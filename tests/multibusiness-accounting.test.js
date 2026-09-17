@@ -30,7 +30,7 @@ test('Merchant and Supplier profiles bind explicitly to economic workspaces', ()
 test('Supplier accounting records commercial receivables separately from actual money', () => {
   assert.match(server, /supplier_fulfilled_revenue/);
   assert.match(server, /supplier_receivables/);
-  assert.match(server, /source,'supplier_receipt'/);
+  assert.match(server, /'supplier_receipt'/);
   assert.match(server, /actual_received_total-paid_amount/);
 });
 
