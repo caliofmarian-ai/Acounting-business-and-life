@@ -1,80 +1,141 @@
-# Accounting Business and Life
+# Business & Life — Philippines
 
-Mobile-first accounting and cash-control app for a small fast-food business in the Philippines.
+Business & Life is a mobile-first local economic ecosystem for the Philippines. It began as an accounting/cash-control application for a small fast-food business and now connects five operational profiles under one human account:
 
-## Purpose
+- Customer
+- Merchant
+- Supplier
+- Courier / Delivery Provider
+- Service Provider / Local Services
 
-The app is designed to answer a practical question: **where did the money go, and how much should still be available?**
+The current production runtime is **V0.8.7**. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
 
-It keeps business activity, personal spending and family/remittance money visibly separate. It records:
+## What is implemented
 
-- sales;
-- business expenses;
-- money received from family/support;
-- personal withdrawals;
-- remittances sent vs PHP actually received;
-- balances by Cash, GCash, Bank and Other;
-- opening cash and end-of-day physical cash variance;
-- stock quantities and low-stock warnings;
-- 7-day and 30-day spending breakdowns;
-- daily/weekly spending limits and low-money warnings;
-- correction history for manually entered transactions.
+### Accounting and stock
+- Cash / GCash / Bank / Other balances;
+- sales, business expenses, support/remittances and personal withdrawals kept distinct;
+- opening cash and end-of-day physical reconciliation;
+- inventory, reorder warnings and unit costs;
+- products/menu, recipes, automatic ingredient consumption and gross-margin analysis;
+- customer receivables and procurement/payment boundaries;
+- audit trail for financial corrections.
 
-Currency is PHP (Philippine peso) for local bookkeeping and the default business timezone is Asia/Manila.
+### Identity and profile system
+- one account identity with multiple profiles;
+- unified Android/PWA shell, avatar and profile switcher;
+- email/password registration and login;
+- revocable sessions;
+- password-reset and email-verification foundation;
+- optional Google OAuth/OpenID Connect adapter when provider credentials are configured;
+- Customer self-service registration;
+- Merchant, Supplier and Courier invite-only governance;
+- Service Provider application and category approval;
+- territory-scoped profile authorization and suspension.
 
-## Accounting rules used by the app
+### Customer commerce
+- Food and Non-food Merchant Marketplace;
+- public Merchant storefronts and published products;
+- basket and checkout;
+- multi-item customer orders;
+- separate fulfilment and payment states;
+- cash pickup presence gate and Merchant-scoped trusted-returning-customer exception;
+- credit/partial payment tracking;
+- customer order tracker.
 
-1. **Sale** = business income.
-2. **Business expense** = money spent to operate the business and reduces business profit.
-3. **Money received / support** = increases available money but is **not business revenue or business profit**.
-4. **Personal withdrawal** = money used for personal/living purposes and is **not a business expense**.
-5. **Remittance** = records what was sent, fees/exchange information when known, and the PHP amount actually received. The received PHP amount is added automatically as `money_received`.
-6. Physical cash reconciliation uses **Cash transactions only**. GCash and Bank balances are not mixed into the physical cash count.
-7. Corrections to manual transactions are written to an audit trail. There is no silent delete flow.
+### Suppliers
+- trusted Merchant ↔ Supplier relationships;
+- Supplier catalog, pack conversion and price snapshots;
+- purchase orders, amendments, ETA/readiness and pickup/delivery states;
+- partial receiving and idempotent stock increase;
+- procurement payment recorded only when money actually moves.
 
-## Recommended daily workflow
+### Delivery
+- Courier profile, vehicle/capacity/radius and approval boundary;
+- versioned delivery-pricing rules;
+- delivery quote snapshots;
+- dispatch after paid/ready gates;
+- live delivery status/location for the active delivery;
+- secure customer handoff code;
+- merchandise and delivery money separated in financial allocation records.
 
-1. Open **Money** and record the physical cash present at the beginning of the day.
-2. Record every sale in the account where it was actually received: Cash, GCash, Bank or Other.
-3. Record every business purchase as **Business expense**.
-4. Record household/personal use as **Personal withdrawal**.
-5. If money arrives from abroad, use **Record money sent** instead of adding the received PHP manually.
-6. At the end of the day, count the physical cash and use **Close day**. The app compares the actual count with the expected Cash balance for that day.
-7. Review the 7-day and 30-day analysis to see business vs personal spending by category.
+### Local Services and safety
+- Service Provider public profiles, services, qualifications/CV evidence and portfolio;
+- service request → quote → accepted → scheduled/in progress → completed lifecycle;
+- verified-review eligibility from completed in-app jobs;
+- private incident reporting with evidence limits and bootstrap Admin triage.
+
+## Current architecture
+
+The production-facing gateway chain is:
+
+```text
+Accounting
+  -> Account/Auth
+  -> Orders
+  -> Marketplace
+  -> Local Services
+  -> Suppliers
+  -> Delivery
+  -> Delivery Finance
+  -> Incidents
+  -> Auth Hardening
+  -> Profile Governance (public entry)
+```
+
+The public process is `server-profile-governance.js` and the Railway health check is `/health`.
+
+## Current country edition
+
+This repository currently represents **Business & Life — Philippines**:
+
+- country: `PH`;
+- operating currency: `PHP` / `₱`;
+- default business timezone: `Asia/Manila`;
+- Philippine-local payment/configuration concepts where implemented.
+
+A future Ireland/Romania/other edition must use an isolated deployment/database/configuration rather than mixing jurisdictions into one production data plane.
+
+## Important open boundary
+
+The next major implementation lane is **Issue #28 — Multi-business Accounting**.
+
+The legacy accounting tables still belong to the original business ledger. New Merchant accounts are intentionally prevented from using that legacy ledger until transactions, inventory, products, reports and reconciliations are safely scoped to an authorized business/economic workspace. Supplier Accounting must reuse the same engine rather than create a second incompatible ledger.
+
+The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**.
 
 ## Stack
 
-- Node.js + Express
+- Node.js 20+ / Express
 - PostgreSQL (Neon)
-- Progressive Web App (installable on Android)
+- Progressive Web App / Android-first UI
 - Railway deployment
-- GitHub Actions CI syntax validation
+- GitHub Actions CI
+- Figma design-system work for application UI
 
-## Environment variables
+## Environment
 
-- `DATABASE_URL` — PostgreSQL connection string
-- `APP_PIN` — private PIN used to enter the app
-- `TOKEN_SECRET` — long random secret used to sign login tokens
-- `PORT` — supplied automatically by Railway
+Core runtime variables include:
 
-Secrets must remain in the hosting environment and must not be committed to GitHub.
+- `DATABASE_URL`
+- `TOKEN_SECRET`
+- `PORT` (Railway)
+- `NODE_ENV`
 
-## Local run
+Temporary/bootstrap migration support may still reference `APP_PIN`, but public V0.8.5+ authentication is email/password and the public PIN login route is blocked by the auth-hardening gateway. Email delivery and Google sign-in are enabled only when their provider-specific environment credentials are configured.
+
+Secrets must remain in Railway/provider secret storage and must never be committed to GitHub.
+
+## Development / validation
 
 ```bash
 npm install
+npm test
 npm start
 ```
 
-The database schema is created/extended automatically on startup with additive migrations.
+`npm test` runs syntax validation plus executable architecture/bootstrap tests. Each implementation PR must also pass an isolated Railway preview and `/health` before promotion.
 
-## Security notes
+## Accounting and legal boundary
 
-- Login tokens expire after 24 hours.
-- Repeated incorrect PIN attempts are rate-limited in memory.
-- Application secrets are read only from environment variables.
-- The PWA caches the application shell and keeps the most recent read-only dashboard data locally for temporary offline viewing.
-
-## Accounting and tax note
-
-This is an operational cash-control and bookkeeping aid. It does not replace Philippine BIR registration, official invoices/receipts, prescribed books of accounts, tax filings, payroll obligations, permits, or professional accounting/legal advice when those are required.
+Business & Life is an operational accounting/commerce platform. It does not by itself replace Philippine BIR registration, official invoices/receipts, tax filings, permits, professional licences, insurance, or legal/accounting obligations where those are required. Legal/compliance workflows are versioned separately and must not falsely claim government filing, licensing or approval.
