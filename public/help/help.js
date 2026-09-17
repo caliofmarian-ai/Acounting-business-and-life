@@ -116,6 +116,12 @@ function articlePage(slug,requestedCode=''){
   const notes=listBlock('Important notes',a.notes);
   const problems=listBlock('Common problems',a.commonProblems,'problem-list');
   const next=a.whatHappensNext?`<div class="next-panel"><strong>What happens next</strong><p>${esc(a.whatHappensNext)}</p></div>`:'';
+  const visual=a.visual?`<figure class="article-visual"><img src="${esc(a.visual.src)}" alt="${esc(a.visual.alt||'')}"><figcaption>${esc(a.visual.caption||'')}</figcaption></figure>`:'';
+  const sections=(a.sections||[]).map(section=>{
+    const paragraphs=(section.paragraphs||[]).map(p=>`<p>${esc(p)}</p>`).join('');
+    const bullets=(section.bullets||[]).length?`<ul class="content-bullets">${section.bullets.map(b=>`<li>${esc(b)}</li>`).join('')}</ul>`:'';
+    return `<section class="content-section"><h2>${esc(section.title)}</h2>${paragraphs}${bullets}</section>`;
+  }).join('');
   const related=(a.related||[]).map(articleBySlug).filter(Boolean);
   const relatedMarkup=related.length?`<h2>Related guides</h2><div class="related-grid">${related.map(guideCard).join('')}</div>`:'';
   const codes=[...new Set([...(a.helpCodes||[]),requestedCode].filter(Boolean))];
@@ -128,6 +134,8 @@ function articlePage(slug,requestedCode=''){
       <h1>${esc(a.title)}</h1>
       <p class="article-lede">${esc(a.summary)}</p>
       <div class="short-answer"><strong>Short answer</strong><div>${esc(a.shortAnswer)}</div></div>
+      ${visual}
+      ${sections}
       ${before}
       ${steps?'<h2>What to do</h2><ol class="steps">'+steps+'</ol>':''}
       ${next}${notes}${problems}${error}${relatedMarkup}
