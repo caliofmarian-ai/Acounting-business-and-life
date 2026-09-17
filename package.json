@@ -1,13 +1,14 @@
 {
   "name": "accounting-business-and-life",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "private": true,
   "type": "module",
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "start": "node server-v03.js",
+    "start": "node server-unified.js",
+    "start:accounting": "node server-v03.js",
     "start:identity": "node identity-server.js",
-    "check": "node --check server-v03.js && node --check public/v03.js && node --check identity-server.js && node --check identity-public/identity.js",
+    "check": "node --check server-unified.js && node --check server-v03.js && node --check public/v03.js && node --check public/shell.js && node --check identity-server.js && node --check identity-public/identity.js",
     "test": "npm run check"
   },
   "engines": {"node": ">=20"},
