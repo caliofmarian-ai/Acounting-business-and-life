@@ -62,6 +62,36 @@ Reserve:
 
 Do not launch experiments that alter actual reward economics without an explicit owner-approved reward policy.
 
-## PostHog integration
+## PostHog live configuration
 
-Issue #49 owns live PostHog mapping. Before writing to PostHog, resolve the correct organization/project and verify existing event names to avoid duplicate schemas.
+Issue #49 owns live PostHog mapping.
+
+Connection was resolved to the single accessible Business & Life/DROPi analytics project before any writes were made.
+
+Configured on 2026-09-17:
+
+- all eight canonical referral event definitions were created;
+- every event definition is intentionally `verified=false` until production instrumentation actually emits and validates it;
+- dashboard **Business & Life — Referral Growth** was created as the stable destination for future referral funnel/channel insights;
+- feature flag `referral_growth_v1` was created with:
+  - `active=false`;
+  - rollout `0%`;
+  - distinct-id bucketing;
+  - experience continuity enabled.
+
+The disabled flag reserves a stable rollout key but does not change production behavior.
+
+Do not mark referral event definitions verified merely because their metadata exists. Verification requires observed, correctly instrumented production/staging events with expected properties and no prohibited PII.
+
+## Dashboard activation sequence
+
+After application instrumentation lands:
+
+1. verify each canonical event appears in the data schema;
+2. audit properties for prohibited PII;
+3. mark correctly instrumented event definitions verified;
+4. build the funnel insight;
+5. add channel/source and creative-variant breakdowns;
+6. add qualified/rewarded counts;
+7. attach insights to the existing Referral Growth dashboard;
+8. keep `referral_growth_v1` at 0% until the integrated feature passes CI, preview and owner acceptance.
