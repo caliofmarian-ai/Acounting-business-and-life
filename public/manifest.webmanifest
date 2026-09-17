@@ -1,0 +1,10 @@
+{
+  "name":"Business & Life Accounting",
+  "short_name":"Business & Life",
+  "start_url":"/",
+  "display":"standalone",
+  "background_color":"#f5f7fb",
+  "theme_color":"#111827",
+  "description":"Simple cash, business expense, personal withdrawal and stock tracking for a small Philippine fast-food business.",
+  "icons":[]
+}
