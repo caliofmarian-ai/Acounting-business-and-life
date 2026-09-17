@@ -183,17 +183,200 @@
       "section": "Getting started",
       "profiles": [],
       "status": "current",
-      "summary": "Understand the account, the five public profiles and how the parts of the application fit together.",
-      "shortAnswer": "You use one account, then switch into the profile that matches what you are doing. Each profile has its own workspace and access rules.",
-      "steps": [
-        "Create or sign in to your account.",
-        "Use the profile switcher to open an enabled profile.",
-        "Follow that profile’s task guides for the activity you want to perform."
-      ],
+      "summary": "A complete introduction to Business & Life — what the product is, who it is for, how its five profiles connect, how money and operations are separated, and how the Philippines Edition works end to end.",
+      "shortAnswer": "Business & Life is a mobile-first local economic ecosystem for the Philippines. One human account can act as a Customer, Merchant, Supplier, Delivery Provider or Local Service Provider, with each role opening a separate workspace. The platform connects local commerce, accounting, procurement, delivery, service work, approvals and private incident handling without mixing each role’s permissions or another business’s financial records.",
+      "steps": [],
       "notes": [
-        "Customer is the default self-service profile.",
-        "Merchant, Supplier and Delivery are governed profiles and require authorization.",
-        "Local Services can begin as an application but operational use depends on approval."
+        "The product is currently a Philippines Edition and the public Help Center documents merged executable behavior.",
+        "Administration is privileged authority, not a normal public profile.",
+        "The architecture is designed so one account can hold several roles without making private business ledgers globally visible."
+      ],
+      "visual": {
+        "src": "/help/product-map.svg",
+        "alt": "Business & Life architecture showing one account connected to Customer, Merchant, Supplier, Delivery and Local Services profiles, with shared commerce, business operations, trust and public guidance layers.",
+        "caption": "Business & Life uses one account identity with separate operational profiles and business-scoped financial workspaces."
+      },
+      "sections": [
+        {
+          "title": "Business & Life in plain language",
+          "paragraphs": [
+            "Business & Life is not only an accounting app and it is not only a marketplace. It is a local economic operating system designed to connect the everyday activities that normally happen in separate places: selling products, buying locally, managing cash, controlling stock, ordering supplies, arranging delivery, offering skilled services and resolving operational problems.",
+            "The product started from a small-business accounting and cash-control need. Its current merged architecture has expanded that foundation into a Philippines-focused ecosystem where the same person can participate in different economic roles without creating a separate identity for each one.",
+            "The central idea is simple: one person keeps one account, but the application changes workspace according to what that person is doing. A person buying food uses Customer. A shop owner runs Merchant. A wholesaler or producer uses Supplier. An approved rider/driver uses Delivery. A carpenter, electrician or other skilled worker uses Local Services."
+          ]
+        },
+        {
+          "title": "What problem the product is designed to solve",
+          "paragraphs": [
+            "Small local economic activity is often fragmented. Money may be tracked in a notebook, orders in chat messages, stock in memory, Supplier prices in another conversation, deliveries by phone, and service work through informal referrals. When those activities are disconnected, it becomes difficult to explain where money went, what is owed, what stock remains, whether an order was actually paid, or who is responsible for the next step.",
+            "Business & Life brings those activities into connected workflows. An order can affect preparation and stock. A real payment can update the correct business money account. A Supplier purchase can become inventory when it is actually received. A delivery can stay separate from merchandise money. A service request can become a quote, a job and then a verified review."
+          ],
+          "bullets": [
+            "Reduce the gap between commercial activity and accounting records.",
+            "Keep payment status separate from fulfilment status so unpaid money is not mistaken for collected money.",
+            "Give small businesses a clearer picture of cash, stock, receivables, Supplier commitments and day-end differences.",
+            "Create explicit relationships between Merchants, Suppliers, Customers, Delivery Providers and Local Service Providers.",
+            "Keep sensitive evidence and incidents private instead of mixing them with public reputation."
+          ]
+        },
+        {
+          "title": "Who the product is for",
+          "paragraphs": [
+            "Business & Life is built around five public operational profiles. These are not five separate apps; they are different workspaces under the same account identity."
+          ],
+          "bullets": [
+            "Customer — discovers local Merchants and Service Providers, orders products, chooses fulfilment/payment options, tracks orders and deliveries, requests local services and reports private problems.",
+            "Merchant — runs a local business storefront, handles Customer orders, accounting, inventory, products/recipes, procurement and delivery dispatch.",
+            "Supplier — maintains a Supplier business profile and catalog, connects to Merchants through accepted relationships, responds to purchase orders and uses its own business-scoped accounting workspace.",
+            "Delivery Provider / Courier — submits eligibility information, becomes available only after approval, receives delivery assignments, shares location during active delivery and completes verified handoff.",
+            "Service Provider / Local Services — presents skills, services and qualifications, receives Customer requests, sends quotes, performs jobs and can receive verified reviews from completed in-app work."
+          ]
+        },
+        {
+          "title": "One account does not mean one shared permission set",
+          "paragraphs": [
+            "The account is the identity layer. The active profile is the operational context. Business workspaces are the economic context. These are deliberately separate concepts.",
+            "For example, having a Customer profile does not grant access to Merchant accounting. Having a Supplier profile does not allow a person to view another Merchant’s ledger. A Merchant or Supplier profile must be bound to an authorized business workspace before accounting data can be accessed.",
+            "This separation is important because the product is designed for many people and many local businesses to use the same platform without their private financial records becoming one shared ledger."
+          ]
+        },
+        {
+          "title": "How the local commerce loop works",
+          "paragraphs": [
+            "A Customer can browse published Merchant storefronts in Food or Non-food discovery. Only storefronts and products that the Merchant has made available are returned through the public marketplace.",
+            "At checkout the platform validates the Merchant’s current capabilities. Pickup and Delivery are separate fulfilment choices. Cash and online/digital are separate payment choices. The application blocks combinations the Merchant has not enabled and currently blocks cash delivery.",
+            "When an order is created, the commercial amount, amount actually paid and outstanding amount are stored separately. This is why the platform can represent Unpaid, Partial and Paid without pretending money has moved when it has not."
+          ],
+          "bullets": [
+            "New/untrusted cash pickup can wait for Customer presence before preparation.",
+            "After 5 completed orders with the same Merchant, the Customer becomes eligible for Merchant-specific remote cash preparation, but the Merchant must still explicitly enable it.",
+            "Starting preparation can consume tracked marketplace stock and/or recipe ingredients.",
+            "A cancellable order can reverse recorded stock consumption where the workflow has already consumed stock.",
+            "A ready pickup order can be completed with an explicit remaining receivable when the Merchant intentionally allows credit."
+          ]
+        },
+        {
+          "title": "How accounting is connected to real operations",
+          "paragraphs": [
+            "Merchant and Supplier accounting uses isolated business workspaces. The accounting engine tracks Cash, GCash, Bank and Other balances rather than treating all money as one undifferentiated total.",
+            "Manual accounting supports Sales, Business expenses, Money received, Personal withdrawals and Adjustments. At the same time, operational workflows can create linked financial entries so the same event is not supposed to be recorded twice.",
+            "The product keeps a distinction between cash-flow accounting records and analytical product profitability. Recipe ingredient cost can be used to estimate gross profit without creating a second duplicate cash expense for inventory that was already purchased."
+          ],
+          "bullets": [
+            "Opening cash and end-of-day physical cash reconciliation.",
+            "Budget/safety warnings for configured personal/business thresholds and minimum available money.",
+            "Inventory quantities, reorder levels and unit costs.",
+            "Products, recipes, automatic ingredient consumption and estimated gross margin.",
+            "Remittance records containing sent currency/amount, fee, expected PHP and actual PHP received.",
+            "Audit events for eligible transaction corrections.",
+            "CSV export of transactions for the active business workspace.",
+            "Customer receivables, Supplier payables/commitments and Supplier-side receivables in the business summary."
+          ]
+        },
+        {
+          "title": "How Suppliers and procurement work",
+          "paragraphs": [
+            "Supplier procurement is relationship-based. A Merchant does not automatically treat an unknown external business as a trusted Supplier. The Merchant invites an active Supplier account and the Supplier explicitly accepts before normal catalog and purchase-order exchange is allowed.",
+            "Supplier catalog items carry pack information, base-unit conversion, price, minimum packs, availability and lead time. When a Merchant creates a purchase order, the relevant item data is snapshotted so later catalog edits do not silently rewrite the historical order.",
+            "The Supplier can confirm quantities and prices, including partial acceptance. The Merchant records what physically arrived. If only part arrives, the PO remains Partially received. Linked inventory can increase from the actual quantity received."
+          ],
+          "bullets": [
+            "Purchase-order status and payment status are separate.",
+            "Merchant records Supplier payment only when money actually moves.",
+            "Merchant accounting records the linked Supplier-payment business expense.",
+            "Supplier accounting records the corresponding Supplier-order money receipt when the Supplier business workspace exists.",
+            "Linked procurement financial records are protected against being independently edited as unrelated manual entries."
+          ]
+        },
+        {
+          "title": "How Delivery works",
+          "paragraphs": [
+            "Delivery is an operational profile with eligibility controls. A Courier does not become available merely by enabling a profile; approval and eligibility status are checked first.",
+            "A Customer delivery uses a quote that snapshots the active delivery-pricing rule, route distance, estimated weight/volume where available and the calculated fee. Current quotes expire after 15 minutes so an old price is not silently reused.",
+            "Merchant dispatch is gated: the order must be Ready and Paid before the Merchant requests a Courier. Only an approved, available Courier can be assigned."
+          ],
+          "bullets": [
+            "Merchant pickup coordinates and Customer drop-off coordinates are used for the delivery quote.",
+            "Configured pricing can include base fee, per-kilometre, per-weight, per-volume, minimum fee, route factor and maximum distance.",
+            "Courier live location is part of the active delivery flow rather than continuous off-duty tracking.",
+            "Customer sees active delivery progress and provides the secure completion/handoff code at the actual handoff.",
+            "Merchandise and delivery fee are separated in financial allocation records."
+          ]
+        },
+        {
+          "title": "How Local Services works",
+          "paragraphs": [
+            "Local Services turns skills into an in-app service workflow. A Service Provider can create a public professional profile, select services, add qualifications and portfolio evidence, receive Customer requests, send quotes and manage job progress.",
+            "Public profile data and private evidence are not the same thing. The provider can choose Public, Relationships only or Private visibility. Private CV/evidence is stored separately from the public CV/experience summary.",
+            "The normal job lifecycle connects Customer request, Provider quote, Customer acceptance, scheduling/work, Provider completion and Customer confirmation. Only after a completed and Customer-confirmed in-app job can the Customer submit the verified service review."
+          ],
+          "bullets": [
+            "Credential evidence can move through Submitted, Verified, Rejected or Expired states.",
+            "Public reputation participation is a separate opt-in from profile visibility.",
+            "Job-linked portfolio work is returned publicly only when Customer publication consent is present.",
+            "A public profile or platform approval is not represented as a substitute for professional licences, permits, insurance or other legal obligations that may apply."
+          ]
+        },
+        {
+          "title": "Trust, approvals and operating territories",
+          "paragraphs": [
+            "Business & Life is designed to operate in controlled local territories rather than assuming every operational profile can immediately work everywhere. Customer is the default self-service profile. Merchant, Supplier and Delivery are governed profiles. Local Services uses an application/approval path for operational scope.",
+            "Invitations, applications and authorizations are territory-scoped. An authorization can later be suspended or reactivated through the governance workflow.",
+            "Administration is deliberately not presented as another public marketplace profile. Privileged platform administration belongs to a separate secured authority model."
+          ]
+        },
+        {
+          "title": "Safety and private problem reporting",
+          "paragraphs": [
+            "The platform includes private incident reporting for operational problems involving orders, deliveries, Merchants, Couriers, service jobs/providers, Suppliers, payments or other issues.",
+            "Incident reporting is separate from public ratings and reviews. Evidence is protected by server-side limits and the reporter sees their own report, evidence, follow-up notes and timeline while authorized platform administration can triage the case."
+          ],
+          "bullets": [
+            "Maximum 5 images per incident.",
+            "Allowed image formats: JPEG, PNG and WebP.",
+            "Maximum 1 PDF.",
+            "Maximum 1.5 MB per image, 3 MB for the PDF and 10 MB total decoded evidence."
+          ]
+        },
+        {
+          "title": "What Business & Life is not",
+          "paragraphs": [
+            "The platform helps organize commerce, operations, accounting evidence and role workflows. It does not claim to replace government registration, required invoices/receipts, tax filing, permits, professional licensing, insurance, legal advice or professional accounting obligations.",
+            "It also does not currently represent every future design issue as a live feature. Public documentation describes merged executable behavior. Open/unmerged features are intentionally excluded until they are actually part of the product."
+          ]
+        },
+        {
+          "title": "Current Philippines Edition",
+          "paragraphs": [
+            "The current repository and runtime represent Business & Life — Philippines. Country edition is a deployment/data boundary, not merely a country selector inside one shared production database."
+          ],
+          "bullets": [
+            "Country code: PH.",
+            "Operating currency: PHP / ₱.",
+            "Default business timezone: Asia/Manila.",
+            "Philippines-specific payment/configuration concepts are used where implemented.",
+            "A future Ireland, Romania or other country edition should use an isolated deployment/database/configuration boundary instead of mixing jurisdictions in one production data plane."
+          ]
+        },
+        {
+          "title": "A complete example",
+          "paragraphs": [
+            "Imagine a Customer opens the app and orders food from a published local Merchant. The Customer chooses pickup or delivery and an available payment method. If it is a new cash pickup relationship, the order can wait for Customer presence. The Merchant confirms the appropriate gate, starts preparation and tracked stock or recipe ingredients are consumed.",
+            "If the order is delivered, the Customer receives a current delivery quote. Once the order is paid and ready, the Merchant requests a Courier. An approved available Courier is assigned, shares location during the active trip and completes delivery using the Customer handoff code.",
+            "The Merchant’s business workspace keeps the merchandise payment and any outstanding receivable visible. If stock is low, the Merchant can order supplies from an accepted Supplier relationship. When goods physically arrive, the Merchant records the received quantities and linked stock increases. When the Merchant actually pays the Supplier, the payment appears in Merchant accounting and the Supplier’s own business accounting records the corresponding receipt.",
+            "The result is one connected history of commerce, fulfilment, stock and money instead of several unrelated conversations and notebooks."
+          ]
+        }
+      ],
+      "related": [
+        "create-account",
+        "switch-profiles",
+        "glossary",
+        "customer-overview",
+        "merchant-overview",
+        "supplier-overview",
+        "courier-overview",
+        "service-provider-overview"
       ]
     },
     {
