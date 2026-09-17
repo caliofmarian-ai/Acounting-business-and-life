@@ -27,6 +27,8 @@ Current master nodes:
 | A4 referral poster | `3:10` | 794×1123 | READY |
 | Social square | `3:25` | 1080×1080 | READY |
 | Story / Status | `3:37` | 1080×1920 | READY |
+| A5 referral flyer | `4:2` | 559×794 | READY |
+| Referral / business card | `4:16` | 1050×600 | READY |
 
 The same file also contains the initial **Promotion Center — Mobile** screen at node `1:2`.
 
@@ -53,38 +55,39 @@ Required properties:
 - QR remains visually isolated from decorative patterns;
 - human-readable referral code remains visible as fallback.
 
-The first Figma masters use a clearly named `QR_SLOT`. A production QR renderer will replace this slot after the runtime integration workstream is rebased from the stable production gateway.
+All current Figma masters use a clearly named `QR_SLOT`. A production QR renderer will replace this slot after the runtime integration workstream is rebased from the stable production gateway.
 
 ## Master families
 
 ### A4 poster
-Use for:
-- shops;
-- community noticeboards;
-- business counters;
-- local events;
-- printed referral promotion.
+Use for shops, community noticeboards, business counters, local events and printed referral promotion.
 
 Primary message:
 **Run your business. Understand your money.**
 
 ### Social square
-Use for:
-- Instagram post;
-- Facebook post;
-- other square social surfaces.
+Use for Instagram and Facebook posts.
 
 Primary message:
 **Know where your money goes.**
 
 ### Story / Status
-Use for:
-- Instagram Story;
-- Facebook Story;
-- WhatsApp Status.
+Use for Instagram Story, Facebook Story and WhatsApp Status.
 
 Primary message:
 **Your business. Your money. More clarity.**
+
+### A5 flyer
+Use for local handouts, business counters, community distribution and smaller noticeboards.
+
+Primary message:
+**Small business? See the money clearly.**
+
+### Referral / business card
+Use for direct person-to-person sharing, a wallet-sized print piece or a compact digital card shown from a phone.
+
+Primary message:
+**Join me on Business & Life.**
 
 ## Claim safety
 
@@ -115,8 +118,6 @@ No bulk personalized asset generation should run until a Canva autofill-capable 
 ## Future families
 
 Still to add under Issue #48:
-- A5 flyer;
-- referral/business card;
 - counter card;
 - window sticker;
 - email/web banner;
