@@ -83,3 +83,14 @@ test('V2 catalog has granular instructions for current modules',()=>{
   const slugs=new Set(content.articles.map(a=>a.slug));
   for(const slug of required) assert.ok(slugs.has(slug),`missing V2 guide ${slug}`);
 });
+
+
+test('product overview is a complete characterization, not a short intro',()=>{
+  const article=content.articles.find(a=>a.slug==='product-overview');
+  assert.ok(article,'product overview missing');
+  assert.ok(Array.isArray(article.sections)&&article.sections.length>=10,'product overview needs substantial long-form sections');
+  const text=[article.summary,article.shortAnswer,...article.sections.flatMap(s=>[s.title,...(s.paragraphs||[]),...(s.bullets||[])])].join(' ');
+  for(const required of ['Customer','Merchant','Supplier','Delivery','Local Services','accounting','Philippines'])
+    assert.ok(text.includes(required),`product overview does not explain ${required}`);
+  assert.ok(article.visual?.src==='/help/product-map.svg','product overview should include the product architecture diagram');
+});
