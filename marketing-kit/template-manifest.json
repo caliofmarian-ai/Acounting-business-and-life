@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "source": {
     "figmaFileName": "Business & Life — Growth & Referral System",
     "figmaFileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
@@ -110,6 +110,104 @@
       "figmaStatus": "design_master_ready",
       "canvaStatus": "editable_master_ready",
       "canvaTitle": "Business & Life — Referral Card V1"
+    },
+    {
+      "id": "COUNTER_CARD_V1",
+      "purpose": "Tabletop/counter referral card for shops and small businesses",
+      "width": 1200,
+      "height": 800,
+      "figmaNodeId": "5:2",
+      "channels": [
+        "counter_card",
+        "in_person",
+        "print"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — Counter Card Referral V1"
+    },
+    {
+      "id": "WINDOW_STICKER_V1",
+      "purpose": "High-contrast window sticker with large scan target",
+      "width": 1080,
+      "height": 1080,
+      "figmaNodeId": "5:13",
+      "channels": [
+        "window_sticker",
+        "print",
+        "storefront"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — Window Sticker Referral V1"
+    },
+    {
+      "id": "LINKEDIN_REFERRAL_V1",
+      "purpose": "Landscape social referral creative",
+      "width": 1200,
+      "height": 627,
+      "figmaNodeId": "5:22",
+      "channels": [
+        "linkedin_post",
+        "facebook_landscape"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — LinkedIn Referral V1"
+    },
+    {
+      "id": "EMAIL_WEB_BANNER_V1",
+      "purpose": "Compact referral banner for email and web placements",
+      "width": 1200,
+      "height": 400,
+      "figmaNodeId": "5:34",
+      "channels": [
+        "email_banner",
+        "web_banner"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — Email Web Referral Banner V1"
+    },
+    {
+      "id": "QR_PHONE_CARD_V1",
+      "purpose": "QR-first full-screen card for direct scanning from another phone",
+      "width": 1080,
+      "height": 1920,
+      "figmaNodeId": "6:2",
+      "channels": [
+        "phone_display",
+        "in_person",
+        "qr"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — QR Phone Card V1"
     }
   ],
   "qrRules": {
