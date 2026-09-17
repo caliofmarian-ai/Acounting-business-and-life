@@ -56,3 +56,30 @@ test('contextual help client is injected into the public app shell',()=>{
   assert.ok(linking.includes("response.clone()"),'fetch inspection must not consume the response used by product UI');
   assert.ok(linking.includes("url.origin!==location.origin"),'contextual help should only inspect same-origin API failures');
 });
+
+
+test('profile journeys and related-guide graph are complete',()=>{
+  const slugs=new Set(content.articles.map(a=>a.slug));
+  for(const profile of content.profiles){
+    assert.ok(Array.isArray(profile.startHere)&&profile.startHere.length>=3,`missing start-here steps for ${profile.id}`);
+    assert.ok(Array.isArray(profile.journey)&&profile.journey.length>=5,`missing journey for ${profile.id}`);
+    assert.match(profile.flowImage,/^\/help\/flows\/[a-z-]+\.svg$/);
+    const file=profile.flowImage.replace('/help/','../public/help/');
+    const svg=readFileSync(new URL(file,import.meta.url),'utf8');
+    assert.ok(svg.includes('<svg'),`missing flow SVG for ${profile.id}`);
+  }
+  for(const article of content.articles){
+    for(const related of article.related||[]) assert.ok(slugs.has(related),`${article.slug} links to missing article ${related}`);
+  }
+});
+
+test('V2 catalog has granular instructions for current modules',()=>{
+  assert.ok(content.articles.length>=60,'expected expanded public guide catalog');
+  const required=[
+    'delivery-fee-and-quote','remote-cash-trust','financial-corrections-audit',
+    'supplier-payment-accounting','courier-location-privacy','credentials-verification',
+    'service-job-statuses','incident-privacy','glossary'
+  ];
+  const slugs=new Set(content.articles.map(a=>a.slug));
+  for(const slug of required) assert.ok(slugs.has(slug),`missing V2 guide ${slug}`);
+});
