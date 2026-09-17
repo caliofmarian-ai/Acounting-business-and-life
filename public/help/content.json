@@ -1,0 +1,767 @@
+{
+  "version": "0.9-main",
+  "locale": "en-PH",
+  "product": {
+    "name": "Business & Life — Philippines",
+    "description": "A mobile-first local economic ecosystem where one account can use separate Customer, Merchant, Supplier, Delivery and Local Services profiles.",
+    "currentBoundary": "Documents behavior merged to GitHub main through V0.9. Unmerged features are not presented as currently available."
+  },
+  "profiles": [
+    {
+      "id": "customer",
+      "label": "Customer",
+      "tagline": "Discover, order, track and request local services.",
+      "accent": "blue",
+      "modules": [
+        "Marketplace",
+        "Orders",
+        "Delivery",
+        "Local Services",
+        "Incidents"
+      ]
+    },
+    {
+      "id": "merchant",
+      "label": "Merchant",
+      "tagline": "Run a storefront and keep business money, stock and orders understandable.",
+      "accent": "teal",
+      "modules": [
+        "Storefront",
+        "Orders",
+        "Accounting",
+        "Inventory",
+        "Products & recipes",
+        "Procurement",
+        "Delivery dispatch"
+      ]
+    },
+    {
+      "id": "supplier",
+      "label": "Supplier",
+      "tagline": "Supply local businesses through a catalog, purchase orders and a separate accounting workspace.",
+      "accent": "amber",
+      "modules": [
+        "Supplier profile",
+        "Catalog",
+        "Merchant relationships",
+        "Purchase orders",
+        "Fulfilment",
+        "Accounting"
+      ]
+    },
+    {
+      "id": "courier",
+      "label": "Delivery",
+      "tagline": "Complete approved delivery work with clear assignment, location and handoff steps.",
+      "accent": "green",
+      "modules": [
+        "Eligibility",
+        "Documents",
+        "Availability",
+        "Assignments",
+        "Location",
+        "Completion"
+      ]
+    },
+    {
+      "id": "service_provider",
+      "label": "Local Services",
+      "tagline": "Present verified skills, quote work and complete local service jobs.",
+      "accent": "red",
+      "modules": [
+        "Public profile",
+        "Services",
+        "Credentials",
+        "Requests & quotes",
+        "Jobs",
+        "Reviews"
+      ]
+    }
+  ],
+  "helpCodes": {
+    "ERR-AUTH-001": "sign-in-recovery",
+    "ERR-GOV-001": "profile-approval-required",
+    "ERR-ACC-009": "business-workspace-unavailable",
+    "ERR-ORD-003": "cash-pickup-presence",
+    "ERR-DEL-004": "delivery-quote-expired",
+    "ERR-DEL-006": "courier-approval-required",
+    "ERR-SUP-002": "trusted-supplier-relationship",
+    "ERR-SVC-002": "service-provider-approval",
+    "ERR-INC-001": "incident-evidence-limits"
+  },
+  "articles": [
+    {
+      "slug": "product-overview",
+      "title": "What is Business & Life?",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "Understand the account, the five public profiles and how the parts of the application fit together.",
+      "shortAnswer": "You use one account, then switch into the profile that matches what you are doing. Each profile has its own workspace and access rules.",
+      "steps": [
+        "Create or sign in to your account.",
+        "Use the profile switcher to open an enabled profile.",
+        "Follow that profile’s task guides for the activity you want to perform."
+      ],
+      "notes": [
+        "Customer is the default self-service profile.",
+        "Merchant, Supplier and Delivery are governed profiles and require authorization.",
+        "Local Services can begin as an application but operational use depends on approval."
+      ]
+    },
+    {
+      "slug": "create-account",
+      "title": "Create your account",
+      "section": "Getting started",
+      "profiles": [
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Create a Customer account using email and password.",
+      "shortAnswer": "Registration creates one account identity and begins with a private Customer profile.",
+      "steps": [
+        "Open Create account.",
+        "Enter your name, email and password.",
+        "Add phone/address only if you want to provide them at this stage.",
+        "Submit the form and continue to the app."
+      ],
+      "notes": [
+        "The normal public login is email + password.",
+        "The old owner PIN is not part of normal user sign-in."
+      ]
+    },
+    {
+      "slug": "sign-in-recovery",
+      "title": "Sign in or reset your password",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "helpCodes": [
+        "ERR-AUTH-001"
+      ],
+      "summary": "Sign in with email/password or prepare a password reset when you cannot access the account.",
+      "shortAnswer": "Use email + password. If you cannot sign in, use Forgot password rather than repeatedly guessing.",
+      "steps": [
+        "Open Sign in.",
+        "Enter the email used for your account.",
+        "Enter your password.",
+        "If it does not work, select Forgot password and follow the reset flow."
+      ],
+      "notes": [
+        "Password-reset and email-verification foundations are implemented.",
+        "Google sign-in only works when provider credentials are configured."
+      ]
+    },
+    {
+      "slug": "switch-profiles",
+      "title": "Switch between profiles",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "Use one identity with different workspaces instead of creating separate accounts.",
+      "shortAnswer": "Open Account & Profiles, then select an enabled profile. Switching profile does not sign you out.",
+      "steps": [
+        "Tap your avatar/account control.",
+        "Find Switch profile.",
+        "Choose an enabled profile.",
+        "The app opens the workspace for that role."
+      ],
+      "notes": [
+        "Administration is not shown as a normal public profile."
+      ]
+    },
+    {
+      "slug": "profile-approval-required",
+      "title": "Why can’t I enable this profile?",
+      "section": "Getting started",
+      "profiles": [
+        "merchant",
+        "supplier",
+        "courier",
+        "service_provider"
+      ],
+      "status": "current",
+      "helpCodes": [
+        "ERR-GOV-001"
+      ],
+      "summary": "Merchant, Supplier and Delivery access is governed; Local Services also has an application/approval flow.",
+      "shortAnswer": "Some profiles are intentionally not self-activated. You need the appropriate invitation/application and Admin authorization for the operating territory.",
+      "steps": [
+        "Open Account & Profiles or the relevant invitation/application screen.",
+        "Complete the requested profile/application information.",
+        "Submit any required evidence.",
+        "Wait for the authorization decision before attempting operational actions."
+      ],
+      "notes": [
+        "A platform approval does not replace licences, permits, insurance or other obligations that may apply to the activity."
+      ]
+    },
+    {
+      "slug": "customer-overview",
+      "title": "Customer profile: what you can do",
+      "section": "Customer",
+      "profiles": [
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Browse local merchants, order products, track fulfilment, use delivery and request local services.",
+      "shortAnswer": "The Customer workspace is for buying/requesting services—not for running a business ledger.",
+      "steps": [
+        "Open Customer from the profile switcher.",
+        "Choose Food, Non-food, Local Services, My Orders or Delivery.",
+        "Follow the task-specific guide for checkout/tracking."
+      ]
+    },
+    {
+      "slug": "browse-marketplace",
+      "title": "Browse Food and Non-food merchants",
+      "section": "Customer",
+      "profiles": [
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Find published Merchant storefronts and products.",
+      "shortAnswer": "Only published storefronts/products are shown in the marketplace.",
+      "steps": [
+        "Open the Customer profile.",
+        "Choose Food or Non-food.",
+        "Open a Merchant storefront.",
+        "Review available products, fulfilment options and supported payment choices."
+      ]
+    },
+    {
+      "slug": "place-order",
+      "title": "Place a marketplace order",
+      "section": "Customer",
+      "profiles": [
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Add products from one Merchant and create the canonical customer order.",
+      "shortAnswer": "A basket belongs to one Merchant. Checkout creates one order with separate fulfilment and payment states.",
+      "steps": [
+        "Open a Merchant storefront.",
+        "Add the products and quantities you want.",
+        "Choose pickup or delivery when available.",
+        "Choose an allowed payment method.",
+        "Review and place the order."
+      ],
+      "notes": [
+        "Delivery checkout currently requires a valid delivery quote and online/digital payment."
+      ]
+    },
+    {
+      "slug": "cash-pickup-presence",
+      "title": "Why a cash pickup may wait for your presence",
+      "section": "Customer",
+      "profiles": [
+        "customer",
+        "merchant"
+      ],
+      "status": "current",
+      "helpCodes": [
+        "ERR-ORD-003"
+      ],
+      "summary": "Understand the presence gate used for new/untrusted cash pickup orders.",
+      "shortAnswer": "For a new/untrusted customer paying cash at pickup, preparation can wait until the Customer checks in and the Merchant confirms presence.",
+      "steps": [
+        "Customer arrives at the Merchant.",
+        "Customer taps I’m here.",
+        "Merchant confirms the Customer is present.",
+        "Merchant can continue preparation according to the order workflow."
+      ],
+      "notes": [
+        "Returning-customer remote cash preparation eligibility is Merchant-specific, not global."
+      ]
+    },
+    {
+      "slug": "track-order",
+      "title": "Track your order",
+      "section": "Customer",
+      "profiles": [
+        "customer"
+      ],
+      "status": "current",
+      "summary": "See preparation, payment and fulfilment progress.",
+      "shortAnswer": "Open My Orders and select the order. Payment status and fulfilment status are shown separately.",
+      "steps": [
+        "Open Customer → My Orders.",
+        "Choose the order.",
+        "Review preparation/payment status.",
+        "If the order uses delivery, open Delivery for the delivery-specific status."
+      ]
+    },
+    {
+      "slug": "delivery-quote-expired",
+      "title": "Why did my delivery quote expire?",
+      "section": "Customer",
+      "profiles": [
+        "customer"
+      ],
+      "status": "current",
+      "helpCodes": [
+        "ERR-DEL-004"
+      ],
+      "summary": "Get a fresh delivery quote when the previous quote is missing or expired.",
+      "shortAnswer": "Request a new quote, then return to checkout. An expired quote cannot be reused.",
+      "steps": [
+        "Return to the basket/checkout.",
+        "Confirm the delivery destination.",
+        "Tap Get quote again.",
+        "Review the new fee and continue checkout."
+      ],
+      "notes": [
+        "The quote snapshots the active pricing rule, route distance, estimated weight/volume and fee.",
+        "A quote is time-limited so checkout does not silently reuse stale pricing."
+      ]
+    },
+    {
+      "slug": "delivery-tracking-handoff",
+      "title": "Track delivery and complete the handoff",
+      "section": "Customer",
+      "profiles": [
+        "customer",
+        "courier"
+      ],
+      "status": "current",
+      "summary": "Follow an active delivery and use the customer handoff code at completion.",
+      "shortAnswer": "Live courier location is shown only while the delivery is active. Completion uses a secure customer handoff code.",
+      "steps": [
+        "Open Customer → Delivery.",
+        "Open the active delivery.",
+        "Watch status/location while active.",
+        "Give the handoff code to the Courier only at the correct delivery handoff."
+      ]
+    },
+    {
+      "slug": "merchant-overview",
+      "title": "Merchant profile: what you can do",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Operate a storefront, customer orders, stock, accounting, procurement and delivery dispatch.",
+      "shortAnswer": "The Merchant profile combines commerce operations with an isolated business accounting workspace.",
+      "steps": [
+        "Open Merchant from the profile switcher.",
+        "Confirm the active business workspace.",
+        "Use the accounting, storefront, order, procurement or delivery area for the task you need."
+      ]
+    },
+    {
+      "slug": "business-workspace-unavailable",
+      "title": "Business accounting workspace unavailable",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "helpCodes": [
+        "ERR-ACC-009"
+      ],
+      "summary": "Understand why Merchant/Supplier accounting requires an authorized business binding.",
+      "shortAnswer": "Accounting is business-scoped. Your active Merchant/Supplier profile must be bound to a business workspace you are allowed to use.",
+      "steps": [
+        "Confirm you are in Merchant or Supplier profile.",
+        "Open the workspace selector if more than one business is available.",
+        "Choose the correct business.",
+        "If no authorized workspace exists, contact the appropriate platform administrator/support path."
+      ],
+      "notes": [
+        "A profile existing does not automatically grant access to another business’s ledger."
+      ]
+    },
+    {
+      "slug": "merchant-accounting",
+      "title": "Use the Merchant accounting workspace",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Track balances, sales, expenses, withdrawals, inventory, budget warnings and reports for the selected business.",
+      "shortAnswer": "Everything in this accounting workspace is scoped to the active business.",
+      "steps": [
+        "Open Merchant.",
+        "Confirm the business name in the workspace bar.",
+        "Use Dashboard for summary/balances.",
+        "Use Transactions, Inventory, Products, Day close or Reports for the detailed task."
+      ],
+      "notes": [
+        "Cash, GCash, Bank and Other are separate money accounts.",
+        "Financial corrections create audit events."
+      ]
+    },
+    {
+      "slug": "record-transaction",
+      "title": "Record a sale, business expense or withdrawal",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Add a manual business transaction to the active accounting workspace.",
+      "shortAnswer": "Choose the correct transaction type, amount and money account. Do not use a manual correction to duplicate a linked order/procurement entry.",
+      "steps": [
+        "Open Accounting → Transactions.",
+        "Choose the transaction type.",
+        "Enter amount, category and money account.",
+        "Add a useful note and save."
+      ],
+      "notes": [
+        "Entries linked to remittances, product sales, order payments or supplier records are protected from separate manual correction."
+      ]
+    },
+    {
+      "slug": "open-close-day",
+      "title": "Open and close the business day",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Record opening cash and reconcile actual cash against expected cash.",
+      "shortAnswer": "Open the day with physical cash. At close, enter the actual cash count and review the variance.",
+      "steps": [
+        "Record opening cash at the beginning of the day.",
+        "Operate normally and record money movements.",
+        "At day end count physical cash.",
+        "Enter actual cash and review the calculated variance."
+      ]
+    },
+    {
+      "slug": "inventory-products-recipes",
+      "title": "Inventory, products and recipes",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Maintain stock, selling products, recipes and gross-margin estimates.",
+      "shortAnswer": "Inventory stores ingredients/items. Products can have recipes that consume inventory and estimate ingredient cost/profit.",
+      "steps": [
+        "Create/update inventory items and unit costs.",
+        "Create products with selling prices.",
+        "Link recipe quantities to inventory ingredients.",
+        "Use product sale/profitability views to review revenue, estimated ingredient COGS and gross profit."
+      ]
+    },
+    {
+      "slug": "merchant-storefront",
+      "title": "Publish your Merchant storefront",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Configure public store information and marketplace product publication.",
+      "shortAnswer": "A storefront can be Draft/private, Published or Paused. Only published storefronts/products appear to Customers.",
+      "steps": [
+        "Open Merchant storefront.",
+        "Set store name, description and Food/Non-food/Mixed type.",
+        "Configure pickup/delivery/payment capabilities and preparation ETA.",
+        "Publish when the storefront information/catalog is ready."
+      ]
+    },
+    {
+      "slug": "merchant-order-workflow",
+      "title": "Process a Customer order",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Confirm presence when required, start preparation, mark ready, take payment and complete/handoff.",
+      "shortAnswer": "Order fulfilment and payment are separate. Follow the allowed state transitions rather than skipping steps.",
+      "steps": [
+        "Open the Merchant order board.",
+        "Review payment/fulfilment state.",
+        "Confirm Customer presence if the cash gate applies.",
+        "Start preparing → mark ready.",
+        "Record money only when it is actually received.",
+        "Complete pickup or delivery handoff as applicable."
+      ]
+    },
+    {
+      "slug": "trusted-supplier-relationship",
+      "title": "Why you need a trusted Supplier relationship",
+      "section": "Supplier",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "helpCodes": [
+        "ERR-SUP-002"
+      ],
+      "summary": "Procurement is limited to explicitly accepted Merchant ↔ Supplier relationships.",
+      "shortAnswer": "A Merchant first invites a known Supplier account. The Supplier accepts before purchase orders can be exchanged.",
+      "steps": [
+        "Merchant opens Procurement and invites the Supplier by email.",
+        "Supplier reviews the relationship invitation.",
+        "Supplier accepts.",
+        "Merchant can then browse that Supplier’s catalog and create purchase orders."
+      ]
+    },
+    {
+      "slug": "supplier-overview",
+      "title": "Supplier profile: what you can do",
+      "section": "Supplier",
+      "profiles": [
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Manage your supply business profile, catalog, Merchant relationships, purchase orders and accounting.",
+      "shortAnswer": "Supplier is both an operational procurement profile and an economic workspace with isolated accounting.",
+      "steps": [
+        "Open Supplier from the profile switcher.",
+        "Confirm the active Supplier business workspace.",
+        "Maintain profile/catalog information.",
+        "Review incoming purchase orders and fulfil them.",
+        "Use Accounting for this Supplier business’s money and reporting."
+      ]
+    },
+    {
+      "slug": "supplier-catalog",
+      "title": "Create and maintain your Supplier catalog",
+      "section": "Supplier",
+      "profiles": [
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Publish supply items with pack, price, base-unit conversion, availability and lead-time information.",
+      "shortAnswer": "Catalog values are data-driven and purchase orders snapshot the relevant values when ordered.",
+      "steps": [
+        "Open Supplier → My Catalog.",
+        "Add product name, pack name and price per pack.",
+        "Set the base unit and units per pack.",
+        "Keep availability/lead time accurate."
+      ]
+    },
+    {
+      "slug": "supplier-purchase-orders",
+      "title": "Respond to and fulfil purchase orders",
+      "section": "Supplier",
+      "profiles": [
+        "supplier",
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Accept/reject an incoming PO, confirm readiness and complete supplier delivery/pickup states.",
+      "shortAnswer": "Use the purchase-order workflow so quantities, ETA, receiving and real payments remain auditable.",
+      "steps": [
+        "Supplier opens Incoming POs.",
+        "Accept/confirm or reject with the appropriate note/ready time.",
+        "Update preparation/fulfilment status.",
+        "Merchant records actual receipt when goods arrive.",
+        "Merchant records Supplier payment only when money really moves."
+      ]
+    },
+    {
+      "slug": "supplier-accounting",
+      "title": "Use Supplier business accounting",
+      "section": "Supplier",
+      "profiles": [
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Track the money and reports of the active Supplier business separately from other businesses.",
+      "shortAnswer": "Open the Supplier Accounting tile. The ledger is isolated to the selected Supplier business.",
+      "steps": [
+        "Open Supplier.",
+        "Select Accounting.",
+        "Verify the workspace/business name.",
+        "Use the same core accounting engine for cash, transactions, inventory and reports."
+      ],
+      "notes": [
+        "Supplier fulfilled revenue/receivables are surfaced in the business-scoped economic summary."
+      ]
+    },
+    {
+      "slug": "courier-overview",
+      "title": "Delivery profile: what you can do",
+      "section": "Delivery",
+      "profiles": [
+        "courier"
+      ],
+      "status": "current",
+      "summary": "Manage delivery eligibility, availability, assignments, active location and completion.",
+      "shortAnswer": "Approval comes first, availability second, assignment third.",
+      "steps": [
+        "Open Delivery profile.",
+        "Complete profile/document requirements.",
+        "Wait for approval.",
+        "Go available when approved.",
+        "Accept/follow assigned work and complete verified handoff."
+      ]
+    },
+    {
+      "slug": "courier-approval-required",
+      "title": "Why can’t I go available for deliveries?",
+      "section": "Delivery",
+      "profiles": [
+        "courier"
+      ],
+      "status": "current",
+      "helpCodes": [
+        "ERR-DEL-006"
+      ],
+      "summary": "Availability is blocked until Courier eligibility is approved and not expired.",
+      "shortAnswer": "You cannot turn availability on while eligibility is pending, suspended, revoked or expired.",
+      "steps": [
+        "Open Delivery → Eligibility.",
+        "Check eligibility/document status.",
+        "Resolve missing/rejected/expired evidence.",
+        "After approval, switch Availability on."
+      ]
+    },
+    {
+      "slug": "courier-documents",
+      "title": "Submit Delivery eligibility documents",
+      "section": "Delivery",
+      "profiles": [
+        "courier"
+      ],
+      "status": "current",
+      "summary": "Add document type, vehicle class, reference and evidence for review.",
+      "shortAnswer": "Submit the requested evidence inside your Delivery profile. Approval status is controlled separately.",
+      "steps": [
+        "Open Delivery → Eligibility documents.",
+        "Choose document type and vehicle class.",
+        "Enter reference/issue/expiry data when applicable.",
+        "Upload the evidence and submit."
+      ]
+    },
+    {
+      "slug": "courier-active-delivery",
+      "title": "Work an assigned delivery",
+      "section": "Delivery",
+      "profiles": [
+        "courier"
+      ],
+      "status": "current",
+      "summary": "Follow the active delivery lifecycle and share location only during the delivery.",
+      "shortAnswer": "Use the assigned delivery queue, update status in order, share active location and complete with the Customer’s handoff code.",
+      "steps": [
+        "Open Assigned Deliveries.",
+        "Open the assigned job.",
+        "Follow pickup/in-transit status actions.",
+        "Share location while the delivery is active.",
+        "At handoff, enter the Customer code and confirm delivery."
+      ]
+    },
+    {
+      "slug": "service-provider-overview",
+      "title": "Local Services profile: what you can do",
+      "section": "Local Services",
+      "profiles": [
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Create a public professional profile, choose services, submit qualifications, quote requests and complete jobs.",
+      "shortAnswer": "Your profile explains what you do; approval/credentials determine what you may offer operationally.",
+      "steps": [
+        "Start/complete the Local Services application.",
+        "Build your public profile and service list.",
+        "Submit qualifications/evidence where relevant.",
+        "Respond to service requests with quotes.",
+        "Complete accepted jobs through the in-app workflow."
+      ]
+    },
+    {
+      "slug": "service-provider-approval",
+      "title": "Why is my Local Services profile not operational yet?",
+      "section": "Local Services",
+      "profiles": [
+        "service_provider"
+      ],
+      "status": "current",
+      "helpCodes": [
+        "ERR-SVC-002"
+      ],
+      "summary": "An application/profile can exist before the platform authorizes operational service categories.",
+      "shortAnswer": "Complete the application and required evidence, submit it for review and wait for the category/territory authorization.",
+      "steps": [
+        "Open Governance / Local Services application.",
+        "Complete profile and requested services.",
+        "Upload supporting evidence.",
+        "Submit for Admin review.",
+        "Use only the scope that is approved."
+      ]
+    },
+    {
+      "slug": "service-profile-and-credentials",
+      "title": "Build your Local Services profile and qualifications",
+      "section": "Local Services",
+      "profiles": [
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Show experience publicly while keeping private evidence protected.",
+      "shortAnswer": "Public profile information and private credential/CV evidence are different. Only publish what is intended for Customers.",
+      "steps": [
+        "Set professional name/headline, service area and experience.",
+        "Choose the services you offer.",
+        "Add credentials/qualifications and evidence.",
+        "Configure visibility/pricing/review preferences.",
+        "Save your profile."
+      ]
+    },
+    {
+      "slug": "service-requests-quotes-jobs",
+      "title": "Respond to requests, quote and complete a service job",
+      "section": "Local Services",
+      "profiles": [
+        "service_provider",
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Move a request through quote, acceptance, work and verified completion.",
+      "shortAnswer": "The in-app job lifecycle creates the evidence needed for verified review eligibility.",
+      "steps": [
+        "Customer sends a service request.",
+        "Service Provider reviews and sends a quote.",
+        "Customer accepts the quote.",
+        "Provider starts/completes the job.",
+        "Customer confirms completion and may leave a verified review."
+      ]
+    },
+    {
+      "slug": "report-problem",
+      "title": "Report a private problem or incident",
+      "section": "Safety & privacy",
+      "profiles": [],
+      "status": "current",
+      "summary": "Submit a private incident about an order, delivery, Merchant, Courier, service job/provider, Supplier, payment or another operational issue.",
+      "shortAnswer": "Use Incident reporting for private safety/fraud/operational evidence. It is separate from public ratings/reviews.",
+      "steps": [
+        "Open Report a problem.",
+        "Choose what the incident relates to.",
+        "Describe what happened clearly.",
+        "Add allowed evidence if useful.",
+        "Submit and use My reports for private follow-up."
+      ]
+    },
+    {
+      "slug": "incident-evidence-limits",
+      "title": "Incident evidence limits",
+      "section": "Safety & privacy",
+      "profiles": [],
+      "status": "current",
+      "helpCodes": [
+        "ERR-INC-001"
+      ],
+      "summary": "Know the allowed evidence types and server limits before uploading.",
+      "shortAnswer": "Maximum 5 images and 1 PDF. Images: JPEG/PNG/WebP up to 1.5 MB each. PDF: up to 3 MB. Total decoded evidence: up to 10 MB.",
+      "steps": [
+        "Choose only relevant evidence.",
+        "Keep each file within the individual limit.",
+        "If the upload is rejected, remove oversized/unsupported files and try again."
+      ]
+    }
+  ]
+}
