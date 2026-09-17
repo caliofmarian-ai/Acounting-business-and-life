@@ -17,10 +17,47 @@ const port=Number(process.env.PORT||3000);
 const upstreamPort=Number(process.env.INTERNAL_BUSINESS_ACCOUNTING_PORT||4207);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
-const body=express.json({limit:'4mb'});
+const body=express.json({limit:'28mb'});
 const SUPPORT_STATUSES=new Set(['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened']);
 const SUPPORT_PRIORITIES=new Set(['low','normal','high','urgent']);
 const SUPPORT_CATEGORIES=new Set(['auth','marketplace_order','payment','merchant_onboarding','supplier_onboarding','delivery','service_provider','accounting','tax_documents','technical_bug','other']);
+const SUPPORT_DESTINATIONS=new Set(['support','territory_admin','country_admin','platform_admin']);
+const SUPPORT_IMAGE_MIMES=new Set(['image/jpeg','image/png','image/webp']);
+const SUPPORT_DOC_MIMES=new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/markdown','text/plain'
+]);
+const SUPPORT_AUDIO_MIMES=new Set([
+  'audio/webm','audio/ogg','audio/mpeg','audio/mp4','audio/wav','audio/x-wav','audio/aac','audio/3gpp'
+]);
+const MAX_SUPPORT_IMAGE_BYTES=1_500_000;
+const MAX_SUPPORT_DOC_BYTES=5_000_000;
+const MAX_SUPPORT_AUDIO_BYTES=10_000_000;
+const MAX_SUPPORT_TOTAL_BYTES=22_000_000;
+function decodeSupportDataUrl(dataUrl){
+  const m=String(dataUrl||'').match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
+  if(!m)throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
+  let bytes;try{bytes=Buffer.from(m[2],'base64')}catch{throw Object.assign(new Error('Attachment could not be decoded'),{status:400})}
+  return{mime:m[1].toLowerCase(),bytes};
+}
+function validateSupportAttachments(raw){
+  const files=Array.isArray(raw)?raw:[];
+  if(files.length>9)throw Object.assign(new Error('Support allows up to 5 images, 3 documents and 1 audio recording'),{status:400});
+  let images=0,docs=0,audio=0,total=0;
+  const out=files.map((f,index)=>{
+    const{mime,bytes}=decodeSupportDataUrl(f?.data_url);let kind='';
+    if(SUPPORT_IMAGE_MIMES.has(mime)){kind='image';images++;if(bytes.length>MAX_SUPPORT_IMAGE_BYTES)throw Object.assign(new Error(`Image ${index+1} exceeds 1.5 MB`),{status:413})}
+    else if(SUPPORT_DOC_MIMES.has(mime)){kind=mime==='application/pdf'?'pdf':mime==='text/markdown'||mime==='text/plain'?'markdown':'word';docs++;if(bytes.length>MAX_SUPPORT_DOC_BYTES)throw Object.assign(new Error(`Document ${index+1} exceeds 5 MB`),{status:413})}
+    else if(SUPPORT_AUDIO_MIMES.has(mime)){kind='audio';audio++;if(bytes.length>MAX_SUPPORT_AUDIO_BYTES)throw Object.assign(new Error('Voice recording exceeds 10 MB'),{status:413})}
+    else throw Object.assign(new Error('Support accepts JPEG/PNG/WebP, PDF, Word DOC/DOCX, Markdown/text and common audio formats'),{status:400});
+    total+=bytes.length;
+    return{kind,mime,file_name:clean(f?.file_name||`${kind}-${index+1}`,180),byte_size:bytes.length,data_url:String(f.data_url),transcript_text:clean(f?.transcript_text,12000),transcript_language:clean(f?.transcript_language,32),english_translation:clean(f?.english_translation,12000)};
+  });
+  if(images>5||docs>3||audio>1||total>MAX_SUPPORT_TOTAL_BYTES)throw Object.assign(new Error('Support attachment limits exceeded'),{status:413});
+  return out;
+}
 const INCIDENT_STATUSES=new Set(['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated']);
 let child;let shuttingDown=false;
 
@@ -44,6 +81,9 @@ async function initDb(){
       category TEXT NOT NULL,
       subject TEXT NOT NULL,
       description TEXT NOT NULL,
+      requested_destination TEXT NOT NULL DEFAULT 'support',
+      source_language TEXT NOT NULL DEFAULT '',
+      english_translation TEXT NOT NULL DEFAULT '',
       related_type TEXT NOT NULL DEFAULT '',
       related_id BIGINT,
       priority TEXT NOT NULL DEFAULT 'normal',
@@ -55,8 +95,28 @@ async function initDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       resolved_at TIMESTAMPTZ,
       CHECK(priority IN ('low','normal','high','urgent')),
-      CHECK(status IN ('new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened'))
+      CHECK(status IN ('new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened')),
+      CHECK(requested_destination IN ('support','territory_admin','country_admin','platform_admin'))
     );
+    ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS requested_destination TEXT NOT NULL DEFAULT 'support';
+    ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS source_language TEXT NOT NULL DEFAULT '';
+    ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS english_translation TEXT NOT NULL DEFAULT '';
+
+    CREATE TABLE IF NOT EXISTS support_attachments (
+      id BIGSERIAL PRIMARY KEY,
+      ticket_id BIGINT NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      byte_size INTEGER NOT NULL CHECK(byte_size>=0),
+      data_url TEXT NOT NULL,
+      transcript_text TEXT NOT NULL DEFAULT '',
+      transcript_language TEXT NOT NULL DEFAULT '',
+      english_translation TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK(kind IN ('image','pdf','word','markdown','audio'))
+    );
+    CREATE INDEX IF NOT EXISTS support_attachments_ticket_idx ON support_attachments(ticket_id,id);
     CREATE INDEX IF NOT EXISTS support_tickets_scope_idx ON support_tickets(country_code,territory_id,status,updated_at DESC);
     CREATE INDEX IF NOT EXISTS support_tickets_requester_idx ON support_tickets(requester_account_id,created_at DESC);
 
@@ -193,12 +253,27 @@ app.post('/api/admin/assignments/:id/status',body,async(req,res,next)=>{try{
 
 app.get('/api/admin/audit',async(req,res,next)=>{try{const{me}=await adminFor(req,'audit.view');const ids=await visibleTerritoryIds(pool,me.account.id,'audit.view'),countryWide=await isCountryWide(me.account.id,'audit.view'),limit=Math.max(1,Math.min(300,Number(req.query.limit)||100));const{rows}=await pool.query(`SELECT e.*,a.display_name actor_name FROM admin_audit_events e LEFT JOIN accounts a ON a.id=e.actor_account_id WHERE ${countryWide?"e.country_code='PH'":"e.territory_id=ANY($1::bigint[])"} ORDER BY e.created_at DESC LIMIT ${limit}`,countryWide?[]:[ids.length?ids:[-1]]);res.json(rows)}catch(e){next(e)}});
 
-app.post('/api/support/tickets',body,async(req,res,next)=>{try{const me=await identity(req),category=clean(req.body?.category,80),subject=clean(req.body?.subject,180),description=clean(req.body?.description,5000),relatedType=clean(req.body?.related_type,50),relatedId=req.body?.related_id?Number(req.body.related_id):null;if(!SUPPORT_CATEGORIES.has(category)||subject.length<3||description.length<10)return res.status(400).json({error:'Valid category, subject and clear description required'});const territoryId=await inferTerritory(relatedType,relatedId,req.body?.territory_id);const{rows}=await pool.query(`INSERT INTO support_tickets(requester_account_id,territory_id,category,subject,description,related_type,related_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[me.account.id,territoryId,category,subject,description,relatedType,relatedId]);await pool.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[rows[0].id,me.account.id,description]);res.status(201).json(rows[0])}catch(e){next(e)}});
-app.get('/api/support/tickets/mine',async(req,res,next)=>{try{const me=await identity(req);const{rows}=await pool.query(`SELECT t.*,(SELECT jsonb_agg(x.tag ORDER BY x.tag) FROM support_ticket_tags x WHERE x.ticket_id=t.id) tags FROM support_tickets t WHERE requester_account_id=$1 ORDER BY updated_at DESC LIMIT 150`,[me.account.id]);res.json(rows)}catch(e){next(e)}});
-app.get('/api/support/tickets/:id',async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0];if(Number(t.requester_account_id)!==Number(me.account.id)){await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id)}const messages=await pool.query(`SELECT m.id,m.actor_account_id,a.display_name actor_name,m.visibility,m.message,m.created_at FROM support_messages m JOIN accounts a ON a.id=m.actor_account_id WHERE m.ticket_id=$1 AND (m.visibility='user' OR $2::boolean) ORDER BY m.created_at,m.id`,[id,Number(t.requester_account_id)!==Number(me.account.id)]);const tags=await pool.query(`SELECT tag FROM support_ticket_tags WHERE ticket_id=$1 ORDER BY tag`,[id]);res.json({...t,messages:messages.rows,tags:tags.rows.map(x=>x.tag)})}catch(e){next(e)}});
+app.post('/api/support/tickets',body,async(req,res,next)=>{const client=await pool.connect();try{
+  const me=await identity(req),category=clean(req.body?.category,80),subject=clean(req.body?.subject,180),description=clean(req.body?.description,5000),relatedType=clean(req.body?.related_type,50),relatedId=req.body?.related_id?Number(req.body.related_id):null,destination=SUPPORT_DESTINATIONS.has(req.body?.requested_destination)?req.body.requested_destination:'support',sourceLanguage=clean(req.body?.source_language,32),englishTranslation=clean(req.body?.english_translation,12000);
+  if(!SUPPORT_CATEGORIES.has(category)||subject.length<3||description.length<10)return res.status(400).json({error:'Valid category, subject and clear description required'});
+  const attachments=validateSupportAttachments(req.body?.attachments),territoryId=await inferTerritory(relatedType,relatedId,req.body?.territory_id);
+  await client.query('BEGIN');
+  const q=await client.query(`INSERT INTO support_tickets(requester_account_id,territory_id,category,subject,description,requested_destination,source_language,english_translation,related_type,related_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[me.account.id,territoryId,category,subject,description,destination,sourceLanguage,englishTranslation,relatedType,relatedId]);
+  const ticket=q.rows[0];
+  await client.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[ticket.id,me.account.id,description]);
+  for(const a of attachments)await client.query(`INSERT INTO support_attachments(ticket_id,kind,mime_type,file_name,byte_size,data_url,transcript_text,transcript_language,english_translation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[ticket.id,a.kind,a.mime,a.file_name,a.byte_size,a.data_url,a.transcript_text,a.transcript_language,a.english_translation]);
+  await client.query('COMMIT');
+  res.status(201).json({...ticket,attachment_count:attachments.length});
+}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
+app.get('/api/support/tickets/mine',async(req,res,next)=>{try{const me=await identity(req);const{rows}=await pool.query(`SELECT t.*,(SELECT jsonb_agg(x.tag ORDER BY x.tag) FROM support_ticket_tags x WHERE x.ticket_id=t.id) tags,(SELECT COUNT(*)::int FROM support_attachments a WHERE a.ticket_id=t.id) attachment_count FROM support_tickets t WHERE requester_account_id=$1 ORDER BY updated_at DESC LIMIT 150`,[me.account.id]);res.json(rows)}catch(e){next(e)}});
+app.get('/api/support/tickets/:id',async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0];if(Number(t.requester_account_id)!==Number(me.account.id)){await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id)}const messages=await pool.query(`SELECT m.id,m.actor_account_id,a.display_name actor_name,m.visibility,m.message,m.created_at FROM support_messages m JOIN accounts a ON a.id=m.actor_account_id WHERE m.ticket_id=$1 AND (m.visibility='user' OR $2::boolean) ORDER BY m.created_at,m.id`,[id,Number(t.requester_account_id)!==Number(me.account.id)]);const tags=await pool.query(`SELECT tag FROM support_ticket_tags WHERE ticket_id=$1 ORDER BY tag`,[id]);const attachments=await pool.query(`SELECT id,kind,mime_type,file_name,byte_size,transcript_text,transcript_language,english_translation,created_at FROM support_attachments WHERE ticket_id=$1 ORDER BY id`,[id]);res.json({...t,messages:messages.rows,tags:tags.rows.map(x=>x.tag),attachments:attachments.rows})}catch(e){next(e)}});
+app.get('/api/support/tickets/:id/attachments/:attachmentId',async(req,res,next)=>{try{
+  const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT requester_account_id,territory_id FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0];if(Number(t.requester_account_id)!==Number(me.account.id))await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id);
+  const a=await pool.query(`SELECT * FROM support_attachments WHERE id=$1 AND ticket_id=$2`,[Number(req.params.attachmentId),id]);if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});const x=a.rows[0];res.json({id:x.id,kind:x.kind,mime_type:x.mime_type,file_name:x.file_name,byte_size:x.byte_size,data_url:x.data_url,transcript_text:x.transcript_text,transcript_language:x.transcript_language,english_translation:x.english_translation});
+}catch(e){next(e)}});
 app.post('/api/support/tickets/:id/reply',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),message=clean(req.body?.message,3000);if(!message)return res.status(400).json({error:'Message is required'});const t=await pool.query(`SELECT * FROM support_tickets WHERE id=$1 AND requester_account_id=$2`,[id,me.account.id]);if(!t.rowCount)return res.status(404).json({error:'Support ticket not found'});await pool.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[id,me.account.id,message]);await pool.query(`UPDATE support_tickets SET status=CASE WHEN status IN ('waiting_user','resolved','closed') THEN 'reopened' ELSE status END,updated_at=NOW() WHERE id=$1`,[id]);res.json({ok:true})}catch(e){next(e)}});
 
-app.get('/api/admin/support',async(req,res,next)=>{try{const me=await identity(req);await requireAdminPermission(pool,me.account.id,'support.manage');const ids=await visibleTerritoryIds(pool,me.account.id,'support.manage'),countryWide=await isCountryWide(me.account.id,'support.manage'),status=clean(req.query.status,40);if(status&&!SUPPORT_STATUSES.has(status))return res.status(400).json({error:'Unknown support status'});const args=[];let where=countryWide?"t.country_code='PH'":`t.territory_id=ANY($1::bigint[])`;if(!countryWide)args.push(ids.length?ids:[-1]);if(status){args.push(status);where+=` AND t.status=$${args.length}`}const{rows}=await pool.query(`SELECT t.*,a.display_name requester_name,a.email requester_email,(SELECT jsonb_agg(x.tag ORDER BY x.tag) FROM support_ticket_tags x WHERE x.ticket_id=t.id) tags FROM support_tickets t JOIN accounts a ON a.id=t.requester_account_id WHERE ${where} ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,t.updated_at DESC LIMIT 250`,args);res.json(rows)}catch(e){next(e)}});
+app.get('/api/admin/support',async(req,res,next)=>{try{const me=await identity(req);await requireAdminPermission(pool,me.account.id,'support.manage');const ids=await visibleTerritoryIds(pool,me.account.id,'support.manage'),countryWide=await isCountryWide(me.account.id,'support.manage'),status=clean(req.query.status,40);if(status&&!SUPPORT_STATUSES.has(status))return res.status(400).json({error:'Unknown support status'});const args=[];let where=countryWide?"t.country_code='PH'":`t.territory_id=ANY($1::bigint[])`;if(!countryWide)args.push(ids.length?ids:[-1]);if(status){args.push(status);where+=` AND t.status=$${args.length}`}const{rows}=await pool.query(`SELECT t.*,a.display_name requester_name,a.email requester_email,(SELECT jsonb_agg(x.tag ORDER BY x.tag) FROM support_ticket_tags x WHERE x.ticket_id=t.id) tags,(SELECT COUNT(*)::int FROM support_attachments sa WHERE sa.ticket_id=t.id) attachment_count FROM support_tickets t JOIN accounts a ON a.id=t.requester_account_id WHERE ${where} ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,t.updated_at DESC LIMIT 250`,args);res.json(rows)}catch(e){next(e)}});
 app.patch('/api/admin/support/:id',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0],assignment=await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id),status=clean(req.body?.status||t.status,40),priority=clean(req.body?.priority||t.priority,30);if(!SUPPORT_STATUSES.has(status)||!SUPPORT_PRIORITIES.has(priority))return res.status(400).json({error:'Invalid status or priority'});const tags=[...new Set((Array.isArray(req.body?.tags)?req.body.tags:[]).map(x=>clean(x,60)).filter(Boolean))].slice(0,12);const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE support_tickets SET status=$1,priority=$2,assigned_admin_account_id=CASE WHEN $3 THEN $4 ELSE assigned_admin_account_id END,resolution_reason=CASE WHEN $5<>'' THEN $5 ELSE resolution_reason END,resolved_at=CASE WHEN $1 IN ('resolved','closed') THEN COALESCE(resolved_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$6`,[status,priority,Boolean(req.body?.assign_to_self),me.account.id,clean(req.body?.resolution_reason,1500),id]);if(Array.isArray(req.body?.tags)){await client.query(`DELETE FROM support_ticket_tags WHERE ticket_id=$1`,[id]);for(const tag of tags)await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,$2,$3)`,[id,tag,me.account.id])}await client.query('COMMIT');await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'support.manage',territoryId:t.territory_id,targetType:'support_ticket',targetId:String(id),eventCode:'support_ticket_updated',before:{status:t.status,priority:t.priority},after:{status,priority,tags},reason:req.body?.resolution_reason,correlationId:correlation(req)});res.json({ok:true})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}});
 app.post('/api/admin/support/:id/messages',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0],assignment=await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id),message=clean(req.body?.message,3000),visibility=req.body?.visibility==='internal'?'internal':'user';if(!message)return res.status(400).json({error:'Message is required'});await pool.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,$3,$4)`,[id,me.account.id,visibility,message]);await pool.query(`UPDATE support_tickets SET status=CASE WHEN $1='user' AND status NOT IN ('resolved','closed') THEN 'waiting_user' ELSE status END,updated_at=NOW() WHERE id=$2`,[visibility,id]);await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'support.manage',territoryId:t.territory_id,targetType:'support_ticket',targetId:String(id),eventCode:visibility==='internal'?'support_internal_note':'support_user_reply',correlationId:correlation(req)});res.json({ok:true})}catch(e){next(e)}});
 app.post('/api/admin/support/:id/escalate',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0],supportAssignment=await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id);await requireAdminPermission(pool,me.account.id,'incident.triage',t.territory_id);if(t.linked_incident_id)return res.json({ok:true,incident_id:t.linked_incident_id});const inc=await pool.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status,territory_id,support_ticket_id) VALUES($1,'other',NULL,'Support escalation',$2,'escalated',$3,$4) RETURNING id`,[t.requester_account_id,`Escalated from support ticket #${id}: ${t.subject}\n${t.description}`,t.territory_id,id]);await pool.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'support_escalation','escalated',$3)`,[inc.rows[0].id,me.account.id,clean(req.body?.reason,1500)||'Escalated from Support']);await pool.query(`UPDATE support_tickets SET linked_incident_id=$1,status='waiting_internal',updated_at=NOW() WHERE id=$2`,[inc.rows[0].id,id]);await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:supportAssignment.id,permission:'incident.triage',territoryId:t.territory_id,targetType:'support_ticket',targetId:String(id),eventCode:'support_escalated_to_incident',after:{incident_id:inc.rows[0].id},reason:req.body?.reason,correlationId:correlation(req)});res.status(201).json({ok:true,incident_id:inc.rows[0].id})}catch(e){next(e)}});
