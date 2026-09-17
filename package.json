@@ -1,9 +1,10 @@
 {
   "name": "accounting-business-and-life",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "scripts": {"start": "node server.js", "test": "node --test"},
+  "packageManager": "npm@10.8.2",
+  "scripts": {"start": "node server.js", "check": "node --check server.js && node --check public/app.js", "test": "npm run check"},
   "engines": {"node": ">=20"},
   "dependencies": {"express": "^5.1.0", "pg": "^8.16.3"}
 }
