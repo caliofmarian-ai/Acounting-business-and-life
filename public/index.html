@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#111827" />
   <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/styles.css" />
   <title>Business & Life</title>
 </head>
@@ -13,7 +14,7 @@
     <section id="login" class="screen centered">
       <div class="brand">Business & Life</div>
       <h1>Keep every peso visible.</h1>
-      <p>Business money, personal money, stock and daily cash — separated clearly.</p>
+      <p>Business money, personal money, remittances, stock and daily cash — separated clearly.</p>
       <form id="loginForm" class="card stack">
         <label>Access PIN<input id="pin" inputmode="numeric" autocomplete="current-password" required maxlength="12" /></label>
         <button class="primary">Open app</button>
@@ -22,29 +23,88 @@
     </section>
 
     <section id="shell" class="hidden">
-      <header class="topbar"><div><strong>Business & Life</strong><small>Philippine peso • Asia/Manila</small></div><button id="refreshBtn" class="ghost">Refresh</button></header>
+      <header class="topbar">
+        <div><strong>Business & Life</strong><small>PHP • Asia/Manila</small></div>
+        <div class="topActions"><span id="onlineState" class="statusChip">Online</span><button id="refreshBtn" class="ghost">Refresh</button></div>
+      </header>
+
       <section id="viewDashboard" class="view">
-        <div class="hero"><span>Cash expected</span><strong id="cashExpected">₱0</strong><small>Calculated from all recorded money in and money out</small></div>
-        <div class="grid2">
-          <div class="metric"><span>Today's sales</span><strong id="todaySales">₱0</strong></div>
-          <div class="metric"><span>Today's profit</span><strong id="todayProfit">₱0</strong></div>
-          <div class="metric"><span>Business expenses</span><strong id="bizExpenses">₱0</strong></div>
-          <div class="metric"><span>Personal withdrawals</span><strong id="personalWithdrawals">₱0</strong></div>
+        <div class="hero"><span>Available money recorded</span><strong id="availableTotal">₱0</strong><small>Sales + support received − business expenses − personal withdrawals</small></div>
+
+        <div id="warningBox" class="warningBox hidden"></div>
+
+        <div class="sectionTitle"><h2>Where the money is</h2><small>Ledger balance by account</small></div>
+        <div class="grid2 accountsGrid">
+          <div class="metric"><span>Cash</span><strong id="acctCash">₱0</strong></div>
+          <div class="metric"><span>GCash</span><strong id="acctGcash">₱0</strong></div>
+          <div class="metric"><span>Bank</span><strong id="acctBank">₱0</strong></div>
+          <div class="metric"><span>Other</span><strong id="acctOther">₱0</strong></div>
         </div>
+
+        <div class="grid2 metricsSpace">
+          <div class="metric"><span>Today's sales</span><strong id="todaySales">₱0</strong></div>
+          <div class="metric"><span>Today's business profit</span><strong id="todayProfit">₱0</strong></div>
+          <div class="metric"><span>Total business expenses</span><strong id="bizExpenses">₱0</strong></div>
+          <div class="metric"><span>Total personal withdrawals</span><strong id="personalWithdrawals">₱0</strong></div>
+          <div class="metric span2"><span>Money received / remittances</span><strong id="moneyReceived">₱0</strong><small id="remittanceReceived">Remittances: ₱0</small></div>
+        </div>
+
         <div class="card stack"><div class="sectionHead"><h2>Recent activity</h2><button data-go="add" class="linkBtn">+ Add</button></div><div id="recentList" class="list"></div></div>
-        <div class="card stack"><h2>Daily cash check</h2><p>Count the actual cash at the end of the day. The app shows any difference immediately.</p><form id="closeForm" class="inlineForm"><input id="actualCash" type="number" step="0.01" min="0" placeholder="Actual cash ₱" required/><button class="secondary">Compare</button></form><div id="closeResult"></div></div>
       </section>
 
       <section id="viewAdd" class="view hidden">
-        <h1>Add transaction</h1><p class="muted">Choose what actually happened. Personal spending is never recorded as a business expense.</p>
+        <h1>Add transaction</h1>
+        <p class="muted">Choose what actually happened. Personal spending is never recorded as a business expense.</p>
         <form id="txForm" class="card stack">
-          <label>Type<select id="type" required><option value="sale">Sale</option><option value="business_expense">Business expense</option><option value="money_received">Money received</option><option value="personal_withdrawal">Personal withdrawal</option><option value="adjustment">Cash adjustment</option></select></label>
+          <label>Type<select id="type" required><option value="sale">Sale</option><option value="business_expense">Business expense</option><option value="money_received">Money received / support</option><option value="personal_withdrawal">Personal withdrawal</option><option value="adjustment">Opening / positive adjustment</option></select></label>
           <label>Amount (₱)<input id="amount" type="number" min="0" step="0.01" required /></label>
-          <label>Category<input id="category" placeholder="e.g. Chicken, Rice, Electricity" /></label>
-          <label>Payment method<select id="paymentMethod"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label>
+          <label>Account<select id="account"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label>
+          <label>Category<input id="category" placeholder="e.g. Chicken, Rice, Electricity, Household" /></label>
           <label>Note<textarea id="note" rows="3" placeholder="Optional explanation"></textarea></label>
           <button class="primary">Save transaction</button><div id="txMessage"></div>
         </form>
+      </section>
+
+      <section id="viewMoney" class="view hidden">
+        <div class="sectionHead"><div><h1>Money control</h1><p class="muted">Remittances, physical cash and spending limits.</p></div></div>
+
+        <div class="card stack">
+          <div class="sectionHead"><h2>Today's physical cash</h2><span id="dayStatusDate" class="muted"></span></div>
+          <div class="grid2">
+            <div class="metric compact"><span>Opening cash</span><strong id="openingCashShown">₱0</strong></div>
+            <div class="metric compact"><span>Expected now</span><strong id="expectedCashShown">₱0</strong></div>
+          </div>
+          <form id="openForm" class="inlineForm"><input id="openingCash" type="number" step="0.01" min="0" placeholder="Opening cash ₱" required/><button class="secondary">Set opening</button></form>
+          <div id="openResult" class="muted"></div>
+          <form id="closeForm" class="inlineForm"><input id="actualCash" type="number" step="0.01" min="0" placeholder="Count actual cash ₱" required/><button class="secondary">Close day</button></form>
+          <div id="closeResult"></div>
+          <small class="muted">Only transactions recorded in the Cash account affect physical cash reconciliation. GCash and bank do not.</small>
+        </div>
+
+        <form id="remittanceForm" class="card stack">
+          <div><h2>Record money sent</h2><p class="muted">Compare what was sent with what actually arrived in the Philippines.</p></div>
+          <div class="grid2"><label>Amount sent<input id="remitSent" type="number" step="0.01" min="0" required /></label><label>Currency<input id="remitCurrency" value="EUR" maxlength="8" /></label></div>
+          <div class="grid2"><label>Transfer fee<input id="remitFee" type="number" step="0.01" min="0" value="0" /></label><label>Exchange rate<input id="remitRate" type="number" step="0.000001" min="0" placeholder="optional" /></label></div>
+          <div class="grid2"><label>Expected PHP<input id="remitExpected" type="number" step="0.01" min="0" placeholder="optional" /></label><label>Actually received PHP<input id="remitReceived" type="number" step="0.01" min="0" required /></label></div>
+          <label>Received into<select id="remitAccount"><option value="gcash">GCash</option><option value="cash">Cash</option><option value="bank">Bank</option><option value="other">Other</option></select></label>
+          <div class="grid2"><label>Provider<input id="remitProvider" placeholder="Wise, Remitly…" /></label><label>Reference<input id="remitReference" placeholder="Transfer reference" /></label></div>
+          <label>Note<textarea id="remitNote" rows="2"></textarea></label>
+          <button class="primary">Save remittance</button><div id="remitMessage"></div>
+        </form>
+        <div class="card stack"><h2>Recent remittances</h2><div id="remittanceList" class="list"></div></div>
+
+        <form id="budgetForm" class="card stack">
+          <div><h2>Spending guardrails</h2><p class="muted">Set 0 to disable a limit.</p></div>
+          <div class="grid2"><label>Personal daily limit ₱<input id="budgetPersonalDaily" type="number" min="0" step="0.01" /></label><label>Personal 7-day limit ₱<input id="budgetPersonalWeekly" type="number" min="0" step="0.01" /></label></div>
+          <div class="grid2"><label>Business daily limit ₱<input id="budgetBusinessDaily" type="number" min="0" step="0.01" /></label><label>Warn below available ₱<input id="budgetMinimum" type="number" min="0" step="0.01" /></label></div>
+          <button class="secondary">Save limits</button><div id="budgetMessage"></div>
+        </form>
+
+        <div class="card stack">
+          <div class="sectionHead"><h2>Where money went</h2><span class="muted">Business vs personal</span></div>
+          <div class="analysisBlock"><strong>Last 7 days</strong><div id="analysis7Totals" class="muted"></div><div id="analysis7" class="list"></div></div>
+          <div class="analysisBlock"><strong>Last 30 days</strong><div id="analysis30Totals" class="muted"></div><div id="analysis30" class="list"></div></div>
+        </div>
       </section>
 
       <section id="viewStock" class="view hidden">
@@ -59,11 +119,29 @@
         <div class="card stack"><h2>Inventory</h2><div id="stockList" class="list"></div></div>
       </section>
 
-      <section id="viewHistory" class="view hidden"><div class="sectionHead"><h1>History</h1><a id="exportLink" class="linkBtn" href="#">Export CSV</a></div><div class="card"><div id="historyList" class="list"></div></div></section>
+      <section id="viewHistory" class="view hidden">
+        <div class="sectionHead"><div><h1>History</h1><p class="muted">Corrections are logged; records are never silently deleted.</p></div><a id="exportLink" class="linkBtn" href="#">Export CSV</a></div>
+        <div class="card"><div id="historyList" class="list"></div></div>
+      </section>
 
-      <nav class="bottomNav"><button data-view="Dashboard" class="active">Home</button><button data-view="Add">Add</button><button data-view="Stock">Stock</button><button data-view="History">History</button></nav>
+      <nav class="bottomNav"><button data-view="Dashboard" class="active">Home</button><button data-view="Add">Add</button><button data-view="Money">Money</button><button data-view="Stock">Stock</button><button data-view="History">History</button></nav>
     </section>
   </main>
+
+  <dialog id="editDialog">
+    <form id="editForm" class="stack dialogCard">
+      <div class="sectionHead"><h2>Correct transaction</h2><button type="button" id="editCancel" class="ghost">Close</button></div>
+      <input id="editId" type="hidden" />
+      <label>Type<select id="editType"><option value="sale">Sale</option><option value="business_expense">Business expense</option><option value="money_received">Money received</option><option value="personal_withdrawal">Personal withdrawal</option><option value="adjustment">Adjustment</option></select></label>
+      <label>Amount ₱<input id="editAmount" type="number" min="0" step="0.01" required /></label>
+      <label>Account<select id="editAccount"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label>
+      <label>Category<input id="editCategory" /></label>
+      <label>Note<textarea id="editNote" rows="2"></textarea></label>
+      <label>Reason for correction<input id="editReason" required placeholder="Why is this being changed?" /></label>
+      <button class="primary">Save correction</button><div id="editMessage"></div>
+    </form>
+  </dialog>
+
   <script type="module" src="/app.js"></script>
 </body>
 </html>
