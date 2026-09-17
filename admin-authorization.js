@@ -25,7 +25,9 @@ export const ADMIN_PERMISSIONS = Object.freeze([
 const clean=(v,max=300)=>String(v??'').trim().slice(0,max);
 const safeEqual=(a,b)=>{
   try{
-    const aa=Buffer.from(String(a),'hex'),bb=Buffer.from(String(b),'hex');
+    const sa=String(a),sb=String(b);
+    if(!/^[0-9a-f]{64}$/i.test(sa)||!/^[0-9a-f]{64}$/i.test(sb))return false;
+    const aa=Buffer.from(sa,'hex'),bb=Buffer.from(sb,'hex');
     return aa.length===bb.length&&crypto.timingSafeEqual(aa,bb);
   }catch{return false}
 };
