@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#17233c" />
+  <title>Track order • Business & Life</title>
+  <link rel="stylesheet" href="/orders.css" />
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f8f7;color:#17233c;font-family:Inter,system-ui,-apple-system,sans-serif}.trackerWrap{max-width:560px;margin:auto;padding:22px 16px 40px}.trackerBrand{display:flex;align-items:center;gap:10px;margin-bottom:20px}.trackerMark{width:42px;height:42px;border-radius:15px;background:linear-gradient(145deg,#0a7c66,#17233c);display:grid;place-items:center;color:#fff;font-weight:900}.trackerBrand strong{display:block;font-size:14px}.trackerBrand small{color:#687386}.trackerHero{background:linear-gradient(135deg,#17233c,#0a7c66);color:#fff;border-radius:27px;padding:22px;box-shadow:0 15px 40px rgba(23,35,60,.18)}.trackerHero small{color:#b9e4d8;text-transform:uppercase;letter-spacing:.08em;font-weight:800}.trackerHero h1{margin:7px 0 5px;font-size:25px}.trackerHero p{margin:0;color:#d6e7e4;font-size:12px}.trackerCard{margin-top:13px;background:#fff;border:1px solid #e1e8e5;border-radius:21px;padding:16px;box-shadow:0 7px 22px rgba(23,35,60,.05)}.trackerCard h2{font-size:14px;margin:0 0 10px}.trackerLine{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #eef2f0;font-size:12px}.trackerLine:last-child{border-bottom:0}.trackerLine span{color:#687386}.trackerProgress{display:flex;gap:4px;margin:16px 0 6px}.trackerProgress span{height:6px;flex:1;border-radius:999px;background:#e5ece9}.trackerProgress span.done{background:#0a7c66}.trackerLabels{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;text-align:center;font-size:8px;color:#7a8794;text-transform:uppercase;font-weight:800}.trackerStatus{display:inline-flex;margin-top:12px;border-radius:999px;padding:7px 10px;background:#ddf4ed;color:#075f50;font-size:10px;text-transform:uppercase;font-weight:900}.trackerError{padding:30px 15px;text-align:center;color:#687386}.trackerFoot{text-align:center;margin-top:18px;color:#8a959f;font-size:9px;line-height:1.5}
+  </style>
+</head>
+<body>
+<main class="trackerWrap">
+  <div class="trackerBrand"><div class="trackerMark">B&L</div><div><strong>Business & Life</strong><small>Philippines Edition</small></div></div>
+  <div id="trackerApp" class="trackerError">Loading order…</div>
+  <div class="trackerFoot">This tracking page shows only the order information needed by the customer. Business accounting and private merchant data are never exposed here.</div>
+</main>
+<script type="module" src="/tracker.js"></script>
+</body>
+</html>
