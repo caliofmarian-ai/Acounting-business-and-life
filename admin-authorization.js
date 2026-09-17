@@ -114,7 +114,8 @@ export function verifyAdminAssertion(secret,token,accountId){
   if(!safeEqual(sig,expected)) return null;
   let payload;
   try{payload=JSON.parse(Buffer.from(encoded,'base64url').toString('utf8'))}catch{return null}
-  if(payload?.v!==1||Number(payload.accountId)!==Number(accountId)) return null;
+  if(payload?.v!==1) return null;
+  if(accountId!=null&&Number(payload.accountId)!==Number(accountId)) return null;
   if(!Number.isFinite(Number(payload.ts))||Math.abs(Date.now()-Number(payload.ts))>90_000) return null;
   return payload;
 }
