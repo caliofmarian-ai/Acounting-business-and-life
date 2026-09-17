@@ -38,7 +38,6 @@ function auth(req, res, next) {
 }
 function cleanText(value, max = 250) { return String(value ?? '').trim().slice(0, max); }
 function validMoney(value) { return Number.isFinite(Number(value)) && Number(value) >= 0; }
-function accountOrDefault(value) { return ACCOUNTS.has(value) ? value : 'cash'; }
 
 async function initDb() {
   await pool.query(`
@@ -55,6 +54,7 @@ async function initDb() {
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT 'cash';
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_id BIGINT;
+    UPDATE transactions SET account=payment_method WHERE account='cash' AND payment_method IN ('gcash','bank','other');
 
     CREATE TABLE IF NOT EXISTS inventory (
       id BIGSERIAL PRIMARY KEY,
@@ -196,6 +196,7 @@ app.get('/api/summary', auth, async (_req, res) => {
   const warnings = [];
   if (Number(b.personal_daily_limit) > 0 && Number(t.today_personal) > Number(b.personal_daily_limit)) warnings.push('Personal spending is over today’s limit.');
   if (Number(b.personal_weekly_limit) > 0 && Number(personal7.rows[0].v) > Number(b.personal_weekly_limit)) warnings.push('Personal spending is over the 7-day limit.');
+  if (Number(b.business_daily_limit) > 0 && Number(t.today_business_expenses) > Number(b.business_daily_limit)) warnings.push('Business spending is over today’s limit.');
   if (Number(b.min_available_warning) > 0 && available < Number(b.min_available_warning)) warnings.push('Available money is below the safety level.');
   const byAccount = { cash: 0, gcash: 0, bank: 0, other: 0 };
   for (const row of accounts.rows) byAccount[row.account] = Number(row.balance);
@@ -226,6 +227,7 @@ app.patch('/api/transactions/:id', auth, async (req, res) => {
   const old = await pool.query(`SELECT * FROM transactions WHERE id=$1`, [id]);
   if (!old.rowCount) return res.status(404).json({ error: 'Transaction not found' });
   const prev = old.rows[0];
+  if (prev.source === 'remittance') return res.status(409).json({ error: 'This entry is linked to a remittance and cannot be corrected separately.' });
   const type = req.body.type ?? prev.type;
   const amount = req.body.amount ?? prev.amount;
   const account = req.body.account ?? prev.account;
@@ -303,8 +305,8 @@ app.get('/api/analysis', auth, async (req, res) => {
 
 app.get('/api/export.csv', auth, async (_req, res) => {
   const { rows } = await pool.query(`SELECT id,type,category,amount,account,source,note,occurred_at FROM transactions ORDER BY occurred_at ASC`);
-  const esc = v => `"${String(v ?? '').replaceAll('"','""')}"`;
-  const csv = ['id,type,category,amount,account,source,note,occurred_at', ...rows.map(r => [r.id,r.type,r.category,r.amount,r.account,r.source,r.note,r.occurred_at.toISOString()].map(esc).join(','))].join('\n');
+  const escCsv = v => `"${String(v ?? '').replaceAll('"','""')}"`;
+  const csv = ['id,type,category,amount,account,source,note,occurred_at', ...rows.map(r => [r.id,r.type,r.category,r.amount,r.account,r.source,r.note,r.occurred_at.toISOString()].map(escCsv).join(','))].join('\n');
   res.type('text/csv').set('Content-Disposition','attachment; filename="transactions.csv"').send(csv);
 });
 
