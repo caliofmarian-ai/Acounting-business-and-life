@@ -43,3 +43,16 @@ test('Help Center shell loads local assets only',()=>{
   assert.ok(html.includes('/help/help.js'));
   assert.ok(!/https?:\/\//.test(html),'Help Center shell should not require external asset hosts');
 });
+
+
+test('contextual help client is injected into the public app shell',()=>{
+  const linking=readFileSync(new URL('../public/help-linking.js',import.meta.url),'utf8');
+  assert.ok(server.includes("app.get('/help-linking.js'"));
+  assert.ok(server.includes('/help-linking.css'));
+  assert.ok(server.includes('<script src="/help-linking.js"></script>'));
+  for(const code of Object.keys(content.helpCodes)){
+    assert.ok(linking.includes(code),`contextual help client does not reference ${code}`);
+  }
+  assert.ok(linking.includes("response.clone()"),'fetch inspection must not consume the response used by product UI');
+  assert.ok(linking.includes("url.origin!==location.origin"),'contextual help should only inspect same-origin API failures');
+});
