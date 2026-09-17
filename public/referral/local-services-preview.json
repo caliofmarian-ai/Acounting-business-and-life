@@ -1,0 +1,7 @@
+{
+  "service": "accounting-growth-local-services-preview",
+  "branch": "feat/growth-community-services-v1-current",
+  "purpose": "verify isolated Community Local Services preview source",
+  "expectedRoute": "/referral/local_services",
+  "containsProductionSecrets": false
+}
