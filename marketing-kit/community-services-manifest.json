@@ -1,0 +1,55 @@
+{
+  "version": "1.0.0",
+  "figma": {
+    "fileName": "Business & Life — Growth & Referral System",
+    "fileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
+    "productReference": {
+      "id": "LOCAL_SERVICES_DUAL_ENTRY_MOBILE_V1",
+      "nodeId": "8:2",
+      "status": "ready"
+    }
+  },
+  "assets": [
+    {
+      "id": "LOCAL_SERVICES_PROVIDER_SQUARE_V1",
+      "figmaNodeId": "8:22",
+      "size": {
+        "width": 1080,
+        "height": 1080
+      },
+      "canvaTitle": "Business & Life — Local Services Provider Square V1",
+      "canvaStatus": "editable_master_ready",
+      "purpose": "Recruit local Service Providers, including experience-first beginners for eligible tasks."
+    },
+    {
+      "id": "LOCAL_SERVICES_BEGINNER_STORY_V1",
+      "figmaNodeId": "8:33",
+      "size": {
+        "width": 1080,
+        "height": 1920
+      },
+      "canvaTitle": "Business & Life — Local Services Beginner Story V1",
+      "canvaStatus": "editable_master_ready",
+      "purpose": "Explain the beginner/experience-first path without weakening credential gates."
+    },
+    {
+      "id": "LOCAL_SERVICES_COMMUNITY_A5_V1",
+      "figmaNodeId": "8:62",
+      "size": {
+        "width": 559,
+        "height": 794
+      },
+      "canvaTitle": "Business & Life — Local Services Community A5 V1",
+      "canvaStatus": "editable_master_ready",
+      "purpose": "Promote both customer demand and local provider participation in community spaces."
+    }
+  ],
+  "privacy": {
+    "publicRepoStoresPrivateCanvaEditUrls": false
+  },
+  "claims": {
+    "guaranteedJobs": false,
+    "guaranteedIncome": false,
+    "credentialGatesRemainAuthoritative": true
+  }
+}
