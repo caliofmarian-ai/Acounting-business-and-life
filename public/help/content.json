@@ -1,10 +1,10 @@
 {
-  "version": "0.9-main",
+  "version": "0.9-docs-v2",
   "locale": "en-PH",
   "product": {
     "name": "Business & Life — Philippines",
     "description": "A mobile-first local economic ecosystem where one account can use separate Customer, Merchant, Supplier, Delivery and Local Services profiles.",
-    "currentBoundary": "Documents behavior merged to GitHub main through V0.9. Unmerged features are not presented as currently available."
+    "currentBoundary": "Public documentation describes behavior merged to GitHub main. Open/unmerged Admin/Support and Referral/Growth work is intentionally excluded until merged."
   },
   "profiles": [
     {
@@ -18,7 +18,21 @@
         "Delivery",
         "Local Services",
         "Incidents"
-      ]
+      ],
+      "startHere": [
+        "Open the Customer profile.",
+        "Choose what you need: Food, Non-food, Local Services, My Orders or Delivery.",
+        "Follow the relevant task guide and keep payment/fulfilment status separate."
+      ],
+      "journey": [
+        "Discover a Merchant or Service Provider",
+        "Choose products or describe the service needed",
+        "Review fulfilment/payment or quote terms",
+        "Place the order or request",
+        "Track preparation/job/delivery",
+        "Confirm completion or report a problem"
+      ],
+      "flowImage": "/help/flows/customer.svg"
     },
     {
       "id": "merchant",
@@ -33,7 +47,23 @@
         "Products & recipes",
         "Procurement",
         "Delivery dispatch"
-      ]
+      ],
+      "startHere": [
+        "Open Merchant.",
+        "Confirm the active business workspace before entering money or stock.",
+        "Use Storefront, Orders, Accounting, Procurement or Delivery according to the task."
+      ],
+      "journey": [
+        "Configure business workspace and storefront",
+        "Publish products/capabilities",
+        "Receive Customer orders",
+        "Prepare and manage stock",
+        "Record real payments / receivables",
+        "Restock through trusted Suppliers",
+        "Dispatch Delivery when required",
+        "Reconcile and review business records"
+      ],
+      "flowImage": "/help/flows/merchant.svg"
     },
     {
       "id": "supplier",
@@ -47,7 +77,23 @@
         "Purchase orders",
         "Fulfilment",
         "Accounting"
-      ]
+      ],
+      "startHere": [
+        "Open Supplier.",
+        "Confirm the active Supplier business workspace.",
+        "Maintain your profile/catalog and respond only to connected Merchant purchase orders."
+      ],
+      "journey": [
+        "Complete Supplier profile",
+        "Create catalog items and pack conversions",
+        "Accept Merchant relationship",
+        "Receive purchase order",
+        "Confirm quantities/prices/ETA",
+        "Prepare and fulfil",
+        "Merchant records receipt/payment",
+        "Supplier accounting records economic result"
+      ],
+      "flowImage": "/help/flows/supplier.svg"
     },
     {
       "id": "courier",
@@ -61,7 +107,23 @@
         "Assignments",
         "Location",
         "Completion"
-      ]
+      ],
+      "startHere": [
+        "Open Delivery.",
+        "Check eligibility and document status.",
+        "Only after approval, turn Availability on and work assigned deliveries."
+      ],
+      "journey": [
+        "Submit Delivery profile/documents",
+        "Receive Admin eligibility decision",
+        "Go available",
+        "Receive assignment",
+        "Collect the ready paid order",
+        "Share location while active",
+        "Deliver to Customer",
+        "Complete with handoff code"
+      ],
+      "flowImage": "/help/flows/courier.svg"
     },
     {
       "id": "service_provider",
@@ -75,7 +137,25 @@
         "Requests & quotes",
         "Jobs",
         "Reviews"
-      ]
+      ],
+      "startHere": [
+        "Start/complete the Local Services application.",
+        "Build the public profile and choose services.",
+        "Keep credentials/evidence updated, then respond to requests through the in-app job flow."
+      ],
+      "journey": [
+        "Apply and receive approved scope",
+        "Build public profile/services",
+        "Submit qualifications/evidence",
+        "Receive Customer request",
+        "Send quote",
+        "Customer accepts",
+        "Schedule and perform work",
+        "Provider completes",
+        "Customer confirms",
+        "Verified review becomes eligible"
+      ],
+      "flowImage": "/help/flows/service-provider.svg"
     }
   ],
   "helpCodes": {
@@ -87,7 +167,14 @@
     "ERR-DEL-006": "courier-approval-required",
     "ERR-SUP-002": "trusted-supplier-relationship",
     "ERR-SVC-002": "service-provider-approval",
-    "ERR-INC-001": "incident-evidence-limits"
+    "ERR-INC-001": "incident-evidence-limits",
+    "ERR-MKT-001": "marketplace-options-explained",
+    "ERR-ORD-004": "order-statuses-explained",
+    "ERR-ORD-005": "customer-credit-receivables",
+    "ERR-ACC-010": "financial-corrections-audit",
+    "ERR-SUP-003": "partial-supplier-receiving",
+    "ERR-DEL-007": "merchant-delivery-dispatch",
+    "ERR-SVC-003": "service-job-statuses"
   },
   "articles": [
     {
@@ -96,17 +183,200 @@
       "section": "Getting started",
       "profiles": [],
       "status": "current",
-      "summary": "Understand the account, the five public profiles and how the parts of the application fit together.",
-      "shortAnswer": "You use one account, then switch into the profile that matches what you are doing. Each profile has its own workspace and access rules.",
-      "steps": [
-        "Create or sign in to your account.",
-        "Use the profile switcher to open an enabled profile.",
-        "Follow that profile’s task guides for the activity you want to perform."
-      ],
+      "summary": "A complete introduction to Business & Life — what the product is, who it is for, how its five profiles connect, how money and operations are separated, and how the Philippines Edition works end to end.",
+      "shortAnswer": "Business & Life is a mobile-first local economic ecosystem for the Philippines. One human account can act as a Customer, Merchant, Supplier, Delivery Provider or Local Service Provider, with each role opening a separate workspace. The platform connects local commerce, accounting, procurement, delivery, service work, approvals and private incident handling without mixing each role’s permissions or another business’s financial records.",
+      "steps": [],
       "notes": [
-        "Customer is the default self-service profile.",
-        "Merchant, Supplier and Delivery are governed profiles and require authorization.",
-        "Local Services can begin as an application but operational use depends on approval."
+        "The product is currently a Philippines Edition and the public Help Center documents merged executable behavior.",
+        "Administration is privileged authority, not a normal public profile.",
+        "The architecture is designed so one account can hold several roles without making private business ledgers globally visible."
+      ],
+      "visual": {
+        "src": "/help/product-map.svg",
+        "alt": "Business & Life architecture showing one account connected to Customer, Merchant, Supplier, Delivery and Local Services profiles, with shared commerce, business operations, trust and public guidance layers.",
+        "caption": "Business & Life uses one account identity with separate operational profiles and business-scoped financial workspaces."
+      },
+      "sections": [
+        {
+          "title": "Business & Life in plain language",
+          "paragraphs": [
+            "Business & Life is not only an accounting app and it is not only a marketplace. It is a local economic operating system designed to connect the everyday activities that normally happen in separate places: selling products, buying locally, managing cash, controlling stock, ordering supplies, arranging delivery, offering skilled services and resolving operational problems.",
+            "The product started from a small-business accounting and cash-control need. Its current merged architecture has expanded that foundation into a Philippines-focused ecosystem where the same person can participate in different economic roles without creating a separate identity for each one.",
+            "The central idea is simple: one person keeps one account, but the application changes workspace according to what that person is doing. A person buying food uses Customer. A shop owner runs Merchant. A wholesaler or producer uses Supplier. An approved rider/driver uses Delivery. A carpenter, electrician or other skilled worker uses Local Services."
+          ]
+        },
+        {
+          "title": "What problem the product is designed to solve",
+          "paragraphs": [
+            "Small local economic activity is often fragmented. Money may be tracked in a notebook, orders in chat messages, stock in memory, Supplier prices in another conversation, deliveries by phone, and service work through informal referrals. When those activities are disconnected, it becomes difficult to explain where money went, what is owed, what stock remains, whether an order was actually paid, or who is responsible for the next step.",
+            "Business & Life brings those activities into connected workflows. An order can affect preparation and stock. A real payment can update the correct business money account. A Supplier purchase can become inventory when it is actually received. A delivery can stay separate from merchandise money. A service request can become a quote, a job and then a verified review."
+          ],
+          "bullets": [
+            "Reduce the gap between commercial activity and accounting records.",
+            "Keep payment status separate from fulfilment status so unpaid money is not mistaken for collected money.",
+            "Give small businesses a clearer picture of cash, stock, receivables, Supplier commitments and day-end differences.",
+            "Create explicit relationships between Merchants, Suppliers, Customers, Delivery Providers and Local Service Providers.",
+            "Keep sensitive evidence and incidents private instead of mixing them with public reputation."
+          ]
+        },
+        {
+          "title": "Who the product is for",
+          "paragraphs": [
+            "Business & Life is built around five public operational profiles. These are not five separate apps; they are different workspaces under the same account identity."
+          ],
+          "bullets": [
+            "Customer — discovers local Merchants and Service Providers, orders products, chooses fulfilment/payment options, tracks orders and deliveries, requests local services and reports private problems.",
+            "Merchant — runs a local business storefront, handles Customer orders, accounting, inventory, products/recipes, procurement and delivery dispatch.",
+            "Supplier — maintains a Supplier business profile and catalog, connects to Merchants through accepted relationships, responds to purchase orders and uses its own business-scoped accounting workspace.",
+            "Delivery Provider / Courier — submits eligibility information, becomes available only after approval, receives delivery assignments, shares location during active delivery and completes verified handoff.",
+            "Service Provider / Local Services — presents skills, services and qualifications, receives Customer requests, sends quotes, performs jobs and can receive verified reviews from completed in-app work."
+          ]
+        },
+        {
+          "title": "One account does not mean one shared permission set",
+          "paragraphs": [
+            "The account is the identity layer. The active profile is the operational context. Business workspaces are the economic context. These are deliberately separate concepts.",
+            "For example, having a Customer profile does not grant access to Merchant accounting. Having a Supplier profile does not allow a person to view another Merchant’s ledger. A Merchant or Supplier profile must be bound to an authorized business workspace before accounting data can be accessed.",
+            "This separation is important because the product is designed for many people and many local businesses to use the same platform without their private financial records becoming one shared ledger."
+          ]
+        },
+        {
+          "title": "How the local commerce loop works",
+          "paragraphs": [
+            "A Customer can browse published Merchant storefronts in Food or Non-food discovery. Only storefronts and products that the Merchant has made available are returned through the public marketplace.",
+            "At checkout the platform validates the Merchant’s current capabilities. Pickup and Delivery are separate fulfilment choices. Cash and online/digital are separate payment choices. The application blocks combinations the Merchant has not enabled and currently blocks cash delivery.",
+            "When an order is created, the commercial amount, amount actually paid and outstanding amount are stored separately. This is why the platform can represent Unpaid, Partial and Paid without pretending money has moved when it has not."
+          ],
+          "bullets": [
+            "New/untrusted cash pickup can wait for Customer presence before preparation.",
+            "After 5 completed orders with the same Merchant, the Customer becomes eligible for Merchant-specific remote cash preparation, but the Merchant must still explicitly enable it.",
+            "Starting preparation can consume tracked marketplace stock and/or recipe ingredients.",
+            "A cancellable order can reverse recorded stock consumption where the workflow has already consumed stock.",
+            "A ready pickup order can be completed with an explicit remaining receivable when the Merchant intentionally allows credit."
+          ]
+        },
+        {
+          "title": "How accounting is connected to real operations",
+          "paragraphs": [
+            "Merchant and Supplier accounting uses isolated business workspaces. The accounting engine tracks Cash, GCash, Bank and Other balances rather than treating all money as one undifferentiated total.",
+            "Manual accounting supports Sales, Business expenses, Money received, Personal withdrawals and Adjustments. At the same time, operational workflows can create linked financial entries so the same event is not supposed to be recorded twice.",
+            "The product keeps a distinction between cash-flow accounting records and analytical product profitability. Recipe ingredient cost can be used to estimate gross profit without creating a second duplicate cash expense for inventory that was already purchased."
+          ],
+          "bullets": [
+            "Opening cash and end-of-day physical cash reconciliation.",
+            "Budget/safety warnings for configured personal/business thresholds and minimum available money.",
+            "Inventory quantities, reorder levels and unit costs.",
+            "Products, recipes, automatic ingredient consumption and estimated gross margin.",
+            "Remittance records containing sent currency/amount, fee, expected PHP and actual PHP received.",
+            "Audit events for eligible transaction corrections.",
+            "CSV export of transactions for the active business workspace.",
+            "Customer receivables, Supplier payables/commitments and Supplier-side receivables in the business summary."
+          ]
+        },
+        {
+          "title": "How Suppliers and procurement work",
+          "paragraphs": [
+            "Supplier procurement is relationship-based. A Merchant does not automatically treat an unknown external business as a trusted Supplier. The Merchant invites an active Supplier account and the Supplier explicitly accepts before normal catalog and purchase-order exchange is allowed.",
+            "Supplier catalog items carry pack information, base-unit conversion, price, minimum packs, availability and lead time. When a Merchant creates a purchase order, the relevant item data is snapshotted so later catalog edits do not silently rewrite the historical order.",
+            "The Supplier can confirm quantities and prices, including partial acceptance. The Merchant records what physically arrived. If only part arrives, the PO remains Partially received. Linked inventory can increase from the actual quantity received."
+          ],
+          "bullets": [
+            "Purchase-order status and payment status are separate.",
+            "Merchant records Supplier payment only when money actually moves.",
+            "Merchant accounting records the linked Supplier-payment business expense.",
+            "Supplier accounting records the corresponding Supplier-order money receipt when the Supplier business workspace exists.",
+            "Linked procurement financial records are protected against being independently edited as unrelated manual entries."
+          ]
+        },
+        {
+          "title": "How Delivery works",
+          "paragraphs": [
+            "Delivery is an operational profile with eligibility controls. A Courier does not become available merely by enabling a profile; approval and eligibility status are checked first.",
+            "A Customer delivery uses a quote that snapshots the active delivery-pricing rule, route distance, estimated weight/volume where available and the calculated fee. Current quotes expire after 15 minutes so an old price is not silently reused.",
+            "Merchant dispatch is gated: the order must be Ready and Paid before the Merchant requests a Courier. Only an approved, available Courier can be assigned."
+          ],
+          "bullets": [
+            "Merchant pickup coordinates and Customer drop-off coordinates are used for the delivery quote.",
+            "Configured pricing can include base fee, per-kilometre, per-weight, per-volume, minimum fee, route factor and maximum distance.",
+            "Courier live location is part of the active delivery flow rather than continuous off-duty tracking.",
+            "Customer sees active delivery progress and provides the secure completion/handoff code at the actual handoff.",
+            "Merchandise and delivery fee are separated in financial allocation records."
+          ]
+        },
+        {
+          "title": "How Local Services works",
+          "paragraphs": [
+            "Local Services turns skills into an in-app service workflow. A Service Provider can create a public professional profile, select services, add qualifications and portfolio evidence, receive Customer requests, send quotes and manage job progress.",
+            "Public profile data and private evidence are not the same thing. The provider can choose Public, Relationships only or Private visibility. Private CV/evidence is stored separately from the public CV/experience summary.",
+            "The normal job lifecycle connects Customer request, Provider quote, Customer acceptance, scheduling/work, Provider completion and Customer confirmation. Only after a completed and Customer-confirmed in-app job can the Customer submit the verified service review."
+          ],
+          "bullets": [
+            "Credential evidence can move through Submitted, Verified, Rejected or Expired states.",
+            "Public reputation participation is a separate opt-in from profile visibility.",
+            "Job-linked portfolio work is returned publicly only when Customer publication consent is present.",
+            "A public profile or platform approval is not represented as a substitute for professional licences, permits, insurance or other legal obligations that may apply."
+          ]
+        },
+        {
+          "title": "Trust, approvals and operating territories",
+          "paragraphs": [
+            "Business & Life is designed to operate in controlled local territories rather than assuming every operational profile can immediately work everywhere. Customer is the default self-service profile. Merchant, Supplier and Delivery are governed profiles. Local Services uses an application/approval path for operational scope.",
+            "Invitations, applications and authorizations are territory-scoped. An authorization can later be suspended or reactivated through the governance workflow.",
+            "Administration is deliberately not presented as another public marketplace profile. Privileged platform administration belongs to a separate secured authority model."
+          ]
+        },
+        {
+          "title": "Safety and private problem reporting",
+          "paragraphs": [
+            "The platform includes private incident reporting for operational problems involving orders, deliveries, Merchants, Couriers, service jobs/providers, Suppliers, payments or other issues.",
+            "Incident reporting is separate from public ratings and reviews. Evidence is protected by server-side limits and the reporter sees their own report, evidence, follow-up notes and timeline while authorized platform administration can triage the case."
+          ],
+          "bullets": [
+            "Maximum 5 images per incident.",
+            "Allowed image formats: JPEG, PNG and WebP.",
+            "Maximum 1 PDF.",
+            "Maximum 1.5 MB per image, 3 MB for the PDF and 10 MB total decoded evidence."
+          ]
+        },
+        {
+          "title": "What Business & Life is not",
+          "paragraphs": [
+            "The platform helps organize commerce, operations, accounting evidence and role workflows. It does not claim to replace government registration, required invoices/receipts, tax filing, permits, professional licensing, insurance, legal advice or professional accounting obligations.",
+            "It also does not currently represent every future design issue as a live feature. Public documentation describes merged executable behavior. Open/unmerged features are intentionally excluded until they are actually part of the product."
+          ]
+        },
+        {
+          "title": "Current Philippines Edition",
+          "paragraphs": [
+            "The current repository and runtime represent Business & Life — Philippines. Country edition is a deployment/data boundary, not merely a country selector inside one shared production database."
+          ],
+          "bullets": [
+            "Country code: PH.",
+            "Operating currency: PHP / ₱.",
+            "Default business timezone: Asia/Manila.",
+            "Philippines-specific payment/configuration concepts are used where implemented.",
+            "A future Ireland, Romania or other country edition should use an isolated deployment/database/configuration boundary instead of mixing jurisdictions in one production data plane."
+          ]
+        },
+        {
+          "title": "A complete example",
+          "paragraphs": [
+            "Imagine a Customer opens the app and orders food from a published local Merchant. The Customer chooses pickup or delivery and an available payment method. If it is a new cash pickup relationship, the order can wait for Customer presence. The Merchant confirms the appropriate gate, starts preparation and tracked stock or recipe ingredients are consumed.",
+            "If the order is delivered, the Customer receives a current delivery quote. Once the order is paid and ready, the Merchant requests a Courier. An approved available Courier is assigned, shares location during the active trip and completes delivery using the Customer handoff code.",
+            "The Merchant’s business workspace keeps the merchandise payment and any outstanding receivable visible. If stock is low, the Merchant can order supplies from an accepted Supplier relationship. When goods physically arrive, the Merchant records the received quantities and linked stock increases. When the Merchant actually pays the Supplier, the payment appears in Merchant accounting and the Supplier’s own business accounting records the corresponding receipt.",
+            "The result is one connected history of commerce, fulfilment, stock and money instead of several unrelated conversations and notebooks."
+          ]
+        }
+      ],
+      "related": [
+        "create-account",
+        "switch-profiles",
+        "glossary",
+        "customer-overview",
+        "merchant-overview",
+        "supplier-overview",
+        "courier-overview",
+        "service-provider-overview"
       ]
     },
     {
@@ -761,6 +1031,871 @@
         "Choose only relevant evidence.",
         "Keep each file within the individual limit.",
         "If the upload is rejected, remove oversized/unsupported files and try again."
+      ]
+    },
+    {
+      "slug": "email-verification",
+      "title": "Verify your email address",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "Request and complete email verification for account security.",
+      "shortAnswer": "Use the account-protection area to request a verification message, then complete the one-time verification flow.",
+      "beforeYouStart": [
+        "You must be signed in to request verification from the account-protection screen.",
+        "Email delivery requires the configured email provider in the deployed environment."
+      ],
+      "steps": [
+        "Open Account protection.",
+        "Choose Send verification email.",
+        "Open the verification message sent to the account email.",
+        "Complete the verification action.",
+        "Return to the app and refresh account status."
+      ],
+      "whatHappensNext": "The account records verified email status. This does not change your active profile or business workspace.",
+      "commonProblems": [
+        "No message arrived: confirm the account email and try again later; email delivery depends on the configured provider.",
+        "The verification token is no longer valid: request a new verification email."
+      ],
+      "related": [
+        "sign-in-recovery",
+        "switch-profiles"
+      ]
+    },
+    {
+      "slug": "marketplace-options-explained",
+      "title": "Pickup, delivery, cash and online options",
+      "section": "Customer",
+      "profiles": [
+        "customer",
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Understand why fulfilment and payment choices differ between Merchants.",
+      "shortAnswer": "Each published Merchant chooses which capabilities are enabled. The app blocks combinations that the Merchant has not enabled.",
+      "beforeYouStart": [
+        "Open a published Merchant storefront."
+      ],
+      "steps": [
+        "Check whether Pickup and/or Delivery is enabled.",
+        "Check whether Cash and/or Online/digital payment is enabled.",
+        "Choose only a combination shown as available.",
+        "If Delivery is selected, provide a delivery address and obtain a valid quote when required."
+      ],
+      "whatHappensNext": "Checkout validates the Merchant’s current capability settings before creating the order.",
+      "commonProblems": [
+        "Merchant is closed: checkout is blocked while the storefront opening status is Closed.",
+        "Cash delivery is currently disabled.",
+        "An item became unavailable or stock is insufficient: update the basket before trying again."
+      ],
+      "related": [
+        "browse-marketplace",
+        "place-order",
+        "delivery-fee-and-quote"
+      ]
+    },
+    {
+      "slug": "order-statuses-explained",
+      "title": "Order and payment statuses explained",
+      "section": "Customer",
+      "profiles": [
+        "customer",
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Read fulfilment status separately from payment status.",
+      "shortAnswer": "An order has two independent tracks: what is happening to the order and how much money has actually been received.",
+      "beforeYouStart": [
+        "Open the order detail or tracker."
+      ],
+      "steps": [
+        "Read the fulfilment status: Awaiting payment, Awaiting customer presence, Accepted, Preparing, Ready, Handoff to delivery, Completed or Cancelled.",
+        "Read payment status separately: Unpaid, Partial or Paid.",
+        "Use the status history to understand what happened and when."
+      ],
+      "whatHappensNext": "Operational actions are enabled only when the order is in an allowed state.",
+      "commonProblems": [
+        "Payment can be Partial while fulfilment continues only where the workflow explicitly allows it.",
+        "A completed or cancelled order cannot be restarted."
+      ],
+      "related": [
+        "track-order",
+        "merchant-order-workflow",
+        "customer-credit-receivables"
+      ]
+    },
+    {
+      "slug": "customer-credit-receivables",
+      "title": "Partial payment, credit and outstanding balance",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Understand paid amount, outstanding balance and Merchant receivables.",
+      "shortAnswer": "The app stores the order total, money actually received and the remaining outstanding amount separately.",
+      "beforeYouStart": [
+        "Open the Merchant order and check Total, Paid and Outstanding."
+      ],
+      "steps": [
+        "Record only money that has actually been received.",
+        "If the payment is less than the outstanding balance, payment status becomes Partial.",
+        "For a ready pickup order, the Merchant may explicitly complete with the remaining balance left as credit/receivable.",
+        "Follow up on the outstanding balance from business records."
+      ],
+      "whatHappensNext": "Money received is posted to the selected money account. Any unpaid remainder stays visible as a receivable rather than being silently treated as paid.",
+      "commonProblems": [
+        "The app blocks a recorded payment that exceeds the outstanding amount.",
+        "Do not create a second manual sale transaction for a payment already linked to the order."
+      ],
+      "related": [
+        "merchant-order-workflow",
+        "record-transaction",
+        "order-statuses-explained"
+      ]
+    },
+    {
+      "slug": "remote-cash-trust",
+      "title": "Remote cash preparation for returning Customers",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Understand when a Merchant can prepare a cash pickup order before the Customer arrives.",
+      "shortAnswer": "Eligibility starts after 5 completed orders with the same Merchant, but the Merchant must separately enable remote cash preparation for that Customer.",
+      "beforeYouStart": [
+        "The Customer must have 5 completed orders with this same Merchant.",
+        "The trust relationship must not be suspended."
+      ],
+      "steps": [
+        "Open the Merchant’s Customer trust settings.",
+        "Review the completed-order count.",
+        "Enable remote cash preparation only when the Customer is eligible.",
+        "Future cash pickup orders from that Customer may enter Accepted without the normal presence wait."
+      ],
+      "whatHappensNext": "This permission applies only to that Merchant–Customer relationship. It is not global trust across the platform.",
+      "commonProblems": [
+        "Fewer than 5 completed orders: the app blocks enabling remote preparation.",
+        "A suspended trust relationship disables eligibility even if the order count is high enough."
+      ],
+      "related": [
+        "cash-pickup-presence",
+        "merchant-order-workflow"
+      ]
+    },
+    {
+      "slug": "delivery-fee-and-quote",
+      "title": "How a delivery quote is calculated",
+      "section": "Customer",
+      "profiles": [
+        "customer",
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Understand the delivery fee snapshot used at checkout.",
+      "shortAnswer": "A quote uses the active delivery pricing rule plus route distance and, where available, estimated item weight/volume. A minimum fee and maximum service distance may also apply.",
+      "beforeYouStart": [
+        "The Merchant storefront must be published with Delivery enabled.",
+        "The Merchant pickup coordinates must be configured.",
+        "An active Admin-configured delivery pricing rule must exist.",
+        "Provide valid drop-off coordinates."
+      ],
+      "steps": [
+        "Open Delivery quote from checkout.",
+        "Confirm the destination.",
+        "Request the quote.",
+        "Review the calculated fee and distance.",
+        "Complete delivery checkout before the quote expires."
+      ],
+      "whatHappensNext": "The quote stores the pricing-rule version, distance, estimated weight/volume, fee and expiry. Current quotes expire after 15 minutes.",
+      "commonProblems": [
+        "No active pricing rule: the app cannot quote Delivery yet.",
+        "Destination outside configured maximum distance: delivery is blocked.",
+        "Expired quote: request a new quote before checkout."
+      ],
+      "related": [
+        "delivery-quote-expired",
+        "place-order",
+        "delivery-tracking-handoff"
+      ]
+    },
+    {
+      "slug": "merchant-money-accounts",
+      "title": "Cash, GCash, Bank and Other balances",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Understand the separate money accounts used by business accounting.",
+      "shortAnswer": "Business & Life tracks Cash, GCash, Bank and Other as separate money locations inside the active business workspace.",
+      "beforeYouStart": [
+        "Confirm the active Merchant or Supplier business workspace."
+      ],
+      "steps": [
+        "Open Accounting Dashboard to review balances.",
+        "When recording a transaction, choose the account where money actually moved.",
+        "Use the same real account when recording payment, expense or remittance receipt.",
+        "Reconcile physical Cash separately at day close."
+      ],
+      "whatHappensNext": "The Dashboard aggregates transactions by money account while preserving the selected business boundary.",
+      "commonProblems": [
+        "Choosing the wrong account makes the account balance misleading even if the total amount is correct.",
+        "A financial event already created by an order/procurement/remittance should not be duplicated manually."
+      ],
+      "related": [
+        "merchant-accounting",
+        "record-transaction",
+        "open-close-day"
+      ]
+    },
+    {
+      "slug": "remittances",
+      "title": "Record money sent to the business",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Record a remittance and the amount actually received in PHP.",
+      "shortAnswer": "A remittance keeps the sent amount/currency, fee and received PHP together. Received PHP is also posted as Money received in the selected business account.",
+      "beforeYouStart": [
+        "Know the sent amount/currency and the PHP amount actually received.",
+        "Choose the correct receiving money account."
+      ],
+      "steps": [
+        "Open Remittances.",
+        "Enter sent amount/currency and transfer fee.",
+        "Optionally record exchange rate and expected PHP.",
+        "Enter received PHP, provider/reference and receiving account.",
+        "Save the remittance."
+      ],
+      "whatHappensNext": "If received PHP is greater than zero, accounting creates one linked Money received transaction. The remittance entry shows the difference between expected and received PHP when expected PHP is provided.",
+      "commonProblems": [
+        "Do not record the same remittance again as a separate manual Money received transaction.",
+        "Use the actual received amount, not only the amount originally sent."
+      ],
+      "related": [
+        "merchant-money-accounts",
+        "record-transaction"
+      ]
+    },
+    {
+      "slug": "budget-warnings",
+      "title": "Set business and personal spending warnings",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Use configurable thresholds to surface simple spending/safety warnings.",
+      "shortAnswer": "You can set personal daily/weekly limits, a business daily expense limit and a minimum available-money warning.",
+      "beforeYouStart": [
+        "Open the Accounting budget/settings area for the correct business workspace."
+      ],
+      "steps": [
+        "Set Personal daily limit.",
+        "Set Personal 7-day/weekly limit.",
+        "Set Business daily expense limit.",
+        "Set Minimum available-money warning.",
+        "Save and review Dashboard warnings."
+      ],
+      "whatHappensNext": "Warnings appear when recorded activity crosses the configured threshold. They are alerts, not automatic payment blocks.",
+      "commonProblems": [
+        "A zero value means no warning threshold for that field.",
+        "Warnings depend on the transactions recorded in the selected business workspace."
+      ],
+      "related": [
+        "merchant-accounting",
+        "record-transaction"
+      ]
+    },
+    {
+      "slug": "financial-corrections-audit",
+      "title": "Correct a transaction and keep the audit trail",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Correct eligible manual transactions without erasing history.",
+      "shortAnswer": "Editing an eligible transaction creates an audit event containing the before/after record and the reason.",
+      "beforeYouStart": [
+        "Open the transaction in the correct business workspace.",
+        "Have a clear correction reason."
+      ],
+      "steps": [
+        "Choose the transaction to correct.",
+        "Update allowed fields such as type, category, amount, account, note or date.",
+        "Enter a correction reason.",
+        "Save, then open the transaction audit history if needed."
+      ],
+      "whatHappensNext": "The transaction is updated and an audit event records the previous and new data.",
+      "commonProblems": [
+        "Linked remittance, product-sale, order-payment, Supplier-payment and Supplier-receipt entries cannot be corrected independently.",
+        "Correct the source workflow instead of editing a linked accounting entry."
+      ],
+      "related": [
+        "record-transaction",
+        "export-transactions-csv"
+      ]
+    },
+    {
+      "slug": "export-transactions-csv",
+      "title": "Export business transactions to CSV",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Download the active business ledger as a CSV file for review or further processing.",
+      "shortAnswer": "The export includes transaction id, type, category, amount, account, source, note and timestamp for the selected business workspace.",
+      "beforeYouStart": [
+        "Confirm the active business workspace."
+      ],
+      "steps": [
+        "Open the accounting export/report area.",
+        "Choose the CSV export.",
+        "Save the downloaded file securely.",
+        "Use it for review or provide it to an authorized accountant/adviser when appropriate."
+      ],
+      "whatHappensNext": "The export is a record extract; it does not itself file taxes, submit government reports or replace required official documents.",
+      "commonProblems": [
+        "If the wrong workspace is active, switch to the correct business before exporting."
+      ],
+      "related": [
+        "merchant-accounting",
+        "financial-corrections-audit"
+      ]
+    },
+    {
+      "slug": "cancel-order-stock-reversal",
+      "title": "What happens to stock when a Merchant cancels an order?",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Understand stock reversal after a cancellable order is cancelled.",
+      "shortAnswer": "If stock was already consumed by the order, cancellation reverses the recorded marketplace stock/inventory consumption before marking the order Cancelled.",
+      "beforeYouStart": [
+        "The order must not already be Completed or Cancelled."
+      ],
+      "steps": [
+        "Open the Merchant order.",
+        "Review why cancellation is needed.",
+        "Enter the cancellation reason.",
+        "Cancel the order."
+      ],
+      "whatHappensNext": "Where consumption events exist, tracked stock and linked inventory quantities are restored and reversal events prevent a second reversal.",
+      "commonProblems": [
+        "Completed orders can no longer be cancelled through this workflow.",
+        "Always record a reason so the status history explains the decision."
+      ],
+      "related": [
+        "merchant-order-workflow",
+        "inventory-products-recipes"
+      ]
+    },
+    {
+      "slug": "merchant-delivery-dispatch",
+      "title": "Request a Courier for a Customer delivery",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "courier"
+      ],
+      "status": "current",
+      "summary": "Understand the readiness and payment gates before dispatch.",
+      "shortAnswer": "The Merchant can request a Courier only after the order is Ready and Paid.",
+      "beforeYouStart": [
+        "The order uses Delivery fulfilment.",
+        "The delivery exists for the order.",
+        "The order status is Ready.",
+        "Payment status is Paid."
+      ],
+      "steps": [
+        "Open the Merchant Delivery board.",
+        "Open the ready paid delivery.",
+        "Choose Request courier.",
+        "Wait for an approved available Courier to be assigned.",
+        "Follow the delivery status through handoff/completion."
+      ],
+      "whatHappensNext": "The delivery moves into the courier-assignment flow. Only eligible approved available Couriers can be assigned.",
+      "commonProblems": [
+        "Order not Ready: finish preparation first.",
+        "Order not Paid: confirm payment before dispatch."
+      ],
+      "related": [
+        "merchant-order-workflow",
+        "courier-active-delivery",
+        "delivery-tracking-handoff"
+      ]
+    },
+    {
+      "slug": "supplier-relationship-invitations",
+      "title": "Accept or decline a Merchant–Supplier connection",
+      "section": "Supplier",
+      "profiles": [
+        "supplier",
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Manage the trusted relationship required before procurement.",
+      "shortAnswer": "A Merchant invites an active Supplier account by email; the Supplier explicitly accepts or declines/revokes the connection.",
+      "beforeYouStart": [
+        "The Supplier profile must be active.",
+        "The Merchant must know the Supplier account email."
+      ],
+      "steps": [
+        "Merchant sends the relationship invitation.",
+        "Supplier opens Supplier relationships.",
+        "Review the Merchant/business information.",
+        "Accept to allow catalog/PO exchange, or decline/revoke if you do not want the connection."
+      ],
+      "whatHappensNext": "Only Accepted relationships allow the Merchant to browse the Supplier catalog and create purchase orders.",
+      "commonProblems": [
+        "No active Supplier profile for that email: the Merchant cannot create the relationship.",
+        "You cannot connect a Merchant business to the same account as its Supplier relationship."
+      ],
+      "related": [
+        "trusted-supplier-relationship",
+        "supplier-catalog",
+        "supplier-purchase-orders"
+      ]
+    },
+    {
+      "slug": "purchase-order-snapshots",
+      "title": "What a purchase order remembers",
+      "section": "Supplier",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Understand why a PO keeps product, pack and price snapshots.",
+      "shortAnswer": "When a Merchant creates a PO, the item name, SKU, unit/pack conversion, ordered packs and price-per-pack are copied into the PO so later catalog edits do not rewrite history.",
+      "beforeYouStart": [
+        "An Accepted Merchant–Supplier relationship must exist."
+      ],
+      "steps": [
+        "Merchant selects active Supplier catalog items.",
+        "Merchant enters pack quantities that meet minimum packs.",
+        "The PO snapshots the current item/pack/price data.",
+        "Supplier may confirm different quantities/prices during response, which are stored separately from the original snapshot."
+      ],
+      "whatHappensNext": "The PO keeps both original order snapshots and confirmed/received values, supporting later receipt and payment review.",
+      "commonProblems": [
+        "Unavailable/inactive catalog items cannot be used to create a new PO.",
+        "Confirmed packs cannot be negative; received packs cannot exceed the remaining confirmed amount."
+      ],
+      "related": [
+        "supplier-purchase-orders",
+        "partial-supplier-receiving"
+      ]
+    },
+    {
+      "slug": "supplier-po-statuses",
+      "title": "Supplier purchase-order statuses explained",
+      "section": "Supplier",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Read the progress of a Merchant purchase order.",
+      "shortAnswer": "A PO can move through Sent, Accepted/Partially accepted, Preparing, Ready for pickup or Out for delivery, Delivered, Partially received/Received, or terminal Cancelled/Rejected states.",
+      "beforeYouStart": [
+        "Open the PO detail."
+      ],
+      "steps": [
+        "Read the PO status.",
+        "Compare ordered packs with confirmed packs.",
+        "Check Supplier ready time / delivery ETA where present.",
+        "Merchant records actual receipt separately when goods arrive."
+      ],
+      "whatHappensNext": "Receiving can move the PO to Partially received or Received based on remaining quantities.",
+      "commonProblems": [
+        "Supplier cannot keep changing a PO after it reaches a terminal state.",
+        "Delivered does not automatically mean the Merchant has recorded receipt."
+      ],
+      "related": [
+        "supplier-purchase-orders",
+        "partial-supplier-receiving",
+        "supplier-payment-accounting"
+      ]
+    },
+    {
+      "slug": "partial-supplier-receiving",
+      "title": "Record a partial Supplier delivery",
+      "section": "Supplier",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Receive only the quantities that actually arrived.",
+      "shortAnswer": "Merchant receiving is quantity-based. A PO stays Partially received until all confirmed quantities are recorded.",
+      "beforeYouStart": [
+        "Open the PO and compare confirmed versus already received packs."
+      ],
+      "steps": [
+        "Merchant opens Receive.",
+        "Enter only packs physically received for each item.",
+        "Use actual price per pack if it differs and the workflow permits it.",
+        "Save the receipt.",
+        "Repeat later for the remaining confirmed quantities."
+      ],
+      "whatHappensNext": "Linked inventory is increased by received base units where mapping exists; the PO becomes Partially received or Received.",
+      "commonProblems": [
+        "Received packs cannot exceed the remaining confirmed quantity.",
+        "Do not record goods as received before they physically arrive."
+      ],
+      "related": [
+        "purchase-order-snapshots",
+        "supplier-po-statuses",
+        "supplier-payment-accounting"
+      ]
+    },
+    {
+      "slug": "supplier-payment-accounting",
+      "title": "How Supplier payments affect accounting",
+      "section": "Supplier",
+      "profiles": [
+        "merchant",
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Understand when procurement money is recorded on both sides.",
+      "shortAnswer": "Merchant records a Supplier payment only when money really moves. The Merchant business records a Supplier-payment expense; the Supplier business records the corresponding Supplier-order receipt in its own ledger when the business binding exists.",
+      "beforeYouStart": [
+        "Open the correct PO and business workspace.",
+        "Know the amount actually paid and the source money account."
+      ],
+      "steps": [
+        "Merchant records the real payment amount and account.",
+        "The PO paid amount/payment status updates.",
+        "Merchant accounting receives the linked Supplier-payment expense.",
+        "Supplier business accounting receives the linked Supplier-order money entry."
+      ],
+      "whatHappensNext": "Partial payments remain Partial until the expected PO total is covered. Linked entries are protected from independent manual correction.",
+      "commonProblems": [
+        "Payment cannot exceed the outstanding PO amount.",
+        "Do not duplicate the linked payment with manual accounting transactions."
+      ],
+      "related": [
+        "supplier-accounting",
+        "record-transaction",
+        "partial-supplier-receiving"
+      ]
+    },
+    {
+      "slug": "courier-location-privacy",
+      "title": "When Courier location is shared",
+      "section": "Delivery",
+      "profiles": [
+        "courier",
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Understand the live-location privacy boundary for an active delivery.",
+      "shortAnswer": "Courier live location is used for the active delivery flow and is not intended as continuous off-duty tracking.",
+      "beforeYouStart": [
+        "The Courier must have an assigned active delivery."
+      ],
+      "steps": [
+        "Open the assigned delivery.",
+        "Use Share location during the active route.",
+        "Customer views live status/location while the delivery is active.",
+        "Stop updating after the delivery is completed/cancelled."
+      ],
+      "whatHappensNext": "The customer-facing delivery view exposes active tracking data only while the delivery is in an active tracking state.",
+      "commonProblems": [
+        "Do not share location for unrelated or inactive deliveries.",
+        "Location permission/device availability can affect updates."
+      ],
+      "related": [
+        "courier-active-delivery",
+        "delivery-tracking-handoff",
+        "courier-completion-code"
+      ]
+    },
+    {
+      "slug": "courier-completion-code",
+      "title": "Use the Customer handoff code",
+      "section": "Delivery",
+      "profiles": [
+        "courier",
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Complete a delivery with the secure Customer handoff code.",
+      "shortAnswer": "At delivery handoff, the Customer provides the delivery completion code and the Courier enters it to confirm the correct handoff.",
+      "beforeYouStart": [
+        "The delivery must be at the correct Customer handoff stage.",
+        "Customer should not share the code prematurely."
+      ],
+      "steps": [
+        "Courier arrives at the correct destination.",
+        "Customer confirms the delivery is being handed over.",
+        "Customer provides the completion code.",
+        "Courier enters the code and confirms Delivered."
+      ],
+      "whatHappensNext": "A valid code lets the delivery complete through the verified handoff workflow.",
+      "commonProblems": [
+        "Wrong code: re-check the active delivery and ask the Customer to read the current code.",
+        "Never request the code before the actual handoff."
+      ],
+      "related": [
+        "courier-active-delivery",
+        "courier-location-privacy"
+      ]
+    },
+    {
+      "slug": "find-local-service-provider",
+      "title": "Find a Local Service Provider",
+      "section": "Local Services",
+      "profiles": [
+        "customer"
+      ],
+      "status": "current",
+      "summary": "Browse public providers by service category and review useful profile information.",
+      "shortAnswer": "Customer discovery shows enabled public Service Provider profiles, offered services, selected verified credentials and optional reputation information.",
+      "beforeYouStart": [
+        "Open Customer → Local Services."
+      ],
+      "steps": [
+        "Choose a service category or browse providers.",
+        "Open a provider profile.",
+        "Review service area, experience, services, qualifications and pricing/availability information.",
+        "Send a service request if the provider fits your needs."
+      ],
+      "whatHappensNext": "The service request enters the in-app job/quote workflow.",
+      "commonProblems": [
+        "A provider with a private or relationship-only profile does not appear as a normal public provider.",
+        "A public profile does not guarantee a specific licence/permit applies to every requested job."
+      ],
+      "related": [
+        "service-profile-visibility",
+        "service-requests-quotes-jobs"
+      ]
+    },
+    {
+      "slug": "service-profile-visibility",
+      "title": "Choose what your Local Services profile shows publicly",
+      "section": "Local Services",
+      "profiles": [
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Control public, relationship-only or private profile visibility and public reputation participation.",
+      "shortAnswer": "Profile visibility and reputation opt-in are separate controls. Private CV/evidence is not automatically exposed as public content.",
+      "beforeYouStart": [
+        "Open Local Services → Public profile."
+      ],
+      "steps": [
+        "Choose Public, Relationships only or Private visibility.",
+        "Complete the public/service name, headline, about, service area and other public-facing details.",
+        "Choose whether public reputation/rating participation is enabled.",
+        "Save the profile."
+      ],
+      "whatHappensNext": "Only eligible public profile data is returned to Customer discovery. Private evidence remains outside the public profile response.",
+      "commonProblems": [
+        "Selecting Public does not automatically verify credentials.",
+        "Public reputation information is suppressed when reputation participation is off."
+      ],
+      "related": [
+        "service-profile-and-credentials",
+        "credentials-verification",
+        "portfolio-publication-privacy"
+      ]
+    },
+    {
+      "slug": "credentials-verification",
+      "title": "Submit and understand Local Services credentials",
+      "section": "Local Services",
+      "profiles": [
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Add qualifications/evidence and understand Submitted, Verified, Rejected or Expired states.",
+      "shortAnswer": "A Service Provider can submit supported credential types with evidence; verification status is separate from the public profile text.",
+      "beforeYouStart": [
+        "Prepare accurate credential title/issuer/reference and evidence."
+      ],
+      "steps": [
+        "Open Qualifications & credentials.",
+        "Choose the credential type.",
+        "Enter title, issuing body, reference and dates where applicable.",
+        "Attach the evidence and submit.",
+        "Review the verification status later."
+      ],
+      "whatHappensNext": "New credentials begin as Submitted. The verification workflow may later mark them Verified, Rejected or Expired.",
+      "commonProblems": [
+        "Submitting evidence does not mean it is verified.",
+        "Expired/rejected evidence may need replacement or correction."
+      ],
+      "related": [
+        "service-profile-visibility",
+        "service-provider-approval"
+      ]
+    },
+    {
+      "slug": "portfolio-publication-privacy",
+      "title": "Portfolio images and Customer publication consent",
+      "section": "Local Services",
+      "profiles": [
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Understand when portfolio work linked to a job may be shown publicly.",
+      "shortAnswer": "Portfolio items can be added by the provider, but job-linked work is publicly returned only when the required Customer publication consent is recorded.",
+      "beforeYouStart": [
+        "Use images you are entitled to upload and avoid unnecessary personal/private information."
+      ],
+      "steps": [
+        "Add a portfolio title, description, category/date and image.",
+        "If the portfolio is linked to a Customer job, ensure publication consent is appropriate.",
+        "Save the portfolio item.",
+        "Review the public profile to confirm what is visible."
+      ],
+      "whatHappensNext": "The public provider profile filters job-linked portfolio entries when Customer publication consent is absent.",
+      "commonProblems": [
+        "Do not treat an uploaded image as automatically public.",
+        "Remove or avoid sensitive/private information in portfolio imagery."
+      ],
+      "related": [
+        "service-profile-visibility",
+        "service-profile-and-credentials"
+      ]
+    },
+    {
+      "slug": "service-job-statuses",
+      "title": "Local Services job statuses explained",
+      "section": "Local Services",
+      "profiles": [
+        "customer",
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Understand the request-to-completion lifecycle.",
+      "shortAnswer": "The normal flow is Requested → Provider reviewing/Quoted → Accepted → Scheduled/In progress → Completed, with Cancelled/Disputed paths where allowed.",
+      "beforeYouStart": [
+        "Open the service job detail."
+      ],
+      "steps": [
+        "Customer creates Requested job.",
+        "Provider reviews and sends a Quote.",
+        "Customer accepts the Quote.",
+        "Provider schedules/starts the work.",
+        "Provider marks work Completed.",
+        "Customer confirms completion."
+      ],
+      "whatHappensNext": "After a Completed job is Customer-confirmed, verified review submission becomes eligible.",
+      "commonProblems": [
+        "The app blocks invalid state jumps.",
+        "Provider completion and Customer confirmation are separate actions."
+      ],
+      "related": [
+        "service-requests-quotes-jobs",
+        "verified-service-review"
+      ]
+    },
+    {
+      "slug": "verified-service-review",
+      "title": "Leave a verified Local Services review",
+      "section": "Local Services",
+      "profiles": [
+        "customer",
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Understand when a Customer can review a Service Provider.",
+      "shortAnswer": "A review is available only after an in-app service job is Completed and the Customer has confirmed completion.",
+      "beforeYouStart": [
+        "The job must belong to the Customer.",
+        "Provider status must be Completed.",
+        "Customer confirmation must already be recorded."
+      ],
+      "steps": [
+        "Open the completed confirmed job.",
+        "Choose Leave review.",
+        "Rate each required dimension from 1 to 5.",
+        "Add optional feedback and submit."
+      ],
+      "whatHappensNext": "Only one review can be created per job. Published reviews contribute to reputation only when the provider has public reputation enabled.",
+      "commonProblems": [
+        "No review button: confirm that the job is completed and Customer-confirmed.",
+        "A second review for the same job is blocked."
+      ],
+      "related": [
+        "service-job-statuses",
+        "service-profile-visibility"
+      ]
+    },
+    {
+      "slug": "incident-privacy",
+      "title": "Who can see a private incident report?",
+      "section": "Safety & privacy",
+      "profiles": [],
+      "status": "current",
+      "summary": "Understand the privacy boundary around incident reports and evidence.",
+      "shortAnswer": "Incident reports are private operational records, separate from public reviews/reputation. The reporter sees their own report/evidence/timeline; authorized Admin triage has access for handling the case.",
+      "beforeYouStart": [
+        "Use incident reporting for operational/safety/payment problems that need private evidence or follow-up."
+      ],
+      "steps": [
+        "Submit the report with relevant detail.",
+        "Add only necessary evidence.",
+        "Use My reports to review your own case.",
+        "Add private follow-up information when needed."
+      ],
+      "whatHappensNext": "The report moves through the private triage/resolution workflow rather than becoming a public rating.",
+      "commonProblems": [
+        "Do not include unrelated personal data in evidence.",
+        "For a public service review, use the verified review flow instead of an incident report."
+      ],
+      "related": [
+        "report-problem",
+        "incident-evidence-limits"
+      ]
+    },
+    {
+      "slug": "glossary",
+      "title": "Business & Life glossary",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "Plain-language meanings for common product terms and statuses.",
+      "shortAnswer": "Use this glossary when a screen uses a product term such as workspace, receivable, fulfilment, verified credential or handoff.",
+      "beforeYouStart": [],
+      "steps": [],
+      "notes": [
+        "Business workspace — the isolated economic/accounting context belonging to an authorized Merchant or Supplier business.",
+        "Fulfilment — how an order/job is carried out, separate from whether money has been paid.",
+        "Receivable — money still owed to the business after the commercial amount has been established.",
+        "Outstanding balance — order/PO total minus the amount recorded as paid.",
+        "Published storefront — a Merchant storefront visible to Customers; Draft/Paused are not normal public discovery states.",
+        "Trusted Supplier relationship — a Merchant–Supplier connection explicitly accepted before catalog/PO exchange.",
+        "Delivery quote — a time-limited snapshot of delivery pricing inputs and fee.",
+        "Eligibility — the platform approval state required before a Courier can become available.",
+        "Credential status — Submitted/Verified/Rejected/Expired state for qualification evidence.",
+        "Verified review — a Local Services review tied to a completed, Customer-confirmed in-app job.",
+        "Incident — a private problem report with protected evidence/timeline, separate from public reputation."
+      ],
+      "related": [
+        "product-overview",
+        "order-statuses-explained",
+        "supplier-po-statuses",
+        "service-job-statuses"
       ]
     }
   ]
