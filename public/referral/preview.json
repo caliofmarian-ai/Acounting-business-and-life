@@ -1,0 +1,7 @@
+{
+  "service": "accounting-growth-referral-preview",
+  "branch": "feat/growth-referral-engine-v1",
+  "purpose": "branch-source verification for isolated referral preview",
+  "expectedPath": "/referral/preview.json",
+  "containsProductionSecrets": false
+}
