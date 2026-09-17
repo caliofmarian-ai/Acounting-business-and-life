@@ -82,3 +82,11 @@ Canonical file:
 `growth/direct-invite-policy.json`
 
 All production gates currently default false. Runtime sending must remain disabled until each required dependency is deliberately configured.
+
+## Figma reference
+
+Direct invite mobile screen:
+- file: `Business & Life — Growth & Referral System`;
+- node: `7:2` — `Promotion Center — Direct Invite`.
+
+The design intentionally shows provider-gated server sending as disabled until the production gates above are satisfied.
