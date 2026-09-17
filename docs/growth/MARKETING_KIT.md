@@ -29,12 +29,17 @@ Current masters:
 | Story / Status | `3:37` | 1080×1920 | READY | READY |
 | A5 referral flyer | `4:2` | 559×794 | READY | READY |
 | Referral / business card | `4:16` | 1050×600 | READY | READY |
+| Counter card | `5:2` | 1200×800 | READY | READY |
+| Window sticker | `5:13` | 1080×1080 | READY | READY |
+| LinkedIn landscape | `5:22` | 1200×627 | READY | READY |
+| Email / web banner | `5:34` | 1200×400 | READY | READY |
+| QR phone card | `6:2` | 1080×1920 | READY | READY |
 
 The same Figma file also contains the initial **Promotion Center — Mobile** screen at node `1:2`.
 
 ## Canva masters
 
-The five Figma masters above have been converted with Canva Magic Layers into editable Canva designs.
+All ten Figma masters above have been converted with Canva Magic Layers into editable Canva designs.
 
 Canonical Canva titles:
 
@@ -43,6 +48,11 @@ Canonical Canva titles:
 - `Business & Life — Story Referral V1`
 - `Business & Life — A5 Referral Flyer V1`
 - `Business & Life — Referral Card V1`
+- `Business & Life — Counter Card Referral V1`
+- `Business & Life — Window Sticker Referral V1`
+- `Business & Life — LinkedIn Referral V1`
+- `Business & Life — Email Web Referral Banner V1`
+- `Business & Life — QR Phone Card V1`
 
 The public GitHub repository deliberately does **not** store private Canva edit URLs. Future agents should locate these designs through the connected Canva account by exact canonical title.
 
@@ -71,32 +81,20 @@ Required properties:
 
 All current masters use a clearly named `QR_SLOT`. A production QR renderer will replace this slot after runtime integration is rebased from the stable production gateway.
 
-## Master families
+## Channel coverage
 
-### A4 poster
-Use for shops, community noticeboards, business counters, local events and printed referral promotion.
-
-Primary message: **Run your business. Understand your money.**
-
-### Social square
-Use for Instagram and Facebook posts.
-
-Primary message: **Know where your money goes.**
-
-### Story / Status
-Use for Instagram Story, Facebook Story and WhatsApp Status.
-
-Primary message: **Your business. Your money. More clarity.**
-
-### A5 flyer
-Use for local handouts, business counters, community distribution and smaller noticeboards.
-
-Primary message: **Small business? See the money clearly.**
-
-### Referral / business card
-Use for direct person-to-person sharing, a wallet-sized print piece or a compact digital card shown from a phone.
-
-Primary message: **Join me on Business & Life.**
+The V1 master family now covers:
+- A4 print poster;
+- A5 flyer;
+- business/referral card;
+- counter display;
+- window sticker;
+- Instagram/Facebook square;
+- Instagram/Facebook Story;
+- WhatsApp Status;
+- LinkedIn landscape;
+- email/web banner;
+- full-screen phone QR sharing.
 
 ## Claim safety
 
@@ -113,21 +111,22 @@ Referral acquisition and operational-profile approval remain separate systems.
 ## Canva production rule
 
 Canva may be used for:
-- editing the five master designs;
+- editing the master designs;
 - resizing/deriving channel formats;
 - future brand-template/autofill production;
 - localized copies.
 
 Bulk personalized asset generation must not run until an autofill-capable Canva template is verified for the connected plan.
 
-## Future families
+## Issue #48 V1 status
 
-Still to add under Issue #48:
-- counter card;
-- window sticker;
-- email/web banner;
-- LinkedIn landscape;
-- QR-only phone card.
+The planned V1 visual master family is complete in Figma and mirrored as editable Canva designs.
+
+Remaining work under this issue is implementation-oriented rather than missing master artwork:
+1. replace `QR_SLOT` with production-generated QR assets;
+2. validate print QR scannability at physical output size;
+3. connect runtime Marketing Kit generation to the canonical field contract;
+4. add locale variants when localization is ready.
 
 ## Coordination
 
