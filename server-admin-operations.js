@@ -224,6 +224,20 @@ app.get('/api/admin/me',async(req,res,next)=>{try{const me=await identity(req);c
 app.get('/api/admin/overview',async(req,res,next)=>{try{const{me}=await adminFor(req,'admin.console');res.json(await adminOverview(me.account.id))}catch(e){next(e)}});
 app.get('/api/governance/admin/overview',async(req,res,next)=>{try{const{me}=await adminFor(req,'admin.console');res.json(await adminOverview(me.account.id))}catch(e){next(e)}});
 
+app.get('/api/admin/assignments',async(req,res,next)=>{try{
+  const me=await identity(req),mine=await getAdminAssignments(pool,me.account.id);
+  const superAdmin=mine.some(a=>a.admin_role==='super_admin');
+  const canAssign=(await hasAdminPermission(pool,me.account.id,'admin.assign_limited')).allowed||(await hasAdminPermission(pool,me.account.id,'admin.delegate')).allowed;
+  if(!canAssign&&!superAdmin)throw Object.assign(new Error('Admin assignment visibility requires delegation permission'),{status:403});
+  let rows;
+  if(superAdmin){
+    ({rows}=await pool.query(`SELECT a.*,ac.display_name,ac.email,t.name territory_name,COALESCE((SELECT jsonb_agg(g.permission_code ORDER BY g.permission_code) FROM admin_permission_grants g WHERE g.assignment_id=a.id AND g.status='active'),'[]'::jsonb) permissions FROM platform_admin_assignments a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id WHERE a.country_code='PH' ORDER BY CASE a.admin_role WHEN 'super_admin' THEN 0 WHEN 'country_admin' THEN 1 ELSE 2 END,a.created_at DESC`));
+  }else{
+    const ids=await visibleTerritoryIds(pool,me.account.id,'admin.delegate');
+    ({rows}=await pool.query(`SELECT a.*,ac.display_name,ac.email,t.name territory_name,COALESCE((SELECT jsonb_agg(g.permission_code ORDER BY g.permission_code) FROM admin_permission_grants g WHERE g.assignment_id=a.id AND g.status='active'),'[]'::jsonb) permissions FROM platform_admin_assignments a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id WHERE a.admin_role='territory_admin' AND a.territory_id=ANY($1::bigint[]) ORDER BY a.created_at DESC`,[ids.length?ids:[-1]]));
+  }
+  res.json(rows);
+}catch(e){next(e)}});
 app.post('/api/admin/assignments',body,async(req,res,next)=>{try{
   const me=await identity(req),targetEmail=clean(req.body?.target_email,180).toLowerCase(),role=clean(req.body?.admin_role,40),territoryId=req.body?.territory_id?Number(req.body.territory_id):null,requested=[...new Set((Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x)))];
   if(!['country_admin','territory_admin'].includes(role)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail))return res.status(400).json({error:'Valid target email and delegated Admin role required'});
