@@ -1,0 +1,95 @@
+{
+  "version": "1.0.0",
+  "locale": "en-PH",
+  "productArea": "local_services",
+  "publicLabel": "Local Services",
+  "providerLabel": "Service Provider",
+  "dualEntry": {
+    "customer": {
+      "intent": "find_local_tradesperson",
+      "headline": "Need help? Find a local person who can do the job.",
+      "body": "Browse local Service Providers by service, area, availability, experience, pricing information, portfolio and verified credentials where available.",
+      "cta": "Find a local tradesperson"
+    },
+    "provider": {
+      "intent": "promote_my_services",
+      "headline": "Have a useful skill? Let local people find you.",
+      "body": "Create a Service Provider profile, show what you can do, add experience or portfolio evidence and receive service requests for tasks you are eligible to offer.",
+      "cta": "Promote my services"
+    }
+  },
+  "experienceFirst": {
+    "headline": "You can start before you have a long work history.",
+    "body": "Not every local service requires a formal qualification. For unrestricted tasks, beginners and experience-first providers can build a profile with skills, work history, portfolio examples and availability.",
+    "transparency": "Your profile must clearly show whether credentials are verified, unverified, experience-only or not on file.",
+    "restriction": "Credential-gated or regulated categories remain unavailable until required evidence and approval are complete.",
+    "allowedPhrases": [
+      "Start building your work history",
+      "Show your skills and portfolio",
+      "Receive service requests for eligible tasks",
+      "Experience matters too",
+      "Not every service requires a formal qualification"
+    ],
+    "prohibitedPhrases": [
+      "Anyone can do any job",
+      "Guaranteed work",
+      "Guaranteed income",
+      "No qualifications ever required",
+      "Verified professional without verification"
+    ]
+  },
+  "customerJourney": [
+    "Browse Local Services",
+    "Choose a category or task",
+    "Review provider experience, credentials, portfolio, availability and price information",
+    "Send a service request",
+    "Receive or discuss a quote",
+    "Accept the quote",
+    "Schedule the work",
+    "Track job status",
+    "Confirm completion",
+    "Leave verified feedback when eligible"
+  ],
+  "providerJourney": [
+    "Create or apply for Service Provider profile",
+    "Choose services and tasks",
+    "Add public-safe experience summary",
+    "Add qualifications or credential evidence where relevant",
+    "Add portfolio/work examples",
+    "Set service area, availability and pricing model",
+    "Become publicly discoverable when eligible",
+    "Receive service requests",
+    "Review or quote the request",
+    "Complete accepted work",
+    "Build verified job history and reviews"
+  ],
+  "categoriesExamples": [
+    "general handyman",
+    "furniture assembly and repair",
+    "carpentry and joinery",
+    "painting and decorating",
+    "cleaning",
+    "gardening and landscaping",
+    "tailoring",
+    "computer and phone repair",
+    "appliance repair",
+    "welding and metalwork",
+    "plumbing",
+    "electrical",
+    "air-conditioning and refrigeration"
+  ],
+  "categoryRule": "Categories are data-driven. Some tasks may be unrestricted; others may require verified credentials or platform approval according to category and jurisdiction rules.",
+  "referral": {
+    "sourceProfileRole": "service_provider",
+    "utmCampaign": "community_local_services_v1",
+    "shortCustomerShare": "Need a local person for a job? Business & Life Local Services lets you browse Service Providers and request work. {REFERRAL_URL}",
+    "shortProviderShare": "Have a practical skill or trade? Business & Life lets eligible local Service Providers show skills, portfolio and availability and receive work requests. {REFERRAL_URL}",
+    "beginnerShare": "Starting out? For unrestricted tasks, you can build a Local Services profile around your skills, experience and portfolio — formal qualifications are not required for every service. {REFERRAL_URL}"
+  },
+  "claims": {
+    "guaranteedJobs": false,
+    "guaranteedIncome": false,
+    "automaticCredentialVerification": false,
+    "automaticRestrictedCategoryAccess": false
+  }
+}
