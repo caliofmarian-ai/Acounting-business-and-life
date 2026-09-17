@@ -112,7 +112,9 @@ async function initDb() {
       min_available_warning NUMERIC(12,2) NOT NULL DEFAULT 0,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    INSERT INTO budgets(id) VALUES(1) ON CONFLICT(id) DO NOTHING;
+    ALTER TABLE budgets ADD COLUMN IF NOT EXISTS business_id BIGINT NOT NULL DEFAULT 1;
+    CREATE UNIQUE INDEX IF NOT EXISTS budgets_business_id_unique ON budgets(business_id,id);
+    INSERT INTO budgets(id,business_id) VALUES(1,1) ON CONFLICT(business_id,id) DO NOTHING;
 
     CREATE TABLE IF NOT EXISTS audit_events (
       id BIGSERIAL PRIMARY KEY,
