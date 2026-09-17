@@ -4,11 +4,18 @@
   const rules = [
     { code:'ERR-AUTH-001', test:(p,m,s)=>p.startsWith('/api/auth/') && (s===401 || /password|sign.?in|login|email/i.test(m)) },
     { code:'ERR-GOV-001', test:(p,m,s)=>p.startsWith('/api/governance/') && (s===401 || s===403 || /approval|authoriz|invitation|profile/i.test(m)) },
+    { code:'ERR-ACC-010', test:(p,m)=>/linked to another record|cannot be corrected separately/i.test(m) },
     { code:'ERR-ACC-009', test:(p,m,s)=>(p.startsWith('/api/accounting/') || p.startsWith('/api/summary') || p.startsWith('/api/transactions') || p.startsWith('/api/inventory')) && (s===403 || /workspace|business unavailable|profile required/i.test(m)) },
+    { code:'ERR-ORD-005', test:(p,m)=>p.startsWith('/api/orders/') && /exceeds the outstanding|leave the balance as credit|outstanding amount/i.test(m) },
     { code:'ERR-ORD-003', test:(p,m)=>p.startsWith('/api/orders/') && /presence|cash|check.?in|here/i.test(m) },
+    { code:'ERR-ORD-004', test:(p,m)=>p.startsWith('/api/orders/') && /current status|only a .* order|can no longer be cancelled|cannot start/i.test(m) },
+    { code:'ERR-MKT-001', test:(p,m,s)=>p.startsWith('/api/marketplace/') && (s===409 || /pickup|delivery|cash|online|closed|unavailable|stock/i.test(m)) },
     { code:'ERR-DEL-004', test:(p,m)=>p.startsWith('/api/delivery/') && /quote.*(missing|expired)|missing or expired|new quote/i.test(m) },
+    { code:'ERR-DEL-007', test:(p,m)=>p.startsWith('/api/delivery/') && /must be ready|must be paid|waiting for assignment/i.test(m) },
     { code:'ERR-DEL-006', test:(p,m,s)=>(p.startsWith('/api/courier/') || p.startsWith('/api/delivery/')) && (s===403 || /approval|eligib|available/i.test(m)) },
+    { code:'ERR-SUP-003', test:(p,m)=>p.startsWith('/api/procurement/') && /received quantity|can no longer be received|actual price|remaining confirmed/i.test(m) },
     { code:'ERR-SUP-002', test:(p,m,s)=>(p.startsWith('/api/procurement/') || p.startsWith('/api/supplier/')) && (s===403 || /relationship|required|supplier/i.test(m)) },
+    { code:'ERR-SVC-003', test:(p,m)=> (p.startsWith('/api/services/') || p.startsWith('/api/service-provider/')) && /cannot move job|cannot be quoted|not available for acceptance|completed job not available/i.test(m) },
     { code:'ERR-SVC-002', test:(p,m,s)=>(p.startsWith('/api/services/') || p.startsWith('/api/service-provider/')) && (s===403 || /approval|credential|service provider/i.test(m)) },
     { code:'ERR-INC-001', test:(p,m,s)=>p.startsWith('/api/incidents') && (s===400 || s===413 || /image|pdf|evidence|file|upload|limit/i.test(m)) }
   ];
