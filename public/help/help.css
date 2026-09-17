@@ -169,3 +169,12 @@ button,input{font:inherit}
   .flow-card{padding:10px}
   .flow-card img{min-width:690px}
 }
+
+.article-visual{margin:8px 0 34px;background:#fff;border:1px solid var(--line);border-radius:20px;padding:14px;box-shadow:0 8px 24px rgba(14,23,32,.035)}
+.article-visual img{display:block;width:100%;height:auto;border-radius:14px}
+.article-visual figcaption{font-size:12px;color:var(--muted);padding:10px 4px 2px}
+.content-section{padding:4px 0 10px}
+.content-section h2{margin-bottom:12px}
+.content-section p{color:#334155;font-size:15px;line-height:1.72;margin:0 0 14px}
+.content-bullets{padding-left:20px;margin:8px 0 18px;color:#334155}
+.content-bullets li{margin:8px 0;line-height:1.6}
