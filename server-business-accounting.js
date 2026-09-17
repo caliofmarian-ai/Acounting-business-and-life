@@ -262,6 +262,18 @@ async function commercialMetrics(ctx){
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,profile_governance:r.ok,accounting_tenancy:true,version:'0.9.0-multi-business-accounting'})}catch{res.status(503).json({ok:false,db:false,profile_governance:false,accounting_tenancy:false,version:'0.9.0-multi-business-accounting'})}});
 app.get('/business-accounting.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','business-accounting.css'),'utf8')));
 app.get('/business-accounting-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','business-accounting-ui.js'),'utf8')));
+
+const helpPage=(_req,res)=>res.type('html').send(readFileSync(join(__dirname,'public','help','index.html'),'utf8'));
+app.get('/help',helpPage);
+app.get('/help/',helpPage);
+app.get('/help/profile/:role',helpPage);
+app.get('/help/article/:slug',helpPage);
+app.get('/help/error/:code',helpPage);
+app.get('/help/help.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','help','help.css'),'utf8')));
+app.get('/help/help.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','help','help.js'),'utf8')));
+app.get('/help/content.json',(_req,res)=>res.type('application/json').send(readFileSync(join(__dirname,'public','help','content.json'),'utf8')));
+app.get('/help/product-map.svg',(_req,res)=>res.type('image/svg+xml').send(readFileSync(join(__dirname,'public','help','product-map.svg'),'utf8')));
+
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/business-accounting.css" />\n</head>').replace('</body>','  <script type="module" src="/business-accounting-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
