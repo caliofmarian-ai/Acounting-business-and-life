@@ -1,0 +1,32 @@
+{
+  "version": "1.0.0",
+  "status": "disabled_pending_owner_policy",
+  "defaultPolicy": {
+    "enabled": false,
+    "qualificationRule": null,
+    "referrerReward": null,
+    "referredUserReward": null,
+    "rewardCurrency": null,
+    "rewardKind": null,
+    "maxRewardsPerAccount": null,
+    "effectiveFrom": null,
+    "effectiveUntil": null
+  },
+  "invariants": [
+    "signup alone does not imply a monetary reward",
+    "qualified is distinct from signed_up",
+    "reward policy changes are versioned and never rewrite historical grants",
+    "self-referral is rejected",
+    "profile switching cannot create additional referral identities",
+    "marketing referral cannot grant operational profile authority"
+  ],
+  "candidateRewardKinds": [
+    "subscription_credit",
+    "feature_credit",
+    "platform_fee_credit",
+    "promotion_boost",
+    "non_cash_badge_or_status",
+    "cash_or_currency_value_only_after_explicit_owner_approval"
+  ],
+  "launchRule": "Do not activate any reward until the Project Owner explicitly selects qualification criteria, benefit type/value, caps and territory applicability."
+}
