@@ -12,7 +12,7 @@ GitHub remains the canonical source for:
 - channel dimensions;
 - governance boundaries.
 
-Figma is the editable visual source for composition. Canva is a downstream distribution/template tool and must not become a second source of product logic.
+Figma and Canva are editable visual-production tools. They must not become independent sources of product logic.
 
 ## Current Figma source
 
@@ -20,21 +20,35 @@ Figma is the editable visual source for composition. Canva is a downstream distr
 
 https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT
 
-Current master nodes:
+Current masters:
 
-| Template | Figma node | Size | Status |
-| --- | --- | ---: | --- |
-| A4 referral poster | `3:10` | 794×1123 | READY |
-| Social square | `3:25` | 1080×1080 | READY |
-| Story / Status | `3:37` | 1080×1920 | READY |
-| A5 referral flyer | `4:2` | 559×794 | READY |
-| Referral / business card | `4:16` | 1050×600 | READY |
+| Template | Figma node | Size | Figma | Canva |
+| --- | --- | ---: | --- | --- |
+| A4 referral poster | `3:10` | 794×1123 | READY | READY |
+| Social square | `3:25` | 1080×1080 | READY | READY |
+| Story / Status | `3:37` | 1080×1920 | READY | READY |
+| A5 referral flyer | `4:2` | 559×794 | READY | READY |
+| Referral / business card | `4:16` | 1050×600 | READY | READY |
 
-The same file also contains the initial **Promotion Center — Mobile** screen at node `1:2`.
+The same Figma file also contains the initial **Promotion Center — Mobile** screen at node `1:2`.
+
+## Canva masters
+
+The five Figma masters above have been converted with Canva Magic Layers into editable Canva designs.
+
+Canonical Canva titles:
+
+- `Business & Life — A4 Referral Poster V1`
+- `Business & Life — Social Square Referral V1`
+- `Business & Life — Story Referral V1`
+- `Business & Life — A5 Referral Flyer V1`
+- `Business & Life — Referral Card V1`
+
+The public GitHub repository deliberately does **not** store private Canva edit URLs. Future agents should locate these designs through the connected Canva account by exact canonical title.
 
 ## Dynamic data contract
 
-Every personalized asset may use only these canonical fields:
+Every personalized asset may use only:
 
 - `REFERRER_NAME`
 - `REFERRAL_CODE`
@@ -55,39 +69,34 @@ Required properties:
 - QR remains visually isolated from decorative patterns;
 - human-readable referral code remains visible as fallback.
 
-All current Figma masters use a clearly named `QR_SLOT`. A production QR renderer will replace this slot after the runtime integration workstream is rebased from the stable production gateway.
+All current masters use a clearly named `QR_SLOT`. A production QR renderer will replace this slot after runtime integration is rebased from the stable production gateway.
 
 ## Master families
 
 ### A4 poster
 Use for shops, community noticeboards, business counters, local events and printed referral promotion.
 
-Primary message:
-**Run your business. Understand your money.**
+Primary message: **Run your business. Understand your money.**
 
 ### Social square
 Use for Instagram and Facebook posts.
 
-Primary message:
-**Know where your money goes.**
+Primary message: **Know where your money goes.**
 
 ### Story / Status
 Use for Instagram Story, Facebook Story and WhatsApp Status.
 
-Primary message:
-**Your business. Your money. More clarity.**
+Primary message: **Your business. Your money. More clarity.**
 
 ### A5 flyer
 Use for local handouts, business counters, community distribution and smaller noticeboards.
 
-Primary message:
-**Small business? See the money clearly.**
+Primary message: **Small business? See the money clearly.**
 
 ### Referral / business card
 Use for direct person-to-person sharing, a wallet-sized print piece or a compact digital card shown from a phone.
 
-Primary message:
-**Join me on Business & Life.**
+Primary message: **Join me on Business & Life.**
 
 ## Claim safety
 
@@ -101,19 +110,15 @@ Never claim:
 
 Referral acquisition and operational-profile approval remain separate systems.
 
-## Canva handoff
+## Canva production rule
 
-Canva is connected and a Brand Kit exists.
+Canva may be used for:
+- editing the five master designs;
+- resizing/deriving channel formats;
+- future brand-template/autofill production;
+- localized copies.
 
-The intended Canva workflow is:
-1. lock this GitHub manifest/copy contract;
-2. use the Figma masters as the visual reference;
-3. build reusable Canva masters;
-4. resize/derive Facebook, Instagram, Story, LinkedIn and flyer variants;
-5. populate dynamic fields only from the canonical list above;
-6. retain template IDs in asset naming.
-
-No bulk personalized asset generation should run until a Canva autofill-capable template has been verified for the connected plan.
+Bulk personalized asset generation must not run until an autofill-capable Canva template is verified for the connected plan.
 
 ## Future families
 
