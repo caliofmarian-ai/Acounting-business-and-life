@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "source": {
     "figmaFileName": "Business & Life — Growth & Referral System",
     "figmaFileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
@@ -57,6 +57,42 @@
         "instagram_story",
         "facebook_story",
         "whatsapp_status"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "status": "design_master_ready"
+    },
+    {
+      "id": "A5_REFERRAL_FLYER_V1",
+      "purpose": "Compact printed flyer for local distribution and counter handouts",
+      "width": 559,
+      "height": 794,
+      "figmaNodeId": "4:2",
+      "channels": [
+        "print_a5",
+        "pdf",
+        "handout"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "status": "design_master_ready"
+    },
+    {
+      "id": "REFERRAL_CARD_V1",
+      "purpose": "Compact print/digital referral card for direct person-to-person sharing",
+      "width": 1050,
+      "height": 600,
+      "figmaNodeId": "4:16",
+      "channels": [
+        "business_card",
+        "digital_card",
+        "in_person"
       ],
       "requiredFields": [
         "REFERRER_NAME",
