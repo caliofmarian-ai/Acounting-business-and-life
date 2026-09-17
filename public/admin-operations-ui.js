@@ -2,7 +2,7 @@ const token=()=>localStorage.getItem('abl_token')||'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token())headers.Authorization=`Bearer ${token()}`;const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}
 const fileDataUrl=file=>new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(new Error('Could not read '+file.name));r.onload=()=>resolve(String(r.result));r.readAsDataURL(file)});
-let pendingAudio=null,voiceRecorder=null,voiceStream=null,voiceRecognition=null,voiceTimer=null,liveTranscript='',adminState=null;
+let pendingAudio=null,voiceRecorder=null,voiceStream=null,voiceRecognition=null,voiceTimer=null,liveTranscript='',adminState=null,adminAccess=null;
 
 function toast(msg){let n=document.getElementById('opsToast');if(!n){n=document.createElement('div');n.id='opsToast';n.className='opsToast';document.body.appendChild(n)}n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),3000)}
 
@@ -116,17 +116,32 @@ async function downloadAttachment(ticketId,id){try{const a=await api(`/api/suppo
 
 async function openAdmin(){
   if(!token())return;openOps('Admin Operations','<div class="opsLoading">Loading Admin dashboard…</div>');
-  try{adminState=await api('/api/admin/overview');const auditAllowed=(await api('/api/admin/me')).permissions.includes('audit.view');document.getElementById('opsBody').innerHTML=`
+  try{adminAccess=await api('/api/admin/me');adminState=await api('/api/admin/overview');const auditAllowed=adminAccess.permissions.includes('audit.view'),adminManage=adminAccess.permissions.includes('admin.assign_limited')||adminAccess.permissions.includes('admin.delegate')||adminAccess.assignments?.some(a=>a.admin_role==='super_admin');document.getElementById('opsBody').innerHTML=`
     <div class="adminHero"><small>Scoped administration</small><h3>Philippines operations</h3><p>Only data inside your current country/territory permissions is shown.</p></div>
     <div class="adminMetrics"><div><strong>${adminState.summary.orders}</strong><span>Orders</span></div><div><strong>${adminState.summary.deliveries}</strong><span>Deliveries</span></div><div><strong>${adminState.summary.support.open}</strong><span>Support open</span></div><div><strong>${adminState.summary.incidents.open}</strong><span>Incidents open</span></div></div>
-    <div class="opsTabs"><button class="active" data-admin-tab="applications">Applications</button><button data-admin-tab="support">Support</button><button data-admin-tab="incidents">Incidents</button>${auditAllowed?'<button data-admin-tab="audit">Audit</button>':''}</div>
+    <div class="opsTabs"><button class="active" data-admin-tab="applications">Applications</button><button data-admin-tab="support">Support</button><button data-admin-tab="incidents">Incidents</button>${adminManage?'<button data-admin-tab="admins">Admins</button>':''}${auditAllowed?'<button data-admin-tab="audit">Audit</button>':''}</div>
     <div id="adminPanel"></div>`;document.querySelectorAll('[data-admin-tab]').forEach(b=>b.onclick=()=>renderAdminTab(b.dataset.adminTab,b));renderAdminTab('applications',document.querySelector('[data-admin-tab="applications"]'));
   }catch(e){document.getElementById('opsBody').innerHTML=`<div class="opsEmpty">${esc(e.message)}</div>`}
 }
 async function renderAdminTab(tab,btn){document.querySelectorAll('[data-admin-tab]').forEach(x=>x.classList.toggle('active',x===btn));const p=document.getElementById('adminPanel');if(tab==='applications'){p.innerHTML=(adminState.applications||[]).slice(0,80).map(a=>`<div class="adminRow"><span><strong>${esc(a.display_name)} • ${esc(a.role)}</strong><small>${esc(a.territory_name)} • ${esc(a.status)}</small></span><b>#${a.id}</b></div>`).join('')||'<div class="opsEmpty">No applications.</div>';return}
   if(tab==='support'){const rows=await api('/api/admin/support');p.innerHTML=rows.map(t=>`<div class="adminRow"><span><strong>#${t.id} • ${esc(t.subject)}</strong><small>${esc(t.requested_destination)} • ${esc(t.priority)} • ${esc(t.status)} • ${t.attachment_count||0} files</small></span></div>`).join('')||'<div class="opsEmpty">Support queue is empty.</div>';return}
   if(tab==='incidents'){const rows=await api('/api/admin/incidents');p.innerHTML=rows.map(t=>`<div class="adminRow"><span><strong>#${t.id} • ${esc(t.category)}</strong><small>${esc(t.status)} • ${esc(t.reporter_name)}</small></span></div>`).join('')||'<div class="opsEmpty">Incident queue is empty.</div>';return}
+  if(tab==='admins'){const rows=await api('/api/admin/assignments');const territories=(adminState.territories||[]).map(t=>`<option value="${t.id}">${esc(t.name)} • ${esc(t.territory_type)}</option>`).join('');const delegated=(adminAccess.permissions||[]).filter(x=>!['admin.console'].includes(x));p.innerHTML=`
+    <form id="adminAssignForm" class="opsForm adminAssignForm">
+      <h4>Delegate administration</h4>
+      <label>Existing account email<input id="adminTargetEmail" type="email" required placeholder="person@example.com"></label>
+      <label>Role<select id="adminTargetRole"><option value="territory_admin">Territory Admin</option><option value="country_admin">Country Admin (Super Admin only)</option></select></label>
+      <label>Territory<select id="adminTargetTerritory"><option value="">Choose territory</option>${territories}</select></label>
+      <div class="permissionGrid">${delegated.map(x=>`<label><input type="checkbox" name="adminPermission" value="${esc(x)}"> ${esc(x)}</label>`).join('')}</div>
+      <label>Reason<input id="adminAssignReason" maxlength="500" placeholder="Why this authority is being delegated"></label>
+      <button class="opsPrimary" type="submit">Create / update assignment</button>
+    </form>
+    <h4>Admin assignments</h4>
+    <div class="opsList">${rows.map(a=>`<div class="adminRow"><span><strong>${esc(a.display_name)} • ${esc(a.admin_role)}</strong><small>${esc(a.territory_name||a.country_code)} • ${esc(a.status)}</small><small>${esc((a.permissions||[]).join(', ')||'Protected Super Admin authority')}</small></span><b>#${a.id}</b></div>`).join('')||'<div class="opsEmpty">No delegated Admins.</div>'}</div>`;document.getElementById('adminAssignForm').onsubmit=createAdminAssignment;return}
   if(tab==='audit'){const rows=await api('/api/admin/audit');p.innerHTML=rows.map(x=>`<div class="adminRow"><span><strong>${esc(x.event_code)}</strong><small>${esc(x.actor_name||'System')} • ${new Date(x.created_at).toLocaleString()}</small></span></div>`).join('')||'<div class="opsEmpty">No Admin audit events.</div>'}
+}
+async function createAdminAssignment(e){
+  e.preventDefault();const role=document.getElementById('adminTargetRole').value,territory=document.getElementById('adminTargetTerritory').value,permissions=[...document.querySelectorAll('input[name="adminPermission"]:checked')].map(x=>x.value);try{await api('/api/admin/assignments',{method:'POST',body:JSON.stringify({target_email:document.getElementById('adminTargetEmail').value,admin_role:role,territory_id:role==='territory_admin'?Number(territory)||null:null,permissions,reason:document.getElementById('adminAssignReason').value})});toast('Admin assignment saved.');const b=document.querySelector('[data-admin-tab="admins"]');await renderAdminTab('admins',b)}catch(err){toast(err.message)}
 }
 
 function boot(){ensureUi();const shell=document.getElementById('shell');if(shell)new MutationObserver(()=>{addButtons()}).observe(shell,{attributes:true,subtree:true,childList:true});setInterval(()=>addButtons(),2500)}
