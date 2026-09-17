@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="theme-color" content="#111827"/>
+<title>Business & Life — Profiles</title>
+<link rel="stylesheet" href="/identity.css"/>
+</head>
+<body>
+<main class="wrap">
+  <section id="login" class="authCard">
+    <div class="eyebrow">Business & Life</div>
+    <h1>One account. Multiple roles.</h1>
+    <p>Use the existing preview PIN to inspect the new account and profile foundation.</p>
+    <form id="loginForm" class="stack">
+      <label>Access PIN<input id="pin" inputmode="numeric" autocomplete="current-password" required/></label>
+      <button class="primary">Open profiles</button>
+      <div id="loginError" class="error"></div>
+    </form>
+  </section>
+
+  <section id="app" class="hidden">
+    <header class="topbar">
+      <div><span class="eyebrow">Business & Life</span><h1>Account & Profiles</h1></div>
+      <a class="ghostLink" href="/">Accounting app</a>
+    </header>
+
+    <div class="notice">V0.3.5 foundation preview — Merchant, Customer, Supplier and Courier are real roles under one account.</div>
+
+    <section class="card stack">
+      <div class="sectionHead"><div><h2>Identity</h2><p>Shared once across all your profiles.</p></div><span id="saveStatus"></span></div>
+      <form id="identityForm" class="stack">
+        <label>Name<input id="displayName" required/></label>
+        <div class="grid2"><label>Phone<input id="phone" inputmode="tel"/></label><label>Email<input id="email" type="email"/></label></div>
+        <label>Address<textarea id="address" rows="2"></textarea></label>
+        <button class="secondary">Save identity</button>
+      </form>
+    </section>
+
+    <section class="card stack">
+      <div class="sectionHead"><div><h2>Profiles</h2><p>Enable roles once, then switch context without another account.</p></div><span id="activeBadge" class="badge"></span></div>
+      <div id="profiles" class="profileGrid"></div>
+    </section>
+
+    <section id="contextCard" class="card stack hidden">
+      <div class="sectionHead"><div><h2 id="contextTitle">Profile</h2><p id="contextText"></p></div></div>
+      <div id="capabilities" class="chips"></div>
+    </section>
+
+    <section id="courierCard" class="card stack hidden">
+      <div><h2>Courier profile</h2><p>Operational settings are stored separately while the human identity stays the same.</p></div>
+      <form id="courierForm" class="stack">
+        <label>Courier display name<input id="courierName"/></label>
+        <label>Vehicle type<input id="vehicleType" placeholder="motorbike, bicycle, car, van"/></label>
+        <label class="check"><input id="courierAvailable" type="checkbox"/> Available for delivery assignments</label>
+        <div class="grid3"><label>Max kg<input id="maxWeight" type="number" min="0" step="0.1"/></label><label>Max volume L<input id="maxVolume" type="number" min="0" step="0.1"/></label><label>Radius km<input id="serviceRadius" type="number" min="0" step="0.1"/></label></div>
+        <button class="secondary">Save courier settings</button>
+        <div id="courierStatus"></div>
+      </form>
+    </section>
+  </section>
+</main>
+<script type="module" src="/identity.js"></script>
+</body>
+</html>
