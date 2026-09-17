@@ -1,16 +1,17 @@
 {
   "name": "accounting-business-and-life",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "start": "node server-orders.js",
+    "start": "node server-marketplace.js",
+    "start:orders": "node server-orders.js",
     "start:auth": "node server-auth.js",
     "start:accounting": "node server-v03.js",
     "start:unified": "node server-unified.js",
     "start:identity": "node identity-server.js",
-    "check": "node --check server-orders.js && node --check server-auth.js && node --check server-unified.js && node --check server-v03.js && node --check public/v03.js && node --check public/shell.js && node --check public/auth-ui.js && node --check public/orders-ui.js && node --check public/tracker.js && node --check identity-server.js && node --check identity-public/identity.js",
+    "check": "node --check server-marketplace.js && node --check server-orders.js && node --check server-auth.js && node --check server-unified.js && node --check server-v03.js && node --check public/v03.js && node --check public/shell.js && node --check public/auth-ui.js && node --check public/orders-ui.js && node --check public/tracker.js && node --check public/marketplace-ui.js && node --check identity-server.js && node --check identity-public/identity.js",
     "test": "npm run check"
   },
   "engines": {"node": ">=20"},
