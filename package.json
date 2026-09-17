@@ -1,11 +1,12 @@
 {
   "name": "accounting-business-and-life",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "private": true,
   "type": "module",
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "start": "node server-incidents.js",
+    "start": "node server-auth-hardening.js",
+    "start:incidents": "node server-incidents.js",
     "start:finance": "node server-delivery-finance.js",
     "start:delivery": "node server-delivery.js",
     "start:suppliers": "node server-suppliers.js",
@@ -16,7 +17,7 @@
     "start:accounting": "node server-v03.js",
     "start:unified": "node server-unified.js",
     "start:identity": "node identity-server.js",
-    "check": "node --check server-incidents.js && node --check server-delivery-finance.js && node --check server-delivery.js && node --check server-suppliers.js && node --check server-services.js && node --check server-marketplace.js && node --check server-orders.js && node --check server-auth.js && node --check server-unified.js && node --check server-v03.js && node --check public/v03.js && node --check public/shell.js && node --check public/auth-ui.js && node --check public/orders-ui.js && node --check public/tracker.js && node --check public/marketplace-ui.js && node --check public/services-ui.js && node --check public/suppliers-ui.js && node --check public/delivery-ui.js && node --check public/incidents-ui.js && node --check identity-server.js && node --check identity-public/identity.js",
+    "check": "node --check server-auth-hardening.js && node --check server-incidents.js && node --check server-delivery-finance.js && node --check server-delivery.js && node --check server-suppliers.js && node --check server-services.js && node --check server-marketplace.js && node --check server-orders.js && node --check server-auth.js && node --check server-unified.js && node --check server-v03.js && node --check public/v03.js && node --check public/shell.js && node --check public/auth-ui.js && node --check public/auth-hardening-ui.js && node --check public/orders-ui.js && node --check public/tracker.js && node --check public/marketplace-ui.js && node --check public/services-ui.js && node --check public/suppliers-ui.js && node --check public/delivery-ui.js && node --check public/incidents-ui.js && node --check identity-server.js && node --check identity-public/identity.js",
     "test": "npm run check"
   },
   "engines": {"node": ">=20"},
