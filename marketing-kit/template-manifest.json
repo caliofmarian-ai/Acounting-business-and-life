@@ -1,0 +1,82 @@
+{
+  "version": "1.0.0",
+  "source": {
+    "figmaFileName": "Business & Life — Growth & Referral System",
+    "figmaFileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
+    "note": "GitHub owns the field/copy/template contract. Figma owns editable visual composition."
+  },
+  "dynamicFields": [
+    "REFERRER_NAME",
+    "REFERRAL_CODE",
+    "REFERRAL_URL",
+    "QR_ASSET"
+  ],
+  "templates": [
+    {
+      "id": "A4_REFERRAL_POSTER_V1",
+      "purpose": "Physical poster for shops, counters, noticeboards and community spaces",
+      "width": 794,
+      "height": 1123,
+      "figmaNodeId": "3:10",
+      "channels": [
+        "print_a4",
+        "pdf",
+        "in_person"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "status": "design_master_ready"
+    },
+    {
+      "id": "SOCIAL_SQUARE_REFERRAL_V1",
+      "purpose": "Instagram/Facebook square referral creative",
+      "width": 1080,
+      "height": 1080,
+      "figmaNodeId": "3:25",
+      "channels": [
+        "instagram_post",
+        "facebook_post"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "status": "design_master_ready"
+    },
+    {
+      "id": "STORY_REFERRAL_V1",
+      "purpose": "Instagram/Facebook Story and WhatsApp Status referral creative",
+      "width": 1080,
+      "height": 1920,
+      "figmaNodeId": "3:37",
+      "channels": [
+        "instagram_story",
+        "facebook_story",
+        "whatsapp_status"
+      ],
+      "requiredFields": [
+        "REFERRER_NAME",
+        "REFERRAL_CODE",
+        "QR_ASSET"
+      ],
+      "status": "design_master_ready"
+    }
+  ],
+  "qrRules": {
+    "payload": "Canonical referral URL only",
+    "minimumPrintSizeMm": 25,
+    "quietZoneModules": 4,
+    "contrast": "Dark modules on light background",
+    "noEmbeddedPii": true
+  },
+  "governance": {
+    "referralGrantsOperationalProfiles": false,
+    "referralGrantsAdminPermissions": false,
+    "publicClaimsMustMatchCurrentProduct": true,
+    "autoGroupMessaging": false
+  }
+}
