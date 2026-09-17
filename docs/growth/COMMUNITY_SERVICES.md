@@ -136,3 +136,21 @@ Report to Project Owner:
 7. Anything still disabled, preview-only or approval-gated.
 
 Never report an app upgrade as live until the deployed commit is healthy.
+
+## Visual implementation
+
+Figma source:
+https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT
+
+Current Local Services Growth nodes:
+- `8:2` — `Local Services — Dual Entry Mobile`;
+- `8:22` — provider recruitment social square;
+- `8:33` — beginner / experience-first Story;
+- `8:62` — community A5 flyer.
+
+Editable Canva masters were created for the three marketing assets using these canonical titles:
+- `Business & Life — Local Services Provider Square V1`;
+- `Business & Life — Local Services Beginner Story V1`;
+- `Business & Life — Local Services Community A5 V1`.
+
+Private Canva edit URLs are not committed to the public repository. Future agents should locate the designs through the connected Canva account by exact title.
