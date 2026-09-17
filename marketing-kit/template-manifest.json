@@ -1,9 +1,9 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "source": {
     "figmaFileName": "Business & Life — Growth & Referral System",
     "figmaFileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
-    "note": "GitHub owns the field/copy/template contract. Figma owns editable visual composition."
+    "note": "GitHub owns the field/copy/template contract. Figma and Canva own editable visual compositions."
   },
   "dynamicFields": [
     "REFERRER_NAME",
@@ -28,7 +28,9 @@
         "REFERRAL_CODE",
         "QR_ASSET"
       ],
-      "status": "design_master_ready"
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — A4 Referral Poster V1"
     },
     {
       "id": "SOCIAL_SQUARE_REFERRAL_V1",
@@ -45,7 +47,9 @@
         "REFERRAL_CODE",
         "QR_ASSET"
       ],
-      "status": "design_master_ready"
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — Social Square Referral V1"
     },
     {
       "id": "STORY_REFERRAL_V1",
@@ -63,7 +67,9 @@
         "REFERRAL_CODE",
         "QR_ASSET"
       ],
-      "status": "design_master_ready"
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — Story Referral V1"
     },
     {
       "id": "A5_REFERRAL_FLYER_V1",
@@ -81,7 +87,9 @@
         "REFERRAL_CODE",
         "QR_ASSET"
       ],
-      "status": "design_master_ready"
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — A5 Referral Flyer V1"
     },
     {
       "id": "REFERRAL_CARD_V1",
@@ -99,7 +107,9 @@
         "REFERRAL_CODE",
         "QR_ASSET"
       ],
-      "status": "design_master_ready"
+      "figmaStatus": "design_master_ready",
+      "canvaStatus": "editable_master_ready",
+      "canvaTitle": "Business & Life — Referral Card V1"
     }
   ],
   "qrRules": {
@@ -113,6 +123,7 @@
     "referralGrantsOperationalProfiles": false,
     "referralGrantsAdminPermissions": false,
     "publicClaimsMustMatchCurrentProduct": true,
-    "autoGroupMessaging": false
+    "autoGroupMessaging": false,
+    "privateCanvaEditUrlsStoredInPublicRepo": false
   }
 }
