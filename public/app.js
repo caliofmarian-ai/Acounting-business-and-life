@@ -33,8 +33,9 @@ function emptyRow(text){const d=document.createElement('div');d.className='empty
 function txRow(tx, editable=false){
   const d=document.createElement('div'); d.className='listRow';
   const negative=['business_expense','personal_withdrawal'].includes(tx.type);
-  d.innerHTML=`<div class="rowMain"><strong>${esc(typeLabel(tx.type))}</strong><small>${esc(tx.category||'Other')} • ${esc(accountLabel(tx.account||tx.payment_method||'cash'))}${tx.note?` • ${esc(tx.note)}`:''}${tx.source==='remittance'?' • remittance':''}</small></div><div class="rowRight"><span class="${negative?'negative':'positive'}">${esc(signedAmount(tx.type,tx.amount))}</span>${editable?'<button class="miniBtn" type="button">Correct</button>':''}</div>`;
-  if(editable) d.querySelector('.miniBtn').onclick=()=>openEdit(tx);
+  const canCorrect=editable&&tx.source!=='remittance';
+  d.innerHTML=`<div class="rowMain"><strong>${esc(typeLabel(tx.type))}</strong><small>${esc(tx.category||'Other')} • ${esc(accountLabel(tx.account||tx.payment_method||'cash'))}${tx.note?` • ${esc(tx.note)}`:''}${tx.source==='remittance'?' • remittance':''}</small></div><div class="rowRight"><span class="${negative?'negative':'positive'}">${esc(signedAmount(tx.type,tx.amount))}</span>${canCorrect?'<button class="miniBtn" type="button">Correct</button>':''}</div>`;
+  if(canCorrect) d.querySelector('.miniBtn').onclick=()=>openEdit(tx);
   return d;
 }
 function remitRow(r){
