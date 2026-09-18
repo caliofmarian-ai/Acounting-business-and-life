@@ -291,11 +291,11 @@ export async function adminNotificationRecipients(pool,{territoryId=null,permiss
       ) SELECT 1 FROM tree WHERE id=$${params.length}
     )))`;
   }
-  if(destination==='support'){
+  if(permission){
     params.push(clean(permission,100));
     where+=` AND (a.admin_role='super_admin' OR EXISTS(
       SELECT 1 FROM admin_permission_grants g
-      WHERE g.assignment_id=a.id AND g.permission_code=$${params.length} AND g.status='active'
+      WHERE g.assignment_id=a.id AND g.permission_code=${params.length} AND g.status='active'
         AND g.effective_from<=NOW() AND (g.effective_until IS NULL OR g.effective_until>NOW())
     ))`;
   }
