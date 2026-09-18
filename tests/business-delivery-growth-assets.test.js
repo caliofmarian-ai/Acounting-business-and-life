@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{readFileSync}from'node:fs';
+const m=JSON.parse(readFileSync(new URL('../marketing-kit/business-delivery-growth-manifest.json',import.meta.url),'utf8'));
+test('business delivery visual kit has mobile reference and three editable Canva masters',()=>{assert.match(m.figma.productReference.nodeId,/^\d+:\d+$/);assert.equal(m.assets.length,3);for(const a of m.assets)assert.equal(a.canvaStatus,'editable_master_ready')});
+test('business delivery visual claims preserve current product boundary',()=>{assert.equal(m.claims.arbitraryExternalParcelBooking,false);assert.equal(m.claims.guaranteedCourierAvailability,false);assert.equal(m.claims.inventedPricing,false);assert.equal(m.claims.cashDeliveryEnabled,false);assert.equal(m.futureProductIssue,86)});
