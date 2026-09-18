@@ -65,6 +65,11 @@ async function switchSupportTab(tab,btn){document.querySelectorAll('.opsTabs but
 async function renderAttachmentPreview(){const files=[...(document.getElementById('supportFiles').files||[])];const out=[];for(const f of files)out.push(`<span>${esc(f.name)} <small>${Math.round(f.size/1024)} KB</small></span>`);if(pendingAudio)out.push(`<span>🎙 voice-recording.webm <small>${Math.round(pendingAudio.blob.size/1024)} KB</small></span>`);document.getElementById('attachmentPreview').innerHTML=out.join('')}
 async function startVoice(){
   if(voiceRecorder)return;
+  const statusNode=document.getElementById('voiceStatus');
+  if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){
+    if(statusNode)statusNode.textContent='Voice recording is not available in this browser. Type your message or attach an audio file instead.';
+    return;
+  }
   try{
     voiceStream=await navigator.mediaDevices.getUserMedia({audio:true});
     const chunks=[];voiceRecorder=new MediaRecorder(voiceStream);voiceRecorder.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data)};
@@ -75,7 +80,14 @@ async function startVoice(){
     else document.getElementById('voiceStatus').textContent='Live transcription is not supported by this browser. Audio will still be attached.';
     document.getElementById('voiceStart').disabled=true;document.getElementById('voiceStop').disabled=false;
     voiceTimer=setTimeout(()=>stopVoice(false),90000);
-  }catch(e){toast(e.message||'Microphone permission is required')}
+  }catch(e){
+    const overlayHint=/Android/i.test(navigator.userAgent||'')&&e?.name==='NotAllowedError';
+    const message=overlayHint
+      ? 'Android blocked microphone access. Close screen-recording/floating bubbles or other overlays, then try again. You can still type the message or attach audio.'
+      : (e?.name==='NotAllowedError'?'Microphone permission was not granted. You can still type the message or attach audio.':(e.message||'Microphone is unavailable.'));
+    if(statusNode)statusNode.textContent=message;
+    toast(message);
+  }
 }
 function stopVoice(cancel){
   clearTimeout(voiceTimer);voiceTimer=null;
@@ -128,12 +140,13 @@ async function openAdmin(){
 async function renderAdminTab(tab,btn){document.querySelectorAll('[data-admin-tab]').forEach(x=>x.classList.toggle('active',x===btn));const p=document.getElementById('adminPanel');if(tab==='applications'){p.innerHTML=(adminState.applications||[]).slice(0,80).map(a=>`<div class="adminRow"><span><strong>${esc(a.display_name)} • ${esc(a.role)}</strong><small>${esc(a.territory_name)} • ${esc(a.status)}</small></span><b>#${a.id}</b></div>`).join('')||'<div class="opsEmpty">No applications.</div>';return}
   if(tab==='support'){const rows=await api('/api/admin/support');p.innerHTML=rows.map(t=>`<div class="adminRow"><span><strong>#${t.id} • ${esc(t.subject)}</strong><small>${esc(t.requested_destination)} • ${esc(t.priority)} • ${esc(t.status)} • ${t.attachment_count||0} files</small></span></div>`).join('')||'<div class="opsEmpty">Support queue is empty.</div>';return}
   if(tab==='incidents'){const rows=await api('/api/admin/incidents');p.innerHTML=rows.map(t=>`<div class="adminRow"><span><strong>#${t.id} • ${esc(t.category)}</strong><small>${esc(t.status)} • ${esc(t.reporter_name)}</small></span></div>`).join('')||'<div class="opsEmpty">Incident queue is empty.</div>';return}
-  if(tab==='admins'){const rows=await api('/api/admin/assignments');const territories=(adminState.territories||[]).map(t=>`<option value="${t.id}">${esc(t.name)} • ${esc(t.territory_type)}</option>`).join('');const delegated=(adminAccess.permissions||[]).filter(x=>!['admin.console'].includes(x));p.innerHTML=`
+  if(tab==='admins'){const rows=await api('/api/admin/assignments');const territoryRows=adminState.territories||[];const territories=territoryRows.map(t=>`<option value="${t.id}">${esc(t.name)} • ${esc(t.territory_type)}</option>`).join('');const delegated=(adminAccess.permissions||[]).filter(x=>!['admin.console'].includes(x));const noTerritory=!territoryRows.length;p.innerHTML=`
     <form id="adminAssignForm" class="opsForm adminAssignForm">
       <h4>Delegate administration</h4>
+      ${noTerritory?'<div class="opsNotice"><strong>Create a territory first for Territory Admin.</strong><span>Use Account & Profiles → Governance & approvals → Territories. Country Admin delegation remains separate.</span></div>':''}
       <label>Existing account email<input id="adminTargetEmail" type="email" required placeholder="person@example.com"></label>
-      <label>Role<select id="adminTargetRole"><option value="territory_admin">Territory Admin</option><option value="country_admin">Country Admin (Super Admin only)</option></select></label>
-      <label>Territory<select id="adminTargetTerritory"><option value="">Choose territory</option>${territories}</select></label>
+      <label>Role<select id="adminTargetRole"><option value="territory_admin" ${noTerritory?'disabled':''}>Territory Admin${noTerritory?' — create territory first':''}</option><option value="country_admin" ${noTerritory?'selected':''}>Country Admin (Super Admin only)</option></select></label>
+      <label>Territory<select id="adminTargetTerritory" ${noTerritory?'disabled':''}><option value="">${noTerritory?'No territories created':'Choose territory'}</option>${territories}</select></label>
       <div class="permissionGrid">${delegated.map(x=>`<label><input type="checkbox" name="adminPermission" value="${esc(x)}"> ${esc(x)}</label>`).join('')}</div>
       <label>Reason<input id="adminAssignReason" maxlength="500" placeholder="Why this authority is being delegated"></label>
       <button class="opsPrimary" type="submit">Create / update assignment</button>
@@ -143,7 +156,7 @@ async function renderAdminTab(tab,btn){document.querySelectorAll('[data-admin-ta
   if(tab==='audit'){const rows=await api('/api/admin/audit');p.innerHTML=rows.map(x=>`<div class="adminRow"><span><strong>${esc(x.event_code)}</strong><small>${esc(x.actor_name||'System')} • ${new Date(x.created_at).toLocaleString()}</small></span></div>`).join('')||'<div class="opsEmpty">No Admin audit events.</div>'}
 }
 async function createAdminAssignment(e){
-  e.preventDefault();const role=document.getElementById('adminTargetRole').value,territory=document.getElementById('adminTargetTerritory').value,permissions=[...document.querySelectorAll('input[name="adminPermission"]:checked')].map(x=>x.value);try{await api('/api/admin/assignments',{method:'POST',body:JSON.stringify({target_email:document.getElementById('adminTargetEmail').value,admin_role:role,territory_id:role==='territory_admin'?Number(territory)||null:null,permissions,reason:document.getElementById('adminAssignReason').value})});toast('Admin assignment saved.');const b=document.querySelector('[data-admin-tab="admins"]');await renderAdminTab('admins',b)}catch(err){toast(err.message)}
+  e.preventDefault();const role=document.getElementById('adminTargetRole').value,territory=document.getElementById('adminTargetTerritory').value,permissions=[...document.querySelectorAll('input[name="adminPermission"]:checked')].map(x=>x.value);if(role==='territory_admin'&&!territory)return toast('Create and choose an operating territory before delegating Territory Admin.');try{await api('/api/admin/assignments',{method:'POST',body:JSON.stringify({target_email:document.getElementById('adminTargetEmail').value,admin_role:role,territory_id:role==='territory_admin'?Number(territory)||null:null,permissions,reason:document.getElementById('adminAssignReason').value})});toast('Admin assignment saved.');const b=document.querySelector('[data-admin-tab="admins"]');await renderAdminTab('admins',b)}catch(err){toast(err.message)}
 }
 
 window.BusinessLifeAdminOps=Object.freeze({openSupport,openAdmin,closeOps});
