@@ -14,7 +14,7 @@ function ensureWorkspace(){
   return true;
 }
 function hideBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('roleHub')?.classList.add('hidden')}
-function closeOrders(){clearInterval(orderPoll);location.reload()}
+function closeOrders(){clearInterval(orderPoll);orderPoll=null;orderWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function header(title,subtitle){return `<div class="ordersHeader"><button class="ordersBack" type="button" data-orders-back>‹</button><div class="ordersHeaderCopy"><h1>${h(title)}</h1><p>${h(subtitle)}</p></div><button class="ordersRefresh" type="button" data-orders-refresh>Refresh</button></div>`}
 function bindHeader(refresh){orderWorkspace.querySelector('[data-orders-back]').onclick=closeOrders;orderWorkspace.querySelector('[data-orders-refresh]').onclick=refresh}
 function statusBadge(status){return `<span class="orderStatus ${h(status)}">${h(nice(status))}</span>`}
