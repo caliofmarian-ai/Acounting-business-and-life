@@ -66,9 +66,11 @@ Do not launch experiments that alter actual reward economics without an explicit
 
 Issue #49 owns live PostHog mapping.
 
-Connection was resolved to the single accessible Business & Life/DROPi analytics project before any writes were made.
+Historical connector work on 2026-09-17 reported a PostHog configuration and created the artifacts listed below. That historical write location is **not currently reverified as the Business & Life project**.
 
-Configured on 2026-09-17:
+Current revalidation on 2026-09-18 shows the connected PostHog account exposes organization `DROPi` with only `Default project` (project id `273401`), and that project reports no ingested events. Do not treat the historical PostHog-side configuration as current Business & Life evidence until the exact project/region is resolved again.
+
+Historically reported configuration:
 
 - all eight canonical referral event definitions were created;
 - every event definition is intentionally `verified=false` until production instrumentation actually emits and validates it;
@@ -98,6 +100,7 @@ The browser sends these only to same-origin Business & Life analytics endpoints.
 
 External PostHog delivery remains **HOLD** and fail-closed until all of these are true:
 - the correct Business & Life PostHog ingest host and project token are configured;
+- the exact PostHog destination has been revalidated and `REFERRAL_ANALYTICS_PROJECT_VERIFIED=true`;
 - `REFERRAL_ANALYTICS_ENABLED=true`;
 - `REFERRAL_ANALYTICS_RETENTION_APPROVED=true`.
 
