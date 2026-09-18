@@ -4,17 +4,17 @@ GitHub `main` is the source of truth. This file is the compact fresh-agent hando
 
 ## Current executable target
 
-- merged baseline before this slice: **V0.10 Scoped Admin RBAC + Support Operations**;
-- current implementation slice: **V0.11 Unified Notifications**;
+- merged baseline before this slice: **V0.11 Unified Notifications**;
+- current implementation slice: **V0.12 Versioned Legal & Consent**;
 - country edition: `PH`;
 - currency: `PHP`;
 - default business timezone: `Asia/Manila`.
 
-The public runtime chain after V0.11 is:
+The public runtime chain after V0.12 is:
 
-`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications`
+`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications -> Legal & Consent`
 
-Public entry: `server-notifications.js`.
+Public entry: `server-legal.js`.
 
 ## Public operational profiles
 
@@ -80,9 +80,7 @@ Implemented in this slice:
 Protected invariant:
 - the bootstrap Project Owner remains Super Admin and cannot be removed through normal delegated-admin flows.
 
-## Open production boundaries
-
-## V0.11 — current boundary: Issue #33
+## V0.11 — completed boundary: Issue #33
 
 Implemented in this slice:
 - `notification_events`, `notification_recipients`, `notification_deliveries`;
@@ -95,8 +93,21 @@ Implemented in this slice:
 - event wiring for Orders, Delivery, Supplier procurement, Local Services, Support, Incidents and Profile Governance;
 - privacy filters that exclude tokens, passwords, live coordinates and evidence payloads from notification history.
 
-### Issue #35 — Legal acceptance
-Versioned Terms, Privacy and role-specific agreements/consents.
+## V0.12 — current boundary: Issue #35
+
+Implemented in this slice:
+- versioned legal-document registry with jurisdiction/locale/version/hash/status;
+- exact acceptance evidence per account + role + document version/hash;
+- contextual evidence for action, business, Admin assignment and territory;
+- minimized HMAC-hashed IP/device metadata rather than raw tracking fields;
+- role/action requirements for Customer, Merchant, Supplier, Courier, Service Provider and Admin;
+- dedicated location-sharing and marketing-consent purposes rather than one blanket consent;
+- re-consent when a reviewed version becomes active;
+- authoritative-language fallback and explicit translation-review status;
+- Legal & Privacy Center with acceptance history;
+- scoped `legal.view` / `legal.manage` Admin governance;
+- activation requires recorded legal review metadata; translated copy also requires translation review;
+- repository agreements are seeded as controlled drafts only and **do not block users until a legally reviewed version is explicitly activated**.
 
 ### Issue #34 — Payments
 Real Philippine payment-provider intents/webhooks, allocations, settlements and reconciliation.
@@ -108,12 +119,11 @@ Backups/restore proof, staging, monitoring, private object storage, rate limits 
 
 Issue #37 — `PH PILOT ROADMAP — Minimum launch gates and post-pilot expansion order` remains the launch-order authority.
 
-Continuation after V0.11:
-1. #35 versioned legal acceptance;
-2. #34 real payment provider + settlement/reconciliation;
-3. end-to-end economic-loop revalidation;
-4. #36 production-readiness gate;
-5. controlled Philippines pilot in one explicitly configured operating territory.
+Continuation after V0.12:
+1. #34 real payment provider + settlement/reconciliation;
+2. end-to-end economic-loop revalidation;
+3. #36 production-readiness gate;
+4. controlled Philippines pilot in one explicitly configured operating territory.
 
 ## Country / commerce separation
 
