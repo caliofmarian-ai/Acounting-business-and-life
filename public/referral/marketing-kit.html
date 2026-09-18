@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f172a">
 <title>Business & Life — Marketing Kit</title>
 <style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#edf4fa}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(#f8fbff,#edf4fa)}button,a,select{font:inherit}main{width:min(100%,720px);margin:auto;padding:16px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.brand{font-weight:900;letter-spacing:.12em;font-size:12px}.badge{font-size:11px;font-weight:900;color:#0369a1;background:#e0f2fe;border-radius:999px;padding:7px 10px}.card{background:#fff;border:1px solid #dbe5ef;border-radius:24px;padding:20px;box-shadow:0 18px 55px #0f172a14}h1{font-size:32px;letter-spacing:-.04em;margin:4px 0 8px}.lead{margin:0 0 18px;color:#64748b;line-height:1.55}.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field{display:grid;gap:6px}.field label{font-size:11px;font-weight:900;letter-spacing:.07em;color:#0369a1}.field select{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff}.preview{margin-top:16px;background:#e2e8f0;border:1px solid #cbd5e1;border-radius:18px;padding:12px;display:grid;place-items:center;min-height:300px;overflow:hidden}.preview img{max-width:100%;max-height:70vh;border-radius:10px;box-shadow:0 8px 28px #0f172a24;background:#fff}.actions{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:14px}.actions button,.actions a{min-height:48px;border-radius:12px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-weight:850;text-decoration:none;display:grid;place-items:center;cursor:pointer}.actions .primary{background:#0f172a;color:#fff;border-color:#0f172a}.status{min-height:20px;margin-top:10px;font-size:12px;color:#0369a1}.notice{margin-top:14px;border-radius:14px;background:#f8fafc;padding:13px;color:#475569;font-size:12px;line-height:1.5}.signin{margin-top:12px;border-radius:14px;background:#fff7ed;border:1px solid #fed7aa;padding:13px;color:#9a3412;font-size:13px}.hidden{display:none!important}@media(max-width:520px){main{padding:11px}.card{padding:16px}.controls,.actions{grid-template-columns:1fr}.preview{min-height:230px}}
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#edf4fa}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(#f8fbff,#edf4fa)}button,a,select{font:inherit}main{width:min(100%,720px);margin:auto;padding:16px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.brand{font-weight:900;letter-spacing:.12em;font-size:12px}.badge{font-size:11px;font-weight:900;color:#0369a1;background:#e0f2fe;border-radius:999px;padding:7px 10px}.card{background:#fff;border:1px solid #dbe5ef;border-radius:24px;padding:20px;box-shadow:0 18px 55px #0f172a14}h1{font-size:32px;letter-spacing:-.04em;margin:4px 0 8px}.lead{margin:0 0 18px;color:#64748b;line-height:1.55}.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field{display:grid;gap:6px}.field label{font-size:11px;font-weight:900;letter-spacing:.07em;color:#0369a1}.field select{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff}.preview{margin-top:16px;background:#e2e8f0;border:1px solid #cbd5e1;border-radius:18px;padding:12px;display:grid;place-items:center;min-height:300px;overflow:hidden}.previewCanvas{width:100%;display:grid;place-items:center}.preview svg{display:block;max-width:100%;max-height:70vh;width:auto;height:auto;border-radius:10px;box-shadow:0 8px 28px #0f172a24;background:#fff}.previewPlaceholder,.previewError{max-width:360px;padding:18px;border-radius:14px;background:#fff;color:#64748b;text-align:center;line-height:1.45}.previewError{color:#9a3412;background:#fff7ed;border:1px solid #fed7aa}.actions{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:14px}.actions button,.actions a{min-height:48px;border-radius:12px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-weight:850;text-decoration:none;display:grid;place-items:center;cursor:pointer}.actions .primary{background:#0f172a;color:#fff;border-color:#0f172a}.status{min-height:20px;margin-top:10px;font-size:12px;color:#0369a1}.notice{margin-top:14px;border-radius:14px;background:#f8fafc;padding:13px;color:#475569;font-size:12px;line-height:1.5}.signin{margin-top:12px;border-radius:14px;background:#fff7ed;border:1px solid #fed7aa;padding:13px;color:#9a3412;font-size:13px}.hidden{display:none!important}@media(max-width:520px){main{padding:11px}.card{padding:16px}.controls,.actions{grid-template-columns:1fr}.preview{min-height:230px}}
 </style>
 </head>
 <body><main>
@@ -23,7 +23,7 @@
 <div class="field"><label for="variant">MESSAGE</label><select id="variant"></select></div>
 </div>
 <div id="signin" class="signin hidden">Sign in to generate a personalized Marketing Kit asset. <a href="/">Open Business &amp; Life</a>.</div>
-<div class="preview"><img id="preview" alt="Personalized referral marketing asset preview"></div>
+<div class="preview"><div id="preview" class="previewCanvas" role="img" aria-label="Personalized referral marketing asset preview"><div class="previewPlaceholder">Loading personalized preview…</div></div></div>
 <div class="actions">
 <button id="export" class="primary" type="button">Export SVG</button>
 <button id="share" type="button">Share asset</button>
@@ -50,7 +50,6 @@ const backLink=document.querySelector('#back');
 const params=new URLSearchParams(location.search);
 const PUBLIC_ROLES=new Set(['customer','merchant','supplier','courier','service_provider']);
 let current=null;
-let previewUrl='';
 
 for(const item of RUNTIME_MARKETING_TEMPLATES){
   const option=document.createElement('option');
@@ -78,18 +77,40 @@ function token(){return localStorage.getItem('abl_token')||''}
 function setStatus(message){status.textContent=message}
 function syncBackLink(){backLink.href='/referral/promotion-center.html?profile='+encodeURIComponent(role.value)}
 function setEnabled(enabled){exportButton.disabled=!enabled;shareButton.disabled=!enabled}
-function revokePreview(){if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=''}}
+function currentSvg(){
+  if(!current)return '';
+  return generateMarketingKitSvg({templateId:template.value,fields:current,locale:locale.value,variantId:variant.value});
+}
 function currentBlob(){
-  if(!current)return null;
-  const svg=generateMarketingKitSvg({templateId:template.value,fields:current,locale:locale.value,variantId:variant.value});
-  return new Blob([svg],{type:'image/svg+xml;charset=utf-8'});
+  const svg=currentSvg();
+  return svg?new Blob([svg],{type:'image/svg+xml;charset=utf-8'}):null;
+}
+function previewFailure(message){
+  preview.replaceChildren();
+  const box=document.createElement('div');
+  box.className='previewError';
+  box.textContent=message;
+  preview.append(box);
+  setStatus(message);
 }
 function render(){
   if(!current)return;
-  revokePreview();
-  const blob=currentBlob();
-  previewUrl=URL.createObjectURL(blob);
-  preview.src=previewUrl;
+  try{
+    const svg=currentSvg();
+    preview.innerHTML=svg;
+    const node=preview.querySelector('svg');
+    if(!node)throw new Error('The SVG preview could not be created.');
+    node.setAttribute('aria-hidden','true');
+    node.setAttribute('focusable','false');
+    const qr=node.querySelector('image');
+    if(qr)qr.addEventListener('error',()=>{
+      qr.setAttribute('visibility','hidden');
+      setStatus('The creative rendered, but the QR image could not be displayed on this device. Export remains available.');
+    },{once:true});
+    setStatus('');
+  }catch(error){
+    previewFailure(String(error?.message||'Could not render the Marketing Kit preview.'));
+  }
 }
 async function load(){
   const auth=token();
@@ -106,7 +127,7 @@ async function load(){
       qrDataUrl:data.qr?.dataUrl||''
     };
     render();setEnabled(true);setStatus('');
-  }catch(error){current=null;revokePreview();preview.removeAttribute('src');setEnabled(false);setStatus(String(error?.message||'Could not load Marketing Kit data'))}
+  }catch(error){current=null;setEnabled(false);previewFailure(String(error?.message||'Could not load Marketing Kit data'))}
 }
 function downloadBlob(blob,fileName){
   const url=URL.createObjectURL(blob);
@@ -135,7 +156,6 @@ role.addEventListener('change',()=>{syncBackLink();load()});
 template.addEventListener('change',render);
 locale.addEventListener('change',()=>{syncVariantOptions();render()});
 variant.addEventListener('change',render);
-addEventListener('beforeunload',revokePreview);
 syncBackLink();
 load();
 </script>
