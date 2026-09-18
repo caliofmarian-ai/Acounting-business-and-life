@@ -25,7 +25,7 @@ function hasAny(list){const p=new Set(state.me?.permissions||[]);return list.som
 function rankLabel(code){return state.catalog?.ranks?.find(x=>x.code===code)?.label||code}
 function highestAssignment(){
   const ranks=new Map((state.catalog?.ranks||[]).map(x=>[x.code,Number(x.level||0)]));
-  return [...(state.me?.assignments||[])].sort((a,b)=>(ranks.get(b.admin_role)||0)-(ranks.get(a.admin_role)||0))[0]||null;
+  return [...(state.me?.assignments||[])].sort((a,b)=>(ranks.get(b.effective_rank||b.authority_rank||b.admin_role)||0)-(ranks.get(a.effective_rank||a.authority_rank||a.admin_role)||0))[0]||null;
 }
 function shell(){
   const visible=modules.filter(m=>hasAny(m.any));
@@ -37,7 +37,7 @@ function shell(){
 function showError(e){const p=document.getElementById('adminPanel')||root;p.innerHTML='<div class="error">'+esc(e.message||e)+'</div>'}
 function hero(){
   const a=highestAssignment();
-  const scopes=(state.me.assignments||[]).map(x=>rankLabel(x.admin_role)+(x.territory_name?' · '+x.territory_name:' · '+(x.country_code||'PH')));
+  const scopes=(state.me.assignments||[]).map(x=>rankLabel(x.effective_rank||x.authority_rank||x.admin_role)+(x.territory_name?' · '+x.territory_name:' · '+(x.country_code||'PH')));
   return '<div class="hero"><div><h2>'+esc(a?rankLabel(a.admin_role):'Admin')+'</h2><p>Privileged workspace. Only functions explicitly delegated to this account are shown.</p></div><div class="badgeRow">'+scopes.map(x=>'<span class="badge">'+esc(x)+'</span>').join('')+'</div></div>';
 }
 function metrics(){
