@@ -4,17 +4,17 @@ GitHub `main` is the source of truth. This file is the compact fresh-agent hando
 
 ## Current executable target
 
-- merged baseline before this slice: **V0.9 Multi-business Accounting**;
-- current implementation slice: **V0.10 Scoped Admin RBAC + Support Operations**;
+- merged baseline before this slice: **V0.10 Scoped Admin RBAC + Support Operations**;
+- current implementation slice: **V0.11 Unified Notifications**;
 - country edition: `PH`;
 - currency: `PHP`;
 - default business timezone: `Asia/Manila`.
 
-The public runtime chain after V0.10 is:
+The public runtime chain after V0.11 is:
 
-`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support`
+`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications`
 
-Public entry: `server-admin-operations.js`.
+Public entry: `server-notifications.js`.
 
 ## Public operational profiles
 
@@ -47,7 +47,12 @@ Admin authority is **not** a public profile.
 - Support routing to Support / Territory Admin / Country Admin / Platform Admin;
 - Support evidence: up to five images, Word/DOCX, PDF, Markdown/text and audio under enforced limits;
 - voice recording + editable live transcript where Web Speech is available;
-- optional browser-native translation to English where supported, with editable original/translated text retained.
+- optional browser-native translation to English where supported, with editable original/translated text retained;
+- canonical notification events/recipients/deliveries/preferences/templates;
+- in-app notification inbox with unread state and per-category preferences;
+- `en-PH` / `fil-PH` notification locale selection;
+- pluggable Resend email and Web Push/PWA channels;
+- bounded retry/failure ledger that never rolls back canonical order/payment state.
 
 ## V0.9 — completed boundary: Issue #28
 
@@ -58,7 +63,7 @@ Accounting is no longer a single shared legacy ledger:
 - Supplier fulfilled revenue/receivables remain separate from actual collected Cash/GCash/Bank;
 - Order and procurement money posts to the owning economic workspace.
 
-## V0.10 — current boundary: Issues #24 and #29
+## V0.10 — completed boundary: Issues #24 and #29
 
 Implemented in this slice:
 - `platform_admin_assignments`;
@@ -77,15 +82,18 @@ Protected invariant:
 
 ## Open production boundaries
 
-### Issue #33 — Notifications — NEXT
-One canonical event/notification layer for in-app, email, Web Push and later external transports across:
-- auth;
-- orders;
-- supplier procurement;
-- delivery;
-- Local Services;
-- Support;
-- Admin/governance.
+## V0.11 — current boundary: Issue #33
+
+Implemented in this slice:
+- `notification_events`, `notification_recipients`, `notification_deliveries`;
+- versioned notification templates and per-category preferences;
+- in-app notification center and unread state;
+- English/Filipino locale handling;
+- Web Push subscription/service-worker adapter with optional VAPID configuration;
+- shared email delivery ledger, including password reset/email verification with private transient links;
+- idempotent event keys and bounded retry/dead-letter states;
+- event wiring for Orders, Delivery, Supplier procurement, Local Services, Support, Incidents and Profile Governance;
+- privacy filters that exclude tokens, passwords, live coordinates and evidence payloads from notification history.
 
 ### Issue #35 — Legal acceptance
 Versioned Terms, Privacy and role-specific agreements/consents.
@@ -100,13 +108,12 @@ Backups/restore proof, staging, monitoring, private object storage, rate limits 
 
 Issue #37 — `PH PILOT ROADMAP — Minimum launch gates and post-pilot expansion order` remains the launch-order authority.
 
-Continuation after V0.10:
-1. #33 Notifications;
-2. #35 versioned legal acceptance;
-3. #34 real payment provider + settlement/reconciliation;
-4. end-to-end economic-loop revalidation;
-5. #36 production-readiness gate;
-6. controlled Philippines pilot in one explicitly configured operating territory.
+Continuation after V0.11:
+1. #35 versioned legal acceptance;
+2. #34 real payment provider + settlement/reconciliation;
+3. end-to-end economic-loop revalidation;
+4. #36 production-readiness gate;
+5. controlled Philippines pilot in one explicitly configured operating territory.
 
 ## Country / commerce separation
 
