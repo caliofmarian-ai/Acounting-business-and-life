@@ -37,6 +37,8 @@ on:
       - 'public/marketplace-ui.js'
       - 'public/orders-ui.js'
       - '.github/workflows/admin-runtime.yml'
+
+      - 'business-finance-view-core.js'
   push:
     branches: [main]
     paths:
@@ -74,6 +76,8 @@ on:
       - 'public/profile-settings.css'
       - 'public/profile-money-ui.js'
       - 'public/profile-money.css'
+      - 'business-finance-view-core.js'
+
 
 permissions:
   contents: read

@@ -47,6 +47,35 @@ window.fetch = async function businessAwareFetch(input, init={}) {
 
 function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 
+function financeMoney(v){return new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0)}
+function financeMetric(label,value,detail=''){return '<div class="businessFinanceMetric"><span>'+escapeHtml(label)+'</span><strong>'+(typeof value==='number'?financeMoney(value):escapeHtml(value))+'</strong>'+(detail?'<small>'+escapeHtml(detail)+'</small>':'')+'</div>'}
+function financeStatusMetric(label,summary){if(!summary?.tracked)return financeMetric(label,'Not configured','No payout/net allocation evidence');return financeMetric(label,financeMoney(summary.paid),'Paid · '+financeMoney(summary.eligible)+' eligible · '+financeMoney(summary.pending)+' pending')}
+function applyFinancePresentation(overview){
+  const role=overview?.role||accountingState.role,domain=overview?.presentation?.merchant_domain||'unknown';
+  document.body.dataset.businessFinanceRole=role||'';document.body.dataset.merchantDomain=domain;
+  const foodAllowed=role==='merchant'&&Boolean(overview?.presentation?.legacy_recipe_ui_allowed);
+  for(const name of ['Sell','Menu']){const btn=document.querySelector('.bottomNav [data-view="'+name+'"]');if(btn){btn.classList.toggle('roleFinanceHidden',!foodAllowed);if(name==='Menu'&&foodAllowed)btn.textContent='Food menu'}const view=document.getElementById('view'+name);if(view)view.classList.toggle('roleFinanceHidden',!foodAllowed)}
+  const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn)stockBtn.textContent=role==='supplier'?'Inventory':domain==='non_food'?'Inventory':'Stock';
+  const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Inventory';
+  const stockFormTitle=document.querySelector('#viewStock form h2');if(stockFormTitle)stockFormTitle.textContent='Add or update inventory item';
+  document.getElementById('budgetForm')?.classList.add('roleFinanceHidden');
+  document.querySelectorAll('option[value="personal_withdrawal"]').forEach(o=>o.textContent='Owner drawing / withdrawal');
+  document.querySelectorAll('[data-view-link="Sell"]').forEach(el=>el.classList.toggle('roleFinanceHidden',!foodAllowed));
+}
+function merchantFinanceHtml(o){
+  const p=o.profitability||{},sett=o.settlement?.merchant_net,margin=p.estimated_margin_pct==null?'Not available':Number(p.estimated_margin_pct).toFixed(2)+'%';
+  return '<div class="businessFinanceMetrics">'+financeMetric('Completed merchandise sales',Number(o.commercial?.completed_merchandise_value||0),'Delivery charge excluded')+financeMetric('Confirmed merchandise received',Number(o.cash_evidence?.confirmed_merchandise_received||0),'Payment evidence')+financeMetric('Customer receivables',Number(o.receivables?.completed_customer_receivables||0),'Completed orders still due')+financeMetric('Supplier payables',Number(o.payables?.supplier_payables||0),'Received procurement not yet paid')+financeMetric('Business expenses',Number(o.ledger?.business_expenses||0),'Operating ledger')+financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Separate from business expense')+financeMetric('Inventory valuation',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')+financeMetric('Planned profile budget',Number(o.profile_finance?.total_allocated_budget||0),'Planning allocation, not provider cash')+financeMetric('Estimated margin',margin,p.status||'')+financeStatusMetric('Merchant payout / settlement',sett)+'</div>';
+}
+function supplierFinanceHtml(o){
+  const attributed=o.commercial?.attribution_status==='SINGLE_SUPPLIER_BUSINESS_BINDING',fulfilled=attributed?Number(o.commercial?.fulfilled_po_value||0):'Account-wide only',receivable=attributed?Number(o.receivables?.merchant_receivables||0):'Account-wide only';
+  return '<div class="businessFinanceMetrics">'+financeMetric('Fulfilled PO value',fulfilled,attributed?'Commercial value — not cash':'Multiple Supplier businesses; PO attribution pending')+financeMetric('Recorded money received',Number(o.cash_evidence?.business_ledger_recorded_receipts||0),'supplier_receipt evidence in this business ledger')+financeMetric('Merchant receivables',receivable,attributed?'Fulfilled value still due':'See attribution warning')+financeMetric('Upstream payables',Number(o.payables?.upstream_supplier_payables||0),'Purchases made by this Supplier business')+financeMetric('Business expenses',Number(o.ledger?.business_expenses||0),'Operating ledger')+financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Separate from business expense')+financeMetric('Inventory valuation',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')+financeMetric('Planned Supplier budget',Number(o.profile_finance?.total_allocated_budget||0),'Planning allocation, not provider cash')+financeStatusMetric('Supplier payout / settlement',o.settlement?.supplier_net)+'</div>';
+}
+function financeWarnings(o){const rows=o.warnings||[];return rows.length?'<div class="businessFinanceWarnings">'+rows.map(x=>'<div>⚠ '+escapeHtml(String(x).replaceAll('_',' '))+'</div>').join('')+'</div>':''}
+function financeAccounts(o){const a=o.profile_finance?.financial_accounts||[];return '<div class="businessFinanceAccounts"><div><strong>Financial accounts</strong><span>'+a.length+' configured · provider balance '+escapeHtml(o.profile_finance?.provider_balance_status||'UNKNOWN')+'</span></div><button id="openBusinessFinanceSettings" type="button">Money Settings</button></div>'}
+function roleFinanceHtml(o){
+  const domain=o.role==='merchant'?' · '+escapeHtml(String(o.presentation?.merchant_domain||'unknown').replace('_',' ')):'';
+  return '<div class="businessFinanceHead"><div><span class="workspaceEyebrow">'+escapeHtml(o.role==='supplier'?'Supplier Finance':'Merchant Finance')+domain+'</span><h2>'+escapeHtml(o.business?.name||'Business')+'</h2><p>'+escapeHtml(o.role==='supplier'?'B2B commercial value, actual receipts, receivables and costs stay separate.':'Business sales, cash evidence, payables and operating costs — without assuming every Merchant is food.')+'</p></div><span class="workspaceIsolated">Shared ledger · role view</span></div>'+(o.role==='supplier'?supplierFinanceHtml(o):merchantFinanceHtml(o))+financeWarnings(o)+financeAccounts(o);
+}
 function mountWorkspaceBar() {
   const topbar=document.querySelector('.topbar');
   if(!topbar || !accountingState.activeBusinessId) return;
@@ -80,7 +109,7 @@ function mountSupplierAccountingTile() {
   if(!grid || grid.querySelector('[data-business-accounting-tile]')) return;
   const tile=document.createElement('button');
   tile.type='button';tile.className='hubTile businessAccountingTile';tile.dataset.businessAccountingTile='true';
-  tile.innerHTML='<span class="hubTileIcon">💼</span><strong>Accounting</strong><small>Cash, sales, costs, receivables and reports for this Supplier business</small><span class="miniBadge">Business-scoped</span>';
+  tile.innerHTML='<span class="hubTileIcon">💼</span><strong>Finance & Accounting</strong><small>PO income, actual receipts, receivables, costs, budgets and payout status</small><span class="miniBadge">Business-scoped</span>';
   tile.onclick=openSupplierAccounting;
   grid.prepend(tile);
 }
@@ -97,16 +126,18 @@ async function openSupplierAccounting() {
 
 async function mountEconomicSummary() {
   try{
-    const summary=await api('/api/summary');
+    const overview=await api('/api/accounting/finance-overview');
     let panel=document.getElementById('economicWorkspaceSummary');
     const dashboard=document.getElementById('viewDashboard');
-    if(!dashboard) return;
-    if(!panel){panel=document.createElement('section');panel.id='economicWorkspaceSummary';panel.className='economicWorkspaceSummary';dashboard.prepend(panel)}
-    const supplier=accountingState.role==='supplier';
-    panel.innerHTML=`<div><span>Workspace</span><strong>${escapeHtml(summary.business?.name||'Business')}</strong></div>${supplier?`<div><span>Fulfilled Supplier revenue</span><strong>₱${Number(summary.supplier_fulfilled_revenue||0).toLocaleString()}</strong></div><div><span>Supplier receivables</span><strong>₱${Number(summary.supplier_receivables||0).toLocaleString()}</strong></div>`:`<div><span>Customer receivables</span><strong>₱${Number(summary.customer_receivables||0).toLocaleString()}</strong></div><div><span>Supplier payables</span><strong>₱${Number(summary.supplier_payables||0).toLocaleString()}</strong></div>`}`;
-  }catch{}
+    if(!dashboard)return;
+    if(!panel){panel=document.createElement('section');panel.id='economicWorkspaceSummary';dashboard.prepend(panel)}
+    panel.className='economicWorkspaceSummary businessFinanceOverview';
+    panel.innerHTML=roleFinanceHtml(overview);
+    applyFinancePresentation(overview);
+    const settings=panel.querySelector('#openBusinessFinanceSettings');
+    if(settings)settings.onclick=()=>window.BusinessLifeProfileSettings?.open?.(overview.role);
+  }catch(err){console.warn('Business Finance overview:',err.message)}
 }
-
 async function bootAccountingWorkspace() {
   if(!ablToken()) return;
   try{
