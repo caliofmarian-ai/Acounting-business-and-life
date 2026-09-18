@@ -1,0 +1,5 @@
+{
+  "service": "accounting-growth-supplier-preview",
+  "route": "/referral/supplier",
+  "proof": "supplier-branch-deploy"
+}
