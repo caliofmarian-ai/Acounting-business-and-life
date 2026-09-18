@@ -22,6 +22,10 @@ test('workspace switch refreshes visible accounting surfaces without rebuilding 
   assert.match(production,/if\(isMerchantBaseActive\(\)\)refreshAll\(\)/);
 });
 
+test('accounting workspace reuses canonical shell identity before falling back to /api/me',()=>{
+  assert.match(accounting,/window\.BusinessLifeProfileState\?\.snapshot\|\|await api\('\/api\/me'\)/);
+});
+
 test('failed workspace switch restores the previous client context',()=>{
   assert.match(accounting,/const previous=accountingState\.activeBusinessId/);
   assert.match(accounting,/accountingState\.activeBusinessId=previous/);
