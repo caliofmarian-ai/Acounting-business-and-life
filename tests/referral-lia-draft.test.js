@@ -17,17 +17,22 @@ test('referral LIA remains draft and does not select a lawful basis', () => {
   assert.match(draft, /status: DRAFT/);
   assert.match(draft, /publication_status: NOT_FOR_PUBLICATION/);
   assert.match(draft, /legal_basis_selected: false/);
+  assert.match(draft, /owner_direction: pursue_legitimate_interest_assessment/);
   assert.match(draft, /LIA_OUTCOME = PENDING_CONTROLLER_APPROVAL/);
   assert.match(draft, /LAWFUL_BASIS_SELECTED = false/);
 });
 
-test('LIA preserves unresolved converted attribution and reward gates', () => {
-  assert.equal(privacy.retention.convertedAttributionRetentionRule, null);
-  assert.equal(privacy.convertedAttribution.attributionModel, null);
+test('LIA records Owner product choices but preserves controller and reward HOLD gates', () => {
+  assert.equal(privacy.retention.convertedAttributionRetentionRule.period, '12_months_after_conversion');
+  assert.equal(privacy.retention.convertedAttributionRetentionRule.activationApproved, false);
+  assert.equal(privacy.convertedAttribution.attributionModel, 'registration_context_v1');
+  assert.equal(privacy.convertedAttribution.attributionModelOwnerApproved, true);
+  assert.equal(privacy.convertedAttribution.attributionModelActivationApproved, false);
+  assert.equal(privacy.convertedAttribution.lawfulBasisSelected, false);
   assert.equal(rewards.defaultPolicy.enabled, false);
   assert.equal(rewards.defaultPolicy.qualificationRule, null);
-  assert.match(draft, /Converted retention \| HOLD/);
-  assert.match(draft, /Converted attribution model \| HOLD \/ null/);
+  assert.match(draft, /Converted retention \| OWNER TARGET: 12 months; controller activation PENDING/);
+  assert.match(draft, /Converted attribution model \| OWNER APPROVED: registration_context_v1; runtime HOLD/);
   assert.match(draft, /Reward purpose\/economics \| HOLD/);
 });
 
