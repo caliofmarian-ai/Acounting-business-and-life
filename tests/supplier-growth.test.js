@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{readFileSync}from'node:fs';
+const c=JSON.parse(readFileSync(new URL('../growth/supplier-growth.en-PH.json',import.meta.url),'utf8'));const h=readFileSync(new URL('../public/referral/supplier.html',import.meta.url),'utf8');
+test('supplier campaign covers catalog relationships procurement and money',()=>{for(const id of ['catalog','relationships','orders','money'])assert.ok(c.pillars.some(x=>x.id===id));assert.match(h,/purchase orders/i);assert.match(h,/ETA/i);assert.match(h,/partial receiving/i)});
+test('supplier relationship and approval boundaries remain explicit',()=>{assert.equal(c.governance.supplierApprovalAutomatic,false);assert.equal(c.governance.universalMerchantTrust,false);assert.match(h,/not automatically trusted by every Merchant/i)});
+test('supplier campaign does not guarantee sales payment discovery or compliance',()=>{assert.equal(c.governance.guaranteedSales,false);assert.equal(c.governance.guaranteedPayment,false);assert.equal(c.governance.universalMarketplaceDiscovery,false);assert.equal(c.governance.taxComplianceGuaranteed,false)});
