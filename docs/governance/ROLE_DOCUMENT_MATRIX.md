@@ -1,3 +1,19 @@
+---
+document_id: BL-20-GLB-ROLEDOC-001
+title: Role × Documentation Matrix
+document_type: governance_matrix
+status: DRAFT
+access_class: OPERATIONS_PRIVATE
+applicable_profiles: []
+applicable_functions: [Documentation Governance Owner, Super Admin, Country Admin, Territory Admin]
+country_code: GLB
+territory_scope: global
+owner_role: Documentation Governance Owner
+approver_role: Project Owner
+version: 1.0
+legal_classification: PLATFORM_POLICY
+---
+
 # Role × Documentation Matrix
 
 Status: **INITIAL CANONICAL MATRIX — V1**
