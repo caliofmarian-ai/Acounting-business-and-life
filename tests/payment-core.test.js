@@ -31,7 +31,7 @@ test('payment intents and legacy mirrors are idempotent and do not double-post a
 
 test('provider evidence storage redacts sensitive payment and identity fields',()=>{
   assert.match(core,/secret\|password\|token\|authorization\|card\|pan\|cvv\|cvc\|expiry/i);
-  assert.match(core,/\\[redacted\\]/);
+  assert.match(core,/\[redacted\]/);
   assert.match(core,/payload_sha256/);
   assert.match(core,/signature_verified BOOLEAN/);
 });
