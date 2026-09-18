@@ -43,7 +43,7 @@ async function initDb(){await ensurePaymentSchema(pool);await backfillLegacyOrde
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));
 app.get('/payments-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','payments-ui.js'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/payments.css" />\n</head>').replace('</body>','  <script type="module" src="/payments-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/payments/config',async(req,res,next)=>{try{
