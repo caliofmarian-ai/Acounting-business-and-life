@@ -981,7 +981,7 @@ async function writeProfileFundLedgerEntry(db,{accountId,scope,direction,amount,
       entry_type,direction,category,amount,currency_code,note,evidence_reference,status,actor_account_id,occurred_at
     ) VALUES($1,$2,$3,$4,NULL,'profile_transfer',$5,$6,$7,'profile_transfer',$8,$9,$10,'','active',$3,NOW())
   `,[
-    'pme_'+crypto.randomUUID().replaceAll('-',''),
+    'pme_transfer_'+String(transferId)+(inwards?'_in':'_out'),
     transferKey+(inwards?':in':':out'),Number(accountId),scope.profileRole,Number(transferId),
     inwards?'profile_transfer_in':'profile_transfer_out',inwards?'in':'out',amount,currencyCode,clean(note,700)
   ]);
