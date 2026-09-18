@@ -73,6 +73,8 @@ The existing Support RBAC makes NULL-territory tickets visible to country-wide/p
 
 **Important:** routing to country-level administration is a technical queue design. It does not state that a Country Admin is automatically the Philippine PIC, DPO, legal representative or final decision-maker.
 
+Current governance records a designated natural-person initial Philippine operator as the provisional PIC candidate. If that operator is confirmed as the individual PIC, NPC guidance treats the same person as de facto DPO. The request queue still remains a technical workflow and must not expose or invent unverified personal contact details.
+
 ## Privacy of the case
 
 The request owner may read their own ticket.
@@ -127,7 +129,7 @@ Do not duplicate the entire request into analytics.
 
 ## Future extension
 
-When the real Philippine PIC/controller/privacy role and operating process are known, a future controlled slice may add:
+When the designated initial natural-person operator's PIC role and verified legal/contact facts are confirmed, a future controlled slice may add:
 - a dedicated privacy/DPO assignment or permission;
 - service-level workflow;
 - identity-verification state;
