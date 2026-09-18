@@ -186,6 +186,14 @@ The current safeguards lower impact, but the final PIC must confirm user expecta
 
 ## 6. Transparency and right to object
 
+An authenticated technical privacy-request channel is now prepared through the canonical Support system:
+
+`Help -> New issue -> Privacy & data rights`
+
+It supports objection, access, correction, erasure/blocking review and other privacy-request categories, routes privacy cases outside Territory Admin-only scope, and preserves user-visible follow-up/audit evidence.
+
+This technical channel does **not** itself satisfy the final controller/DPO/contact or legal-decision requirements, and it does not automatically execute deletion/suppression.
+
 If legitimate interest is selected, the effective privacy notice must clearly disclose, as applicable:
 - responsible Philippine PIC/controller;
 - specific referral-attribution purpose;
@@ -264,7 +272,7 @@ Marketing preferences/consent remain separate where required.
 | Balancing test | PENDING controller approval |
 | PIC/controller identified | PENDING |
 | Effective privacy notice | PENDING |
-| Objection workflow | PENDING operational verification |
+| Objection/request channel | IMPLEMENTED TECHNICALLY — controller/privacy operating process still PENDING |
 | 90-day unconverted retention | OWNER APPROVED |
 | Converted retention | OWNER TARGET: 12 months; controller activation PENDING |
 | Converted attribution model | OWNER APPROVED: registration_context_v1; runtime HOLD |
@@ -289,7 +297,7 @@ Before legitimate interest can be recorded as the selected basis for this proces
 3. complete/approve the legitimate-interest, necessity and balancing tests;
 4. validate the Owner-selected `registration_context_v1` model under the controller/privacy assessment;
 5. validate and operationalize the Owner-approved 12-month converted-attribution retention/deletion target;
-6. establish the objection/request workflow;
+6. approve the operating/controller handling process for the technically implemented privacy-request channel;
 7. integrate accurate wording into the EFFECTIVE privacy notice;
 8. verify any external processor/project/region and data-processing terms;
 9. perform product/privacy/security review;
