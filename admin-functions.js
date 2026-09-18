@@ -34,7 +34,7 @@ export const ADMIN_FUNCTION_BUNDLES = Object.freeze({
     code:'finance_accounting',label:'Finance & Accounting',
     description:'Financial summaries, accounting exports and operational metrics.',
     assignable_to:['country_admin','territory_admin','specialist'],
-    permissions:['admin.console','finance.summary.view','finance.cost.manage','accounting.export.view','metrics.view']
+    permissions:['admin.console','finance.summary.view','finance.cost.manage','finance.ledger.view','finance.ledger.manage','finance.budget.manage','accounting.export.view','metrics.view']
   }),
   payments_settlements:Object.freeze({
     code:'payments_settlements',label:'Payments & Settlements',
