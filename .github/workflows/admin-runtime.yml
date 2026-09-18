@@ -21,6 +21,7 @@ on:
       - 'public/profile-settings.css'
       - 'public/profile-settings-ui.js'
       - 'profile-finance-core.js'
+      - 'account-money-core.js'
       - 'server-orders.js'
       - 'server-services.js'
       - 'server-suppliers.js'
@@ -39,8 +40,7 @@ on:
       - '.github/workflows/admin-runtime.yml'
 
       - 'business-finance-view-core.js'
-
-      - 'account-money-core.js'  push:
+  push:
     branches: [main]
     paths:
       - 'admin-authorization.js'
@@ -72,6 +72,7 @@ on:
       - 'public/orders-ui.js'
       - '.github/workflows/admin-runtime.yml'
       - 'profile-finance-core.js'
+      - 'account-money-core.js'
       - 'profile-money-core.js'
       - 'public/profile-settings-ui.js'
       - 'public/profile-settings.css'
@@ -79,7 +80,6 @@ on:
       - 'public/profile-money.css'
       - 'business-finance-view-core.js'
 
-      - 'account-money-core.js'
 
 permissions:
   contents: read
