@@ -57,9 +57,13 @@ Initial Philippine operator:
 **natural person designated by the Project Owner**
 
 Controller:
-**provisional candidate only until actual processing-control allocation is confirmed**
+**allocation unresolved between the designated Philippine operator, Project Owner, and any future legal entity according to actual processing-control facts**
 
-If the initial operator is confirmed as the individual PIC, NPC guidance treats the individual PIC as the de facto DPO.
+Known evidence:
+- Philippine operator: expected local operation;
+- Project Owner: material referral/growth processing decisions already recorded.
+
+Any person confirmed as an individual PIC is treated as de facto DPO under current NPC guidance.
 
 Legal name/public contact remain intentionally unrecorded until supplied and verified.
 
@@ -215,7 +219,7 @@ It becomes a **public-launch HOLD** if the final applicability decision is still
 
 Before clearing the gate:
 
-1. confirm actual PIC/operator legal identity;
+1. complete controller allocation and confirm the legal identity/contact of the actual PIC/controller structure;
 2. verify workforce facts;
 3. classify launch SPI and estimate/measure unique affected individuals;
 4. complete the launch DPS inventory;
