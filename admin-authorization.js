@@ -21,7 +21,12 @@ export const ADMIN_PERMISSIONS = Object.freeze([
   'audit.view',
   'metrics.view',
   'legal.view',
-  'legal.manage'
+  'legal.manage',
+  'payment.view',
+  'payment.manage',
+  'payment.reconcile',
+  'settlement.manage',
+  'fee_policy.manage_limited'
 ]);
 
 const clean=(v,max=300)=>String(v??'').trim().slice(0,max);
