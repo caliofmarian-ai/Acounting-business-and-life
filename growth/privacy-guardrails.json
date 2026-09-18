@@ -106,6 +106,12 @@
     "requiresExistingPendingAttribution": true,
     "selfReferralRejected": true,
     "duplicateAccountAttributionRejected": true,
-    "rewardStateAllowed": false
+    "rewardStateAllowed": false,
+    "requiresPendingAttributionActivation": true,
+    "requiresExplicitAttributionModel": true,
+    "attributionModel": null,
+    "supportedImplementationModels": [
+      "registration_context_v1"
+    ]
   }
 }
