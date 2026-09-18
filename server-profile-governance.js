@@ -169,7 +169,7 @@ async function profileState(me){const id=Number(me.account.id);const [apps,auths
 app.get('/health',async(_q,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,auth_hardening:r.ok,version:'0.8.6-profile-governance'})}catch{res.status(503).json({ok:false,db:false,auth_hardening:false,version:'0.8.6-profile-governance'})}})
 app.get('/profile-governance.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','profile-governance.css'),'utf8')))
 app.get('/profile-governance-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','profile-governance-ui.js'),'utf8')))
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/profile-governance.css" />\n</head>').replace('</body>','  <script type="module" src="/profile-governance-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});const html=await r.text();res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/governance/state',async(req,res,next)=>{try{const me=await identity(req);res.json(await profileState(me))}catch(e){next(e)}})
