@@ -1,0 +1,36 @@
+{
+  "locale": "fil-PH",
+  "version": "1.0.0",
+  "brand": "Business & Life",
+  "reusable": {
+    "brandLine": "BUSINESS & LIFE",
+    "scanCta": "I-SCAN PARA MAGSIMULA",
+    "referralCodeLabel": "Referral code: {REFERRAL_CODE}",
+    "recommendedBy": "Inirerekomenda ni {REFERRER_NAME}",
+    "governanceNote": "Hindi nilalaktawan ng referral credit ang kinakailangang pag-apruba ng operational profile."
+  },
+  "variants": [
+    {
+      "id": "clarity_v1",
+      "headline": "Patakbuhin ang iyong negosyo. Unawain ang iyong pera.",
+      "body": "Isang account para sa mga tool at profile na available sa iyo."
+    },
+    {
+      "id": "money_visibility_v1",
+      "headline": "Alamin kung saan napupunta ang iyong pera.",
+      "body": "Mas madaling unawain ang pera ng negosyo at personal na pera kapag nasa iisang lugar ang tamang impormasyon."
+    },
+    {
+      "id": "personal_share_v1",
+      "headline": "Inimbitahan kang subukan ang Business & Life.",
+      "body": "Gamitin ang referral link o QR code para magsimula."
+    }
+  ],
+  "prohibitedClaims": [
+    "Garantisadong matitipid",
+    "Garantisadong kita",
+    "Awtomatikong pag-apruba ng negosyo",
+    "Accounting na aprubado ng gobyerno",
+    "Garantisadong pagsunod sa buwis"
+  ]
+}

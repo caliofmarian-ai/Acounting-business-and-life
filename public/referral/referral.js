@@ -9,6 +9,7 @@ const campaign = clean(params.get('utm_campaign'), 'organic');
 const source = clean(params.get('utm_source'), 'profile');
 const medium = clean(params.get('utm_medium'), 'referral');
 const profile = params.get('profile') || '';
+const qrOrigin = location.hash === '#qr';
 const valid = CODE_RE.test(ref) && (!profile || PUBLIC_ROLES.has(profile));
 
 const referralCode = document.querySelector('#referralCode');
@@ -66,6 +67,14 @@ if (valid) {
   continueButton.href = continueUrl();
   configureChannelLinks(currentReferralUrl());
   if(profile){
+    if(qrOrigin){
+      void captureReferralEvent({
+        event:'referral_qr_opened',
+        referralCode:ref,
+        properties:{campaign,source_profile_role:profile}
+      });
+      history.replaceState?.(null,'',currentReferralUrl());
+    }
     void captureReferralEvent({
       event:'referral_landing_viewed',
       referralCode:ref,

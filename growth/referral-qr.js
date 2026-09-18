@@ -18,6 +18,9 @@ export async function buildLocalReferralQr(referralUrl) {
     throw new TypeError('QR payload must be a canonical referral URL');
   }
 
+  if (parsed.hash) throw new TypeError('canonical referral URL must not contain a fragment');
+  const canonicalUrl = parsed.toString();
+  parsed.hash = 'qr';
   const payload = parsed.toString();
   if (payload.length > MAX_REFERRAL_URL_LENGTH) {
     throw new RangeError('referral URL is too long for QR rendering');
@@ -26,13 +29,15 @@ export async function buildLocalReferralQr(referralUrl) {
   const dataUrl = await QRCode.toDataURL(payload, {
     type: 'image/png',
     errorCorrectionLevel: 'M',
-    margin: 2,
+    margin: 4,
     width: 256
   });
 
   return Object.freeze({
     format: 'png',
     encoder: 'local',
+    marker: 'qr',
+    referralUrl: canonicalUrl,
     payload,
     dataUrl
   });

@@ -73,17 +73,20 @@ now:
 
 ## Personal QR — live local rendering
 
-Promotion Center now renders a real personalized QR from the exact authenticated referral URL.
+Promotion Center now renders a real personalized QR tied to the exact authenticated referral URL.
 
 Implementation rules:
 - encoding runs locally in the Business & Life server process via the `qrcode` package;
 - the referral URL is not sent to Google Charts, qrserver, QuickChart or another QR web service;
-- QR payload is the same canonical URL returned as `referralUrl`;
+- the QR keeps the exact canonical referral URL and adds only the fragment `#qr` as a one-shot scan-origin marker;
+- URL fragments are not sent in the HTTP request; after the landing emits `referral_qr_opened`, it removes `#qr` with `history.replaceState`;
+- copying or resharing from the landing uses the clean canonical referral URL, so the QR marker is not propagated;
+- the renderer uses a four-module quiet zone, matching the Marketing Kit QR contract;
 - changing the source profile changes the canonical role campaign URL and therefore regenerates the QR;
 - the human-readable opaque referral code remains visible as fallback;
 - QR generation never grants profile or Admin authority.
 
-The authenticated endpoint returns a `qr` object containing `format`, `encoder`, `payload` and a PNG `dataUrl`.
+The authenticated endpoint returns a `qr` object containing `format`, `encoder`, `marker`, `referralUrl`, `payload` and a PNG `dataUrl`.
 
 ## Authorization boundary
 

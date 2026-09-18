@@ -35,7 +35,7 @@
 <img id="qrImage" class="qrimage hidden" alt="Personal referral QR code">
 <div id="qrFallback" class="qrfallback">Use your referral code if QR is unavailable.</div>
 </div>
-<div><strong>Personal QR</strong><div class="small">Scan to open your live referral link. Changing the sharing profile regenerates this QR locally from the matching campaign URL; no external QR service receives your referral URL.</div></div>
+<div><strong>Personal QR</strong><div class="small">Scan to open your live referral link. The QR carries a one-shot local <code>#qr</code> origin marker so scans can be measured separately from ordinary link opens; the marker is removed on landing and is not propagated when resharing. Changing the sharing profile regenerates this QR locally; no external QR service receives your referral URL.</div></div>
 </div>
 
 <div id="signin" class="signin">Sign in to Business &amp; Life to load your personal referral identity. <a href="/">Open the app</a>.</div>
@@ -43,6 +43,7 @@
 <div class="actions">
 <button class="primary" id="share" type="button">Share invitation</button>
 <button id="copy" type="button">Copy referral link</button>
+<a href="/referral/marketing-kit.html?profile=customer" id="marketingKit">Create Marketing Kit</a>
 <a href="/" id="backToApp">Back to Business &amp; Life</a>
 </div>
 
@@ -73,6 +74,7 @@ const signin=document.querySelector('#signin');
 const channels=document.querySelector('#channels');
 const shareButton=document.querySelector('#share');
 const copyButton=document.querySelector('#copy');
+const marketingKit=document.querySelector('#marketingKit');
 const modeState=document.querySelector('#modeState');
 const qrImage=document.querySelector('#qrImage');
 const qrFallback=document.querySelector('#qrFallback');
@@ -82,6 +84,7 @@ const requestedRole=PUBLIC_ROLES.has(params.get('profile'))?params.get('profile'
 role.value=requestedRole;
 
 function setStatus(message){status.textContent=message}
+function syncMarketingKit(){marketingKit.href='/referral/marketing-kit.html?profile='+encodeURIComponent(role.value)}
 function disableSharing(disabled){
   shareButton.disabled=disabled;copyButton.disabled=disabled;channels.classList.toggle('hidden',disabled);
 }
@@ -91,7 +94,7 @@ function clearQr(){
   qrFallback.classList.remove('hidden');
 }
 function applyQr(data){
-  if(!data?.qr?.dataUrl||data.qr.payload!==data.referralUrl){clearQr();return false}
+  if(!data?.qr?.dataUrl||data.qr.referralUrl!==data.referralUrl||data.qr.marker!=='qr'){clearQr();return false}
   qrImage.src=data.qr.dataUrl;
   qrImage.alt='Personal referral QR for '+(data.profileRole||'account')+' campaign';
   qrImage.classList.remove('hidden');
@@ -161,7 +164,7 @@ async function loadIdentity(){
     }
   }
 }
-role.addEventListener('change',loadIdentity);
+role.addEventListener('change',()=>{syncMarketingKit();loadIdentity()});
 copyButton.addEventListener('click',async()=>{
   if(!live?.referralUrl)return;
   try{await navigator.clipboard.writeText(live.referralUrl);trackShare('copy_link');setStatus('Referral link copied.')}catch{setStatus('Copy unavailable — use the browser address/share menu.')}
@@ -176,6 +179,7 @@ for(const [id,channel] of [['wa','whatsapp'],['tg','telegram'],['sms','sms'],['m
   document.querySelector('#'+id)?.addEventListener('click',()=>trackShare(channel));
 }
 modeState.textContent='LIVE';
+syncMarketingKit();
 loadIdentity();
 </script>
 </body></html>
