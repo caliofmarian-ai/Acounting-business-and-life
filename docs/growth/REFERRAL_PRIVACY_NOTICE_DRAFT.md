@@ -135,6 +135,7 @@ Current product truth:
 External PostHog delivery requires all of:
 - `REFERRAL_ANALYTICS_ENABLED=true`;
 - `REFERRAL_ANALYTICS_RETENTION_APPROVED=true`;
+- `REFERRAL_ANALYTICS_PROJECT_VERIFIED=true` only after exact project/organization/region revalidation;
 - a verified Business & Life `POSTHOG_PROJECT_TOKEN`;
 - the correct `POSTHOG_INGEST_HOST`.
 
