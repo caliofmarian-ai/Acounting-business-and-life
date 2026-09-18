@@ -35,7 +35,7 @@
 <img id="qrImage" class="qrimage hidden" alt="Personal referral QR code">
 <div id="qrFallback" class="qrfallback">Use your referral code if QR is unavailable.</div>
 </div>
-<div><strong>Personal QR</strong><div class="small">Scan to open your live referral link. Changing the sharing profile regenerates this QR locally from the matching campaign URL; no external QR service receives your referral URL.</div></div>
+<div><strong>Personal QR</strong><div class="small">Scan to open your live referral link. The QR carries a one-shot local <code>#qr</code> origin marker so scans can be measured separately from ordinary link opens; the marker is removed on landing and is not propagated when resharing. Changing the sharing profile regenerates this QR locally; no external QR service receives your referral URL.</div></div>
 </div>
 
 <div id="signin" class="signin">Sign in to Business &amp; Life to load your personal referral identity. <a href="/">Open the app</a>.</div>
@@ -91,7 +91,7 @@ function clearQr(){
   qrFallback.classList.remove('hidden');
 }
 function applyQr(data){
-  if(!data?.qr?.dataUrl||data.qr.payload!==data.referralUrl){clearQr();return false}
+  if(!data?.qr?.dataUrl||data.qr.referralUrl!==data.referralUrl||data.qr.marker!=='qr'){clearQr();return false}
   qrImage.src=data.qr.dataUrl;
   qrImage.alt='Personal referral QR for '+(data.profileRole||'account')+' campaign';
   qrImage.classList.remove('hidden');

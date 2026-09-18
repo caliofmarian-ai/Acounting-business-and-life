@@ -29,6 +29,16 @@ test('runtime referral analytics accepts only privacy-minimized properties', () 
     }),
     /not allowed/
   );
+  const qrOpen = sanitizeReferralAnalyticsEvent({
+    event: 'referral_qr_opened',
+    properties: {
+      campaign: 'merchant_referral_v1',
+      source_profile_role: 'merchant',
+      correlation_id: '4f7f8bbd-6f3f-45d5-9f7e-32e5f282ce2d'
+    }
+  });
+  assert.equal(qrOpen.event, 'referral_qr_opened');
+
   const signup = sanitizeReferralAnalyticsEvent({
     event: 'referral_signup_started',
     properties: {
@@ -91,6 +101,9 @@ test('referral UI is wired to the same-origin analytics gateway, never directly 
 
   assert.match(helper, /\/api\/growth\/referral-analytics\/account/);
   assert.match(helper, /\/api\/growth\/referral-analytics\/public/);
+  assert.match(landing, /referral_qr_opened/);
+  assert.match(landing, /location\.hash === '#qr'/);
+  assert.match(landing, /history\.replaceState/);
   assert.match(landing, /referral_landing_viewed/);
   assert.match(landing, /referral_shared/);
   assert.match(promotion, /referral_link_created/);
@@ -99,7 +112,9 @@ test('referral UI is wired to the same-origin analytics gateway, never directly 
   assert.match(server, /campaign: `\$\{role\}_referral_v1`/);
   assert.match(server, /source profile is not enabled/);
   assert.match(server, /referral-analytics\/account/);
+  assert.match(server, /PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set\(\['referral_qr_opened'/);
   assert.match(server, /referral-analytics\/public/);
+  assert.match(adapter, /'referral_qr_opened'/);
   assert.match(adapter, /REFERRAL_ANALYTICS_RETENTION_APPROVED/);
   assert.doesNotMatch(helper, /POSTHOG_PROJECT_TOKEN|\.posthog\.com/);
 });

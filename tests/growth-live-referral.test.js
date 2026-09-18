@@ -65,12 +65,14 @@ test('Promotion Center loads the authenticated account identity and never defaul
   assert.match(page, /direct referral sending stays disabled/i);
 });
 
-test('live referral endpoint adds a local QR for the exact campaign URL', () => {
+test('live referral endpoint adds a local QR tied to the exact campaign URL with a qr-origin marker', () => {
   const server = read('server-auth.js');
   const page = read('public/referral/promotion-center.html');
   assert.match(server, /buildLocalReferralQr\(payload\.referralUrl\)/);
   assert.match(server, /qr \}/);
-  assert.match(page, /data\.qr\.payload!==data\.referralUrl/);
+  assert.match(page, /data\.qr\.referralUrl!==data\.referralUrl/);
+  assert.match(page, /data\.qr\.marker!=='qr'/);
+  assert.match(page, /#qr/);
   assert.match(page, /Changing the sharing profile regenerates this QR locally/i);
   assert.doesNotMatch(page, /api\.qrserver|quickchart|chart\.google/);
 });

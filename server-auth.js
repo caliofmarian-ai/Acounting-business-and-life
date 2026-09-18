@@ -27,7 +27,7 @@ const jsonBody = express.json({ limit: '450kb' });
 const loginAttempts = new Map();
 const growthAnalyticsAttempts = new Map();
 const ACCOUNT_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_link_created','referral_shared']);
-const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_landing_viewed','referral_shared','referral_signup_started']);
+const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_qr_opened','referral_landing_viewed','referral_shared','referral_signup_started']);
 let accountingChild;
 let shuttingDown = false;
 
