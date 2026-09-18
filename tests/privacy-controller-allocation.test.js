@@ -81,7 +81,7 @@ test('controller allocation blocks effective notice and durable referral activat
   assert.equal(allocation.activation.externalPosthogAllowed, false);
   assert.equal(profile.pic.activationApproved, false);
   assert.equal(profile.privacyNotice.effectiveControllerIdentityReady, false);
-  assert.match(notice, /Controller allocation status: \*\*UNRESOLVED \/ PRE-LAUNCH FACT FINDING\*\*/);
+  assert.match(notice, /Current controller-allocation status: \*\*UNRESOLVED \/ PRE-LAUNCH FACT FINDING\*\*/);
 });
 
 test('no actor legal identity is invented', () => {
