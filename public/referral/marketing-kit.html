@@ -19,6 +19,8 @@
 <option value="customer">Customer</option><option value="merchant">Merchant</option><option value="supplier">Supplier</option><option value="courier">Courier / Delivery Provider</option><option value="service_provider">Service Provider / Local Services</option>
 </select></div>
 <div class="field"><label for="template">FORMAT</label><select id="template"></select></div>
+<div class="field"><label for="locale">CREATIVE LANGUAGE</label><select id="locale"><option value="en-PH">English (Philippines)</option><option value="fil-PH">Filipino / Tagalog</option></select></div>
+<div class="field"><label for="variant">MESSAGE</label><select id="variant"></select></div>
 </div>
 <div id="signin" class="signin hidden">Sign in to generate a personalized Marketing Kit asset. <a href="/">Open Business &amp; Life</a>.</div>
 <div class="preview"><img id="preview" alt="Personalized referral marketing asset preview"></div>
@@ -33,10 +35,12 @@
 </section>
 </main>
 <script type="module">
-import { RUNTIME_MARKETING_TEMPLATES, deriveReferrerName, generateMarketingKitSvg, marketingKitFileName } from '/referral/marketing-kit-runtime.js';
+import { RUNTIME_MARKETING_TEMPLATES, RUNTIME_MARKETING_COPY, SUPPORTED_MARKETING_LOCALES, deriveReferrerName, generateMarketingKitSvg, marketingKitFileName } from '/referral/marketing-kit-runtime.js';
 
 const role=document.querySelector('#role');
 const template=document.querySelector('#template');
+const locale=document.querySelector('#locale');
+const variant=document.querySelector('#variant');
 const preview=document.querySelector('#preview');
 const status=document.querySelector('#status');
 const signin=document.querySelector('#signin');
@@ -54,6 +58,21 @@ for(const item of RUNTIME_MARKETING_TEMPLATES){
   template.append(option);
 }
 role.value=PUBLIC_ROLES.has(params.get('profile'))?params.get('profile'):'customer';
+locale.value=SUPPORTED_MARKETING_LOCALES.includes(params.get('locale'))?params.get('locale'):'en-PH';
+
+function syncVariantOptions(){
+  const previous=variant.value||params.get('variant')||'personal_share_v1';
+  const pack=RUNTIME_MARKETING_COPY[locale.value]||RUNTIME_MARKETING_COPY['en-PH'];
+  variant.replaceChildren();
+  for(const item of pack.variants){
+    const option=document.createElement('option');
+    option.value=item.id;option.textContent=item.headline;
+    variant.append(option);
+  }
+  variant.value=pack.variants.some(item=>item.id===previous)?previous:'personal_share_v1';
+  document.documentElement.lang=locale.value;
+}
+syncVariantOptions();
 
 function token(){return localStorage.getItem('abl_token')||''}
 function setStatus(message){status.textContent=message}
@@ -62,7 +81,7 @@ function setEnabled(enabled){exportButton.disabled=!enabled;shareButton.disabled
 function revokePreview(){if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=''}}
 function currentBlob(){
   if(!current)return null;
-  const svg=generateMarketingKitSvg({templateId:template.value,fields:current});
+  const svg=generateMarketingKitSvg({templateId:template.value,fields:current,locale:locale.value,variantId:variant.value});
   return new Blob([svg],{type:'image/svg+xml;charset=utf-8'});
 }
 function render(){
@@ -97,13 +116,13 @@ function downloadBlob(blob,fileName){
 exportButton.addEventListener('click',()=>{
   if(!current)return;
   const blob=currentBlob();
-  downloadBlob(blob,marketingKitFileName(template.value,current.referralCode));
+  downloadBlob(blob,marketingKitFileName(template.value,current.referralCode,locale.value));
   setStatus('SVG exported. It stays sharp for digital use and print scaling.');
 });
 shareButton.addEventListener('click',async()=>{
   if(!current)return;
   const blob=currentBlob();
-  const fileName=marketingKitFileName(template.value,current.referralCode);
+  const fileName=marketingKitFileName(template.value,current.referralCode,locale.value);
   if(typeof File==='function'&&navigator.share&&navigator.canShare){
     const file=new File([blob],fileName,{type:'image/svg+xml'});
     if(navigator.canShare({files:[file]})){
@@ -114,6 +133,8 @@ shareButton.addEventListener('click',async()=>{
 });
 role.addEventListener('change',()=>{syncBackLink();load()});
 template.addEventListener('change',render);
+locale.addEventListener('change',()=>{syncVariantOptions();render()});
+variant.addEventListener('change',render);
 addEventListener('beforeunload',revokePreview);
 syncBackLink();
 load();
