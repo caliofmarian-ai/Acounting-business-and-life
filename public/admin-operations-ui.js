@@ -19,13 +19,6 @@ function addButtons(){
   const top=document.querySelector('.topActions');
   if(top&&!document.getElementById('supportOpsBtn')){const b=document.createElement('button');b.id='supportOpsBtn';b.className='supportOpsBtn';b.type='button';b.textContent='Help';b.onclick=openSupport;top.prepend(b)}
   if(!document.getElementById('supportFloating')){const b=document.createElement('button');b.id='supportFloating';b.className='supportFloating';b.type='button';b.textContent='?';b.setAttribute('aria-label','Help and Support');b.onclick=openSupport;document.body.appendChild(b)}
-  refreshAdminButton().catch(()=>{});
-}
-async function refreshAdminButton(){
-  if(!token())return;const me=await api('/api/admin/me');const top=document.querySelector('.topActions');
-  let b=document.getElementById('adminOpsBtn');
-  if(me.is_admin&&top&&!b){b=document.createElement('button');b.id='adminOpsBtn';b.className='adminOpsBtn';b.type='button';b.textContent='Admin';b.onclick=openAdmin;top.prepend(b)}
-  if(!me.is_admin&&b)b.remove();
 }
 function openOps(title,html){ensureUi();document.getElementById('opsTitle').textContent=title;document.getElementById('opsBody').innerHTML=html;document.getElementById('supportOpsBackdrop').classList.remove('hidden');document.body.style.overflow='hidden'}
 function closeOps(){stopVoice(true);document.getElementById('supportOpsBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
@@ -156,5 +149,5 @@ async function createAdminAssignment(e){
 }
 
 window.BusinessLifeAdminOps=Object.freeze({openSupport,openAdmin,closeOps});
-function boot(){ensureUi();if(lazyFeatureMode)return;addButtons();document.addEventListener('abl:profile-state',()=>addButtons());window.addEventListener('focus',()=>refreshAdminButton().catch(()=>{}),{passive:true})}
+function boot(){ensureUi();if(lazyFeatureMode)return;addButtons();document.addEventListener('abl:profile-state',()=>addButtons())}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
