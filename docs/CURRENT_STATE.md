@@ -4,17 +4,17 @@ GitHub `main` is the source of truth. This file is the compact fresh-agent hando
 
 ## Current executable target
 
-- merged baseline before this slice: **V0.11 Unified Notifications**;
-- current implementation slice: **V0.12 Versioned Legal & Consent**;
+- merged baseline before this slice: **V0.12 Versioned Legal & Consent**;
+- current implementation slice: **V0.13 Provider-neutral Payment Core**;
 - country edition: `PH`;
 - currency: `PHP`;
 - default business timezone: `Asia/Manila`.
 
-The public runtime chain after V0.12 is:
+The public runtime chain after V0.13 is:
 
-`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications -> Legal & Consent`
+`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications -> Legal & Consent -> Payment Core`
 
-Public entry: `server-legal.js`.
+Public entry: `server-payments.js`.
 
 ## Public operational profiles
 
@@ -93,7 +93,7 @@ Implemented in this slice:
 - event wiring for Orders, Delivery, Supplier procurement, Local Services, Support, Incidents and Profile Governance;
 - privacy filters that exclude tokens, passwords, live coordinates and evidence payloads from notification history.
 
-## V0.12 — current boundary: Issue #35
+## V0.12 — completed boundary: Issue #35
 
 Implemented in this slice:
 - versioned legal-document registry with jurisdiction/locale/version/hash/status;
@@ -109,6 +109,26 @@ Implemented in this slice:
 - activation requires recorded legal review metadata; translated copy also requires translation review;
 - repository agreements are seeded as controlled drafts only and **do not block users until a legally reviewed version is explicitly activated**.
 
+## V0.13 — current boundary: Issue #34
+
+Implemented in the provider-neutral slice:
+- server-owned payment intents with mandatory idempotency keys;
+- provider configuration metadata with credentials explicitly excluded from database/GitHub;
+- payment attempts and redacted provider-event evidence;
+- immutable payment allocations separating merchandise, delivery and future fee components;
+- draft-only versioned fee policies and fee rules with no invented/active percentage;
+- refund requests that remain provider-action-required until a PSP adapter exists;
+- settlement and settlement-line ledgers;
+- reconciliation runs/items that remain manual-review until a real provider statement adapter is installed;
+- backfill/mirroring of existing confirmed `order_payments` without re-posting accounting revenue;
+- client success pages are never payment authority;
+- Payment Center and Finance Admin UI showing provider readiness explicitly.
+
+Required next decision before real online payments:
+- choose/onboard a Philippine PSP;
+- configure its credentials in Railway/provider secret storage;
+- implement provider-specific intent/session creation, signed webhook verification, refunds, payouts/settlements and statement reconciliation.
+
 ### Issue #34 — Payments
 Real Philippine payment-provider intents/webhooks, allocations, settlements and reconciliation.
 
@@ -119,11 +139,12 @@ Backups/restore proof, staging, monitoring, private object storage, rate limits 
 
 Issue #37 — `PH PILOT ROADMAP — Minimum launch gates and post-pilot expansion order` remains the launch-order authority.
 
-Continuation after V0.12:
-1. #34 real payment provider + settlement/reconciliation;
-2. end-to-end economic-loop revalidation;
-3. #36 production-readiness gate;
-4. controlled Philippines pilot in one explicitly configured operating territory.
+Continuation after V0.13 provider-neutral core:
+1. Project Owner approval of PSP choice/onboarding;
+2. provider-specific payment adapter + signed webhook authority;
+3. end-to-end economic-loop revalidation;
+4. #36 production-readiness gate;
+5. controlled Philippines pilot in one explicitly configured operating territory.
 
 ## Country / commerce separation
 
