@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sendTransientEmailNotification } from './notification-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -184,20 +185,17 @@ async function recordEmail(accountId, template, recipient, status, provider = ''
   await pool.query(`INSERT INTO auth_email_deliveries(account_id,template_code,provider,recipient_hash,status,provider_reference,error_code,delivered_at) VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $5='sent' THEN NOW() END)`, [accountId, template, provider, sha256(normalizeEmail(recipient)), status, clean(reference, 300), clean(error, 300)]).catch(() => {});
 }
 async function sendEmail({ accountId, to, subject, html, template }) {
-  if (AUTH_EMAIL_PROVIDER === 'resend' && RESEND_API_KEY && AUTH_FROM_EMAIL) {
-    try {
-      const r = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: AUTH_FROM_EMAIL, to: [to], subject, html }) });
-      const b = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(b?.message || `Email provider ${r.status}`);
-      await recordEmail(accountId, template, to, 'sent', 'resend', b?.id || '');
-      return { sent: true };
-    } catch (e) {
-      await recordEmail(accountId, template, to, 'failed', 'resend', '', e.message);
-      return { sent: false };
-    }
-  }
-  await recordEmail(accountId, template, to, 'not_configured', AUTH_EMAIL_PROVIDER || 'none');
-  return { sent: false };
+  const eventCode=template==='password_reset'?'auth.password_reset':'auth.email_verification';
+  const eventKey=`auth:${template}:${accountId}:${Date.now()}:${crypto.randomBytes(5).toString('hex')}`;
+  const safeBody=template==='password_reset'
+    ?'Password reset instructions were requested for your account.'
+    :'Email verification instructions were requested for your account.';
+  const result=await sendTransientEmailNotification(pool,{
+    eventKey,eventCode,accountId,to,subject,html,category:'security',priority:'high',
+    data:{title:subject,body:safeBody}
+  });
+  await recordEmail(accountId,template,to,result.sent?'sent':result.not_configured?'not_configured':'failed',result.sent?'resend':AUTH_EMAIL_PROVIDER||'none',result.reference||'',result.sent?'':result.not_configured?'provider_not_configured':'notification_delivery_failed');
+  return {sent:Boolean(result.sent)};
 }
 async function ownerMigrationRequired() {
   const q = await pool.query(`SELECT email,(password_hash IS NOT NULL) has_password,legacy_pin_retired_at FROM accounts WHERE id=1`);
