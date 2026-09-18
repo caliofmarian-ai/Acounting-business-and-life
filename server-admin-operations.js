@@ -272,8 +272,14 @@ function requirePermissionFromContext(ctx,permission,territoryId=null){
   if(!result.allowed)throw Object.assign(new Error('Admin permission or territory scope is not available'),{status:403});
   return result.assignment;
 }
+function adminIdentityPayload(assignments){
+  const permissions=new Set(),superAdmin=assignments.some(a=>assignmentRank(a)==='super_admin');
+  if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
+  else for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
+  return{is_admin:assignments.length>0,assignments,permissions:[...permissions].sort()};
+}
 function adminMePayload(ctx){
-  return{is_admin:ctx.assignments.length>0,assignments:ctx.assignments,permissions:[...ctx.permissions].sort()};
+  return adminIdentityPayload(ctx.assignments);
 }
 function adminCatalogPayload(ctx){
   if(!ctx.assignments.length)throw Object.assign(new Error('Admin assignment required'),{status:403});
@@ -427,8 +433,8 @@ async function root(req,res){const r=await upstream(req.path,{headers:{...req.he
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/admin/me',async(req,res,next)=>{try{
-  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
-  res.json(adminMePayload(ctx));
+  const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
+  res.json(adminIdentityPayload(assignments));
 }catch(e){next(e)}});
 app.get('/api/admin/catalog',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
