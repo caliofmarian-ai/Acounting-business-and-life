@@ -138,6 +138,8 @@ External PostHog delivery requires all of:
 
 Production currently has none of those activation variables configured. Current PostHog revalidation exposes only `DROPi / Default project` (project id `273401`, no ingested events), which is not accepted as verified Business & Life destination evidence.
 
+Prepared pre-conversion persistence now has a separate fail-closed gate. It remains inactive unless `REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED=true`, retention is approved, lawful basis is approved and a dedicated HMAC secret is configured. If later activated, its pending rows expire after the approved 90-day window and cannot store a referred account id.
+
 Therefore:
 - browser instrumentation can call Business & Life same-origin validation endpoints;
 - no referral analytics is currently delivered to PostHog;

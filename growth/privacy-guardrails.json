@@ -85,5 +85,15 @@
     "referralCanGrantAdmin": false,
     "referralCanBypassTerritoryApproval": false,
     "referralCanBypassCredentialChecks": false
+  },
+  "pendingAttribution": {
+    "enabledByDefault": false,
+    "retentionDays": 90,
+    "requiresRetentionApproval": true,
+    "requiresLawfulBasisApproval": true,
+    "requiresDedicatedHmacSecret": true,
+    "rawCorrelationIdStored": false,
+    "convertedAccountBindingAllowed": false,
+    "rewardStateAllowed": false
   }
 }

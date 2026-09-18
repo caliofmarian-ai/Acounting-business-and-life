@@ -173,6 +173,8 @@ The final notice must provide the actual controller/PIC or representative contac
 ## 9. Security/minimization controls already implemented
 
 Current Growth guardrails include:
+- pending pre-conversion attribution persistence is disabled by default and separately gated by lawful-basis approval;
+- raw browser correlation IDs are not stored by the pending-attribution design; only a dedicated-secret HMAC is permitted;
 - opaque public referral identifier;
 - strict analytics property allowlist;
 - explicit analytics denylist for raw contact data/secrets;
