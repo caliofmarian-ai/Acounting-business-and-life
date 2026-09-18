@@ -45,9 +45,14 @@ test('PayMongo sandbox can be READY for internal QA but not for real-customer co
   assert.ok(live.blockers.includes('PAYMONGO_LIVE_MODE_REQUIRED_FOR_REAL_CUSTOMER_PILOT'));
 });
 
-test('PayMongo real-customer pilot gate is READY only with live key, live enablement and webhook',()=>{
+test('PayMongo real-customer pilot gate also requires verified LIVE payment and reconciliation evidence',()=>{
   const cfg={secretReady:true,webhookReady:true,keyMode:'live',mode:'live',liveAllowed:true,methods:['gcash','paymaya','qrph','card']};
-  const live=payMongoPilotReadiness(cfg,{ready:true},'controlled_pilot');
+  const validation=payMongoPilotReadiness(cfg,{ready:true},'live_validation');
+  assert.equal(validation.state,'READY');
+  const beforeEvidence=payMongoPilotReadiness(cfg,{ready:true},'controlled_pilot');
+  assert.equal(beforeEvidence.state,'HOLD');
+  assert.ok(beforeEvidence.blockers.includes('PAYMONGO_LIVE_PAYMENT_EVIDENCE_MISSING'));
+  const live=payMongoPilotReadiness(cfg,{ready:true},'controlled_pilot',{live_payment_confirmed:true,live_reconciliation_matched:true});
   assert.equal(live.state,'READY');
   assert.deepEqual(live.blockers,[]);
   assert.equal(live.online_payment_required,true);
