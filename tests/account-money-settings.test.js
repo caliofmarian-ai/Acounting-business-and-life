@@ -90,3 +90,11 @@ test('registered business identity is a verification declaration not automatic a
   assert.match(core,/verification_status=CASE WHEN identity_kind<>\$1 OR legal_name<>\$2 THEN 'unverified'/);
   assert.doesNotMatch(core,/identity_kind='registered_business'[^\n]*verification_status='verified'/);
 });
+
+
+test('normal Withdraw flow no longer uses profile-scoped legacy movement form',()=>{
+  const render=ui.slice(ui.indexOf('function renderSettings'),ui.indexOf('function bindSettings'));
+  assert.match(render,/Withdraw will use the default payout destination configured above in Avatar → Money & Banking/);
+  assert.doesNotMatch(render,/moneyMovementForm\(\)/);
+  assert.match(ui,/const legacyMovement=document\.getElementById\('moneyMovementForm'\)/);
+});
