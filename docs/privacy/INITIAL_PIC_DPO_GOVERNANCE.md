@@ -151,3 +151,13 @@ Placeholders such as "[DPO name]" or fake addresses/emails must not be published
 `NPC_REGISTRATION_STATUS = assessment_required_before_public_launch`
 
 `PUBLIC_CONTROLLER_IDENTITY_READY = false`
+
+## 10. Registration-assessment checkpoint
+
+A dedicated trigger-by-trigger assessment is maintained at:
+- `docs/privacy/NPC_REGISTRATION_ASSESSMENT_DRAFT.md`;
+- `privacy/npc-registration-assessment.json`.
+
+Current final registration decision: **PENDING**.
+
+This does not block continued development, but it is a public-launch gate if unresolved when live Philippine personal-data processing is ready to begin.
