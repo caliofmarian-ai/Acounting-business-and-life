@@ -145,14 +145,20 @@ app.post('/api/payments/admin/paymongo/refunds/:id/execute',async(req,res,next)=
 });
 
 function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
   const headers={...req.headers,host:'127.0.0.1:'+upstreamPort};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
   const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
     res.statusCode=ur.statusCode||502;
     for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
     ur.pipe(res);
   });
   up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Payment Core upstream unavailable'})});
-  req.pipe(up);
+  if(payload)up.end(payload);else req.pipe(up);
 }
 app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected PayMongo adapter error',code:err.code||undefined})});
