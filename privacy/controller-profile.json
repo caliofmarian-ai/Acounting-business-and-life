@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "countryCode": "PH",
   "operatingName": "Business & Life",
   "legalEntity": {
@@ -39,7 +39,11 @@
       "data_processing_system_involving_automated_decision_making_or_profiling"
     ],
     "npcrsRegistrationId": null,
-    "certificate": null
+    "certificate": null,
+    "assessmentDocument": "docs/privacy/NPC_REGISTRATION_ASSESSMENT_DRAFT.md",
+    "assessmentData": "privacy/npc-registration-assessment.json",
+    "launchGateIfUnresolved": true,
+    "currentAssessment": "in_progress"
   },
   "privacyNotice": {
     "effectiveControllerIdentityReady": false,
