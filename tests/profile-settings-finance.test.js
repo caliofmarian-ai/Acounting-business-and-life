@@ -116,7 +116,19 @@ test('real movement requests are account-scoped and capability-gated',()=>{
 test('Settings finance payload exposes budgets and movement history without raw provider balance invention',()=>{
   assert.match(server,/listProfileBudgetEnvelopes/);
   assert.match(server,/listProfileMoneyMovements/);
-  assert.match(server,/financial_accounts:accounts,preferences,budgets,money_movements:movements/);
+  assert.match(server,/financial_accounts:accounts,legacy_profile_financial_accounts:accounts,preferences,budgets,money_movements:movements/);
   assert.match(server,/budget_purposes:BUDGET_PURPOSES/);
   assert.match(server,/movement_types:MONEY_MOVEMENT_TYPES/);
+});
+
+
+test('account-level Money & Banking is the normal external-finance setup while profile destinations remain legacy',()=>{
+  assert.match(server,/accountMoneySettings\(pool,\{accountId:me\.account\.id/);
+  assert.match(server,/account_money:accountMoney/);
+  assert.match(server,/legacy_profile_financial_accounts:accounts/);
+  const render=ui.slice(ui.indexOf('function renderSettings'),ui.indexOf('function bindSettings'));
+  assert.match(render,/accountMoneySettingsCard\(\)/);
+  assert.doesNotMatch(render,/Financial accounts & payout destinations/);
+  assert.match(ui,/One external financial identity for this account/);
+  assert.match(ui,/Shared across profiles/);
 });
