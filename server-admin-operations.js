@@ -195,22 +195,138 @@ async function unionPermissionScope(accountId,permissions){
   }
   return{ids:[...ids],countryWide};
 }
-async function adminOverview(accountId){
-  const assignments=await getAdminAssignments(pool,accountId);
+
+async function buildAdminScopeContext(accountId,seedAssignments=null){
+  const assignments=seedAssignments||await getAdminAssignments(pool,accountId);
   const permissions=new Set();
   const superAdmin=assignments.some(a=>assignmentRank(a)==='super_admin');
   if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
   else for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
-
-  const consoleScope=await scopeClause(accountId,'admin.console','territory_id');
-  const consoleIds=consoleScope.ids.length?consoleScope.ids:[-1];
-  const territories=await pool.query(
-    `SELECT id,country_code,parent_id,territory_type,name,code,status,created_at
-     FROM territories
-     WHERE ${consoleScope.countryWide?"country_code='PH'":"id=ANY($1::bigint[])"}
-     ORDER BY name`,
-    consoleScope.countryWide?[]:[consoleIds]
+  const {rows:territories}=await pool.query(
+    `SELECT id,country_code,parent_id,territory_type,name,code,status,created_at FROM territories ORDER BY id`
   );
+  const byId=new Map(territories.map(t=>[Number(t.id),t]));
+  const children=new Map();
+  for(const t of territories){
+    const parent=t.parent_id==null?null:Number(t.parent_id);
+    if(!children.has(parent))children.set(parent,[]);
+    children.get(parent).push(Number(t.id));
+  }
+  const descendantCache=new Map();
+  function descendants(rootId){
+    const root=Number(rootId);
+    if(!Number.isFinite(root))return[];
+    if(descendantCache.has(root))return descendantCache.get(root);
+    const out=[],seen=new Set(),stack=[root];
+    while(stack.length){
+      const id=stack.pop();
+      if(seen.has(id)||!byId.has(id))continue;
+      seen.add(id);out.push(id);
+      for(const child of children.get(id)||[])stack.push(child);
+    }
+    descendantCache.set(root,out);
+    return out;
+  }
+  return{accountId:Number(accountId),assignments,permissions,superAdmin,territories,byId,descendants};
+}
+function scopeFromContext(ctx,permission,column='territory_id'){
+  if(ctx.assignments.some(a=>a.admin_role==='super_admin')){
+    return{ids:ctx.territories.filter(t=>t.country_code==='PH').map(t=>Number(t.id)),countryWide:true,column};
+  }
+  const ids=new Set();let countryWide=false;
+  for(const a of ctx.assignments){
+    const perms=new Set(Array.isArray(a.permissions)?a.permissions:[]);
+    if(!perms.has(permission))continue;
+    if(a.admin_role==='country_admin'){
+      if(a.country_code==='PH')countryWide=true;
+      for(const t of ctx.territories)if(t.country_code===a.country_code)ids.add(Number(t.id));
+    }else if(a.admin_role==='territory_admin'&&a.territory_id){
+      for(const id of ctx.descendants(a.territory_id))ids.add(Number(id));
+    }
+  }
+  return{ids:[...ids],countryWide,column};
+}
+function unionScopeFromContext(ctx,permissions,column='territory_id'){
+  const ids=new Set();let countryWide=false;
+  for(const permission of permissions){
+    const scope=scopeFromContext(ctx,permission,column);
+    if(scope.countryWide)countryWide=true;
+    for(const id of scope.ids)ids.add(Number(id));
+  }
+  return{ids:[...ids],countryWide,column};
+}
+function permissionFromContext(ctx,permission,territoryId=null){
+  for(const a of ctx.assignments){
+    if(a.admin_role==='super_admin')return{allowed:true,assignment:a};
+    const perms=new Set(Array.isArray(a.permissions)?a.permissions:[]);
+    if(!perms.has(permission))continue;
+    if(a.admin_role==='country_admin'&&a.country_code==='PH')return{allowed:true,assignment:a};
+    if(a.admin_role==='territory_admin'&&territoryId!=null&&ctx.descendants(a.territory_id).includes(Number(territoryId))){
+      return{allowed:true,assignment:a};
+    }
+  }
+  return{allowed:false,assignment:null};
+}
+function requirePermissionFromContext(ctx,permission,territoryId=null){
+  const result=permissionFromContext(ctx,permission,territoryId);
+  if(!result.allowed)throw Object.assign(new Error('Admin permission or territory scope is not available'),{status:403});
+  return result.assignment;
+}
+function adminMePayload(ctx){
+  return{is_admin:ctx.assignments.length>0,assignments:ctx.assignments,permissions:[...ctx.permissions].sort()};
+}
+function adminCatalogPayload(ctx){
+  if(!ctx.assignments.length)throw Object.assign(new Error('Admin assignment required'),{status:403});
+  const highest=[...ctx.assignments].sort((a,b)=>rankLevel(assignmentRank(b))-rankLevel(assignmentRank(a)))[0];
+  const catalog=publicAdminCatalog(),actorRank=assignmentRank(highest);
+  const functions=catalog.functions.map(fn=>({...fn,can_delegate:ctx.superAdmin||fn.permissions.every(p=>ctx.permissions.has(p))}));
+  const delegable_roles=catalog.ranks.filter(r=>canDelegateRank(actorRank,r.code)).map(r=>r.code);
+  return{...catalog,functions,delegable_roles,actor_rank:actorRank};
+}
+async function adminSummaryFromContext(ctx){
+  const supportPromise=ctx.permissions.has('support.manage')?(async()=>{
+    const scope=scopeFromContext(ctx,'support.manage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed'))::int open
+       FROM support_tickets WHERE ${scope.countryWide?"country_code='PH'":"territory_id=ANY($1::bigint[])"}`,
+      scope.countryWide?[]:[ids]
+    );
+    return q.rows[0];
+  })():Promise.resolve(null);
+
+  const incidentPromise=ctx.permissions.has('incident.triage')?(async()=>{
+    const scope=scopeFromContext(ctx,'incident.triage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','dismissed'))::int open
+       FROM incident_reports WHERE ${scope.countryWide?"(territory_id IS NULL OR territory_id IN (SELECT id FROM territories WHERE country_code='PH'))":"territory_id=ANY($1::bigint[])"}`,
+      scope.countryWide?[]:[ids]
+    );
+    return q.rows[0];
+  })():Promise.resolve(null);
+
+  const metricPermissions=['metrics.view','finance.summary.view'].filter(p=>ctx.permissions.has(p));
+  const metricsPromise=metricPermissions.length?(async()=>{
+    const scope=unionScopeFromContext(ctx,metricPermissions),ids=scope.ids.length?scope.ids:[-1];
+    const [oq,dq,sq]=await Promise.all([
+      pool.query(`SELECT COUNT(*)::int n FROM orders o JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
+      pool.query(`SELECT COUNT(*)::int n FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
+      pool.query(`SELECT COUNT(*)::int n FROM service_jobs j JOIN service_provider_profiles sp ON sp.account_id=j.provider_account_id LEFT JOIN profile_authorizations pa ON pa.account_id=sp.account_id AND pa.role='service_provider' AND pa.status='active' WHERE ${scope.countryWide?"TRUE":"pa.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]).catch(()=>({rows:[{n:0}]}))
+    ]);
+    return{orders:Number(oq.rows[0]?.n||0),deliveries:Number(dq.rows[0]?.n||0),service_jobs:Number(sq.rows[0]?.n||0)};
+  })():Promise.resolve({orders:null,deliveries:null,service_jobs:null});
+
+  const [support,incidents,metrics]=await Promise.all([supportPromise,incidentPromise,metricsPromise]);
+  return{support,incidents,...metrics};
+}
+async function adminOverview(accountId,seedContext=null){
+  const ctx=seedContext||await buildAdminScopeContext(accountId);
+  const {assignments,permissions}=ctx;
+  const consoleScope=scopeFromContext(ctx,'admin.console','territory_id');
+  const consoleIds=new Set(consoleScope.ids);
+  const territories=(consoleScope.countryWide
+    ?ctx.territories.filter(t=>t.country_code==='PH')
+    :ctx.territories.filter(t=>consoleIds.has(Number(t.id))))
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
 
   const profilePermissionByRole=new Map([
     ['merchant','merchant.approve'],
@@ -224,11 +340,9 @@ async function adminOverview(accountId){
     ['courier','profiles.invite_courier']
   ]);
 
-  const applications=[];
-  for(const [role,permission] of profilePermissionByRole){
-    if(!permissions.has(permission))continue;
-    const scope=await scopeClause(accountId,permission,'pa.territory_id');
-    const ids=scope.ids.length?scope.ids:[-1];
+  const summaryPromise=adminSummaryFromContext(ctx);
+  const applicationTasks=[...profilePermissionByRole].filter(([,permission])=>permissions.has(permission)).map(async([role,permission])=>{
+    const scope=scopeFromContext(ctx,permission,'pa.territory_id'),ids=scope.ids.length?scope.ids:[-1];
     const q=await pool.query(
       `SELECT pa.id,pa.account_id,pa.role,pa.territory_id,pa.status,pa.proposed_business_name,pa.submitted_at,pa.updated_at,
               a.display_name,a.email,t.name territory_name,
@@ -240,14 +354,10 @@ async function adminOverview(accountId){
        ORDER BY pa.updated_at DESC LIMIT 150`,
       scope.countryWide?[role]:[role,ids]
     );
-    applications.push(...q.rows);
-  }
-
-  const invitations=[];
-  for(const [role,permission] of invitationPermissionByRole){
-    if(!permissions.has(permission))continue;
-    const scope=await scopeClause(accountId,permission,'i.territory_id');
-    const ids=scope.ids.length?scope.ids:[-1];
+    return q.rows;
+  });
+  const invitationTasks=[...invitationPermissionByRole].filter(([,permission])=>permissions.has(permission)).map(async([role,permission])=>{
+    const scope=scopeFromContext(ctx,permission,'i.territory_id'),ids=scope.ids.length?scope.ids:[-1];
     const q=await pool.query(
       `SELECT i.id,i.target_email,i.role,i.territory_id,i.status,i.expires_at,i.created_at,t.name territory_name
        FROM profile_invitations i JOIN territories t ON t.id=i.territory_id
@@ -255,16 +365,14 @@ async function adminOverview(accountId){
        ORDER BY i.created_at DESC LIMIT 100`,
       scope.countryWide?[role]:[role,ids]
     );
-    invitations.push(...q.rows);
-  }
+    return q.rows;
+  });
 
-  const authorizationById=new Map();
   const authorizationPermissions=[];
   if(permissions.has('profile.suspend'))authorizationPermissions.push(['*','profile.suspend']);
   for(const [role,permission] of profilePermissionByRole)if(permissions.has(permission))authorizationPermissions.push([role,permission]);
-  for(const [role,permission] of authorizationPermissions){
-    const scope=await scopeClause(accountId,permission,'a.territory_id');
-    const ids=scope.ids.length?scope.ids:[-1];
+  const authorizationTasks=authorizationPermissions.map(async([role,permission])=>{
+    const scope=scopeFromContext(ctx,permission,'a.territory_id'),ids=scope.ids.length?scope.ids:[-1];
     const roleClause=role==='*'?'TRUE':'a.role=$1';
     const scopeClauseSql=scope.countryWide?"(t.country_code='PH' OR a.territory_id IS NULL)":`a.territory_id=ANY($${role==='*'?1:2}::bigint[])`;
     const args=role==='*'?(scope.countryWide?[]:[ids]):(scope.countryWide?[role]:[role,ids]);
@@ -278,48 +386,24 @@ async function adminOverview(accountId){
        ORDER BY a.updated_at DESC LIMIT 150`,
       args
     );
-    for(const row of q.rows)authorizationById.set(String(row.id),row);
-  }
+    return q.rows;
+  });
 
-  let support=null;
-  if(permissions.has('support.manage')){
-    const scope=await scopeClause(accountId,'support.manage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
-    const q=await pool.query(
-      `SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed'))::int open
-       FROM support_tickets WHERE ${scope.countryWide?"country_code='PH'":"territory_id=ANY($1::bigint[])"}`,
-      scope.countryWide?[]:[ids]
-    );support=q.rows[0];
-  }
-
-  let incidents=null;
-  if(permissions.has('incident.triage')){
-    const scope=await scopeClause(accountId,'incident.triage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
-    const q=await pool.query(
-      `SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','dismissed'))::int open
-       FROM incident_reports WHERE ${scope.countryWide?"(territory_id IS NULL OR territory_id IN (SELECT id FROM territories WHERE country_code='PH'))":"territory_id=ANY($1::bigint[])"}`,
-      scope.countryWide?[]:[ids]
-    );incidents=q.rows[0];
-  }
-
-  let orders=null,deliveries=null,serviceJobs=null;
-  const metricPermissions=['metrics.view','finance.summary.view'].filter(p=>permissions.has(p));
-  if(metricPermissions.length){
-    const scope=await unionPermissionScope(accountId,metricPermissions),ids=scope.ids.length?scope.ids:[-1];
-    const [oq,dq,sq]=await Promise.all([
-      pool.query(`SELECT COUNT(*)::int n FROM orders o JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
-      pool.query(`SELECT COUNT(*)::int n FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
-      pool.query(`SELECT COUNT(*)::int n FROM service_jobs j JOIN service_provider_profiles sp ON sp.account_id=j.provider_account_id LEFT JOIN profile_authorizations pa ON pa.account_id=sp.account_id AND pa.role='service_provider' AND pa.status='active' WHERE ${scope.countryWide?"TRUE":"pa.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]).catch(()=>({rows:[{n:0}]}))
-    ]);
-    orders=Number(oq.rows[0]?.n||0);deliveries=Number(dq.rows[0]?.n||0);serviceJobs=Number(sq.rows[0]?.n||0);
-  }
+  const [applicationGroups,invitationGroups,authorizationGroups,summary]=await Promise.all([
+    Promise.all(applicationTasks),Promise.all(invitationTasks),Promise.all(authorizationTasks),summaryPromise
+  ]);
+  const applications=applicationGroups.flat();
+  const invitations=invitationGroups.flat();
+  const authorizationById=new Map();
+  for(const rows of authorizationGroups)for(const row of rows)authorizationById.set(String(row.id),row);
 
   applications.sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')));
   invitations.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
   const authorizations=[...authorizationById.values()].sort((a,b)=>String(b.approved_at||'').localeCompare(String(a.approved_at||'')));
   return{
-    assignments,territories:territories.rows,
+    assignments,territories,
     applications:applications.slice(0,150),invitations:invitations.slice(0,100),authorizations:authorizations.slice(0,150),
-    summary:{support,incidents,orders,deliveries,service_jobs:serviceJobs}
+    summary
   };
 }
 
