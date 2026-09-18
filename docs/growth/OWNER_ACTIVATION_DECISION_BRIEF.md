@@ -2,17 +2,17 @@
 document_id: BL-GROWTH-OWNER-ACTIVATION-BRIEF-001
 title: Referral Growth Activation Decision Brief
 document_type: owner_decision_brief
-status: DRAFT_FOR_OWNER_DECISION
+status: OWNER_DECISION_RECORDED
 country_code: PH
 runtime_activation: NONE
-version: 1.0
+version: 1.1
 ---
 
 # Business & Life — Referral Growth Activation Decision Brief
 
 ## Purpose
 
-This brief separates decisions that belong to the Project Owner / future Philippine controller from implementation that is already complete.
+This brief records the Project Owner's approved pilot product-policy direction and separates it from privacy/controller/processor activation gates that remain incomplete.
 
 Nothing in this document activates:
 - converted referral attribution;
@@ -50,7 +50,7 @@ Already implemented and production-protected:
 
 Canonical current value:
 
-`attributionModel = null`
+`attributionModel = registration_context_v1`
 
 ### Option A — registration context
 
@@ -105,7 +105,7 @@ Risk:
 - easier to game near signup;
 - may overwrite a meaningful earlier referral.
 
-### Product recommendation for pilot — NOT APPROVED
+### Owner decision for pilot — APPROVED PRODUCT POLICY
 
 **Use `registration_context_v1` for the first pilot.**
 
@@ -116,15 +116,15 @@ Reason:
 - it is easy to audit and explain;
 - the project can change policy later under a new version without rewriting historical attribution.
 
-This recommendation becomes policy only after explicit Owner approval.
+Project Owner approved this model on 2026-09-18. Runtime converted binding remains HOLD until the separate privacy/controller and activation gates are satisfied.
 
 ## Decision 2 — converted-attribution retention
 
 Canonical current value:
 
-`convertedAttributionRetentionRule = null`
+`convertedAttributionRetentionRule = 12_months_after_conversion`
 
-The existing retention brief contains **12 months after conversion** as a candidate, not as an approved rule.
+Project Owner approved **12 months after conversion** as the product-policy target. It is not a statutory Philippine period and is not yet approved for runtime activation by the privacy/controller gate.
 
 ### Candidate A — 90 days after conversion
 
@@ -157,11 +157,11 @@ Cons:
 - greater privacy/storage burden;
 - requires stronger necessity justification and periodic review.
 
-### Product recommendation for Owner/privacy review — NOT APPROVED
+### Owner product target — APPROVED; privacy/controller activation still HOLD
 
-Retain **12 months as the candidate to assess**, then delete or irreversibly aggregate/de-identify the converted attribution when the purpose ends, subject to the final controller/privacy assessment.
+Retain **12 months after conversion** as the Owner-approved product-policy target, then delete or irreversibly aggregate/de-identify the converted attribution when the purpose ends, subject to the final controller/privacy assessment.
 
-This is a product-analysis candidate, not a statutory Philippine retention period and not an activation instruction.
+This remains a product-policy target, not a statutory Philippine retention period and not an activation instruction.
 
 ## Decision 3 — lawful-basis path
 
@@ -203,7 +203,7 @@ Would require:
 
 ### Decision boundary
 
-The Project Owner may approve **pursuing** the legitimate-interest path for controller/privacy review.
+The Project Owner approved **pursuing** the legitimate-interest path for controller/privacy review.
 
 That does not by itself establish the legal basis. The final controller/privacy approval and effective notice remain mandatory.
 
@@ -211,7 +211,7 @@ That does not by itself establish the legal basis. The final controller/privacy 
 
 Canonical state:
 
-`status = disabled_pending_owner_policy`
+`status = disabled_for_initial_pilot_owner_approved`
 
 There is currently:
 - no qualification rule;
@@ -250,9 +250,9 @@ Requires:
 - accounting/tax classification;
 - reward-evidence retention.
 
-### Product recommendation for pilot — NOT APPROVED
+### Owner decision for pilot — APPROVED OFF
 
-**Keep rewards OFF for the initial pilot.**
+**Rewards are OFF for the initial pilot by Owner decision.**
 
 The live product now correctly says **Invite & Share**, so referral behavior can be tested without an implied payment promise.
 
@@ -274,12 +274,12 @@ Required:
 
 The current connected PostHog context must not be used merely because it is technically accessible.
 
-## Suggested pilot decision set — NOT APPROVED
+## Approved pilot product-policy set
 
-For the smallest, most privacy-minimized first pilot:
+Project Owner approved the following product-policy direction for the first pilot:
 
 1. attribution model: `registration_context_v1`;
-2. converted retention: keep **12 months as the candidate pending privacy/controller approval**;
+2. converted retention: **12 months after conversion** as the Owner product target, pending privacy/controller activation approval;
 3. lawful-basis workstream: continue the legitimate-interest assessment, without declaring it approved;
 4. rewards: OFF;
 5. PostHog: OFF until the correct Business & Life project is connected and verified.
@@ -288,7 +288,7 @@ This set minimizes new implementation and prevents reward/analytics dependencies
 
 ## What Owner approval would and would not do
 
-Owner approval can select the product-policy direction for:
+Owner approval has selected the product-policy direction for:
 - attribution model;
 - retention candidate;
 - reward launch strategy.
@@ -304,3 +304,9 @@ Owner approval alone does **not** substitute for:
 Even after an Owner product decision is recorded, production variables remain OFF until every required legal/privacy/processor/runtime gate for that function is satisfied and verified.
 
 No broad "turn everything on" action is permitted.
+
+## Decision record
+
+Canonical approval record: `docs/growth/OWNER_PILOT_POLICY_DECISION.md`.
+
+Owner product policy is recorded, but runtime activation remains fail-closed until the separate privacy/controller/processor/runtime gates are verified.

@@ -25,7 +25,7 @@ const readyEnv = {
   REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true',
   REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED: 'true',
   REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED: 'true',
-  REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_DAYS: '120',
+  REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS: '12',
   REFERRAL_ATTRIBUTION_CONVERTED_POLICY_VERSION: 'test-policy-v1',
   REFERRAL_ATTRIBUTION_CONVERTED_MODEL: 'registration_context_v1'
 };
@@ -39,7 +39,17 @@ test('converted referral binding is fail-closed behind all explicit gates', () =
   assert.equal(guardrails.convertedAttribution.rewardStateAllowed, false);
   assert.equal(guardrails.convertedAttribution.requiresPendingAttributionActivation, true);
   assert.equal(guardrails.convertedAttribution.requiresExplicitAttributionModel, true);
-  assert.equal(guardrails.convertedAttribution.attributionModel, null);
+  assert.equal(guardrails.convertedAttribution.attributionModel, 'registration_context_v1');
+  assert.equal(guardrails.convertedAttribution.attributionModelOwnerApproved, true);
+  assert.equal(guardrails.convertedAttribution.attributionModelActivationApproved, false);
+  assert.equal(guardrails.convertedAttribution.retentionMonthsTarget, 12);
+  assert.equal(guardrails.convertedAttribution.retentionActivationApproved, false);
+  assert.equal(guardrails.convertedAttribution.retentionRuntimeUnit, 'calendar_months');
+  assert.equal(guardrails.convertedAttribution.retentionRuntimeExpectedMonths, 12);
+  assert.equal(guardrails.convertedAttribution.retentionRuntimeConfig, 'REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS');
+  assert.equal(guardrails.convertedAttribution.retentionDaysLegacyOnly, true);
+  assert.equal(guardrails.convertedAttribution.lawfulBasisPath, 'legitimate_interest_assessment');
+  assert.equal(guardrails.convertedAttribution.lawfulBasisSelected, false);
   assert.deepEqual(guardrails.convertedAttribution.supportedImplementationModels, ['registration_context_v1']);
   assert.equal(convertedReferralBindingState({}).reason, 'disabled');
   assert.equal(convertedReferralBindingState({
@@ -68,7 +78,11 @@ test('converted referral binding is fail-closed behind all explicit gates', () =
     REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true',
     REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED: 'true',
     REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED: 'true'
-  }).reason, 'retention_days_not_configured');
+  }).reason, 'retention_months_not_configured');
+  assert.equal(convertedReferralBindingState({
+    ...readyEnv,
+    REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS: '11'
+  }).reason, 'retention_policy_mismatch');
   assert.equal(convertedReferralBindingState({
     ...readyEnv,
     REFERRAL_ATTRIBUTION_CONVERTED_POLICY_VERSION: ''
@@ -89,6 +103,8 @@ test('converted referral binding is fail-closed behind all explicit gates', () =
   assert.equal(ready.bindable, true);
   assert.equal(ready.pendingReady, true);
   assert.equal(ready.attributionModel, 'registration_context_v1');
+  assert.equal(ready.retentionMonths, 12);
+  assert.equal(ready.retentionPolicyMatchesOwner, true);
 });
 
 test('conversion context accepts only canonical referral identity fields', () => {
@@ -199,7 +215,7 @@ test('valid pending referral binds once with explicit retention metadata', async
             id: 61,
             state: 'signed_up',
             signed_up_at: '2026-09-18T19:00:00.000Z',
-            expires_at: '2027-01-16T19:00:00.000Z'
+            expires_at: '2027-09-18T19:00:00.000Z'
           }]
         };
       }
@@ -221,13 +237,15 @@ test('valid pending referral binds once with explicit retention metadata', async
   assert.equal(result.referrerAccountId, 7);
   assert.equal(result.referredAccountId, 10);
   assert.equal(result.sourceProfileRole, 'merchant');
-  assert.equal(result.retentionDays, 120);
+  assert.equal(result.retentionMonths, 12);
   assert.equal(result.retentionPolicyVersion, 'test-policy-v1');
 
   const insert = calls.find(call => call.text.includes('INSERT INTO referral_attributions'));
   assert.ok(insert);
   assert.match(insert.text, /state,signed_up_at/);
-  assert.match(insert.text, /retention_policy_version,retention_days,expires_at/);
+  assert.match(insert.text, /retention_policy_version,retention_months,expires_at/);
+  assert.match(insert.text, /INTERVAL '1 month'/);
+  assert.equal(insert.params[9], 12);
   assert.equal(insert.params.includes(context.correlation_id), false);
 });
 

@@ -69,11 +69,15 @@ CREATE INDEX IF NOT EXISTS referral_attributions_campaign_idx
 ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS correlation_hash TEXT;
 ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_policy_version TEXT;
 ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_days INTEGER;
+ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_months INTEGER;
 ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
 CREATE UNIQUE INDEX IF NOT EXISTS referral_attributions_correlation_hash_unique
   ON referral_attributions(correlation_hash)
   WHERE correlation_hash IS NOT NULL;
+
+-- `retention_days` is retained only for schema compatibility with pre-Owner-decision preparation.
+-- Owner-approved pilot policy uses `retention_months = 12` and calendar-month expiry.
 
 CREATE INDEX IF NOT EXISTS referral_attributions_expiry_idx
   ON referral_attributions(expires_at)
