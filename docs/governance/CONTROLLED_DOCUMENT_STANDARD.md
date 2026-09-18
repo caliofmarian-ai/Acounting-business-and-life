@@ -1,3 +1,19 @@
+---
+document_id: BL-20-GLB-DOCSTD-001
+title: Controlled Document Standard
+document_type: governance_standard
+status: DRAFT
+access_class: OPERATIONS_PRIVATE
+applicable_profiles: []
+applicable_functions: [Documentation Governance Owner, Super Admin, Country Admin]
+country_code: GLB
+territory_scope: global
+owner_role: Documentation Governance Owner
+approver_role: Project Owner
+version: 1.0
+legal_classification: PLATFORM_POLICY
+---
+
 # Controlled Document Standard
 
 Status: **CANONICAL V1**
