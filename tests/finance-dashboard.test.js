@@ -117,3 +117,31 @@ test('Pricing Lab discloses shared cost and missing-cost evidence limitations',(
   assert.match(ui,/missing_cost_warning/);
   assert.match(ui,/shared_cost_warning/);
 });
+
+
+test('Direct promotional cost is shown as an evidence floor, not full subsidy',()=>{
+  assert.match(ui,/Direct promotional cost/);
+  assert.match(ui,/Direct promo cost/);
+  assert.match(ui,/Promo processor cost/);
+  assert.match(ui,/Explicit Finance-ledger cost/);
+  assert.match(ui,/Direct cost \/ promo completion/);
+  assert.match(ui,/Direct cost \/ active promo subject/);
+  assert.match(ui,/DIRECT_ONLY_EXCLUDES_SHARED_FIXED/);
+  assert.match(ui,/DIRECT_PROMOTIONAL_SUBSIDY_FLOOR/);
+  assert.match(ui,/minimum evidenced subsidy\/cost floor, not the full economic cost/);
+});
+
+test('Direct promo dashboard exposes service and phase cost attribution',()=>{
+  assert.match(ui,/Direct promo cost by service/);
+  assert.match(ui,/promo\.direct_cost\|\|\{\}/);
+  assert.match(ui,/direct_processor_cost/);
+  assert.match(ui,/direct_ledger_cost/);
+  assert.match(ui,/total_direct_cost/);
+  assert.match(ui,/direct_cost_per_completion/);
+  assert.match(ui,/direct_cost_per_active_subject/);
+});
+
+test('Old no-attribution placeholder is removed after direct cost runtime exists',()=>{
+  assert.doesNotMatch(ui,/exact subsidy per promotional transaction is not shown until/);
+  assert.doesNotMatch(ui,/No subsidy amount is inferred/);
+});
