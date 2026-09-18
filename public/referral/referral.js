@@ -1,3 +1,5 @@
+import { captureReferralEvent } from './referral-analytics.js';
+
 const CODE_RE = /^r1_[A-Za-z0-9_-]{16}$/;
 const PUBLIC_ROLES = new Set(['customer','merchant','supplier','courier','service_provider']);
 
@@ -63,6 +65,13 @@ if (valid) {
   }
   continueButton.href = continueUrl();
   configureChannelLinks(currentReferralUrl());
+  if(profile){
+    void captureReferralEvent({
+      event:'referral_landing_viewed',
+      referralCode:ref,
+      properties:{campaign,source,medium,source_profile_role:profile}
+    });
+  }
 } else {
   document.documentElement.dataset.invalid = 'true';
   referralCode.textContent = 'Invalid or missing referral code';
@@ -78,6 +87,7 @@ shareButton.addEventListener('click', async () => {
   if (navigator.share) {
     try {
       await navigator.share(data);
+      if(profile)void captureReferralEvent({event:'referral_shared',referralCode:ref,properties:{channel:'native_share',campaign,source_profile_role:profile}});
       setStatus('Share sheet opened.');
       return;
     } catch (error) {
@@ -86,6 +96,7 @@ shareButton.addEventListener('click', async () => {
   }
   try {
     await navigator.clipboard.writeText(data.url);
+    if(profile)void captureReferralEvent({event:'referral_shared',referralCode:ref,properties:{channel:'copy_link',campaign,source_profile_role:profile}});
     setStatus('Sharing is unavailable here, so the invitation link was copied.');
   } catch {
     setStatus('Sharing is unavailable. Copy the address from your browser.');
@@ -96,8 +107,20 @@ copyButton.addEventListener('click', async () => {
   if (!valid) return;
   try {
     await navigator.clipboard.writeText(currentReferralUrl());
+    if(profile)void captureReferralEvent({event:'referral_shared',referralCode:ref,properties:{channel:'copy_link',campaign,source_profile_role:profile}});
     setStatus('Invitation link copied.');
   } catch {
     setStatus('Copy is unavailable. Copy the address from your browser.');
   }
 });
+
+
+for (const [id, channel] of [['whatsappLink','whatsapp'],['telegramLink','telegram'],['smsLink','sms'],['emailLink','email']]) {
+  document.querySelector('#' + id)?.addEventListener('click', () => {
+    if (valid && profile) void captureReferralEvent({
+      event: 'referral_shared',
+      referralCode: ref,
+      properties: { channel, campaign, source_profile_role: profile }
+    });
+  });
+}
