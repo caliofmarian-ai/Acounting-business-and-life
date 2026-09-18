@@ -11,12 +11,14 @@ const help=read('public/help-linking.js');
 const helpCss=read('public/help-linking.css');
 const payments=read('public/payments-ui.js');
 
-test('lazy Admin uses one launcher and direct module API without duplicate buttons',()=>{
+test('lazy Support keeps the Admin module API without injecting duplicate Admin buttons',()=>{
   assert.match(admin,/lazyFeatureMode=Boolean\(window\.__ABL_LAZY_FEATURES__\)/);
   assert.match(admin,/window\.BusinessLifeAdminOps=Object\.freeze\(\{openSupport,openAdmin,closeOps\}\)/);
   assert.match(admin,/if\(lazyFeatureMode\|\|!token\(\)\)return/);
   assert.match(loader,/window\.__ABL_LAZY_FEATURES__=true/);
   assert.match(loader,/window\.BusinessLifeAdminOps/);
+  assert.doesNotMatch(loader,/lazyAdminBtn/);
+  assert.doesNotMatch(admin,/adminOpsBtn/);
   assert.doesNotMatch(loader,/waitFor\('adminOpsBtn'/);
   assert.doesNotMatch(loader,/document\.getElementById\('adminOpsBtn'\).*click/);
 });

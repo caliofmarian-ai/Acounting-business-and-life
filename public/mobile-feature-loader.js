@@ -8,7 +8,6 @@ const FEATURE_SPECS={
 };
 
 const featurePromises=new Map();
-let adminAccess=null;
 
 const token=()=>localStorage.getItem('abl_token')||'';
 
@@ -94,15 +93,6 @@ async function openSupport(){
   }catch(error){toast(error.message||'Could not open Support.')}
 }
 
-async function openAdmin(){
-  try{
-    closeMore();
-    if(!(await fetchAdminAccess()))throw new Error('Admin access is unavailable for this account.');
-    const api=await loadAdminOps();
-    api.openAdmin();
-  }catch(error){toast(error.message||'Could not open Admin.')}
-}
-
 async function openButtonFeature(name,id){
   try{
     closeMore();
@@ -138,20 +128,6 @@ function closeMore(){
   document.body.classList.remove('lazyModalOpen');
 }
 
-async function fetchAdminAccess(){
-  if(adminAccess!==null)return adminAccess;
-  if(!token())return false;
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),6000);
-  try{
-    const r=await fetch('/api/admin/me',{headers:{Authorization:'Bearer '+token()},signal:controller.signal});
-    if(!r.ok)return adminAccess=false;
-    const data=await r.json().catch(()=>({}));
-    return adminAccess=Boolean(data.is_admin);
-  }catch{return adminAccess=false}
-  finally{clearTimeout(timer)}
-}
-
 async function mountLaunchers(){
   if(!token())return;
   const top=document.querySelector('.topActions');
@@ -177,17 +153,6 @@ async function mountLaunchers(){
     top.appendChild(more);
   }
 
-  if(await fetchAdminAccess()){
-    if(!document.getElementById('lazyAdminBtn')){
-      const admin=document.createElement('button');
-      admin.id='lazyAdminBtn';
-      admin.className='lazyFeatureButton lazyAdminButton';
-      admin.type='button';
-      admin.textContent='Admin';
-      admin.onclick=openAdmin;
-      top.prepend(admin);
-    }
-  }
 }
 
 async function loadDrawerFeatures(){

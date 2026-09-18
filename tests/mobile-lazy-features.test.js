@@ -45,12 +45,12 @@ test('feature launcher lazy-loads optional modules and their CSS',()=>{
   assert.match(loader,/featurePromises\.has\(name\)/);
 });
 
-test('mobile launcher preserves Help Admin More and lazy feature recovery',()=>{
+test('mobile launcher preserves Help and More while Admin stays in the profile switcher',()=>{
   assert.match(loader,/lazySupportBtn/);
-  assert.match(loader,/lazyAdminBtn/);
+  assert.doesNotMatch(loader,/lazyAdminBtn/);
+  assert.doesNotMatch(loader,/fetchAdminAccess/);
   assert.match(loader,/lazyMoreBtn/);
   assert.match(loader,/BusinessLifeAdminOps/);
-  assert.match(loader,/Admin access is unavailable for this account/);
   assert.match(loader,/Could not load this feature/);
 });
 
