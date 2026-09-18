@@ -110,7 +110,7 @@ async function mountEconomicSummary() {
 async function bootAccountingWorkspace() {
   if(!ablToken()) return;
   try{
-    const me=await api('/api/me');
+    const me=window.BusinessLifeProfileState?.snapshot||await api('/api/me');
     const role=me.account?.active_role;
     if(!['merchant','supplier'].includes(role)) return;
     const profile=me.profiles?.find(p=>p.role===role);
