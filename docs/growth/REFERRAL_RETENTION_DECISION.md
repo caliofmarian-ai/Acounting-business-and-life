@@ -159,8 +159,9 @@ Still requiring explicit approval/resolution before Growth enables production re
 
 1. Converted attribution retention rule.
 2. Whether/when converted attribution becomes irreversibly aggregated.
-3. Privacy-notice wording/basis for referral analytics.
-4. Correct Business & Life PostHog project/region and project token.
-5. Reward-evidence retention only after reward economics are separately approved.
+3. Converted attribution model (for example registration-context, first-touch or last-touch). No model is selected by default.
+4. Privacy-notice wording/basis for referral analytics.
+5. Correct Business & Life PostHog project/region and project token.
+6. Reward-evidence retention only after reward economics are separately approved.
 
 Until then the canonical state is **HOLD** for external analytics and durable referral attribution retention.

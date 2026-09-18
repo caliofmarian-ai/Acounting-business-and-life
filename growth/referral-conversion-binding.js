@@ -1,4 +1,4 @@
-import { hashReferralCorrelation } from './referral-unconverted-attribution.js';
+import { hashReferralCorrelation, unconvertedReferralPersistenceState } from './referral-unconverted-attribution.js';
 import { isValidReferralCode, PUBLIC_PROFILE_ROLES } from './referral-domain.js';
 
 function isTrue(value) {
@@ -20,30 +20,48 @@ function retentionDaysFromEnv(env = process.env) {
 
 export function convertedReferralBindingState(env = process.env) {
   const enabled = isTrue(env.REFERRAL_ATTRIBUTION_CONVERTED_ENABLED);
+  const pendingState = unconvertedReferralPersistenceState(env);
   const retentionApproved = isTrue(env.REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED);
   const lawfulBasisApproved = isTrue(env.REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED);
   const retentionDays = retentionDaysFromEnv(env);
   const policyVersion = String(env.REFERRAL_ATTRIBUTION_CONVERTED_POLICY_VERSION || '').trim();
+  const attributionModel = String(env.REFERRAL_ATTRIBUTION_CONVERTED_MODEL || '').trim();
   const hmacSecret = String(env.REFERRAL_ATTRIBUTION_HMAC_SECRET || '');
   const secretConfigured = hmacSecret.length >= 32;
   const policyConfigured = /^[A-Za-z0-9._:-]{1,80}$/.test(policyVersion);
+  const modelSupported = attributionModel === 'registration_context_v1';
 
   let reason = 'ready';
   if (!enabled) reason = 'disabled';
+  else if (!pendingState.persistable) reason = `pending_${pendingState.reason}`;
   else if (!retentionApproved) reason = 'retention_not_approved';
   else if (!lawfulBasisApproved) reason = 'lawful_basis_not_approved';
   else if (!retentionDays) reason = 'retention_days_not_configured';
   else if (!policyConfigured) reason = 'policy_version_not_configured';
+  else if (!attributionModel) reason = 'attribution_model_not_configured';
+  else if (!modelSupported) reason = 'attribution_model_not_supported';
   else if (!secretConfigured) reason = 'hmac_secret_not_configured';
 
   return Object.freeze({
     enabled,
+    pendingReady: pendingState.persistable,
+    pendingReason: pendingState.reason,
     retentionApproved,
     lawfulBasisApproved,
     retentionDays,
     policyVersion: policyConfigured ? policyVersion : '',
+    attributionModel,
+    modelSupported,
     secretConfigured,
-    bindable: enabled && retentionApproved && lawfulBasisApproved && Boolean(retentionDays) && policyConfigured && secretConfigured,
+    bindable:
+      enabled &&
+      pendingState.persistable &&
+      retentionApproved &&
+      lawfulBasisApproved &&
+      Boolean(retentionDays) &&
+      policyConfigured &&
+      modelSupported &&
+      secretConfigured,
     reason
   });
 }
