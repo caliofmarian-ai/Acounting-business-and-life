@@ -120,6 +120,8 @@ At expiry, and absent a documented legal/business exception:
 
 No converted-attribution period is asserted by this draft. Durable converted attribution must remain gated until its retention/deletion rule and lawful purpose/basis are explicitly approved.
 
+The attribution-selection model is also unresolved. The implementation can support registration-context binding, but that support is not a policy decision. First-touch, last-touch or registration-context behavior must not be activated without an explicit approved model.
+
 ### Reward/payment/accounting evidence
 
 **TO BE CONFIRMED — HOLD.**
