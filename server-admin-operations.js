@@ -272,6 +272,7 @@ app.post('/api/admin/assignments',body,async(req,res,next)=>{try{
   for(const code of functionCodes)if(!isFunctionAssignableToRole(code,role))return res.status(400).json({error:'Function is not assignable to this Admin rank: '+code});
   const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
   const requested=[...new Set([...explicit,...expandAdminFunctions(functionCodes,role)])];
+  if(role==='specialist'&&requested.some(p=>p==='admin.assign_limited'||p==='admin.delegate'))return res.status(400).json({error:'Specialist cannot receive Admin delegation authority'});
   if(role==='specialist'&&!requested.length)return res.status(400).json({error:'Specialist requires at least one delegated function or permission'});
   let authority=await hasAdminPermission(pool,me.account.id,'admin.assign_limited',territoryId);
   if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',territoryId);
@@ -310,6 +311,7 @@ app.put('/api/admin/assignments/:id/permissions',body,async(req,res,next)=>{try{
   for(const code of functionCodes)if(!isFunctionAssignableToRole(code,targetRank))return res.status(400).json({error:'Function is not assignable to this Admin rank: '+code});
   const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
   const requested=[...new Set([...explicit,...(hasFunctions?expandAdminFunctions(functionCodes,targetRank):[])])];
+  if(targetRank==='specialist'&&requested.some(p=>p==='admin.assign_limited'||p==='admin.delegate'))return res.status(400).json({error:'Specialist cannot receive Admin delegation authority'});
   for(const p of requested){if(actorRank!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,target.territory_id);if(!x.allowed)return res.status(403).json({error:'You cannot delegate permission: '+p})}}
   const client=await pool.connect();try{
     await client.query('BEGIN');
