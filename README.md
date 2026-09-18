@@ -116,9 +116,9 @@ A future Ireland/Romania/other edition must use an isolated deployment/database/
 
 **V0.14 PayMongo Sandbox Adapter is implemented.** It uses PayMongo Hosted Checkout v2, server-only secret-key calls, signed raw-body webhook verification, exact amount/session matching, processor-fee evidence, and PayMongo refund execution. Redirects are never payment authority. Live keys remain disabled unless live mode is explicitly enabled.
 
-**V0.15 PayMongo Webhook Bootstrap is the current release target.** Once `PAYMONGO_SECRET_KEY=sk_test_...` exists in Railway, the server discovers the exact test webhook for its public URL or creates it through PayMongo once, retrieves the webhook verification secret server-side, and keeps it only in process memory. `PAYMONGO_WEBHOOK_SECRET` remains an optional explicit override, not a second mandatory manual setup step.
+**V0.15 PayMongo Webhook Bootstrap is implemented.** In QA/preview, a PayMongo test key can bootstrap the exact signed webhook for sandbox Hosted Checkout. On the public production surface, sandbox checkout is now fail-closed: the first controlled test with real customers requires PayMongo **LIVE** readiness (live key, explicit live enablement, signed webhook and at least one enabled online payment method). Cash remains supported in parallel. See `docs/payments/PAYMONGO_INTEGRATION.md` and `docs/payments/FIRST_PILOT_PAYMENT_GATE.md`.
 
-The remaining owner action for the first end-to-end sandbox payment is now only to add the PayMongo **test secret key** to Railway and redeploy. See `docs/payments/PAYMONGO_INTEGRATION.md`.
+**Crypto payment architecture is defined under Issue #188.** Crypto is a separate VASP/provider rail behind Payment Core, keeps PHP as the canonical PH commercial amount, does not make Business & Life a crypto custodian/exchange, and remains live-disabled until provider/compliance/reconciliation evidence is verified.
 
 The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**.
 
