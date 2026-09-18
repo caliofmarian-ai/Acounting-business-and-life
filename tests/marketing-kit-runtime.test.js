@@ -44,6 +44,8 @@ test('SVG export binds canonical referral fields and escapes user-controlled tex
   assert.match(svg, /width="1080" height="1080"/);
   assert.match(svg, /r1_abcdefghijklmnop/);
   assert.match(svg, /data:image\/png;base64,QUJDRA==/);
+  assert.match(svg, /xmlns:xlink="http:\/\/www\.w3\.org\/1999\/xlink"/);
+  assert.match(svg, /xlink:href="data:image\/png;base64,QUJDRA=="/);
   assert.doesNotMatch(svg, /<script>/);
   assert.match(svg, /&lt;script&gt;/);
 });
@@ -91,5 +93,9 @@ test('Marketing Kit page uses authenticated live referral data and user-initiate
   assert.match(page, /fil-PH/);
   assert.match(page, /syncVariantOptions/);
   assert.match(page, /new Blob/);
+  assert.match(page, /preview\.innerHTML=svg/);
+  assert.match(page, /preview\.querySelector\('svg'\)/);
+  assert.match(page, /previewFailure/);
+  assert.doesNotMatch(page, /preview\.src=previewUrl/);
   assert.doesNotMatch(page, /api\.qrserver|quickchart|chart\.google/);
 });
