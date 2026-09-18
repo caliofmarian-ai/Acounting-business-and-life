@@ -24,8 +24,10 @@ async function cachedJson(path,key){
   try { const data=await api(path); localStorage.setItem(cacheKey(key),JSON.stringify(data)); return data; }
   catch(e){ if(e.status===401) throw e; const cached=localStorage.getItem(cacheKey(key)); if(cached) return JSON.parse(cached); throw e; }
 }
-function logout(){ token=''; localStorage.removeItem('abl_token'); $('shell').classList.add('hidden'); $('login').classList.remove('hidden'); }
-function showShell(){ $('login').classList.add('hidden'); $('shell').classList.remove('hidden'); refreshAll(); }
+let baseActiveRole=window.BusinessLifeProfileState?.activeRole||null;
+function isMerchantBaseActive(){return baseActiveRole==='merchant'}
+function logout(){ token=''; baseActiveRole=null; localStorage.removeItem('abl_token'); $('shell').classList.add('hidden'); $('login').classList.remove('hidden'); }
+function showShell(){ $('login').classList.add('hidden'); $('shell').classList.remove('hidden'); }
 function typeLabel(t){return ({sale:'Sale',business_expense:'Business expense',money_received:'Money received',personal_withdrawal:'Personal withdrawal',adjustment:'Adjustment'})[t]||t;}
 function accountLabel(a){return ({cash:'Cash',gcash:'GCash',bank:'Bank',other:'Other'})[a]||a;}
 function signedAmount(t,a){ return ['business_expense','personal_withdrawal'].includes(t) ? `−${money(a)}` : `+${money(a)}`; }
@@ -107,6 +109,7 @@ async function loadAnalysis(days){
   $(`analysis${days}`).replaceChildren(...analysisRows(a));
 }
 async function refreshAll(){
+  if(!isMerchantBaseActive())return;
   try{await Promise.all([loadSummary(),loadTransactions(),loadStock(),loadRemittances(),loadDay(),loadBudget(),loadAnalysis(7),loadAnalysis(30)]);}catch(e){console.error(e);}
 }
 $('refreshBtn').onclick=refreshAll;
@@ -169,8 +172,18 @@ document.querySelectorAll('.bottomNav button').forEach(b=>b.onclick=()=>setView(
 document.querySelectorAll('[data-go="add"]').forEach(b=>b.onclick=()=>setView('Add'));
 $('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv',{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}catch(err){alert(err.message);}};
 
-window.addEventListener('online',()=>{setOnline(true);refreshAll();});
+document.addEventListener('abl:profile-state',event=>{
+  baseActiveRole=event.detail?.activeRole||null;
+  if(isMerchantBaseActive())refreshAll();
+});
+window.addEventListener('online',()=>{setOnline(true);if(isMerchantBaseActive())refreshAll();});
 window.addEventListener('offline',()=>setOnline(false));
 setOnline(navigator.onLine);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(reg=>reg.update().catch(()=>{})).catch(()=>{});
-if (token) showShell();
+if (token) {
+  showShell();
+  if(window.BusinessLifeProfileState){
+    baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
+    if(isMerchantBaseActive())refreshAll();
+  }
+}
