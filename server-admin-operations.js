@@ -10,6 +10,7 @@ import {
   requireAdminPermission, visibleTerritoryIds, signAdminAssertion, appendAdminAudit
 } from './admin-authorization.js';
 import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
+import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
 
 const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -74,6 +75,7 @@ async function isCountryWide(accountId,permission){const as=await getAdminAssign
 
 async function initDb(){
   await ensureAdminSchema(pool);
+  await ensureAdminFinanceSchema(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS support_tickets (
       id BIGSERIAL PRIMARY KEY,
@@ -245,6 +247,29 @@ function scopeFromContext(ctx,permission,column='territory_id'){
     }
   }
   return{ids:[...ids],countryWide,column};
+}
+function adminFinanceScope(ctx,permission='admin.console'){
+  const base=scopeFromContext(ctx,permission,'territory_id');
+  const specialistFunctions=new Set();
+  let hasNonSpecialist=false;
+  for(const a of ctx.assignments){
+    const perms=new Set(Array.isArray(a.permissions)?a.permissions:[]);
+    if(a.admin_role!=='super_admin'&&!perms.has(permission))continue;
+    const rank=assignmentRank(a);
+    if(rank==='specialist'){
+      for(const fn of Array.isArray(a.functions)?a.functions:[])specialistFunctions.add(String(fn));
+    }else hasNonSpecialist=true;
+  }
+  return{
+    countryWide:base.countryWide,
+    territoryIds:base.ids,
+    functionCodes:hasNonSpecialist||ctx.superAdmin?[]:[...specialistFunctions]
+  };
+}
+function financeActorRank(ctx){
+  return [...ctx.assignments].sort((a,b)=>rankLevel(assignmentRank(b))-rankLevel(assignmentRank(a)))[0]
+    ?assignmentRank([...ctx.assignments].sort((a,b)=>rankLevel(assignmentRank(b))-rankLevel(assignmentRank(a)))[0])
+    :'';
 }
 function unionScopeFromContext(ctx,permissions,column='territory_id'){
   const ids=new Set();let countryWide=false;
@@ -488,6 +513,7 @@ app.post('/api/admin/assignments',body,async(req,res,next)=>{try{
   const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
   const requested=[...new Set([...explicit,...expandAdminFunctions(functionCodes,role)])];
   if(role==='specialist'&&requested.some(p=>p==='admin.assign_limited'||p==='admin.delegate'))return res.status(400).json({error:'Specialist cannot receive Admin delegation authority'});
+  if(role!=='super_admin'&&requested.includes('finance.owner_distribution.manage'))return res.status(400).json({error:'Owner distribution authority is reserved for Super Admin'});
   if(role==='specialist'&&!requested.length)return res.status(400).json({error:'Specialist requires at least one delegated function or permission'});
   let authority=await hasAdminPermission(pool,me.account.id,'admin.assign_limited',territoryId);
   if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',territoryId);
@@ -535,6 +561,7 @@ app.put('/api/admin/assignments/:id/permissions',body,async(req,res,next)=>{try{
   const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
   const requested=[...new Set([...explicit,...(hasFunctions?expandAdminFunctions(functionCodes,targetRank):[])])];
   if(targetRank==='specialist'&&requested.some(p=>p==='admin.assign_limited'||p==='admin.delegate'))return res.status(400).json({error:'Specialist cannot receive Admin delegation authority'});
+  if(targetRank!=='super_admin'&&requested.includes('finance.owner_distribution.manage'))return res.status(400).json({error:'Owner distribution authority is reserved for Super Admin'});
   for(const p of requested){if(actorRank!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,target.territory_id);if(!x.allowed)return res.status(403).json({error:'You cannot delegate permission: '+p})}}
   const client=await pool.connect();try{
     await client.query('BEGIN');
@@ -562,6 +589,64 @@ app.post('/api/admin/assignments/:id/status',body,async(req,res,next)=>{try{
   await pool.query('UPDATE platform_admin_assignments SET status=$1,reason=$2,updated_at=NOW() WHERE id=$3',[status,clean(req.body?.reason,1000),id]);
   await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:authority.assignment.id,permission:'admin.assign_limited',territoryId:target.territory_id,targetType:'admin_assignment',targetId:String(id),eventCode:'admin_assignment_'+status,reason:req.body?.reason,correlationId:correlation(req)});
   res.json({ok:true,status});
+}catch(e){next(e)}});
+
+app.get('/api/admin/finance/operating',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  requirePermissionFromContext(ctx,'admin.console');
+  const scope=adminFinanceScope(ctx,'admin.console');
+  const [summary,budgets]=await Promise.all([
+    adminFinanceSummary(pool,scope),
+    listAdminBudgets(pool,scope)
+  ]);
+  res.json({
+    actor_rank:financeActorRank(ctx),
+    scope:{country_code:'PH',country_wide:scope.countryWide,territory_ids:scope.territoryIds,function_codes:scope.functionCodes},
+    summary:summary.summary,authority:summary.authority,recent_entries:summary.recent_entries,budgets,
+    catalog:{entry_types:ADMIN_FINANCE_ENTRY_TYPES,categories:ADMIN_FINANCE_CATEGORIES,budget_categories:ADMIN_BUDGET_CATEGORIES}
+  });
+}catch(e){next(e)}});
+
+app.post('/api/admin/finance/budgets',body,async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  const territoryId=req.body?.territory_id==null||req.body?.territory_id===''?null:Number(req.body.territory_id);
+  const permission=permissionFromContext(ctx,'finance.budget.manage',territoryId);
+  if(!permission.allowed)throw Object.assign(new Error('Budget management is outside your Admin finance authority'),{status:403});
+  const rank=assignmentRank(permission.assignment),functions=Array.isArray(permission.assignment.functions)?permission.assignment.functions:[];
+  const functionCode=clean(req.body?.function_code,100);
+  if(rank==='specialist'&&!functionCode)throw Object.assign(new Error('Specialist budget requires its delegated function'),{status:400});
+  if(rank==='specialist'&&!functions.includes(functionCode))throw Object.assign(new Error('Specialist cannot manage another function budget'),{status:403});
+  const row=await createAdminBudget(pool,{
+    budgetCategory:req.body?.budget_category,label:req.body?.label,allocatedAmount:req.body?.allocated_amount,
+    territoryId,functionCode,periodStart:req.body?.period_start||null,periodEnd:req.body?.period_end||null,
+    createdByAccountId:me.account.id
+  });
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:permission.assignment.id,permission:'finance.budget.manage',territoryId,targetType:'admin_finance_budget',targetId:String(row.id),eventCode:'admin_finance_budget_created',after:{public_id:row.public_id,budget_category:row.budget_category,allocated_amount:row.allocated_amount,function_code:row.function_code},reason:req.body?.reason,correlationId:correlation(req)});
+  res.status(201).json(row);
+}catch(e){next(e)}});
+
+app.post('/api/admin/finance/entries',body,async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  const territoryId=req.body?.territory_id==null||req.body?.territory_id===''?null:Number(req.body.territory_id);
+  const entryType=clean(req.body?.entry_type,40);
+  const required=entryType==='owner_distribution'?'finance.owner_distribution.manage':'finance.ledger.manage';
+  const permission=permissionFromContext(ctx,required,territoryId);
+  if(!permission.allowed)throw Object.assign(new Error(entryType==='owner_distribution'?'Owner distribution requires Super Admin authority':'Finance ledger management is outside your Admin scope'),{status:403});
+  const rank=assignmentRank(permission.assignment);
+  if(entryType==='owner_distribution'&&rank!=='super_admin')throw Object.assign(new Error('Owner distribution is reserved for Super Admin'),{status:403});
+  const functions=Array.isArray(permission.assignment.functions)?permission.assignment.functions:[];
+  const functionCode=clean(req.body?.function_code,100);
+  if(rank==='specialist'&&!functionCode)throw Object.assign(new Error('Specialist finance entry requires its delegated function'),{status:400});
+  if(rank==='specialist'&&!functions.includes(functionCode))throw Object.assign(new Error('Specialist cannot record another function finance entry'),{status:403});
+  const key=clean(req.headers['idempotency-key']||req.body?.entry_key,220);
+  const row=await createAdminFinanceEntry(pool,{
+    entryType,category:req.body?.category,amount:req.body?.amount,entryKey:key,territoryId,functionCode,
+    occurredAt:req.body?.occurred_at||null,counterparty:req.body?.counterparty,evidenceReference:req.body?.evidence_reference,
+    description:req.body?.description,providerCode:req.body?.provider_code,providerReference:req.body?.provider_reference,
+    createdByAccountId:me.account.id
+  });
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:permission.assignment.id,permission:required,territoryId,targetType:'admin_finance_entry',targetId:String(row.id),eventCode:'admin_finance_entry_created',after:{public_id:row.public_id,entry_type:row.entry_type,category:row.category,amount:row.amount,function_code:row.function_code},reason:req.body?.reason||req.body?.description,correlationId:correlation(req)});
+  res.status(201).json(row);
 }catch(e){next(e)}});
 
 app.get('/api/admin/audit',async(req,res,next)=>{try{const{me}=await adminFor(req,'audit.view');const ids=await visibleTerritoryIds(pool,me.account.id,'audit.view'),countryWide=await isCountryWide(me.account.id,'audit.view'),limit=Math.max(1,Math.min(300,Number(req.query.limit)||100));const{rows}=await pool.query(`SELECT e.*,a.display_name actor_name FROM admin_audit_events e LEFT JOIN accounts a ON a.id=e.actor_account_id WHERE ${countryWide?"e.country_code='PH'":"e.territory_id=ANY($1::bigint[])"} ORDER BY e.created_at DESC LIMIT ${limit}`,countryWide?[]:[ids.length?ids:[-1]]);res.json(rows)}catch(e){next(e)}});
