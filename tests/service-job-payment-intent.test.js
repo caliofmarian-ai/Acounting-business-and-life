@@ -94,5 +94,10 @@ test('Service Job payment endpoints are distinct from Order payment endpoint',()
   assert.match(server,/api\/payments\/intents\/service-job\/:id/);
   assert.match(server,/api\/payments\/service-jobs\/:id\/summary/);
   assert.match(server,/api\/payments\/intents\/order\/:id/);
-  assert.doesNotMatch(server,/service-job\/:id[^]*mirrorConfirmedOrderPayment/);
+  const start=server.indexOf("app.post('/api/payments/intents/service-job/:id'");
+  const end=server.indexOf("app.get('/api/payments/intents/:id'",start);
+  assert.ok(start>=0&&end>start);
+  const block=server.slice(start,end);
+  assert.doesNotMatch(block,/mirrorConfirmedOrderPayment/);
+  assert.doesNotMatch(block,/order_payments/);
 });
