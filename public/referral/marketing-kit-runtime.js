@@ -188,7 +188,7 @@ export function generateMarketingKitSvg({ templateId, fields, locale = 'en-PH', 
   const referralCodeLabel = interpolate(copy.pack.reusable.referralCodeLabel, copyFields);
   const scanCta = copy.pack.reusable.scanCta;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Business & Life referral creative">
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Business & Life referral creative">
   <rect width="${width}" height="${height}" rx="${Math.round(min * 0.035)}" fill="#f8fbff"/>
   <rect x="0" y="0" width="${width}" height="${Math.max(84, Math.round(height * 0.115))}" fill="#0f172a"/>
   <rect x="${pad}" y="${Math.max(62, Math.round(height * 0.115))}" width="${Math.max(90, Math.round(contentWidth * 0.32))}" height="${accentH}" rx="${Math.round(accentH/2)}" fill="#0284c7"/>
@@ -199,7 +199,7 @@ export function generateMarketingKitSvg({ templateId, fields, locale = 'en-PH', 
   <text x="${left}" y="${codeY + Math.max(84, Math.round(height * 0.115))}" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="${Math.max(15, Math.round(codeSize * 0.8))}" font-weight="800" fill="#0369a1">${xmlEscape(referralCodeLabel)}</text>
   <text x="${left}" y="${urlY + Math.max(84, Math.round(height * 0.115))}" font-family="Inter,Arial,sans-serif" font-size="${Math.max(13, Math.round(bodySize * 0.78))}" fill="#64748b">${xmlEscape(compactUrl(safe.referralUrl))}</text>
   <rect x="${qrX - Math.round(pad * 0.28)}" y="${qrY - Math.round(pad * 0.28)}" width="${qrSize + Math.round(pad * 0.56)}" height="${qrSize + Math.round(pad * 0.56)}" rx="${Math.round(min * 0.025)}" fill="#ffffff" stroke="#cbd5e1"/>
-  <image href="${xmlEscape(safe.qrDataUrl)}" x="${qrX}" y="${qrY}" width="${qrSize}" height="${qrSize}" preserveAspectRatio="xMidYMid meet"/>
+  <image href="${xmlEscape(safe.qrDataUrl)}" xlink:href="${xmlEscape(safe.qrDataUrl)}" x="${qrX}" y="${qrY}" width="${qrSize}" height="${qrSize}" preserveAspectRatio="xMidYMid meet"/>
   <text x="${landscape ? qrX + qrSize/2 : width/2}" y="${Math.min(height - Math.round(pad * 0.45), qrY + qrSize + Math.round(bodySize * 1.8))}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="${Math.max(12, Math.round(bodySize * 0.72))}" font-weight="700" fill="#475569">${xmlEscape(scanCta)}</text>
 </svg>`;
 }
