@@ -120,6 +120,35 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
 }
 
+
+export async function mirrorConfirmedOrderPayment(pool,orderPaymentId){
+  const q=await pool.query("SELECT p.id legacy_payment_id,p.payment_intent_id,p.order_id,p.amount,p.merchandise_amount,p.delivery_amount,p.account,p.method_code,p.provider_code,p.provider_reference,p.status,p.created_at,o.customer_account_id,o.business_id,o.currency_code,b.territory_id FROM order_payments p JOIN orders o ON o.id=p.order_id JOIN businesses b ON b.id=o.business_id WHERE p.id=$1 AND p.status='confirmed'",[Number(orderPaymentId)]);
+  if(!q.rowCount)return null;
+  const p=q.rows[0];
+  if(p.payment_intent_id)return paymentIntentDetail(pool,p.payment_intent_id);
+  const client=await pool.connect();
+  let intentId=null;
+  try{
+    await client.query('BEGIN');
+    const locked=await client.query("SELECT payment_intent_id FROM order_payments WHERE id=$1 FOR UPDATE",[p.legacy_payment_id]);
+    if(locked.rows[0]?.payment_intent_id){
+      intentId=Number(locked.rows[0].payment_intent_id);
+      await client.query('COMMIT');
+      return paymentIntentDetail(pool,intentId);
+    }
+    const key='legacy-order-payment:'+p.legacy_payment_id;
+    const ins=await client.query("INSERT INTO payment_intents(public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,provider_code,provider_intent_id,logical_method,currency_code,amount,status,provider_status,succeeded_at,created_at,updated_at) VALUES($1,$2,'order',$3,$4,$5,$6,$7,$8,$9,$10,$11,'succeeded','legacy_confirmed',$12,$12,$12) ON CONFLICT(idempotency_key) DO UPDATE SET updated_at=payment_intents.updated_at RETURNING id",[
+      'pi_legacy_'+p.legacy_payment_id,key,p.order_id,p.customer_account_id,p.business_id,p.territory_id,clean(p.provider_code,80),clean(p.provider_reference,160),normalizeMethod(p.method_code),p.currency_code||'PHP',money(p.amount),p.created_at
+    ]);
+    intentId=Number(ins.rows[0].id);
+    if(Number(p.merchandise_amount)>0)await client.query("INSERT INTO payment_allocations(payment_intent_id,component_code,economic_party_type,economic_party_id,gross_base,amount,currency_code,settlement_status,rule_snapshot) SELECT $1,'merchandise','merchant_business',$2,$3,$3,$4,'eligible','{\"source\":\"legacy_order_payment\"}'::jsonb WHERE NOT EXISTS(SELECT 1 FROM payment_allocations WHERE payment_intent_id=$1 AND component_code='merchandise')",[intentId,String(p.business_id),money(p.merchandise_amount),p.currency_code||'PHP']);
+    if(Number(p.delivery_amount)>0)await client.query("INSERT INTO payment_allocations(payment_intent_id,component_code,economic_party_type,economic_party_id,gross_base,amount,currency_code,settlement_status,rule_snapshot) SELECT $1,'delivery','delivery_service','',$2,$2,$3,'eligible','{\"source\":\"legacy_order_payment\"}'::jsonb WHERE NOT EXISTS(SELECT 1 FROM payment_allocations WHERE payment_intent_id=$1 AND component_code='delivery')",[intentId,money(p.delivery_amount),p.currency_code||'PHP']);
+    await client.query("UPDATE order_payments SET payment_intent_id=$1 WHERE id=$2",[intentId,p.legacy_payment_id]);
+    await client.query('COMMIT');
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  return paymentIntentDetail(pool,intentId);
+}
+
 export async function paymentIntentDetail(pool,idOrPublic){
   const q=await pool.query("SELECT i.*,b.name business_name,t.name territory_name,COALESCE((SELECT jsonb_agg(a ORDER BY a.id) FROM payment_allocations a WHERE a.payment_intent_id=i.id),'[]'::jsonb) allocations,COALESCE((SELECT jsonb_agg(x ORDER BY x.id) FROM payment_attempts x WHERE x.payment_intent_id=i.id),'[]'::jsonb) attempts,COALESCE((SELECT jsonb_agg(r ORDER BY r.id) FROM refunds r WHERE r.payment_intent_id=i.id),'[]'::jsonb) refunds FROM payment_intents i LEFT JOIN businesses b ON b.id=i.business_id LEFT JOIN territories t ON t.id=i.territory_id WHERE i.id::text=$1 OR i.public_id=$1",[String(idOrPublic)]);
   return q.rows[0]||null;
