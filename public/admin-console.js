@@ -113,8 +113,28 @@ function renderPricingScenario(s){
     +'</div>';
 }
 
+function renderSharedCostResult(s){
+  return '<div class="sharedCostResults">'
+    +'<div class="financeSummary"><div class="metric"><strong>'+financeMoney(s.equal_pool||0)+'</strong><span>50% equal pool</span></div><div class="metric"><strong>'+financeMoney(s.activity_pool||0)+'</strong><span>50% activity pool</span></div><div class="metric"><strong>'+financeMoney(s.allocated_total||0)+'</strong><span>Allocated total</span></div><div class="metric"><strong>'+financeMoney(s.residual||0)+'</strong><span>Residual</span></div></div>'
+    +(s.zero_activity_fallback==='EQUAL_SPLIT_ACTIVITY_HALF'?'<div class="notice"><strong>Zero-activity fallback used.</strong><br>The activity half was also divided equally because every scope had zero activity.</div>':'')
+    +rows(s.rows||[],x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.scope_name||x.scope_id)+'</strong><span class="status">'+financeMoney(x.allocated_amount)+'</span></div><div class="financeLine"><span>Equal '+financeMoney(x.equal_component)+'</span><span>Activity '+financeMoney(x.activity_component)+'</span><span>Driver '+esc(x.driver_value)+'</span></div></div>')
+    +'</div>';
+}
+function sharedCostScopeRow(index){
+  return '<div class="sharedCostScopeRow" data-shared-cost-row><label>Scope ID<input data-sc="id" value="scope-'+index+'" required></label><label>Country / zone name<input data-sc="name" placeholder="Philippines / Metro Manila" required></label><label>Activity / traffic units<input data-sc="driver" type="number" min="0" step="0.01" value="0" required></label><button type="button" class="secondary" data-remove-shared-cost>Remove</button></div>';
+}
+function monetizationV2Card(model){
+  const p=model?.profile_models||{},d=model?.digital_payment_incentive||{},shared=model?.shared_cost_policy||{};
+  const item=(role,label)=>{const x=p?.[role]||{};let value='';if(x.customer_free)value='FREE';else if(x.delivery_production_fee)value='% of delivery production';else if(x.monthly_subscription&&x.transaction_fee)value='Subscription + transaction fee';return '<div class="monetizationRoleRow"><div><strong>'+esc(label)+'</strong><small>'+(x.promotional_entitlement?'90-day promo before monetization':'No paid profile subscription')+'</small></div><b>'+esc(value||'Policy not configured')+'</b></div>'};
+  return '<section class="monetizationV2Card">'
+    +'<div class="commissionPlannerHead"><div><small>MONETIZATION V2</small><h3>Profile model & shared company costs</h3><p>No live amount or percentage is activated here.</p></div><span class="badge">OWNER POLICY</span></div>'
+    +'<div class="profileMonetizationGrid">'+item('customer','Customer')+item('merchant','Merchant')+item('supplier','Supplier')+item('local_services','Artisan / Local Services')+item('courier','Delivery')+'</div>'
+    +'<div class="financeTruth"><strong>Digital-payment incentive</strong><span>Verified '+esc((d.eligible_payment_methods||[]).join(' / '))+' payments may earn subscription or future platform-fee credits. Credits stay disabled until a versioned policy and Growth/Finance budget are approved.</span></div>'
+    +'<details class="commissionAssumptions"><summary>Shared company cost simulator · 50% equal + 50% activity</summary><form id="sharedCostScenarioForm" class="adminForm"><div class="financeFormGrid"><label>Total shared company cost (PHP)<input name="total_amount" type="number" min="0" step="0.01" required></label><label>Activity driver<select name="driver_code">'+(shared.supported_driver_examples||[]).map(x=>'<option value="'+esc(x)+'">'+esc(x.replaceAll('_',' '))+'</option>').join('')+'</select></label></div><div id="sharedCostScopeRows">'+sharedCostScopeRow(1)+sharedCostScopeRow(2)+'</div><button type="button" class="secondary" id="addSharedCostScope">Add country / zone</button><button class="primary" type="submit">Calculate 50/50 allocation</button><div id="sharedCostScenarioResult"></div></form></details>'
+    +'</section>';
+}
 function renderCommissionPlannerResult(s){
-  const current=s?.rates?.current_rollout||{},mature=s?.rates?.mature_100pct_fee_eligible||{},cost=s?.cost_model||{},vol=s?.volume||{},staff=s?.staffing||{},ops=s?.operating_costs||{};
+  const current=s?.rates?.current_rollout||{},mature=s?.rates?.mature_100pct_fee_eligible||{},cost=s?.cost_model||{},vol=s?.volume||{},staff=s?.staffing||{},ops=s?.operating_costs||{},mix=s?.revenue_mix||{};
   const pct=v=>v==null?'—':Number(v).toFixed(2)+'%';
   const status=current.status==='PROMOTIONAL_VOLUME_REQUIRES_EXTERNAL_FUNDING'
     ?'<div class="notice"><strong>Promo-funded period</strong><br>Fee-eligible volume is 0%. Commission revenue cannot fund this modeled operation yet; Owner/company capital or another legitimate funding source is required.</div>'
@@ -138,7 +158,10 @@ function renderCommissionPlannerResult(s){
       +' · Operating overhead '+financeMoney(ops.total_monthly_operating_overhead||0)
       +' · Processor '+financeMoney(cost.processor_total_cost||0)
       +' · Risk allowance '+financeMoney(cost.refund_chargeback_bad_debt_allowance||0)
-      +'<br>Mature fee base '+financeMoney(vol.mature_monthly_fee_base||0)
+      +'<br>Subscriptions '+financeMoney(mix.subscription_revenue||0)
+      +' · Delivery production fee '+financeMoney(mix.delivery_production_fee_revenue||0)
+      +' · Remaining sustainable transaction-fee revenue need '+financeMoney(mix.sustainable_transaction_revenue_need||0)
+      +'<br>Mature transaction fee base '+financeMoney(vol.mature_monthly_fee_base||0)
       +' · Current fee-eligible base '+financeMoney(vol.current_fee_eligible_monthly_base||0)
     +'</span></div>'
     +'<div class="financeTruth"><strong>Boundary</strong><span>'+esc(s?.guardrails?.owner_distribution_note||'Owner distribution is excluded.')+'<br>'+esc(s?.guardrails?.fee_base_rule||'')+'</span></div>'
@@ -171,7 +194,17 @@ function commissionPlannerForm(k,promo){
         +costInput('insurance_licences','Insurance & licences')
         +costInput('other_overhead','Other operating overhead')
       +'</div></details>'
-      +'<details class="commissionAssumptions"><summary>4. Payments, risk & sustainability</summary><div class="financeFormGrid">'
+      +'<details class="commissionAssumptions"><summary>4. Profile subscriptions & Delivery revenue</summary><div class="financeFormGrid">'
+        +'<label>Paid Merchant profiles<input name="merchant_paid_profiles" type="number" min="0" step="1" value="0"></label>'
+        +'<label>Merchant monthly subscription (PHP)<input name="merchant_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Paid Supplier profiles<input name="supplier_paid_profiles" type="number" min="0" step="1" value="0"></label>'
+        +'<label>Supplier monthly subscription (PHP)<input name="supplier_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Paid Artisan / Local Services profiles<input name="local_services_paid_profiles" type="number" min="0" step="1" value="0"></label>'
+        +'<label>Artisan / Local Services monthly subscription (PHP)<input name="local_services_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Monthly eligible Delivery earnings (PHP)<input name="delivery_eligible_earnings" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Delivery production fee %<input name="delivery_production_rate_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
+      +'</div><div class="notice"><strong>These revenues reduce the transaction fee still required.</strong><br>Customer remains free. Delivery has no monthly subscription.</div></details>'
+      +'<details class="commissionAssumptions"><summary>5. Payments, risk & sustainability</summary><div class="financeFormGrid">'
         +'<label>Blended processor rate %<input name="processor_rate_pct" type="number" min="0" max="100" step="0.0001" value="0"></label>'
         +'<label>Fixed processor cost / online event<input name="processor_fixed_per_online_event" type="number" min="0" step="0.01" value="0"></label>'
         +'<label>Refund / chargeback / bad-debt allowance %<input name="risk_allowance_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
@@ -244,7 +277,10 @@ async function financePanel(){
   if(!hasAny(['finance.summary.view'])){
     return hero()+operatingHtml+'<details class="adminFinanceAdvanced"><summary>Advanced platform economics</summary><div class="notice">Unit economics and payment-specific controls are not delegated to this Admin account.</div></details>';
   }
-  const k=await api('/api/payments/admin/unit-economics'+financeScopeQuery());
+  const [k,monetizationV2]=await Promise.all([
+    api('/api/payments/admin/unit-economics'+financeScopeQuery()),
+    api('/api/payments/admin/monetization-v2/model')
+  ]);
   const p=k.period||{};
   const serviceRows=k.services||[];
   const evidence=k.evidence_breakdown||[];
@@ -279,7 +315,7 @@ async function financePanel(){
       +'<div id="pricingScenarioResult"></div>'
     +'</form>';
   const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
-  return hero()+operatingHtml+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
+  return hero()+operatingHtml+monetizationV2Card(monetizationV2)+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
     +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
     +'<div class="financeSummary">'
       +'<div class="metric"><strong>'+financeMoney(k.gross_payment_volume)+'</strong><span>Gross payment volume · context, not revenue</span></div>'
@@ -328,6 +364,12 @@ async function financePanel(){
     +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>')
     +'</div></details>';
 }
+async function wireMonetizationV2(){
+  const rowsBox=document.getElementById('sharedCostScopeRows'),add=document.getElementById('addSharedCostScope'),form=document.getElementById('sharedCostScenarioForm');
+  if(add&&rowsBox)add.onclick=()=>{const count=rowsBox.querySelectorAll('[data-shared-cost-row]').length+1;rowsBox.insertAdjacentHTML('beforeend',sharedCostScopeRow(count));};
+  if(rowsBox)rowsBox.onclick=e=>{const b=e.target.closest('[data-remove-shared-cost]');if(!b)return;const all=rowsBox.querySelectorAll('[data-shared-cost-row]');if(all.length<=1)return;b.closest('[data-shared-cost-row]')?.remove();};
+  if(form)form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form),out=document.getElementById('sharedCostScenarioResult');const scopes=[...form.querySelectorAll('[data-shared-cost-row]')].map(r=>({scope_id:r.querySelector('[data-sc="id"]').value,scope_name:r.querySelector('[data-sc="name"]').value,driver_value:Number(r.querySelector('[data-sc="driver"]').value||0)}));out.innerHTML='<div class="notice">Calculating shared cost allocation…</div>';try{const x=await api('/api/payments/admin/shared-cost-allocation-scenario',{method:'POST',body:JSON.stringify({total_amount:Number(fd.get('total_amount')),driver_code:fd.get('driver_code'),scopes})});out.innerHTML=renderSharedCostResult(x)}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+}
 async function wireCommissionPlanner(){
   const form=document.getElementById('commissionPlannerForm');if(!form)return;
   form.onsubmit=async e=>{
@@ -349,6 +391,18 @@ async function wireCommissionPlanner(){
       risk_allowance_pct:Number(fd.get('risk_allowance_pct')||0),
       safety_reserve_pct:Number(fd.get('safety_reserve_pct')||0),
       growth_surplus_pct:Number(fd.get('growth_surplus_pct')||0),
+      paid_profiles:{
+        merchant:Number(fd.get('merchant_paid_profiles')||0),
+        supplier:Number(fd.get('supplier_paid_profiles')||0),
+        local_services:Number(fd.get('local_services_paid_profiles')||0)
+      },
+      subscription_amounts:{
+        merchant:Number(fd.get('merchant_subscription_amount')||0),
+        supplier:Number(fd.get('supplier_subscription_amount')||0),
+        local_services:Number(fd.get('local_services_subscription_amount')||0)
+      },
+      delivery_eligible_earnings:Number(fd.get('delivery_eligible_earnings')||0),
+      delivery_production_rate_pct:Number(fd.get('delivery_production_rate_pct')||0),
       platform_absorbs_processor_fees:fd.get('platform_absorbs_processor_fees')!=='false',
       platform_absorbs_risk_allowance:fd.get('platform_absorbs_risk_allowance')!=='false',
       staffing,monthly_costs:monthlyCosts
@@ -369,6 +423,7 @@ async function wireOperatingFinance(){
 }
 async function wireFinance(){
   await wireOperatingFinance();
+  await wireMonetizationV2();
   await wireCommissionPlanner();
   const pricing=document.getElementById('pricingScenarioForm');
   if(pricing)pricing.onsubmit=async e=>{
