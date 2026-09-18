@@ -15,11 +15,11 @@ test('mobile shell prevents injected top actions from widening the page',()=>{
   assert.match(shellCss,/@media\(max-width:640px\)[\s\S]*\.topActions\{width:100%;max-width:100%;justify-content:flex-start/);
 });
 
-test('only canonical V0.10 Admin is injected into the topbar',()=>{
+test('Admin authority is profile-first and never injected into the topbar',()=>{
   assert.doesNotMatch(governanceUi,/govAdminTop/);
   assert.doesNotMatch(governanceUi,/function addAdminButton/);
-  assert.match(adminUi,/id='adminOpsBtn'|id="adminOpsBtn"|getElementById\('adminOpsBtn'\)/);
-  assert.match(adminUi,/b\.textContent='Admin'/);
+  assert.doesNotMatch(adminUi,/adminOpsBtn/);
+  assert.doesNotMatch(adminUi,/refreshAdminButton/);
 });
 
 test('governance remains reachable without duplicate topbar Admin',()=>{
