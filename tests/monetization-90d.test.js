@@ -80,7 +80,7 @@ test('Payment/Finance layer backfills existing canonical history and reports rea
   assert.match(payments,/ensureMonetizationSchema\(pool\)/);
   assert.match(payments,/backfillMonetizationHistory\(pool\)/);
   assert.match(finance,/promotionKpi\(pool,\{\.\.\.p,territoryId\}\)/);
-  assert.match(finance,/promotion_economics:promotion/);
+  assert.match(finance,/promotion_economics:\{\.\.\.promotion,direct_cost:promotionDirectCost\}/);
   assert.match(core,/paid_conversion_status:'NOT_AVAILABLE_UNTIL_ACTIVE_FEE_POLICY'/);
 });
 
