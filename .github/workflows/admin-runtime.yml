@@ -9,6 +9,9 @@ on:
       - 'public/admin-console.html'
       - 'public/admin-console.css'
       - 'public/admin-console.js'
+      - 'server-paymongo.js'
+      - 'public/shell.js'
+      - 'public/profile-governance-ui.js'
       - '.github/workflows/admin-runtime.yml'
   push:
     branches: [main]
@@ -19,6 +22,9 @@ on:
       - 'public/admin-console.html'
       - 'public/admin-console.css'
       - 'public/admin-console.js'
+      - 'server-paymongo.js'
+      - 'public/shell.js'
+      - 'public/profile-governance-ui.js'
       - '.github/workflows/admin-runtime.yml'
 
 permissions:
@@ -79,6 +85,12 @@ jobs:
         run: |
           curl --fail --silent http://127.0.0.1:3000/admin | grep -q 'Admin Workspace'
           status=$(curl --silent --output /tmp/admin-me.json --write-out '%{http_code}' http://127.0.0.1:3000/api/admin/me)
+          test "$status" = "401"
+      - name: Verify profile-switch JSON survives the public proxy
+        run: |
+          status=$(curl --max-time 12 --silent --output /tmp/profile-switch.json --write-out '%{http_code}' \
+            -X PATCH -H 'Content-Type: application/json' -H 'Authorization: Bearer invalid-session' \
+            --data '{"role":"customer"}' http://127.0.0.1:3000/api/me/active-role)
           test "$status" = "401"
       - name: Stop application
         if: always()
