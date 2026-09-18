@@ -42,6 +42,7 @@ const status=document.querySelector('#status');
 const signin=document.querySelector('#signin');
 const exportButton=document.querySelector('#export');
 const shareButton=document.querySelector('#share');
+const backLink=document.querySelector('#back');
 const params=new URLSearchParams(location.search);
 const PUBLIC_ROLES=new Set(['customer','merchant','supplier','courier','service_provider']);
 let current=null;
@@ -56,6 +57,7 @@ role.value=PUBLIC_ROLES.has(params.get('profile'))?params.get('profile'):'custom
 
 function token(){return localStorage.getItem('abl_token')||''}
 function setStatus(message){status.textContent=message}
+function syncBackLink(){backLink.href='/referral/promotion-center.html?profile='+encodeURIComponent(role.value)}
 function setEnabled(enabled){exportButton.disabled=!enabled;shareButton.disabled=!enabled}
 function revokePreview(){if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=''}}
 function currentBlob(){
@@ -101,15 +103,19 @@ exportButton.addEventListener('click',()=>{
 shareButton.addEventListener('click',async()=>{
   if(!current)return;
   const blob=currentBlob();
-  const file=new File([blob],marketingKitFileName(template.value,current.referralCode),{type:'image/svg+xml'});
-  if(navigator.share&&navigator.canShare?.({files:[file]})){
-    try{await navigator.share({title:'Business & Life referral asset',files:[file]});setStatus('Share sheet opened.');return}catch(error){if(error?.name==='AbortError')return}
+  const fileName=marketingKitFileName(template.value,current.referralCode);
+  if(typeof File==='function'&&navigator.share&&navigator.canShare){
+    const file=new File([blob],fileName,{type:'image/svg+xml'});
+    if(navigator.canShare({files:[file]})){
+      try{await navigator.share({title:'Business & Life referral asset',files:[file]});setStatus('Share sheet opened.');return}catch(error){if(error?.name==='AbortError')return}
+    }
   }
-  downloadBlob(blob,file.name);setStatus('File sharing is unavailable here, so the SVG was exported instead.');
+  downloadBlob(blob,fileName);setStatus('File sharing is unavailable here, so the SVG was exported instead.');
 });
-role.addEventListener('change',load);
+role.addEventListener('change',()=>{syncBackLink();load()});
 template.addEventListener('change',render);
 addEventListener('beforeunload',revokePreview);
+syncBackLink();
 load();
 </script>
 </body></html>
