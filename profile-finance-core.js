@@ -10,6 +10,13 @@ export const PAYOUT_SCHEDULES=Object.freeze(['provider_default','daily','weekly'
 export const BUDGET_PURPOSES=Object.freeze(['operating','procurement','inventory','delivery','personal_spending','earnings_reserve','tax_reserve','emergency','custom']);
 export const MONEY_MOVEMENT_TYPES=Object.freeze(['transfer','withdrawal','payout']);
 export const MONEY_MOVEMENT_STATUSES=Object.freeze(['draft','pending_provider','processing','succeeded','failed','reversed','cancelled','manual_review']);
+export const PERSONAL_MONEY_ROLES=Object.freeze(['customer','courier','service_provider']);
+export const PROFILE_MONEY_ENTRY_TYPES=Object.freeze(['money_in','expense','adjustment','reversal']);
+export const PROFILE_MONEY_ENTRY_CATEGORIES=Object.freeze({
+  customer:['income','remittance','household','groceries','housing','transport','health','education','family','personal','other','adjustment'],
+  courier:['fuel','maintenance','parking_toll','vehicle_insurance','mobile_data','equipment','other_work','adjustment'],
+  service_provider:['materials','travel','tools_equipment','subcontractor','permit_fee','mobile_data','other_work','adjustment']
+});
 
 const ROLE_SET=new Set(PROFILE_FINANCE_ROLES);
 const BUSINESS_ROLE_SET=new Set(BUSINESS_FINANCE_ROLES);
@@ -18,6 +25,8 @@ const METHOD_SET=new Set(MONEY_METHODS);
 const SCHEDULE_SET=new Set(PAYOUT_SCHEDULES);
 const BUDGET_PURPOSE_SET=new Set(BUDGET_PURPOSES);
 const MOVEMENT_TYPE_SET=new Set(MONEY_MOVEMENT_TYPES);
+const PERSONAL_MONEY_ROLE_SET=new Set(PERSONAL_MONEY_ROLES);
+const PROFILE_MONEY_TYPE_SET=new Set(PROFILE_MONEY_ENTRY_TYPES);
 
 export function isBusinessFinanceRole(role){return BUSINESS_ROLE_SET.has(String(role||''))}
 export function publicFinancialAccount(row){
@@ -82,6 +91,59 @@ function normalizeBudgetScope(profileRole,businessId){
   }
   if(businessId!=null&&businessId!=='')fail('Personal/profile budget cannot use a business workspace');
   return{role,businessId:null};
+}
+function normalizePersonalMoneyRole(role){
+  const r=clean(role,40);
+  if(!PERSONAL_MONEY_ROLE_SET.has(r))fail('Personal money ledger is available only for Customer, Courier or Service Provider');
+  return r;
+}
+export function profileMoneyEntryCapabilities(role){
+  const r=normalizePersonalMoneyRole(role);
+  return{
+    profile_role:r,
+    entry_types:r==='customer'?['money_in','expense','adjustment']:['expense','adjustment'],
+    categories:[...(PROFILE_MONEY_ENTRY_CATEGORIES[r]||[])],
+    source_types:r==='courier'?['manual','delivery']:r==='service_provider'?['manual','service_job']:['manual'],
+    provider_balance_effect:false,
+    canonical_income_rule:r==='courier'
+      ?'Courier earnings require courier_net allocation evidence.'
+      :r==='service_provider'
+        ?'Service Provider income requires payment/settlement evidence.'
+        :'Platform purchases/refunds remain sourced from Orders and Payment Core.'
+  };
+}
+function normalizeProfileMoneyCategory(role,category){
+  const v=clean(category||'other',60);
+  if(!(PROFILE_MONEY_ENTRY_CATEGORIES[role]||[]).includes(v))fail('Unsupported category for this profile');
+  return v;
+}
+function normalizeProfileMoneyEntry(role,type,direction){
+  const t=clean(type,30),d=clean(direction,10);
+  if(!PROFILE_MONEY_TYPE_SET.has(t)||t==='reversal')fail('Unsupported manual money entry type');
+  if(role!=='customer'&&t==='money_in')fail('Courier and Service Provider income cannot be entered manually');
+  if(t==='money_in'&&d!=='in')fail('Money-in entry must use direction in');
+  if(t==='expense'&&d!=='out')fail('Expense entry must use direction out');
+  if(t==='adjustment'&&!['in','out'].includes(d))fail('Adjustment direction must be in or out');
+  return{type:t,direction:d};
+}
+async function validateProfileMoneySource(pool,{accountId,profileRole,sourceType='manual',sourceId=null}){
+  const source=clean(sourceType||'manual',30);
+  const allowed=profileMoneyEntryCapabilities(profileRole).source_types;
+  if(!allowed.includes(source))fail('Source type is not allowed for this profile');
+  if(source==='manual'){
+    if(sourceId!=null&&sourceId!=='')fail('Manual entry cannot claim a platform source record');
+    return{sourceType:'manual',sourceId:null};
+  }
+  const id=Number(sourceId);
+  if(!Number.isInteger(id)||id<=0)fail('A valid source record is required');
+  if(source==='delivery'){
+    const q=await pool.query('SELECT 1 FROM deliveries WHERE id=$1 AND courier_account_id=$2',[id,Number(accountId)]);
+    if(!q.rowCount)fail('Delivery is outside this Courier profile',403);
+  }else if(source==='service_job'){
+    const q=await pool.query('SELECT 1 FROM service_jobs WHERE id=$1 AND provider_account_id=$2',[id,Number(accountId)]);
+    if(!q.rowCount)fail('Service job is outside this Service Provider profile',403);
+  }
+  return{sourceType:source,sourceId:id};
 }
 async function validateLinkedFinancialAccount(pool,{accountId,profileRole,businessId,financialAccountId,currencyCode,purpose='link'}){
   if(financialAccountId==null||financialAccountId==='')return null;
@@ -238,7 +300,40 @@ export async function ensureProfileFinanceSchema(pool){
       CHECK(status IN ('draft','pending_provider','processing','succeeded','failed','reversed','cancelled','manual_review'))
     )`,
     `CREATE INDEX IF NOT EXISTS profile_money_movements_owner_idx
-      ON profile_money_movements(account_id,created_at DESC,status)`
+      ON profile_money_movements(account_id,created_at DESC,status)`,
+    `CREATE TABLE IF NOT EXISTS profile_money_entries(
+      id BIGSERIAL PRIMARY KEY,
+      public_id TEXT NOT NULL UNIQUE,
+      entry_key TEXT NOT NULL UNIQUE,
+      account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      profile_role TEXT NOT NULL,
+      financial_account_id BIGINT REFERENCES profile_financial_accounts(id) ON DELETE SET NULL,
+      source_type TEXT NOT NULL DEFAULT 'manual',
+      source_id BIGINT,
+      entry_type TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      category TEXT NOT NULL,
+      amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      currency_code TEXT NOT NULL DEFAULT 'PHP',
+      note TEXT NOT NULL DEFAULT '',
+      evidence_reference TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      reversal_of_id BIGINT REFERENCES profile_money_entries(id) ON DELETE RESTRICT,
+      actor_account_id BIGINT REFERENCES accounts(id),
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK(profile_role IN ('customer','courier','service_provider')),
+      CHECK(source_type IN ('manual','delivery','service_job')),
+      CHECK(entry_type IN ('money_in','expense','adjustment','reversal')),
+      CHECK(direction IN ('in','out')),
+      CHECK(status IN ('active','reversed')),
+      CHECK((entry_type='reversal' AND reversal_of_id IS NOT NULL) OR (entry_type<>'reversal' AND reversal_of_id IS NULL))
+    )`,
+    `CREATE INDEX IF NOT EXISTS profile_money_entries_scope_idx
+      ON profile_money_entries(account_id,profile_role,occurred_at DESC,id DESC)`,
+    `CREATE INDEX IF NOT EXISTS profile_money_entries_source_idx
+      ON profile_money_entries(source_type,source_id) WHERE source_id IS NOT NULL`
   ];
   for(const sql of statements)await pool.query(sql);
 }
@@ -609,4 +704,133 @@ export async function createProfileMoneyMovementRequest(pool,{
     })
   ]);
   return (await listProfileMoneyMovements(pool,accountId)).find(x=>x.id===Number(rows[0].id));
+}
+
+
+export async function listProfileMoneyEntries(pool,{accountId,profileRole,limit=100}){
+  const role=normalizePersonalMoneyRole(profileRole);
+  const cap=Math.min(250,Math.max(1,Number(limit)||100));
+  const [entries,summary]=await Promise.all([
+    pool.query(`
+      SELECT e.*,f.display_name financial_account_name,f.account_kind financial_account_kind,
+        f.reference_last4 financial_account_last4
+      FROM profile_money_entries e
+      LEFT JOIN profile_financial_accounts f ON f.id=e.financial_account_id
+      WHERE e.account_id=$1 AND e.profile_role=$2
+      ORDER BY e.occurred_at DESC,e.id DESC LIMIT $3
+    `,[Number(accountId),role,cap]),
+    pool.query(`
+      SELECT
+        COUNT(*) FILTER(WHERE status='active' AND entry_type<>'reversal')::int active_entry_count,
+        COALESCE(SUM(amount) FILTER(WHERE status='active' AND entry_type<>'reversal' AND direction='in'),0) active_money_in,
+        COALESCE(SUM(amount) FILTER(WHERE status='active' AND entry_type<>'reversal' AND direction='out'),0) active_money_out,
+        COUNT(*) FILTER(WHERE status='reversed')::int reversed_entry_count
+      FROM profile_money_entries WHERE account_id=$1 AND profile_role=$2
+    `,[Number(accountId),role])
+  ]);
+  const s=summary.rows[0]||{},moneyIn=Math.round((Number(s.active_money_in||0)+Number.EPSILON)*100)/100;
+  const moneyOut=Math.round((Number(s.active_money_out||0)+Number.EPSILON)*100)/100;
+  return{
+    profile_role:role,
+    capabilities:profileMoneyEntryCapabilities(role),
+    summary:{
+      active_entry_count:Number(s.active_entry_count||0),
+      recorded_money_in:moneyIn,
+      recorded_money_out:moneyOut,
+      recorded_net:Math.round((moneyIn-moneyOut+Number.EPSILON)*100)/100,
+      reversed_entry_count:Number(s.reversed_entry_count||0),
+      balance_type:'profile_recorded_cash_flow',
+      provider_cash_balance:null,
+      provider_balance_status:'NOT_AVAILABLE_WITHOUT_PROVIDER_EVIDENCE'
+    },
+    entries:entries.rows.map(x=>({
+      id:Number(x.id),public_id:x.public_id,entry_type:x.entry_type,direction:x.direction,category:x.category,
+      amount:Number(x.amount),currency_code:x.currency_code,financial_account_id:x.financial_account_id==null?null:Number(x.financial_account_id),
+      financial_account_name:x.financial_account_name||'',financial_account_kind:x.financial_account_kind||'',
+      financial_account_last4:x.financial_account_last4||'',source_type:x.source_type,
+      source_id:x.source_id==null?null:Number(x.source_id),note:x.note||'',evidence_reference:x.evidence_reference||'',
+      status:x.status,reversal_of_id:x.reversal_of_id==null?null:Number(x.reversal_of_id),
+      occurred_at:x.occurred_at,created_at:x.created_at
+    }))
+  };
+}
+
+export async function createProfileMoneyEntry(pool,{
+  publicId,entryKey,accountId,profileRole,entryType,direction,category,amount,currencyCode='PHP',
+  financialAccountId=null,sourceType='manual',sourceId=null,note='',evidenceReference='',occurredAt=null,actorAccountId=null
+}){
+  const role=normalizePersonalMoneyRole(profileRole),entry=normalizeProfileMoneyEntry(role,entryType,direction);
+  const cat=normalizeProfileMoneyCategory(role,category),value=normalizePositiveMoney(amount,'Money entry amount');
+  const currency=normalizeCurrency(currencyCode),key=clean(entryKey,220);
+  if(!key)fail('Idempotency key is required');
+  const existing=await pool.query('SELECT id FROM profile_money_entries WHERE entry_key=$1',[key]);
+  if(existing.rowCount)return (await listProfileMoneyEntries(pool,{accountId,profileRole:role,limit:250})).entries.find(x=>x.id===Number(existing.rows[0].id));
+  await validateLinkedFinancialAccount(pool,{
+    accountId:Number(accountId),profileRole:role,businessId:null,financialAccountId,currencyCode:currency
+  });
+  const source=await validateProfileMoneySource(pool,{accountId,profileRole:role,sourceType,sourceId});
+  const when=occurredAt==null||occurredAt===''?null:new Date(occurredAt);
+  if(when&&Number.isNaN(when.getTime()))fail('occurred_at must be a valid date/time');
+  const {rows}=await pool.query(`
+    INSERT INTO profile_money_entries(
+      public_id,entry_key,account_id,profile_role,financial_account_id,source_type,source_id,
+      entry_type,direction,category,amount,currency_code,note,evidence_reference,actor_account_id,occurred_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,COALESCE($16::timestamptz,NOW()))
+    RETURNING *
+  `,[
+    clean(publicId,120),key,Number(accountId),role,financialAccountId==null?null:Number(financialAccountId),
+    source.sourceType,source.sourceId,entry.type,entry.direction,cat,value,currency,clean(note,700),
+    clean(evidenceReference,500),actorAccountId||Number(accountId),when?when.toISOString():null
+  ]);
+  await pool.query(`
+    INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
+    VALUES($1,$2,NULL,$3,'profile_money_entry_created',$4::jsonb)
+  `,[
+    Number(accountId),role,financialAccountId==null?null:Number(financialAccountId),
+    JSON.stringify({entry_id:Number(rows[0].id),entry_type:entry.type,direction:entry.direction,category:cat,amount:value,currency_code:currency,source_type:source.sourceType,source_id:source.sourceId,provider_balance_effect:false})
+  ]);
+  return (await listProfileMoneyEntries(pool,{accountId,profileRole:role,limit:250})).entries.find(x=>x.id===Number(rows[0].id));
+}
+
+export async function reverseProfileMoneyEntry(pool,{
+  publicId,reversalKey,accountId,profileRole,entryId,note='',actorAccountId=null
+}){
+  const role=normalizePersonalMoneyRole(profileRole),key=clean(reversalKey,220);
+  if(!key)fail('Idempotency key is required');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const existing=await client.query('SELECT id FROM profile_money_entries WHERE entry_key=$1',[key]);
+    if(existing.rowCount){await client.query('COMMIT');return{reversal_id:Number(existing.rows[0].id),idempotent:true}}
+    const q=await client.query(`
+      SELECT * FROM profile_money_entries
+      WHERE id=$1 AND account_id=$2 AND profile_role=$3 FOR UPDATE
+    `,[Number(entryId),Number(accountId),role]);
+    if(!q.rowCount)fail('Money entry not found',404);
+    const old=q.rows[0];
+    if(old.entry_type==='reversal')fail('A reversal entry cannot be reversed again',409);
+    if(old.status!=='active')fail('Money entry is already reversed',409);
+    const reverseDirection=old.direction==='in'?'out':'in';
+    const ins=await client.query(`
+      INSERT INTO profile_money_entries(
+        public_id,entry_key,account_id,profile_role,financial_account_id,source_type,source_id,
+        entry_type,direction,category,amount,currency_code,note,evidence_reference,status,reversal_of_id,actor_account_id,occurred_at
+      ) VALUES($1,$2,$3,$4,$5,'manual',NULL,'reversal',$6,$7,$8,$9,$10,'','active',$11,$12,NOW())
+      RETURNING *
+    `,[
+      clean(publicId,120),key,Number(accountId),role,old.financial_account_id,reverseDirection,
+      old.category,old.amount,old.currency_code,clean(note||('Reversal of entry '+old.id),700),old.id,actorAccountId||Number(accountId)
+    ]);
+    await client.query("UPDATE profile_money_entries SET status='reversed',updated_at=NOW() WHERE id=$1",[old.id]);
+    await client.query(`
+      INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
+      VALUES($1,$2,NULL,$3,'profile_money_entry_reversed',$4::jsonb)
+    `,[
+      Number(accountId),role,old.financial_account_id,
+      JSON.stringify({entry_id:Number(old.id),reversal_entry_id:Number(ins.rows[0].id),amount:Number(old.amount),direction:old.direction,provider_balance_effect:false})
+    ]);
+    await client.query('COMMIT');
+    return{entry_id:Number(old.id),reversal_id:Number(ins.rows[0].id),status:'reversed',provider_balance_effect:false};
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
 }
