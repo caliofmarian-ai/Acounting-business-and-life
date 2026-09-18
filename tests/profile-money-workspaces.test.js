@@ -19,7 +19,7 @@ test('Customer Money uses payment/refund/order evidence and never business profi
 });
 
 test('Courier delivery fee is explicitly not treated as Courier earnings',()=>{
-  assert.match(core,/componentCode,'courier_net'/);
+  assert.match(core,/netAllocations\(pool,'courier_net',accountId\)/);
   assert.match(core,/delivery_fee_rule:'A delivery fee is the customer\/order delivery charge\. It is not automatically Courier earnings\.'/);
   assert.match(core,/Courier compensation allocation is not configured yet/);
   assert.match(ui,/Customer charges — not earnings/);
@@ -29,7 +29,7 @@ test('Courier delivery fee is explicitly not treated as Courier earnings',()=>{
 
 test('Local Services commercial job value stays separate from received income',()=>{
   assert.match(core,/COALESCE\(final_price,quote_amount,0\)/);
-  assert.match(core,/componentCode,'service_provider_net'/);
+  assert.match(core,/netAllocations\(pool,'service_provider_net',accountId\)/);
   assert.match(core,/Completed job value is a commercial amount, not proof that money was received/);
   assert.match(ui,/Completed job value is shown separately from provider-confirmed income/);
   assert.match(ui,/No service-provider settlement yet/);
