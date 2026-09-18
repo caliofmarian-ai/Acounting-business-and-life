@@ -6,10 +6,12 @@ const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
 const cents=v=>Math.round(Number(v)*100);
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
+let discoveredWebhook={secret:'',id:'',url:'',status:'unconfigured',source:'',updatedAt:null,error:''};
 
 export function payMongoRuntimeConfig(){
   const secretKey=String(process.env.PAYMONGO_SECRET_KEY||'').trim();
-  const webhookSecret=String(process.env.PAYMONGO_WEBHOOK_SECRET||'').trim();
+  const envWebhookSecret=String(process.env.PAYMONGO_WEBHOOK_SECRET||'').trim();
+  const webhookSecret=envWebhookSecret||discoveredWebhook.secret;
   const keyMode=secretKey.startsWith('sk_live_')?'live':secretKey.startsWith('sk_test_')?'test':'unknown';
   const requestedMode=String(process.env.PAYMONGO_MODE||'test').toLowerCase()==='live'?'live':'test';
   const liveAllowed=String(process.env.PAYMONGO_LIVE_ENABLED||'').toLowerCase()==='true';
@@ -21,6 +23,8 @@ export function payMongoRuntimeConfig(){
     secretKey,webhookSecret,keyMode,mode,liveAllowed,
     secretReady:Boolean(secretKey)&&(mode==='test'?keyMode==='test':keyMode==='live'),
     webhookReady:Boolean(webhookSecret),
+    webhookSource:envWebhookSecret?'environment':(discoveredWebhook.secret?'paymongo_api_memory':''),
+    webhookId:discoveredWebhook.id||'',webhookUrl:discoveredWebhook.url||'',webhookStatus:discoveredWebhook.status||'unconfigured',webhookBootstrapError:discoveredWebhook.error||'',
     methods:[...new Set(methods.length?methods:['card','gcash','paymaya','qrph'])],
     baseUrl:clean(process.env.AUTH_PUBLIC_BASE_URL||process.env.PUBLIC_BASE_URL||'',500),
     signatureToleranceSeconds:Math.max(60,Math.min(900,Number(process.env.PAYMONGO_WEBHOOK_TOLERANCE_SECONDS)||300))
@@ -38,7 +42,7 @@ export async function ensurePayMongoSchema(pool){
   const cfg=payMongoRuntimeConfig();
   const status=cfg.secretReady?(cfg.mode==='live'?'active':'sandbox'):'disabled';
   await pool.query(
-    "INSERT INTO payment_provider_configs(provider_code,display_name,adapter_version,status,country_code,supported_methods,ledger_account,config_metadata) VALUES('paymongo','PayMongo','v0.14-hosted-checkout-v2',$1,'PH',$2::jsonb,'other',$3::jsonb) ON CONFLICT(provider_code) DO UPDATE SET display_name='PayMongo',adapter_version='v0.14-hosted-checkout-v2',status=EXCLUDED.status,supported_methods=EXCLUDED.supported_methods,ledger_account='other',config_metadata=EXCLUDED.config_metadata,updated_at=NOW()",
+    "INSERT INTO payment_provider_configs(provider_code,display_name,adapter_version,status,country_code,supported_methods,ledger_account,config_metadata) VALUES('paymongo','PayMongo','v0.15-hosted-checkout-v2',$1,'PH',$2::jsonb,'other',$3::jsonb) ON CONFLICT(provider_code) DO UPDATE SET display_name='PayMongo',adapter_version='v0.15-hosted-checkout-v2',status=EXCLUDED.status,supported_methods=EXCLUDED.supported_methods,ledger_account='other',config_metadata=EXCLUDED.config_metadata,updated_at=NOW()",
     [status,JSON.stringify(cfg.methods),JSON.stringify({integration:'hosted_checkout_v2',mode:cfg.mode,secret_ready:cfg.secretReady,webhook_ready:cfg.webhookReady,pass_on_fees:false})]
   );
 }
@@ -66,6 +70,149 @@ async function payMongoRequest(path,{method='GET',body=null,idempotencyKey=''}={
     }
     return data;
   }finally{clearTimeout(timer)}
+}
+
+
+function webhookAttrs(resource){
+  if(resource?.attributes&&typeof resource.attributes==='object')return resource.attributes;
+  return{};
+}
+
+function webhookResourceList(json){
+  if(Array.isArray(json?.data))return json.data;
+  if(json?.data&&typeof json.data==='object'&&json.data.id)return[json.data];
+  return[];
+}
+
+function publicWebhookState(extra={}){
+  return{
+    id:discoveredWebhook.id||'',
+    url:discoveredWebhook.url||'',
+    status:discoveredWebhook.status||'unconfigured',
+    source:discoveredWebhook.source||'',
+    ready:Boolean(discoveredWebhook.secret||process.env.PAYMONGO_WEBHOOK_SECRET),
+    updated_at:discoveredWebhook.updatedAt||null,
+    error:discoveredWebhook.error||'',
+    ...extra
+  };
+}
+
+async function updateWebhookProviderMetadata(pool,cfg,state){
+  const metadata={
+    integration:'hosted_checkout_v2',
+    mode:cfg.mode,
+    secret_ready:cfg.secretReady,
+    webhook_ready:Boolean(state.ready),
+    webhook_id:state.id||'',
+    webhook_url:state.url||'',
+    webhook_status:state.status||'unconfigured',
+    webhook_secret_source:state.source||'',
+    webhook_bootstrap_error:state.error||'',
+    webhook_events:['checkout_session.payment.paid'],
+    pass_on_fees:false
+  };
+  await pool.query(
+    "UPDATE payment_provider_configs SET adapter_version='v0.15-hosted-checkout-v2',status=$1,config_metadata=$2::jsonb,updated_at=NOW() WHERE provider_code='paymongo'",
+    [cfg.secretReady?(cfg.mode==='live'?'active':'sandbox'):'disabled',JSON.stringify(metadata)]
+  );
+}
+
+export function payMongoWebhookBootstrapStatus(){
+  const cfg=payMongoRuntimeConfig();
+  return{
+    ...publicWebhookState(),
+    mode:cfg.mode,
+    secret_key_ready:cfg.secretReady,
+    environment_webhook_secret:Boolean(process.env.PAYMONGO_WEBHOOK_SECRET)
+  };
+}
+
+export async function ensurePayMongoWebhook(pool,{force=false}={}){
+  const cfg=payMongoRuntimeConfig();
+  if(process.env.PAYMONGO_WEBHOOK_SECRET){
+    discoveredWebhook={
+      ...discoveredWebhook,
+      secret:String(process.env.PAYMONGO_WEBHOOK_SECRET),
+      status:'ready',
+      source:'environment',
+      updatedAt:new Date().toISOString(),
+      error:''
+    };
+    const state=publicWebhookState({created:false,reused:true});
+    await updateWebhookProviderMetadata(pool,cfg,state).catch(()=>{});
+    return state;
+  }
+  if(!cfg.secretReady){
+    discoveredWebhook={secret:'',id:'',url:'',status:'waiting_for_secret_key',source:'',updatedAt:new Date().toISOString(),error:''};
+    const state=publicWebhookState({created:false,reused:false});
+    await updateWebhookProviderMetadata(pool,cfg,state).catch(()=>{});
+    return state;
+  }
+  if(!cfg.baseUrl||!/^https:\/\//i.test(cfg.baseUrl)){
+    discoveredWebhook={secret:'',id:'',url:'',status:'configuration_error',source:'',updatedAt:new Date().toISOString(),error:'public_https_base_url_required'};
+    const state=publicWebhookState({created:false,reused:false});
+    await updateWebhookProviderMetadata(pool,cfg,state).catch(()=>{});
+    return state;
+  }
+  if(discoveredWebhook.secret&&!force)return publicWebhookState({created:false,reused:true});
+  const target=cfg.baseUrl.replace(/\/+$/,'')+'/api/payments/webhooks/paymongo';
+  try{
+    const list=await payMongoRequest('/v1/webhooks?limit=100&url='+encodeURIComponent(target));
+    let resources=webhookResourceList(list);
+    const livemode=cfg.mode==='live';
+    let hook=resources.find(r=>{
+      const a=webhookAttrs(r),events=Array.isArray(a.events)?a.events:[];
+      return a.url===target&&Boolean(a.livemode)===livemode&&events.includes('checkout_session.payment.paid');
+    })||null;
+    let created=false;
+    if(hook&&webhookAttrs(hook).status==='disabled'){
+      await payMongoRequest('/v1/webhooks/'+encodeURIComponent(hook.id)+'/enable',{method:'POST',body:{}});
+      const refreshed=await payMongoRequest('/v1/webhooks/'+encodeURIComponent(hook.id));
+      hook=refreshed?.data||hook;
+    }
+    if(!hook){
+      const createdJson=await payMongoRequest('/v1/webhooks',{
+        method:'POST',
+        body:{data:{attributes:{url:target,events:['checkout_session.payment.paid']}}},
+        idempotencyKey:'bl-webhook-'+cfg.mode+'-'+hash(target).slice(0,24)
+      });
+      hook=createdJson?.data||null;
+      created=true;
+    }
+    if(!hook?.id)throw new Error('PayMongo did not return a webhook id');
+    let attrs=webhookAttrs(hook);
+    if(!attrs.secret_key){
+      const detailed=await payMongoRequest('/v1/webhooks/'+encodeURIComponent(hook.id));
+      hook=detailed?.data||hook;attrs=webhookAttrs(hook);
+    }
+    const secret=clean(attrs.secret_key,500);
+    if(!secret)throw new Error('PayMongo webhook resource did not return a verification secret');
+    discoveredWebhook={
+      secret,
+      id:clean(hook.id,200),
+      url:clean(attrs.url||target,1000),
+      status:clean(attrs.status||'enabled',60),
+      source:'paymongo_api_memory',
+      updatedAt:new Date().toISOString(),
+      error:''
+    };
+    const state=publicWebhookState({created,reused:!created});
+    await updateWebhookProviderMetadata(pool,payMongoRuntimeConfig(),state);
+    return state;
+  }catch(e){
+    discoveredWebhook={
+      secret:'',
+      id:discoveredWebhook.id||'',
+      url:target,
+      status:'bootstrap_failed',
+      source:'',
+      updatedAt:new Date().toISOString(),
+      error:clean(e.code||e.message,300)
+    };
+    const state=publicWebhookState({created:false,reused:false});
+    await updateWebhookProviderMetadata(pool,cfg,state).catch(()=>{});
+    return state;
+  }
 }
 
 export async function createPayMongoCheckout(pool,{intentPublicId,accountId}){
