@@ -6,7 +6,8 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensurePayMongoSchema,payMongoRuntimeConfig,createPayMongoCheckout,
-  processPayMongoWebhook,executePayMongoRefund,ensurePayMongoWebhook,payMongoWebhookBootstrapStatus
+  processPayMongoWebhook,executePayMongoRefund,ensurePayMongoWebhook,payMongoWebhookBootstrapStatus,
+  payMongoLivePilotEvidence,reconcilePayMongoLivePayment
 } from './paymongo-adapter.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { emitNotificationEvent,businessNotificationRecipients } from './notification-core.js';
@@ -98,14 +99,16 @@ app.get('/api/payments/paymongo/status',async(req,res,next)=>{
     const cfg=payMongoRuntimeConfig();
     const p=await pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account,config_metadata,updated_at FROM payment_provider_configs WHERE provider_code='paymongo'");
     const bootstrap=payMongoWebhookBootstrapStatus();
-    const internalQa=payMongoPilotReadiness(cfg,bootstrap,'internal');
-    const controlledPilot=payMongoPilotReadiness(cfg,bootstrap,'controlled_pilot');
-    const checkoutPolicy=payMongoCheckoutPolicy(cfg,bootstrap,{productionSurface:railwayServiceName==='accounting-business-life'});
+    const evidence=await payMongoLivePilotEvidence(pool);
+    const internalQa=payMongoPilotReadiness(cfg,bootstrap,'internal',evidence);
+    const liveValidation=payMongoPilotReadiness(cfg,bootstrap,'live_validation',evidence);
+    const controlledPilot=payMongoPilotReadiness(cfg,bootstrap,'controlled_pilot',evidence);
+    const checkoutPolicy=payMongoCheckoutPolicy(cfg,bootstrap,{productionSurface:railwayServiceName==='accounting-business-life',evidence});
     res.json({
       provider:'paymongo',mode:cfg.mode,secret_ready:cfg.secretReady,webhook_ready:cfg.webhookReady,
       live_enabled:cfg.liveAllowed,methods:cfg.methods,ready:Boolean(cfg.secretReady&&cfg.webhookReady),
       webhook:{id:bootstrap.id,url:bootstrap.url,status:bootstrap.status,source:bootstrap.source,updated_at:bootstrap.updated_at,error:bootstrap.error},
-      pilot_readiness:{internal_qa:internalQa,controlled_pilot:controlledPilot},
+      pilot_readiness:{internal_qa:internalQa,live_validation:liveValidation,controlled_pilot:controlledPilot},
       checkout_policy:checkoutPolicy,
       configuration:p.rows[0]||null
     });
@@ -117,13 +120,30 @@ app.post('/api/payments/paymongo/checkout/:intent',async(req,res,next)=>{
     const me=await identity(req);
     const cfg=payMongoRuntimeConfig();
     const bootstrap=payMongoWebhookBootstrapStatus();
-    const policy=payMongoCheckoutPolicy(cfg,bootstrap,{productionSurface:railwayServiceName==='accounting-business-life'});
-    if(!policy.checkout_enabled){
-      const e=new Error(policy.required_stage==='controlled_pilot'?'PayMongo LIVE is not ready for the controlled customer pilot':'PayMongo sandbox is not ready for internal checkout testing');
+    const evidence=await payMongoLivePilotEvidence(pool);
+    const productionSurface=railwayServiceName==='accounting-business-life';
+    const policy=payMongoCheckoutPolicy(cfg,bootstrap,{productionSurface,evidence});
+    let validationAssignment=null;
+    if(!policy.checkout_enabled&&productionSurface){
+      const validation=payMongoPilotReadiness(cfg,bootstrap,'live_validation',evidence);
+      if(validation.state==='READY'){
+        try{validationAssignment=await requireAdminPermission(pool,me.account.id,'payment.manage')}catch{}
+      }
+    }
+    if(!policy.checkout_enabled&&!validationAssignment){
+      const e=new Error(policy.required_stage==='controlled_pilot'?'PayMongo LIVE pilot evidence is not ready for external customers':'PayMongo sandbox is not ready for internal checkout testing');
       e.status=503;e.code='PAYMONGO_CHECKOUT_NOT_READY';e.blockers=policy.blockers;throw e;
     }
     const result=await createPayMongoCheckout(pool,{intentPublicId:req.params.intent,accountId:Number(me.account.id)});
-    res.status(result.already_paid?200:201).json(result);
+    if(validationAssignment&&!result.already_paid){
+      await appendAdminAudit(pool,{
+        actorAccountId:me.account.id,assignmentId:validationAssignment.id,permission:'payment.manage',
+        targetType:'payment_intent',targetId:String(req.params.intent),eventCode:'paymongo_live_validation_checkout_opened',
+        after:{checkout_session_id:result.checkout_session_id||'',mode:'live'},
+        reason:'Controlled pre-pilot live payment validation',correlationId:correlation(req)
+      });
+    }
+    res.status(result.already_paid?200:201).json({...result,live_validation_override:Boolean(validationAssignment)});
   }catch(e){next(e)}
 });
 
@@ -139,6 +159,22 @@ app.post('/api/payments/admin/paymongo/webhook/bootstrap',async(req,res,next)=>{
       reason:'PayMongo webhook bootstrap/retry',correlationId:correlation(req)
     });
     res.status(state.ready?200:503).json(state);
+  }catch(e){next(e)}
+});
+
+app.post('/api/payments/admin/paymongo/reconcile-live/:intent',async(req,res,next)=>{
+  try{
+    const me=await identity(req);
+    const assignment=await requireAdminPermission(pool,me.account.id,'payment.reconcile');
+    const result=await reconcilePayMongoLivePayment(pool,{intentPublicId:req.params.intent,actorAccountId:Number(me.account.id)});
+    await appendAdminAudit(pool,{
+      actorAccountId:me.account.id,assignmentId:assignment.id,permission:'payment.reconcile',
+      targetType:'payment_intent',targetId:String(req.params.intent),
+      eventCode:result.matched?'paymongo_live_payment_reconciled':'paymongo_live_payment_reconciliation_mismatch',
+      after:{matched:Boolean(result.matched),run_public_id:result.run?.public_id||'',mismatch_codes:result.mismatch_codes||[]},
+      reason:'First-pilot PayMongo live payment reconciliation',correlationId:correlation(req)
+    });
+    res.status(200).json(result);
   }catch(e){next(e)}
 });
 
