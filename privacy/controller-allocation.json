@@ -1,0 +1,130 @@
+{
+  "version": "1.0.0",
+  "countryCode": "PH",
+  "status": "allocation_assessment_in_progress",
+  "finalControllerModel": null,
+  "actors": {
+    "projectOwner": {
+      "type": "natural_person",
+      "legalName": null,
+      "operationalLocation": null,
+      "knownDecisionEvidence": [
+        "selected_referral_attribution_model",
+        "approved_unconverted_referral_retention_90_days",
+        "approved_converted_referral_retention_target_12_months",
+        "directed_legitimate_interest_assessment_path",
+        "kept_initial_pilot_rewards_off",
+        "kept_posthog_off_until_verified"
+      ],
+      "picStatus": "possible_controller_pending_full_domain_assessment"
+    },
+    "philippineOperator": {
+      "type": "natural_person",
+      "legalName": null,
+      "role": "owner_designated_initial_local_operator",
+      "knownOperationalEvidence": [
+        "designated_to_operate_business_and_life_initially_in_philippines"
+      ],
+      "knownFinalProcessingDecisionAuthority": null,
+      "picStatus": "provisional_candidate_pending_actual_control_confirmation",
+      "deFactoDpoIfConfirmedIndividualPic": true
+    },
+    "futureBusinessLifeEntity": {
+      "exists": false,
+      "legalName": null,
+      "picStatus": "not_applicable_until_formed_and_actual_control_assumed"
+    }
+  },
+  "processingDomains": {
+    "account_identity_authentication": {
+      "purposeDecision": "unresolved",
+      "dataCategoryDecision": "unresolved",
+      "retentionDecision": "unresolved",
+      "processorRecipientDecision": "unresolved",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    },
+    "merchant_supplier_operations": {
+      "purposeDecision": "unresolved",
+      "dataCategoryDecision": "unresolved",
+      "retentionDecision": "unresolved",
+      "processorRecipientDecision": "unresolved",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    },
+    "courier_delivery_location": {
+      "purposeDecision": "unresolved",
+      "dataCategoryDecision": "unresolved",
+      "retentionDecision": "unresolved",
+      "processorRecipientDecision": "unresolved",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    },
+    "service_provider_cv_credentials": {
+      "purposeDecision": "unresolved",
+      "dataCategoryDecision": "unresolved",
+      "retentionDecision": "unresolved",
+      "processorRecipientDecision": "unresolved",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    },
+    "payments_accounting": {
+      "purposeDecision": "unresolved",
+      "dataCategoryDecision": "unresolved",
+      "retentionDecision": "unresolved",
+      "processorRecipientDecision": "unresolved",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    },
+    "support_incident_privacy_rights": {
+      "purposeDecision": "unresolved",
+      "dataCategoryDecision": "unresolved",
+      "retentionDecision": "unresolved",
+      "processorRecipientDecision": "unresolved",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    },
+    "referral_growth_analytics": {
+      "purposeDecision": "project_owner_material_decisions_recorded",
+      "dataCategoryDecision": "project_owner_material_decisions_recorded",
+      "retentionDecision": "project_owner_approved_90_days_and_12_month_target",
+      "processorRecipientDecision": "project_owner_kept_posthog_off_until_verified",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    },
+    "admin_authorization_audit": {
+      "purposeDecision": "unresolved",
+      "dataCategoryDecision": "unresolved",
+      "retentionDecision": "unresolved",
+      "processorRecipientDecision": "unresolved",
+      "localOperation": "philippine_operator_expected",
+      "controllerConclusion": null
+    }
+  },
+  "legalDecisionRules": {
+    "localOperationDoesNotAloneProvePic": true,
+    "ownershipDoesNotAloneProvePic": true,
+    "actualControlOverCollectionPurposeOrExtentIsRequired": true,
+    "personActingOnlyOnAnotherControllersInstructionsIsNotPicForThoseFunctions": true,
+    "extraterritorialApplicabilityMustBeConsidered": true
+  },
+  "activation": {
+    "controllerAllocationReady": false,
+    "effectivePrivacyNoticeReady": false,
+    "durableReferralAttributionAllowed": false,
+    "externalPosthogAllowed": false
+  },
+  "requiredToComplete": [
+    "record_who_has_final_processing_decision_authority_for_each_domain",
+    "record_who_selects_processors_and_recipients",
+    "record_who_approves_retention_and_deletion",
+    "record_who_can_change_data_categories_and_purposes",
+    "distinguish_operational_execution_from_controller_decision_authority",
+    "review_multi_actor_controller_structure_under_philippine_privacy_law",
+    "verify_legal_identity_and_contact_of_final_controller_or_controllers"
+  ],
+  "sources": {
+    "dataPrivacyAct": "https://privacy.gov.ph/data-privacy-act/",
+    "dataPrivacyIrr": "https://privacy.gov.ph/implementing-rules-regulations-data-privacy-act-2012/"
+  }
+}
