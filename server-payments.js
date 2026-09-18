@@ -13,7 +13,7 @@ import {
 } from './payment-core.js';
 import {
   ensureFinanceSchema,createPlatformCostEntry,allocatePlatformCost,voidPlatformCostEntry,
-  listPlatformCostEntries,financeKpiOverview,pricingScenario,FINANCE_EVIDENCE_CLASSES
+  listPlatformCostEntries,financeKpiOverview,pricingScenario,commissionSustainabilityScenario,FINANCE_EVIDENCE_CLASSES
 } from './finance-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetization-core.js';
@@ -401,6 +401,38 @@ app.get('/api/payments/admin/unit-economics',async(req,res,next)=>{try{
     evidenceClasses:financeEvidence(req)
   });
   res.json(data);
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/commission-planner',body,async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',territoryId);
+  const scenario=commissionSustainabilityScenario({
+    completedEventsPerMonth:req.body?.completed_events_per_month,
+    averageFeeBaseValue:req.body?.average_fee_base_value,
+    feeEligibleSharePct:req.body?.fee_eligible_share_pct,
+    onlinePaymentSharePct:req.body?.online_payment_share_pct,
+    processorRatePct:req.body?.processor_rate_pct,
+    processorFixedPerOnlineEvent:req.body?.processor_fixed_per_online_event,
+    riskAllowancePct:req.body?.risk_allowance_pct,
+    safetyReservePct:req.body?.safety_reserve_pct,
+    growthSurplusPct:req.body?.growth_surplus_pct,
+    platformAbsorbsProcessorFees:req.body?.platform_absorbs_processor_fees!==false,
+    platformAbsorbsRiskAllowance:req.body?.platform_absorbs_risk_allowance!==false,
+    staffing:req.body?.staffing||{},
+    monthlyCosts:req.body?.monthly_costs||{}
+  });
+  await appendAdminAudit(pool,{
+    actorAccountId:me.account.id,permission:'finance.summary.view',territoryId,
+    targetType:'commission_scenario',targetId:'simulation',eventCode:'commission_sustainability_scenario_run',
+    after:{
+      completed_events_per_month:scenario.assumptions.completed_events_per_month,
+      fee_eligible_share_pct:scenario.assumptions.fee_eligible_share_pct,
+      mature_sustainable_pct:scenario.rates.mature_100pct_fee_eligible.sustainable_pct,
+      current_sustainable_pct:scenario.rates.current_rollout.sustainable_pct
+    },
+    reason:'Read-only commission sustainability simulation',correlationId:correlation(req)
+  });
+  res.json({...scenario,territory_id:territoryId});
 }catch(e){next(e)}});
 
 app.post('/api/payments/admin/pricing-scenario',body,async(req,res,next)=>{try{
