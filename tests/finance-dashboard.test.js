@@ -60,9 +60,10 @@ test('Finance dashboard renders real 90-day cohort metrics without inventing pai
   assert.match(ui,/Activity conversion means an expired trial subject completed at least one later service/);
 });
 
-test('Finance dashboard does not fabricate promotional subsidy before direct cost attribution exists',()=>{
-  assert.match(ui,/Promo cost attribution/);
-  assert.match(ui,/No subsidy amount is inferred/);
+test('Finance dashboard does not overstate the evidenced direct promo cost as full subsidy',()=>{
+  assert.match(ui,/DIRECT_PROMOTIONAL_SUBSIDY_FLOOR/);
+  assert.match(ui,/minimum evidenced subsidy\/cost floor, not the full economic cost/);
+  assert.doesNotMatch(ui,/No subsidy amount is inferred/);
   assert.doesNotMatch(ui,/Promo subsidy[^\n]{0,80}financeMoney\(0\)/);
 });
 
