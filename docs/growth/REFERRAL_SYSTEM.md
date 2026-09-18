@@ -119,6 +119,8 @@ The registration flow now carries the already-existing referral code/profile/cor
 
 The adapter requires an existing unexpired pending attribution, rejects self-referral, prevents replacing an already-attributed account, and treats repeat binding to the same referral as idempotent.
 
+Converted binding now also refuses activation unless the pending-attribution pipeline itself is active and an attribution model is explicitly configured. The only currently implemented model is `registration_context_v1`, but it is **supported, not selected**; the canonical selected model remains null until Owner/policy approval.
+
 It remains inactive because converted-attribution retention/lawful-basis policy is unresolved. There is intentionally no default converted retention period in code or guardrails.
 
 `referral_signup_completed` is prepared as an internal analytics event but can only be emitted after a successful non-idempotent converted binding. Current production cannot satisfy that binding gate.
