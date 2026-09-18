@@ -60,6 +60,9 @@ test('Marketing Kit page uses authenticated live referral data and user-initiate
   assert.match(page, /Export SVG/);
   assert.match(page, /navigator\.share/);
   assert.match(page, /navigator\.canShare/);
+  assert.match(page, /typeof File==='function'/);
+  assert.match(page, /downloadBlob\(blob,fileName\)/);
+  assert.match(page, /promotion-center\.html\?profile=/);
   assert.match(page, /new Blob/);
   assert.doesNotMatch(page, /api\.qrserver|quickchart|chart\.google/);
 });
