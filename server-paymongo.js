@@ -10,6 +10,7 @@ import {
 } from './paymongo-adapter.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { emitNotificationEvent,businessNotificationRecipients } from './notification-core.js';
+import { payMongoPilotReadiness } from './pilot-payment-readiness.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -97,10 +98,13 @@ app.get('/api/payments/paymongo/status',async(req,res,next)=>{
     const cfg=payMongoRuntimeConfig();
     const p=await pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account,config_metadata,updated_at FROM payment_provider_configs WHERE provider_code='paymongo'");
     const bootstrap=payMongoWebhookBootstrapStatus();
+    const internalQa=payMongoPilotReadiness(cfg,bootstrap,'internal');
+    const controlledPilot=payMongoPilotReadiness(cfg,bootstrap,'controlled_pilot');
     res.json({
       provider:'paymongo',mode:cfg.mode,secret_ready:cfg.secretReady,webhook_ready:cfg.webhookReady,
       live_enabled:cfg.liveAllowed,methods:cfg.methods,ready:Boolean(cfg.secretReady&&cfg.webhookReady),
       webhook:{id:bootstrap.id,url:bootstrap.url,status:bootstrap.status,source:bootstrap.source,updated_at:bootstrap.updated_at,error:bootstrap.error},
+      pilot_readiness:{internal_qa:internalQa,controlled_pilot:controlledPilot},
       configuration:p.rows[0]||null
     });
   }catch(e){next(e)}
