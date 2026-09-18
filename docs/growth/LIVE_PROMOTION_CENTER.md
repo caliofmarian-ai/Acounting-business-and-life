@@ -71,6 +71,17 @@ now:
 - supports Native Share, Copy, WhatsApp, Telegram, SMS intent and email intent;
 - keeps direct server-sent referral email/SMS disabled until referral-specific controls are ready.
 
+## Basic referral progress summary
+
+Promotion Center includes a truthful state summary for the selected sharing profile:
+- referral link: `Ready` only when the authenticated canonical URL loaded;
+- personal QR: `Ready` when the matching local QR loaded, otherwise the code fallback is stated;
+- journey signals: available through account-creation start;
+- completed referrals: `Not counted yet`;
+- rewards: `Not enabled`.
+
+The UI deliberately does not display fabricated zero conversion/reward counts. Completed-referral counts require durable converted attribution, and reward progress requires an approved reward policy.
+
 ## Personal QR — live local rendering
 
 Promotion Center now renders a real personalized QR tied to the exact authenticated referral URL.
