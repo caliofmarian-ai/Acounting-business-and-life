@@ -278,6 +278,7 @@ app.post('/api/admin/assignments',body,async(req,res,next)=>{try{
   if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',territoryId);
   if(!authority.allowed)throw Object.assign(new Error('Admin delegation permission required'),{status:403});
   const actorRank=assignmentRank(authority.assignment);
+  if(role==='country_admin'&&actorRank!=='super_admin')throw Object.assign(new Error('Only Super Admin can appoint a Country Admin'),{status:403});
   if(!canDelegateRank(actorRank,role))throw Object.assign(new Error('You cannot create or modify an Admin rank equal to or above your own delegated authority'),{status:403});
   if(territoryId){const t=await pool.query("SELECT id FROM territories WHERE id=$1 AND country_code='PH'",[territoryId]);if(!t.rowCount)return res.status(404).json({error:'Territory not found'})}
   const account=await pool.query('SELECT id,display_name,email FROM accounts WHERE LOWER(email)=$1',[targetEmail]);if(!account.rowCount)return res.status(404).json({error:'The target must create a Business & Life account first'});
