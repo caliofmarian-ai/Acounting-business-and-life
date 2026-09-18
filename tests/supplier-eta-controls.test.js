@@ -27,6 +27,6 @@ test('existing Supplier ETA values are retained when reopening the response form
 
 test('Supplier ETA uses explicit Philippines local time conversion',()=>{
   assert.match(ui,/timeZone:'Asia\/Manila'/);
-  assert.match(ui,/raw\+'\\:00\+08:00'/);
+  assert.match(ui,/new Date\(raw\+':00\+08:00'\)/);
   assert.match(ui,/toISOString\(\)/);
 });
