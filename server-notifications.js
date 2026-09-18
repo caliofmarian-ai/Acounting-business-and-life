@@ -63,7 +63,7 @@ async function forwardJson(req,res,after){
   try{
     const r=await upstream(req.originalUrl,{method:req.method,headers:{Authorization:authHeader(req),'Content-Type':'application/json',...(req.headers['x-bl-admin-assertion']?{'x-bl-admin-assertion':String(req.headers['x-bl-admin-assertion'])}:{})},body:['GET','HEAD'].includes(req.method)?undefined:JSON.stringify(req.body??{})});
     const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{}
-    if(r.ok&&after){Promise.resolve(after(data)).catch(e=>console.error('Post-transaction notification hook:',e.message))}
+    if(r.ok&&after){Promise.resolve().then(()=>after(data)).catch(e=>console.error('Post-transaction notification hook:',e.message))}
     res.status(r.status);const ct=r.headers.get('content-type');if(ct)res.type(ct);res.send(text);
   }catch(e){if(!res.headersSent)res.status(502).json({error:'Notification gateway upstream unavailable'});}
 }
