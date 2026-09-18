@@ -47,7 +47,7 @@ test('unit economics separates platform revenue, variable cost, contribution, fi
 
 test('promotional reporting uses real cohorts while paid conversion remains gated by active fee policy',()=>{
   assert.match(core,/promotionKpi\(pool,\{\.\.\.p,territoryId\}\)/);
-  assert.match(core,/promotion_economics:promotion/);
+  assert.match(core,/promotion_economics:\{\.\.\.promotion,direct_cost:promotionDirectCost\}/);
   assert.doesNotMatch(core,/PENDING_PROMO_COHORT_LINKAGE/);
   assert.doesNotMatch(core,/paid_conversion_pct:\s*0/);
 });

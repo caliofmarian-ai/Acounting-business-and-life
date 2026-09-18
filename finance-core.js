@@ -55,6 +55,24 @@ function ratio(a,b){
   const x=Number(a||0),y=Number(b||0);
   return y>0?Math.round((x/y)*10000)/100:null;
 }
+function allocateProcessorCents(totalAmount,weightedRows){
+  const totalCents=Math.max(0,Math.round(Number(totalAmount||0)*100));
+  const rows=(weightedRows||[]).map((row,index)=>({...row,index,weight:Math.max(0,Number(row.weight||0))}));
+  const weightTotal=rows.reduce((s,x)=>s+x.weight,0);
+  if(!rows.length||totalCents===0||weightTotal<=0)return rows.map(x=>({...x,amount:0}));
+  let used=0;
+  const split=rows.map(x=>{
+    const raw=totalCents*x.weight/weightTotal;
+    const cents=Math.floor(raw);
+    used+=cents;
+    return{...x,cents,fraction:raw-cents};
+  });
+  let remaining=totalCents-used;
+  split.sort((a,b)=>b.fraction-a.fraction||b.weight-a.weight||a.index-b.index);
+  for(let i=0;i<split.length&&remaining>0;i++,remaining--)split[i].cents++;
+  split.sort((a,b)=>a.index-b.index);
+  return split.map(({fraction,cents,...x})=>({...x,amount:money(cents/100)}));
+}
 function perUnit(a,b){
   const x=Number(a||0),y=Number(b||0);
   return y>0?money(x/y):null;
@@ -299,15 +317,167 @@ async function manualCostEconomics(pool,{from,to,territoryId=null,evidence}){
   };
 }
 
+async function promotionDirectCostEconomics(pool,{from,to,territoryId=null,evidence}){
+  const eventIntent=await pool.query(`
+    WITH proc AS (
+      SELECT payment_intent_id,COALESCE(SUM(amount),0) processor_fee
+      FROM payment_allocations
+      WHERE component_code='processor_fee' AND settlement_status<>'reversed'
+      GROUP BY payment_intent_id
+    ),
+    bases AS (
+      SELECT payment_intent_id,
+        COALESCE(SUM(amount) FILTER (WHERE component_code='merchandise'),0) merchandise_base,
+        COALESCE(SUM(amount) FILTER (WHERE component_code='delivery'),0) delivery_base
+      FROM payment_allocations
+      WHERE settlement_status<>'reversed'
+      GROUP BY payment_intent_id
+    )
+    SELECT e.id event_id,e.entitlement_id,e.service_scope,e.phase_snapshot,e.source_type,e.source_id,e.territory_id,
+      pi.id payment_intent_id,pi.amount intent_amount,
+      COALESCE(b.merchandise_base,0) merchandise_base,COALESCE(b.delivery_base,0) delivery_base,
+      COALESCE(p.processor_fee,0) processor_fee
+    FROM service_monetization_events e
+    LEFT JOIN deliveries d ON e.service_scope='delivery' AND e.source_type='delivery' AND d.id=e.source_id
+    JOIN payment_intents pi ON (
+      (e.service_scope='marketplace' AND e.source_type='order' AND pi.source_type='order' AND pi.source_id=e.source_id)
+      OR (e.service_scope='delivery' AND e.source_type='delivery' AND pi.source_type='order' AND pi.source_id=d.order_id)
+      OR (e.service_scope='supplier' AND e.source_type='purchase_order' AND pi.source_type='purchase_order' AND pi.source_id=e.source_id)
+      OR (e.service_scope='local_services' AND e.source_type='service_job' AND pi.source_type='service_job' AND pi.source_id=e.source_id)
+    )
+    LEFT JOIN proc p ON p.payment_intent_id=pi.id
+    LEFT JOIN bases b ON b.payment_intent_id=pi.id
+    WHERE e.country_code='PH' AND e.completed_at >= $1 AND e.completed_at < $2
+      AND ($3::bigint IS NULL OR e.territory_id=$3 OR e.territory_id IS NULL)
+      AND COALESCE(p.processor_fee,0)>0
+    ORDER BY pi.id,e.id
+  `,[from,to,territoryId]);
+
+  const byIntent=new Map();
+  for(const row of eventIntent.rows){
+    const key=String(row.payment_intent_id);
+    if(!byIntent.has(key))byIntent.set(key,{fee:money(row.processor_fee),rows:[]});
+    let weight=Number(row.intent_amount||0);
+    if(row.service_scope==='marketplace')weight=Number(row.merchandise_base||0);
+    else if(row.service_scope==='delivery')weight=Number(row.delivery_base||0);
+    byIntent.get(key).rows.push({
+      event_id:Number(row.event_id),entitlement_id:Number(row.entitlement_id),service_scope:row.service_scope,
+      phase:row.phase_snapshot,weight
+    });
+  }
+  const processorRows=[];
+  for(const x of byIntent.values()){
+    for(const a of allocateProcessorCents(x.fee,x.rows))processorRows.push(a);
+  }
+
+  const ledger=await pool.query(`
+    WITH events AS (
+      SELECT e.id event_id,e.entitlement_id,e.service_scope,e.phase_snapshot,e.source_type,e.source_id,e.territory_id
+      FROM service_monetization_events e
+      WHERE e.country_code='PH' AND e.completed_at >= $1 AND e.completed_at < $2
+        AND ($3::bigint IS NULL OR e.territory_id=$3 OR e.territory_id IS NULL)
+    ),
+    mapped AS (
+      SELECT ev.*,pi.id payment_intent_id
+      FROM events ev
+      LEFT JOIN deliveries d ON ev.service_scope='delivery' AND ev.source_type='delivery' AND d.id=ev.source_id
+      JOIN payment_intents pi ON (
+        (ev.service_scope='marketplace' AND ev.source_type='order' AND pi.source_type='order' AND pi.source_id=ev.source_id)
+        OR (ev.service_scope='delivery' AND ev.source_type='delivery' AND pi.source_type='order' AND pi.source_id=d.order_id)
+        OR (ev.service_scope='supplier' AND ev.source_type='purchase_order' AND pi.source_type='purchase_order' AND pi.source_id=ev.source_id)
+        OR (ev.service_scope='local_services' AND ev.source_type='service_job' AND pi.source_type='service_job' AND pi.source_id=ev.source_id)
+      )
+    ),
+    allocated AS (
+      SELECT m.event_id,m.entitlement_id,m.service_scope,m.phase_snapshot,a.id source_cost_id,a.amount
+      FROM mapped m
+      JOIN platform_cost_allocations a ON a.payment_intent_id=m.payment_intent_id AND a.service_scope=m.service_scope
+      JOIN platform_cost_entries ce ON ce.id=a.cost_entry_id
+      WHERE ce.status='active' AND ce.evidence_class=ANY($4::text[])
+    ),
+    direct_unallocated AS (
+      SELECT m.event_id,m.entitlement_id,m.service_scope,m.phase_snapshot,ce.id source_cost_id,ce.amount
+      FROM mapped m
+      JOIN platform_cost_entries ce ON ce.payment_intent_id=m.payment_intent_id AND ce.service_scope=m.service_scope
+      WHERE ce.status='active' AND ce.evidence_class=ANY($4::text[])
+        AND NOT EXISTS(SELECT 1 FROM platform_cost_allocations a WHERE a.cost_entry_id=ce.id)
+    )
+    SELECT * FROM allocated
+    UNION ALL
+    SELECT * FROM direct_unallocated
+    ORDER BY event_id,source_cost_id
+  `,[from,to,territoryId,evidence]);
+
+  const agg=new Map();
+  const keyFor=(service,phase)=>service+'|'+phase;
+  const ensure=(service,phase)=>{
+    const key=keyFor(service,phase);
+    if(!agg.has(key))agg.set(key,{service_scope:service,phase,processor_cost:0,ledger_cost:0,eventIds:new Set(),subjectIds:new Set()});
+    return agg.get(key);
+  };
+  for(const x of processorRows){
+    const a=ensure(x.service_scope,x.phase);
+    a.processor_cost=money(a.processor_cost+Number(x.amount||0));
+    a.eventIds.add(Number(x.event_id));a.subjectIds.add(Number(x.entitlement_id));
+  }
+  for(const x of ledger.rows){
+    const a=ensure(x.service_scope,x.phase_snapshot);
+    a.ledger_cost=money(a.ledger_cost+Number(x.amount||0));
+    a.eventIds.add(Number(x.event_id));a.subjectIds.add(Number(x.entitlement_id));
+  }
+  const eventCounts=await pool.query(`
+    SELECT service_scope,phase_snapshot,COUNT(*)::int completed_events,COUNT(DISTINCT entitlement_id)::int active_subjects
+    FROM service_monetization_events
+    WHERE country_code='PH' AND completed_at >= $1 AND completed_at < $2
+      AND ($3::bigint IS NULL OR territory_id=$3 OR territory_id IS NULL)
+    GROUP BY service_scope,phase_snapshot
+  `,[from,to,territoryId]);
+  for(const x of eventCounts.rows){
+    const a=ensure(x.service_scope,x.phase_snapshot);
+    a.completed_events=Number(x.completed_events||0);
+    a.active_subjects=Number(x.active_subjects||0);
+  }
+  const rows=[...agg.values()].map(x=>{
+    const total=money(x.processor_cost+x.ledger_cost);
+    const completed=Number(x.completed_events||0),subjects=Number(x.active_subjects||0);
+    return{
+      service_scope:x.service_scope,phase:x.phase,
+      completed_events:completed,active_subjects:subjects,
+      direct_processor_cost:money(x.processor_cost),direct_ledger_cost:money(x.ledger_cost),
+      total_direct_cost:total,
+      direct_cost_per_completion:perUnit(total,completed),
+      direct_cost_per_active_subject:perUnit(total,subjects)
+    };
+  }).sort((a,b)=>a.service_scope.localeCompare(b.service_scope)||a.phase.localeCompare(b.phase));
+  const sumPhase=phase=>{
+    const selected=rows.filter(x=>x.phase===phase);
+    const processor=money(selected.reduce((s,x)=>s+x.direct_processor_cost,0));
+    const ledgerCost=money(selected.reduce((s,x)=>s+x.direct_ledger_cost,0));
+    const total=money(processor+ledgerCost);
+    const completed=selected.reduce((s,x)=>s+x.completed_events,0);
+    const activeSubjects=selected.reduce((s,x)=>s+x.active_subjects,0);
+    return{direct_processor_cost:processor,direct_ledger_cost:ledgerCost,total_direct_cost:total,completed_events:completed,active_subjects:activeSubjects,direct_cost_per_completion:perUnit(total,completed),direct_cost_per_active_subject:perUnit(total,activeSubjects)};
+  };
+  return{
+    coverage_status:'DIRECT_ONLY_EXCLUDES_SHARED_FIXED',
+    terminology:'DIRECT_PROMOTIONAL_SUBSIDY_FLOOR',
+    promotional:sumPhase('promotional'),
+    post_promo:sumPhase('post_promo'),
+    services:rows,
+    warning:'Direct cost includes canonical processor fees and Finance costs explicitly linked to payment intents/service scopes. Shared and fixed overhead is excluded unless explicitly allocated.'
+  };
+}
+
 export async function financeKpiOverview(pool,input={}){
   const p=period(input);
   const territoryId=input.territoryId==null?null:Number(input.territoryId);
   const evidence=evidenceClasses(input.evidenceClasses);
-  const [pay,manual,recent,promotion]=await Promise.all([
+  const [pay,manual,recent,promotion,promotionDirectCost]=await Promise.all([
     paymentEconomics(pool,{...p,territoryId}),
     manualCostEconomics(pool,{...p,territoryId,evidence}),
     listPlatformCostEntries(pool,{...p,territoryId,evidenceClasses:FINANCE_EVIDENCE_CLASSES}),
-    promotionKpi(pool,{...p,territoryId})
+    promotionKpi(pool,{...p,territoryId}),
+    promotionDirectCostEconomics(pool,{...p,territoryId,evidence})
   ]);
   const manualVariable=money(manual.rows.filter(x=>x.cost_nature==='variable').reduce((s,x)=>s+Number(x.amount||0),0));
   const allocatedFixed=money(manual.rows.filter(x=>x.cost_nature!=='variable').reduce((s,x)=>s+Number(x.amount||0),0));
@@ -344,7 +514,7 @@ export async function financeKpiOverview(pool,input={}){
     break_even_status:contributionPerTx&&contributionPerTx>0?'CALCULABLE':'NO_BREAK_EVEN_AT_CURRENT_UNIT_ECONOMICS',
     services:serviceRows,evidence_breakdown:manual.evidenceBreakdown,
     recent_cost_entries:recent.slice(0,25),
-    promotion_economics:promotion,
+    promotion_economics:{...promotion,direct_cost:promotionDirectCost},
     accounting_note:'GMV/payment volume is context only. Provider/customer/merchant/courier/service-provider money is not platform revenue unless an explicit platform-owned allocation exists.'
   };
 }
@@ -447,4 +617,4 @@ export async function pricingScenario(pool,input={}){
   };
 }
 
-export const financeInternals=Object.freeze({serviceFromSource});
+export const financeInternals=Object.freeze({serviceFromSource,allocateProcessorCents});
