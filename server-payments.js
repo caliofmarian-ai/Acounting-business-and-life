@@ -7,7 +7,8 @@ import { readFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,paymentIntentDetail,
+  ensurePaymentSchema,backfillLegacyOrderPayments,createOrderPaymentIntent,createServiceJobPaymentIntent,
+  serviceJobPaymentSummary,paymentIntentDetail,
   createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,createReconciliationRun,
   paymentFinanceOverview,mirrorConfirmedOrderPayment
 } from './payment-core.js';
@@ -366,6 +367,35 @@ app.post('/api/payments/intents/order/:id',body,async(req,res,next)=>{try{
   const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
   const intent=await createOrderPaymentIntent(pool,{orderId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,clientReference:req.body?.client_reference||''});
   res.status(201).json({...intent,provider_ready:intent.status!=='requires_provider',next_action:intent.status==='requires_provider'?'CONNECT_REAL_PAYMENT_PROVIDER':'PROVIDER_ADAPTER_REQUIRED'});
+}catch(e){next(e)}});
+
+app.post('/api/payments/intents/service-job/:id',body,async(req,res,next)=>{try{
+  const me=await identity(req);
+  const idempotency=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const provider=clean(req.body?.provider_code||process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const intent=await createServiceJobPaymentIntent(pool,{
+    serviceJobId:Number(req.params.id),payerAccountId:Number(me.account.id),idempotencyKey:idempotency,
+    logicalMethod:req.body?.logical_method||'online_other',providerCode:provider,
+    clientReference:req.body?.client_reference||''
+  });
+  res.status(201).json({
+    ...intent,
+    provider_ready:false,
+    checkout_enabled:false,
+    next_action:'SERVICE_JOB_CHECKOUT_NOT_ENABLED_YET'
+  });
+}catch(e){next(e)}});
+
+app.get('/api/payments/service-jobs/:id/summary',async(req,res,next)=>{try{
+  const me=await identity(req);
+  const summary=await serviceJobPaymentSummary(pool,Number(req.params.id));
+  const accountId=Number(me.account.id);
+  if(accountId!==Number(summary.customer_account_id)&&accountId!==Number(summary.provider_account_id)){
+    try{await requireAdminPermission(pool,accountId,'payment.view')}catch{
+      return res.status(403).json({error:'Service Job payment summary is outside your authorized scope'});
+    }
+  }
+  res.json(summary);
 }catch(e){next(e)}});
 
 app.get('/api/payments/intents/:id',async(req,res,next)=>{try{
