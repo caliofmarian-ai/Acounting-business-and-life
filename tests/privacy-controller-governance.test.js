@@ -35,16 +35,19 @@ test('initial Philippine operator remains a natural-person record without invent
   assert.equal(profile.privacyNotice.placeholderPublicationAllowed, false);
 });
 
-test('PIC status follows actual control and is not silently activated', () => {
-  assert.equal(profile.pic.status, 'provisional_candidate_pending_actual_control_confirmation');
-  assert.equal(profile.pic.candidate, 'initial_operator');
+test('PIC status follows actual control and controller allocation is not silently resolved', () => {
+  assert.equal(profile.pic.status, 'controller_allocation_pending');
+  assert.equal(profile.pic.candidate, 'initial_operator_and_project_owner_require_actual_control_assessment');
   assert.equal(profile.pic.activationApproved, false);
-  assert.match(governance, /provisional PIC candidate only if that person actually controls/i);
+  assert.equal(profile.controllerAllocation.finalControllerModel, null);
+  assert.equal(profile.controllerAllocation.philippineOperatorSolePicConfirmed, false);
+  assert.equal(profile.controllerAllocation.projectOwnerSolePicConfirmed, false);
+  assert.match(governance, /must not convert the local-operator assumption into a sole-PIC conclusion/i);
 });
 
-test('individual PIC is recorded as de facto DPO without inventing a second person', () => {
-  assert.equal(profile.dpo.status, 'de_facto_if_initial_operator_is_confirmed_individual_pic');
-  assert.equal(profile.dpo.candidate, 'same_as_individual_pic');
+test('any confirmed individual PIC is recorded as de facto DPO without inventing a second person', () => {
+  assert.equal(profile.dpo.status, 'pending_final_individual_pic_controller_allocation');
+  assert.equal(profile.dpo.candidate, 'de_facto_for_any_confirmed_individual_pic_as_applicable');
   assert.equal(profile.dpo.separatePersonRequiredByThisRecord, false);
   assert.equal(profile.dpo.legalName, null);
   assert.equal(profile.dpo.officialEmail, null);

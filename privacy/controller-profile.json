@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "countryCode": "PH",
   "operatingName": "Business & Life",
   "legalEntity": {
@@ -14,16 +14,16 @@
     "status": "owner_designated_initial_philippine_operator"
   },
   "pic": {
-    "status": "provisional_candidate_pending_actual_control_confirmation",
-    "candidate": "initial_operator",
-    "condition": "initial_operator_actually_controls_business_and_life_personal_data_processing_decisions",
+    "status": "controller_allocation_pending",
+    "candidate": "initial_operator_and_project_owner_require_actual_control_assessment",
+    "condition": "final_pic_model_must_follow_actual_control_over_collection_purpose_extent_retention_and_processors",
     "legalName": null,
     "publicContact": null,
     "activationApproved": false
   },
   "dpo": {
-    "status": "de_facto_if_initial_operator_is_confirmed_individual_pic",
-    "candidate": "same_as_individual_pic",
+    "status": "pending_final_individual_pic_controller_allocation",
+    "candidate": "de_facto_for_any_confirmed_individual_pic_as_applicable",
     "legalName": null,
     "officialEmail": null,
     "separatePersonRequiredByThisRecord": false,
@@ -54,5 +54,15 @@
     "npcDpoGuidance": "https://privacy.gov.ph/appointing-a-data-protection-officer/",
     "npcRegistrationCircular2022_04": "https://privacy.gov.ph/wp-content/uploads/2023/05/Circular-2022-04.pdf",
     "npcRegistrationFaq2026": "https://privacy.gov.ph/pips-and-pics/faqs/"
+  },
+  "controllerAllocation": {
+    "status": "assessment_in_progress",
+    "finalControllerModel": null,
+    "assessmentDocument": "docs/privacy/CONTROLLER_ALLOCATION_ASSESSMENT.md",
+    "assessmentData": "privacy/controller-allocation.json",
+    "projectOwnerControllerEvidence": "material_referral_growth_processing_decisions_recorded",
+    "philippineOperatorSolePicConfirmed": false,
+    "projectOwnerSolePicConfirmed": false,
+    "multipleControllerModelConfirmed": false
   }
 }

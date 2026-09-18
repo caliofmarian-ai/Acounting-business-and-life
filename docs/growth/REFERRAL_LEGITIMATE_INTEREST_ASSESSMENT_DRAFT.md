@@ -106,11 +106,15 @@ Business & Life may have an actual business interest in:
 
 **POTENTIALLY ESTABLISHED — CONTROLLER CONFIRMATION REQUIRED.**
 
-The Project Owner has designated the initial Philippine operator as a natural person. That operator is the provisional PIC candidate if she actually controls the relevant Business & Life processing decisions. The final controller allocation must follow the real operating facts.
+The Project Owner designated the initial Philippine operator as a natural person. Local operation creates a PIC candidate, but it does not by itself prove sole controller status.
 
-If confirmed as the individual PIC, current NPC guidance treats that individual PIC as the de facto DPO.
+The Project Owner also has direct controller-allocation evidence for referral/growth processing because he selected the attribution model, retention targets, legitimate-interest assessment direction, reward boundary and PostHog-off gate.
 
-The interest is concrete and related to operation/growth of the referral feature, but the confirmed PIC/controller must approve the declared purpose before relying on it.
+Therefore the final controller model for referral/growth is currently **UNRESOLVED** pending confirmation of who will have final authority over processing purpose, data categories, retention, processors and material changes after launch.
+
+Any person confirmed as an individual PIC is treated as de facto DPO under current NPC guidance.
+
+The legitimate interest is concrete and related to operation/growth of the referral feature, but the confirmed controller/PIC structure must approve the declared purpose before reliance.
 
 The interest must not be expanded into unrelated tracking merely because the data exists.
 
@@ -274,7 +278,7 @@ Marketing preferences/consent remain separate where required.
 | Actual legitimate interest articulated | DRAFT candidate |
 | Necessity/proportionality analysis | DRAFT candidate |
 | Balancing test | PENDING controller approval |
-| PIC/controller identified | PROVISIONAL NATURAL-PERSON OPERATOR CANDIDATE — legal identity/control confirmation pending |
+| PIC/controller identified | CONTROLLER ALLOCATION PENDING — Project Owner decision evidence + Philippine operator local-operation evidence |
 | Effective privacy notice | PENDING |
 | Objection/request channel | IMPLEMENTED TECHNICALLY — controller/privacy operating process still PENDING |
 | 90-day unconverted retention | OWNER APPROVED |
@@ -296,7 +300,7 @@ No production flag may be enabled solely because this draft exists.
 
 Before legitimate interest can be recorded as the selected basis for this processing activity:
 
-1. confirm the designated initial Philippine natural-person operator as the actual PIC for the relevant processing and verify the legal identity/contact facts;
+1. complete the controller-allocation assessment between the Project Owner and designated Philippine operator, then verify the legal identity/contact facts of the confirmed controller/controller structure;
 2. confirm the exact declared referral-attribution purpose;
 3. complete/approve the legitimate-interest, necessity and balancing tests;
 4. validate the Owner-selected `registration_context_v1` model under the controller/privacy assessment;

@@ -33,17 +33,24 @@ Those facts must be supplied and verified before they are used in an EFFECTIVE p
 
 ## 2. Provisional PIC structure
 
-The initial operator is the provisional PIC candidate only if that person actually controls the relevant personal-data processing decisions for Business & Life.
+The initial operator is one provisional PIC candidate because that person is expected to operate Business & Life locally.
 
-The controller conclusion must follow the real operating facts.
+However, the Project Owner also has documented controller-level decision evidence in at least the referral/growth domain. He has selected processing model, retention rules and external-analytics boundaries.
 
-If another person/entity actually determines or jointly determines the relevant processing decisions, do not keep the initial-operator PIC assumption merely because it was convenient during development.
+Therefore the project must not convert the local-operator assumption into a sole-PIC conclusion.
+
+The controller conclusion must follow the real operating facts and may differ by processing domain.
 
 Current machine-readable status:
 
-`pic.status = provisional_candidate_pending_actual_control_confirmation`
+`pic.status = controller_allocation_pending`
+
+`controllerAllocation.finalControllerModel = null`
 
 `pic.activationApproved = false`
+
+Canonical allocation assessment:
+`docs/privacy/CONTROLLER_ALLOCATION_ASSESSMENT.md`
 
 ## 3. Individual PIC and DPO
 
@@ -52,8 +59,8 @@ National Privacy Commission guidance states that an individual PIC or PIP is a *
 Official NPC guidance:
 https://privacy.gov.ph/appointing-a-data-protection-officer/
 
-Therefore, if the initial natural-person operator is confirmed as the individual PIC:
-- that same person is the de facto DPO at that stage;
+Therefore, for any person confirmed as an individual PIC in the final controller allocation:
+- that individual is treated as de facto DPO under current NPC guidance;
 - this project must not invent a second DPO merely to fill a document field;
 - an official/dedicated privacy or DPO contact still needs to be established where required for public notice, NPC registration and operational handling;
 - DPO responsibilities must actually be performed, not only named.
@@ -161,3 +168,7 @@ A dedicated trigger-by-trigger assessment is maintained at:
 Current final registration decision: **PENDING**.
 
 This does not block continued development, but it is a public-launch gate if unresolved when live Philippine personal-data processing is ready to begin.
+
+## 11. Controller-allocation checkpoint
+
+Local operation and project ownership are both insufficient by themselves to determine sole PIC status. The Project Owner already has recorded decision evidence for referral/growth processing, while the designated Philippine operator has local operating responsibility. Final allocation remains a pre-launch fact/governance decision tracked in `privacy/controller-allocation.json`.
