@@ -42,6 +42,14 @@ test('Admin schema and authorization support specialists without turning Admin i
   assert.match(server,/function_codes/);
 });
 
+test('Admin overview scopes each data family by its delegated permission',()=>{
+  assert.match(server,/scopeClause\(accountId,'support\.manage'/);
+  assert.match(server,/scopeClause\(accountId,'incident\.triage'/);
+  assert.match(server,/profilePermissionByRole/);
+  assert.match(server,/metricPermissions/);
+  assert.match(server,/already holds a higher Admin rank in the same scope/);
+});
+
 test('dedicated Admin workspace is a separate permission-driven surface',()=>{
   assert.match(server,/admin-console\.html/);
   assert.match(server,/app\.get\('\/admin'/);
