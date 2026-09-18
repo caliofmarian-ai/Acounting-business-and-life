@@ -21,7 +21,8 @@ const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const body=express.json({limit:'28mb'});
 const SUPPORT_STATUSES=new Set(['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened']);
 const SUPPORT_PRIORITIES=new Set(['low','normal','high','urgent']);
-const SUPPORT_CATEGORIES=new Set(['auth','marketplace_order','payment','merchant_onboarding','supplier_onboarding','delivery','service_provider','accounting','tax_documents','technical_bug','other']);
+const PRIVACY_SUPPORT_CATEGORIES=new Set(['privacy_objection','privacy_access','privacy_correction','privacy_erasure_blocking','privacy_other_request']);
+const SUPPORT_CATEGORIES=new Set(['auth','marketplace_order','payment','merchant_onboarding','supplier_onboarding','delivery','service_provider','accounting','tax_documents','technical_bug','other',...PRIVACY_SUPPORT_CATEGORIES]);
 const SUPPORT_DESTINATIONS=new Set(['support','territory_admin','country_admin','platform_admin']);
 const SUPPORT_IMAGE_MIMES=new Set(['image/jpeg','image/png','image/webp']);
 const SUPPORT_DOC_MIMES=new Set([
@@ -567,13 +568,21 @@ app.post('/api/admin/assignments/:id/status',body,async(req,res,next)=>{try{
 app.get('/api/admin/audit',async(req,res,next)=>{try{const{me}=await adminFor(req,'audit.view');const ids=await visibleTerritoryIds(pool,me.account.id,'audit.view'),countryWide=await isCountryWide(me.account.id,'audit.view'),limit=Math.max(1,Math.min(300,Number(req.query.limit)||100));const{rows}=await pool.query(`SELECT e.*,a.display_name actor_name FROM admin_audit_events e LEFT JOIN accounts a ON a.id=e.actor_account_id WHERE ${countryWide?"e.country_code='PH'":"e.territory_id=ANY($1::bigint[])"} ORDER BY e.created_at DESC LIMIT ${limit}`,countryWide?[]:[ids.length?ids:[-1]]);res.json(rows)}catch(e){next(e)}});
 
 app.post('/api/support/tickets',body,async(req,res,next)=>{const client=await pool.connect();try{
-  const me=await identity(req),category=clean(req.body?.category,80),subject=clean(req.body?.subject,180),description=clean(req.body?.description,5000),relatedType=clean(req.body?.related_type,50),relatedId=req.body?.related_id?Number(req.body.related_id):null,destination=SUPPORT_DESTINATIONS.has(req.body?.requested_destination)?req.body.requested_destination:'support',sourceLanguage=clean(req.body?.source_language,32),englishTranslation=clean(req.body?.english_translation,12000);
+  const me=await identity(req),category=clean(req.body?.category,80),subject=clean(req.body?.subject,180),description=clean(req.body?.description,5000),requestedRelatedType=clean(req.body?.related_type,50),requestedRelatedId=req.body?.related_id?Number(req.body.related_id):null,requestedDestination=SUPPORT_DESTINATIONS.has(req.body?.requested_destination)?req.body.requested_destination:'support',sourceLanguage=clean(req.body?.source_language,32),englishTranslation=clean(req.body?.english_translation,12000);
   if(!SUPPORT_CATEGORIES.has(category)||subject.length<3||description.length<10)return res.status(400).json({error:'Valid category, subject and clear description required'});
-  const attachments=validateSupportAttachments(req.body?.attachments),territoryId=await inferTerritory(relatedType,relatedId,req.body?.territory_id);
+  const isPrivacyRequest=PRIVACY_SUPPORT_CATEGORIES.has(category);
+  const destination=isPrivacyRequest?'country_admin':requestedDestination;
+  const relatedType=isPrivacyRequest?'privacy_rights':requestedRelatedType;
+  const relatedId=isPrivacyRequest?null:requestedRelatedId;
+  const attachments=validateSupportAttachments(req.body?.attachments),territoryId=isPrivacyRequest?null:await inferTerritory(relatedType,relatedId,req.body?.territory_id);
   await client.query('BEGIN');
   const q=await client.query(`INSERT INTO support_tickets(requester_account_id,territory_id,category,subject,description,requested_destination,source_language,english_translation,related_type,related_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[me.account.id,territoryId,category,subject,description,destination,sourceLanguage,englishTranslation,relatedType,relatedId]);
   const ticket=q.rows[0];
   await client.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[ticket.id,me.account.id,description]);
+  if(isPrivacyRequest){
+    await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,'privacy_rights',$2) ON CONFLICT DO NOTHING`,[ticket.id,me.account.id]);
+    await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[ticket.id,category,me.account.id]);
+  }
   for(const a of attachments)await client.query(`INSERT INTO support_attachments(ticket_id,kind,mime_type,file_name,byte_size,data_url,transcript_text,transcript_language,english_translation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[ticket.id,a.kind,a.mime,a.file_name,a.byte_size,a.data_url,a.transcript_text,a.transcript_language,a.english_translation]);
   await client.query('COMMIT');
   res.status(201).json({...ticket,attachment_count:attachments.length});
