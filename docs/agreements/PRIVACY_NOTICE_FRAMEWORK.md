@@ -105,6 +105,8 @@ Do not state arbitrary retention periods until approved.
 
 Final notice must explain applicable rights/process under Philippine privacy law and how requests are submitted/verified.
 
+A technical authenticated request channel is implemented through `Help -> New issue -> Privacy & data rights`. It may be referenced only as a submission channel; it does not replace the need to identify the actual controller/privacy contact or define the approved handling/verification process.
+
 ## 9. Security
 
 Describe implemented safeguards accurately without guaranteeing absolute security.
