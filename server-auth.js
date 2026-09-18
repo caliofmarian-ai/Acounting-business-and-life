@@ -9,6 +9,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLiveReferralPayload, ensureAccountReferral, ensureReferralAccountSchema, normalizeReferralProfileRole } from './growth/referral-account.js';
 import { buildLocalReferralQr } from './growth/referral-qr.js';
+import { isValidReferralCode } from './growth/referral-domain.js';
+import { deliverReferralAnalyticsEvent, sanitizeReferralAnalyticsEvent } from './growth/referral-analytics.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -23,6 +25,9 @@ const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ROLES = new Set(['merchant', 'customer', 'supplier', 'courier', 'service_provider']);
 const jsonBody = express.json({ limit: '450kb' });
 const loginAttempts = new Map();
+const growthAnalyticsAttempts = new Map();
+const ACCOUNT_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_link_created','referral_shared']);
+const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_landing_viewed','referral_shared']);
 let accountingChild;
 let shuttingDown = false;
 
@@ -262,6 +267,38 @@ function throttled(req, identity) {
 }
 function clearThrottle(req, identity) { loginAttempts.delete(`${req.ip || 'unknown'}:${identity}`); }
 
+function growthAnalyticsThrottled(identity, limit = 90) {
+  const key = String(identity || 'unknown');
+  const now = Date.now();
+  const state = growthAnalyticsAttempts.get(key) || { count: 0, first: now };
+  if (now - state.first > 60_000) { state.count = 0; state.first = now; }
+  if (state.count >= limit) return true;
+  state.count += 1;
+  growthAnalyticsAttempts.set(key, state);
+  if (growthAnalyticsAttempts.size > 5000) {
+    for (const [candidate, value] of growthAnalyticsAttempts) {
+      if (now - value.first > 60_000) growthAnalyticsAttempts.delete(candidate);
+    }
+  }
+  return false;
+}
+
+async function sendReferralAnalytics(res, input) {
+  let safe;
+  try {
+    safe = sanitizeReferralAnalyticsEvent(input);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+  try {
+    const result = await deliverReferralAnalyticsEvent(safe);
+    return res.status(202).json(result);
+  } catch (error) {
+    console.warn('Referral analytics delivery suppressed:', error.message);
+    return res.status(202).json({ accepted: true, delivered: false, reason: 'delivery_error', event: safe.event });
+  }
+}
+
 app.post('/api/auth/register', jsonBody, async (req, res, next) => {
   const email = normalizeEmail(req.body?.email);
   const name = clean(req.body?.display_name, 120);
@@ -360,6 +397,43 @@ app.get('/api/growth/referral', auth, async (req, res, next) => {
     next(err);
   }
 });
+
+app.post('/api/growth/referral-analytics/account', jsonBody, auth, async (req, res) => {
+  const event = clean(req.body?.event, 80);
+  if (!ACCOUNT_REFERRAL_ANALYTICS_EVENTS.has(event)) {
+    return res.status(400).json({ error: 'Referral analytics event is not allowed for account instrumentation' });
+  }
+  if (growthAnalyticsThrottled(`account:${req.accountId}`, 120)) {
+    return res.status(429).json({ error: 'Referral analytics rate limit exceeded' });
+  }
+  return sendReferralAnalytics(res, { event, properties: req.body?.properties });
+});
+
+app.post('/api/growth/referral-analytics/public', jsonBody, async (req, res, next) => {
+  const event = clean(req.body?.event, 80);
+  if (!PUBLIC_REFERRAL_ANALYTICS_EVENTS.has(event)) {
+    return res.status(400).json({ error: 'Referral analytics event is not allowed for public instrumentation' });
+  }
+  if (growthAnalyticsThrottled(`public:${req.ip || 'unknown'}`, 60)) {
+    return res.status(429).json({ error: 'Referral analytics rate limit exceeded' });
+  }
+
+  const referralCode = clean(req.body?.referral_code, 40);
+  if (!isValidReferralCode(referralCode)) {
+    return res.status(202).json({ accepted: false, delivered: false, reason: 'invalid_referral' });
+  }
+
+  try {
+    const known = await pool.query('SELECT 1 FROM referral_accounts WHERE referral_code=$1 LIMIT 1', [referralCode]);
+    if (!known.rowCount) {
+      return res.status(202).json({ accepted: false, delivered: false, reason: 'unknown_referral' });
+    }
+    return sendReferralAnalytics(res, { event, properties: req.body?.properties });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.patch('/api/me', jsonBody, auth, async (req, res, next) => {
   const name = clean(req.body?.display_name, 120);
   const phone = clean(req.body?.phone, 40);
