@@ -27,10 +27,15 @@ Current pre-launch facts:
 - legal name/address/public privacy contact: **not yet verified for publication**.
 
 Controller/PIC rule:
-- the initial operator is the provisional PIC candidate if that person actually controls the relevant personal-data processing decisions;
-- if confirmed as an individual PIC, NPC guidance treats that individual PIC as the de facto DPO.
+- the initial Philippine operator is a provisional PIC candidate because she is designated to operate locally;
+- the Project Owner also has documented controller-level decision evidence in at least the referral/growth domain because he selected processing model, retention and processor/analytics boundaries;
+- neither local operation nor ownership alone determines the final PIC;
+- the final controller allocation must follow who actually determines collection, purpose, extent, retention and processor/recipient decisions for each relevant processing domain;
+- any confirmed individual PIC is treated as de facto DPO under current NPC guidance.
 
-The EFFECTIVE notice must still contain the verified legal identity/contact facts appropriate to the actual controller.
+Current controller-allocation status: **UNRESOLVED / PRE-LAUNCH FACT FINDING**.
+
+The EFFECTIVE notice must still contain the verified legal identity/contact facts appropriate to the actual controller or controllers.
 
 NPC registration details must appear only if applicable and verified.
 
@@ -134,7 +139,7 @@ Maintain version/effective date and contact method.
 
 ## Pre-publication checklist
 
-- confirm actual controller allocation for the designated initial natural-person operator;
+- confirm actual controller allocation between the Project Owner, designated Philippine operator and any future Business & Life legal entity;
 - verify legal name/address/public privacy contact;
 - complete DPO/NPCRS applicability assessment;
 - vendor/processor register;
@@ -145,3 +150,5 @@ Maintain version/effective date and contact method.
 - review against DPA/IRR/NPC guidance.
 
 Canonical pre-launch controller/DPO record: `docs/privacy/INITIAL_PIC_DPO_GOVERNANCE.md`.
+
+Canonical controller-allocation assessment: `docs/privacy/CONTROLLER_ALLOCATION_ASSESSMENT.md`.
