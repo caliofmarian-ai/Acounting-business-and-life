@@ -48,3 +48,27 @@ test('Finance dashboard stays mobile-first with dedicated KPI and form layouts',
   assert.match(css,/\.financeFormGrid/);
   assert.match(css,/@media\(min-width:760px\)[\s\S]*\.financeSummary/);
 });
+
+
+test('Finance dashboard renders real 90-day cohort metrics without inventing paid conversion',()=>{
+  assert.match(ui,/90-day promotional cohorts/);
+  assert.match(ui,/Active 90-day trials/);
+  assert.match(ui,/Trials started this period/);
+  assert.match(ui,/Promo completions this period/);
+  assert.match(ui,/Post-promo activity conversion/);
+  assert.match(ui,/NOT_AVAILABLE_UNTIL_ACTIVE_FEE_POLICY/);
+  assert.match(ui,/Activity conversion means an expired trial subject completed at least one later service/);
+});
+
+test('Finance dashboard does not fabricate promotional subsidy before direct cost attribution exists',()=>{
+  assert.match(ui,/Promo cost attribution/);
+  assert.match(ui,/No subsidy amount is inferred/);
+  assert.doesNotMatch(ui,/Promo subsidy[^\n]{0,80}financeMoney\(0\)/);
+});
+
+test('Finance dashboard exposes promotional activity per service and phase',()=>{
+  assert.match(ui,/Promotion activity by service/);
+  assert.match(ui,/promo\.services\|\|\[\]/);
+  assert.match(ui,/x\.phase/);
+  assert.match(ui,/x\.gross_value/);
+});
