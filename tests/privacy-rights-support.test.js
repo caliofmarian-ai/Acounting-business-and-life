@@ -64,3 +64,11 @@ test('workflow does not invent controller DPO identity or guarantee legal outcom
   assert.match(workflow, /does not yet automate deletion or suppression/i);
   assert.match(workflow, /must not publish an invented DPO\/controller name/i);
 });
+
+test('user can send follow-up through the existing account-bound Support reply endpoint', () => {
+  assert.match(ui, /id="supportReplyForm"/);
+  assert.match(ui, /Send follow-up/);
+  assert.match(ui, /\/api\/support\/tickets\/'\+id\+'\/reply/);
+  assert.match(server, /app\.post\('\/api\/support\/tickets\/:id\/reply'/);
+  assert.match(server, /WHERE id=\$1 AND requester_account_id=\$2/);
+});
