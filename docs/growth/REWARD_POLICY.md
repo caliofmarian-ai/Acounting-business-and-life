@@ -4,11 +4,13 @@
 
 Referral acquisition can be implemented and measured before a reward economy is activated.
 
-The canonical default is:
+The canonical initial-pilot state is:
 
-`status = disabled_pending_owner_policy`
+`status = disabled_for_initial_pilot_owner_approved`
 
-No cash amount, subscription period, fee credit or other benefit is currently assumed.
+Project Owner explicitly approved **rewards OFF for the initial pilot** on 2026-09-18.
+
+No cash amount, subscription period, fee credit or other benefit is approved for the pilot.
 
 ## Why
 
@@ -38,7 +40,7 @@ Future policies may use:
 - non-cash ambassador status;
 - cash/currency value only after explicit commercial/legal/accounting approval.
 
-## Required owner decision before activation
+## Required future decision before any reward activation
 
 A reward policy must specify:
 - qualification rule;
@@ -51,4 +53,4 @@ A reward policy must specify:
 - abuse/fraud exclusions;
 - accounting/tax treatment where relevant.
 
-Until those values are explicitly decided, `enabled=false`.
+For the initial pilot, `enabled=false` is an explicit Owner decision. Any future reward activation requires a new Owner decision covering all values above plus applicable accounting/tax/privacy evidence rules.
