@@ -1,3 +1,19 @@
+---
+document_id: BL-120-GLB-GENDOC-001
+title: Generated Documents & Forms Contract
+document_type: generated_document_contract
+status: DRAFT
+access_class: OPERATIONS_PRIVATE
+applicable_profiles: []
+applicable_functions: [Documentation Governance Owner, Super Admin, Country Admin]
+country_code: GLB
+territory_scope: global
+owner_role: Documentation Governance Owner
+approver_role: Project Owner
+version: 1.0
+legal_classification: PLATFORM_POLICY
+---
+
 # Generated Documents & Forms Contract
 
 Status: **CANONICAL DESIGN V1**
