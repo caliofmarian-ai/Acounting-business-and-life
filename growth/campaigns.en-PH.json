@@ -1,0 +1,168 @@
+{
+  "version": "1.0.0",
+  "locale": "en-PH",
+  "country": "PH",
+  "common": {
+    "appName": "Business & Life",
+    "requiredPlaceholders": [
+      "REFERRER_NAME",
+      "REFERRAL_CODE",
+      "REFERRAL_URL"
+    ],
+    "userInitiatedSharingOnly": true,
+    "autoGroupPosting": false,
+    "operationalApprovalBypass": false,
+    "prohibitedClaims": [
+      "guaranteed profit",
+      "guaranteed savings",
+      "automatic Merchant approval",
+      "automatic Supplier approval",
+      "automatic Courier approval",
+      "automatic Service Provider approval",
+      "government-approved accounting",
+      "guaranteed tax compliance"
+    ]
+  },
+  "profiles": {
+    "customer": {
+      "campaignId": "referral_customer_v1",
+      "utmCampaign": "customer_referral_v1",
+      "sourceProfileRole": "customer",
+      "groundedCapabilities": [
+        "Food and Non-food Marketplace",
+        "basket and checkout",
+        "multi-item orders",
+        "order tracker",
+        "credit and partial-payment tracking"
+      ],
+      "creativeVariant": "clarity_customer_v1",
+      "shortShare": "I’m using Business & Life. You can use my invitation to explore local Marketplace ordering and keep your activity in one account: {REFERRAL_URL}",
+      "groupShare": "If anyone here wants to try Business & Life, this is my referral link: {REFERRAL_URL} — code {REFERRAL_CODE}.",
+      "email": {
+        "subject": "You’re invited to try Business & Life",
+        "body": "Hi,\n\n{REFERRER_NAME} invited you to try Business & Life. The Customer profile supports Marketplace browsing, basket/checkout and order tracking where those services are available.\n\nStart here: {REFERRAL_URL}\nReferral code: {REFERRAL_CODE}\n\nA referral identifies who introduced you; it does not grant restricted operational profiles."
+      },
+      "social": {
+        "headline": "Local ordering, one account.",
+        "body": "Use a referral invitation to start with Business & Life and explore the Customer tools available in your area."
+      }
+    },
+    "merchant": {
+      "campaignId": "referral_merchant_v1",
+      "utmCampaign": "merchant_referral_v1",
+      "sourceProfileRole": "merchant",
+      "groundedCapabilities": [
+        "cash control and reconciliation",
+        "inventory and reorder warnings",
+        "menu products and recipes",
+        "gross-margin analysis",
+        "Marketplace storefront and customer orders"
+      ],
+      "creativeVariant": "money_visibility_merchant_v1",
+      "shortShare": "I use Business & Life for business money, stock and day-to-day operations. Here’s my invitation if you want to try it too: {REFERRAL_URL}",
+      "groupShare": "For small-business owners who want clearer records for cash, stock and operations, here’s my Business & Life referral link: {REFERRAL_URL}. Merchant access still follows platform approval rules.",
+      "email": {
+        "subject": "An invitation to Business & Life for small-business operations",
+        "body": "Hi,\n\n{REFERRER_NAME} invited you to Business & Life. Current Merchant tools include cash control/reconciliation, inventory, menu/recipe tracking, product profitability and Marketplace operations.\n\nReferral link: {REFERRAL_URL}\nCode: {REFERRAL_CODE}\n\nMerchant activation is not automatic and remains subject to the platform’s invitation and approval process."
+      },
+      "social": {
+        "headline": "Run the business. See the money.",
+        "body": "Cash, stock and operating activity can be easier to understand when they are kept in one system."
+      }
+    },
+    "supplier": {
+      "campaignId": "referral_supplier_v1",
+      "utmCampaign": "supplier_referral_v1",
+      "sourceProfileRole": "supplier",
+      "groundedCapabilities": [
+        "trusted Merchant-Supplier relationships",
+        "Supplier catalog",
+        "purchase orders and amendments",
+        "ETA and readiness",
+        "partial receiving and procurement payment boundaries"
+      ],
+      "creativeVariant": "supplier_workflow_v1",
+      "shortShare": "Business & Life includes Supplier workflows for trusted Merchant relationships, catalogs and purchase orders. My invitation: {REFERRAL_URL}",
+      "groupShare": "For local suppliers/producers working with merchants: Business & Life has supplier catalog and purchase-order workflows. Referral: {REFERRAL_URL}. Supplier activation remains approval-gated.",
+      "email": {
+        "subject": "Business & Life Supplier invitation",
+        "body": "Hi,\n\n{REFERRER_NAME} shared Business & Life with you. Supplier workflows currently cover trusted Merchant relationships, catalogs, purchase orders, ETA/readiness, receiving and procurement-payment boundaries.\n\nReferral link: {REFERRAL_URL}\nCode: {REFERRAL_CODE}\n\nSupplier operational access is invite-only and Admin-approved."
+      },
+      "social": {
+        "headline": "Supplier relationships, made easier to follow.",
+        "body": "Catalogs, purchase orders, readiness and receiving can stay connected to the Merchant relationship."
+      }
+    },
+    "courier": {
+      "campaignId": "referral_courier_v1",
+      "utmCampaign": "courier_referral_v1",
+      "sourceProfileRole": "courier",
+      "groundedCapabilities": [
+        "Courier profile and eligibility",
+        "vehicle/capacity/radius",
+        "versioned delivery pricing",
+        "dispatch",
+        "live delivery status/location",
+        "secure handoff code"
+      ],
+      "creativeVariant": "delivery_courier_v1",
+      "shortShare": "Interested in the Business & Life delivery workflow? Here’s my referral link: {REFERRAL_URL}. Courier access requires platform approval.",
+      "groupShare": "For approved delivery participants, Business & Life supports dispatch, live delivery status and handoff workflows. Referral link: {REFERRAL_URL}. Courier eligibility is approval-gated.",
+      "email": {
+        "subject": "Business & Life delivery workflow invitation",
+        "body": "Hi,\n\n{REFERRER_NAME} invited you to explore Business & Life. The Courier workflow includes vehicle/capacity settings, delivery pricing, dispatch, live delivery status/location and secure handoff.\n\nReferral link: {REFERRAL_URL}\nCode: {REFERRAL_CODE}\n\nA referral does not approve Courier eligibility; operational access remains subject to platform review."
+      },
+      "social": {
+        "headline": "Delivery status from dispatch to handoff.",
+        "body": "Business & Life connects approved Courier workflows to the order and delivery process."
+      }
+    },
+    "service_provider": {
+      "campaignId": "referral_service_provider_v1",
+      "utmCampaign": "service_provider_referral_v1",
+      "sourceProfileRole": "service_provider",
+      "groundedCapabilities": [
+        "public Service Provider profiles",
+        "services and qualifications/CV evidence",
+        "portfolio",
+        "request to quote lifecycle",
+        "scheduled/in-progress/completed states",
+        "verified-review eligibility"
+      ],
+      "creativeVariant": "local_services_provider_v1",
+      "shortShare": "Business & Life has Local Services profiles and job workflows. If you want to explore it, here’s my invitation: {REFERRAL_URL}",
+      "groupShare": "For people offering local services, Business & Life supports service profiles, requests/quotes and job status workflows. Referral: {REFERRAL_URL}. Some services/categories require approval.",
+      "email": {
+        "subject": "Explore Local Services on Business & Life",
+        "body": "Hi,\n\n{REFERRER_NAME} invited you to Business & Life. Local Services currently supports provider profiles, service/qualification evidence, request-to-quote workflows, job status and verified-review eligibility after completed in-app work.\n\nReferral link: {REFERRAL_URL}\nCode: {REFERRAL_CODE}\n\nOperational/category access can require platform approval and credentials."
+      },
+      "social": {
+        "headline": "Show your services. Follow the job.",
+        "body": "Business & Life connects service profiles with requests, quotes and job progress."
+      }
+    }
+  },
+  "experiments": {
+    "dimensions": [
+      "creative_variant",
+      "cta_variant",
+      "landing_variant",
+      "reward_message_variant"
+    ],
+    "initialCtaVariants": [
+      {
+        "id": "cta_scan_start_v1",
+        "text": "Scan to start"
+      },
+      {
+        "id": "cta_try_business_life_v1",
+        "text": "Try Business & Life"
+      },
+      {
+        "id": "cta_join_invitation_v1",
+        "text": "Open invitation"
+      }
+    ],
+    "rule": "Experiments may change presentation and wording, not actual reward economics or profile-approval authority without explicit owner approval."
+  }
+}
