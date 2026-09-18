@@ -9,6 +9,7 @@ import {
   ADMIN_PERMISSIONS, ensureAdminSchema, getAdminAssignments, hasAdminPermission,
   requireAdminPermission, visibleTerritoryIds, signAdminAssertion, appendAdminAudit
 } from './admin-authorization.js';
+import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
 
 const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,7 @@ const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correla
 async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 function rolePermission(role){return role==='merchant'?'merchant.approve':role==='supplier'?'supplier.approve':role==='courier'?'courier.verify':'profiles.review_service_provider'}
+const assignmentRank=a=>clean(a?.effective_rank||a?.authority_rank||a?.admin_role,40);
 async function adminFor(req,permission,territoryId=null){const me=await identity(req);const assignment=await requireAdminPermission(pool,Number(me.account.id),permission,territoryId);return{me,assignment}}
 async function isCountryWide(accountId,permission){const as=await getAdminAssignments(pool,accountId);for(const a of as){if(a.admin_role==='super_admin')return true;if(a.admin_role==='country_admin'){const p=new Set(Array.isArray(a.permissions)?a.permissions:[]);if(p.has(permission))return true}}return false}
 
@@ -217,52 +219,124 @@ async function forwardAdmin(req,res,permission,territoryId,targetType='',targetI
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,upstream:r.ok,version:'0.10-admin-rbac-support'})}catch{res.status(503).json({ok:false,db:false,upstream:false,version:'0.10-admin-rbac-support'})}});
 app.get('/admin-operations.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-operations.css'),'utf8')));
 app.get('/admin-operations-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-operations-ui.js'),'utf8')));
+app.get('/admin-console.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-console.css'),'utf8')));
+app.get('/admin-console.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-console.js'),'utf8')));
+app.get('/admin',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
+app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});const html=await r.text();res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
-app.get('/api/admin/me',async(req,res,next)=>{try{const me=await identity(req);const assignments=await getAdminAssignments(pool,me.account.id);const permissions=new Set();for(const a of assignments){if(a.admin_role==='super_admin')ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));else(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p))}res.json({is_admin:assignments.length>0,assignments,permissions:[...permissions].sort()})}catch(e){next(e)}});
+app.get('/api/admin/me',async(req,res,next)=>{try{const me=await identity(req);const assignments=await getAdminAssignments(pool,me.account.id);const permissions=new Set();for(const a of assignments){if(assignmentRank(a)==='super_admin')ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));else(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p))}res.json({is_admin:assignments.length>0,assignments,permissions:[...permissions].sort()})}catch(e){next(e)}});
+app.get('/api/admin/catalog',async(req,res,next)=>{try{
+  const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
+  if(!assignments.length)throw Object.assign(new Error('Admin assignment required'),{status:403});
+  const permissions=new Set(),superAdmin=assignments.some(a=>assignmentRank(a)==='super_admin');
+  for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
+  if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
+  const highest=[...assignments].sort((a,b)=>rankLevel(assignmentRank(b))-rankLevel(assignmentRank(a)))[0];
+  const catalog=publicAdminCatalog(),actorRank=assignmentRank(highest);
+  const functions=catalog.functions.map(fn=>({...fn,can_delegate:superAdmin||fn.permissions.every(p=>permissions.has(p))}));
+  const delegable_roles=catalog.ranks.filter(r=>canDelegateRank(actorRank,r.code)).map(r=>r.code);
+  res.json({...catalog,functions,delegable_roles,actor_rank:actorRank});
+}catch(e){next(e)}});
 app.get('/api/admin/overview',async(req,res,next)=>{try{const{me}=await adminFor(req,'admin.console');res.json(await adminOverview(me.account.id))}catch(e){next(e)}});
 app.get('/api/governance/admin/overview',async(req,res,next)=>{try{const{me}=await adminFor(req,'admin.console');res.json(await adminOverview(me.account.id))}catch(e){next(e)}});
 
 app.get('/api/admin/assignments',async(req,res,next)=>{try{
   const me=await identity(req),mine=await getAdminAssignments(pool,me.account.id);
-  const superAdmin=mine.some(a=>a.admin_role==='super_admin');
+  const superAdmin=mine.some(a=>assignmentRank(a)==='super_admin');
   const canAssign=(await hasAdminPermission(pool,me.account.id,'admin.assign_limited')).allowed||(await hasAdminPermission(pool,me.account.id,'admin.delegate')).allowed;
   if(!canAssign&&!superAdmin)throw Object.assign(new Error('Admin assignment visibility requires delegation permission'),{status:403});
+  const select="SELECT a.*,COALESCE(NULLIF(a.authority_rank,''),a.admin_role) effective_rank,ac.display_name,ac.email,t.name territory_name,COALESCE((SELECT jsonb_agg(g.permission_code ORDER BY g.permission_code) FROM admin_permission_grants g WHERE g.assignment_id=a.id AND g.status='active'),'[]'::jsonb) permissions,COALESCE((SELECT jsonb_agg(f.function_code ORDER BY f.function_code) FROM admin_function_assignments f WHERE f.assignment_id=a.id AND f.status='active'),'[]'::jsonb) functions FROM platform_admin_assignments a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id";
   let rows;
   if(superAdmin){
-    ({rows}=await pool.query(`SELECT a.*,ac.display_name,ac.email,t.name territory_name,COALESCE((SELECT jsonb_agg(g.permission_code ORDER BY g.permission_code) FROM admin_permission_grants g WHERE g.assignment_id=a.id AND g.status='active'),'[]'::jsonb) permissions FROM platform_admin_assignments a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id WHERE a.country_code='PH' ORDER BY CASE a.admin_role WHEN 'super_admin' THEN 0 WHEN 'country_admin' THEN 1 ELSE 2 END,a.created_at DESC`));
+    ({rows}=await pool.query(select+" WHERE a.country_code='PH' ORDER BY CASE COALESCE(NULLIF(a.authority_rank,''),a.admin_role) WHEN 'super_admin' THEN 0 WHEN 'country_admin' THEN 1 WHEN 'territory_admin' THEN 2 ELSE 3 END,a.created_at DESC"));
   }else{
-    const ids=await visibleTerritoryIds(pool,me.account.id,'admin.delegate');
-    ({rows}=await pool.query(`SELECT a.*,ac.display_name,ac.email,t.name territory_name,COALESCE((SELECT jsonb_agg(g.permission_code ORDER BY g.permission_code) FROM admin_permission_grants g WHERE g.assignment_id=a.id AND g.status='active'),'[]'::jsonb) permissions FROM platform_admin_assignments a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id WHERE a.admin_role='territory_admin' AND a.territory_id=ANY($1::bigint[]) ORDER BY a.created_at DESC`,[ids.length?ids:[-1]]));
+    const countryManager=mine.some(a=>assignmentRank(a)==='country_admin'&&((a.permissions||[]).includes('admin.delegate')||(a.permissions||[]).includes('admin.assign_limited')));
+    if(countryManager){
+      ({rows}=await pool.query(select+" WHERE a.country_code='PH' AND COALESCE(NULLIF(a.authority_rank,''),a.admin_role) IN ('territory_admin','specialist') ORDER BY a.created_at DESC"));
+    }else{
+      const ids=[...new Set([...(await visibleTerritoryIds(pool,me.account.id,'admin.delegate')),...(await visibleTerritoryIds(pool,me.account.id,'admin.assign_limited'))])];
+      ({rows}=await pool.query(select+" WHERE COALESCE(NULLIF(a.authority_rank,''),a.admin_role)='specialist' AND a.territory_id=ANY($1::bigint[]) ORDER BY a.created_at DESC",[ids.length?ids:[-1]]));
+    }
   }
   res.json(rows);
 }catch(e){next(e)}});
+
 app.post('/api/admin/assignments',body,async(req,res,next)=>{try{
-  const me=await identity(req),targetEmail=clean(req.body?.target_email,180).toLowerCase(),role=clean(req.body?.admin_role,40),territoryId=req.body?.territory_id?Number(req.body.territory_id):null,requested=[...new Set((Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x)))];
-  if(!['country_admin','territory_admin'].includes(role)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail))return res.status(400).json({error:'Valid target email and delegated Admin role required'});
+  const me=await identity(req),targetEmail=clean(req.body?.target_email,180).toLowerCase(),role=clean(req.body?.admin_role,40),territoryId=req.body?.territory_id?Number(req.body.territory_id):null;
+  const functionCodes=[...new Set((Array.isArray(req.body?.function_codes)?req.body.function_codes:[]).map(x=>clean(x,100)).filter(Boolean))];
+  if(!['country_admin','territory_admin','specialist'].includes(role)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail))return res.status(400).json({error:'Valid target email and delegated Admin rank required'});
   if(role==='territory_admin'&&!territoryId)return res.status(400).json({error:'Territory Admin requires a territory'});
   if(role==='country_admin'&&territoryId)return res.status(400).json({error:'Country Admin is country-scoped and must not use a territory id'});
+  for(const code of functionCodes)if(!isFunctionAssignableToRole(code,role))return res.status(400).json({error:'Function is not assignable to this Admin rank: '+code});
+  const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
+  const requested=[...new Set([...explicit,...expandAdminFunctions(functionCodes,role)])];
+  if(role==='specialist'&&!requested.length)return res.status(400).json({error:'Specialist requires at least one delegated function or permission'});
   let authority=await hasAdminPermission(pool,me.account.id,'admin.assign_limited',territoryId);
   if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',territoryId);
   if(!authority.allowed)throw Object.assign(new Error('Admin delegation permission required'),{status:403});
-  if(role==='country_admin'&&authority.assignment.admin_role!=='super_admin')throw Object.assign(new Error('Only Super Admin can appoint a Country Admin'),{status:403});
-  if(territoryId){const t=await pool.query(`SELECT id FROM territories WHERE id=$1 AND country_code='PH'`,[territoryId]);if(!t.rowCount)return res.status(404).json({error:'Territory not found'})}
-  const account=await pool.query(`SELECT id,display_name,email FROM accounts WHERE LOWER(email)=$1`,[targetEmail]);if(!account.rowCount)return res.status(404).json({error:'The target must create a Business & Life account first'});
-  for(const p of requested){if(authority.assignment.admin_role!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,territoryId);if(!x.allowed)return res.status(403).json({error:`You cannot delegate permission: ${p}`})}}
-  const client=await pool.connect();try{await client.query('BEGIN');const q=await client.query(`INSERT INTO platform_admin_assignments(account_id,admin_role,country_code,territory_id,status,assigned_by_account_id,reason) VALUES($1,$2,'PH',$3,'active',$4,$5) ON CONFLICT(account_id,admin_role,country_code,COALESCE(territory_id,0)) DO UPDATE SET status='active',assigned_by_account_id=EXCLUDED.assigned_by_account_id,reason=EXCLUDED.reason,effective_until=NULL,updated_at=NOW() RETURNING *`,[account.rows[0].id,role,territoryId,me.account.id,clean(req.body?.reason,1000)]);const a=q.rows[0];for(const p of requested)await client.query(`INSERT INTO admin_permission_grants(assignment_id,permission_code,status,granted_by_account_id,reason) VALUES($1,$2,'active',$3,$4) ON CONFLICT(assignment_id,permission_code) DO UPDATE SET status='active',granted_by_account_id=EXCLUDED.granted_by_account_id,reason=EXCLUDED.reason,effective_until=NULL,updated_at=NOW()`,[a.id,p,me.account.id,clean(req.body?.reason,500)]);await client.query('COMMIT');await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:authority.assignment.id,permission:'admin.assign_limited',territoryId,targetType:'admin_assignment',targetId:String(a.id),eventCode:'admin_assignment_created',after:{target_account_id:account.rows[0].id,role,permissions:requested},reason:req.body?.reason,correlationId:correlation(req)});res.status(201).json({...a,permissions:requested,target:account.rows[0]})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  const actorRank=assignmentRank(authority.assignment);
+  if(!canDelegateRank(actorRank,role))throw Object.assign(new Error('You cannot create or modify an Admin rank equal to or above your own delegated authority'),{status:403});
+  if(territoryId){const t=await pool.query("SELECT id FROM territories WHERE id=$1 AND country_code='PH'",[territoryId]);if(!t.rowCount)return res.status(404).json({error:'Territory not found'})}
+  const account=await pool.query('SELECT id,display_name,email FROM accounts WHERE LOWER(email)=$1',[targetEmail]);if(!account.rowCount)return res.status(404).json({error:'The target must create a Business & Life account first'});
+  for(const p of requested){if(actorRank!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,territoryId);if(!x.allowed)return res.status(403).json({error:'You cannot delegate permission: '+p})}}
+  const technicalRole=role==='specialist'?(territoryId?'territory_admin':'country_admin'):role;
+  const client=await pool.connect();try{
+    await client.query('BEGIN');
+    const q=await client.query("INSERT INTO platform_admin_assignments(account_id,admin_role,authority_rank,country_code,territory_id,status,assigned_by_account_id,reason) VALUES($1,$2,$3,'PH',$4,'active',$5,$6) ON CONFLICT(account_id,admin_role,country_code,COALESCE(territory_id,0)) DO UPDATE SET authority_rank=EXCLUDED.authority_rank,status='active',assigned_by_account_id=EXCLUDED.assigned_by_account_id,reason=EXCLUDED.reason,effective_until=NULL,updated_at=NOW() RETURNING *",[account.rows[0].id,technicalRole,role,territoryId,me.account.id,clean(req.body?.reason,1000)]);
+    const a=q.rows[0];
+    await client.query("UPDATE admin_permission_grants SET status='revoked',updated_at=NOW() WHERE assignment_id=$1",[a.id]);
+    for(const p of requested)await client.query("INSERT INTO admin_permission_grants(assignment_id,permission_code,status,granted_by_account_id,reason) VALUES($1,$2,'active',$3,$4) ON CONFLICT(assignment_id,permission_code) DO UPDATE SET status='active',granted_by_account_id=EXCLUDED.granted_by_account_id,reason=EXCLUDED.reason,effective_until=NULL,updated_at=NOW()",[a.id,p,me.account.id,clean(req.body?.reason,500)]);
+    await client.query("UPDATE admin_function_assignments SET status='revoked',updated_at=NOW() WHERE assignment_id=$1",[a.id]);
+    for(const code of functionCodes)await client.query("INSERT INTO admin_function_assignments(assignment_id,function_code,status,granted_by_account_id,reason) VALUES($1,$2,'active',$3,$4) ON CONFLICT(assignment_id,function_code) DO UPDATE SET status='active',granted_by_account_id=EXCLUDED.granted_by_account_id,reason=EXCLUDED.reason,effective_until=NULL,updated_at=NOW()",[a.id,code,me.account.id,clean(req.body?.reason,500)]);
+    await client.query('COMMIT');
+    await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:authority.assignment.id,permission:'admin.assign_limited',territoryId,targetType:'admin_assignment',targetId:String(a.id),eventCode:'admin_assignment_created',after:{target_account_id:account.rows[0].id,role,technical_role:technicalRole,functions:functionCodes,permissions:requested},reason:req.body?.reason,correlationId:correlation(req)});
+    res.status(201).json({...a,effective_rank:role,functions:functionCodes,permissions:requested,target:account.rows[0]});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
 }catch(e){next(e)}});
 
 app.put('/api/admin/assignments/:id/permissions',body,async(req,res,next)=>{try{
-  const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM platform_admin_assignments WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Admin assignment not found'});const target=q.rows[0];if(target.admin_role==='super_admin')return res.status(409).json({error:'Bootstrap Super Admin permissions are protected'});
-  let authority=await hasAdminPermission(pool,me.account.id,'admin.assign_limited',target.territory_id);if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',target.territory_id);if(!authority.allowed)throw Object.assign(new Error('Admin delegation permission required'),{status:403});
-  const requested=[...new Set((Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x)))];
-  for(const p of requested){if(authority.assignment.admin_role!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,target.territory_id);if(!x.allowed)return res.status(403).json({error:`You cannot delegate permission: ${p}`})}}
-  const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE admin_permission_grants SET status='revoked',updated_at=NOW() WHERE assignment_id=$1`,[id]);for(const p of requested)await client.query(`INSERT INTO admin_permission_grants(assignment_id,permission_code,status,granted_by_account_id,reason) VALUES($1,$2,'active',$3,$4) ON CONFLICT(assignment_id,permission_code) DO UPDATE SET status='active',granted_by_account_id=EXCLUDED.granted_by_account_id,reason=EXCLUDED.reason,updated_at=NOW()`,[id,p,me.account.id,clean(req.body?.reason,500)]);await client.query('COMMIT');await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:authority.assignment.id,permission:'admin.assign_limited',territoryId:target.territory_id,targetType:'admin_assignment',targetId:String(id),eventCode:'admin_permissions_replaced',after:{permissions:requested},reason:req.body?.reason,correlationId:correlation(req)});res.json({ok:true,permissions:requested})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  const me=await identity(req),id=Number(req.params.id),q=await pool.query('SELECT * FROM platform_admin_assignments WHERE id=$1',[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Admin assignment not found'});
+  const target=q.rows[0],targetRank=clean(target.authority_rank||target.admin_role,40);
+  if(targetRank==='super_admin')return res.status(409).json({error:'Bootstrap Super Admin permissions are protected'});
+  let authority=await hasAdminPermission(pool,me.account.id,'admin.assign_limited',target.territory_id);if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',target.territory_id);
+  if(!authority.allowed)throw Object.assign(new Error('Admin delegation permission required'),{status:403});
+  const actorRank=assignmentRank(authority.assignment);
+  if(!canDelegateRank(actorRank,targetRank))throw Object.assign(new Error('You cannot modify an Admin rank equal to or above your own delegated authority'),{status:403});
+  const hasFunctions=Array.isArray(req.body?.function_codes);
+  const functionCodes=[...new Set((hasFunctions?req.body.function_codes:[]).map(x=>clean(x,100)).filter(Boolean))];
+  for(const code of functionCodes)if(!isFunctionAssignableToRole(code,targetRank))return res.status(400).json({error:'Function is not assignable to this Admin rank: '+code});
+  const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
+  const requested=[...new Set([...explicit,...(hasFunctions?expandAdminFunctions(functionCodes,targetRank):[])])];
+  for(const p of requested){if(actorRank!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,target.territory_id);if(!x.allowed)return res.status(403).json({error:'You cannot delegate permission: '+p})}}
+  const client=await pool.connect();try{
+    await client.query('BEGIN');
+    await client.query("UPDATE admin_permission_grants SET status='revoked',updated_at=NOW() WHERE assignment_id=$1",[id]);
+    for(const p of requested)await client.query("INSERT INTO admin_permission_grants(assignment_id,permission_code,status,granted_by_account_id,reason) VALUES($1,$2,'active',$3,$4) ON CONFLICT(assignment_id,permission_code) DO UPDATE SET status='active',granted_by_account_id=EXCLUDED.granted_by_account_id,reason=EXCLUDED.reason,updated_at=NOW()",[id,p,me.account.id,clean(req.body?.reason,500)]);
+    if(hasFunctions){
+      await client.query("UPDATE admin_function_assignments SET status='revoked',updated_at=NOW() WHERE assignment_id=$1",[id]);
+      for(const code of functionCodes)await client.query("INSERT INTO admin_function_assignments(assignment_id,function_code,status,granted_by_account_id,reason) VALUES($1,$2,'active',$3,$4) ON CONFLICT(assignment_id,function_code) DO UPDATE SET status='active',granted_by_account_id=EXCLUDED.granted_by_account_id,reason=EXCLUDED.reason,updated_at=NOW()",[id,code,me.account.id,clean(req.body?.reason,500)]);
+    }
+    await client.query('COMMIT');
+    await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:authority.assignment.id,permission:'admin.assign_limited',territoryId:target.territory_id,targetType:'admin_assignment',targetId:String(id),eventCode:'admin_permissions_replaced',after:{functions:hasFunctions?functionCodes:undefined,permissions:requested},reason:req.body?.reason,correlationId:correlation(req)});
+    res.json({ok:true,functions:hasFunctions?functionCodes:undefined,permissions:requested});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
 }catch(e){next(e)}});
 
 app.post('/api/admin/assignments/:id/status',body,async(req,res,next)=>{try{
-  const me=await identity(req),id=Number(req.params.id),status=clean(req.body?.status,30),q=await pool.query(`SELECT * FROM platform_admin_assignments WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Admin assignment not found'});const target=q.rows[0];if(target.admin_role==='super_admin')return res.status(409).json({error:'Platform Owner Super Admin cannot be changed here'});if(!['active','suspended','revoked'].includes(status))return res.status(400).json({error:'Choose active, suspended or revoked'});let authority=await hasAdminPermission(pool,me.account.id,'admin.assign_limited',target.territory_id);if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',target.territory_id);if(!authority.allowed)throw Object.assign(new Error('Admin delegation permission required'),{status:403});await pool.query(`UPDATE platform_admin_assignments SET status=$1,reason=$2,updated_at=NOW() WHERE id=$3`,[status,clean(req.body?.reason,1000),id]);await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:authority.assignment.id,permission:'admin.assign_limited',territoryId:target.territory_id,targetType:'admin_assignment',targetId:String(id),eventCode:`admin_assignment_${status}`,reason:req.body?.reason,correlationId:correlation(req)});res.json({ok:true,status})
+  const me=await identity(req),id=Number(req.params.id),status=clean(req.body?.status,30),q=await pool.query('SELECT * FROM platform_admin_assignments WHERE id=$1',[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Admin assignment not found'});
+  const target=q.rows[0],targetRank=clean(target.authority_rank||target.admin_role,40);
+  if(targetRank==='super_admin')return res.status(409).json({error:'Platform Owner Super Admin cannot be changed here'});
+  if(!['active','suspended','revoked'].includes(status))return res.status(400).json({error:'Choose active, suspended or revoked'});
+  let authority=await hasAdminPermission(pool,me.account.id,'admin.assign_limited',target.territory_id);if(!authority.allowed)authority=await hasAdminPermission(pool,me.account.id,'admin.delegate',target.territory_id);
+  if(!authority.allowed)throw Object.assign(new Error('Admin delegation permission required'),{status:403});
+  if(!canDelegateRank(assignmentRank(authority.assignment),targetRank))throw Object.assign(new Error('You cannot change the status of an Admin rank equal to or above your own delegated authority'),{status:403});
+  await pool.query('UPDATE platform_admin_assignments SET status=$1,reason=$2,updated_at=NOW() WHERE id=$3',[status,clean(req.body?.reason,1000),id]);
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:authority.assignment.id,permission:'admin.assign_limited',territoryId:target.territory_id,targetType:'admin_assignment',targetId:String(id),eventCode:'admin_assignment_'+status,reason:req.body?.reason,correlationId:correlation(req)});
+  res.json({ok:true,status});
 }catch(e){next(e)}});
 
 app.get('/api/admin/audit',async(req,res,next)=>{try{const{me}=await adminFor(req,'audit.view');const ids=await visibleTerritoryIds(pool,me.account.id,'audit.view'),countryWide=await isCountryWide(me.account.id,'audit.view'),limit=Math.max(1,Math.min(300,Number(req.query.limit)||100));const{rows}=await pool.query(`SELECT e.*,a.display_name actor_name FROM admin_audit_events e LEFT JOIN accounts a ON a.id=e.actor_account_id WHERE ${countryWide?"e.country_code='PH'":"e.territory_id=ANY($1::bigint[])"} ORDER BY e.created_at DESC LIMIT ${limit}`,countryWide?[]:[ids.length?ids:[-1]]);res.json(rows)}catch(e){next(e)}});
