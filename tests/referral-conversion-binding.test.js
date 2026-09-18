@@ -37,6 +37,10 @@ test('converted referral binding is fail-closed behind all explicit gates', () =
   assert.equal(guardrails.convertedAttribution.selfReferralRejected, true);
   assert.equal(guardrails.convertedAttribution.duplicateAccountAttributionRejected, true);
   assert.equal(guardrails.convertedAttribution.rewardStateAllowed, false);
+  assert.equal(guardrails.convertedAttribution.requiresPendingAttributionActivation, true);
+  assert.equal(guardrails.convertedAttribution.requiresExplicitAttributionModel, true);
+  assert.equal(guardrails.convertedAttribution.attributionModel, null);
+  assert.deepEqual(guardrails.convertedAttribution.supportedImplementationModels, ['registration_context_v1']);
   assert.equal(convertedReferralBindingState({}).reason, 'disabled');
   assert.equal(convertedReferralBindingState({
     REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true'
