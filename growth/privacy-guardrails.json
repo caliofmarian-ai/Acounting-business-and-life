@@ -1,0 +1,89 @@
+{
+  "version": "1.0.0",
+  "status": "production_gate",
+  "classification": {
+    "referralCode": "pseudonymous_public_identifier",
+    "campaignMetadata": "non_sensitive_marketing_metadata",
+    "rawEmail": "pii_prohibited_in_public_referral_payload",
+    "rawPhone": "pii_prohibited_in_public_referral_payload",
+    "recipientName": "pii_prohibited_in_analytics",
+    "addressBook": "bulk_collection_prohibited",
+    "authToken": "secret_prohibited",
+    "referralSecret": "secret_prohibited"
+  },
+  "channelRules": {
+    "native_share": {
+      "userInitiated": true,
+      "bulkSend": false
+    },
+    "copy_link": {
+      "userInitiated": true,
+      "bulkSend": false
+    },
+    "whatsapp": {
+      "userInitiated": true,
+      "bulkSend": false
+    },
+    "telegram": {
+      "userInitiated": true,
+      "bulkSend": false
+    },
+    "sms": {
+      "userInitiated": true,
+      "bulkSend": false
+    },
+    "email": {
+      "userInitiated": true,
+      "bulkSend": false
+    },
+    "group_share": {
+      "userInitiated": true,
+      "autoPosting": false
+    }
+  },
+  "consentBoundary": {
+    "referralSharing": "user_action",
+    "optionalMarketing": "separate_preference_or_consent_when_required",
+    "operationalNotifications": "separate_from_marketing",
+    "legalAcceptance": "separate_from_marketing",
+    "locationConsent": "separate_from_marketing"
+  },
+  "retention": {
+    "unconvertedReferralEventDays": null,
+    "convertedAttributionRetentionRule": null,
+    "rewardEvidenceRetentionRule": null,
+    "productionReady": false,
+    "gateReason": "Retention periods must be configured under legal/privacy and production-readiness policy before production referral tracking is enabled."
+  },
+  "analytics": {
+    "allowedProperties": [
+      "campaign",
+      "source",
+      "medium",
+      "source_profile_role",
+      "channel",
+      "creative_variant",
+      "cta_variant",
+      "landing_variant",
+      "reward_policy_version",
+      "reward_kind",
+      "correlation_id"
+    ],
+    "prohibitedProperties": [
+      "email",
+      "phone",
+      "postal_address",
+      "recipient_name",
+      "contact_list",
+      "auth_token",
+      "reset_token",
+      "referral_secret"
+    ]
+  },
+  "authorization": {
+    "referralCanGrantProfile": false,
+    "referralCanGrantAdmin": false,
+    "referralCanBypassTerritoryApproval": false,
+    "referralCanBypassCredentialChecks": false
+  }
+}
