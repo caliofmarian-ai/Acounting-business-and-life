@@ -851,6 +851,7 @@ export async function reverseProfileMoneyEntry(pool,{
     if(!q.rowCount)fail('Money entry not found',404);
     const old=q.rows[0];
     if(old.entry_type==='reversal')fail('A reversal entry cannot be reversed again',409);
+    if(old.source_type==='profile_transfer')fail('Internal profile transfer entries must be corrected as one atomic transfer',409);
     if(old.status!=='active')fail('Money entry is already reversed',409);
     const reverseDirection=old.direction==='in'?'out':'in';
     const ins=await client.query(`
