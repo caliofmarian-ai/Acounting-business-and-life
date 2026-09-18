@@ -29,6 +29,16 @@ test('runtime referral analytics accepts only privacy-minimized properties', () 
     }),
     /not allowed/
   );
+  const signup = sanitizeReferralAnalyticsEvent({
+    event: 'referral_signup_started',
+    properties: {
+      campaign: 'merchant_referral_v1',
+      source: 'profile',
+      source_profile_role: 'merchant',
+      correlation_id: '4f7f8bbd-6f3f-45d5-9f7e-32e5f282ce2d'
+    }
+  });
+  assert.equal(signup.event, 'referral_signup_started');
   assert.throws(
     () => sanitizeReferralAnalyticsEvent({ event: 'referral_rewarded', properties: {} }),
     /not enabled/
@@ -75,6 +85,7 @@ test('referral UI is wired to the same-origin analytics gateway, never directly 
   const helper = readFileSync(new URL('../public/referral/referral-analytics.js', import.meta.url), 'utf8');
   const landing = readFileSync(new URL('../public/referral/referral.js', import.meta.url), 'utf8');
   const promotion = readFileSync(new URL('../public/referral/promotion-center.html', import.meta.url), 'utf8');
+  const authUi = readFileSync(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
   const server = readFileSync(new URL('../server-auth.js', import.meta.url), 'utf8');
   const adapter = readFileSync(new URL('../growth/referral-analytics.js', import.meta.url), 'utf8');
 
@@ -84,6 +95,9 @@ test('referral UI is wired to the same-origin analytics gateway, never directly 
   assert.match(landing, /referral_shared/);
   assert.match(promotion, /referral_link_created/);
   assert.match(promotion, /referral_shared/);
+  assert.match(authUi, /referral_signup_started/);
+  assert.match(server, /campaign: `\$\{role\}_referral_v1`/);
+  assert.match(server, /source profile is not enabled/);
   assert.match(server, /referral-analytics\/account/);
   assert.match(server, /referral-analytics\/public/);
   assert.match(adapter, /REFERRAL_ANALYTICS_RETENTION_APPROVED/);
