@@ -17,7 +17,7 @@ const modules=[
   {id:'support',label:'Support',any:['support.manage']},
   {id:'safety',label:'Trust & Safety',any:['incident.triage']},
   {id:'territories',label:'Territories',any:['territory.manage']},
-  {id:'finance',label:'Finance',any:['finance.summary.view','accounting.export.view','payment.view','payment.manage','payment.reconcile','settlement.manage']},
+  {id:'finance',label:'Finance',any:['finance.summary.view','finance.cost.manage','accounting.export.view','payment.view','payment.manage','payment.reconcile','settlement.manage']},
   {id:'audit',label:'Audit & Metrics',any:['audit.view','metrics.view']},
   {id:'team',label:'Team & Delegation',any:['admin.assign_limited','admin.delegate']}
 ];
@@ -35,6 +35,20 @@ function shell(){
   root.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>{state.active=b.dataset.module;shell();renderActive().catch(showError)});
 }
 function showError(e){const p=document.getElementById('adminPanel')||root;p.innerHTML='<div class="error">'+esc(e.message||e)+'</div>'}
+function financeMoney(v,currency='PHP'){
+  try{return new Intl.NumberFormat('en-PH',{style:'currency',currency}).format(Number(v||0))}
+  catch{return '₱'+Number(v||0).toFixed(2)}
+}
+function financePct(v){return v==null?'—':Number(v).toFixed(2)+'%'}
+function financeTerritoryId(){
+  const scoped=(state.me?.assignments||[]).find(a=>a.admin_role==='territory_admin'&&a.territory_id);
+  return scoped?Number(scoped.territory_id):null;
+}
+function financeScopeQuery(){
+  const id=financeTerritoryId();
+  return id?'?territory_id='+encodeURIComponent(id):'';
+}
+function financeTone(v){const n=Number(v||0);return n<0?'moneyNeg':(n>0?'moneyPos':'')}
 function hero(){
   const a=highestAssignment();
   const scopes=(state.me.assignments||[]).map(x=>rankLabel(x.effective_rank||x.authority_rank||x.admin_role)+(x.territory_name?' · '+x.territory_name:' · '+(x.country_code||'PH')));
@@ -73,9 +87,144 @@ async function queuePanel(kind){
 function territoriesPanel(){
   return hero()+'<p class="moduleIntro">Operating cells visible to your assignment.</p>'+rows(state.overview?.territories||[],x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.territory_type)+' · '+esc(x.code||'')+'</span></div>');
 }
+function renderPricingScenario(s){
+  const p=s?.portfolio||{},services=s?.services||[],g=s?.guardrails||{};
+  return '<div class="pricingScenarioResults">'
+    +'<div class="notice"><strong>SIMULATION ONLY</strong><br>This scenario does not activate a fee policy, change prices or charge any Customer, Merchant, Supplier, Courier or Service Provider.</div>'
+    +'<div class="financeSummary">'
+      +'<div class="metric"><strong>'+financeMoney(p.total_completed_gross_value||0)+'</strong><span>Total completed service value</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.actual_post_promo_gross_value||0)+'</strong><span>Actual post-promo gross value</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.projected_revenue_post_promo_actual||0)+'</strong><span>Projected revenue · post-promo actual</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.projected_revenue_mature_volume||0)+'</strong><span>Projected revenue · mature simulation</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.total_recorded_cost||0)+'</strong><span>Recorded cost</span></div>'
+      +'<div class="metric"><strong class="'+financeTone(p.projected_operating_pl_post_promo_actual)+'">'+financeMoney(p.projected_operating_pl_post_promo_actual||0)+'</strong><span>Projected P/L · post-promo actual</span></div>'
+      +'<div class="metric"><strong class="'+financeTone(p.projected_operating_pl_mature_volume)+'">'+financeMoney(p.projected_operating_pl_mature_volume||0)+'</strong><span>Projected P/L · mature simulation</span></div>'
+      +'<div class="metric"><strong>'+financePct(p.break_even_rate_total_volume_pct)+'</strong><span>Break-even rate · total volume</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>Scenario bases</strong><span><b>Post-promo actual:</b> '+esc(s?.bases?.post_promo_actual||'')+'<br><b>Mature-volume simulation:</b> '+esc(s?.bases?.all_activity_mature_simulation||'')+'</span></div>'
+    +'<div class="sectionTitle"><h3>Scenario by service</h3></div>'
+    +rows(services,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+financePct(x.proposed_rate_pct)+'</span></div>'
+      +'<div class="financeLine"><span>Promo gross '+financeMoney(x.promotional_gross_value)+'</span><span>Post-promo gross '+financeMoney(x.post_promo_gross_value)+'</span><span>Total gross '+financeMoney(x.total_completed_gross_value)+'</span></div>'
+      +'<div class="financeLine"><span>Projected mature revenue '+financeMoney(x.projected_revenue_mature_volume)+'</span><span>Recorded cost '+financeMoney(x.recorded_service_cost)+'</span><strong class="'+financeTone(x.projected_operating_pl_mature_volume)+'">Mature P/L '+financeMoney(x.projected_operating_pl_mature_volume)+'</strong></div>'
+      +'<span class="muted">Break-even on total volume: '+financePct(x.break_even_rate_total_volume_pct)+' · Post-promo actual break-even: '+financePct(x.break_even_rate_post_promo_volume_pct)+' · '+esc(x.data_status)+'</span></div>')
+    +'<div class="financeTruth"><strong>Cost coverage</strong><span>Shared / unallocated recorded cost: '+financeMoney(p.unallocated_shared_cost||0)+'. '+esc(g.shared_cost_warning||'All recorded costs in this period are allocated to service scopes.')+'</span></div>'
+    +'<div class="notice"><strong>Evidence boundary</strong><br>'+esc(g.missing_cost_warning||'Only canonical recorded costs are used.')+'</div>'
+    +'<div class="notice"><strong>Live fee state</strong><br>'+esc(g.fee_activation||'NOT_PERFORMED')+' · Promotional live charge remains zero until a future explicit fee-resolution implementation.</div>'
+    +'</div>';
+}
+
 async function financePanel(){
-  let m={};try{m=await api('/api/admin/metrics')}catch(e){m={error:e.message}}
-  return hero()+'<p class="moduleIntro">Finance, payment and settlement visibility follows your exact delegated permissions.</p>'+metrics()+(m.error?'<div class="notice">'+esc(m.error)+'</div>':'<div class="row"><strong>Operational metrics endpoint connected</strong><span class="muted">Detailed finance actions stay permission-gated by the backend.</span></div>');
+  if(!hasAny(['finance.summary.view'])){
+    let m={};try{m=await api('/api/admin/metrics')}catch(e){m={error:e.message}}
+    return hero()+'<p class="moduleIntro">Finance visibility follows your exact delegated permissions.</p>'+metrics()+(m.error?'<div class="notice">'+esc(m.error)+'</div>':'<div class="notice">Unit economics are not delegated to this account. Payment-specific controls remain available only under their own permissions.</div>');
+  }
+  const k=await api('/api/payments/admin/unit-economics'+financeScopeQuery());
+  const p=k.period||{};
+  const serviceRows=k.services||[];
+  const evidence=k.evidence_breakdown||[];
+  const costs=k.recent_cost_entries||[];
+  const promo=k.promotion_economics||{};
+  const promoTotals=(promo.totals||[]).find(x=>x.phase==='promotional')||{};
+  const postPromoTotals=(promo.totals||[]).find(x=>x.phase==='post_promo')||{};
+  const promoServices=promo.services||[];
+  const canManage=hasAny(['finance.cost.manage']);
+  const fixedTerritory=financeTerritoryId();
+  const territoryField=fixedTerritory
+    ?'<input type="hidden" name="territory_id" value="'+esc(fixedTerritory)+'"><div class="financeScopeNote">Cost scope: delegated territory #'+esc(fixedTerritory)+'</div>'
+    :'<label>Territory / allocation scope<select name="territory_id"><option value="">Shared / country-wide</option>'+((state.overview?.territories||[]).map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join(''))+'</select></label>';
+  const pricingTerritoryField=fixedTerritory
+    ?'<input type="hidden" name="territory_id" value="'+esc(fixedTerritory)+'"><div class="financeScopeNote">Simulation scope: delegated territory #'+esc(fixedTerritory)+'</div>'
+    :'<label>Scenario territory<select name="territory_id"><option value="">Country-wide / shared view</option>'+((state.overview?.territories||[]).map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join(''))+'</select></label>';
+  const pricingForm='<div class="sectionTitle"><h3>Pricing Lab — simulation only</h3></div>'
+    +'<form id="pricingScenarioForm" class="adminForm pricingLabForm">'
+      +'<div class="notice"><strong>No live fee is changed here.</strong><br>Enter hypothetical commission percentages to compare projected revenue with the costs already recorded in Finance.</div>'
+      +'<div class="financeFormGrid">'
+        +'<label>Marketplace %<input name="marketplace" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +'<label>Delivery %<input name="delivery" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +'<label>Supplier B2B %<input name="supplier" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +'<label>Local Services %<input name="local_services" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +pricingTerritoryField
+      +'</div>'
+      +'<button class="primary" type="submit">Run non-charging simulation</button>'
+      +'<div id="pricingScenarioResult"></div>'
+    +'</form>';
+  const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
+  return hero()
+    +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
+    +'<div class="financeSummary">'
+      +'<div class="metric"><strong>'+financeMoney(k.gross_payment_volume)+'</strong><span>Gross payment volume · context, not revenue</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(k.platform_revenue)+'</strong><span>Platform revenue</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(k.variable_costs)+'</strong><span>Variable costs</span></div>'
+      +'<div class="metric"><strong class="'+financeTone(k.contribution)+'">'+financeMoney(k.contribution)+'</strong><span>Contribution</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(k.allocated_fixed_cost)+'</strong><span>Fixed / semi-fixed costs</span></div>'
+      +'<div class="metric"><strong class="'+financeTone(k.operating_profit)+'">'+financeMoney(k.operating_profit)+'</strong><span>Operating profit / loss</span></div>'
+      +'<div class="metric"><strong>'+financePct(k.net_margin_pct)+'</strong><span>Net margin</span></div>'
+      +'<div class="metric"><strong>'+(k.break_even_transactions==null?'—':esc(k.break_even_transactions))+'</strong><span>Break-even transactions</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>Per completed transaction</strong><span>Revenue '+financeMoney(k.revenue_per_completed_transaction)+' · Variable cost '+financeMoney(k.variable_cost_per_completed_transaction)+' · Contribution '+financeMoney(k.contribution_per_completed_transaction)+' · Operating result '+financeMoney(k.operating_profit_per_completed_transaction)+'</span></div>'
+    +'<div class="sectionTitle"><h3>Profitability by service</h3></div>'
+    +rows(serviceRows,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+esc(x.completed_transactions)+' tx</span></div><div class="financeLine"><span>Gross '+financeMoney(x.gross_value)+'</span><span>Revenue '+financeMoney(x.revenue)+'</span><span>Variable '+financeMoney(x.variable_cost)+'</span><span>Fixed '+financeMoney(x.allocated_fixed_cost)+'</span><strong class="'+financeTone(x.operating_profit)+'">P/L '+financeMoney(x.operating_profit)+'</strong></div><span class="muted">Contribution margin '+financePct(x.contribution_margin_pct)+' · Net margin '+financePct(x.net_margin_pct)+'</span></div>')
+    +'<div class="sectionTitle"><h3>Cost evidence quality</h3></div>'
+    +(evidence.length?'<div class="financeEvidence">'+evidence.map(x=>'<div class="card"><strong>'+financeMoney(x.amount)+'</strong><span>'+esc(x.evidence_class)+' · '+esc(x.entries)+' records</span></div>').join('')+'</div>':'<div class="empty">No platform cost evidence recorded in this period.</div>')
+    +'<div class="sectionTitle"><h3>90-day promotional cohorts</h3></div>'
+    +'<div class="financeSummary financePromoSummary">'
+      +'<div class="metric"><strong>'+esc(promo.active_promotional_subjects||0)+'</strong><span>Active 90-day trials</span></div>'
+      +'<div class="metric"><strong>'+esc(promo.trials_started||0)+'</strong><span>Trials started this period</span></div>'
+      +'<div class="metric"><strong>'+esc(promo.trials_ending||0)+'</strong><span>Trials ended this period</span></div>'
+      +'<div class="metric"><strong>'+esc(promo.expired_subjects||0)+'</strong><span>Expired trial subjects</span></div>'
+      +'<div class="metric"><strong>'+esc(promoTotals.completed_events||0)+'</strong><span>Promo completions this period</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(promoTotals.gross_value||0)+'</strong><span>Promo gross service value</span></div>'
+      +'<div class="metric"><strong>'+esc(postPromoTotals.completed_events||0)+'</strong><span>Post-promo completions</span></div>'
+      +'<div class="metric"><strong>'+financePct(promo.post_promo_activity_conversion_pct)+'</strong><span>Post-promo activity conversion</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>Monetization status</strong><span>Promotional duration: '+esc(promo.promotional_days||90)+' days · Paid conversion: '+(promo.paid_conversion_status==='NOT_AVAILABLE_UNTIL_ACTIVE_FEE_POLICY'?'not available until an active fee policy collects a platform fee':'available from configured fee evidence')+'. Activity conversion means an expired trial subject completed at least one later service; it is not the same as paid conversion.</span></div>'
+    +'<div class="sectionTitle"><h3>Promotion activity by service</h3></div>'
+    +(promoServices.length?rows(promoServices,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+esc(x.phase)+'</span></div><div class="financeLine"><span>'+esc(x.completed_events)+' completions</span><span>'+esc(x.active_subjects)+' subjects</span><span>Gross '+financeMoney(x.gross_value)+'</span></div></div>'):'<div class="empty">No promotional or post-promo completion events in this reporting period.</div>')
+    +'<div class="notice"><strong>Promo cost attribution</strong><br>Platform costs are recorded in the Finance ledger, but exact subsidy per promotional transaction is not shown until those direct costs are linked to promotional completion events. No subsidy amount is inferred.</div>'
+    +pricingForm
+    +costForm
+    +'<div class="sectionTitle"><h3>Recent cost entries</h3></div>'
+    +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>');
+}
+async function wireFinance(){
+  const pricing=document.getElementById('pricingScenarioForm');
+  if(pricing)pricing.onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(pricing),out=document.getElementById('pricingScenarioResult');
+    const payload={
+      territory_id:fd.get('territory_id')||null,
+      rates:{
+        marketplace:Number(fd.get('marketplace')),
+        delivery:Number(fd.get('delivery')),
+        supplier:Number(fd.get('supplier')),
+        local_services:Number(fd.get('local_services'))
+      }
+    };
+    out.innerHTML='<div class="notice">Running scenario against canonical Finance data…</div>';
+    try{
+      const scenario=await api('/api/payments/admin/pricing-scenario',{method:'POST',body:JSON.stringify(payload)});
+      out.innerHTML=renderPricingScenario(scenario);
+    }catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
+  };
+  const form=document.getElementById('financeCostForm');
+  if(form)form.onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(form),out=document.getElementById('financeCostResult');
+    const payload={
+      cost_code:fd.get('cost_code'),amount:Number(fd.get('amount')),
+      cost_category:fd.get('cost_category'),cost_nature:fd.get('cost_nature'),
+      evidence_class:fd.get('evidence_class'),service_scope:fd.get('service_scope'),
+      territory_id:fd.get('territory_id')||null,evidence_reference:fd.get('evidence_reference'),
+      description:fd.get('description')||'',currency_code:'PHP',incurred_at:new Date().toISOString(),
+      reason:'Finance cost ledger entry'
+    };
+    const key='finance-cost-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+    try{
+      await api('/api/payments/admin/costs',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});
+      out.innerHTML='<div class="notice">Cost recorded in the canonical ledger and included according to its evidence class.</div>';
+      const panel=document.getElementById('adminPanel');if(panel){panel.innerHTML=await financePanel();await wireFinance()}
+    }catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
+  };
 }
 async function auditPanel(){
   const [audit,metric]=await Promise.all([
@@ -87,9 +236,10 @@ async function auditPanel(){
 }
 function delegationForm(){
   const allowedRanks=(state.catalog?.ranks||[]).filter(r=>(state.catalog?.delegable_roles||[]).includes(r.code));
+  const defaultRank=allowedRanks.some(r=>r.code==='specialist')?'specialist':(allowedRanks.at(-1)?.code||'');
   const functions=(state.catalog?.functions||[]).filter(f=>f.can_delegate);
   const territories=state.overview?.territories||[];
-  return '<form id="delegateForm" class="adminForm"><h3>Delegate responsibility</h3><label>Account email<input name="target_email" type="email" required autocomplete="off"></label><label>Rank<select name="admin_role" id="delegateRole">'+allowedRanks.map(r=>'<option value="'+esc(r.code)+'">'+esc(r.label)+'</option>').join('')+'</select></label><label>Territory / scope<select name="territory_id" id="delegateTerritory"><option value="">Country scope / not applicable</option>'+territories.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join('')+'</select></label><div><strong>Functions</strong><div id="functionGrid" class="functionGrid"></div></div><label>Reason<textarea name="reason" required placeholder="Why this responsibility is being delegated"></textarea></label><button class="primary" type="submit">Delegate functions</button><div id="delegateResult"></div></form>';
+  return '<form id="delegateForm" class="adminForm"><h3>Delegate responsibility</h3><label>Account email<input name="target_email" type="email" required autocomplete="off"></label><label>Rank<select name="admin_role" id="delegateRole">'+allowedRanks.map(r=>'<option value="'+esc(r.code)+'" '+(r.code===defaultRank?'selected':'')+'>'+esc(r.label)+'</option>').join('')+'</select></label><label>Territory / scope<select name="territory_id" id="delegateTerritory"><option value="">Country scope / not applicable</option>'+territories.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join('')+'</select></label><div><strong>Functions</strong><div id="functionGrid" class="functionGrid"></div></div><label>Reason<textarea name="reason" required placeholder="Why this responsibility is being delegated"></textarea></label><button class="primary" type="submit">Delegate functions</button><div id="delegateResult"></div></form>';
 }
 function drawFunctionChoices(){
   const role=document.getElementById('delegateRole')?.value||'specialist';
@@ -125,14 +275,15 @@ async function renderActive(){
   else if(state.active==='support')p.innerHTML=await queuePanel('support');
   else if(state.active==='safety')p.innerHTML=await queuePanel('safety');
   else if(state.active==='territories')p.innerHTML=territoriesPanel();
-  else if(state.active==='finance')p.innerHTML=await financePanel();
+  else if(state.active==='finance'){p.innerHTML=await financePanel();await wireFinance()}
   else if(state.active==='audit')p.innerHTML=await auditPanel();
   else if(state.active==='team'){p.innerHTML=await teamPanel();await wireTeam()}
 }
 async function loadBase(){
-  const [me,catalog,overview]=await Promise.all([api('/api/admin/me'),api('/api/admin/catalog'),api('/api/admin/overview')]);
+  const bootstrap=await api('/api/admin/bootstrap');
+  const me=bootstrap.me||{};
   if(!me.is_admin)throw Object.assign(new Error('No delegated Admin workspace is available for this account.'),{code:'NOT_ADMIN'});
-  state.me=me;state.catalog=catalog;state.overview=overview;
+  state.me=me;state.catalog=bootstrap.catalog||{};state.overview=bootstrap.overview||{};
 }
 async function boot(){
   if(!token()){root.className='adminDenied';root.innerHTML='<h2>Admin sign-in required</h2><p>Open the main app and sign in with the account that received delegated Admin authority.</p><a class="adminButton" href="/">Return to app</a>';return}

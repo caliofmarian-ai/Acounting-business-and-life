@@ -11,7 +11,12 @@ import {
   createFeePolicy,addFeeRule,feePolicyOverview,createRefundRequest,createReconciliationRun,
   paymentFinanceOverview,mirrorConfirmedOrderPayment
 } from './payment-core.js';
+import {
+  ensureFinanceSchema,createPlatformCostEntry,allocatePlatformCost,voidPlatformCostEntry,
+  listPlatformCostEntries,financeKpiOverview,pricingScenario,FINANCE_EVIDENCE_CLASSES
+} from './finance-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
+import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetization-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -33,12 +38,24 @@ async function forwardJson(req,res,after){
   if(r.ok&&after)Promise.resolve().then(()=>after(data)).catch(e=>console.error('Payment mirror hook:',e.message));
   res.status(r.status);const ct=r.headers.get('content-type');if(ct)res.type(ct);res.send(text);
 }
+function financeEvidence(req){
+  const raw=clean(req.query?.evidence||'',200);
+  if(!raw)return undefined;
+  const values=[...new Set(raw.split(',').map(x=>clean(x,30)).filter(x=>FINANCE_EVIDENCE_CLASSES.includes(x)))];
+  return values.length?values:undefined;
+}
+function financeTerritory(value){
+  if(value==null||value==='')return null;
+  const n=Number(value);
+  if(!Number.isInteger(n)||n<=0)throw Object.assign(new Error('territory_id must be a positive integer'),{status:400});
+  return n;
+}
 async function canSeeIntent(me,intent){
   if(Number(intent.payer_account_id)===Number(me.account.id))return true;
   if((me.businesses||[]).some(b=>Number(b.id)===Number(intent.business_id)&&b.active!==false))return true;
   try{await requireAdminPermission(pool,me.account.id,'payment.view',intent.territory_id);return true}catch{return false}
 }
-async function initDb(){await ensurePaymentSchema(pool);await backfillLegacyOrderPayments(pool)}
+async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));
@@ -91,6 +108,81 @@ app.post('/api/payments/webhooks/:provider',body,async(req,res)=>res.status(501)
 app.get('/api/payments/admin/overview',async(req,res,next)=>{try{
   const me=await identity(req);await requireAdminPermission(pool,me.account.id,'payment.view');
   res.json(await paymentFinanceOverview(pool));
+}catch(e){next(e)}});
+
+app.get('/api/payments/admin/unit-economics',async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.query?.territory_id);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',territoryId);
+  const data=await financeKpiOverview(pool,{
+    from:req.query?.from,to:req.query?.to,territoryId,
+    evidenceClasses:financeEvidence(req)
+  });
+  res.json(data);
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/pricing-scenario',body,async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',territoryId);
+  const scenario=await pricingScenario(pool,{
+    from:req.body?.from,to:req.body?.to,territoryId,
+    evidenceClasses:Array.isArray(req.body?.evidence_classes)?req.body.evidence_classes:undefined,
+    rates:req.body?.rates||{}
+  });
+  res.json(scenario);
+}catch(e){next(e)}});
+
+app.get('/api/payments/admin/costs',async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.query?.territory_id);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',territoryId);
+  res.json(await listPlatformCostEntries(pool,{
+    from:req.query?.from,to:req.query?.to,territoryId,
+    serviceScope:clean(req.query?.service_scope,80)||undefined,
+    evidenceClasses:financeEvidence(req)
+  }));
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/costs',body,async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
+  const assignment=await requireAdminPermission(pool,me.account.id,'finance.cost.manage',territoryId);
+  const row=await createPlatformCostEntry(pool,{
+    sourceKey:req.headers['idempotency-key']||req.body?.source_key,
+    costCode:req.body?.cost_code,costCategory:req.body?.cost_category,
+    costNature:req.body?.cost_nature,evidenceClass:req.body?.evidence_class,
+    serviceScope:req.body?.service_scope||'shared',territoryId,
+    businessId:req.body?.business_id?Number(req.body.business_id):null,
+    paymentIntentId:req.body?.payment_intent_id?Number(req.body.payment_intent_id):null,
+    providerCode:req.body?.provider_code,currencyCode:req.body?.currency_code||'PHP',
+    amount:req.body?.amount,incurredAt:req.body?.incurred_at,
+    periodStart:req.body?.period_start,periodEnd:req.body?.period_end,
+    evidenceReference:req.body?.evidence_reference,description:req.body?.description,
+    metadata:req.body?.metadata,createdBy:me.account.id
+  });
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'finance.cost.manage',territoryId:row.territory_id,targetType:'platform_cost_entry',targetId:String(row.id),eventCode:'platform_cost_recorded',after:{public_id:row.public_id,cost_code:row.cost_code,cost_category:row.cost_category,cost_nature:row.cost_nature,evidence_class:row.evidence_class,service_scope:row.service_scope,amount:row.amount,currency_code:row.currency_code},reason:req.body?.reason||'',correlationId:correlation(req)});
+  res.status(201).json(row);
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/costs/:id/allocations',body,async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
+  const assignment=await requireAdminPermission(pool,me.account.id,'finance.cost.manage',territoryId);
+  const row=await allocatePlatformCost(pool,Number(req.params.id),{
+    allocationKey:req.headers['idempotency-key']||req.body?.allocation_key,
+    serviceScope:req.body?.service_scope||'shared',territoryId,
+    businessId:req.body?.business_id?Number(req.body.business_id):null,
+    paymentIntentId:req.body?.payment_intent_id?Number(req.body.payment_intent_id):null,
+    allocationMethod:req.body?.allocation_method||'direct',driverCode:req.body?.driver_code,
+    amount:req.body?.amount,policyVersionId:req.body?.policy_version_id?Number(req.body.policy_version_id):null,
+    createdBy:me.account.id
+  });
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'finance.cost.manage',territoryId:row.territory_id,targetType:'platform_cost_allocation',targetId:String(row.id),eventCode:'platform_cost_allocated',after:{cost_entry_id:row.cost_entry_id,service_scope:row.service_scope,allocation_method:row.allocation_method,amount:row.amount},reason:req.body?.reason||'',correlationId:correlation(req)});
+  res.status(201).json(row);
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/costs/:id/void',body,async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
+  const assignment=await requireAdminPermission(pool,me.account.id,'finance.cost.manage',territoryId);
+  const row=await voidPlatformCostEntry(pool,Number(req.params.id),{voidedBy:me.account.id,reason:req.body?.reason||''});
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'finance.cost.manage',territoryId:row.territory_id,targetType:'platform_cost_entry',targetId:String(row.id),eventCode:'platform_cost_voided',before:{status:'active'},after:{status:'void'},reason:row.void_reason,correlationId:correlation(req)});
+  res.json(row);
 }catch(e){next(e)}});
 
 app.get('/api/payments/admin/fee-policies',async(req,res,next)=>{try{

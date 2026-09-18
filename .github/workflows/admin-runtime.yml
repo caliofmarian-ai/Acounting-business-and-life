@@ -9,9 +9,25 @@ on:
       - 'public/admin-console.html'
       - 'public/admin-console.css'
       - 'public/admin-console.js'
+      - 'public/admin-operations-ui.js'
+      - 'public/mobile-feature-loader.js'
       - 'server-paymongo.js'
+      - 'monetization-core.js'
+      - 'finance-core.js'
+      - 'server-payments.js'
+      - 'server-orders.js'
+      - 'server-services.js'
+      - 'server-suppliers.js'
+      - 'server-delivery.js'
       - 'public/shell.js'
+      - 'public/app.js'
+      - 'public/help-linking.js'
       - 'public/profile-governance-ui.js'
+      - 'public/services-ui.js'
+      - 'public/delivery-ui.js'
+      - 'public/suppliers-ui.js'
+      - 'public/marketplace-ui.js'
+      - 'public/orders-ui.js'
       - '.github/workflows/admin-runtime.yml'
   push:
     branches: [main]
@@ -22,9 +38,25 @@ on:
       - 'public/admin-console.html'
       - 'public/admin-console.css'
       - 'public/admin-console.js'
+      - 'public/admin-operations-ui.js'
+      - 'public/mobile-feature-loader.js'
       - 'server-paymongo.js'
+      - 'server-delivery.js'
+      - 'server-suppliers.js'
+      - 'server-services.js'
+      - 'server-orders.js'
+      - 'server-payments.js'
+      - 'finance-core.js'
+      - 'monetization-core.js'
       - 'public/shell.js'
+      - 'public/app.js'
+      - 'public/help-linking.js'
       - 'public/profile-governance-ui.js'
+      - 'public/services-ui.js'
+      - 'public/delivery-ui.js'
+      - 'public/suppliers-ui.js'
+      - 'public/marketplace-ui.js'
+      - 'public/orders-ui.js'
       - '.github/workflows/admin-runtime.yml'
 
 permissions:
@@ -86,6 +118,8 @@ jobs:
           curl --fail --silent http://127.0.0.1:3000/admin | grep -q 'Admin Workspace'
           status=$(curl --silent --output /tmp/admin-me.json --write-out '%{http_code}' http://127.0.0.1:3000/api/admin/me)
           test "$status" = "401"
+          bootstrap_status=$(curl --silent --output /tmp/admin-bootstrap.json --write-out '%{http_code}' http://127.0.0.1:3000/api/admin/bootstrap)
+          test "$bootstrap_status" = "401"
       - name: Verify profile-switch JSON survives the public proxy
         run: |
           status=$(curl --max-time 12 --silent --output /tmp/profile-switch.json --write-out '%{http_code}' \

@@ -244,7 +244,10 @@ async function enableOrSwitch(role) {
     if (!isEnabled(role)) snapshot = await profileApi(`/api/profiles/${role}`, { method: 'PUT', body: JSON.stringify({ enabled: true, visibility: role === 'merchant' ? 'public' : 'private' }) });
     snapshot = await profileApi('/api/me/active-role', { method: 'PATCH', body: JSON.stringify({ role }) });
     activeRole = snapshot.account.active_role || role;
-    applyActiveRole(); renderDrawer(); closeDrawer();
+    applyActiveRole();
+    publishProfileState();
+    renderDrawer();
+    closeDrawer();
   } catch (err) { showToast(err.message); }
 }
 
@@ -259,6 +262,29 @@ function showMerchantWorkspace() {
   if (dashboard) dashboard.click();
   else document.getElementById('viewDashboard')?.classList.remove('hidden');
 }
+
+function hideFeatureWorkspaces() {
+  for (const id of ['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace']) {
+    document.getElementById(id)?.classList.add('hidden');
+  }
+  for (const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg']) {
+    document.getElementById(id)?.classList.add('hidden');
+  }
+  document.body.classList.remove('supplierAccountingMode');
+  document.getElementById('supplierAccountingBack')?.remove();
+  document.body.style.overflow='';
+}
+function showActiveWorkspace() {
+  hideFeatureWorkspaces();
+  closeDrawer();
+  applyActiveRole();
+  publishProfileState();
+  window.scrollTo({top:0,behavior:'auto'});
+}
+window.BusinessLifeShell=Object.freeze({
+  showActiveWorkspace,
+  getProfileState:()=>window.BusinessLifeProfileState||null
+});
 
 const HUBS = {
   customer: [
@@ -285,7 +311,7 @@ function renderRoleHub(role) {
   const hub = document.getElementById('roleHub');
   if (!hub || !meta) return;
   const tiles = (HUBS[role] || []).map((item, index) => `<button class="hubTile ${index === 3 && role === 'customer' ? 'accent' : ''}" type="button" data-hub-feature="${escapeHtml(item[3])}"><span class="hubTileIcon">${item[0]}</span><strong>${escapeHtml(item[1])}</strong><small>${escapeHtml(item[2])}</small>${role === 'courier' && item[1] === 'Eligibility' ? `<span class="miniBadge ${snapshot?.courier?.eligibility_status === 'approved' ? '' : 'pending'}">${escapeHtml(snapshot?.courier?.eligibility_status || 'not requested')}</span>` : ''}</button>`).join('');
-  hub.innerHTML = `<div class="hubHero"><div class="hubEyebrow">${escapeHtml(meta.label)} profile</div><h1>${escapeHtml(meta.hero)}</h1><p>One identity, a dedicated workspace, and only the information this role needs.</p><span class="hubStatus">Profile active</span></div><div class="hubSectionTitle"><h2>Your ${escapeHtml(meta.label)} workspace</h2><span>Philippines Edition</span></div><div class="hubGrid">${tiles}</div>`;
+  hub.innerHTML = `<div class="hubHero"><div class="hubEyebrow">${escapeHtml(meta.label)} profile</div><h1>${escapeHtml(meta.hero)}</h1><p>One identity, a dedicated workspace, and only the information this role needs.</p><span class="hubStatus">Profile selected</span></div><div class="hubSectionTitle"><h2>Your ${escapeHtml(meta.label)} workspace</h2><span>Philippines Edition</span></div><div class="hubGrid">${tiles}</div>`;
   hub.querySelectorAll('[data-hub-feature]').forEach(btn => btn.onclick = () => showToast(`${btn.dataset.hubFeature}: implementation continues in the next marketplace/service slice.`));
   hub.classList.remove('hidden');
 }
@@ -297,13 +323,18 @@ function applyActiveRole() {
   else { hideMerchantWorkspace(); renderRoleHub(activeRole); }
 }
 
+function publishProfileState(){
+  const detail={activeRole,accountId:Number(snapshot?.account?.id)||null,snapshot};
+  window.BusinessLifeProfileState=Object.freeze(detail);
+  document.dispatchEvent(new CustomEvent('abl:profile-state',{detail}));
+}
 async function refreshProfile() {
   if (!token()) return;
   snapshot = await profileApi('/api/me');
   activeRole = snapshot.account?.active_role || 'merchant';
   ensureShellChrome();
   applyActiveRole();
-  document.dispatchEvent(new CustomEvent('abl:profile-state', { detail: { activeRole, accountId: Number(snapshot.account?.id) || null } }));
+  publishProfileState();
 }
 
 function onShellVisibility() {
