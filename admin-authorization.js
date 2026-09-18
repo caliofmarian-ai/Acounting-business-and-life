@@ -19,7 +19,9 @@ export const ADMIN_PERMISSIONS = Object.freeze([
   'finance.summary.view',
   'accounting.export.view',
   'audit.view',
-  'metrics.view'
+  'metrics.view',
+  'legal.view',
+  'legal.manage'
 ]);
 
 const clean=(v,max=300)=>String(v??'').trim().slice(0,max);
