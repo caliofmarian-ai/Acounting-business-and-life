@@ -64,6 +64,20 @@ app.post('/api/payments/webhooks/paymongo',express.raw({type:'application/json',
 
 app.use(body);
 
+const railwayServiceName=clean(process.env.RAILWAY_SERVICE_NAME||'',120);
+const pwaInstallAllowed=process.env.PWA_INSTALL_ALLOWED==='1'||!railwayServiceName||railwayServiceName==='accounting-business-life';
+async function servePwaAsset(req,res,path,type){
+  if(!pwaInstallAllowed)return res.status(404).type('text/plain').send('PWA installation is disabled on preview services.');
+  const r=await upstream(path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});
+  const body=await r.arrayBuffer();
+  res.status(r.status);
+  if(type)res.type(type);
+  if(path==='/sw.js')res.setHeader('Cache-Control','no-store, max-age=0');
+  res.send(Buffer.from(body));
+}
+app.get('/manifest.webmanifest',(req,res,next)=>servePwaAsset(req,res,'/manifest.webmanifest','application/manifest+json').catch(next));
+app.get('/sw.js',(req,res,next)=>servePwaAsset(req,res,'/sw.js','application/javascript').catch(next));
+
 app.get('/health',async(_req,res)=>{
   try{
     await pool.query('SELECT 1');

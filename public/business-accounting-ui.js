@@ -104,8 +104,7 @@ async function bootAccountingWorkspace() {
     mountWorkspaceBar();
     mountSupplierAccountingTile();
     if(role==='merchant') mountEconomicSummary();
-    const observer=new MutationObserver(()=>{mountWorkspaceBar();mountSupplierAccountingTile()});
-    observer.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+    document.addEventListener('abl:profile-state',()=>{mountWorkspaceBar();mountSupplierAccountingTile()});
   }catch(err){console.warn('Accounting workspace:',err.message)}
 }
 
