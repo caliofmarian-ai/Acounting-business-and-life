@@ -1,0 +1,5 @@
+{
+  "service": "accounting-growth-marketing-kit-preview",
+  "route": "/marketing_manifest",
+  "purpose": "validate canonical Marketing Kit contract on current main"
+}
