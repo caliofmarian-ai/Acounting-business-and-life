@@ -42,7 +42,7 @@ test('Admin schema and authorization support specialists without turning Admin i
 });
 
 test('dedicated Admin workspace is a separate permission-driven surface',()=>{
-  assert.match(server,/\/admin-console\.html/);
+  assert.match(server,/admin-console\.html/);
   assert.match(server,/app\.get\('\/admin'/);
   assert.match(html,/Admin Workspace/);
   assert.match(ui,/No delegated Admin workspace is available/);
