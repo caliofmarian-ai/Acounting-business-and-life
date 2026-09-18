@@ -1,3 +1,19 @@
+---
+document_id: BL-00-GLB-DOCSYS-001
+title: Business & Life Documentation & Governance System
+document_type: governance_architecture
+status: DRAFT
+access_class: OPERATIONS_PRIVATE
+applicable_profiles: []
+applicable_functions: [Documentation Governance Owner, Super Admin, Country Admin, Territory Admin]
+country_code: GLB
+territory_scope: global
+owner_role: Documentation Governance Owner
+approver_role: Project Owner
+version: 1.0
+legal_classification: PLATFORM_POLICY
+---
+
 # Business & Life — Documentation & Governance System
 
 Status: **CANONICAL ARCHITECTURE — V1**
