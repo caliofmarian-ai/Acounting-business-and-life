@@ -1,0 +1,5 @@
+{
+  "service": "accounting-growth-marketing-kit-v2-preview",
+  "route": "/marketing_manifest",
+  "proof": "marketing-kit-current2-branch-deploy"
+}
