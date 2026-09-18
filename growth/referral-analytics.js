@@ -6,7 +6,8 @@ export const RUNTIME_REFERRAL_EVENTS = Object.freeze([
   'referral_shared',
   'referral_qr_opened',
   'referral_landing_viewed',
-  'referral_signup_started'
+  'referral_signup_started',
+  'referral_signup_completed'
 ]);
 
 const RUNTIME_EVENTS = new Set(RUNTIME_REFERRAL_EVENTS);
@@ -27,7 +28,8 @@ const REQUIRED = Object.freeze({
   referral_shared: ['channel','campaign','source_profile_role','correlation_id'],
   referral_qr_opened: ['campaign','source_profile_role','correlation_id'],
   referral_landing_viewed: ['campaign','source','medium','source_profile_role','correlation_id'],
-  referral_signup_started: ['campaign','source','source_profile_role','correlation_id']
+  referral_signup_started: ['campaign','source','source_profile_role','correlation_id'],
+  referral_signup_completed: ['campaign','source','source_profile_role','correlation_id']
 });
 
 function boundedToken(value, name, max = 80) {
