@@ -32,7 +32,8 @@ test('function bundles expand only to canonical Admin permissions',()=>{
 
 test('Admin schema and authorization support specialists without turning Admin into a public profile',()=>{
   assert.match(auth,/admin_function_assignments/);
-  assert.match(auth,/specialist/);
+  assert.match(auth,/authority_rank/);
+  assert.match(server,/specialist/);
   assert.match(auth,/platform_admin_assignments/);
   assert.match(auth,/admin_permission_grants/);
   assert.match(server,/\/api\/admin\/catalog/);
