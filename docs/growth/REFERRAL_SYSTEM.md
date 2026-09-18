@@ -112,3 +112,15 @@ It may persist only `referral_landing_viewed` and `referral_signup_started` into
 It is inactive unless all privacy/activation gates are explicitly satisfied. It cannot bind a referred account, qualify a referral or create reward state.
 
 See `docs/growth/UNCONVERTED_ATTRIBUTION_RUNTIME.md`.
+
+## Converted attribution readiness — 2026-09-18
+
+The registration flow now carries the already-existing referral code/profile/correlation context through account creation, and the server has a fail-closed binding adapter in `growth/referral-conversion-binding.js`.
+
+The adapter requires an existing unexpired pending attribution, rejects self-referral, prevents replacing an already-attributed account, and treats repeat binding to the same referral as idempotent.
+
+It remains inactive because converted-attribution retention/lawful-basis policy is unresolved. There is intentionally no default converted retention period in code or guardrails.
+
+`referral_signup_completed` is prepared as an internal analytics event but can only be emitted after a successful non-idempotent converted binding. Current production cannot satisfy that binding gate.
+
+See `docs/growth/CONVERTED_ATTRIBUTION_RUNTIME.md`.
