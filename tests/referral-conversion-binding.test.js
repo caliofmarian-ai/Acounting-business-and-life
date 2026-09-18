@@ -13,13 +13,21 @@ const context = {
   correlation_id: '4f7f8bbd-6f3f-45d5-9f7e-32e5f282ce2d'
 };
 
+const pendingReadyEnv = {
+  REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED: 'true',
+  REFERRAL_ANALYTICS_RETENTION_APPROVED: 'true',
+  REFERRAL_ANALYTICS_LAWFUL_BASIS_APPROVED: 'true',
+  REFERRAL_ATTRIBUTION_HMAC_SECRET: 'test-only-secret-with-at-least-32-characters'
+};
+
 const readyEnv = {
+  ...pendingReadyEnv,
   REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true',
   REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED: 'true',
   REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED: 'true',
   REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_DAYS: '120',
   REFERRAL_ATTRIBUTION_CONVERTED_POLICY_VERSION: 'test-policy-v1',
-  REFERRAL_ATTRIBUTION_HMAC_SECRET: 'test-only-secret-with-at-least-32-characters'
+  REFERRAL_ATTRIBUTION_CONVERTED_MODEL: 'registration_context_v1'
 };
 
 test('converted referral binding is fail-closed behind all explicit gates', () => {
@@ -32,12 +40,27 @@ test('converted referral binding is fail-closed behind all explicit gates', () =
   assert.equal(convertedReferralBindingState({}).reason, 'disabled');
   assert.equal(convertedReferralBindingState({
     REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true'
+  }).reason, 'pending_disabled');
+  assert.equal(convertedReferralBindingState({
+    REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true',
+    REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED: 'true'
+  }).reason, 'pending_retention_not_approved');
+  assert.equal(convertedReferralBindingState({
+    REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true',
+    REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED: 'true',
+    REFERRAL_ANALYTICS_RETENTION_APPROVED: 'true'
+  }).reason, 'pending_lawful_basis_not_approved');
+  assert.equal(convertedReferralBindingState({
+    ...pendingReadyEnv,
+    REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true'
   }).reason, 'retention_not_approved');
   assert.equal(convertedReferralBindingState({
+    ...pendingReadyEnv,
     REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true',
     REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED: 'true'
   }).reason, 'lawful_basis_not_approved');
   assert.equal(convertedReferralBindingState({
+    ...pendingReadyEnv,
     REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true',
     REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED: 'true',
     REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED: 'true'
@@ -48,9 +71,20 @@ test('converted referral binding is fail-closed behind all explicit gates', () =
   }).reason, 'policy_version_not_configured');
   assert.equal(convertedReferralBindingState({
     ...readyEnv,
+    REFERRAL_ATTRIBUTION_CONVERTED_MODEL: ''
+  }).reason, 'attribution_model_not_configured');
+  assert.equal(convertedReferralBindingState({
+    ...readyEnv,
+    REFERRAL_ATTRIBUTION_CONVERTED_MODEL: 'last_touch'
+  }).reason, 'attribution_model_not_supported');
+  assert.equal(convertedReferralBindingState({
+    ...readyEnv,
     REFERRAL_ATTRIBUTION_HMAC_SECRET: ''
-  }).reason, 'hmac_secret_not_configured');
-  assert.equal(convertedReferralBindingState(readyEnv).bindable, true);
+  }).reason, 'pending_hmac_secret_not_configured');
+  const ready = convertedReferralBindingState(readyEnv);
+  assert.equal(ready.bindable, true);
+  assert.equal(ready.pendingReady, true);
+  assert.equal(ready.attributionModel, 'registration_context_v1');
 });
 
 test('conversion context accepts only canonical referral identity fields', () => {
