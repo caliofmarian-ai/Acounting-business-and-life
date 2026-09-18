@@ -38,15 +38,26 @@ Business & Life should preserve:
 
 NPC's January 2026 FAQ explains mandatory-registration triggers under NPC Circular 2022-04.
 
-Business & Life must perform an operator-specific determination using:
-- actual Philippine operating entity;
+Current operator facts:
+- working/operating name: **Business & Life**;
+- Philippine legal entity: **not yet formed**;
+- initial Philippine operator: **natural person designated by the Project Owner**;
+- operator legal name/contact: **pending verification**.
+
+PIC treatment:
+- the initial operator is the provisional PIC candidate only if that person actually controls the relevant Business & Life personal-data processing decisions;
+- if confirmed as an individual PIC, NPC guidance treats the individual PIC as the de facto DPO;
+- do not invent a separate DPO merely to fill a document field.
+
+Business & Life must still perform an operator-specific NPCRS/DPS determination using:
 - employee count;
 - sensitive-personal-information volume;
 - risk to data-subject rights/freedoms;
+- automated decision-making/profiling applicability;
 - PIC/PIP status for each processing system.
 
 Current status:
-APPLICABILITY_REVIEW_REQUIRED.
+`NPC_REGISTRATION_STATUS = ASSESSMENT_REQUIRED_BEFORE_PUBLIC_LAUNCH`.
 
 Do not hard-code either "registration not required" or "registration mandatory" until this assessment is performed.
 
@@ -65,3 +76,5 @@ Develop:
 - consent/legal-basis map.
 
 Only documents explicitly classified PUBLIC may appear in the public Help Center.
+
+Canonical controller/DPO record: `docs/privacy/INITIAL_PIC_DPO_GOVERNANCE.md` and `privacy/controller-profile.json`.
