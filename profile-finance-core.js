@@ -763,8 +763,18 @@ export async function createProfileMoneyEntry(pool,{
   const cat=normalizeProfileMoneyCategory(role,category),value=normalizePositiveMoney(amount,'Money entry amount');
   const currency=normalizeCurrency(currencyCode),key=clean(entryKey,220);
   if(!key)fail('Idempotency key is required');
-  const existing=await pool.query('SELECT id FROM profile_money_entries WHERE entry_key=$1',[key]);
-  if(existing.rowCount)return (await listProfileMoneyEntries(pool,{accountId,profileRole:role,limit:250})).entries.find(x=>x.id===Number(existing.rows[0].id));
+  const existing=await pool.query('SELECT * FROM profile_money_entries WHERE entry_key=$1',[key]);
+  if(existing.rowCount){
+    const old=existing.rows[0];
+    if(Number(old.account_id)!==Number(accountId)||old.profile_role!==role)fail('Idempotency key belongs to another Money scope',409);
+    const detail=await pool.query(`
+      SELECT e.*,f.display_name financial_account_name,f.account_kind financial_account_kind,f.reference_last4 financial_account_last4
+      FROM profile_money_entries e LEFT JOIN profile_financial_accounts f ON f.id=e.financial_account_id
+      WHERE e.id=$1
+    `,[old.id]);
+    const x=detail.rows[0];
+    return{id:Number(x.id),public_id:x.public_id,entry_type:x.entry_type,direction:x.direction,category:x.category,amount:Number(x.amount),currency_code:x.currency_code,financial_account_id:x.financial_account_id==null?null:Number(x.financial_account_id),financial_account_name:x.financial_account_name||'',financial_account_kind:x.financial_account_kind||'',financial_account_last4:x.financial_account_last4||'',source_type:x.source_type,source_id:x.source_id==null?null:Number(x.source_id),note:x.note||'',evidence_reference:x.evidence_reference||'',status:x.status,reversal_of_id:x.reversal_of_id==null?null:Number(x.reversal_of_id),occurred_at:x.occurred_at,created_at:x.created_at};
+  }
   await validateLinkedFinancialAccount(pool,{
     accountId:Number(accountId),profileRole:role,businessId:null,financialAccountId,currencyCode:currency
   });
@@ -800,8 +810,12 @@ export async function reverseProfileMoneyEntry(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
-    const existing=await client.query('SELECT id FROM profile_money_entries WHERE entry_key=$1',[key]);
-    if(existing.rowCount){await client.query('COMMIT');return{reversal_id:Number(existing.rows[0].id),idempotent:true}}
+    const existing=await client.query('SELECT id,account_id,profile_role,reversal_of_id FROM profile_money_entries WHERE entry_key=$1',[key]);
+    if(existing.rowCount){
+      const oldKey=existing.rows[0];
+      if(Number(oldKey.account_id)!==Number(accountId)||oldKey.profile_role!==role||Number(oldKey.reversal_of_id)!==Number(entryId))fail('Idempotency key belongs to another Money correction',409);
+      await client.query('COMMIT');return{entry_id:Number(entryId),reversal_id:Number(oldKey.id),status:'reversed',idempotent:true,provider_balance_effect:false}
+    }
     const q=await client.query(`
       SELECT * FROM profile_money_entries
       WHERE id=$1 AND account_id=$2 AND profile_role=$3 FOR UPDATE
