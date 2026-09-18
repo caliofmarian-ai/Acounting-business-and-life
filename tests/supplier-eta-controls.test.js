@@ -8,8 +8,8 @@ const server=readFileSync(new URL('../server-suppliers.js',import.meta.url),'utf
 test('Supplier PO response captures both readiness and delivery ETA',()=>{
   assert.match(ui,/id="supReady"/);
   assert.match(ui,/id="supDeliveryEta"/);
-  assert.match(ui,/supplier_ready_at:document\.getElementById\('supReady'\)\.value\|\|null/);
-  assert.match(ui,/supplier_delivery_eta:document\.getElementById\('supDeliveryEta'\)\.value\|\|null/);
+  assert.match(ui,/supplier_ready_at:pmanilaIso\(document\.getElementById\('supReady'\)\.value\)/);
+  assert.match(ui,/supplier_delivery_eta:pmanilaIso\(document\.getElementById\('supDeliveryEta'\)\.value\)/);
   assert.match(server,/supplier_ready_at=\$3,supplier_delivery_eta=\$4/);
 });
 
@@ -20,7 +20,13 @@ test('accepted purchase orders can reopen the existing response editor to update
 });
 
 test('existing Supplier ETA values are retained when reopening the response form',()=>{
-  assert.match(ui,/p\.supplier_ready_at\?new Date\(p\.supplier_ready_at\)/);
-  assert.match(ui,/p\.supplier_delivery_eta\?new Date\(p\.supplier_delivery_eta\)/);
+  assert.match(ui,/pmanilaInput\(p\.supplier_ready_at\)/);
+  assert.match(ui,/pmanilaInput\(p\.supplier_delivery_eta\)/);
   assert.match(ui,/p\.supplier_note\|\|''/);
+});
+
+test('Supplier ETA uses explicit Philippines local time conversion',()=>{
+  assert.match(ui,/timeZone:'Asia\/Manila'/);
+  assert.match(ui,/raw\+'\\:00\+08:00'/);
+  assert.match(ui,/toISOString\(\)/);
 });
