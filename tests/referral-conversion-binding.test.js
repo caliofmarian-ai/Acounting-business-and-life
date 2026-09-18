@@ -23,6 +23,12 @@ const readyEnv = {
 };
 
 test('converted referral binding is fail-closed behind all explicit gates', () => {
+  const guardrails = JSON.parse(readFileSync(new URL('../growth/privacy-guardrails.json', import.meta.url), 'utf8'));
+  assert.equal(guardrails.convertedAttribution.enabledByDefault, false);
+  assert.equal(guardrails.convertedAttribution.retentionDays, null);
+  assert.equal(guardrails.convertedAttribution.selfReferralRejected, true);
+  assert.equal(guardrails.convertedAttribution.duplicateAccountAttributionRejected, true);
+  assert.equal(guardrails.convertedAttribution.rewardStateAllowed, false);
   assert.equal(convertedReferralBindingState({}).reason, 'disabled');
   assert.equal(convertedReferralBindingState({
     REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'true'
