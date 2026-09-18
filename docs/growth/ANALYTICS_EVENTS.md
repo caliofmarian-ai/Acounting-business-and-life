@@ -88,9 +88,10 @@ Do not mark referral event definitions verified merely because their metadata ex
 Current runtime slice wires:
 - `referral_link_created` from authenticated Promotion Center identity loads;
 - `referral_shared` from explicit Native Share / Copy / WhatsApp / Telegram / SMS / email actions;
-- `referral_landing_viewed` from valid canonical public referral landings.
+- `referral_landing_viewed` from valid canonical public referral landings;
+- `referral_signup_started` when a referred visitor actually submits the create-account form.
 
-The browser sends these only to same-origin Business & Life analytics endpoints.
+The browser sends these only to same-origin Business & Life analytics endpoints. The server validates the opaque referral/source profile and derives canonical campaign/source fields before any optional external delivery.
 
 External PostHog delivery remains **HOLD** and fail-closed until all of these are true:
 - the correct Business & Life PostHog ingest host and project token are configured;
