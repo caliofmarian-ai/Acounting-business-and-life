@@ -1,0 +1,56 @@
+{
+  "version": "1.0.0",
+  "status": "integration_blocked_until_notification_provider_and_policy_ready",
+  "modes": {
+    "email": {
+      "recipientEntry": "single_recipient_manual_entry",
+      "serverDelivery": "requires_notification_layer",
+      "bulkUpload": false,
+      "addressBookImport": false
+    },
+    "sms": {
+      "recipientEntry": "single_recipient_manual_entry",
+      "serverDelivery": "requires_approved_sms_provider",
+      "bulkUpload": false,
+      "addressBookImport": false
+    },
+    "whatsapp": {
+      "recipientEntry": "optional_manual_or_share_sheet",
+      "serverDelivery": false,
+      "mechanism": "user_initiated_share_intent"
+    },
+    "telegram": {
+      "recipientEntry": "share_sheet_or_share_url",
+      "serverDelivery": false,
+      "mechanism": "user_initiated_share_intent"
+    },
+    "group": {
+      "serverDelivery": false,
+      "mechanism": "user_initiated_share_only",
+      "automaticPosting": false
+    }
+  },
+  "uiRules": {
+    "title": "Invite someone you know",
+    "emailLabel": "Email address",
+    "phoneLabel": "Phone number",
+    "confirmRecipient": "I chose this person to receive my invitation.",
+    "noContactUploadNotice": "Business & Life does not need to upload your address book to send a referral invitation.",
+    "authorityNotice": "This referral invitation does not approve restricted operational profiles."
+  },
+  "productionGates": {
+    "emailProviderConfigured": false,
+    "smsProviderConfigured": false,
+    "marketingPreferencePolicyConfigured": false,
+    "rateLimitConfigured": false,
+    "abuseMonitoringConfigured": false
+  },
+  "requiredServerControls": [
+    "per-account invitation rate limit",
+    "per-recipient deduplication window",
+    "bounded retry only for transient provider errors",
+    "delivery status without copying message secrets into analytics",
+    "suppression/stop handling where required by channel/provider/policy",
+    "no privileged profile activation side effect"
+  ]
+}
