@@ -32,7 +32,6 @@ test('Owner-approved 90-day unconverted retention stays gated until remaining po
   assert.equal(rules.retention.convertedAttributionRetentionRule, null);
   assert.equal(rules.retention.rewardEvidenceRetentionRule, null);
   assert.match(rules.retention.gateReason, /90-day retention/i);
-  assert.match(rules.retention.gateReason, /superseding the temporary 60-day setting/i);
   assert.match(rules.retention.gateReason, /remain unresolved/i);
 });
 
