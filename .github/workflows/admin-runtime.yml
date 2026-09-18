@@ -39,7 +39,8 @@ on:
       - '.github/workflows/admin-runtime.yml'
 
       - 'business-finance-view-core.js'
-  push:
+
+      - 'account-money-core.js'  push:
     branches: [main]
     paths:
       - 'admin-authorization.js'
@@ -78,6 +79,7 @@ on:
       - 'public/profile-money.css'
       - 'business-finance-view-core.js'
 
+      - 'account-money-core.js'
 
 permissions:
   contents: read
