@@ -5,8 +5,9 @@ Status: **DESIGN SOURCE FOR IMPLEMENTATION**
 Figma file:
 https://www.figma.com/design/9gNwZeoAicQ2aH3UAab3zu
 
-Primary mobile screen node:
+Primary mobile screen nodes:
 - `1:323` — `Money & Banking — Mobile`
+- `2:2094` — `Transfer between profiles — Mobile`
 
 ## Canonical UX
 
