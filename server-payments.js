@@ -16,6 +16,7 @@ import {
   listPlatformCostEntries,financeKpiOverview,FINANCE_EVIDENCE_CLASSES
 } from './finance-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
+import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetization-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -54,7 +55,7 @@ async function canSeeIntent(me,intent){
   if((me.businesses||[]).some(b=>Number(b.id)===Number(intent.business_id)&&b.active!==false))return true;
   try{await requireAdminPermission(pool,me.account.id,'payment.view',intent.territory_id);return true}catch{return false}
 }
-async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await backfillLegacyOrderPayments(pool)}
+async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));

@@ -45,10 +45,11 @@ test('unit economics separates platform revenue, variable cost, contribution, fi
   assert.match(core,/NO_BREAK_EVEN_AT_CURRENT_UNIT_ECONOMICS/);
 });
 
-test('zero-fee promotional reporting stays truthful until cohort linkage exists',()=>{
-  assert.match(core,/PENDING_PROMO_COHORT_LINKAGE/);
-  assert.match(core,/90-day promo conversion\/subsidy cohorts require explicit promotional eligibility linkage/);
-  assert.doesNotMatch(core,/conversion_rate:\s*0/);
+test('promotional reporting uses real cohorts while paid conversion remains gated by active fee policy',()=>{
+  assert.match(core,/promotionKpi\(pool,\{\.\.\.p,territoryId\}\)/);
+  assert.match(core,/promotion_economics:promotion/);
+  assert.doesNotMatch(core,/PENDING_PROMO_COHORT_LINKAGE/);
+  assert.doesNotMatch(core,/paid_conversion_pct:\s*0/);
 });
 
 test('cost allocation cannot exceed the source cost and historical cost is voided rather than deleted',()=>{

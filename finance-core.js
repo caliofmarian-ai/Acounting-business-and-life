@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { promotionKpi } from './monetization-core.js';
 
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
@@ -301,10 +302,11 @@ export async function financeKpiOverview(pool,input={}){
   const p=period(input);
   const territoryId=input.territoryId==null?null:Number(input.territoryId);
   const evidence=evidenceClasses(input.evidenceClasses);
-  const [pay,manual,recent]=await Promise.all([
+  const [pay,manual,recent,promotion]=await Promise.all([
     paymentEconomics(pool,{...p,territoryId}),
     manualCostEconomics(pool,{...p,territoryId,evidence}),
-    listPlatformCostEntries(pool,{...p,territoryId,evidenceClasses:FINANCE_EVIDENCE_CLASSES})
+    listPlatformCostEntries(pool,{...p,territoryId,evidenceClasses:FINANCE_EVIDENCE_CLASSES}),
+    promotionKpi(pool,{...p,territoryId})
   ]);
   const manualVariable=money(manual.rows.filter(x=>x.cost_nature==='variable').reduce((s,x)=>s+Number(x.amount||0),0));
   const allocatedFixed=money(manual.rows.filter(x=>x.cost_nature!=='variable').reduce((s,x)=>s+Number(x.amount||0),0));
@@ -341,7 +343,7 @@ export async function financeKpiOverview(pool,input={}){
     break_even_status:contributionPerTx&&contributionPerTx>0?'CALCULABLE':'NO_BREAK_EVEN_AT_CURRENT_UNIT_ECONOMICS',
     services:serviceRows,evidence_breakdown:manual.evidenceBreakdown,
     recent_cost_entries:recent.slice(0,25),
-    promotion_economics:{status:'PENDING_PROMO_COHORT_LINKAGE',note:'Costs are measurable now; 90-day promo conversion/subsidy cohorts require explicit promotional eligibility linkage before Finance may report conversion.'},
+    promotion_economics:promotion,
     accounting_note:'GMV/payment volume is context only. Provider/customer/merchant/courier/service-provider money is not platform revenue unless an explicit platform-owned allocation exists.'
   };
 }
