@@ -35,9 +35,31 @@ function validEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
 function passwordOkay(value) { return typeof value === 'string' && value.length >= 8 && value.length <= 160; }
 
 function referralRequestOrigin(req) {
-  const host = clean(req.get('host'), 255);
+  const explicit = clean(process.env.REFERRAL_PUBLIC_ORIGIN || process.env.PUBLIC_APP_ORIGIN || '', 500).replace(/\/+$/, '');
+  if (explicit) {
+    try {
+      const url = new URL(explicit);
+      if (!['http:','https:'].includes(url.protocol)) throw new Error('bad protocol');
+      if (['localhost','127.0.0.1','0.0.0.0'].includes(url.hostname)) throw new Error('private host');
+      return url.origin;
+    } catch {
+      throw Object.assign(new Error('Invalid configured referral public origin'), { status: 500 });
+    }
+  }
+
+  const railwayDomain = clean(process.env.RAILWAY_PUBLIC_DOMAIN || '', 255);
+  if (railwayDomain && /^[A-Za-z0-9.-]+$/.test(railwayDomain) && !['localhost','127.0.0.1','0.0.0.0'].includes(railwayDomain)) {
+    return `https://${railwayDomain}`;
+  }
+
+  const forwardedHost = clean(String(req.headers['x-forwarded-host'] || '').split(',')[0], 255);
+  const host = forwardedHost || clean(req.get('host'), 255);
   if (!host || !/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/.test(host)) {
     throw Object.assign(new Error('Invalid public host'), { status: 400 });
+  }
+  const hostname = host.split(':')[0].toLowerCase();
+  if (['localhost','127.0.0.1','0.0.0.0'].includes(hostname)) {
+    throw Object.assign(new Error('Public referral origin is not configured'), { status: 503 });
   }
   const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
   const protocol = forwarded === 'https' ? 'https' : forwarded === 'http' ? 'http' : req.secure ? 'https' : 'http';
