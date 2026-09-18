@@ -147,7 +147,7 @@ function scopeSql({countryWide=false,territoryIds=[]},alias='e'){
 export async function adminFinanceSummary(pool,{countryWide=false,territoryIds=[],functionCodes=[]}={}){
   const scope=scopeSql({countryWide,territoryIds},'e');
   const fn=(functionCodes||[]).map(x=>clean(x,100)).filter(Boolean);
-  const fnSql=fn.length?` AND (e.function_code='' OR e.function_code=ANY($${scope.args.length+1}::text[]))`:'';
+  const fnSql=fn.length?` AND e.function_code=ANY(${scope.args.length+1}::text[])`:'';
   const args=[...scope.args,...(fn.length?[fn]:[])];
   const entries=await pool.query(`
     SELECT
@@ -200,7 +200,7 @@ export async function adminFinanceSummary(pool,{countryWide=false,territoryIds=[
 export async function listAdminBudgets(pool,{countryWide=false,territoryIds=[],functionCodes=[]}={}){
   const scope=scopeSql({countryWide,territoryIds},'b');
   const fn=(functionCodes||[]).map(x=>clean(x,100)).filter(Boolean);
-  const fnSql=fn.length?` AND (b.function_code='' OR b.function_code=ANY($${scope.args.length+1}::text[]))`:'';
+  const fnSql=fn.length?` AND b.function_code=ANY(${scope.args.length+1}::text[])`:'';
   const args=[...scope.args,...(fn.length?[fn]:[])];
   const {rows}=await pool.query(`
     SELECT b.*,t.name territory_name FROM admin_finance_budgets b
