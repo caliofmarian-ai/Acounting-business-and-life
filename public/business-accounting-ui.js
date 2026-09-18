@@ -55,7 +55,23 @@ function mountWorkspaceBar() {
   const options=accountingState.businesses.map(b=>`<option value="${b.id}" ${Number(b.id)===Number(accountingState.activeBusinessId)?'selected':''}>${escapeHtml(b.name)}</option>`).join('');
   bar.innerHTML=`<div><span class="workspaceEyebrow">${accountingState.role==='supplier'?'Supplier accounting':'Business workspace'}</span><strong>${escapeHtml(accountingState.businesses.find(b=>Number(b.id)===Number(accountingState.activeBusinessId))?.name||'Business')}</strong></div>${accountingState.businesses.length>1?`<label>Workspace<select id="businessWorkspaceSelect">${options}</select></label>`:'<span class="workspaceIsolated">Isolated ledger</span>'}`;
   const select=bar.querySelector('#businessWorkspaceSelect');
-  if(select) select.onchange=async()=>{select.disabled=true;try{await api('/api/accounting/active-workspace',{method:'PATCH',body:JSON.stringify({business_id:Number(select.value)})});location.reload()}catch(err){select.disabled=false;alert(err.message)}};
+  if(select) select.onchange=async()=>{
+    const previous=accountingState.activeBusinessId;
+    select.disabled=true;
+    try{
+      await api('/api/accounting/active-workspace',{method:'PATCH',body:JSON.stringify({business_id:Number(select.value)})});
+      const state=await api('/api/accounting/workspaces');
+      accountingState={role:state.role,activeBusinessId:Number(state.active_business_id),businesses:state.businesses||[]};
+      mountWorkspaceBar();
+      mountSupplierAccountingTile();
+      await mountEconomicSummary();
+      document.dispatchEvent(new CustomEvent('abl:business-workspace-changed',{detail:{role:accountingState.role,activeBusinessId:accountingState.activeBusinessId}}));
+    }catch(err){
+      accountingState.activeBusinessId=previous;
+      mountWorkspaceBar();
+      alert(err.message);
+    }
+  };
 }
 
 function mountSupplierAccountingTile() {
