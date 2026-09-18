@@ -76,6 +76,7 @@ test('referral UI is wired to the same-origin analytics gateway, never directly 
   const landing = readFileSync(new URL('../public/referral/referral.js', import.meta.url), 'utf8');
   const promotion = readFileSync(new URL('../public/referral/promotion-center.html', import.meta.url), 'utf8');
   const server = readFileSync(new URL('../server-auth.js', import.meta.url), 'utf8');
+  const adapter = readFileSync(new URL('../growth/referral-analytics.js', import.meta.url), 'utf8');
 
   assert.match(helper, /\/api\/growth\/referral-analytics\/account/);
   assert.match(helper, /\/api\/growth\/referral-analytics\/public/);
@@ -83,6 +84,8 @@ test('referral UI is wired to the same-origin analytics gateway, never directly 
   assert.match(landing, /referral_shared/);
   assert.match(promotion, /referral_link_created/);
   assert.match(promotion, /referral_shared/);
-  assert.match(server, /REFERRAL_ANALYTICS_RETENTION_APPROVED/);
+  assert.match(server, /referral-analytics\/account/);
+  assert.match(server, /referral-analytics\/public/);
+  assert.match(adapter, /REFERRAL_ANALYTICS_RETENTION_APPROVED/);
   assert.doesNotMatch(helper, /POSTHOG_PROJECT_TOKEN|\.posthog\.com/);
 });
