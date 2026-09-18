@@ -8,9 +8,15 @@ const ROLE_META = {
 const ROLE_ORDER = ['merchant', 'customer', 'supplier', 'courier', 'service_provider'];
 const ADMIN_RANK_LABELS = { super_admin:'Super Admin', country_admin:'Country Admin', territory_admin:'Territory Admin', specialist:'Specialist' };
 let snapshot = null;
+let profileFetchedAt = 0;
+let profileRefreshPromise = null;
 let adminContext = null;
+let adminContextFetchedAt = 0;
+let adminContextRefreshPromise = null;
 let activeRole = 'merchant';
 let toastTimer;
+const PROFILE_CACHE_MS = 30000;
+const ADMIN_CONTEXT_CACHE_MS = 60000;
 
 const token = () => localStorage.getItem('abl_token') || '';
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -63,13 +69,23 @@ function adminProfileRow(){
     <button class="roleAction" type="button" data-admin-profile>Switch</button>
   </div>`;
 }
-async function refreshAdminContext(){
-  if(!token()){adminContext=null;return null}
-  try{
-    const data=await profileApi('/api/admin/me');
-    adminContext=data?.is_admin?data:null;
-  }catch(_error){adminContext=null}
-  return adminContext;
+async function refreshAdminContext(force=false){
+  if(!token()){adminContext=null;adminContextFetchedAt=0;return null}
+  if(!force&&adminContextFetchedAt&&Date.now()-adminContextFetchedAt<ADMIN_CONTEXT_CACHE_MS)return adminContext;
+  if(adminContextRefreshPromise)return adminContextRefreshPromise;
+  adminContextRefreshPromise=(async()=>{
+    try{
+      const data=await profileApi('/api/admin/me');
+      adminContext=data?.is_admin?data:null;
+      adminContextFetchedAt=Date.now();
+      return adminContext;
+    }catch(_error){
+      adminContext=null;
+      return null;
+    }
+  })();
+  try{return await adminContextRefreshPromise}
+  finally{adminContextRefreshPromise=null}
 }
 
 function showToast(message) {
@@ -176,7 +192,10 @@ async function openDrawer() {
   document.getElementById('profileDrawerBackdrop')?.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   try {
-    await Promise.all([refreshProfile(),refreshAdminContext()]);
+    const tasks=[];
+    if(!snapshot?.account||!profileFetchedAt||Date.now()-profileFetchedAt>=PROFILE_CACHE_MS)tasks.push(refreshProfile());
+    if(!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS)tasks.push(refreshAdminContext());
+    if(tasks.length)await Promise.all(tasks);
     renderDrawer();
   } catch (error) {
     showToast(error.message);
@@ -196,7 +215,7 @@ async function saveIdentity(event) {
       phone: document.getElementById('shellPhone').value,
       address: document.getElementById('shellAddress').value
     }) });
-    renderTopAccount(); renderDrawer(); showToast('Account saved.');
+    profileFetchedAt=Date.now(); renderTopAccount(); renderDrawer(); showToast('Account saved.');
   } catch (err) { showToast(err.message); }
 }
 
@@ -227,7 +246,7 @@ async function uploadAvatar(event) {
     snapshot = await profileApi('/api/me', { method: 'PATCH', body: JSON.stringify({
       display_name: snapshot.account.display_name || 'Business owner', phone: snapshot.account.phone || '', email: snapshot.account.email || '', address: snapshot.account.address || '', avatar_data_url
     }) });
-    renderTopAccount(); renderDrawer(); showToast('Profile photo updated.');
+    profileFetchedAt=Date.now(); renderTopAccount(); renderDrawer(); showToast('Profile photo updated.');
   } catch (err) { showToast(err.message); }
 }
 async function removeAvatar() {
@@ -235,7 +254,7 @@ async function removeAvatar() {
     snapshot = await profileApi('/api/me', { method: 'PATCH', body: JSON.stringify({
       display_name: snapshot.account.display_name || 'Business owner', phone: snapshot.account.phone || '', email: snapshot.account.email || '', address: snapshot.account.address || '', avatar_data_url: ''
     }) });
-    renderTopAccount(); renderDrawer(); showToast('Profile photo removed.');
+    profileFetchedAt=Date.now(); renderTopAccount(); renderDrawer(); showToast('Profile photo removed.');
   } catch (err) { showToast(err.message); }
 }
 
@@ -244,6 +263,7 @@ async function enableOrSwitch(role) {
     if (!isEnabled(role)) snapshot = await profileApi(`/api/profiles/${role}`, { method: 'PUT', body: JSON.stringify({ enabled: true, visibility: role === 'merchant' ? 'public' : 'private' }) });
     snapshot = await profileApi('/api/me/active-role', { method: 'PATCH', body: JSON.stringify({ role }) });
     activeRole = snapshot.account.active_role || role;
+    profileFetchedAt=Date.now();
     applyActiveRole();
     publishProfileState();
     renderDrawer();
@@ -328,13 +348,21 @@ function publishProfileState(){
   window.BusinessLifeProfileState=Object.freeze(detail);
   document.dispatchEvent(new CustomEvent('abl:profile-state',{detail}));
 }
-async function refreshProfile() {
-  if (!token()) return;
-  snapshot = await profileApi('/api/me');
-  activeRole = snapshot.account?.active_role || 'merchant';
-  ensureShellChrome();
-  applyActiveRole();
-  publishProfileState();
+async function refreshProfile(force=false) {
+  if (!token()) return null;
+  if(!force&&snapshot?.account&&profileFetchedAt&&Date.now()-profileFetchedAt<PROFILE_CACHE_MS)return snapshot;
+  if(profileRefreshPromise)return profileRefreshPromise;
+  profileRefreshPromise=(async()=>{
+    snapshot = await profileApi('/api/me');
+    profileFetchedAt=Date.now();
+    activeRole = snapshot.account?.active_role || 'merchant';
+    ensureShellChrome();
+    applyActiveRole();
+    publishProfileState();
+    return snapshot;
+  })();
+  try{return await profileRefreshPromise}
+  finally{profileRefreshPromise=null}
 }
 
 function onShellVisibility() {
