@@ -189,16 +189,26 @@ Authority: NPC
 URLs:
 - https://privacy.gov.ph/pips-and-pics/register/
 - https://privacy.gov.ph/pips-and-pics/faqs/
+- https://privacy.gov.ph/appointing-a-data-protection-officer/
+- https://privacy.gov.ph/wp-content/uploads/2023/05/Circular-2022-04.pdf
 
 Status: SOURCE_VERIFIED  
-Classification: OFFICIAL_GUIDANCE
+Classification: OFFICIAL_GUIDANCE / REGULATION
 
-Verified point:
-- NPC's FAQ updated 05 January 2026 explains mandatory-registration triggers under NPC Circular No. 2022-04.
+Verified points:
+- NPC's FAQ updated 05 January 2026 explains current NPCRS registration/compliance guidance.
+- NPC Circular 2022-04 sets mandatory-registration triggers including 250+ employees, sensitive personal information of 1,000+ individuals, or processing likely to pose risk to rights/freedoms.
+- a Data Processing System involving automated decision-making or profiling is subject to a specific all-instances registration rule in the Circular.
+- NPC DPO guidance states an individual PIC or PIP is a de facto DPO.
 
 Platform action:
-- perform an entity/data/risk-specific registration assessment.
-- do not declare registration mandatory or exempt before evaluating the actual operating entity and data-processing profile.
+- current operating name: Business & Life;
+- Philippine legal entity: not yet formed;
+- initial Philippine operator: designated natural person;
+- if that person is confirmed as the individual PIC, treat the same person as de facto DPO;
+- perform an entity/data/risk/system-specific NPCRS registration assessment before public launch;
+- do not declare registration mandatory or exempt until the actual processing inventory and triggers are assessed;
+- do not invent registration ids, certificates or DPO contact details.
 
 ## PH-PRC-VERIFY-001 — PRC Professional License Verification
 
