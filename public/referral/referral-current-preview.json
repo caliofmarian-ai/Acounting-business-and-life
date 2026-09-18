@@ -1,0 +1,6 @@
+{
+  "service": "accounting-growth-referral-current-preview",
+  "branch": "feat/growth-referral-engine-v1-current",
+  "route": "/referral/promotion",
+  "productionSecrets": false
+}
