@@ -9,10 +9,13 @@ const ui=readFileSync(new URL('../public/profile-money-ui.js',import.meta.url),'
 const css=readFileSync(new URL('../public/profile-money.css',import.meta.url),'utf8');
 
 test('one shared personal money ledger serves Customer Courier and Service Provider only',()=>{
-  assert.match(core,/CREATE TABLE IF NOT EXISTS profile_money_entries/);
-  assert.match(core,/CHECK\(profile_role IN \('customer','courier','service_provider'\)\)/);
-  assert.doesNotMatch(core,/CHECK\(profile_role IN \([^)]*merchant/);
-  assert.doesNotMatch(core,/CHECK\(profile_role IN \([^)]*supplier/);
+  const start=core.indexOf('CREATE TABLE IF NOT EXISTS profile_money_entries');
+  const end=core.indexOf('CREATE INDEX IF NOT EXISTS profile_money_entries_scope_idx',start);
+  const schema=core.slice(start,end);
+  assert.ok(start>=0&&end>start);
+  assert.match(schema,/CHECK\(profile_role IN \('customer','courier','service_provider'\)\)/);
+  assert.doesNotMatch(schema,/merchant/);
+  assert.doesNotMatch(schema,/supplier/);
 });
 
 test('role capabilities prevent manual Courier and Service Provider income',()=>{
