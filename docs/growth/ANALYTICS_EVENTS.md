@@ -83,6 +83,27 @@ The disabled flag reserves a stable rollout key but does not change production b
 
 Do not mark referral event definitions verified merely because their metadata exists. Verification requires observed, correctly instrumented production/staging events with expected properties and no prohibited PII.
 
+## Runtime instrumentation status
+
+Current runtime slice wires:
+- `referral_link_created` from authenticated Promotion Center identity loads;
+- `referral_shared` from explicit Native Share / Copy / WhatsApp / Telegram / SMS / email actions;
+- `referral_landing_viewed` from valid canonical public referral landings.
+
+The browser sends these only to same-origin Business & Life analytics endpoints.
+
+External PostHog delivery remains **HOLD** and fail-closed until all of these are true:
+- the correct Business & Life PostHog ingest host and project token are configured;
+- `REFERRAL_ANALYTICS_ENABLED=true`;
+- `REFERRAL_ANALYTICS_RETENTION_APPROVED=true`.
+
+The server sets `$process_person_profile=false` and uses a random session-scoped correlation id instead of raw contact identity.
+
+Do not emit later funnel stages until their underlying product state is real:
+- `referral_signup_completed` requires bound attribution;
+- `referral_qualified` requires an approved qualification rule;
+- `referral_rewarded` requires an actual recorded reward.
+
 ## Dashboard activation sequence
 
 After application instrumentation lands:
