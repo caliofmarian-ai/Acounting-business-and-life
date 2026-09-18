@@ -15,7 +15,6 @@ test('Promotion Center loads authenticated account identity instead of embedding
   assert.match(html, /localStorage\.getItem\('abl_token'\)/);
   assert.match(html, /Sign in required/);
   assert.doesNotMatch(html, /r1_DemoReferral2026/);
-  assert.doesNotMatch(html, /data:image\/png;base64,/);
 });
 
 test('Promotion Center supports explicit user-initiated sharing channels', () => {
@@ -34,7 +33,11 @@ test('Promotion Center repeats the operational authority boundary', () => {
   assert.match(html, /never approves Merchant, Supplier, Courier, Service Provider or Admin authority/i);
 });
 
-test('Promotion Center does not outsource live QR generation while dependency ownership is external', () => {
-  assert.match(html, /Local personalized QR generation is the next Promotion Center slice/i);
+test('Promotion Center renders the authenticated local QR and keeps code fallback', () => {
+  assert.match(html, /id="qrImage"/);
+  assert.match(html, /id="qrFallback"/);
+  assert.match(html, /data\.qr\.dataUrl/);
+  assert.match(html, /data\.qr\.payload!==data\.referralUrl/);
+  assert.match(html, /Use your referral code if QR is unavailable/i);
   assert.doesNotMatch(html, /api\.qrserver|quickchart|chart\.google/);
 });
