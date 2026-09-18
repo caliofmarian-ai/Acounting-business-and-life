@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{readFileSync}from'node:fs';
+const c=JSON.parse(readFileSync(new URL('../growth/business-delivery-growth.en-PH.json',import.meta.url),'utf8'));const h=readFileSync(new URL('../public/referral/business-delivery.html',import.meta.url),'utf8');
+test('business delivery campaign is grounded in current delivery workflow',()=>{assert.match(h,/Delivery quote/i);assert.match(h,/approved Courier/i);assert.match(h,/secure handoff/i);assert.equal(c.claims.deliveryFeeSeparateFromMerchandise,true)});
+test('standalone external parcel booking is explicitly future-only',()=>{assert.equal(c.claims.arbitraryExternalParcelBooking,false);assert.equal(c.standaloneExtension.status,'future_product_extension_not_live');assert.match(h,/does not yet mean .send any external parcel./i)});
+test('courier pricing availability and approval claims remain bounded',()=>{assert.equal(c.claims.guaranteedCourierAvailability,false);assert.equal(c.claims.inventedPricing,false);assert.equal(c.claims.courierApprovalAutomatic,false);assert.equal(c.claims.cashDeliveryEnabled,false)});
