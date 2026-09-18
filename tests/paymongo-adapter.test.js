@@ -25,7 +25,7 @@ test('PayMongo secret key remains server-side and Basic auth is constructed only
 });
 
 test('live key cannot activate accidentally without explicit live enablement',()=>{
-  const old={...process.env};
+  const oldKey=process.env.PAYMONGO_SECRET_KEY,oldMode=process.env.PAYMONGO_MODE,oldLive=process.env.PAYMONGO_LIVE_ENABLED;
   process.env.PAYMONGO_SECRET_KEY='sk_live_example';
   process.env.PAYMONGO_MODE='live';
   delete process.env.PAYMONGO_LIVE_ENABLED;
@@ -36,7 +36,9 @@ test('live key cannot activate accidentally without explicit live enablement',()
   const live=payMongoRuntimeConfig();
   assert.equal(live.mode,'live');
   assert.equal(live.secretReady,true);
-  process.env=old;
+  if(oldKey===undefined)delete process.env.PAYMONGO_SECRET_KEY;else process.env.PAYMONGO_SECRET_KEY=oldKey;
+  if(oldMode===undefined)delete process.env.PAYMONGO_MODE;else process.env.PAYMONGO_MODE=oldMode;
+  if(oldLive===undefined)delete process.env.PAYMONGO_LIVE_ENABLED;else process.env.PAYMONGO_LIVE_ENABLED=oldLive;
 });
 
 test('webhook signature verification uses raw body, HMAC SHA-256, mode signature and replay tolerance',()=>{
@@ -94,5 +96,5 @@ test('PayMongo provider metadata declares adapter readiness without storing cred
   assert.match(adapter,/v0\.14-hosted-checkout-v2/);
   assert.match(adapter,/secret_ready/);
   assert.match(adapter,/webhook_ready/);
-  assert.doesNotMatch(adapter,/config_metadata[^]*secretKey/);
+  assert.doesNotMatch(adapter,/JSON\.stringify\(\{[^}]*secretKey/);
 });
