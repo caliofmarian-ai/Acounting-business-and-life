@@ -13,7 +13,7 @@ let profileRefreshPromise = null;
 let adminContext = null;
 let adminContextFetchedAt = 0;
 let adminContextRefreshPromise = null;
-let activeRole = 'merchant';
+let activeRole = null;
 let toastTimer;
 const PROFILE_CACHE_MS = 30000;
 const ADMIN_CONTEXT_CACHE_MS = 60000;
@@ -276,6 +276,7 @@ function hideMerchantWorkspace() {
   document.querySelector('.bottomNav')?.classList.add('hidden');
 }
 function showMerchantWorkspace() {
+  if(activeRole!=='merchant')return hideMerchantWorkspace();
   document.getElementById('roleHub')?.classList.add('hidden');
   document.querySelector('.bottomNav')?.classList.remove('hidden');
   const dashboard = document.querySelector('.bottomNav [data-view="Dashboard"]');
@@ -338,8 +339,10 @@ function renderRoleHub(role) {
 }
 
 function applyActiveRole() {
-  activeRole = snapshot?.account?.active_role || 'merchant';
+  activeRole = snapshot?.account?.active_role || null;
   renderTopAccount();
+  hideFeatureWorkspaces();
+  if (!activeRole) return hideMerchantWorkspace();
   if (activeRole === 'merchant') showMerchantWorkspace();
   else { hideMerchantWorkspace(); renderRoleHub(activeRole); }
 }
@@ -375,6 +378,7 @@ function onShellVisibility() {
 
 function boot() {
   if (!ensureShellChrome()) return setTimeout(boot, 80);
+  hideMerchantWorkspace();
   const shell = document.getElementById('shell');
   if (shell) new MutationObserver(onShellVisibility).observe(shell, { attributes: true, attributeFilter: ['class'] });
   if (token()) {

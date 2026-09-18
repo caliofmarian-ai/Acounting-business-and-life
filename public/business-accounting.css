@@ -10,3 +10,12 @@
 .roleFinanceHidden{display:none!important}
 @media(min-width:760px){.businessFinanceMetrics{grid-template-columns:repeat(5,minmax(0,1fr))}}
 @media(max-width:640px){.businessFinanceHead{display:grid}.businessFinanceHead .workspaceIsolated{justify-self:start}.businessFinanceMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}.businessFinanceAccounts{align-items:flex-start;flex-direction:column}}
+
+.businessFinancePrimary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.businessFinanceMetric.primary{min-height:88px;border-color:#dbeafe;background:linear-gradient(180deg,#fff,#f8fbff)}
+.businessFinanceMetric.primary strong{font-size:1.08rem}
+.businessFinanceDetails{margin-top:10px;border:1px solid #e2e8f0;border-radius:13px;background:#fff;overflow:hidden}
+.businessFinanceDetails>summary{cursor:pointer;list-style:none;padding:10px 11px;font-size:.78rem;font-weight:850;color:#475569}.businessFinanceDetails>summary::-webkit-details-marker{display:none}.businessFinanceDetails>summary:after{content:"›";float:right;transform:rotate(90deg)}.businessFinanceDetails[open]>summary:after{transform:rotate(-90deg)}
+.businessFinanceDetails .businessFinanceMetrics{padding:0 10px 10px}
+@media(min-width:760px){.businessFinancePrimary{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:640px){.businessFinancePrimary{grid-template-columns:repeat(2,minmax(0,1fr))}}

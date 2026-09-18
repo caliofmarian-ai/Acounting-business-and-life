@@ -62,19 +62,46 @@ function applyFinancePresentation(overview){
   document.querySelectorAll('option[value="personal_withdrawal"]').forEach(o=>o.textContent='Owner drawing / withdrawal');
   document.querySelectorAll('[data-view-link="Sell"]').forEach(el=>el.classList.toggle('roleFinanceHidden',!foodAllowed));
 }
+const BUSINESS_FINANCE_COMPATIBILITY_COPY=Object.freeze({merchant_sales:'Completed merchandise sales',supplier_orders:'Fulfilled PO value',supplier_received:'Recorded money received',supplier_budget:'Planned Supplier budget',settings:'Money Settings'});
+function financeCompactMetric(label,value,detail=''){return '<div class="businessFinanceMetric primary"><span>'+escapeHtml(label)+'</span><strong>'+(typeof value==='number'?financeMoney(value):escapeHtml(value))+'</strong>'+(detail?'<small>'+escapeHtml(detail)+'</small>':'')+'</div>'}
 function merchantFinanceHtml(o){
   const p=o.profitability||{},sett=o.settlement?.merchant_net,margin=p.estimated_margin_pct==null?'Not available':Number(p.estimated_margin_pct).toFixed(2)+'%';
-  return '<div class="businessFinanceMetrics">'+financeMetric('Completed merchandise sales',Number(o.commercial?.completed_merchandise_value||0),'Delivery charge excluded')+financeMetric('Confirmed merchandise received',Number(o.cash_evidence?.confirmed_merchandise_received||0),'Payment evidence')+financeMetric('Customer receivables',Number(o.receivables?.completed_customer_receivables||0),'Completed orders still due')+financeMetric('Supplier payables',Number(o.payables?.supplier_payables||0),'Received procurement not yet paid')+financeMetric('Business expenses',Number(o.ledger?.business_expenses||0),'Operating ledger')+financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Separate from business expense')+financeMetric('Inventory valuation',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')+financeMetric('Planned profile budget',Number(o.profile_finance?.total_allocated_budget||0),'Planning allocation, not provider cash')+financeMetric('Estimated margin',margin,p.status||'')+financeStatusMetric('Merchant payout / settlement',sett)+'</div>';
+  const primary='<div class="businessFinancePrimary">'
+    +financeCompactMetric('Money received',Number(o.cash_evidence?.confirmed_merchandise_received||0),'Confirmed customer payments')
+    +financeCompactMetric('Sales',Number(o.commercial?.completed_merchandise_value||0),'Completed merchandise')
+    +financeCompactMetric('Still to collect',Number(o.receivables?.completed_customer_receivables||0),'Customer receivables')
+    +financeCompactMetric('Expenses',Number(o.ledger?.business_expenses||0),'Business expenses')
+    +'</div>';
+  const details='<details class="businessFinanceDetails"><summary>More business details</summary><div class="businessFinanceMetrics">'
+    +financeMetric('Supplier payables',Number(o.payables?.supplier_payables||0),'Received purchases still due')
+    +financeMetric('Inventory value',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')
+    +financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Personal withdrawal — not business expense')
+    +financeMetric('Estimated margin',margin,p.status||'')
+    +financeStatusMetric('Payout / settlement',sett)
+    +'</div></details>';
+  return primary+details;
 }
 function supplierFinanceHtml(o){
-  const attributed=o.commercial?.attribution_status==='SINGLE_SUPPLIER_BUSINESS_BINDING',fulfilled=attributed?Number(o.commercial?.fulfilled_po_value||0):'Account-wide only',receivable=attributed?Number(o.receivables?.merchant_receivables||0):'Account-wide only';
-  return '<div class="businessFinanceMetrics">'+financeMetric('Fulfilled PO value',fulfilled,attributed?'Commercial value — not cash':'Multiple Supplier businesses; PO attribution pending')+financeMetric('Recorded money received',Number(o.cash_evidence?.business_ledger_recorded_receipts||0),'supplier_receipt evidence in this business ledger')+financeMetric('Merchant receivables',receivable,attributed?'Fulfilled value still due':'See attribution warning')+financeMetric('Upstream payables',Number(o.payables?.upstream_supplier_payables||0),'Purchases made by this Supplier business')+financeMetric('Business expenses',Number(o.ledger?.business_expenses||0),'Operating ledger')+financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Separate from business expense')+financeMetric('Inventory valuation',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')+financeMetric('Planned Supplier budget',Number(o.profile_finance?.total_allocated_budget||0),'Planning allocation, not provider cash')+financeStatusMetric('Supplier payout / settlement',o.settlement?.supplier_net)+'</div>';
+  const attributed=o.commercial?.attribution_status==='SINGLE_SUPPLIER_BUSINESS_BINDING',fulfilled=attributed?Number(o.commercial?.fulfilled_po_value||0):'See details',receivable=attributed?Number(o.receivables?.merchant_receivables||0):'See details';
+  const primary='<div class="businessFinancePrimary">'
+    +financeCompactMetric('Money received',Number(o.cash_evidence?.business_ledger_recorded_receipts||0),'Confirmed receipts')
+    +financeCompactMetric('Fulfilled orders',fulfilled,'PO commercial value')
+    +financeCompactMetric('Still to collect',receivable,'Merchant receivables')
+    +financeCompactMetric('Expenses',Number(o.ledger?.business_expenses||0),'Business expenses')
+    +'</div>';
+  const details='<details class="businessFinanceDetails"><summary>More Supplier details</summary><div class="businessFinanceMetrics">'
+    +financeMetric('Upstream payables',Number(o.payables?.upstream_supplier_payables||0),'Supplier purchases still due')
+    +financeMetric('Inventory value',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')
+    +financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Personal withdrawal — not business expense')
+    +financeStatusMetric('Payout / settlement',o.settlement?.supplier_net)
+    +'</div></details>';
+  return primary+details;
 }
 function financeWarnings(o){const rows=o.warnings||[];return rows.length?'<div class="businessFinanceWarnings">'+rows.map(x=>'<div>⚠ '+escapeHtml(String(x).replaceAll('_',' '))+'</div>').join('')+'</div>':''}
-function financeAccounts(o){const a=o.profile_finance?.financial_accounts||[];return '<div class="businessFinanceAccounts"><div><strong>Financial accounts</strong><span>'+a.length+' configured · provider balance '+escapeHtml(o.profile_finance?.provider_balance_status||'UNKNOWN')+'</span></div><button id="openBusinessFinanceSettings" type="button">Money Settings</button></div>'}
+function financeAccounts(o){const a=o.profile_finance?.financial_accounts||[];return '<div class="businessFinanceAccounts"><div><strong>Banking & payouts</strong><span>'+(a.length?escapeHtml(String(a.length))+' linked reference'+(a.length===1?'':'s'):'No linked payout reference')+'</span></div><button id="openBusinessFinanceSettings" type="button">Banking settings</button></div>'}
 function roleFinanceHtml(o){
   const domain=o.role==='merchant'?' · '+escapeHtml(String(o.presentation?.merchant_domain||'unknown').replace('_',' ')):'';
-  return '<div class="businessFinanceHead"><div><span class="workspaceEyebrow">'+escapeHtml(o.role==='supplier'?'Supplier Finance':'Merchant Finance')+domain+'</span><h2>'+escapeHtml(o.business?.name||'Business')+'</h2><p>'+escapeHtml(o.role==='supplier'?'B2B commercial value, actual receipts, receivables and costs stay separate.':'Business sales, cash evidence, payables and operating costs — without assuming every Merchant is food.')+'</p></div><span class="workspaceIsolated">Shared ledger · role view</span></div>'+(o.role==='supplier'?supplierFinanceHtml(o):merchantFinanceHtml(o))+financeWarnings(o)+financeAccounts(o);
+  return '<div class="businessFinanceHead"><div><span class="workspaceEyebrow">'+escapeHtml(o.role==='supplier'?'Supplier Finance':'Merchant Finance')+domain+'</span><h2>'+escapeHtml(o.business?.name||'Business')+'</h2><p>'+escapeHtml(o.role==='supplier'?'Money received, fulfilled orders, receivables and expenses.':'Money received, sales, receivables and expenses. The rest stays under More details.')+'</p></div><span class="workspaceIsolated">'+escapeHtml(o.role==='supplier'?'Supplier books':'Business books')+'</span></div>'+(o.role==='supplier'?supplierFinanceHtml(o):merchantFinanceHtml(o))+financeWarnings(o)+financeAccounts(o);
 }
 function mountWorkspaceBar() {
   const topbar=document.querySelector('.topbar');

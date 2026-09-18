@@ -20,3 +20,9 @@
 .moneyLedgerList .moneyRowAmount{display:grid;justify-items:end;gap:6px}.moneyIn{color:#166534!important}.moneyOut{color:#b91c1c!important}
 .moneyReverse{border:1px solid #fecaca;background:#fff1f2;color:#be123c;border-radius:9px;padding:6px 8px;font-size:10px;font-weight:900}
 @media(max-width:560px){.moneyFormGrid{grid-template-columns:1fr}.moneySectionLabel{display:grid;align-items:start}.moneySectionLabel span{max-width:none;text-align:left}}
+
+.moneyHeroCustomer{background:linear-gradient(135deg,#17233c,#1d4ed8)}
+.moneyMetricsPrimary .moneyMetric{min-height:94px}
+.moneySimpleBanking .moneySettingsButton{margin-top:12px}
+.moneyAdvanced{margin-top:12px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;overflow:hidden}
+.moneyAdvanced>summary{cursor:pointer;list-style:none;padding:15px 17px;font-weight:900;color:#334155}.moneyAdvanced>summary::-webkit-details-marker{display:none}.moneyAdvanced>summary:after{content:"Optional";float:right;font-size:10px;color:#64748b;background:#f1f5f9;border-radius:999px;padding:4px 7px}.moneyAdvancedBody{padding:0 12px 12px}.moneyAdvancedBody .moneyCard{margin-top:0;border:0;background:#f8fafc}

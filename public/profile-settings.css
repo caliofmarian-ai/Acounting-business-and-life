@@ -33,3 +33,12 @@
 .accountMoneyCard{border-color:#bae6fd;background:linear-gradient(180deg,#ffffff,#f8fcff)}
 .accountMoneyHeading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:14px}.accountMoneyHeading small{font-size:10px;letter-spacing:.1em;color:#0369a1;font-weight:900}.accountMoneyHeading h2{font-size:22px;margin:3px 0 5px}.settingsMoneyBadge{white-space:nowrap;border-radius:999px;background:#e0f2fe;color:#075985;padding:7px 10px;font-size:11px;font-weight:900}.sectionTitle{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:18px 0 8px}.sectionTitle h3{margin:0}
 @media(max-width:620px){.accountMoneyHeading{display:grid}.settingsMoneyBadge{justify-self:start}}
+
+.settingsHeroSimple h2{max-width:560px}
+.settingsSimpleCard{display:grid;gap:12px}
+.settingsSimpleHead{display:flex;gap:12px;align-items:flex-start}.settingsSimpleIcon{font-size:26px;line-height:1}
+.settingsSimpleHead h2{margin:0}.settingsSimpleHead p{margin:3px 0 0}
+.settingsSimpleRows{display:grid;gap:8px}.settingsSimpleRows>div{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:11px 12px;border-radius:13px;background:#f8fafc;border:1px solid #edf2f7}.settingsSimpleRows span{font-size:12px;color:#64748b;font-weight:800}.settingsSimpleRows strong{font-size:12px;color:#17233c;text-align:right;max-width:62%}
+.settingsAdvanced{border:1px solid #e2e8f0;border-radius:15px;background:#fbfdff;overflow:hidden}.settingsAdvanced>summary{cursor:pointer;list-style:none;padding:13px 14px;font-weight:900;color:#334155}.settingsAdvanced>summary::-webkit-details-marker{display:none}.settingsAdvanced>summary:after{content:"›";float:right;transform:rotate(90deg);color:#64748b}.settingsAdvanced[open]>summary:after{transform:rotate(-90deg)}.settingsAdvancedBody{padding:0 14px 14px;display:grid;gap:14px}.settingsAdvanced.settingsCard{padding:0}.settingsAdvanced.settingsCard>summary{padding:16px 18px}
+.settingsContextCard{box-shadow:none;background:#fbfdff}
+@media(max-width:620px){.settingsSimpleRows>div{display:grid;gap:4px}.settingsSimpleRows strong{text-align:left;max-width:none}.settingsSimpleHead{gap:9px}}
