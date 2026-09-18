@@ -22,6 +22,7 @@ import {
   createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
   listProfileBudgetEnvelopes,createProfileBudgetEnvelope,postProfileBudgetEntry,transferProfileBudgetAllocation,
   listProfileMoneyMovements,createProfileMoneyMovementRequest,
+  listProfileMoneyEntries,createProfileMoneyEntry,reverseProfileMoneyEntry,profileMoneyEntryCapabilities,
   isBusinessFinanceRole,PROFILE_FINANCE_ROLES,FINANCIAL_ACCOUNT_KINDS,MONEY_METHODS,PAYOUT_SCHEDULES,
   BUDGET_PURPOSES,MONEY_MOVEMENT_TYPES
 } from './profile-finance-core.js';
@@ -114,16 +115,47 @@ app.get('/api/profile-money/:role',async(req,res,next)=>{try{
   const me=await identity(req),role=clean(req.params.role,40);
   if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile uses business accounting or does not have a personal Money workspace'});
   if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before opening its Money workspace'});
-  const [snapshot,accounts,preferences,budgets]=await Promise.all([
+  const [snapshot,accounts,preferences,budgets,profileLedger]=await Promise.all([
     profileMoneySnapshot(pool,role,me.account.id),
     listProfileFinancialAccounts(pool,me.account.id),
     listMoneyPreferences(pool,me.account.id),
-    listProfileBudgetEnvelopes(pool,me.account.id)
+    listProfileBudgetEnvelopes(pool,me.account.id),
+    listProfileMoneyEntries(pool,{accountId:me.account.id,profileRole:role})
   ]);
   const profileAccounts=accounts.filter(a=>a.profile_role===role&&a.owner_scope==='account');
   const preference=preferences.find(p=>p.profile_role===role&&p.business_id==null)||null;
   const profileBudgets=budgets.filter(b=>b.profile_role===role&&b.business_id==null);
-  res.json({...snapshot,financial_accounts:profileAccounts,money_preference:preference,budgets:profileBudgets});
+  res.json({...snapshot,financial_accounts:profileAccounts,money_preference:preference,budgets:profileBudgets,profile_ledger:profileLedger});
+}catch(e){next(e)}});
+
+app.post('/api/profile-money/:role/entries',body,async(req,res,next)=>{try{
+  rejectSensitiveFinancialFields(req.body);
+  const me=await identity(req),role=clean(req.params.role,40);
+  if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use the personal/profile Money ledger'});
+  if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before recording Money entries'});
+  profileMoneyEntryCapabilities(role);
+  const key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const row=await createProfileMoneyEntry(pool,{
+    publicId:'pme_'+crypto.randomUUID().replaceAll('-',''),entryKey:key,accountId:me.account.id,profileRole:role,
+    entryType:req.body?.entry_type,direction:req.body?.direction,category:req.body?.category,
+    amount:req.body?.amount,currencyCode:req.body?.currency_code||'PHP',
+    financialAccountId:req.body?.financial_account_id||null,sourceType:req.body?.source_type||'manual',
+    sourceId:req.body?.source_id||null,note:req.body?.note||'',evidenceReference:req.body?.evidence_reference||'',
+    occurredAt:req.body?.occurred_at||null,actorAccountId:me.account.id
+  });
+  res.status(201).json({...row,provider_balance_effect:false});
+}catch(e){next(e)}});
+
+app.post('/api/profile-money/:role/entries/:id/reverse',body,async(req,res,next)=>{try{
+  const me=await identity(req),role=clean(req.params.role,40);
+  if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use the personal/profile Money ledger'});
+  if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before correcting Money entries'});
+  const key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const row=await reverseProfileMoneyEntry(pool,{
+    publicId:'pme_rev_'+crypto.randomUUID().replaceAll('-',''),reversalKey:key,accountId:me.account.id,
+    profileRole:role,entryId:Number(req.params.id),note:req.body?.note||'',actorAccountId:me.account.id
+  });
+  res.json({...row,provider_balance_effect:false});
 }catch(e){next(e)}});
 
 app.get('/api/settings/finance',async(req,res,next)=>{try{
