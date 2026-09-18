@@ -74,7 +74,7 @@ Decision required:
 - whether data can be aggregated/anonymized earlier;
 - how erasure/closure requests interact with legitimate legal/business exceptions.
 
-Current runtime does not persist this attribution end-to-end.
+Current production does not persist this attribution end-to-end. A fail-closed binding adapter is now prepared, but it requires explicit converted-retention approval, lawful-basis approval, an approved retention-days value, a policy version and the dedicated HMAC secret before it performs any database work. No converted retention value is defaulted by the implementation.
 
 ### C. Reward evidence
 
@@ -139,6 +139,8 @@ External PostHog delivery requires all of:
 Production currently has none of those activation variables configured. Current PostHog revalidation exposes only `DROPi / Default project` (project id `273401`, no ingested events), which is not accepted as verified Business & Life destination evidence.
 
 Prepared pre-conversion persistence now has a separate fail-closed gate. It remains inactive unless `REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED=true`, retention is approved, lawful basis is approved and a dedicated HMAC secret is configured. If later activated, its pending rows expire after the approved 90-day window and cannot store a referred account id.
+
+Prepared converted binding has its own independent fail-closed gate and still has **no approved retention value**. Registration may carry referral context, but the binder performs zero database work until converted retention and lawful-basis decisions are explicitly configured.
 
 Therefore:
 - browser instrumentation can call Business & Life same-origin validation endpoints;

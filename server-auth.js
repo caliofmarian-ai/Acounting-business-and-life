@@ -12,6 +12,7 @@ import { buildLocalReferralQr } from './growth/referral-qr.js';
 import { isValidReferralCode } from './growth/referral-domain.js';
 import { deliverReferralAnalyticsEvent, sanitizeReferralAnalyticsEvent } from './growth/referral-analytics.js';
 import { persistUnconvertedReferralEvent } from './growth/referral-unconverted-attribution.js';
+import { bindReferralSignupConversion } from './growth/referral-conversion-binding.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -362,6 +363,32 @@ app.post('/api/auth/register', jsonBody, async (req, res, next) => {
     await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2)`, [accountId, address]);
     await client.query('COMMIT');
     clearThrottle(req, email);
+
+    const referralConversion = req.body?.referral_conversion;
+    if (referralConversion && typeof referralConversion === 'object' && !Array.isArray(referralConversion)) {
+      try {
+        const binding = await bindReferralSignupConversion(pool, {
+          referredAccountId: accountId,
+          context: referralConversion
+        });
+        if (binding.bound && !binding.idempotent) {
+          await deliverReferralAnalyticsEvent({
+            event: 'referral_signup_completed',
+            properties: {
+              campaign: binding.campaign,
+              source: binding.source || 'profile',
+              source_profile_role: binding.sourceProfileRole,
+              correlation_id: String(referralConversion.correlation_id || '')
+            }
+          }).catch(error => {
+            console.warn('Referral signup-completed analytics suppressed:', error.message);
+          });
+        }
+      } catch (error) {
+        console.warn('Referral signup conversion binding suppressed:', error.message);
+      }
+    }
+
     const session = await createSession(accountId);
     res.status(201).json({ token: session.token, expires_in_hours: 24, profile: await profileSnapshot(accountId) });
   } catch (err) { await client.query('ROLLBACK').catch(() => {}); next(err); } finally { client.release(); }

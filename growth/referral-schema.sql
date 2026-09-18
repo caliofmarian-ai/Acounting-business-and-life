@@ -66,6 +66,19 @@ CREATE INDEX IF NOT EXISTS referral_attributions_referrer_idx
 CREATE INDEX IF NOT EXISTS referral_attributions_campaign_idx
   ON referral_attributions(campaign, source, medium, created_at DESC);
 
+ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS correlation_hash TEXT;
+ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_policy_version TEXT;
+ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_days INTEGER;
+ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+CREATE UNIQUE INDEX IF NOT EXISTS referral_attributions_correlation_hash_unique
+  ON referral_attributions(correlation_hash)
+  WHERE correlation_hash IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS referral_attributions_expiry_idx
+  ON referral_attributions(expires_at)
+  WHERE expires_at IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS referral_events (
   id BIGSERIAL PRIMARY KEY,
   attribution_id BIGINT REFERENCES referral_attributions(id) ON DELETE CASCADE,
