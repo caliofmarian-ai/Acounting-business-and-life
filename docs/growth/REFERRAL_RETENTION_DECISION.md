@@ -52,9 +52,9 @@ Examples:
 
 These events are acquisition analytics, not accounting records. The retention period should therefore be the shortest period that supports the declared acquisition-analysis purpose.
 
-Owner decision corrected on 2026-09-18:
+Owner decision confirmed on 2026-09-18:
 - `unconvertedReferralEventDays = 90`.
-- This supersedes the temporary 60-day value recorded earlier the same day and restores the project-wide 90-day standard.
+- This is the canonical project-wide retention standard for unconverted referral events.
 
 No current Philippine source found in this research imposes a fixed number of days for this ordinary referral-analytics class.
 
@@ -148,7 +148,7 @@ Therefore:
 
 Recorded Owner decision:
 
-- Unconverted referral-event retention: **90 days**. This supersedes the temporary 60-day setting recorded earlier on 2026-09-18.
+- Unconverted referral-event retention: **90 days**.
 
 Still requiring explicit approval/resolution before Growth enables production referral analytics or durable attribution:
 
