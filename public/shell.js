@@ -6,7 +6,9 @@ const ROLE_META = {
   service_provider: { label: 'Local Services', icon: '🛠️', desc: 'Skills, quotes and service jobs', hero: 'Turn your skills into trusted local work.' }
 };
 const ROLE_ORDER = ['merchant', 'customer', 'supplier', 'courier', 'service_provider'];
+const ADMIN_RANK_LABELS = { super_admin:'Super Admin', country_admin:'Country Admin', territory_admin:'Territory Admin', specialist:'Specialist' };
 let snapshot = null;
+let adminContext = null;
 let activeRole = 'merchant';
 let toastTimer;
 
@@ -43,6 +45,32 @@ function avatarMarkup(account, extraClass = '') {
 }
 function roleProfile(role) { return snapshot?.profiles?.find(p => p.role === role); }
 function isEnabled(role) { return Boolean(roleProfile(role)?.enabled); }
+function adminRank(assignment){ return assignment?.effective_rank || assignment?.authority_rank || assignment?.admin_role || 'admin'; }
+function highestAdminAssignment(){
+  const levels={super_admin:100,country_admin:80,territory_admin:60,specialist:40};
+  return [...(adminContext?.assignments||[])].sort((a,b)=>(levels[adminRank(b)]||0)-(levels[adminRank(a)]||0))[0]||null;
+}
+function adminProfileRow(){
+  if(!adminContext?.is_admin)return '';
+  const assignment=highestAdminAssignment();
+  const rank=adminRank(assignment);
+  const label=ADMIN_RANK_LABELS[rank]||'Admin';
+  const scope=assignment?.territory_name||assignment?.country_code||'Platform';
+  const desc=rank==='super_admin'?'Platform control • all administrative functions':scope+' • delegated administration';
+  return `<div id="adminProfileRole" class="profileRole adminProfileRole">
+    <span class="roleIcon">🛡️</span>
+    <span class="roleCopy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(desc)}</small></span>
+    <button class="roleAction" type="button" data-admin-profile>Switch</button>
+  </div>`;
+}
+async function refreshAdminContext(){
+  if(!token()){adminContext=null;return null}
+  try{
+    const data=await profileApi('/api/admin/me');
+    adminContext=data?.is_admin?data:null;
+  }catch(_error){adminContext=null}
+  return adminContext;
+}
 
 function showToast(message) {
   const toast = document.getElementById('roleToast');
@@ -100,6 +128,7 @@ function renderDrawer() {
   const account = snapshot.account;
   const panel = document.getElementById('profileDrawerPanel');
   if (!panel) return;
+  const adminRow = adminProfileRow();
   const profileRows = ROLE_ORDER.map(role => {
     const meta = ROLE_META[role];
     const profile = roleProfile(role);
@@ -115,7 +144,7 @@ function renderDrawer() {
   panel.innerHTML = `
     <div class="drawerHandle"></div>
     <div class="drawerHeader">${avatarMarkup(account)}<div class="drawerIdentity"><h2>${escapeHtml(account.display_name || 'Business owner')}</h2><p>${escapeHtml(account.email || account.phone || 'One account • multiple profiles')}</p></div><button id="drawerClose" class="drawerClose" type="button" aria-label="Close">×</button></div>
-    <section class="drawerSection"><h3>Switch profile</h3><div class="profileRoleList">${profileRows}</div></section>
+    <section class="drawerSection"><h3>Switch profile</h3><div class="profileRoleList">${adminRow}${profileRows}</div></section>
     <section class="drawerSection growthDrawerSection">
       <div class="growthDrawerCopy"><span class="growthDrawerEyebrow">INVITE &amp; EARN</span><h3>Promotion Center</h3><p>Share your account-level referral link from the active ${escapeHtml(ROLE_META[activeRole]?.label || activeRole)} profile.</p></div>
       <button id="promotionCenterButton" class="growthDrawerButton" type="button">Open Promotion Center</button>
@@ -133,6 +162,7 @@ function renderDrawer() {
     </section>`;
   panel.querySelector('#drawerClose').onclick = closeDrawer;
   panel.querySelector('#promotionCenterButton').onclick = () => { window.location.href = `/referral/promotion-center.html?profile=${encodeURIComponent(activeRole)}`; };
+  panel.querySelector('[data-admin-profile]')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
   panel.querySelectorAll('[data-role-action]').forEach(btn => btn.onclick = () => enableOrSwitch(btn.dataset.roleAction));
   panel.querySelector('#accountIdentityForm').onsubmit = saveIdentity;
   panel.querySelector('#avatarFile').onchange = uploadAvatar;
@@ -146,7 +176,7 @@ async function openDrawer() {
   document.getElementById('profileDrawerBackdrop')?.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   try {
-    await refreshProfile();
+    await Promise.all([refreshProfile(),refreshAdminContext()]);
     renderDrawer();
   } catch (error) {
     showToast(error.message);
@@ -287,7 +317,10 @@ function boot() {
   if (!ensureShellChrome()) return setTimeout(boot, 80);
   const shell = document.getElementById('shell');
   if (shell) new MutationObserver(onShellVisibility).observe(shell, { attributes: true, attributeFilter: ['class'] });
-  if (token()) refreshProfile().catch(() => {});
+  if (token()) {
+    refreshProfile().catch(() => {});
+    refreshAdminContext().then(()=>{if(!document.getElementById('profileDrawerBackdrop')?.classList.contains('hidden'))renderDrawer()}).catch(()=>{});
+  }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
 }
 boot();
