@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLiveReferralPayload, ensureAccountReferral, ensureReferralAccountSchema, normalizeReferralProfileRole } from './growth/referral-account.js';
+import { buildLocalReferralQr } from './growth/referral-qr.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -347,12 +348,14 @@ app.get('/api/growth/referral', auth, async (req, res, next) => {
     if (!enabled.rowCount) return res.status(403).json({ error: 'This profile is not enabled' });
 
     const identity = await ensureAccountReferral(pool, req.accountId);
-    res.json(buildLiveReferralPayload({
+    const payload = buildLiveReferralPayload({
       code: identity.referral_code,
       origin: referralRequestOrigin(req),
       profileRole: role,
       inviterDisplayName: account.rows[0].display_name || ''
-    }));
+    });
+    const qr = await buildLocalReferralQr(payload.referralUrl);
+    res.json({ ...payload, campaign: new URL(payload.referralUrl).searchParams.get('utm_campaign'), qr });
   } catch (err) {
     next(err);
   }

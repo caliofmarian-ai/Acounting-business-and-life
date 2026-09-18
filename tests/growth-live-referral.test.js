@@ -65,8 +65,12 @@ test('Promotion Center loads the authenticated account identity and never defaul
   assert.match(page, /direct referral sending stays disabled/i);
 });
 
-test('dynamic QR is explicitly not faked while package dependency ownership is external', () => {
+test('live referral endpoint adds a local QR for the exact campaign URL', () => {
+  const server = read('server-auth.js');
   const page = read('public/referral/promotion-center.html');
-  assert.match(page, /Local personalized QR generation is the next Promotion Center slice/);
+  assert.match(server, /buildLocalReferralQr\(payload\.referralUrl\)/);
+  assert.match(server, /qr \}/);
+  assert.match(page, /data\.qr\.payload!==data\.referralUrl/);
+  assert.match(page, /Changing the sharing profile regenerates this QR locally/i);
   assert.doesNotMatch(page, /api\.qrserver|quickchart|chart\.google/);
 });

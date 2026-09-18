@@ -71,13 +71,19 @@ now:
 - supports Native Share, Copy, WhatsApp, Telegram, SMS intent and email intent;
 - keeps direct server-sent referral email/SMS disabled until referral-specific controls are ready.
 
-## QR coordination gate
+## Personal QR — live local rendering
 
-Personal QR must be generated locally rather than through a third-party QR web service.
+Promotion Center now renders a real personalized QR from the exact authenticated referral URL.
 
-An active Payment V0.13 branch currently owns `package.json` and `tests/architecture.test.js`. Growth does not modify those shared files in this slice.
+Implementation rules:
+- encoding runs locally in the Business & Life server process via the `qrcode` package;
+- the referral URL is not sent to Google Charts, qrserver, QuickChart or another QR web service;
+- QR payload is the same canonical URL returned as `referralUrl`;
+- changing the source profile changes the canonical role campaign URL and therefore regenerates the QR;
+- the human-readable opaque referral code remains visible as fallback;
+- QR generation never grants profile or Admin authority.
 
-Therefore local dynamic QR encoding remains a follow-up inside Issue #94 after the Payment dependency surface stabilizes. The live page does not display a fake personal QR.
+The authenticated endpoint returns a `qr` object containing `format`, `encoder`, `payload` and a PNG `dataUrl`.
 
 ## Authorization boundary
 
