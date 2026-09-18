@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('../public/referral/promotion-center.html', import.meta.url), 'utf8');
 
+test('Promotion Center does not promise earnings while rewards are disabled', () => {
+  assert.match(html, /INVITE &amp; SHARE/);
+  assert.doesNotMatch(html, /INVITE &amp; EARN/);
+  assert.match(html, /id="progressRewards">Not enabled/);
+});
+
 test('Promotion Center exposes all five public profile sources', () => {
   for (const role of ['customer','merchant','supplier','courier','service_provider']) {
     assert.match(html, new RegExp('value="'+role+'"'));
