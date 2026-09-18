@@ -263,6 +263,29 @@ function showMerchantWorkspace() {
   else document.getElementById('viewDashboard')?.classList.remove('hidden');
 }
 
+function hideFeatureWorkspaces() {
+  for (const id of ['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace']) {
+    document.getElementById(id)?.classList.add('hidden');
+  }
+  for (const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg']) {
+    document.getElementById(id)?.classList.add('hidden');
+  }
+  document.body.classList.remove('supplierAccountingMode');
+  document.getElementById('supplierAccountingBack')?.remove();
+  document.body.style.overflow='';
+}
+function showActiveWorkspace() {
+  hideFeatureWorkspaces();
+  closeDrawer();
+  applyActiveRole();
+  publishProfileState();
+  window.scrollTo({top:0,behavior:'auto'});
+}
+window.BusinessLifeShell=Object.freeze({
+  showActiveWorkspace,
+  getProfileState:()=>window.BusinessLifeProfileState||null
+});
+
 const HUBS = {
   customer: [
     ['🍲','Food','Local food merchants, menus and ordering','Marketplace'],

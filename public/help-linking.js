@@ -64,15 +64,25 @@
     return raw;
   }
 
+  function visible(id){
+    const node=document.getElementById(id);
+    return Boolean(node&&!node.classList.contains('hidden'));
+  }
+  function activeRole(){return window.BusinessLifeProfileState?.activeRole||''}
+  function accountingPath(path){
+    return ['/api/summary','/api/transactions','/api/inventory','/api/remittances','/api/day-status','/api/open-day','/api/close-day','/api/budget','/api/analysis','/api/products','/api/product-profitability','/api/product-sales','/api/accounting/'].some(prefix=>path===prefix||path.startsWith(prefix));
+  }
   function shouldSurface(path){
-    if(path.startsWith('/api/payments/')){
-      const panel=document.getElementById('paymentBackdrop');
-      return Boolean(panel&&!panel.classList.contains('hidden'));
-    }
-    if(path.startsWith('/api/admin/')){
-      const panel=document.getElementById('supportOpsBackdrop');
-      return Boolean(panel&&!panel.classList.contains('hidden'));
-    }
+    if(accountingPath(path))return activeRole()==='merchant'||document.body.classList.contains('supplierAccountingMode');
+    if(path.startsWith('/api/services/')||path.startsWith('/api/service-provider/'))return visible('servicesWorkspace')||visible('serviceModalBackdrop')||visible('govModalBg');
+    if(path.startsWith('/api/delivery/')||path.startsWith('/api/courier/'))return visible('deliveryWorkspace')||visible('deliveryModalBg')||visible('checkoutBackdrop');
+    if(path.startsWith('/api/orders/'))return visible('ordersWorkspace')||visible('orderModalBackdrop');
+    if(path.startsWith('/api/marketplace/'))return visible('marketWorkspace')||visible('checkoutBackdrop');
+    if(path.startsWith('/api/procurement/')||path.startsWith('/api/supplier/'))return visible('supWorkspace')||visible('supModalBg');
+    if(path.startsWith('/api/governance/'))return visible('profileDrawerBackdrop')||visible('govModalBg');
+    if(path.startsWith('/api/incidents'))return visible('incidentBackdrop')||visible('incidentModalBg');
+    if(path.startsWith('/api/payments/'))return visible('paymentBackdrop');
+    if(path.startsWith('/api/admin/'))return location.pathname.startsWith('/admin')||visible('supportOpsBackdrop');
     return true;
   }
 

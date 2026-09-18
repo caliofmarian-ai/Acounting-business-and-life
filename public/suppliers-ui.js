@@ -9,7 +9,8 @@ async function loadSupMe(){if(!ptok())return null;try{supMe=await papi('/api/me'
 function ensureSup(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('supWorkspace')){supWorkspace=document.createElement('section');supWorkspace.id='supWorkspace';supWorkspace.className='supWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',supWorkspace)}else supWorkspace=document.getElementById('supWorkspace');if(!document.getElementById('supModalBg')){const b=document.createElement('div');b.id='supModalBg';b.className='supModalBg hidden';b.innerHTML='<section id="supModal" class="supModal"></section>';document.body.appendChild(b);b.onclick=e=>{if(e.target===b)closeSupModal()}}return true}
 function hideSupBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));for(const id of ['roleHub','ordersWorkspace','marketWorkspace','servicesWorkspace'])document.getElementById(id)?.classList.add('hidden');document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('basketBar')?.classList.add('hidden')}
 function supHeader(title,sub){return `<div class="supHeader"><button class="supBack" type="button">‹</button><div><h1>${ph(title)}</h1><p>${ph(sub)}</p></div></div>`}
-function bindSupBack(fn=()=>location.reload()){supWorkspace.querySelector('.supBack').onclick=fn}
+function closeSupWorkspace(){supWorkspace?.classList.add('hidden');document.getElementById('supModalBg')?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function bindSupBack(fn=closeSupWorkspace){supWorkspace.querySelector('.supBack').onclick=fn}
 function closeSupModal(){document.getElementById('supModalBg')?.classList.add('hidden')}
 function openSupModal(html){document.getElementById('supModal').innerHTML=html;document.getElementById('supModalBg').classList.remove('hidden')}
 
