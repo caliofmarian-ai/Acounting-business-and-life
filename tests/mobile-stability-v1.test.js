@@ -7,6 +7,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const shell=read('public/shell.js');
 const governance=read('public/profile-governance-ui.js');
 const admin=read('public/admin-operations-ui.js');
+const adminConsole=read('public/admin-console.js');
 const incidents=read('public/incidents-ui.js');
 const legal=read('public/legal-ui.js');
 const payments=read('public/payments-ui.js');
@@ -68,7 +69,9 @@ test('Railway previews cannot expose installable PWA assets by default',()=>{
   assert.match(paymongo,/app\.get\('\/sw\.js'/);
 });
 
-test('incident Admin shortcut is consolidated into canonical Admin operations',()=>{
+test('incident Admin shortcut is consolidated into the dedicated Admin workspace',()=>{
   assert.doesNotMatch(incidents,/incidentAdminButton/);
-  assert.match(admin,/data-admin-tab="incidents"/);
+  assert.match(admin,/window\.location\.assign\('\/admin'\)/);
+  assert.match(adminConsole,/Trust & Safety/);
+  assert.match(adminConsole,/incident\.triage/);
 });
