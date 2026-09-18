@@ -79,7 +79,7 @@ Required properties:
 - QR remains visually isolated from decorative patterns;
 - human-readable referral code remains visible as fallback.
 
-All current masters use a clearly named `QR_SLOT`. A production QR renderer will replace this slot after runtime integration is rebased from the stable production gateway.
+All current masters use a clearly named `QR_SLOT`. The live production QR renderer now exists and enforces the canonical four-module quiet zone. Runtime Marketing Kit export still needs to place that generated QR asset into each template's `QR_SLOT`; this document does not mark template export complete yet.
 
 ## Channel coverage
 
@@ -123,10 +123,12 @@ Canva autofill was checked against the connected Brand Kit and returned **0 temp
 The planned V1 visual master family is complete in Figma and mirrored as editable Canva designs.
 
 Remaining work under this issue is implementation-oriented rather than missing master artwork:
-1. replace `QR_SLOT` with production-generated QR assets;
+1. place production-generated QR assets into `QR_SLOT` during runtime Marketing Kit export;
 2. validate print QR scannability at physical output size;
 3. connect runtime Marketing Kit generation to the canonical field contract;
 4. add locale variants when localization is ready.
+
+The live QR renderer itself is no longer a missing dependency: it now produces locally generated PNG QR assets with the four-module quiet zone required by this contract.
 
 ## Coordination
 
