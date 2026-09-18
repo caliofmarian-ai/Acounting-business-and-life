@@ -17,6 +17,7 @@ export const ADMIN_PERMISSIONS = Object.freeze([
   'incident.triage',
   'support.manage',
   'finance.summary.view',
+  'finance.cost.manage',
   'accounting.export.view',
   'audit.view',
   'metrics.view',
