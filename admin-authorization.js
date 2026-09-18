@@ -57,6 +57,9 @@ export async function ensureAdminSchema(pool){
       CHECK(admin_role IN ('super_admin','country_admin','territory_admin')),
       CHECK(status IN ('active','suspended','revoked','expired'))
     );
+    ALTER TABLE platform_admin_assignments ADD COLUMN IF NOT EXISTS authority_rank TEXT NOT NULL DEFAULT '';
+    UPDATE platform_admin_assignments SET authority_rank=admin_role WHERE authority_rank='';
+
     CREATE UNIQUE INDEX IF NOT EXISTS platform_admin_assignment_scope_unique
       ON platform_admin_assignments(account_id,admin_role,country_code,COALESCE(territory_id,0));
 
@@ -73,6 +76,21 @@ export async function ensureAdminSchema(pool){
       PRIMARY KEY(assignment_id,permission_code),
       CHECK(status IN ('active','revoked','expired'))
     );
+
+    CREATE TABLE IF NOT EXISTS admin_function_assignments (
+      assignment_id BIGINT NOT NULL REFERENCES platform_admin_assignments(id) ON DELETE CASCADE,
+      function_code TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      granted_by_account_id BIGINT REFERENCES accounts(id),
+      effective_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      effective_until TIMESTAMPTZ,
+      reason TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(assignment_id,function_code),
+      CHECK(status IN ('active','revoked','expired'))
+    );
+    CREATE INDEX IF NOT EXISTS admin_function_assignments_code_idx ON admin_function_assignments(function_code,status,assignment_id);
 
     CREATE TABLE IF NOT EXISTS admin_audit_events (
       id BIGSERIAL PRIMARY KEY,
@@ -93,8 +111,8 @@ export async function ensureAdminSchema(pool){
     CREATE INDEX IF NOT EXISTS admin_audit_events_scope_idx ON admin_audit_events(country_code,territory_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS admin_audit_events_actor_idx ON admin_audit_events(actor_account_id,created_at DESC);
 
-    INSERT INTO platform_admin_assignments(account_id,admin_role,country_code,territory_id,status,assigned_by_account_id,reason)
-    VALUES(1,'super_admin','PH',NULL,'active',1,'Bootstrap Platform Owner / Super Admin')
+    INSERT INTO platform_admin_assignments(account_id,admin_role,authority_rank,country_code,territory_id,status,assigned_by_account_id,reason)
+    VALUES(1,'super_admin','super_admin','PH',NULL,'active',1,'Bootstrap Platform Owner / Super Admin')
     ON CONFLICT(account_id,admin_role,country_code,COALESCE(territory_id,0))
     DO UPDATE SET status='active',effective_until=NULL,updated_at=NOW();
   `);
@@ -131,21 +149,29 @@ export function verifyAdminAssertion(secret,token,accountId){
 
 export async function getAdminAssignments(pool,accountId){
   const {rows}=await pool.query(`
-    SELECT a.*,t.name territory_name,t.parent_id territory_parent_id,
+    SELECT a.*,COALESCE(NULLIF(a.authority_rank,''),a.admin_role) effective_rank,
+      t.name territory_name,t.parent_id territory_parent_id,
       COALESCE((
         SELECT jsonb_agg(g.permission_code ORDER BY g.permission_code)
         FROM admin_permission_grants g
         WHERE g.assignment_id=a.id AND g.status='active'
           AND g.effective_from<=NOW()
           AND (g.effective_until IS NULL OR g.effective_until>NOW())
-      ),'[]'::jsonb) permissions
+      ),'[]'::jsonb) permissions,
+      COALESCE((
+        SELECT jsonb_agg(f.function_code ORDER BY f.function_code)
+        FROM admin_function_assignments f
+        WHERE f.assignment_id=a.id AND f.status='active'
+          AND f.effective_from<=NOW()
+          AND (f.effective_until IS NULL OR f.effective_until>NOW())
+      ),'[]'::jsonb) functions
     FROM platform_admin_assignments a
     LEFT JOIN territories t ON t.id=a.territory_id
     WHERE a.account_id=$1
       AND a.status='active'
       AND a.effective_from<=NOW()
       AND (a.effective_until IS NULL OR a.effective_until>NOW())
-    ORDER BY CASE a.admin_role WHEN 'super_admin' THEN 0 WHEN 'country_admin' THEN 1 ELSE 2 END,a.id
+    ORDER BY CASE COALESCE(NULLIF(a.authority_rank,''),a.admin_role) WHEN 'super_admin' THEN 0 WHEN 'country_admin' THEN 1 WHEN 'territory_admin' THEN 2 ELSE 3 END,a.id
   `,[accountId]);
   return rows;
 }

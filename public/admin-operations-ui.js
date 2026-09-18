@@ -129,14 +129,10 @@ async function openTicket(id){try{const t=await api('/api/support/tickets/'+id);
 async function downloadAttachment(ticketId,id){try{const a=await api(`/api/support/tickets/${ticketId}/attachments/${id}`);const link=document.createElement('a');link.href=a.data_url;link.download=a.file_name||'attachment';link.click()}catch(e){toast(e.message)}}
 
 async function openAdmin(){
-  if(!token())return;openOps('Admin Operations','<div class="opsLoading">Loading Admin dashboard…</div>');
-  try{adminAccess=await api('/api/admin/me');adminState=await api('/api/admin/overview');const auditAllowed=adminAccess.permissions.includes('audit.view'),adminManage=adminAccess.permissions.includes('admin.assign_limited')||adminAccess.permissions.includes('admin.delegate')||adminAccess.assignments?.some(a=>a.admin_role==='super_admin');document.getElementById('opsBody').innerHTML=`
-    <div class="adminHero"><small>Scoped administration</small><h3>Philippines operations</h3><p>Only data inside your current country/territory permissions is shown.</p></div>
-    <div class="adminMetrics"><div><strong>${adminState.summary.orders}</strong><span>Orders</span></div><div><strong>${adminState.summary.deliveries}</strong><span>Deliveries</span></div><div><strong>${adminState.summary.support.open}</strong><span>Support open</span></div><div><strong>${adminState.summary.incidents.open}</strong><span>Incidents open</span></div></div>
-    <div class="opsTabs"><button class="active" data-admin-tab="applications">Applications</button><button data-admin-tab="support">Support</button><button data-admin-tab="incidents">Incidents</button>${adminManage?'<button data-admin-tab="admins">Admins</button>':''}${auditAllowed?'<button data-admin-tab="audit">Audit</button>':''}</div>
-    <div id="adminPanel"></div>`;document.querySelectorAll('[data-admin-tab]').forEach(b=>b.onclick=()=>renderAdminTab(b.dataset.adminTab,b));renderAdminTab('applications',document.querySelector('[data-admin-tab="applications"]'));
-  }catch(e){document.getElementById('opsBody').innerHTML=`<div class="opsEmpty">${esc(e.message)}</div>`}
+  if(!token())return;
+  window.location.assign('/admin');
 }
+
 async function renderAdminTab(tab,btn){document.querySelectorAll('[data-admin-tab]').forEach(x=>x.classList.toggle('active',x===btn));const p=document.getElementById('adminPanel');if(tab==='applications'){p.innerHTML=(adminState.applications||[]).slice(0,80).map(a=>`<div class="adminRow"><span><strong>${esc(a.display_name)} • ${esc(a.role)}</strong><small>${esc(a.territory_name)} • ${esc(a.status)}</small></span><b>#${a.id}</b></div>`).join('')||'<div class="opsEmpty">No applications.</div>';return}
   if(tab==='support'){const rows=await api('/api/admin/support');p.innerHTML=rows.map(t=>`<div class="adminRow"><span><strong>#${t.id} • ${esc(t.subject)}</strong><small>${esc(t.requested_destination)} • ${esc(t.priority)} • ${esc(t.status)} • ${t.attachment_count||0} files</small></span></div>`).join('')||'<div class="opsEmpty">Support queue is empty.</div>';return}
   if(tab==='incidents'){const rows=await api('/api/admin/incidents');p.innerHTML=rows.map(t=>`<div class="adminRow"><span><strong>#${t.id} • ${esc(t.category)}</strong><small>${esc(t.status)} • ${esc(t.reporter_name)}</small></span></div>`).join('')||'<div class="opsEmpty">Incident queue is empty.</div>';return}
