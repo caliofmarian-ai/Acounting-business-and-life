@@ -1,0 +1,349 @@
+import crypto from 'node:crypto';
+
+const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
+const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
+const finiteMoney=v=>{
+  const n=Number(v);
+  if(!Number.isFinite(n)||n<=0)throw Object.assign(new Error('A positive cost amount is required'),{status:400});
+  return money(n);
+};
+const safeDate=(v,name)=>{
+  const d=v?new Date(v):null;
+  if(!d||Number.isNaN(d.getTime()))throw Object.assign(new Error(name+' must be a valid date/time'),{status:400});
+  return d.toISOString();
+};
+
+export const FINANCE_EVIDENCE_CLASSES=Object.freeze(['actual','accrued','estimated','budget']);
+export const FINANCE_COST_NATURES=Object.freeze(['variable','fixed','semi_fixed']);
+export const FINANCE_SERVICE_SCOPES=Object.freeze(['marketplace','delivery','supplier','local_services','accounting_pro','enterprise','shared']);
+export const FINANCE_COST_CATEGORIES=Object.freeze([
+  'infrastructure','database','storage','bandwidth','monitoring_security','support','maps_api','ai_api',
+  'notification','marketing','referral_reward','promo_subsidy','delivery_subsidy','refund_loss',
+  'chargeback_dispute','fraud_bad_debt','operator_share','legal_compliance','accounting','payroll_contractor',
+  'insurance_licence','payment_provider_other','other'
+]);
+export const FINANCE_ALLOCATION_METHODS=Object.freeze(['direct','measured','driver','shared']);
+
+function requireEnum(value,allowed,label){
+  const v=clean(value,80);
+  if(!allowed.includes(v))throw Object.assign(new Error(label+' is invalid'),{status:400});
+  return v;
+}
+function sanitizeMetadata(value){
+  const blocked=/secret|password|token|authorization|card|pan|cvv|cvc|private_key|api_key/i;
+  const source=value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+  const out={};
+  for(const [k,v] of Object.entries(source).slice(0,40)){
+    const key=clean(k,80);
+    if(!key)continue;
+    if(blocked.test(key)){out[key]='[redacted]';continue}
+    if(typeof v==='number'||typeof v==='boolean'||v==null)out[key]=v;
+    else out[key]=clean(v,500);
+  }
+  return out;
+}
+function serviceFromSource(sourceType){
+  if(sourceType==='order')return'marketplace';
+  if(sourceType==='purchase_order')return'supplier';
+  if(sourceType==='service_job')return'local_services';
+  if(sourceType==='external')return'enterprise';
+  return'shared';
+}
+function ratio(a,b){
+  const x=Number(a||0),y=Number(b||0);
+  return y>0?Math.round((x/y)*10000)/100:null;
+}
+function perUnit(a,b){
+  const x=Number(a||0),y=Number(b||0);
+  return y>0?money(x/y):null;
+}
+function period(input={}){
+  const now=new Date();
+  const startDefault=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),1));
+  const from=input.from?safeDate(input.from,'from'):startDefault.toISOString();
+  const to=input.to?safeDate(input.to,'to'):now.toISOString();
+  if(new Date(to)<=new Date(from))throw Object.assign(new Error('to must be after from'),{status:400});
+  return{from,to};
+}
+function evidenceClasses(input){
+  if(Array.isArray(input)&&input.length){
+    const values=[...new Set(input.map(x=>clean(x,30)).filter(x=>FINANCE_EVIDENCE_CLASSES.includes(x)))];
+    if(values.length)return values;
+  }
+  return['actual','accrued'];
+}
+
+export async function ensureFinanceSchema(pool){
+  const statements=[
+    "CREATE TABLE IF NOT EXISTS cost_allocation_policy_versions(id BIGSERIAL PRIMARY KEY,policy_code TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',country_code TEXT NOT NULL DEFAULT 'PH',description TEXT NOT NULL DEFAULT '',methodology_json JSONB NOT NULL DEFAULT '{}'::jsonb,effective_from TIMESTAMPTZ,effective_until TIMESTAMPTZ,created_by_account_id BIGINT REFERENCES accounts(id),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(policy_code,version),CHECK(status IN ('draft','approved','active','superseded','withdrawn')))",
+    "CREATE TABLE IF NOT EXISTS platform_cost_entries(id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,source_key TEXT NOT NULL UNIQUE,cost_code TEXT NOT NULL,cost_category TEXT NOT NULL,cost_nature TEXT NOT NULL,evidence_class TEXT NOT NULL,service_scope TEXT NOT NULL DEFAULT 'shared',country_code TEXT NOT NULL DEFAULT 'PH',territory_id BIGINT REFERENCES territories(id),business_id BIGINT REFERENCES businesses(id),payment_intent_id BIGINT REFERENCES payment_intents(id),provider_code TEXT NOT NULL DEFAULT '',currency_code TEXT NOT NULL DEFAULT 'PHP',amount NUMERIC(14,2) NOT NULL CHECK(amount>0),incurred_at TIMESTAMPTZ NOT NULL,period_start TIMESTAMPTZ,period_end TIMESTAMPTZ,evidence_reference TEXT NOT NULL DEFAULT '',description TEXT NOT NULL DEFAULT '',metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,status TEXT NOT NULL DEFAULT 'active',created_by_account_id BIGINT REFERENCES accounts(id),voided_by_account_id BIGINT REFERENCES accounts(id),void_reason TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(cost_nature IN ('variable','fixed','semi_fixed')),CHECK(evidence_class IN ('actual','accrued','estimated','budget')),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services','accounting_pro','enterprise','shared')),CHECK(status IN ('active','void')))",
+    "CREATE INDEX IF NOT EXISTS platform_cost_entries_period_idx ON platform_cost_entries(country_code,incurred_at DESC,status)",
+    "CREATE INDEX IF NOT EXISTS platform_cost_entries_scope_idx ON platform_cost_entries(service_scope,territory_id,incurred_at DESC)",
+    "CREATE TABLE IF NOT EXISTS platform_cost_allocations(id BIGSERIAL PRIMARY KEY,allocation_key TEXT NOT NULL UNIQUE,cost_entry_id BIGINT NOT NULL REFERENCES platform_cost_entries(id) ON DELETE RESTRICT,service_scope TEXT NOT NULL,territory_id BIGINT REFERENCES territories(id),business_id BIGINT REFERENCES businesses(id),payment_intent_id BIGINT REFERENCES payment_intents(id),allocation_method TEXT NOT NULL,driver_code TEXT NOT NULL DEFAULT '',amount NUMERIC(14,2) NOT NULL CHECK(amount>0),policy_version_id BIGINT REFERENCES cost_allocation_policy_versions(id),created_by_account_id BIGINT REFERENCES accounts(id),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services','accounting_pro','enterprise','shared')),CHECK(allocation_method IN ('direct','measured','driver','shared')))",
+    "CREATE INDEX IF NOT EXISTS platform_cost_allocations_entry_idx ON platform_cost_allocations(cost_entry_id,id)",
+    "CREATE INDEX IF NOT EXISTS platform_cost_allocations_scope_idx ON platform_cost_allocations(service_scope,territory_id,payment_intent_id)"
+  ];
+  for(const sql of statements)await pool.query(sql);
+}
+
+export async function createPlatformCostEntry(pool,input={}){
+  const evidence=requireEnum(input.evidenceClass,FINANCE_EVIDENCE_CLASSES,'evidence_class');
+  const nature=requireEnum(input.costNature,FINANCE_COST_NATURES,'cost_nature');
+  const scope=requireEnum(input.serviceScope||'shared',FINANCE_SERVICE_SCOPES,'service_scope');
+  const category=requireEnum(input.costCategory||'other',FINANCE_COST_CATEGORIES,'cost_category');
+  const sourceKey=clean(input.sourceKey,220);
+  const code=clean(input.costCode,120);
+  const reference=clean(input.evidenceReference,500);
+  if(!sourceKey)throw Object.assign(new Error('An idempotent source_key is required'),{status:400});
+  if(!code)throw Object.assign(new Error('cost_code is required'),{status:400});
+  if(!reference)throw Object.assign(new Error('evidence_reference or estimation/budget source is required'),{status:400});
+  const amount=finiteMoney(input.amount);
+  const incurredAt=safeDate(input.incurredAt||new Date().toISOString(),'incurred_at');
+  const periodStart=input.periodStart?safeDate(input.periodStart,'period_start'):null;
+  const periodEnd=input.periodEnd?safeDate(input.periodEnd,'period_end'):null;
+  if(periodStart&&periodEnd&&new Date(periodEnd)<new Date(periodStart))throw Object.assign(new Error('period_end must not be before period_start'),{status:400});
+  const metadata=sanitizeMetadata(input.metadata);
+  const q=await pool.query(
+    "INSERT INTO platform_cost_entries(public_id,source_key,cost_code,cost_category,cost_nature,evidence_class,service_scope,country_code,territory_id,business_id,payment_intent_id,provider_code,currency_code,amount,incurred_at,period_start,period_end,evidence_reference,description,metadata_json,created_by_account_id) VALUES($1,$2,$3,$4,$5,$6,$7,'PH',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20) ON CONFLICT(source_key) DO UPDATE SET updated_at=platform_cost_entries.updated_at RETURNING *",
+    [
+      'cost_'+crypto.randomBytes(10).toString('hex'),sourceKey,code,category,nature,evidence,scope,
+      input.territoryId||null,input.businessId||null,input.paymentIntentId||null,clean(input.providerCode,80),
+      clean(input.currencyCode||'PHP',10),amount,incurredAt,periodStart,periodEnd,reference,
+      clean(input.description,1200),JSON.stringify(metadata),input.createdBy||null
+    ]
+  );
+  return q.rows[0];
+}
+
+export async function allocatePlatformCost(pool,costEntryId,input={}){
+  const amount=finiteMoney(input.amount);
+  const scope=requireEnum(input.serviceScope||'shared',FINANCE_SERVICE_SCOPES,'service_scope');
+  const method=requireEnum(input.allocationMethod||'direct',FINANCE_ALLOCATION_METHODS,'allocation_method');
+  const key=clean(input.allocationKey,220);
+  if(!key)throw Object.assign(new Error('An idempotent allocation_key is required'),{status:400});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const e=await client.query("SELECT * FROM platform_cost_entries WHERE id=$1 FOR UPDATE",[Number(costEntryId)]);
+    if(!e.rowCount)throw Object.assign(new Error('Cost entry not found'),{status:404});
+    if(e.rows[0].status!=='active')throw Object.assign(new Error('Only active cost entries can be allocated'),{status:409});
+    const existing=await client.query("SELECT * FROM platform_cost_allocations WHERE allocation_key=$1",[key]);
+    if(existing.rowCount){await client.query('COMMIT');return existing.rows[0]}
+    const used=await client.query("SELECT COALESCE(SUM(amount),0) total FROM platform_cost_allocations WHERE cost_entry_id=$1",[Number(costEntryId)]);
+    if(money(Number(used.rows[0].total)+amount)>money(e.rows[0].amount))throw Object.assign(new Error('Cost allocations cannot exceed the cost entry amount'),{status:409});
+    const q=await client.query(
+      "INSERT INTO platform_cost_allocations(allocation_key,cost_entry_id,service_scope,territory_id,business_id,payment_intent_id,allocation_method,driver_code,amount,policy_version_id,created_by_account_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",
+      [key,Number(costEntryId),scope,input.territoryId||null,input.businessId||null,input.paymentIntentId||null,method,clean(input.driverCode,100),amount,input.policyVersionId||null,input.createdBy||null]
+    );
+    await client.query('COMMIT');
+    return q.rows[0];
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw e;
+  }finally{client.release()}
+}
+
+export async function voidPlatformCostEntry(pool,costEntryId,{voidedBy=null,reason=''}={}){
+  const why=clean(reason,1000);
+  if(!why)throw Object.assign(new Error('A void reason is required'),{status:400});
+  const q=await pool.query("UPDATE platform_cost_entries SET status='void',voided_by_account_id=$1,void_reason=$2,updated_at=NOW() WHERE id=$3 AND status='active' RETURNING *",[voidedBy||null,why,Number(costEntryId)]);
+  if(!q.rowCount)throw Object.assign(new Error('Active cost entry not found'),{status:404});
+  return q.rows[0];
+}
+
+export async function listPlatformCostEntries(pool,input={}){
+  const p=period(input);
+  const territoryId=input.territoryId==null?null:Number(input.territoryId);
+  const scope=input.serviceScope&&FINANCE_SERVICE_SCOPES.includes(input.serviceScope)?input.serviceScope:null;
+  const classes=Array.isArray(input.evidenceClasses)&&input.evidenceClasses.length?input.evidenceClasses.filter(x=>FINANCE_EVIDENCE_CLASSES.includes(x)):FINANCE_EVIDENCE_CLASSES;
+  const q=await pool.query(`
+    SELECT e.*,
+      COALESCE((SELECT SUM(a.amount) FROM platform_cost_allocations a WHERE a.cost_entry_id=e.id),0) allocated_amount,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'id',a.id,'service_scope',a.service_scope,'territory_id',a.territory_id,'business_id',a.business_id,
+        'payment_intent_id',a.payment_intent_id,'allocation_method',a.allocation_method,'driver_code',a.driver_code,
+        'amount',a.amount,'policy_version_id',a.policy_version_id,'created_at',a.created_at
+      ) ORDER BY a.id) FROM platform_cost_allocations a WHERE a.cost_entry_id=e.id),'[]'::jsonb) allocations
+    FROM platform_cost_entries e
+    WHERE e.country_code='PH' AND e.incurred_at >= $1 AND e.incurred_at < $2
+      AND ($3::bigint IS NULL OR e.territory_id=$3 OR EXISTS(SELECT 1 FROM platform_cost_allocations a WHERE a.cost_entry_id=e.id AND a.territory_id=$3))
+      AND ($4::text IS NULL OR e.service_scope=$4 OR EXISTS(SELECT 1 FROM platform_cost_allocations a WHERE a.cost_entry_id=e.id AND a.service_scope=$4))
+      AND e.evidence_class=ANY($5::text[])
+    ORDER BY e.incurred_at DESC,e.id DESC LIMIT 500
+  `,[p.from,p.to,territoryId,scope,classes]);
+  return q.rows;
+}
+
+async function paymentEconomics(pool,{from,to,territoryId=null}){
+  const intentFilter="pi.status='succeeded' AND COALESCE(pi.succeeded_at,pi.updated_at)>= $1 AND COALESCE(pi.succeeded_at,pi.updated_at)< $2 AND ($3::bigint IS NULL OR pi.territory_id=$3)";
+  const [volume,revenue,processor,services]=await Promise.all([
+    pool.query(`SELECT COUNT(*)::int completed_transactions,COALESCE(SUM(pi.amount),0) gross_payment_volume FROM payment_intents pi WHERE ${intentFilter}`,[from,to,territoryId]),
+    pool.query(`
+      SELECT COALESCE(SUM(pa.amount),0) platform_revenue
+      FROM payment_allocations pa JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+      WHERE ${intentFilter}
+        AND pa.component_code IN ('platform_fee','country_operator_fee','territory_operator_fee')
+        AND pa.economic_party_type='platform' AND pa.settlement_status<>'reversed'
+    `,[from,to,territoryId]),
+    pool.query(`
+      SELECT COALESCE(SUM(pa.amount),0) processor_cost
+      FROM payment_allocations pa JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+      WHERE ${intentFilter} AND pa.component_code='processor_fee' AND pa.settlement_status<>'reversed'
+    `,[from,to,territoryId]),
+    pool.query(`
+      WITH intents AS (
+        SELECT pi.id,pi.source_type,pi.amount,
+          CASE WHEN pi.source_type='order' THEN 'marketplace'
+               WHEN pi.source_type='purchase_order' THEN 'supplier'
+               WHEN pi.source_type='service_job' THEN 'local_services'
+               ELSE 'enterprise' END service_scope
+        FROM payment_intents pi
+        WHERE ${intentFilter}
+      ),
+      base AS (
+        SELECT service_scope,COUNT(*)::int completed_transactions,COALESCE(SUM(amount),0) gross_value
+        FROM intents GROUP BY service_scope
+      ),
+      delivery AS (
+        SELECT 'delivery'::text service_scope,COUNT(DISTINCT i.id)::int completed_transactions,
+          COALESCE(SUM(pa.amount),0) gross_value
+        FROM intents i JOIN payment_allocations pa ON pa.payment_intent_id=i.id
+        WHERE pa.component_code='delivery' AND pa.settlement_status<>'reversed'
+      ),
+      fee AS (
+        SELECT COALESCE(fp.service_scope,
+          CASE WHEN pi.source_type='order' THEN 'marketplace'
+               WHEN pi.source_type='purchase_order' THEN 'supplier'
+               WHEN pi.source_type='service_job' THEN 'local_services'
+               ELSE 'enterprise' END) service_scope,
+          COALESCE(SUM(pa.amount),0) revenue
+        FROM payment_allocations pa
+        JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+        LEFT JOIN fee_policy_versions fp ON fp.id=pa.fee_policy_version_id
+        WHERE ${intentFilter}
+          AND pa.component_code IN ('platform_fee','country_operator_fee','territory_operator_fee')
+          AND pa.economic_party_type='platform' AND pa.settlement_status<>'reversed'
+        GROUP BY 1
+      ),
+      proc AS (
+        SELECT COALESCE(fp.service_scope,'shared') service_scope,COALESCE(SUM(pa.amount),0) processor_cost
+        FROM payment_allocations pa
+        JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+        LEFT JOIN fee_policy_versions fp ON fp.id=pa.fee_policy_version_id
+        WHERE ${intentFilter} AND pa.component_code='processor_fee' AND pa.settlement_status<>'reversed'
+        GROUP BY 1
+      ),
+      scopes AS (
+        SELECT service_scope FROM base UNION SELECT service_scope FROM delivery WHERE gross_value>0
+        UNION SELECT service_scope FROM fee UNION SELECT service_scope FROM proc
+      )
+      SELECT s.service_scope,
+        COALESCE(b.completed_transactions,d.completed_transactions,0)::int completed_transactions,
+        COALESCE(b.gross_value,d.gross_value,0) gross_value,
+        COALESCE(f.revenue,0) revenue,COALESCE(p.processor_cost,0) processor_cost
+      FROM scopes s
+      LEFT JOIN base b USING(service_scope) LEFT JOIN delivery d USING(service_scope)
+      LEFT JOIN fee f USING(service_scope) LEFT JOIN proc p USING(service_scope)
+      ORDER BY s.service_scope
+    `,[from,to,territoryId])
+  ]);
+  return{
+    completedTransactions:Number(volume.rows[0]?.completed_transactions||0),
+    grossPaymentVolume:money(volume.rows[0]?.gross_payment_volume||0),
+    platformRevenue:money(revenue.rows[0]?.platform_revenue||0),
+    processorCost:money(processor.rows[0]?.processor_cost||0),
+    services:services.rows.map(x=>({
+      service_scope:x.service_scope,completed_transactions:Number(x.completed_transactions||0),
+      gross_value:money(x.gross_value||0),revenue:money(x.revenue||0),processor_cost:money(x.processor_cost||0)
+    }))
+  };
+}
+
+async function manualCostEconomics(pool,{from,to,territoryId=null,evidence}){
+  const q=await pool.query(`
+    WITH alloc AS (
+      SELECT a.cost_entry_id,COALESCE(SUM(a.amount),0) allocated_total
+      FROM platform_cost_allocations a GROUP BY a.cost_entry_id
+    ),
+    effective AS (
+      SELECT e.id,e.cost_nature,e.evidence_class,a.service_scope,a.territory_id,a.amount
+      FROM platform_cost_entries e
+      JOIN platform_cost_allocations a ON a.cost_entry_id=e.id
+      WHERE e.status='active' AND e.country_code='PH' AND e.incurred_at >= $1 AND e.incurred_at < $2
+        AND e.evidence_class=ANY($4::text[])
+      UNION ALL
+      SELECT e.id,e.cost_nature,e.evidence_class,e.service_scope,e.territory_id,
+        GREATEST(e.amount-COALESCE(x.allocated_total,0),0) amount
+      FROM platform_cost_entries e LEFT JOIN alloc x ON x.cost_entry_id=e.id
+      WHERE e.status='active' AND e.country_code='PH' AND e.incurred_at >= $1 AND e.incurred_at < $2
+        AND e.evidence_class=ANY($4::text[]) AND e.amount>COALESCE(x.allocated_total,0)
+    )
+    SELECT service_scope,cost_nature,evidence_class,COUNT(DISTINCT id)::int cost_entries,COALESCE(SUM(amount),0) amount
+    FROM effective
+    WHERE ($3::bigint IS NULL OR territory_id=$3)
+    GROUP BY service_scope,cost_nature,evidence_class
+    ORDER BY service_scope,cost_nature,evidence_class
+  `,[from,to,territoryId,evidence]);
+  const evidenceAll=await pool.query(`
+    SELECT evidence_class,COUNT(*)::int entries,COALESCE(SUM(amount),0) amount
+    FROM platform_cost_entries
+    WHERE status='active' AND country_code='PH' AND incurred_at >= $1 AND incurred_at < $2
+      AND ($3::bigint IS NULL OR territory_id=$3)
+    GROUP BY evidence_class ORDER BY evidence_class
+  `,[from,to,territoryId]);
+  return{
+    rows:q.rows.map(x=>({...x,cost_entries:Number(x.cost_entries||0),amount:money(x.amount||0)})),
+    evidenceBreakdown:evidenceAll.rows.map(x=>({...x,entries:Number(x.entries||0),amount:money(x.amount||0)}))
+  };
+}
+
+export async function financeKpiOverview(pool,input={}){
+  const p=period(input);
+  const territoryId=input.territoryId==null?null:Number(input.territoryId);
+  const evidence=evidenceClasses(input.evidenceClasses);
+  const [pay,manual,recent]=await Promise.all([
+    paymentEconomics(pool,{...p,territoryId}),
+    manualCostEconomics(pool,{...p,territoryId,evidence}),
+    listPlatformCostEntries(pool,{...p,territoryId,evidenceClasses:FINANCE_EVIDENCE_CLASSES})
+  ]);
+  const manualVariable=money(manual.rows.filter(x=>x.cost_nature==='variable').reduce((s,x)=>s+Number(x.amount||0),0));
+  const allocatedFixed=money(manual.rows.filter(x=>x.cost_nature!=='variable').reduce((s,x)=>s+Number(x.amount||0),0));
+  const variableCosts=money(pay.processorCost+manualVariable);
+  const contribution=money(pay.platformRevenue-variableCosts);
+  const operatingProfit=money(contribution-allocatedFixed);
+  const services=new Map();
+  for(const x of pay.services)services.set(x.service_scope,{...x,manual_variable_cost:0,allocated_fixed_cost:0});
+  for(const x of manual.rows){
+    if(!services.has(x.service_scope))services.set(x.service_scope,{service_scope:x.service_scope,completed_transactions:0,gross_value:0,revenue:0,processor_cost:0,manual_variable_cost:0,allocated_fixed_cost:0});
+    const row=services.get(x.service_scope);
+    if(x.cost_nature==='variable')row.manual_variable_cost=money(row.manual_variable_cost+Number(x.amount||0));
+    else row.allocated_fixed_cost=money(row.allocated_fixed_cost+Number(x.amount||0));
+  }
+  const serviceRows=[...services.values()].map(x=>{
+    const variable=money(Number(x.processor_cost||0)+Number(x.manual_variable_cost||0));
+    const contrib=money(Number(x.revenue||0)-variable);
+    const profit=money(contrib-Number(x.allocated_fixed_cost||0));
+    return{...x,variable_cost:variable,contribution:contrib,operating_profit:profit,contribution_margin_pct:ratio(contrib,x.revenue),net_margin_pct:ratio(profit,x.revenue)};
+  }).sort((a,b)=>a.service_scope.localeCompare(b.service_scope));
+  const contributionPerTx=perUnit(contribution,pay.completedTransactions);
+  const breakEven=contributionPerTx&&contributionPerTx>0?Math.ceil(allocatedFixed/contributionPerTx):null;
+  return{
+    period:p,country_code:'PH',territory_id:territoryId,included_evidence_classes:evidence,
+    gross_payment_volume:pay.grossPaymentVolume,completed_transactions:pay.completedTransactions,
+    platform_revenue:pay.platformRevenue,processor_cost:pay.processorCost,manual_variable_cost:manualVariable,
+    variable_costs:variableCosts,contribution,contribution_margin_pct:ratio(contribution,pay.platformRevenue),
+    allocated_fixed_cost:allocatedFixed,operating_profit:operatingProfit,net_margin_pct:ratio(operatingProfit,pay.platformRevenue),
+    revenue_per_completed_transaction:perUnit(pay.platformRevenue,pay.completedTransactions),
+    variable_cost_per_completed_transaction:perUnit(variableCosts,pay.completedTransactions),
+    contribution_per_completed_transaction:contributionPerTx,
+    operating_profit_per_completed_transaction:perUnit(operatingProfit,pay.completedTransactions),
+    break_even_transactions:breakEven,
+    break_even_status:contributionPerTx&&contributionPerTx>0?'CALCULABLE':'NO_BREAK_EVEN_AT_CURRENT_UNIT_ECONOMICS',
+    services:serviceRows,evidence_breakdown:manual.evidenceBreakdown,
+    recent_cost_entries:recent.slice(0,25),
+    promotion_economics:{status:'PENDING_PROMO_COHORT_LINKAGE',note:'Costs are measurable now; 90-day promo conversion/subsidy cohorts require explicit promotional eligibility linkage before Finance may report conversion.'},
+    accounting_note:'GMV/payment volume is context only. Provider/customer/merchant/courier/service-provider money is not platform revenue unless an explicit platform-owned allocation exists.'
+  };
+}
+
+export const financeInternals=Object.freeze({serviceFromSource});
