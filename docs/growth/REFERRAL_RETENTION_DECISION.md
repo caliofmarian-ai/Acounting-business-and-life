@@ -1,6 +1,6 @@
 # Referral Retention Decision Brief — Philippines
 
-Status: **PARTIAL OWNER DECISION RECORDED — NOT ACTIVE**
+Status: **OWNER PRODUCT POLICY RECORDED — ACTIVATION HOLD**
 
 Verified: 2026-09-18
 
@@ -68,13 +68,12 @@ Possible purposes may include:
 - customer/support disputes;
 - measuring conversion effectiveness.
 
-Decision required:
-- how long converted attribution remains identifiable;
-- what event terminates the purpose;
-- whether data can be aggregated/anonymized earlier;
-- how erasure/closure requests interact with legitimate legal/business exceptions.
+Owner product-policy decision recorded on 2026-09-18:
+- converted attribution target: **12 months after conversion**;
+- at purpose end: delete or irreversibly aggregate/de-identify unless a documented lawful exception applies;
+- privacy/controller review must still validate necessity, lawful basis, transparency and rights handling before activation.
 
-Current production does not persist this attribution end-to-end. A fail-closed binding adapter is now prepared, but it requires explicit converted-retention approval, lawful-basis approval, an approved retention-days value, a policy version and the dedicated HMAC secret before it performs any database work. No converted retention value is defaulted by the implementation.
+Current production does not persist this attribution end-to-end. A fail-closed binding adapter is prepared. The Owner-approved product target is 12 months after conversion, but runtime retention remains unset/inactive until privacy/controller approval, exact runtime retention implementation, a policy version and the dedicated HMAC secret are deliberately configured.
 
 ### C. Reward evidence
 
@@ -96,7 +95,7 @@ The following values are design candidates based on data minimization. They are 
 | Data class | Candidate | Rationale | Current status |
 | --- | ---: | --- | --- |
 | Unconverted identifiable referral events | 90 days | Owner-approved project-standard acquisition-analysis window; delete or irreversibly aggregate after expiry unless a documented exception applies | OWNER APPROVED — NOT YET ACTIVATED |
-| Converted referral attribution, when no financial reward is involved | 12 months after conversion | Supports attribution/support analysis, then should be deleted or irreversibly aggregated unless another documented basis applies | OWNER / LEGAL DECISION |
+| Converted referral attribution, when no financial reward is involved | 12 months after conversion | Owner-approved product target; delete or irreversibly aggregate at purpose end unless a documented lawful exception applies | OWNER PRODUCT POLICY APPROVED — PRIVACY/CONTROLLER ACTIVATION HOLD |
 | Aggregated/de-identified growth statistics | Longer, subject to genuine de-identification | DPA/IRR allows longer storage where data no longer permits identification, with safeguards | DESIGN |
 | Reward/payment/accounting evidence | No value yet | Depends on future reward economics, accounting/tax classification and dispute obligations | HOLD |
 
@@ -140,7 +139,7 @@ Production currently has none of those activation variables configured. Current 
 
 Prepared pre-conversion persistence now has a separate fail-closed gate. It remains inactive unless `REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED=true`, retention is approved, lawful basis is approved and a dedicated HMAC secret is configured. If later activated, its pending rows expire after the approved 90-day window and cannot store a referred account id.
 
-Prepared converted binding has its own independent fail-closed gate and still has **no approved retention value**. Registration may carry referral context, but the binder performs zero database work until converted retention and lawful-basis decisions are explicitly configured.
+Prepared converted binding has its own independent fail-closed gate. The Owner-approved product target is **12 months after conversion**, but the binder still performs zero database work until privacy/controller approval and explicit runtime retention/lawful-basis activation are configured.
 
 Therefore:
 - browser instrumentation can call Business & Life same-origin validation endpoints;
@@ -151,17 +150,20 @@ Therefore:
 
 ## 8. Owner decision record
 
-Recorded Owner decision:
+Recorded Owner decisions:
 
 - Unconverted referral-event retention: **90 days**.
+- Converted attribution product target: **12 months after conversion**.
+- Converted attribution model: **registration_context_v1**.
+- End-of-purpose behavior: delete or irreversibly aggregate/de-identify unless a documented lawful exception applies.
+- Initial-pilot rewards: **OFF**.
 
-Still requiring explicit approval/resolution before Growth enables production referral analytics or durable attribution:
+Still requiring approval/resolution before Growth enables production referral analytics or durable converted attribution:
 
-1. Converted attribution retention rule.
-2. Whether/when converted attribution becomes irreversibly aggregated.
-3. Converted attribution model (for example registration-context, first-touch or last-touch). No model is selected by default.
-4. Privacy-notice wording/basis for referral analytics.
-5. Correct Business & Life PostHog project/region and project token.
-6. Reward-evidence retention only after reward economics are separately approved.
+1. Philippine PIC/controller and lawful-basis approval.
+2. EFFECTIVE privacy-notice wording and rights/objection workflow.
+3. Exact runtime implementation/configuration of the 12-month converted-retention target.
+4. Correct Business & Life PostHog project/region/token and processor/cross-border facts.
+5. Reward-evidence retention only if a future reward program is separately approved.
 
 Until then the canonical state is **HOLD** for external analytics and durable referral attribution retention.
