@@ -25,18 +25,28 @@ For a valid referral registration:
 
 ## Mandatory conversion gates
 
+Converted binding also depends on the pending-attribution pipeline being genuinely active. It does not auto-create a pending row or bypass the pre-conversion privacy gates.
+
 Binding is inactive unless all of these are true:
 
+- `REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED=true`
+- `REFERRAL_ANALYTICS_RETENTION_APPROVED=true`
+- `REFERRAL_ANALYTICS_LAWFUL_BASIS_APPROVED=true`
 - `REFERRAL_ATTRIBUTION_CONVERTED_ENABLED=true`
 - `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED=true`
 - `REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED=true`
 - `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_DAYS=<approved integer>`
 - `REFERRAL_ATTRIBUTION_CONVERTED_POLICY_VERSION=<approved policy version>`
+- `REFERRAL_ATTRIBUTION_CONVERTED_MODEL=<explicit approved model>`
 - `REFERRAL_ATTRIBUTION_HMAC_SECRET=<same dedicated secret used by pending attribution>`
 
-There is intentionally **no default converted retention period**.
+There is intentionally **no default converted retention period and no default attribution model**.
 
-The code accepts a configured period only as an implementation parameter after policy approval. Repository documentation and machine-readable guardrails keep converted retention at `null` while the Owner/legal decision is unresolved.
+The current implementation supports `registration_context_v1`: bind the valid referral context that is present on the registration flow. Merely supporting that implementation does not select it as policy. `growth/privacy-guardrails.json` keeps the chosen attribution model at `null`, and activation requires `REFERRAL_ATTRIBUTION_CONVERTED_MODEL=registration_context_v1` to be set explicitly after Owner/policy approval.
+
+If Owner policy chooses first-touch, last-touch or another model, converted binding remains fail-closed until that model is implemented and added to the supported set.
+
+The code accepts a configured retention period only as an implementation parameter after policy approval. Repository documentation and machine-readable guardrails keep converted retention at `null` while the Owner/legal decision is unresolved.
 
 ## Binding evidence
 
