@@ -29,3 +29,21 @@ export function payMongoPilotReadiness(config={},webhookState={},stage='controll
     blockers
   };
 }
+
+export function payMongoCheckoutPolicy(config={},webhookState={},{
+  productionSurface=false,
+  allowSandboxOnProduction=false
+}={}){
+  const requiredStage=productionSurface&&!allowSandboxOnProduction?'controlled_pilot':'internal';
+  const readiness=payMongoPilotReadiness(config,webhookState,requiredStage);
+  return{
+    required_stage:requiredStage,
+    production_surface:Boolean(productionSurface),
+    sandbox_override:Boolean(allowSandboxOnProduction),
+    checkout_enabled:readiness.state==='READY',
+    state:readiness.state,
+    mode:readiness.mode,
+    enabled_methods:readiness.enabled_methods,
+    blockers:readiness.blockers
+  };
+}
