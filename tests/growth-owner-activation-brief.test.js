@@ -13,27 +13,31 @@ const rewards = JSON.parse(
   readFileSync(new URL('../growth/reward-policy.json', import.meta.url), 'utf8')
 );
 
-test('owner activation brief does not silently approve runtime activation', () => {
-  assert.match(brief, /status: DRAFT_FOR_OWNER_DECISION/);
+test('recorded Owner decision still does not approve runtime activation', () => {
+  assert.match(brief, /status: OWNER_DECISION_RECORDED/);
   assert.match(brief, /runtime_activation: NONE/);
-  assert.match(brief, /NOT APPROVED/);
   assert.match(brief, /No broad "turn everything on" action is permitted/);
+  assert.match(brief, /OWNER_PILOT_POLICY_DECISION\.md/);
 });
 
-test('owner decision brief preserves canonical HOLD values', () => {
-  assert.equal(privacy.retention.convertedAttributionRetentionRule, null);
-  assert.equal(privacy.convertedAttribution.attributionModel, null);
+test('owner decision brief records product choices while runtime and rewards remain HOLD', () => {
+  assert.equal(privacy.retention.convertedAttributionRetentionRule.period, '12_months_after_conversion');
+  assert.equal(privacy.retention.convertedAttributionRetentionRule.activationApproved, false);
+  assert.equal(privacy.convertedAttribution.attributionModel, 'registration_context_v1');
+  assert.equal(privacy.convertedAttribution.attributionModelActivationApproved, false);
+  assert.equal(privacy.convertedAttribution.lawfulBasisSelected, false);
+  assert.equal(rewards.status, 'disabled_for_initial_pilot_owner_approved');
   assert.equal(rewards.defaultPolicy.enabled, false);
   assert.equal(rewards.defaultPolicy.qualificationRule, null);
   assert.equal(rewards.defaultPolicy.referrerReward, null);
   assert.equal(rewards.defaultPolicy.referredUserReward, null);
 });
 
-test('pilot recommendation is explicit but remains a recommendation', () => {
-  assert.match(brief, /Use `registration_context_v1` for the first pilot/);
-  assert.match(brief, /Keep rewards OFF for the initial pilot/);
-  assert.match(brief, /12 months as the candidate pending privacy\/controller approval/);
-  assert.match(brief, /This recommendation becomes policy only after explicit Owner approval/);
+test('pilot product policy is explicitly Owner approved', () => {
+  assert.match(brief, /Owner decision for pilot — APPROVED PRODUCT POLICY/);
+  assert.match(brief, /Rewards are OFF for the initial pilot by Owner decision/);
+  assert.match(brief, /12 months after conversion/);
+  assert.match(brief, /Project Owner approved this model on 2026-09-18/);
 });
 
 test('legal and PostHog gates remain separate from Owner product choice', () => {

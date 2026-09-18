@@ -119,9 +119,9 @@ The registration flow now carries the already-existing referral code/profile/cor
 
 The adapter requires an existing unexpired pending attribution, rejects self-referral, prevents replacing an already-attributed account, and treats repeat binding to the same referral as idempotent.
 
-Converted binding now also refuses activation unless the pending-attribution pipeline itself is active and an attribution model is explicitly configured. The only currently implemented model is `registration_context_v1`, but it is **supported, not selected**; the canonical selected model remains null until Owner/policy approval.
+Converted binding also refuses activation unless the pending-attribution pipeline itself is active and an attribution model is explicitly configured. Project Owner selected `registration_context_v1` for the initial pilot; runtime activation remains HOLD until privacy/controller and other activation gates pass.
 
-It remains inactive because converted-attribution retention/lawful-basis policy is unresolved. There is intentionally no default converted retention period in code or guardrails.
+It remains inactive because privacy/controller lawful-basis activation is unresolved. Project Owner selected a **12-month-after-conversion** product retention target, but no production retention/activation variable is enabled by that decision alone.
 
 `referral_signup_completed` is prepared as an internal analytics event but can only be emitted after a successful non-idempotent converted binding. Current production cannot satisfy that binding gate.
 

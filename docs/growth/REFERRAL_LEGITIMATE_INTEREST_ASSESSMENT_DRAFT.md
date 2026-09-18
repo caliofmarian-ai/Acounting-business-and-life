@@ -8,16 +8,17 @@ country_code: PH
 scope: referral_attribution_and_growth_analytics
 legal_basis_candidate: legitimate_interest
 legal_basis_selected: false
+owner_direction: pursue_legitimate_interest_assessment
 controller_approval: REQUIRED
 legal_privacy_review: REQUIRED
-version: 1.0
+version: 1.1
 ---
 
 # Business & Life — Referral Attribution Legitimate Interest Assessment (DRAFT)
 
 > **Controlled draft — NOT FOR PUBLICATION / NOT AN APPROVED LAWFUL BASIS.**
 >
-> This document prepares the assessment required if the future Philippine Personal Information Controller (PIC) considers legitimate interest under Section 12(f) of Republic Act No. 10173 for pseudonymous referral attribution and acquisition analytics.
+> Project Owner approved pursuing this legitimate-interest assessment path. This document prepares the assessment required before the future Philippine Personal Information Controller (PIC) may select legitimate interest under Section 12(f) of Republic Act No. 10173 for pseudonymous referral attribution and acquisition analytics.
 >
 > It does not activate referral persistence, PostHog delivery, qualification, rewards, direct marketing, profiling, or any production environment variable.
 
@@ -227,12 +228,13 @@ This assessment does not change that value.
 
 ### Converted attribution
 
-Canonical state:
-**UNRESOLVED / HOLD.**
+Owner product-policy state:
+- attribution model: **registration_context_v1**;
+- retention target: **12 months after conversion**;
+- runtime activation: **HOLD**;
+- privacy/controller approval: **PENDING**.
 
-No duration is approved by this assessment.
-
-A duration must be justified by the chosen purpose and periodically reviewed. At expiry, delete or irreversibly aggregate/de-identify unless a documented exception applies.
+This assessment does not independently approve the 12-month period. The future PIC/controller must validate necessity, proportionality, user expectations, rights handling and disposal behavior before activation. At purpose end, delete or irreversibly aggregate/de-identify unless a documented lawful exception applies.
 
 ### Reward evidence
 
@@ -264,8 +266,8 @@ Marketing preferences/consent remain separate where required.
 | Effective privacy notice | PENDING |
 | Objection workflow | PENDING operational verification |
 | 90-day unconverted retention | OWNER APPROVED |
-| Converted retention | HOLD |
-| Converted attribution model | HOLD / null |
+| Converted retention | OWNER TARGET: 12 months; controller activation PENDING |
+| Converted attribution model | OWNER APPROVED: registration_context_v1; runtime HOLD |
 | Correct PostHog project | HOLD / unverified |
 | PostHog processor/cross-border facts | HOLD |
 | Reward purpose/economics | HOLD |
@@ -285,8 +287,8 @@ Before legitimate interest can be recorded as the selected basis for this proces
 1. identify the actual Philippine PIC/controller;
 2. confirm the exact declared referral-attribution purpose;
 3. complete/approve the legitimate-interest, necessity and balancing tests;
-4. decide converted-attribution model;
-5. decide converted-attribution retention/deletion;
+4. validate the Owner-selected `registration_context_v1` model under the controller/privacy assessment;
+5. validate and operationalize the Owner-approved 12-month converted-attribution retention/deletion target;
 6. establish the objection/request workflow;
 7. integrate accurate wording into the EFFECTIVE privacy notice;
 8. verify any external processor/project/region and data-processing terms;

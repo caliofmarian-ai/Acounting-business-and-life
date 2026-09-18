@@ -9,16 +9,22 @@ test('referral privacy supplement is explicitly non-publishable and legally gate
   assert.match(draft, /status: DRAFT/);
   assert.match(draft, /publication_status: NOT_FOR_PUBLICATION/);
   assert.match(draft, /LEGAL DECISION REQUIRED/);
-  assert.match(draft, /referralAnalyticsLawfulBasis = TO_BE_CONFIRMED/);
+  assert.match(draft, /referralAnalyticsLawfulBasisPath = LEGITIMATE_INTEREST_ASSESSMENT/);
+  assert.match(draft, /referralAnalyticsLawfulBasisSelected = false/);
 });
 
-test('privacy draft reflects the canonical 90-day unconverted retention and unresolved later classes', () => {
+test('privacy draft reflects Owner product choices while activation remains legally gated', () => {
   assert.equal(guardrails.retention.unconvertedReferralEventDays, 90);
-  assert.equal(guardrails.retention.convertedAttributionRetentionRule, null);
+  assert.equal(guardrails.retention.convertedAttributionRetentionRule.period, '12_months_after_conversion');
+  assert.equal(guardrails.retention.convertedAttributionRetentionRule.activationApproved, false);
+  assert.equal(guardrails.convertedAttribution.attributionModel, 'registration_context_v1');
+  assert.equal(guardrails.convertedAttribution.lawfulBasisSelected, false);
   assert.equal(guardrails.retention.rewardEvidenceRetentionRule, null);
   assert.equal(guardrails.retention.productionReady, false);
   assert.match(draft, /\*\*90 days\*\*/);
-  assert.match(draft, /Converted attribution[\s\S]*TO BE CONFIRMED — HOLD/);
+  assert.match(draft, /Converted attribution[\s\S]*OWNER PRODUCT POLICY RECORDED — ACTIVATION HOLD/);
+  assert.match(draft, /12 months after conversion/);
+  assert.match(draft, /registration_context_v1/);
   assert.match(draft, /Reward\/payment\/accounting evidence[\s\S]*TO BE CONFIRMED — HOLD/);
 });
 
