@@ -455,8 +455,8 @@ async function promotionDirectCostEconomics(pool,{from,to,territoryId=null,evide
     const ledgerCost=money(selected.reduce((s,x)=>s+x.direct_ledger_cost,0));
     const total=money(processor+ledgerCost);
     const completed=selected.reduce((s,x)=>s+x.completed_events,0);
-    const subjects=new Set();
-    return{direct_processor_cost:processor,direct_ledger_cost:ledgerCost,total_direct_cost:total,completed_events:completed,direct_cost_per_completion:perUnit(total,completed)};
+    const activeSubjects=selected.reduce((s,x)=>s+x.active_subjects,0);
+    return{direct_processor_cost:processor,direct_ledger_cost:ledgerCost,total_direct_cost:total,completed_events:completed,active_subjects:activeSubjects,direct_cost_per_completion:perUnit(total,completed),direct_cost_per_active_subject:perUnit(total,activeSubjects)};
   };
   return{
     coverage_status:'DIRECT_ONLY_EXCLUDES_SHARED_FIXED',
