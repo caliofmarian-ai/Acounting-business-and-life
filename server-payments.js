@@ -20,7 +20,10 @@ import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetiza
 import {
   ensureProfileFinanceSchema,listProfileFinancialAccounts,listMoneyPreferences,
   createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
-  isBusinessFinanceRole,PROFILE_FINANCE_ROLES,FINANCIAL_ACCOUNT_KINDS,MONEY_METHODS,PAYOUT_SCHEDULES
+  listProfileBudgetEnvelopes,createProfileBudgetEnvelope,postProfileBudgetEntry,transferProfileBudgetAllocation,
+  listProfileMoneyMovements,createProfileMoneyMovementRequest,
+  isBusinessFinanceRole,PROFILE_FINANCE_ROLES,FINANCIAL_ACCOUNT_KINDS,MONEY_METHODS,PAYOUT_SCHEDULES,
+  BUDGET_PURPOSES,MONEY_MOVEMENT_TYPES
 } from './profile-finance-core.js';
 import {profileMoneySnapshot} from './profile-money-core.js';
 
@@ -111,21 +114,25 @@ app.get('/api/profile-money/:role',async(req,res,next)=>{try{
   const me=await identity(req),role=clean(req.params.role,40);
   if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile uses business accounting or does not have a personal Money workspace'});
   if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before opening its Money workspace'});
-  const [snapshot,accounts,preferences]=await Promise.all([
+  const [snapshot,accounts,preferences,budgets]=await Promise.all([
     profileMoneySnapshot(pool,role,me.account.id),
     listProfileFinancialAccounts(pool,me.account.id),
-    listMoneyPreferences(pool,me.account.id)
+    listMoneyPreferences(pool,me.account.id),
+    listProfileBudgetEnvelopes(pool,me.account.id)
   ]);
   const profileAccounts=accounts.filter(a=>a.profile_role===role&&a.owner_scope==='account');
   const preference=preferences.find(p=>p.profile_role===role&&p.business_id==null)||null;
-  res.json({...snapshot,financial_accounts:profileAccounts,money_preference:preference});
+  const profileBudgets=budgets.filter(b=>b.profile_role===role&&b.business_id==null);
+  res.json({...snapshot,financial_accounts:profileAccounts,money_preference:preference,budgets:profileBudgets});
 }catch(e){next(e)}});
 
 app.get('/api/settings/finance',async(req,res,next)=>{try{
   const me=await identity(req);
-  const [accounts,preferences,providers]=await Promise.all([
+  const [accounts,preferences,budgets,movements,providers]=await Promise.all([
     listProfileFinancialAccounts(pool,me.account.id),
     listMoneyPreferences(pool,me.account.id),
+    listProfileBudgetEnvelopes(pool,me.account.id),
+    listProfileMoneyMovements(pool,me.account.id),
     pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account FROM payment_provider_configs WHERE country_code='PH' ORDER BY provider_code")
   ]);
   const defaultProvider=clean(process.env.PAYMENT_PROVIDER_DEFAULT,80);
@@ -135,8 +142,8 @@ app.get('/api/settings/finance',async(req,res,next)=>{try{
     active_role:me.account.active_role,
     profiles:(me.profiles||[]).map(p=>({role:p.role,enabled:Boolean(p.enabled),status:p.status,visibility:p.visibility})),
     businesses:(me.businesses||[]).map(b=>({id:Number(b.id),name:b.name,active:b.active!==false})),
-    financial_accounts:accounts,preferences,
-    catalog:{roles:PROFILE_FINANCE_ROLES,account_kinds:FINANCIAL_ACCOUNT_KINDS,methods:MONEY_METHODS,payout_schedules:PAYOUT_SCHEDULES},
+    financial_accounts:accounts,preferences,budgets,money_movements:movements,
+    catalog:{roles:PROFILE_FINANCE_ROLES,account_kinds:FINANCIAL_ACCOUNT_KINDS,methods:MONEY_METHODS,payout_schedules:PAYOUT_SCHEDULES,budget_purposes:BUDGET_PURPOSES,movement_types:MONEY_MOVEMENT_TYPES},
     provider:{
       default_provider:defaultProvider,provider_ready:Boolean(selected),selected_provider:selected,
       payout_execution_ready:false,
@@ -185,6 +192,62 @@ app.put('/api/settings/money-preferences/:role',body,async(req,res,next)=>{try{
     acceptedMethods:req.body?.accepted_methods,payoutSchedulePreference:req.body?.payout_schedule_preference
   });
   res.json(pref);
+}catch(e){next(e)}});
+
+app.post('/api/settings/budgets',body,async(req,res,next)=>{try{
+  const me=await identity(req),role=clean(req.body?.profile_role,40),scope=financeScope(me,role,req.body?.business_id);
+  const row=await createProfileBudgetEnvelope(pool,{
+    publicId:'budget_'+crypto.randomUUID().replaceAll('-',''),
+    accountId:me.account.id,profileRole:role,businessId:scope.business_id,
+    linkedFinancialAccountId:req.body?.linked_financial_account_id||null,
+    label:req.body?.label,purpose:req.body?.purpose||'custom',currencyCode:req.body?.currency_code||'PHP'
+  });
+  res.status(201).json(row);
+}catch(e){next(e)}});
+
+app.post('/api/settings/budgets/:id/entries',body,async(req,res,next)=>{try{
+  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const direction=req.body?.direction==='debit'?'debit':'credit';
+  const entryType=clean(req.body?.entry_type||(direction==='credit'?'allocation':'release'),40);
+  const row=await postProfileBudgetEntry(pool,{
+    accountId:me.account.id,envelopeId:Number(req.params.id),entryKey:key,
+    direction,entryType,amount:req.body?.amount,sourceType:'manual_plan',
+    sourceId:req.body?.source_id||'',note:req.body?.note||'',actorAccountId:me.account.id
+  });
+  res.status(201).json({...row,balance_type:'planned_allocation',provider_money_moved:false});
+}catch(e){next(e)}});
+
+app.post('/api/settings/budget-transfers',body,async(req,res,next)=>{try{
+  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const row=await transferProfileBudgetAllocation(pool,{
+    publicId:'btx_'+crypto.randomUUID().replaceAll('-',''),transferKey:key,accountId:me.account.id,
+    sourceEnvelopeId:req.body?.source_envelope_id,destinationEnvelopeId:req.body?.destination_envelope_id,
+    amount:req.body?.amount,actorAccountId:me.account.id,note:req.body?.note||''
+  });
+  res.status(201).json(row);
+}catch(e){next(e)}});
+
+app.get('/api/settings/money-movements',async(req,res,next)=>{try{
+  const me=await identity(req);
+  res.json(await listProfileMoneyMovements(pool,me.account.id));
+}catch(e){next(e)}});
+
+app.post('/api/settings/money-movements',body,async(req,res,next)=>{try{
+  rejectSensitiveFinancialFields(req.body);
+  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const row=await createProfileMoneyMovementRequest(pool,{
+    publicId:'move_'+crypto.randomUUID().replaceAll('-',''),idempotencyKey:key,accountId:me.account.id,
+    movementType:req.body?.movement_type,sourceFinancialAccountId:req.body?.source_financial_account_id,
+    destinationFinancialAccountId:req.body?.destination_financial_account_id,
+    amount:req.body?.amount,currencyCode:req.body?.currency_code||'PHP',
+    providerCode:req.body?.provider_code||'',note:req.body?.note||''
+  });
+  res.status(202).json({
+    ...row,
+    provider_money_moved:false,
+    execution_status:'HOLD',
+    next_action:'CONNECT_VERIFIED_MONEY_MOVEMENT_ADAPTER'
+  });
 }catch(e){next(e)}});
 
 app.get('/api/payments/config',async(req,res,next)=>{try{
