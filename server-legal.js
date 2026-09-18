@@ -88,7 +88,7 @@ async function initDb(){
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,notifications:childAlive,legal:true,version:'0.12-legal-consent'})}catch{res.status(503).json({ok:false,db:false,notifications:false,legal:false,version:'0.12-legal-consent'})}});
 app.get('/legal.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','legal.css'),'utf8')));
 app.get('/legal-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','legal-ui.js'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/legal.css" />\n</head>').replace('</body>','  <script type="module" src="/legal-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});const html=await r.text();res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/legal/status',async(req,res,next)=>{try{
