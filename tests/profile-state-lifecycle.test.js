@@ -28,7 +28,12 @@ test('role feature decorators are event-driven and never poll identity in backgr
     assert.match(source,/BusinessLifeProfileState/,name+' must consume cached profile-state');
     assert.doesNotMatch(source,/if\(!(?:svcMe|delMe|supMe|marketMe|orderMe)\)await/,name+' must not fall back to its own identity fetch');
   }
-  assert.match(modules.delivery,/function observeCheckout\(\)[\s\S]*new\s+MutationObserver/,'checkout DOM observer remains allowed for delivery quote UI');
+  const checkoutStart=modules.delivery.indexOf('function observeCheckout');
+  const checkoutEnd=modules.delivery.indexOf('function applyDeliveryState',checkoutStart);
+  const checkoutLifecycle=modules.delivery.slice(checkoutStart,checkoutEnd);
+  assert.match(checkoutLifecycle,/abl:marketplace-checkout-rendered/,'checkout enhancement must use the explicit Marketplace lifecycle event');
+  assert.doesNotMatch(checkoutLifecycle,/MutationObserver/,'checkout enhancement must not observe the global DOM');
+  assert.doesNotMatch(checkoutLifecycle,/setInterval/,'checkout enhancement must not poll globally');
 });
 
 test('operational polling remains separate from profile identity lifecycle',()=>{
