@@ -11,7 +11,9 @@ This slice wires only events that are truthful in the current product runtime:
 - `referral_landing_viewed`
 - `referral_signup_started`
 
-It does **not** emit `referral_signup_completed`, `referral_qualified` or `referral_rewarded` before the corresponding attribution/reward runtime exists.
+A `referral_signup_completed` emission path is also prepared internally, but it is reachable only after a successful converted-attribution binding. Converted binding is currently fail-closed/HOLD, so `referral_signup_completed` is not a current production emission claim.
+
+It does **not** emit `referral_qualified` or `referral_rewarded` before their corresponding policy/runtime exists.
 
 ## Privacy boundary
 
