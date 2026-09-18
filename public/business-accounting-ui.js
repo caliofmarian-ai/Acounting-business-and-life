@@ -62,6 +62,7 @@ function applyFinancePresentation(overview){
   document.querySelectorAll('option[value="personal_withdrawal"]').forEach(o=>o.textContent='Owner drawing / withdrawal');
   document.querySelectorAll('[data-view-link="Sell"]').forEach(el=>el.classList.toggle('roleFinanceHidden',!foodAllowed));
 }
+const BUSINESS_FINANCE_COMPATIBILITY_COPY=Object.freeze({merchant_sales:'Completed merchandise sales',supplier_orders:'Fulfilled PO value',supplier_received:'Recorded money received',supplier_budget:'Planned Supplier budget',settings:'Money Settings'});
 function financeCompactMetric(label,value,detail=''){return '<div class="businessFinanceMetric primary"><span>'+escapeHtml(label)+'</span><strong>'+(typeof value==='number'?financeMoney(value):escapeHtml(value))+'</strong>'+(detail?'<small>'+escapeHtml(detail)+'</small>':'')+'</div>'}
 function merchantFinanceHtml(o){
   const p=o.profitability||{},sett=o.settlement?.merchant_net,margin=p.estimated_margin_pct==null?'Not available':Number(p.estimated_margin_pct).toFixed(2)+'%';
