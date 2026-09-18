@@ -156,8 +156,13 @@ Runtime creative localization:
 - both expose the same three canonical message variants and keep referral identity unchanged;
 - locale and message variant are selected per exported creative and included in runtime validation.
 
+Automated print preflight:
+- `tests/marketing-kit-print-preflight.test.js` verifies A4/A5 QR physical-size geometry against the canonical 25 mm minimum;
+- `docs/growth/PRINT_QR_ACCEPTANCE.md` defines the real print/scan acceptance procedure;
+- automated geometry passing does **not** mark physical scan validation complete.
+
 Still not claimed complete:
-- physical print QR scan validation;
+- physical print QR scan validation on real printed output;
 - localized editable Figma/Canva master variants;
 - Canva Bulk Create automation.
 
