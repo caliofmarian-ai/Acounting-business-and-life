@@ -75,18 +75,18 @@ PostHog referral definitions must not be marked verified until emitted propertie
 
 ## Retention production gate
 
-Exact retention periods have intentionally **not** been invented in the Growth workstream.
+Growth does not invent retention periods. The Project Owner approved **60 days** for unconverted identifiable referral events on 2026-09-18.
 
-Before production referral tracking is activated, the project must define:
-- retention for unconverted referral events;
+Before production referral tracking is activated, the project must still define:
 - retention/legal basis for converted attribution;
-- retention/accounting basis for reward evidence.
+- retention/accounting basis for reward evidence;
+- the corresponding privacy-notice/processing basis required for the enabled analytics flow.
 
 Until that happens:
 
 `retention.productionReady = false`
 
-This prevents a marketing feature from silently establishing an indefinite PII/pseudonymous tracking policy.
+The approved 60-day unconverted period is therefore recorded, while `productionReady` remains false until the remaining retention/privacy gates are resolved. This prevents a partial Owner decision from silently enabling indefinite or incompletely governed PII/pseudonymous tracking.
 
 ## Authorization boundary
 
