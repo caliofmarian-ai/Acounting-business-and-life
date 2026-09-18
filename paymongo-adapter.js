@@ -215,16 +215,55 @@ export async function ensurePayMongoWebhook(pool,{force=false}={}){
   }
 }
 
+function payMongoSourceNotEnabled(sourceType,operation='checkout'){
+  return Object.assign(
+    new Error('PayMongo '+operation+' is not enabled for source type '+clean(sourceType||'unknown',60)),
+    {status:409,code:'PAYMONGO_SOURCE_NOT_ENABLED',source_type:clean(sourceType||'unknown',60)}
+  );
+}
+
+export async function resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,accountId}){
+  const iq=await pool.query("SELECT * FROM payment_intents WHERE public_id=$1",[clean(intentPublicId,120)]);
+  if(!iq.rowCount)throw Object.assign(new Error('Payment intent not found'),{status:404});
+  const i=iq.rows[0];
+  if(Number(i.payer_account_id)!==Number(accountId))throw Object.assign(new Error('Payment intent belongs to another payer'),{status:403});
+
+  if(i.source_type==='order'){
+    const oq=await pool.query(
+      "SELECT o.order_number,o.customer_account_id,o.business_id,o.currency_code,o.outstanding_amount,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1",
+      [i.source_id]
+    );
+    if(!oq.rowCount)throw Object.assign(new Error('Order not found for payment intent'),{status:404});
+    const o=oq.rows[0];
+    if(Number(o.customer_account_id)!==Number(accountId))throw Object.assign(new Error('Payment intent belongs to another Customer'),{status:403});
+    return{
+      intent:i,
+      source_type:'order',
+      source_id:Number(i.source_id),
+      payer_account_id:Number(i.payer_account_id),
+      currency_code:i.currency_code||o.currency_code||'PHP',
+      amount:Number(i.amount),
+      line_item_name:clean('Order '+(o.order_number||i.source_id)+' balance',120),
+      reference_number:clean(o.order_number||('ORDER-'+i.source_id),120),
+      metadata:{
+        bl_payment_intent_public_id:String(i.public_id),
+        bl_source_type:'order',
+        bl_source_id:String(i.source_id),
+        bl_order_id:String(i.source_id),
+        bl_business_id:String(o.business_id)
+      },
+      context:{order_number:o.order_number,business_id:Number(o.business_id),business_name:o.business_name,outstanding_amount:Number(o.outstanding_amount)}
+    };
+  }
+
+  throw payMongoSourceNotEnabled(i.source_type,'checkout');
+}
+
 export async function createPayMongoCheckout(pool,{intentPublicId,accountId}){
   const cfg=payMongoRuntimeConfig();
   if(!cfg.baseUrl||!/^https:\/\//i.test(cfg.baseUrl))throw Object.assign(new Error('A public HTTPS base URL is required for PayMongo redirects'),{status:503});
-  const q=await pool.query(
-    "SELECT i.*,o.order_number,o.customer_account_id,o.business_id,o.currency_code,o.outstanding_amount,b.name business_name FROM payment_intents i JOIN orders o ON o.id=i.source_id AND i.source_type='order' JOIN businesses b ON b.id=o.business_id WHERE i.public_id=$1",
-    [clean(intentPublicId,120)]
-  );
-  if(!q.rowCount)throw Object.assign(new Error('Payment intent not found'),{status:404});
-  const i=q.rows[0];
-  if(Number(i.payer_account_id)!==Number(accountId)||Number(i.customer_account_id)!==Number(accountId))throw Object.assign(new Error('Payment intent belongs to another Customer'),{status:403});
+  const descriptor=await resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,accountId});
+  const i=descriptor.intent;
   if(i.status==='succeeded')return{already_paid:true,intent:i};
   if(!['requires_provider','requires_action','processing'].includes(i.status))throw Object.assign(new Error('Payment intent cannot open PayMongo checkout from its current status'),{status:409});
   if(cents(i.amount)<100)throw Object.assign(new Error('PayMongo requires at least PHP 1.00'),{status:409});
@@ -238,18 +277,14 @@ export async function createPayMongoCheckout(pool,{intentPublicId,accountId}){
   }
 
   const body={data:{attributes:{
-    line_items:[{name:clean('Order '+(i.order_number||i.source_id)+' balance',120),amount:cents(i.amount),currency:'PHP',quantity:1}],
+    line_items:[{name:descriptor.line_item_name,amount:cents(i.amount),currency:descriptor.currency_code,quantity:1}],
     payment_method_types:cfg.methods,
     success_url:cfg.baseUrl+'/?payment_result=paymongo&status=return&intent='+encodeURIComponent(i.public_id),
     cancel_url:cfg.baseUrl+'/?payment_result=paymongo&status=cancel&intent='+encodeURIComponent(i.public_id),
-    reference_number:clean(i.order_number||('ORDER-'+i.source_id),120),
+    reference_number:descriptor.reference_number,
     send_email_receipt:false,
     pass_on_fees:false,
-    metadata:{
-      bl_payment_intent_public_id:String(i.public_id),
-      bl_order_id:String(i.source_id),
-      bl_business_id:String(i.business_id)
-    }
+    metadata:descriptor.metadata
   }}};
   const json=await payMongoRequest('/v2/checkout_sessions',{method:'POST',body,idempotencyKey:'bl-checkout-'+i.public_id});
   const session=json?.data;
@@ -262,13 +297,16 @@ export async function createPayMongoCheckout(pool,{intentPublicId,accountId}){
     const n=await client.query("SELECT COALESCE(MAX(attempt_no),0)+1 n FROM payment_attempts WHERE payment_intent_id=$1",[i.id]);
     await client.query(
       "INSERT INTO payment_attempts(payment_intent_id,attempt_no,provider_code,provider_attempt_id,status,amount,currency_code,provider_redirect_url,metadata_json) VALUES($1,$2,'paymongo',$3,'requires_action',$4,$5,$6,$7::jsonb)",
-      [i.id,Number(n.rows[0].n),sessionId,i.amount,i.currency_code||'PHP',checkoutUrl,JSON.stringify({mode:cfg.mode,methods:cfg.methods,pass_on_fees:false})]
+      [i.id,Number(n.rows[0].n),sessionId,i.amount,descriptor.currency_code,checkoutUrl,JSON.stringify({mode:cfg.mode,methods:cfg.methods,pass_on_fees:false,source_type:descriptor.source_type,source_id:descriptor.source_id})]
     );
     await client.query(
       "UPDATE payment_intents SET provider_code='paymongo',provider_session_id=$1,status='requires_action',provider_status='checkout_session_created',updated_at=NOW() WHERE id=$2 AND status<>'succeeded'",
       [sessionId,i.id]
     );
-    await client.query("INSERT INTO payment_audit_events(payment_intent_id,event_code,provider_code,after_json,correlation_id) VALUES($1,'paymongo_checkout_created','paymongo',$2::jsonb,$3)",[i.id,JSON.stringify({checkout_session_id:sessionId,methods:cfg.methods,mode:cfg.mode}),'paymongo-checkout:'+sessionId]);
+    await client.query(
+      "INSERT INTO payment_audit_events(payment_intent_id,event_code,provider_code,after_json,correlation_id) VALUES($1,'paymongo_checkout_created','paymongo',$2::jsonb,$3)",
+      [i.id,JSON.stringify({checkout_session_id:sessionId,methods:cfg.methods,mode:cfg.mode,source_type:descriptor.source_type,source_id:descriptor.source_id}),'paymongo-checkout:'+sessionId]
+    );
     await client.query('COMMIT');
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
   return{checkout_url:checkoutUrl,checkout_session_id:sessionId,reused:false,intent:await paymentIntentDetail(pool,i.id)};
@@ -314,6 +352,65 @@ async function markProviderEvent(pool,id,status,errorCode=''){
   await pool.query("UPDATE provider_events SET processing_status=$1,error_code=$2,processed_at=NOW() WHERE id=$3",[status,clean(errorCode,120),id]);
 }
 
+async function confirmOrderPayMongoSourcePayment(client,{intent,providerPaymentId,providerMethod}){
+  const oq=await client.query("SELECT * FROM orders WHERE id=$1 FOR UPDATE",[intent.source_id]);
+  if(!oq.rowCount)throw Object.assign(new Error('Order not found for PayMongo payment'),{status:404});
+  const o=oq.rows[0],outstanding=money(Number(o.total)-Number(o.paid_amount));
+  if(Number(intent.amount)>outstanding+0.001){
+    return{manual_review:true,reason:'outstanding_balance_changed',source_type:'order',source_id:Number(o.id)};
+  }
+
+  const alloc=await client.query("SELECT component_code,amount FROM payment_allocations WHERE payment_intent_id=$1",[intent.id]);
+  const merchandise=money(alloc.rows.filter(x=>x.component_code==='merchandise').reduce((s,x)=>s+Number(x.amount),0));
+  const delivery=money(alloc.rows.filter(x=>x.component_code==='delivery').reduce((s,x)=>s+Number(x.amount),0));
+  const op=await client.query(
+    "INSERT INTO order_payments(order_id,payment_intent_id,amount,merchandise_amount,delivery_amount,account,method_code,provider_code,provider_reference,status,received_by_account_id) VALUES($1,$2,$3,$4,$5,'other',$6,'paymongo',$7,'confirmed',NULL) ON CONFLICT(payment_intent_id) WHERE payment_intent_id IS NOT NULL DO UPDATE SET provider_reference=EXCLUDED.provider_reference RETURNING *",
+    [o.id,intent.id,intent.amount,merchandise,delivery,providerMethod,providerPaymentId]
+  );
+  const orderPaymentId=Number(op.rows[0].id),paid=money(Number(o.paid_amount)+Number(intent.amount)),remaining=money(Number(o.total)-paid),paymentStatus=remaining<=0.001?'paid':'partial';
+  await client.query("UPDATE orders SET paid_amount=$1,outstanding_amount=$2,payment_status=$3,updated_at=NOW() WHERE id=$4",[paid,remaining,paymentStatus,o.id]);
+  if(merchandise>0)await client.query(
+    "INSERT INTO transactions(business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at) VALUES($1,'sale',$2,$3,$4,'other',$5,'order_payment',$6,NOW()) ON CONFLICT DO NOTHING",
+    [o.business_id,'Order '+(o.order_number||o.id),merchandise,providerMethod,'PayMongo-confirmed merchandise payment for '+(o.order_number||o.id),orderPaymentId]
+  );
+  if(delivery>0){
+    const dq=await client.query("SELECT id FROM deliveries WHERE order_id=$1",[o.id]);
+    await client.query(
+      "INSERT INTO delivery_financial_events(order_id,delivery_id,event_type,amount,currency_code,source_payment_id) VALUES($1,$2,'delivery_fee_received',$3,$4,$5) ON CONFLICT(event_type,source_payment_id) DO NOTHING",
+      [o.id,dq.rows[0]?.id||null,delivery,o.currency_code||'PHP',orderPaymentId]
+    );
+  }
+  if(paymentStatus==='paid'&&o.order_status==='awaiting_payment'){
+    await client.query("UPDATE orders SET order_status='accepted',accepted_at=COALESCE(accepted_at,NOW()),updated_at=NOW() WHERE id=$1",[o.id]);
+    await client.query(
+      "INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,'awaiting_payment','accepted',NULL,'PayMongo webhook confirmed payment')",
+      [o.id]
+    );
+  }
+  await client.query(
+    "UPDATE payment_allocations SET settlement_status='eligible' WHERE payment_intent_id=$1 AND component_code IN ('merchandise','delivery') AND settlement_status='pending'",
+    [intent.id]
+  );
+  return{
+    source_type:'order',source_id:Number(o.id),order_id:Number(o.id),
+    order_payment_id:orderPaymentId,payment_status:paymentStatus,
+    merchandise_amount:merchandise,delivery_amount:delivery
+  };
+}
+
+export async function confirmPayMongoSourcePayment(client,args){
+  const sourceType=clean(args?.intent?.source_type,60);
+  if(sourceType==='order')return confirmOrderPayMongoSourcePayment(client,args);
+  return{
+    hold:true,
+    manual_review:true,
+    reason:'paymongo_source_not_enabled',
+    code:'PAYMONGO_SOURCE_NOT_ENABLED',
+    source_type:sourceType||'unknown',
+    source_id:Number(args?.intent?.source_id)||null
+  };
+}
+
 export async function processPayMongoWebhook(pool,{rawBody,signatureHeader}){
   const sig=verifyPayMongoSignature(rawBody,signatureHeader);
   if(!sig.ok)throw Object.assign(new Error('Invalid PayMongo webhook signature: '+sig.reason),{status:400,code:'PAYMONGO_WEBHOOK_SIGNATURE_INVALID'});
@@ -341,59 +438,70 @@ export async function processPayMongoWebhook(pool,{rawBody,signatureHeader}){
   const providerPaymentId=clean(payment.id,200);
   const providerIntentId=clean(attrs.payment_intent?.id||pa.payment_intent_id,200);
   const fee=money((Number(pa.fee)||0)/100),net=money((Number(pa.net_amount)||amountCents)/100);
-  const sourceType=clean(pa.source?.type||'paymongo',60);
+  const providerMethod=clean(pa.source?.type||'paymongo',60);
 
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
     const iq=await client.query("SELECT * FROM payment_intents WHERE id=$1 FOR UPDATE",[intent.id]);
     const i=iq.rows[0];
-    if(i.status==='succeeded'){await client.query("UPDATE provider_events SET processing_status='processed',processed_at=NOW() WHERE id=$1",[pe.id]);await client.query('COMMIT');return{ok:true,duplicate:true}}
-    if(i.source_type!=='order')throw Object.assign(new Error('PayMongo confirmation only supports order intents in V0.14'),{status:409});
-    if(i.provider_session_id&&sessionId&&i.provider_session_id!==sessionId){await client.query("UPDATE provider_events SET processing_status='manual_review',error_code='checkout_session_mismatch',processed_at=NOW() WHERE id=$1",[pe.id]);await client.query('COMMIT');return{ok:false,manual_review:true,reason:'checkout_session_mismatch'}}
-    const oq=await client.query("SELECT * FROM orders WHERE id=$1 FOR UPDATE",[i.source_id]);
-    if(!oq.rowCount)throw Object.assign(new Error('Order not found for PayMongo payment'),{status:404});
-    const o=oq.rows[0],outstanding=money(Number(o.total)-Number(o.paid_amount));
-    if(Number(i.amount)>outstanding+0.001){
-      await client.query("UPDATE provider_events SET processing_status='manual_review',error_code='outstanding_balance_changed',processed_at=NOW() WHERE id=$1",[pe.id]);
-      await client.query('COMMIT');return{ok:false,manual_review:true,reason:'outstanding_balance_changed'};
+    if(i.status==='succeeded'){
+      await client.query("UPDATE provider_events SET processing_status='processed',processed_at=NOW() WHERE id=$1",[pe.id]);
+      await client.query('COMMIT');
+      return{ok:true,duplicate:true};
     }
-    const alloc=await client.query("SELECT component_code,amount FROM payment_allocations WHERE payment_intent_id=$1",[i.id]);
-    const merchandise=money(alloc.rows.filter(x=>x.component_code==='merchandise').reduce((s,x)=>s+Number(x.amount),0));
-    const delivery=money(alloc.rows.filter(x=>x.component_code==='delivery').reduce((s,x)=>s+Number(x.amount),0));
-    const op=await client.query(
-      "INSERT INTO order_payments(order_id,payment_intent_id,amount,merchandise_amount,delivery_amount,account,method_code,provider_code,provider_reference,status,received_by_account_id) VALUES($1,$2,$3,$4,$5,'other',$6,'paymongo',$7,'confirmed',NULL) ON CONFLICT(payment_intent_id) WHERE payment_intent_id IS NOT NULL DO UPDATE SET provider_reference=EXCLUDED.provider_reference RETURNING *",
-      [o.id,i.id,i.amount,merchandise,delivery,sourceType,providerPaymentId]
-    );
-    const orderPaymentId=Number(op.rows[0].id),paid=money(Number(o.paid_amount)+Number(i.amount)),remaining=money(Number(o.total)-paid),paymentStatus=remaining<=0.001?'paid':'partial';
-    await client.query("UPDATE orders SET paid_amount=$1,outstanding_amount=$2,payment_status=$3,updated_at=NOW() WHERE id=$4",[paid,remaining,paymentStatus,o.id]);
-    if(merchandise>0)await client.query(
-      "INSERT INTO transactions(business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at) VALUES($1,'sale',$2,$3,$4,'other',$5,'order_payment',$6,NOW()) ON CONFLICT DO NOTHING",
-      [o.business_id,'Order '+(o.order_number||o.id),merchandise,sourceType,'PayMongo-confirmed merchandise payment for '+(o.order_number||o.id),orderPaymentId]
-    );
-    if(delivery>0){
-      const dq=await client.query("SELECT id FROM deliveries WHERE order_id=$1",[o.id]);
-      await client.query("INSERT INTO delivery_financial_events(order_id,delivery_id,event_type,amount,currency_code,source_payment_id) VALUES($1,$2,'delivery_fee_received',$3,$4,$5) ON CONFLICT(event_type,source_payment_id) DO NOTHING",[o.id,dq.rows[0]?.id||null,delivery,o.currency_code||'PHP',orderPaymentId]);
+    if(i.provider_session_id&&sessionId&&i.provider_session_id!==sessionId){
+      await client.query("UPDATE provider_events SET processing_status='manual_review',error_code='checkout_session_mismatch',processed_at=NOW() WHERE id=$1",[pe.id]);
+      await client.query('COMMIT');
+      return{ok:false,manual_review:true,reason:'checkout_session_mismatch'};
     }
-    if(paymentStatus==='paid'&&o.order_status==='awaiting_payment'){
-      await client.query("UPDATE orders SET order_status='accepted',accepted_at=COALESCE(accepted_at,NOW()),updated_at=NOW() WHERE id=$1",[o.id]);
-      await client.query("INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,'awaiting_payment','accepted',NULL,'PayMongo webhook confirmed payment')",[o.id]);
+
+    const sourceResult=await confirmPayMongoSourcePayment(client,{intent:i,providerPaymentId,providerMethod});
+    if(sourceResult?.hold){
+      await client.query(
+        "UPDATE provider_events SET processing_status='manual_review',error_code=$1,processed_at=NOW() WHERE id=$2",
+        [clean(sourceResult.reason,120),pe.id]
+      );
+      await client.query(
+        "INSERT INTO payment_audit_events(payment_intent_id,event_code,provider_code,after_json,correlation_id) VALUES($1,'paymongo_source_not_enabled','paymongo',$2::jsonb,$3)",
+        [i.id,JSON.stringify({source_type:i.source_type,source_id:i.source_id,checkout_session_id:sessionId,payment_id:providerPaymentId}),'paymongo-event:'+evt.eventId]
+      );
+      await client.query('COMMIT');
+      return{ok:false,manual_review:true,reason:sourceResult.reason,code:sourceResult.code,source_type:i.source_type};
     }
-    await client.query("UPDATE payment_allocations SET settlement_status='eligible' WHERE payment_intent_id=$1 AND component_code IN ('merchandise','delivery') AND settlement_status='pending'",[i.id]);
+    if(sourceResult?.manual_review){
+      await client.query(
+        "UPDATE provider_events SET processing_status='manual_review',error_code=$1,processed_at=NOW() WHERE id=$2",
+        [clean(sourceResult.reason,120),pe.id]
+      );
+      await client.query('COMMIT');
+      return{ok:false,manual_review:true,reason:sourceResult.reason,source_type:i.source_type};
+    }
+
     if(fee>0)await client.query(
       "INSERT INTO payment_allocations(payment_intent_id,component_code,economic_party_type,economic_party_id,gross_base,amount,currency_code,fee_policy_version_id,rule_snapshot,settlement_status) SELECT $1,'processor_fee','processor','paymongo',$2,$3,'PHP',NULL,$4::jsonb,'paid' WHERE NOT EXISTS(SELECT 1 FROM payment_allocations WHERE payment_intent_id=$1 AND component_code='processor_fee' AND economic_party_id='paymongo')",
       [i.id,i.amount,fee,JSON.stringify({provider:'paymongo',payment_id:providerPaymentId,checkout_session_id:sessionId,net_amount:net,fee_source:'verified_webhook'})]
     );
     await client.query(
       "UPDATE payment_intents SET status='succeeded',provider_code='paymongo',provider_session_id=$1,provider_payment_id=$2,provider_intent_id=$3,provider_status='paid',provider_fee=$4,provider_net_amount=$5,provider_payment_method=$6,succeeded_at=NOW(),updated_at=NOW() WHERE id=$7",
-      [sessionId,providerPaymentId,providerIntentId,fee,net,sourceType,i.id]
+      [sessionId,providerPaymentId,providerIntentId,fee,net,providerMethod,i.id]
     );
-    await client.query("UPDATE payment_attempts SET status='succeeded',finished_at=NOW() WHERE payment_intent_id=$1 AND provider_code='paymongo' AND provider_attempt_id=$2",[i.id,sessionId]);
+    await client.query(
+      "UPDATE payment_attempts SET status='succeeded',finished_at=NOW() WHERE payment_intent_id=$1 AND provider_code='paymongo' AND provider_attempt_id=$2",
+      [i.id,sessionId]
+    );
     await client.query("UPDATE provider_events SET processing_status='processed',processed_at=NOW() WHERE id=$1",[pe.id]);
-    await client.query("INSERT INTO payment_audit_events(payment_intent_id,event_code,provider_code,after_json,correlation_id) VALUES($1,'paymongo_checkout_paid','paymongo',$2::jsonb,$3)",[i.id,JSON.stringify({checkout_session_id:sessionId,payment_id:providerPaymentId,payment_intent_id:providerIntentId,amount:Number(i.amount),fee,net_amount:net,payment_method:sourceType}),'paymongo-event:'+evt.eventId]);
+    await client.query(
+      "INSERT INTO payment_audit_events(payment_intent_id,event_code,provider_code,after_json,correlation_id) VALUES($1,'paymongo_checkout_paid','paymongo',$2::jsonb,$3)",
+      [i.id,JSON.stringify({checkout_session_id:sessionId,payment_id:providerPaymentId,payment_intent_id:providerIntentId,amount:Number(i.amount),fee,net_amount:net,payment_method:providerMethod,source_type:i.source_type,source_id:i.source_id}),'paymongo-event:'+evt.eventId]
+    );
     await client.query('COMMIT');
-    return{ok:true,intent:await paymentIntentDetail(pool,i.id),order_id:o.id,payment_id:providerPaymentId};
-  }catch(e){await client.query('ROLLBACK').catch(()=>{});await markProviderEvent(pool,pe.id,'failed',clean(e.code||'processing_error',120)).catch(()=>{});throw e}finally{client.release()}
+    return{ok:true,intent:await paymentIntentDetail(pool,i.id),...sourceResult,payment_id:providerPaymentId};
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    await markProviderEvent(pool,pe.id,'failed',clean(e.code||'processing_error',120)).catch(()=>{});
+    throw e;
+  }finally{client.release()}
 }
 
 
