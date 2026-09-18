@@ -73,7 +73,9 @@ async function ledgerMetrics(pool,businessId){
         COALESCE(SUM(amount) FILTER(WHERE type='money_received'),0) other_money_received,
         COALESCE(SUM(amount) FILTER(WHERE type='business_expense'),0) business_expenses,
         COALESCE(SUM(amount) FILTER(WHERE type='personal_withdrawal'),0) owner_drawings,
-        COALESCE(SUM(amount) FILTER(WHERE type='adjustment'),0) adjustments
+        COALESCE(SUM(amount) FILTER(WHERE type='adjustment'),0) adjustments,
+        COALESCE(SUM(amount) FILTER(WHERE type='profile_transfer_in'),0) profile_transfer_in,
+        COALESCE(SUM(amount) FILTER(WHERE type='profile_transfer_out'),0) profile_transfer_out
       FROM transactions WHERE business_id=$1
     `,[businessId]),
     pool.query(`
@@ -98,6 +100,9 @@ async function ledgerMetrics(pool,businessId){
       business_expenses:money(t.business_expenses),
       owner_drawings:money(t.owner_drawings),
       adjustments:money(t.adjustments),
+      profile_transfer_in:money(t.profile_transfer_in),profile_transfer_out:money(t.profile_transfer_out),
+      recorded_available_balance:money(Number(t.recorded_sales||0)+Number(t.other_money_received||0)+Number(t.adjustments||0)+Number(t.profile_transfer_in||0)-Number(t.business_expenses||0)-Number(t.owner_drawings||0)-Number(t.profile_transfer_out||0)),
+      internal_transfer_rule:'Profile transfers change recorded balance but never business revenue, expense or profit.',
       owner_drawing_rule:'Owner drawing / withdrawal is separate from business operating expense.'
     },
     expense_categories:categories.rows.map(x=>({category:x.category,entries:n(x.entries),amount:money(x.amount)})),
