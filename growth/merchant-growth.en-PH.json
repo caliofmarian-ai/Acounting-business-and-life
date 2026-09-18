@@ -1,0 +1,79 @@
+{
+  "version": "1.0.0",
+  "locale": "en-PH",
+  "productArea": "merchant",
+  "publicLabel": "Merchant",
+  "headline": "Run the business. Sell to customers. See where the money goes.",
+  "body": "Business & Life connects money, stock, products, customer orders, Suppliers and delivery workflows around one approved Merchant profile.",
+  "audiences": [
+    "restaurant",
+    "fast-food / takeaway",
+    "bakery",
+    "food stall",
+    "sari-sari / convenience shop",
+    "small grocery",
+    "local retail shop",
+    "other eligible local merchant"
+  ],
+  "pillars": [
+    {
+      "id": "money",
+      "title": "Understand the money",
+      "points": [
+        "cash and account balances",
+        "sales and business expenses",
+        "daily reconciliation",
+        "customer receivables",
+        "reports and audit corrections"
+      ]
+    },
+    {
+      "id": "stock",
+      "title": "Control stock and products",
+      "points": [
+        "inventory and reorder warnings",
+        "menu/products",
+        "recipes and ingredient consumption",
+        "unit costs",
+        "gross-margin visibility"
+      ]
+    },
+    {
+      "id": "sell",
+      "title": "Sell and serve customers",
+      "points": [
+        "Marketplace storefront when published",
+        "customer basket/checkout",
+        "multi-item orders",
+        "preparation and fulfilment states",
+        "order tracking"
+      ]
+    },
+    {
+      "id": "network",
+      "title": "Work with your local network",
+      "points": [
+        "trusted Supplier relationships",
+        "procurement orders",
+        "delivery handoff for eligible in-app customer orders",
+        "separate delivery fee accounting"
+      ]
+    }
+  ],
+  "ctas": {
+    "primary": "Explore Merchant tools",
+    "secondary": "Share with a local business"
+  },
+  "governance": {
+    "merchantApprovalAutomatic": false,
+    "storefrontPublicationAutomatic": false,
+    "guaranteedProfit": false,
+    "taxComplianceGuaranteed": false,
+    "arbitraryExternalParcelDeliveryClaim": false
+  },
+  "share": {
+    "short": "Run a restaurant, fast-food business or local shop? Business & Life brings business money, stock, orders, Suppliers and eligible delivery workflows together. {REFERRAL_URL}",
+    "socialHeadline": "Run the business. See the money.",
+    "socialBody": "Cash, stock, products, customer orders and local business relationships — connected in one Merchant workspace."
+  }
+}
