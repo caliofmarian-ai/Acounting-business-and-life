@@ -37,7 +37,7 @@ async function openPayments(){
     const [orders,intents]=await Promise.all([api('/api/payments/open-orders'),api('/api/payments/mine')]);
     const liveGate=gateState('controlled_pilot'),qaGate=gateState('internal_qa');
     const payReady=liveGate?.state==='READY',qaReady=qaGate?.state==='READY';
-    const bannerTitle=payReady?'PayMongo LIVE ready for first pilot':(qaReady?'PayMongo ready for internal QA · live pilot HOLD':'PayMongo setup incomplete');
+    const bannerTitle=payReady?'PayMongo LIVE ready for first pilot':(qaReady?'PayMongo sandbox ready for internal QA · live pilot HOLD':'PayMongo setup incomplete');
     const bannerCopy=payReady
       ?'Live Hosted Checkout and signed webhook are ready. A payment becomes authoritative only after verified provider confirmation.'
       :(qaReady?'Sandbox checkout is available only for internal QA. Real-customer checkout stays blocked until PayMongo LIVE is ready.':'Online checkout remains safely unavailable until the required PayMongo configuration and webhook are ready.');
