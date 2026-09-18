@@ -69,7 +69,9 @@ const templates=[
   ['profile.application_reviewed','en-PH','Profile application updated','Your {{role}} application is now {{status}}.'],
   ['profile.application_reviewed','fil-PH','Na-update ang profile application','Ang {{role}} application mo ay {{status}} na.'],
   ['profile.authorization_changed','en-PH','Profile authorization updated','Your {{role}} authorization is now {{status}}.'],
-  ['profile.authorization_changed','fil-PH','Na-update ang profile authorization','Ang {{role}} authorization mo ay {{status}} na.']
+  ['profile.authorization_changed','fil-PH','Na-update ang profile authorization','Ang {{role}} authorization mo ay {{status}} na.'],
+  ['legal.reconsent_required','en-PH','Legal document updated','A reviewed Business & Life legal document was updated. Open Legal & Privacy to review version {{version_label}}.'],
+  ['legal.reconsent_required','fil-PH','Na-update ang legal document','May na-update na reviewed legal document sa Business & Life. Buksan ang Legal & Privacy para makita ang version {{version_label}}.']
 ];
 
 export async function ensureNotificationSchema(pool){
