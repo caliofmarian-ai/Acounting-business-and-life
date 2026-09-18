@@ -17,10 +17,19 @@ async function profileApi(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   const t = token();
   if (t) headers.Authorization = `Bearer ${t}`;
-  const response = await fetch(path, { ...options, headers });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
-  return data;
+  const controller = options.signal ? null : new AbortController();
+  const timeout = controller ? setTimeout(() => controller.abort(), 10000) : null;
+  try {
+    const response = await fetch(path, { ...options, headers, signal: options.signal || controller?.signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+    return data;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('The app is taking too long to respond. Check your connection and try again.');
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function initials(name) {
@@ -128,14 +137,20 @@ function renderDrawer() {
   panel.querySelector('#accountIdentityForm').onsubmit = saveIdentity;
   panel.querySelector('#avatarFile').onchange = uploadAvatar;
   panel.querySelector('#removeAvatar').onclick = removeAvatar;
+  document.dispatchEvent(new CustomEvent('abl:drawer-rendered', { detail: { activeRole, accountId: Number(account.id) || null } }));
 }
 
 async function openDrawer() {
   if (!token()) return showToast('Sign in first to open your account.');
-  try { await refreshProfile(); } catch {}
-  renderDrawer();
+  if (snapshot?.account) renderDrawer();
   document.getElementById('profileDrawerBackdrop')?.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
+  try {
+    await refreshProfile();
+    renderDrawer();
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 function closeDrawer() {
   document.getElementById('profileDrawerBackdrop')?.classList.add('hidden');
@@ -258,6 +273,7 @@ async function refreshProfile() {
   activeRole = snapshot.account?.active_role || 'merchant';
   ensureShellChrome();
   applyActiveRole();
+  document.dispatchEvent(new CustomEvent('abl:profile-state', { detail: { activeRole, accountId: Number(snapshot.account?.id) || null } }));
 }
 
 function onShellVisibility() {
