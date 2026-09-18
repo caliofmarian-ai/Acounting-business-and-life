@@ -9,6 +9,7 @@ This slice wires only events that are truthful in the current product runtime:
 - `referral_link_created`
 - `referral_shared`
 - `referral_landing_viewed`
+- `referral_signup_started`
 
 It does **not** emit `referral_signup_completed`, `referral_qualified` or `referral_rewarded` before the corresponding attribution/reward runtime exists.
 
@@ -20,7 +21,9 @@ Allowed runtime properties are bounded to the canonical Growth allowlist. Raw em
 
 A random session-scoped `correlation_id` is used as the PostHog `distinct_id`. Delivery sets `$process_person_profile=false` so these referral analytics events do not create person profiles.
 
-The public landing sends its referral code only to the same-origin server so the server can verify that the opaque code exists. The code is not forwarded to PostHog.
+The public landing and referred signup-start flow send the referral code only to the same-origin server so the server can verify that the opaque code exists and belongs to the claimed enabled source profile. The code is not forwarded to PostHog.
+
+Campaign, source and medium values are canonicalized server-side from the validated source profile where applicable; client-supplied values cannot redefine canonical campaign attribution.
 
 ## Delivery gates
 
