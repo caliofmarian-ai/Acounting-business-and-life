@@ -9,7 +9,7 @@ const read = relative => readFileSync(new URL(`../${relative}`, import.meta.url)
 test('production entry point is the unified Notifications gateway over Admin and Support', () => {
   assert.equal(pkg.version, '0.11.0');
   assert.match(pkg.scripts.start, /--import \.\/bootstrap-env\.js/);
-  assert.match(pkg.scripts.start, /server-admin-operations\.js/);
+  assert.match(pkg.scripts.start, /server-notifications\.js/);
 });
 
 test('all executable domain gateways required by the current platform exist', () => {
