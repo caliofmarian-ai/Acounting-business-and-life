@@ -8,7 +8,15 @@ function ensureUi(){if(!document.getElementById('paymentBackdrop')){const w=docu
 function addButton(){const top=document.querySelector('.topActions');if(!top||!token()||document.getElementById('paymentCenterBtn'))return;const b=document.createElement('button');b.id='paymentCenterBtn';b.className='paymentCenterBtn';b.type='button';b.textContent='Payments';b.onclick=openPayments;top.prepend(b)}
 function openSheet(){ensureUi();document.getElementById('paymentBackdrop').classList.remove('hidden');document.body.style.overflow='hidden'}
 function closePayments(){document.getElementById('paymentBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
-async function loadCtx(){if(!pctx.me)pctx.me=await api('/api/me');if(!pctx.admin){try{pctx.admin=await api('/api/admin/me')}catch{pctx.admin={is_admin:false,permissions:[],assignments:[]}}}pctx.config=await api('/api/payments/config');try{pctx.paymongo=await api('/api/payments/paymongo/status')}catch{pctx.paymongo=null}}
+async function loadCtx(){
+  const mePromise=pctx.me?Promise.resolve(pctx.me):api('/api/me').then(x=>(pctx.me=x));
+  const adminPromise=pctx.admin?Promise.resolve(pctx.admin):api('/api/admin/me').then(x=>(pctx.admin=x)).catch(()=>(pctx.admin={is_admin:false,permissions:[],assignments:[]}));
+  const configPromise=api('/api/payments/config');
+  const paymongoPromise=api('/api/payments/paymongo/status').catch(()=>null);
+  const [, , config, paymongo]=await Promise.all([mePromise,adminPromise,configPromise,paymongoPromise]);
+  pctx.config=config;
+  pctx.paymongo=paymongo;
+}
 async function openPayments(){
   openSheet();const body=document.getElementById('paymentBody');body.innerHTML='<div class="paymentLoading">Loading payment state…</div>';
   try{
