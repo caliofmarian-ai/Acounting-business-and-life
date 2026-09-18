@@ -29,3 +29,7 @@
 .movementRow small{opacity:.72;overflow-wrap:anywhere}
 .movementRow span{font-size:12px;font-weight:700;text-transform:uppercase}
 @media(min-width:760px){.settingsSplit{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.accountMoneyCard{border-color:#bae6fd;background:linear-gradient(180deg,#ffffff,#f8fcff)}
+.accountMoneyHeading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:14px}.accountMoneyHeading small{font-size:10px;letter-spacing:.1em;color:#0369a1;font-weight:900}.accountMoneyHeading h2{font-size:22px;margin:3px 0 5px}.settingsMoneyBadge{white-space:nowrap;border-radius:999px;background:#e0f2fe;color:#075985;padding:7px 10px;font-size:11px;font-weight:900}.sectionTitle{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:18px 0 8px}.sectionTitle h3{margin:0}
+@media(max-width:620px){.accountMoneyHeading{display:grid}.settingsMoneyBadge{justify-self:start}}
