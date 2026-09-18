@@ -22,6 +22,7 @@ import {
   createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
   isBusinessFinanceRole,PROFILE_FINANCE_ROLES,FINANCIAL_ACCOUNT_KINDS,MONEY_METHODS,PAYOUT_SCHEDULES
 } from './profile-finance-core.js';
+import {profileMoneySnapshot} from './profile-money-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -67,7 +68,9 @@ app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__
 app.get('/payments-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','payments-ui.js'),'utf8')));
 app.get('/profile-settings.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','profile-settings.css'),'utf8')));
 app.get('/profile-settings-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','profile-settings-ui.js'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n  <link rel="stylesheet" href="/profile-settings.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n  <script type="module" src="/profile-settings-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+app.get('/profile-money.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','profile-money.css'),'utf8')));
+app.get('/profile-money-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','profile-money-ui.js'),'utf8')));
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n  <link rel="stylesheet" href="/profile-settings.css" />\n  <link rel="stylesheet" href="/profile-money.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n  <script type="module" src="/profile-settings-ui.js"></script>\n  <script type="module" src="/profile-money-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 function rejectSensitiveFinancialFields(value){
@@ -103,6 +106,20 @@ async function financialAccountOwnedForScope(accountId,id,role,businessId,purpos
   if(purpose==='payout'&&!row.can_payout)throw Object.assign(new Error('Selected account is not enabled as a payout destination'),{status:409});
   return Number(row.id);
 }
+
+app.get('/api/profile-money/:role',async(req,res,next)=>{try{
+  const me=await identity(req),role=clean(req.params.role,40);
+  if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile uses business accounting or does not have a personal Money workspace'});
+  if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before opening its Money workspace'});
+  const [snapshot,accounts,preferences]=await Promise.all([
+    profileMoneySnapshot(pool,role,me.account.id),
+    listProfileFinancialAccounts(pool,me.account.id),
+    listMoneyPreferences(pool,me.account.id)
+  ]);
+  const profileAccounts=accounts.filter(a=>a.profile_role===role&&a.owner_scope==='account');
+  const preference=preferences.find(p=>p.profile_role===role&&p.business_id==null)||null;
+  res.json({...snapshot,financial_accounts:profileAccounts,money_preference:preference});
+}catch(e){next(e)}});
 
 app.get('/api/settings/finance',async(req,res,next)=>{try{
   const me=await identity(req);

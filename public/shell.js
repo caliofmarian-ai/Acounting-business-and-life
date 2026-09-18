@@ -313,16 +313,17 @@ const HUBS = {
     ['🛠️','Local Services','Electricians, carpenters, painters and more','Local Services'],
     ['🛒','Platform Store','Philippines-only platform Shopify store','Platform Store'],
     ['🧾','My Orders','Preparation, payment and order history','Orders'],
-    ['📍','Delivery','Courier status and live tracking','Delivery']
+    ['📍','Delivery','Courier status and live tracking','Delivery'],
+    ['💳','My Money','Payments, refunds and personal purchase flow','Money']
   ],
   supplier: [
     ['📦','My Catalog','Products and raw materials you supply','Catalog'],['📥','Incoming Orders','Purchase orders from connected merchants','Procurement'],['⏱️','ETA & Readiness','Confirm availability and ready times','ETA'],['🚚','Fulfilment','Pickup or supplier delivery status','Fulfilment']
   ],
   courier: [
-    ['✅','Eligibility','Admin approval and document status','Eligibility'],['🟢','Availability','Go available after approval','Availability'],['📋','Assigned Deliveries','Your active delivery queue','Deliveries'],['🗺️','Active Route','Pickup, transit and completion','Tracking']
+    ['✅','Eligibility','Admin approval and document status','Eligibility'],['🟢','Availability','Go available after approval','Availability'],['📋','Assigned Deliveries','Your active delivery queue','Deliveries'],['🗺️','Active Route','Pickup, transit and completion','Tracking'],['💰','Earnings & Money','Recorded earnings, settlement and payout status','Money']
   ],
   service_provider: [
-    ['👤','Public Profile','Headline, experience and service area','Profile'],['🧰','Services Offered','Choose the tasks you provide','Services'],['🎓','Qualifications & CV','Credentials, experience and portfolio','Qualifications'],['💬','Requests & Quotes','Review requests and send quotes','Quotes'],['🗓️','Jobs','Scheduled and active work','Jobs'],['⭐','Reviews','Verified feedback from completed work','Reviews']
+    ['👤','Public Profile','Headline, experience and service area','Profile'],['🧰','Services Offered','Choose the tasks you provide','Services'],['🎓','Qualifications & CV','Credentials, experience and portfolio','Qualifications'],['💬','Requests & Quotes','Review requests and send quotes','Quotes'],['🗓️','Jobs','Scheduled and active work','Jobs'],['⭐','Reviews','Verified feedback from completed work','Reviews'],['💰','Money','Job value, receivables and payout status','Money']
   ]
 };
 
