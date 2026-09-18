@@ -19,3 +19,13 @@
 .settingsAvatarEntry{display:flex;gap:10px;align-items:center;width:100%;border:1px solid #dbe3ea;background:#fff;border-radius:15px;padding:13px;text-align:left}.settingsAvatarEntry span{font-size:20px}.settingsAvatarEntry strong{display:block;color:#17233c}.settingsAvatarEntry small{display:block;color:#64748b;margin-top:2px}
 .settingsStatus{min-height:18px;font-size:12px;color:#0369a1;margin-top:7px}
 @media(max-width:620px){.settingsGrid2,.settingsChecks{grid-template-columns:1fr}.profileSettingsWorkspace{padding-left:10px;padding-right:10px}.settingsHero{border-radius:20px}.settingsCard{padding:15px;border-radius:18px}}
+.budgetCard{border:1px solid var(--line,#d9e0e7);border-radius:16px;padding:14px;background:var(--card,#fff);display:grid;gap:10px}
+.budgetTruth{display:grid;gap:3px;padding:10px;border-radius:12px;background:rgba(72,122,255,.07)}
+.budgetTruth small{opacity:.72;line-height:1.35}
+.settingsSplit{display:grid;grid-template-columns:1fr;gap:12px;margin-top:14px}
+.movementHistory{display:grid;gap:8px;margin-top:14px}
+.movementRow{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px;border:1px solid var(--line,#d9e0e7);border-radius:12px}
+.movementRow div{display:grid;gap:3px;min-width:0}
+.movementRow small{opacity:.72;overflow-wrap:anywhere}
+.movementRow span{font-size:12px;font-weight:700;text-transform:uppercase}
+@media(min-width:760px){.settingsSplit{grid-template-columns:repeat(2,minmax(0,1fr))}}
