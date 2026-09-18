@@ -97,6 +97,10 @@ async function financePanel(){
   const serviceRows=k.services||[];
   const evidence=k.evidence_breakdown||[];
   const costs=k.recent_cost_entries||[];
+  const promo=k.promotion_economics||{};
+  const promoTotals=(promo.totals||[]).find(x=>x.phase==='promotional')||{};
+  const postPromoTotals=(promo.totals||[]).find(x=>x.phase==='post_promo')||{};
+  const promoServices=promo.services||[];
   const canManage=hasAny(['finance.cost.manage']);
   const fixedTerritory=financeTerritoryId();
   const territoryField=fixedTerritory
@@ -120,7 +124,21 @@ async function financePanel(){
     +rows(serviceRows,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+esc(x.completed_transactions)+' tx</span></div><div class="financeLine"><span>Gross '+financeMoney(x.gross_value)+'</span><span>Revenue '+financeMoney(x.revenue)+'</span><span>Variable '+financeMoney(x.variable_cost)+'</span><span>Fixed '+financeMoney(x.allocated_fixed_cost)+'</span><strong class="'+financeTone(x.operating_profit)+'">P/L '+financeMoney(x.operating_profit)+'</strong></div><span class="muted">Contribution margin '+financePct(x.contribution_margin_pct)+' · Net margin '+financePct(x.net_margin_pct)+'</span></div>')
     +'<div class="sectionTitle"><h3>Cost evidence quality</h3></div>'
     +(evidence.length?'<div class="financeEvidence">'+evidence.map(x=>'<div class="card"><strong>'+financeMoney(x.amount)+'</strong><span>'+esc(x.evidence_class)+' · '+esc(x.entries)+' records</span></div>').join('')+'</div>':'<div class="empty">No platform cost evidence recorded in this period.</div>')
-    +'<div class="notice"><strong>90-day promotion</strong><br>'+esc(k.promotion_economics?.note||'Promo cohort linkage is not available yet.')+'</div>'
+    +'<div class="sectionTitle"><h3>90-day promotional cohorts</h3></div>'
+    +'<div class="financeSummary financePromoSummary">'
+      +'<div class="metric"><strong>'+esc(promo.active_promotional_subjects||0)+'</strong><span>Active 90-day trials</span></div>'
+      +'<div class="metric"><strong>'+esc(promo.trials_started||0)+'</strong><span>Trials started this period</span></div>'
+      +'<div class="metric"><strong>'+esc(promo.trials_ending||0)+'</strong><span>Trials ended this period</span></div>'
+      +'<div class="metric"><strong>'+esc(promo.expired_subjects||0)+'</strong><span>Expired trial subjects</span></div>'
+      +'<div class="metric"><strong>'+esc(promoTotals.completed_events||0)+'</strong><span>Promo completions this period</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(promoTotals.gross_value||0)+'</strong><span>Promo gross service value</span></div>'
+      +'<div class="metric"><strong>'+esc(postPromoTotals.completed_events||0)+'</strong><span>Post-promo completions</span></div>'
+      +'<div class="metric"><strong>'+financePct(promo.post_promo_activity_conversion_pct)+'</strong><span>Post-promo activity conversion</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>Monetization status</strong><span>Promotional duration: '+esc(promo.promotional_days||90)+' days · Paid conversion: '+(promo.paid_conversion_status==='NOT_AVAILABLE_UNTIL_ACTIVE_FEE_POLICY'?'not available until an active fee policy collects a platform fee':'available from configured fee evidence')+'. Activity conversion means an expired trial subject completed at least one later service; it is not the same as paid conversion.</span></div>'
+    +'<div class="sectionTitle"><h3>Promotion activity by service</h3></div>'
+    +(promoServices.length?rows(promoServices,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+esc(x.phase)+'</span></div><div class="financeLine"><span>'+esc(x.completed_events)+' completions</span><span>'+esc(x.active_subjects)+' subjects</span><span>Gross '+financeMoney(x.gross_value)+'</span></div></div>'):'<div class="empty">No promotional or post-promo completion events in this reporting period.</div>')
+    +'<div class="notice"><strong>Promo cost attribution</strong><br>Platform costs are recorded in the Finance ledger, but exact subsidy per promotional transaction is not shown until those direct costs are linked to promotional completion events. No subsidy amount is inferred.</div>'
     +costForm
     +'<div class="sectionTitle"><h3>Recent cost entries</h3></div>'
     +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>');
