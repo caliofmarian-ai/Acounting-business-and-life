@@ -8,7 +8,7 @@ Business & Life is a mobile-first local economic ecosystem for the Philippines. 
 - Courier / Delivery Provider
 - Service Provider / Local Services
 
-The current release target is **V0.10.0**; V0.9 multi-business accounting is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
+The current release target is **V0.11.0**; V0.10 scoped Admin + Support is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
 
 ## What is implemented
 
@@ -82,10 +82,11 @@ Accounting
   -> Auth Hardening
   -> Profile Governance
   -> Multi-business Accounting
-  -> Scoped Admin + Support (public entry)
+  -> Scoped Admin + Support
+  -> Notifications (public entry)
 ```
 
-The public process is `server-admin-operations.js` and the Railway health check is `/health`.
+The public process is `server-notifications.js` and the Railway health check is `/health`.
 
 ## Current country edition
 
@@ -102,9 +103,11 @@ A future Ireland/Romania/other edition must use an isolated deployment/database/
 
 **V0.9 Multi-business Accounting is implemented.** Legacy accounting rows are tenant-scoped to the initial business and Merchant/Supplier profiles resolve through explicit economic workspaces.
 
-**V0.10 Scoped Admin + Support is the current release target.** Admin authority is separate from public profiles and uses explicit Super Admin / Country Admin / Territory Admin assignments, delegated permissions, territory scope and audit events. Support is separate from safety Incidents and supports image/PDF/Word/Markdown/audio evidence, editable voice transcripts, and optional browser-assisted English translation.
+**V0.10 Scoped Admin + Support is implemented.** Admin authority is separate from public profiles and uses explicit Super Admin / Country Admin / Territory Admin assignments, delegated permissions, territory scope and audit events. Support is separate from safety Incidents and supports image/PDF/Word/Markdown/audio evidence, editable voice transcripts, and optional browser-assisted English translation.
 
-The next major implementation lane after V0.10 is **Issue #33 — Notifications**.
+**V0.11 Notifications is the current release target.** It adds one canonical event/delivery layer across Orders, Delivery, Suppliers, Local Services, Support, Incidents and Profile Governance, with in-app inbox, preferences/locales, email delivery ledger, PWA Web Push, bounded retries and idempotency. Password-reset and verification email now use the same delivery ledger without storing secure reset/verification links in notification history.
+
+The next major implementation lane after V0.11 is **Issue #35 — versioned legal acceptance**.
 
 The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**.
 
@@ -117,6 +120,7 @@ The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**
 - GitHub Actions CI
 - Figma design-system work for application UI
 - browser-native speech recognition / translation when supported, with editable fallbacks
+- canonical in-app/email/Web Push notification infrastructure
 
 ## Environment
 
