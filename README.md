@@ -8,7 +8,7 @@ Business & Life is a mobile-first local economic ecosystem for the Philippines. 
 - Courier / Delivery Provider
 - Service Provider / Local Services
 
-The current release target is **V0.13.0**; V0.12 versioned Legal & Consent is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
+The current release target is **V0.14.0**; V0.13 provider-neutral Payment Core is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
 
 ## What is implemented
 
@@ -85,10 +85,11 @@ Accounting
   -> Scoped Admin + Support
   -> Notifications
   -> Legal & Consent
-  -> Payment Core (public entry)
+  -> Payment Core
+  -> PayMongo Sandbox Adapter (public entry)
 ```
 
-The public process is `server-payments.js` and the Railway health check is `/health`.
+The public process is `server-paymongo.js` and the Railway health check is `/health`.
 
 ## Current country edition
 
@@ -111,9 +112,11 @@ A future Ireland/Romania/other edition must use an isolated deployment/database/
 
 **V0.12 Legal & Consent is implemented.** It adds versioned legal documents, exact content hashes, role/action requirements, acceptance/withdrawal evidence, localization review state, re-consent and controlled Admin activation. Existing repository agreements are imported only as `draft / legal review pending`; they do not become active Terms automatically.
 
-**V0.13 Payment Core is the current release target.** It introduces provider-neutral payment intents, allocation records, refund requests, settlement/reconciliation ledgers and versioned fee-policy drafts. Existing Merchant-confirmed payments are mirrored for traceability without posting revenue twice. No online intent becomes paid from a client success screen, and no platform/operator fee is activated or invented by this release.
+**V0.13 Payment Core is implemented.** It introduces provider-neutral payment intents, allocation records, refund requests, settlement/reconciliation ledgers and versioned fee-policy drafts. Existing Merchant-confirmed payments are mirrored for traceability without posting revenue twice. No online intent becomes paid from a client success screen, and no platform/operator fee is activated or invented by this release.
 
-The next payment step requires selecting and onboarding a real Philippine payment service provider (PSP), then implementing its signed webhook/intent/refund/statement adapter.
+**V0.14 PayMongo Sandbox Adapter is the current release target.** It uses PayMongo Hosted Checkout v2, server-only secret-key calls, signed raw-body webhook verification, exact amount/session matching, processor-fee evidence, and PayMongo refund execution. Redirects are never payment authority. Live keys remain disabled unless live mode is explicitly enabled.
+
+The remaining step for an end-to-end sandbox payment is PayMongo account configuration: test secret key + test webhook secret in Railway. See `docs/payments/PAYMONGO_INTEGRATION.md`.
 
 The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**.
 

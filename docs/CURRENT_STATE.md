@@ -4,17 +4,17 @@ GitHub `main` is the source of truth. This file is the compact fresh-agent hando
 
 ## Current executable target
 
-- merged baseline before this slice: **V0.12 Versioned Legal & Consent**;
-- current implementation slice: **V0.13 Provider-neutral Payment Core**;
+- merged baseline before this slice: **V0.13 Provider-neutral Payment Core**;
+- current implementation slice: **V0.14 PayMongo Sandbox Adapter**;
 - country edition: `PH`;
 - currency: `PHP`;
 - default business timezone: `Asia/Manila`.
 
-The public runtime chain after V0.13 is:
+The public runtime chain after V0.14 is:
 
-`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications -> Legal & Consent -> Payment Core`
+`Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications -> Legal & Consent -> Payment Core -> PayMongo Sandbox`
 
-Public entry: `server-payments.js`.
+Public entry: `server-paymongo.js`.
 
 ## Public operational profiles
 
@@ -109,7 +109,7 @@ Implemented in this slice:
 - activation requires recorded legal review metadata; translated copy also requires translation review;
 - repository agreements are seeded as controlled drafts only and **do not block users until a legally reviewed version is explicitly activated**.
 
-## V0.13 — current boundary: Issue #34
+## V0.13 — completed boundary: Issue #34
 
 Implemented in the provider-neutral slice:
 - server-owned payment intents with mandatory idempotency keys;
@@ -124,10 +124,30 @@ Implemented in the provider-neutral slice:
 - client success pages are never payment authority;
 - Payment Center and Finance Admin UI showing provider readiness explicitly.
 
-Required next decision before real online payments:
-- choose/onboard a Philippine PSP;
-- configure its credentials in Railway/provider secret storage;
-- implement provider-specific intent/session creation, signed webhook verification, refunds, payouts/settlements and statement reconciliation.
+## V0.14 — current boundary: PayMongo sandbox implementation
+
+Implemented:
+- PayMongo provider registration and sandbox/live-mode guard;
+- Hosted Checkout v2 session creation from internal payment intents;
+- default methods: Card, GCash, Maya/PayMaya and QR Ph, subject to account capabilities;
+- server-only Basic authentication using `PAYMONGO_SECRET_KEY`;
+- raw-body HMAC SHA-256 verification of `Paymongo-Signature`;
+- test/live signature branch and timestamp replay tolerance;
+- exact internal-intent / checkout-session / amount / currency validation;
+- authoritative order payment only after verified `checkout_session.payment.paid`;
+- PayMongo processor fee and provider net amount stored separately from merchandise/delivery allocations;
+- provider-clearing accounting boundary via existing `other` account, without pretending payout has reached bank;
+- PayMongo refund API execution for approved internal refund requests;
+- Payment Center redirect flow that never trusts browser success redirects.
+
+Still required for end-to-end PayMongo sandbox:
+- PayMongo account with access to a test secret key;
+- `PAYMONGO_SECRET_KEY=sk_test_...` in Railway;
+- PayMongo test webhook subscribed to `checkout_session.payment.paid`;
+- `PAYMONGO_WEBHOOK_SECRET` in Railway;
+- provider test checkout + signed webhook verification.
+
+Operational setup: `docs/payments/PAYMONGO_INTEGRATION.md`.
 
 ### Issue #34 — Payments
 Real Philippine payment-provider intents/webhooks, allocations, settlements and reconciliation.
@@ -139,12 +159,13 @@ Backups/restore proof, staging, monitoring, private object storage, rate limits 
 
 Issue #37 — `PH PILOT ROADMAP — Minimum launch gates and post-pilot expansion order` remains the launch-order authority.
 
-Continuation after V0.13 provider-neutral core:
-1. Project Owner approval of PSP choice/onboarding;
-2. provider-specific payment adapter + signed webhook authority;
-3. end-to-end economic-loop revalidation;
-4. #36 production-readiness gate;
-5. controlled Philippines pilot in one explicitly configured operating territory.
+Continuation after V0.14 code integration:
+1. configure PayMongo test key and webhook secret in Railway;
+2. execute one end-to-end PayMongo sandbox checkout and refund test;
+3. reconcile PayMongo payout/statement evidence once the account exposes it;
+4. end-to-end economic-loop revalidation;
+5. #36 production-readiness gate;
+6. controlled Philippines pilot in one explicitly configured operating territory.
 
 ## Country / commerce separation
 

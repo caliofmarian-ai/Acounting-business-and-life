@@ -67,7 +67,7 @@ test('payment administration uses explicit scoped permissions',()=>{
 });
 
 test('Payment Center clearly exposes provider readiness instead of fake checkout',()=>{
-  assert.match(ui,/Online provider not connected/);
+  assert.match(ui,/PayMongo setup incomplete/);
   assert.match(ui,/Provider-authoritative payments/);
   assert.match(ui,/Creating an intent never marks the order paid/);
   assert.match(ui,/Finance Admin/);
