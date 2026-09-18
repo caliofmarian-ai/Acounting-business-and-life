@@ -59,7 +59,9 @@
 
 <div class="direct disabled"><h2>Email or phone</h2><p class="small">The platform now has Notifications and versioned marketing-consent foundations, but direct referral sending stays disabled until referral-specific templates, consent binding, rate limits, deduplication, suppression and abuse monitoring are enabled.</p><input disabled placeholder="name@example.com or phone number"><button disabled>Send invitation</button></div>
 </section></main>
-<script>
+<script type="module">
+import { captureReferralEvent } from '/referral/referral-analytics.js';
+
 const PUBLIC_ROLES=new Set(['customer','merchant','supplier','courier','service_provider']);
 const params=new URLSearchParams(location.search);
 const token=()=>localStorage.getItem('abl_token')||'';
@@ -105,6 +107,15 @@ function syncChannels(){
   document.querySelector('#sms').href='sms:?body='+encodeURIComponent(message);
   document.querySelector('#mail').href='mailto:?subject='+encodeURIComponent(live.share?.title||'Business & Life invitation')+'&body='+encodeURIComponent(message);
 }
+function trackAccountReferral(event,properties){
+  const auth=token();
+  if(!auth)return;
+  void captureReferralEvent({event,properties,authenticated:true,token:auth});
+}
+function trackShare(channel){
+  if(!live?.campaign||!live?.profileRole)return;
+  trackAccountReferral('referral_shared',{channel,campaign:live.campaign,source_profile_role:live.profileRole});
+}
 function applyIdentity(data){
   live=data;
   codeNode.textContent=data.code;
@@ -113,6 +124,9 @@ function applyIdentity(data){
   disableSharing(false);
   applyQr(data);
   syncChannels();
+  if(data.campaign&&data.profileRole){
+    trackAccountReferral('referral_link_created',{campaign:data.campaign,source_profile_role:data.profileRole});
+  }
 }
 async function loadIdentity(){
   const auth=token();
@@ -139,14 +153,17 @@ async function loadIdentity(){
 role.addEventListener('change',loadIdentity);
 copyButton.addEventListener('click',async()=>{
   if(!live?.referralUrl)return;
-  try{await navigator.clipboard.writeText(live.referralUrl);setStatus('Referral link copied.')}catch{setStatus('Copy unavailable — use the browser address/share menu.')}
+  try{await navigator.clipboard.writeText(live.referralUrl);trackShare('copy_link');setStatus('Referral link copied.')}catch{setStatus('Copy unavailable — use the browser address/share menu.')}
 });
 shareButton.addEventListener('click',async()=>{
   if(!live?.referralUrl)return;
   const payload={title:live.share?.title||'Business & Life',text:live.share?.text||'You are invited to try Business & Life.',url:live.referralUrl};
-  if(navigator.share){try{await navigator.share(payload);return}catch(err){if(err?.name==='AbortError')return}}
-  try{await navigator.clipboard.writeText(live.referralUrl);setStatus('Native share unavailable, so the referral link was copied.')}catch{setStatus('Use one of the channel buttons below.')}
+  if(navigator.share){try{await navigator.share(payload);trackShare('native_share');return}catch(err){if(err?.name==='AbortError')return}}
+  try{await navigator.clipboard.writeText(live.referralUrl);trackShare('copy_link');setStatus('Native share unavailable, so the referral link was copied.')}catch{setStatus('Use one of the channel buttons below.')}
 });
+for(const [id,channel] of [['wa','whatsapp'],['tg','telegram'],['sms','sms'],['mail','email']]){
+  document.querySelector('#'+id)?.addEventListener('click',()=>trackShare(channel));
+}
 modeState.textContent='LIVE';
 loadIdentity();
 </script>
