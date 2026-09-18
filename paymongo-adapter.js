@@ -396,6 +396,196 @@ export async function processPayMongoWebhook(pool,{rawBody,signatureHeader}){
   }catch(e){await client.query('ROLLBACK').catch(()=>{});await markProviderEvent(pool,pe.id,'failed',clean(e.code||'processing_error',120)).catch(()=>{});throw e}finally{client.release()}
 }
 
+
+export async function payMongoLivePilotEvidence(pool){
+  const q=await pool.query(`
+    SELECT i.id,i.public_id,i.provider_payment_id,i.succeeded_at,
+      EXISTS(
+        SELECT 1 FROM provider_events pe
+        WHERE pe.payment_intent_id=i.id
+          AND pe.provider_code='paymongo'
+          AND pe.signature_verified=TRUE
+          AND pe.processing_status='processed'
+      ) webhook_confirmed,
+      EXISTS(
+        SELECT 1
+        FROM reconciliation_items ri
+        JOIN reconciliation_runs rr ON rr.id=ri.reconciliation_run_id
+        WHERE rr.provider_code='paymongo'
+          AND rr.status='matched'
+          AND ri.item_type='payment'
+          AND ri.internal_ref=i.public_id
+          AND ri.provider_ref=i.provider_payment_id
+          AND ri.status='matched'
+      ) reconciliation_matched,
+      (
+        SELECT rr.public_id
+        FROM reconciliation_items ri
+        JOIN reconciliation_runs rr ON rr.id=ri.reconciliation_run_id
+        WHERE rr.provider_code='paymongo'
+          AND rr.status='matched'
+          AND ri.item_type='payment'
+          AND ri.internal_ref=i.public_id
+          AND ri.provider_ref=i.provider_payment_id
+          AND ri.status='matched'
+        ORDER BY rr.completed_at DESC NULLS LAST,rr.id DESC
+        LIMIT 1
+      ) reconciliation_run_public_id
+    FROM payment_intents i
+    WHERE i.provider_code='paymongo'
+      AND i.status='succeeded'
+      AND i.provider_payment_id<>''
+      AND EXISTS(
+        SELECT 1 FROM payment_attempts a
+        WHERE a.payment_intent_id=i.id
+          AND a.provider_code='paymongo'
+          AND a.status='succeeded'
+          AND COALESCE(a.metadata_json->>'mode','')='live'
+      )
+    ORDER BY i.succeeded_at DESC NULLS LAST,i.id DESC
+    LIMIT 1
+  `);
+  const row=q.rows[0]||null;
+  return{
+    live_payment_confirmed:Boolean(row?.webhook_confirmed),
+    live_reconciliation_matched:Boolean(row?.reconciliation_matched),
+    latest_live_intent_public_id:row?.public_id||'',
+    latest_live_provider_payment_id:row?.provider_payment_id||'',
+    latest_live_succeeded_at:row?.succeeded_at||null,
+    reconciliation_run_public_id:row?.reconciliation_run_public_id||''
+  };
+}
+
+async function findPayMongoPaymentById(providerPaymentId){
+  let after='';
+  for(let page=0;page<20;page++){
+    const query=new URLSearchParams({limit:'100'});
+    if(after)query.set('after',after);
+    const json=await payMongoRequest('/v1/payments?'+query.toString());
+    const rows=Array.isArray(json?.data)?json.data:[];
+    const found=rows.find(x=>String(x?.id||'')===String(providerPaymentId));
+    if(found)return found;
+    if(rows.length<100)break;
+    const next=clean(rows[rows.length-1]?.id,220);
+    if(!next||next===after)break;
+    after=next;
+  }
+  return null;
+}
+
+export async function reconcilePayMongoLivePayment(pool,{intentPublicId,actorAccountId=null}={}){
+  const cfg=payMongoRuntimeConfig();
+  if(cfg.mode!=='live'||cfg.keyMode!=='live'||!cfg.liveAllowed||!cfg.secretReady){
+    throw Object.assign(new Error('PayMongo live mode and live secret key are required for live reconciliation'),{status:409,code:'PAYMONGO_LIVE_RECONCILIATION_NOT_READY'});
+  }
+  const q=await pool.query(`
+    SELECT i.*,
+      EXISTS(
+        SELECT 1 FROM payment_attempts a
+        WHERE a.payment_intent_id=i.id
+          AND a.provider_code='paymongo'
+          AND a.status='succeeded'
+          AND COALESCE(a.metadata_json->>'mode','')='live'
+      ) live_attempt,
+      EXISTS(
+        SELECT 1 FROM provider_events pe
+        WHERE pe.payment_intent_id=i.id
+          AND pe.provider_code='paymongo'
+          AND pe.signature_verified=TRUE
+          AND pe.processing_status='processed'
+      ) verified_webhook
+    FROM payment_intents i
+    WHERE i.public_id=$1 AND i.provider_code='paymongo' AND i.status='succeeded'
+  `,[clean(intentPublicId,120)]);
+  if(!q.rowCount)throw Object.assign(new Error('Confirmed PayMongo payment intent not found'),{status:404});
+  const i=q.rows[0];
+  if(!i.live_attempt||!i.verified_webhook)throw Object.assign(new Error('This payment does not have verified LIVE PayMongo evidence'),{status:409,code:'PAYMONGO_LIVE_EVIDENCE_REQUIRED'});
+  if(!i.provider_payment_id)throw Object.assign(new Error('PayMongo payment reference is missing'),{status:409});
+
+  const existing=await pool.query(`
+    SELECT rr.* FROM reconciliation_items ri
+    JOIN reconciliation_runs rr ON rr.id=ri.reconciliation_run_id
+    WHERE rr.provider_code='paymongo'
+      AND rr.status='matched'
+      AND ri.item_type='payment'
+      AND ri.internal_ref=$1
+      AND ri.provider_ref=$2
+      AND ri.status='matched'
+    ORDER BY rr.id DESC LIMIT 1
+  `,[i.public_id,i.provider_payment_id]);
+  if(existing.rowCount)return{matched:true,reused:true,run:existing.rows[0],evidence:await payMongoLivePilotEvidence(pool)};
+
+  const provider=await findPayMongoPaymentById(i.provider_payment_id);
+  if(!provider)throw Object.assign(new Error('PayMongo API did not return the confirmed provider payment'),{status:409,code:'PAYMONGO_PROVIDER_PAYMENT_NOT_FOUND'});
+  const a=provider.attributes||{};
+  const providerAmount=money((Number(a.amount)||0)/100);
+  const providerFee=money((Number(a.fee)||0)/100);
+  const providerNet=money((Number(a.net_amount)||Number(a.amount)||0)/100);
+  const providerCurrency=clean(a.currency||'',10).toUpperCase();
+  const providerStatus=clean(a.status||'',40);
+  const providerLive=Boolean(a.livemode);
+  const mismatch=[];
+  if(providerStatus!=='paid')mismatch.push('provider_status_not_paid');
+  if(!providerLive)mismatch.push('provider_payment_not_live');
+  if(providerCurrency!=='PHP')mismatch.push('currency_mismatch');
+  if(Math.abs(providerAmount-Number(i.amount))>0.001)mismatch.push('amount_mismatch');
+  if(Math.abs(providerFee-Number(i.provider_fee||0))>0.001)mismatch.push('processor_fee_mismatch');
+  if(Math.abs(providerNet-Number(i.provider_net_amount||0))>0.001)mismatch.push('provider_net_amount_mismatch');
+
+  const runPublic='rec_paymongo_'+crypto.randomBytes(12).toString('hex');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const run=await client.query(`
+      INSERT INTO reconciliation_runs(
+        public_id,provider_code,period_start,period_end,status,
+        internal_payment_total,provider_payment_total,
+        internal_settlement_total,provider_settlement_total,
+        mismatch_count,statement_sha256,started_by_account_id,completed_at
+      ) VALUES($1,'paymongo',COALESCE($2::timestamptz,NOW()),NOW(),$3,$4,$5,0,0,$6,$7,$8,NOW())
+      RETURNING *
+    `,[
+      runPublic,i.succeeded_at,mismatch.length?'mismatch':'matched',
+      money(i.amount),providerAmount,mismatch.length,
+      hash(JSON.stringify({id:provider.id,status:providerStatus,livemode:providerLive,amount:a.amount,currency:providerCurrency,fee:a.fee,net_amount:a.net_amount})),
+      actorAccountId||null
+    ]);
+    const itemStatus=mismatch.includes('amount_mismatch')?'amount_mismatch':(mismatch.length?'manual_review':'matched');
+    await client.query(`
+      INSERT INTO reconciliation_items(
+        reconciliation_run_id,item_type,internal_ref,provider_ref,
+        internal_amount,provider_amount,variance,status,detail_json
+      ) VALUES($1,'payment',$2,$3,$4,$5,$6,$7,$8::jsonb)
+    `,[
+      run.rows[0].id,i.public_id,i.provider_payment_id,money(i.amount),providerAmount,
+      money(providerAmount-Number(i.amount)),itemStatus,
+      JSON.stringify({
+        mode:'live',
+        provider_status:providerStatus,
+        provider_livemode:providerLive,
+        internal_processor_fee:money(i.provider_fee||0),
+        provider_processor_fee:providerFee,
+        internal_net_amount:money(i.provider_net_amount||0),
+        provider_net_amount:providerNet,
+        mismatch_codes:mismatch
+      })
+    ]);
+    await client.query(`
+      INSERT INTO payment_audit_events(
+        actor_account_id,payment_intent_id,event_code,provider_code,after_json,correlation_id
+      ) VALUES($1,$2,$3,'paymongo',$4::jsonb,$5)
+    `,[
+      actorAccountId||null,i.id,
+      mismatch.length?'paymongo_live_reconciliation_mismatch':'paymongo_live_reconciliation_matched',
+      JSON.stringify({run_public_id:runPublic,provider_payment_id:i.provider_payment_id,mismatch_codes:mismatch}),
+      'paymongo-reconciliation:'+i.provider_payment_id
+    ]);
+    await client.query('COMMIT');
+    return{matched:mismatch.length===0,reused:false,run:run.rows[0],mismatch_codes:mismatch,evidence:await payMongoLivePilotEvidence(pool)};
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+}
+
 export async function executePayMongoRefund(pool,{refundId,actorAccountId=null}){
   const cfg=payMongoRuntimeConfig();
   const q=await pool.query("SELECT r.*,i.provider_code,i.provider_payment_id,i.public_id intent_public_id FROM refunds r JOIN payment_intents i ON i.id=r.payment_intent_id WHERE r.id=$1",[Number(refundId)]);

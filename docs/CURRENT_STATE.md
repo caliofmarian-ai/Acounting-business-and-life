@@ -153,13 +153,27 @@ Implemented:
 - scoped Finance Admin can trigger a safe webhook-bootstrap retry;
 - signature verification remains mandatory even when automatic bootstrap fails.
 
-Still required for the first end-to-end PayMongo sandbox:
-- PayMongo account with access to a test secret key;
-- `PAYMONGO_SECRET_KEY=sk_test_...` added directly to Railway secret variables;
-- redeploy;
-- provider test checkout + verified signed webhook.
+PayMongo release boundary:
+- sandbox/test credentials are valid for **internal QA / preview only**;
+- the public production service blocks PayMongo Hosted Checkout while the controlled-pilot gate is HOLD;
+- the first controlled test with real customers requires an approved PayMongo live account, `PAYMONGO_SECRET_KEY=sk_live_...`, `PAYMONGO_MODE=live`, `PAYMONGO_LIVE_ENABLED=true`, a verified signed webhook and at least one enabled online method;
+- Cash remains available in parallel;
+- the Payment Center/Admin surface shows separate `Internal QA` and `First real-customer pilot` readiness states with exact blockers;
+- browser redirects remain non-authoritative.
 
-Operational setup: `docs/payments/PAYMONGO_INTEGRATION.md`.
+Operational setup: `docs/payments/PAYMONGO_INTEGRATION.md` and `docs/payments/FIRST_PILOT_PAYMENT_GATE.md`.
+
+## Crypto payment extension — Issue #188
+
+Crypto is designed as a separate provider/VASP rail behind the same Payment Core:
+- PHP remains the canonical PH commercial/accounting amount;
+- short-lived provider quote records asset/network/amount/rate/expiry evidence;
+- Business & Life does not hold customer private keys or act as an exchange/custodian;
+- GCrypto may be a compatible funding source only where a verified VASP/network path supports it;
+- preferred Merchant settlement remains PHP;
+- live crypto remains HOLD until provider commercial/regulatory status, KYB/KYC/AML, webhook/reconciliation and controlled live-money evidence are all verified.
+
+Canonical design: `docs/payments/CRYPTO_PAYMENT_ARCHITECTURE.md`.
 
 ### Issue #34 — Payments
 Real Philippine payment-provider intents/webhooks, allocations, settlements and reconciliation.
@@ -172,13 +186,17 @@ Backups/restore proof, staging, monitoring, private object storage, rate limits 
 Issue #37 — `PH PILOT ROADMAP — Minimum launch gates and post-pilot expansion order` remains the launch-order authority.
 
 Continuation after V0.15:
-1. add the PayMongo test secret key directly to Railway and redeploy;
-2. automatic webhook bootstrap must report ready;
-3. execute one end-to-end PayMongo sandbox checkout and refund test;
-4. reconcile PayMongo payout/statement evidence once the account exposes it;
-5. end-to-end economic-loop revalidation;
-6. #36 production-readiness gate;
-7. controlled Philippines pilot in one explicitly configured operating territory.
+1. obtain/configure PayMongo test credentials in a QA/preview environment;
+2. complete sandbox Hosted Checkout + signed webhook + refund/reconciliation QA;
+3. obtain/verify PayMongo live processing approval and live methods;
+4. configure the live key only in production secret storage and enable live mode explicitly;
+5. complete one small-value live payment and reconciliation proof;
+6. only then may the real-customer pilot gate become `READY`;
+7. end-to-end economic-loop revalidation;
+8. #36 production-readiness gate;
+9. controlled Philippines pilot in one explicitly configured operating territory.
+
+Crypto is developed as a later optional rail and does not block the first pilot.
 
 ## Country / commerce separation
 
