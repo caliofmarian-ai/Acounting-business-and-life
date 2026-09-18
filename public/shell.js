@@ -162,7 +162,7 @@ function renderDrawer() {
     <div class="drawerHeader">${avatarMarkup(account)}<div class="drawerIdentity"><h2>${escapeHtml(account.display_name || 'Business owner')}</h2><p>${escapeHtml(account.email || account.phone || 'One account • multiple profiles')}</p></div><button id="drawerClose" class="drawerClose" type="button" aria-label="Close">×</button></div>
     <section class="drawerSection"><h3>Switch profile</h3><div class="profileRoleList">${adminRow}${profileRows}</div></section>
     <section class="drawerSection growthDrawerSection">
-      <div class="growthDrawerCopy"><span class="growthDrawerEyebrow">INVITE &amp; EARN</span><h3>Promotion Center</h3><p>Share your account-level referral link from the active ${escapeHtml(ROLE_META[activeRole]?.label || activeRole)} profile.</p></div>
+      <div class="growthDrawerCopy"><span class="growthDrawerEyebrow">INVITE &amp; SHARE</span><h3>Promotion Center</h3><p>Share your account-level referral link from the active ${escapeHtml(ROLE_META[activeRole]?.label || activeRole)} profile.</p></div>
       <button id="promotionCenterButton" class="growthDrawerButton" type="button">Open Promotion Center</button>
     </section>
     <section class="drawerSection"><h3>Account identity</h3>
