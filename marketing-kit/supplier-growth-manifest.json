@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "figma": {
+    "fileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
+    "productReference": {
+      "nodeId": "10:2",
+      "status": "ready"
+    }
+  },
+  "assets": [
+    {
+      "id": "SUPPLIER_GROWTH_SQUARE_V1",
+      "figmaNodeId": "10:21",
+      "size": {
+        "width": 1080,
+        "height": 1080
+      },
+      "canvaTitle": "Business & Life — Supplier Social Square V1",
+      "canvaStatus": "editable_master_ready"
+    },
+    {
+      "id": "SUPPLIER_GROWTH_STORY_V1",
+      "figmaNodeId": "10:32",
+      "size": {
+        "width": 1080,
+        "height": 1920
+      },
+      "canvaTitle": "Business & Life — Supplier Story V1",
+      "canvaStatus": "editable_master_ready"
+    },
+    {
+      "id": "SUPPLIER_GROWTH_A5_V1",
+      "figmaNodeId": "10:61",
+      "size": {
+        "width": 559,
+        "height": 794
+      },
+      "canvaTitle": "Business & Life — Supplier A5 Flyer V1",
+      "canvaStatus": "editable_master_ready"
+    }
+  ],
+  "claims": {
+    "guaranteedSales": false,
+    "guaranteedPayment": false,
+    "automaticSupplierApproval": false,
+    "universalMerchantTrust": false
+  },
+  "privacy": {
+    "publicRepoStoresPrivateCanvaEditUrls": false
+  }
+}
