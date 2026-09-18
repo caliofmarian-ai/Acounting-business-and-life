@@ -24,6 +24,7 @@ export const FINANCE_COST_CATEGORIES=Object.freeze([
   'insurance_licence','payment_provider_other','other'
 ]);
 export const FINANCE_ALLOCATION_METHODS=Object.freeze(['direct','measured','driver','shared']);
+export const PRICING_SCENARIO_SERVICES=Object.freeze(['marketplace','delivery','supplier','local_services']);
 
 function requireEnum(value,allowed,label){
   const v=clean(value,80);
@@ -345,6 +346,104 @@ export async function financeKpiOverview(pool,input={}){
     recent_cost_entries:recent.slice(0,25),
     promotion_economics:promotion,
     accounting_note:'GMV/payment volume is context only. Provider/customer/merchant/courier/service-provider money is not platform revenue unless an explicit platform-owned allocation exists.'
+  };
+}
+
+
+function scenarioRate(value){
+  const n=Number(value??0);
+  if(!Number.isFinite(n)||n<0||n>100)throw Object.assign(new Error('Scenario rate must be between 0 and 100 percent'),{status:400});
+  return Math.round(n*10000)/10000;
+}
+function pctRatio(n,d){
+  const a=Number(n||0),b=Number(d||0);
+  return b>0?Math.round((a/b)*1000000)/10000:null;
+}
+
+export async function pricingScenario(pool,input={}){
+  const p=period(input);
+  const territoryId=input.territoryId==null?null:Number(input.territoryId);
+  const evidence=evidenceClasses(input.evidenceClasses);
+  const rates={};
+  for(const scope of PRICING_SCENARIO_SERVICES)rates[scope]=scenarioRate(input.rates?.[scope]);
+
+  const finance=await financeKpiOverview(pool,{...p,territoryId,evidenceClasses:evidence});
+  const promo=finance.promotion_economics||{};
+  const promoRows=promo.services||[];
+  const financeByService=new Map((finance.services||[]).map(x=>[x.service_scope,x]));
+
+  const rows=PRICING_SCENARIO_SERVICES.map(scope=>{
+    const promotionalGross=money(promoRows.filter(x=>x.service_scope===scope&&x.phase==='promotional').reduce((s,x)=>s+Number(x.gross_value||0),0));
+    const postPromoGross=money(promoRows.filter(x=>x.service_scope===scope&&x.phase==='post_promo').reduce((s,x)=>s+Number(x.gross_value||0),0));
+    const totalGross=money(promotionalGross+postPromoGross);
+    const rate=rates[scope];
+    const currentEligibleProjectedRevenue=money(postPromoGross*rate/100);
+    const matureProjectedRevenue=money(totalGross*rate/100);
+    const f=financeByService.get(scope)||{};
+    const variableCost=money(f.variable_cost||0);
+    const fixedCost=money(f.allocated_fixed_cost||0);
+    const recordedCost=money(variableCost+fixedCost);
+    return{
+      service_scope:scope,
+      proposed_rate_pct:rate,
+      promotional_gross_value:promotionalGross,
+      post_promo_gross_value:postPromoGross,
+      total_completed_gross_value:totalGross,
+      projected_revenue_post_promo_actual:currentEligibleProjectedRevenue,
+      projected_revenue_mature_volume:matureProjectedRevenue,
+      recorded_variable_cost:variableCost,
+      recorded_fixed_cost:fixedCost,
+      recorded_service_cost:recordedCost,
+      projected_operating_pl_post_promo_actual:money(currentEligibleProjectedRevenue-recordedCost),
+      projected_operating_pl_mature_volume:money(matureProjectedRevenue-recordedCost),
+      break_even_rate_total_volume_pct:pctRatio(recordedCost,totalGross),
+      break_even_rate_post_promo_volume_pct:pctRatio(recordedCost,postPromoGross),
+      data_status:totalGross>0?'HAS_ACTIVITY':'INSUFFICIENT_ACTIVITY'
+    };
+  });
+
+  const modeledGross=money(rows.reduce((s,x)=>s+x.total_completed_gross_value,0));
+  const postPromoGross=money(rows.reduce((s,x)=>s+x.post_promo_gross_value,0));
+  const matureRevenue=money(rows.reduce((s,x)=>s+x.projected_revenue_mature_volume,0));
+  const postRevenue=money(rows.reduce((s,x)=>s+x.projected_revenue_post_promo_actual,0));
+  const serviceRecordedCosts=money(rows.reduce((s,x)=>s+x.recorded_service_cost,0));
+  const totalRecordedCosts=money(Number(finance.variable_costs||0)+Number(finance.allocated_fixed_cost||0));
+  const unallocatedSharedCost=money(Math.max(0,totalRecordedCosts-serviceRecordedCosts));
+
+  return{
+    simulation_only:true,
+    applies_live_fees:false,
+    period:p,
+    country_code:'PH',
+    territory_id:territoryId,
+    included_evidence_classes:evidence,
+    rates,
+    bases:{
+      post_promo_actual:'Only completed gross service value already outside the 90-day promotional window.',
+      all_activity_mature_simulation:'All completed service value in the period treated hypothetically as mature/post-promo volume. This is not actual billable revenue.'
+    },
+    services:rows,
+    portfolio:{
+      total_completed_gross_value:modeledGross,
+      actual_post_promo_gross_value:postPromoGross,
+      projected_revenue_post_promo_actual:postRevenue,
+      projected_revenue_mature_volume:matureRevenue,
+      total_recorded_cost:totalRecordedCosts,
+      service_scoped_recorded_cost:serviceRecordedCosts,
+      unallocated_shared_cost:unallocatedSharedCost,
+      projected_operating_pl_post_promo_actual:money(postRevenue-totalRecordedCosts),
+      projected_operating_pl_mature_volume:money(matureRevenue-totalRecordedCosts),
+      weighted_effective_rate_total_volume_pct:pctRatio(matureRevenue,modeledGross),
+      break_even_rate_total_volume_pct:pctRatio(totalRecordedCosts,modeledGross),
+      break_even_rate_post_promo_volume_pct:pctRatio(totalRecordedCosts,postPromoGross)
+    },
+    guardrails:{
+      fee_activation:'NOT_PERFORMED',
+      promotional_charge:'ZERO_IN_LIVE_POLICY_UNTIL_FUTURE_EXPLICIT_FEE_RESOLUTION',
+      paid_conversion_status:promo.paid_conversion_status||'NOT_AVAILABLE_UNTIL_ACTIVE_FEE_POLICY',
+      missing_cost_warning:'Results use only costs present in the canonical Finance ledger/payment allocations. Missing invoices or unrecorded overhead are not invented.',
+      shared_cost_warning:unallocatedSharedCost>0?'Some recorded costs remain shared/unallocated and are included only in portfolio P/L, not service-specific P/L.':null
+    }
   };
 }
 
