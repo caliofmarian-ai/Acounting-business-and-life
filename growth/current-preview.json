@@ -1,0 +1,5 @@
+{
+  "service": "accounting-growth-campaigns-preview",
+  "route": "/campaigns",
+  "purpose": "validate current profile campaign/direct-invite/reward contracts"
+}
