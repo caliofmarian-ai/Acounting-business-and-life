@@ -8,7 +8,7 @@ Business & Life is a mobile-first local economic ecosystem for the Philippines. 
 - Courier / Delivery Provider
 - Service Provider / Local Services
 
-The current release target is **V0.11.0**; V0.10 scoped Admin + Support is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
+The current release target is **V0.12.0**; V0.11 unified notifications is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
 
 ## What is implemented
 
@@ -83,10 +83,11 @@ Accounting
   -> Profile Governance
   -> Multi-business Accounting
   -> Scoped Admin + Support
-  -> Notifications (public entry)
+  -> Notifications
+  -> Legal & Consent (public entry)
 ```
 
-The public process is `server-notifications.js` and the Railway health check is `/health`.
+The public process is `server-legal.js` and the Railway health check is `/health`.
 
 ## Current country edition
 
@@ -105,9 +106,11 @@ A future Ireland/Romania/other edition must use an isolated deployment/database/
 
 **V0.10 Scoped Admin + Support is implemented.** Admin authority is separate from public profiles and uses explicit Super Admin / Country Admin / Territory Admin assignments, delegated permissions, territory scope and audit events. Support is separate from safety Incidents and supports image/PDF/Word/Markdown/audio evidence, editable voice transcripts, and optional browser-assisted English translation.
 
-**V0.11 Notifications is the current release target.** It adds one canonical event/delivery layer across Orders, Delivery, Suppliers, Local Services, Support, Incidents and Profile Governance, with in-app inbox, preferences/locales, email delivery ledger, PWA Web Push, bounded retries and idempotency. Password-reset and verification email now use the same delivery ledger without storing secure reset/verification links in notification history.
+**V0.11 Notifications is implemented.** It adds one canonical event/delivery layer across Orders, Delivery, Suppliers, Local Services, Support, Incidents and Profile Governance, with in-app inbox, preferences/locales, email delivery ledger, PWA Web Push, bounded retries and idempotency. Password-reset and verification email now use the same delivery ledger without storing secure reset/verification links in notification history.
 
-The next major implementation lane after V0.11 is **Issue #35 — versioned legal acceptance**.
+**V0.12 Legal & Consent is the current release target.** It adds versioned legal documents, exact content hashes, role/action requirements, acceptance/withdrawal evidence, localization review state, re-consent and controlled Admin activation. Existing repository agreements are imported only as `draft / legal review pending`; they do not become active Terms automatically.
+
+The next major implementation lane after V0.12 is **Issue #34 — real payment provider, settlement and reconciliation**.
 
 The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**.
 
