@@ -141,6 +141,8 @@ Prepared pre-conversion persistence now has a separate fail-closed gate. It rema
 
 Prepared converted binding has its own independent fail-closed gate. The Owner-approved product target is **12 months after conversion**, but the binder still performs zero database work until privacy/controller approval and explicit runtime retention/lawful-basis activation are configured.
 
+Exact runtime support is now prepared with `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS=12`; other month values fail closed, and expiry uses calendar-month arithmetic rather than an approximate day count.
+
 Therefore:
 - browser instrumentation can call Business & Life same-origin validation endpoints;
 - no referral analytics is currently delivered to PostHog;
@@ -162,7 +164,7 @@ Still requiring approval/resolution before Growth enables production referral an
 
 1. Philippine PIC/controller and lawful-basis approval.
 2. EFFECTIVE privacy-notice wording and rights/objection workflow.
-3. Exact runtime implementation/configuration of the 12-month converted-retention target.
+3. Privacy/controller approval and deliberate activation of the prepared exact 12-calendar-month runtime retention contract.
 4. Correct Business & Life PostHog project/region/token and processor/cross-border facts.
 5. Reward-evidence retention only if a future reward program is separately approved.
 

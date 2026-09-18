@@ -35,7 +35,7 @@ Binding is inactive unless all of these are true:
 - `REFERRAL_ATTRIBUTION_CONVERTED_ENABLED=true`
 - `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED=true`
 - `REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED=true`
-- `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_DAYS=<approved integer>`
+- `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS=12`
 - `REFERRAL_ATTRIBUTION_CONVERTED_POLICY_VERSION=<approved policy version>`
 - `REFERRAL_ATTRIBUTION_CONVERTED_MODEL=<explicit approved model>`
 - `REFERRAL_ATTRIBUTION_HMAC_SECRET=<same dedicated secret used by pending attribution>`
@@ -46,7 +46,7 @@ The current implementation supports and the Project Owner has selected `registra
 
 First-touch, last-touch and other models are not selected for the initial pilot. A future model change requires a new versioned Owner decision and implementation.
 
-The Owner product target is 12 months after conversion. The current runtime still requires an explicit retention value/configuration and remains inactive until privacy/controller approval and exact retention implementation are verified; no production retention variable is set by the Owner decision alone.
+The Owner product target is 12 months after conversion. Runtime support now uses an explicit **calendar-month** configuration and accepts only `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS=12`; any other value fails closed as a policy mismatch. No production retention variable is set by the Owner decision alone, and activation still requires privacy/controller approval.
 
 ## Binding evidence
 
@@ -66,7 +66,7 @@ When enabled, the adapter:
 A successful binding records:
 
 - `retention_policy_version`;
-- `retention_days`;
+- `retention_months`;
 - `expires_at`;
 - pseudonymous `correlation_hash`.
 
@@ -89,9 +89,10 @@ Qualification and reward transitions remain separate, disabled domains.
 
 ## Current production state
 
-Current canonical policy has:
+Current canonical policy/runtime preparation has:
 - attribution model: **registration_context_v1 — Owner approved**;
 - converted-attribution retention target: **12 months after conversion — Owner approved product target**;
+- runtime retention unit: **calendar months**, exact expected value **12**;
 - privacy/controller activation approval: **PENDING**;
 - converted binding: **disabled by default / HOLD**;
 - initial-pilot reward economics: **Owner approved OFF**.

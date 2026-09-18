@@ -121,7 +121,7 @@ The adapter requires an existing unexpired pending attribution, rejects self-ref
 
 Converted binding also refuses activation unless the pending-attribution pipeline itself is active and an attribution model is explicitly configured. Project Owner selected `registration_context_v1` for the initial pilot; runtime activation remains HOLD until privacy/controller and other activation gates pass.
 
-It remains inactive because privacy/controller lawful-basis activation is unresolved. Project Owner selected a **12-month-after-conversion** product retention target, but no production retention/activation variable is enabled by that decision alone.
+It remains inactive because privacy/controller lawful-basis activation is unresolved. Project Owner selected a **12-month-after-conversion** product retention target, but no production retention/activation variable is enabled by that decision alone. Runtime support now enforces the target as exactly **12 calendar months** when/if the activation gates are later approved.
 
 `referral_signup_completed` is prepared as an internal analytics event but can only be emitted after a successful non-idempotent converted binding. Current production cannot satisfy that binding gate.
 
