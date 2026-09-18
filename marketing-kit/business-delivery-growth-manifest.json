@@ -1,0 +1,53 @@
+{
+  "version": "1.0.0",
+  "figma": {
+    "fileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
+    "productReference": {
+      "nodeId": "11:2",
+      "status": "ready"
+    }
+  },
+  "assets": [
+    {
+      "id": "BUSINESS_DELIVERY_SQUARE_V1",
+      "figmaNodeId": "11:29",
+      "size": {
+        "width": 1080,
+        "height": 1080
+      },
+      "canvaTitle": "Business & Life — Business Delivery Social Square V1",
+      "canvaStatus": "editable_master_ready"
+    },
+    {
+      "id": "BUSINESS_DELIVERY_STORY_V1",
+      "figmaNodeId": "11:40",
+      "size": {
+        "width": 1080,
+        "height": 1920
+      },
+      "canvaTitle": "Business & Life — Business Delivery Story V1",
+      "canvaStatus": "editable_master_ready"
+    },
+    {
+      "id": "BUSINESS_DELIVERY_A5_V1",
+      "figmaNodeId": "11:69",
+      "size": {
+        "width": 559,
+        "height": 794
+      },
+      "canvaTitle": "Business & Life — Business Delivery A5 Flyer V1",
+      "canvaStatus": "editable_master_ready"
+    }
+  ],
+  "claims": {
+    "arbitraryExternalParcelBooking": false,
+    "guaranteedCourierAvailability": false,
+    "inventedPricing": false,
+    "cashDeliveryEnabled": false,
+    "courierApprovalAutomatic": false
+  },
+  "futureProductIssue": 86,
+  "privacy": {
+    "publicRepoStoresPrivateCanvaEditUrls": false
+  }
+}
