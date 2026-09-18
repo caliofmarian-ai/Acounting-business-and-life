@@ -1,11 +1,18 @@
 {
-  "name":"Business & Life Accounting",
-  "short_name":"Business & Life",
-  "start_url":"/",
-  "scope":"/",
-  "display":"standalone",
-  "background_color":"#f5f7fb",
-  "theme_color":"#111827",
-  "description":"Cash, remittance, business expense, personal withdrawal and stock tracking for a small Philippine fast-food business.",
-  "icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+  "name": "Business & Life — Philippines",
+  "short_name": "Business & Life",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f8f7",
+  "theme_color": "#0a7c66",
+  "description": "Local commerce, accounting, suppliers, delivery, services and support for the Philippines.",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }
