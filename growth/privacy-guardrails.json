@@ -95,5 +95,17 @@
     "rawCorrelationIdStored": false,
     "convertedAccountBindingAllowed": false,
     "rewardStateAllowed": false
+  },
+  "convertedAttribution": {
+    "enabledByDefault": false,
+    "retentionDays": null,
+    "retentionPolicyVersion": null,
+    "requiresRetentionApproval": true,
+    "requiresLawfulBasisApproval": true,
+    "requiresDedicatedHmacSecret": true,
+    "requiresExistingPendingAttribution": true,
+    "selfReferralRejected": true,
+    "duplicateAccountAttributionRejected": true,
+    "rewardStateAllowed": false
   }
 }
