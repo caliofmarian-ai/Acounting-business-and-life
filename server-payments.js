@@ -28,6 +28,7 @@ import {
   BUDGET_PURPOSES,MONEY_MOVEMENT_TYPES
 } from './profile-finance-core.js';
 import {profileMoneySnapshot} from './profile-money-core.js';
+import {allocateSharedCompanyCost50x50,PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,monetizationPolicyDraft} from './monetization-policy-v2.js';
 import {
   ensureAccountMoneySchema,accountMoneySettings,updateAccountMoneyIdentity,
   createAccountFinancialDestination,updateAccountFinancialDestination,setDefaultAccountPayoutDestination
@@ -403,6 +404,45 @@ app.get('/api/payments/admin/unit-economics',async(req,res,next)=>{try{
   res.json(data);
 }catch(e){next(e)}});
 
+app.get('/api/payments/admin/monetization-v2/model',async(req,res,next)=>{try{
+  const me=await identity(req);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',null);
+  res.json({
+    profile_models:PROFILE_MONETIZATION_MODEL,
+    digital_payment_incentive:DIGITAL_PAYMENT_INCENTIVE_DEFAULT,
+    shared_cost_policy:{
+      equal_weight_pct:50,
+      activity_weight_pct:50,
+      zero_activity_fallback:'EQUAL_SPLIT_ACTIVITY_HALF',
+      supported_driver_examples:['verified_traffic_units','active_members','completed_economic_events','gross_eligible_service_value']
+    },
+    draft_examples:{
+      customer:monetizationPolicyDraft('customer'),
+      merchant:monetizationPolicyDraft('merchant'),
+      supplier:monetizationPolicyDraft('supplier'),
+      local_services:monetizationPolicyDraft('local_services'),
+      courier:monetizationPolicyDraft('courier')
+    }
+  });
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/shared-cost-allocation-scenario',body,async(req,res,next)=>{try{
+  const me=await identity(req);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',null);
+  const result=allocateSharedCompanyCost50x50(req.body?.total_amount,req.body?.scopes||[],{
+    driverCode:clean(req.body?.driver_code||'verified_traffic_units',80),
+    equalWeightPct:50,
+    driverWeightPct:50
+  });
+  await appendAdminAudit(pool,{
+    actorAccountId:me.account.id,permission:'finance.summary.view',
+    targetType:'shared_cost_scenario',targetId:'simulation',eventCode:'shared_cost_50_50_scenario_run',
+    after:{total_amount:result.total_amount,driver_code:result.driver_code,scope_count:result.rows.length,zero_activity_fallback:result.zero_activity_fallback},
+    reason:'Read-only shared company cost allocation simulation',correlationId:correlation(req)
+  });
+  res.json({...result,simulation_only:true,applies_live_allocation:false});
+}catch(e){next(e)}});
+
 app.post('/api/payments/admin/commission-planner',body,async(req,res,next)=>{try{
   const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
   await requireAdminPermission(pool,me.account.id,'finance.summary.view',territoryId);
@@ -416,6 +456,10 @@ app.post('/api/payments/admin/commission-planner',body,async(req,res,next)=>{try
     riskAllowancePct:req.body?.risk_allowance_pct,
     safetyReservePct:req.body?.safety_reserve_pct,
     growthSurplusPct:req.body?.growth_surplus_pct,
+    paidProfiles:req.body?.paid_profiles||{},
+    subscriptionAmounts:req.body?.subscription_amounts||{},
+    deliveryEligibleEarnings:req.body?.delivery_eligible_earnings,
+    deliveryProductionRatePct:req.body?.delivery_production_rate_pct,
     platformAbsorbsProcessorFees:req.body?.platform_absorbs_processor_fees!==false,
     platformAbsorbsRiskAllowance:req.body?.platform_absorbs_risk_allowance!==false,
     staffing:req.body?.staffing||{},

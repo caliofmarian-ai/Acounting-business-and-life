@@ -20,3 +20,12 @@
 .commissionPlannerResults{display:grid;gap:10px;margin-top:12px}
 @media(min-width:760px){.commissionPlannerHead{grid-template-columns:1fr auto;align-items:start}.staffingPair{grid-column:span 2}}
 @media(max-width:520px){.staffingPair{grid-template-columns:1fr}}
+
+.monetizationV2Card{display:grid;gap:12px;margin:14px 0;background:#0d1928;border:1px solid #28425f;border-radius:20px;padding:14px}
+.profileMonetizationGrid{display:grid;gap:7px}
+.monetizationRoleRow{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:10px 11px;border:1px solid #20344b;border-radius:13px;background:#0a1422}
+.monetizationRoleRow>div{display:grid;gap:2px}.monetizationRoleRow strong{font-size:12px}.monetizationRoleRow small{font-size:9px;color:var(--muted)}.monetizationRoleRow b{font-size:11px;text-align:right;color:#9ef0da;max-width:52%}
+.sharedCostScopeRow{display:grid;grid-template-columns:1fr 1.4fr 1fr auto;gap:8px;align-items:end;padding:9px;border:1px solid #20344b;border-radius:13px;background:#0b1625;margin-bottom:8px}
+.sharedCostResults{display:grid;gap:10px;margin-top:12px}
+@media(max-width:720px){.sharedCostScopeRow{grid-template-columns:1fr 1fr}.sharedCostScopeRow .secondary{grid-column:span 2}.monetizationRoleRow{align-items:flex-start}.monetizationRoleRow b{max-width:56%}}
+@media(max-width:480px){.sharedCostScopeRow{grid-template-columns:1fr}.sharedCostScopeRow .secondary{grid-column:auto}.monetizationRoleRow{display:grid}.monetizationRoleRow b{max-width:none;text-align:left}}
