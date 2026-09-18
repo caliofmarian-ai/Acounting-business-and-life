@@ -27,7 +27,7 @@ const jsonBody = express.json({ limit: '450kb' });
 const loginAttempts = new Map();
 const growthAnalyticsAttempts = new Map();
 const ACCOUNT_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_link_created','referral_shared']);
-const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_landing_viewed','referral_shared']);
+const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_landing_viewed','referral_shared','referral_signup_started']);
 let accountingChild;
 let shuttingDown = false;
 
@@ -305,6 +305,24 @@ function growthAnalyticsThrottled(identity, limit = 90) {
   return false;
 }
 
+function canonicalReferralAnalyticsProperties(event, input = {}) {
+  const role = clean(input?.source_profile_role, 40);
+  if (!ROLES.has(role)) throw new TypeError('Unknown referral analytics source profile role');
+  const output = {
+    ...input,
+    source_profile_role: role,
+    campaign: `${role}_referral_v1`
+  };
+  if (event === 'referral_landing_viewed') {
+    output.source = 'profile';
+    output.medium = 'referral';
+  }
+  if (event === 'referral_signup_started') {
+    output.source = 'profile';
+  }
+  return output;
+}
+
 async function sendReferralAnalytics(res, input) {
   let safe;
   try {
@@ -420,7 +438,7 @@ app.get('/api/growth/referral', auth, async (req, res, next) => {
   }
 });
 
-app.post('/api/growth/referral-analytics/account', jsonBody, auth, async (req, res) => {
+app.post('/api/growth/referral-analytics/account', jsonBody, auth, async (req, res, next) => {
   const event = clean(req.body?.event, 80);
   if (!ACCOUNT_REFERRAL_ANALYTICS_EVENTS.has(event)) {
     return res.status(400).json({ error: 'Referral analytics event is not allowed for account instrumentation' });
@@ -428,7 +446,26 @@ app.post('/api/growth/referral-analytics/account', jsonBody, auth, async (req, r
   if (growthAnalyticsThrottled(`account:${req.accountId}`, 120)) {
     return res.status(429).json({ error: 'Referral analytics rate limit exceeded' });
   }
-  return sendReferralAnalytics(res, { event, properties: req.body?.properties });
+
+  let properties;
+  try {
+    properties = canonicalReferralAnalyticsProperties(event, req.body?.properties);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+
+  try {
+    const enabled = await pool.query(
+      'SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 AND enabled=TRUE LIMIT 1',
+      [req.accountId, properties.source_profile_role]
+    );
+    if (!enabled.rowCount) {
+      return res.status(403).json({ error: 'Referral analytics source profile is not enabled' });
+    }
+    return sendReferralAnalytics(res, { event, properties });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.post('/api/growth/referral-analytics/public', jsonBody, async (req, res, next) => {
@@ -445,12 +482,26 @@ app.post('/api/growth/referral-analytics/public', jsonBody, async (req, res, nex
     return res.status(202).json({ accepted: false, delivered: false, reason: 'invalid_referral' });
   }
 
+  let properties;
   try {
-    const known = await pool.query('SELECT 1 FROM referral_accounts WHERE referral_code=$1 LIMIT 1', [referralCode]);
+    properties = canonicalReferralAnalyticsProperties(event, req.body?.properties);
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+
+  try {
+    const known = await pool.query(
+      `SELECT 1
+         FROM referral_accounts ra
+         JOIN profiles p ON p.account_id=ra.account_id
+         WHERE ra.referral_code=$1 AND p.role=$2 AND p.enabled=TRUE
+         LIMIT 1`,
+      [referralCode, properties.source_profile_role]
+    );
     if (!known.rowCount) {
       return res.status(202).json({ accepted: false, delivered: false, reason: 'unknown_referral' });
     }
-    return sendReferralAnalytics(res, { event, properties: req.body?.properties });
+    return sendReferralAnalytics(res, { event, properties });
   } catch (err) {
     next(err);
   }
