@@ -23,6 +23,7 @@ import {
   listProfileBudgetEnvelopes,createProfileBudgetEnvelope,postProfileBudgetEntry,transferProfileBudgetAllocation,
   listProfileMoneyMovements,createProfileMoneyMovementRequest,
   listProfileMoneyEntries,createProfileMoneyEntry,reverseProfileMoneyEntry,profileMoneyEntryCapabilities,
+  listProfileFundScopes,listProfileFundTransfers,transferFundsBetweenProfiles,
   isBusinessFinanceRole,PROFILE_FINANCE_ROLES,FINANCIAL_ACCOUNT_KINDS,MONEY_METHODS,PAYOUT_SCHEDULES,
   BUDGET_PURPOSES,MONEY_MOVEMENT_TYPES
 } from './profile-finance-core.js';
@@ -160,11 +161,13 @@ app.post('/api/profile-money/:role/entries/:id/reverse',body,async(req,res,next)
 
 app.get('/api/settings/finance',async(req,res,next)=>{try{
   const me=await identity(req);
-  const [accounts,preferences,budgets,movements,providers]=await Promise.all([
+  const [accounts,preferences,budgets,movements,fundScopes,fundTransfers,providers]=await Promise.all([
     listProfileFinancialAccounts(pool,me.account.id),
     listMoneyPreferences(pool,me.account.id),
     listProfileBudgetEnvelopes(pool,me.account.id),
     listProfileMoneyMovements(pool,me.account.id),
+    listProfileFundScopes(pool,me.account.id),
+    listProfileFundTransfers(pool,me.account.id),
     pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account FROM payment_provider_configs WHERE country_code='PH' ORDER BY provider_code")
   ]);
   const defaultProvider=clean(process.env.PAYMENT_PROVIDER_DEFAULT,80);
@@ -174,7 +177,7 @@ app.get('/api/settings/finance',async(req,res,next)=>{try{
     active_role:me.account.active_role,
     profiles:(me.profiles||[]).map(p=>({role:p.role,enabled:Boolean(p.enabled),status:p.status,visibility:p.visibility})),
     businesses:(me.businesses||[]).map(b=>({id:Number(b.id),name:b.name,active:b.active!==false})),
-    financial_accounts:accounts,preferences,budgets,money_movements:movements,
+    financial_accounts:accounts,preferences,budgets,money_movements:movements,profile_fund_scopes:fundScopes,profile_fund_transfers:fundTransfers,
     catalog:{roles:PROFILE_FINANCE_ROLES,account_kinds:FINANCIAL_ACCOUNT_KINDS,methods:MONEY_METHODS,payout_schedules:PAYOUT_SCHEDULES,budget_purposes:BUDGET_PURPOSES,movement_types:MONEY_MOVEMENT_TYPES},
     provider:{
       default_provider:defaultProvider,provider_ready:Boolean(selected),selected_provider:selected,
@@ -280,6 +283,22 @@ app.post('/api/settings/money-movements',body,async(req,res,next)=>{try{
     execution_status:'HOLD',
     next_action:'CONNECT_VERIFIED_MONEY_MOVEMENT_ADAPTER'
   });
+}catch(e){next(e)}});
+
+app.post('/api/settings/profile-fund-transfers',body,async(req,res,next)=>{try{
+  const me=await identity(req),key=clean(req.headers['idempotency-key']||req.body?.idempotency_key,220);
+  const row=await transferFundsBetweenProfiles(pool,{
+    publicId:'pft_'+crypto.randomUUID().replaceAll('-',''),transferKey:key,accountId:me.account.id,
+    sourceProfileRole:req.body?.source_profile_role,sourceBusinessId:req.body?.source_business_id||null,
+    destinationProfileRole:req.body?.destination_profile_role,destinationBusinessId:req.body?.destination_business_id||null,
+    amount:req.body?.amount,currencyCode:req.body?.currency_code||'PHP',note:req.body?.note||''
+  });
+  res.status(201).json({...row,platform_fee:0,provider_money_moved:false});
+}catch(e){next(e)}});
+
+app.get('/api/settings/profile-fund-transfers',async(req,res,next)=>{try{
+  const me=await identity(req);
+  res.json({scopes:await listProfileFundScopes(pool,me.account.id),transfers:await listProfileFundTransfers(pool,me.account.id)});
 }catch(e){next(e)}});
 
 app.get('/api/payments/config',async(req,res,next)=>{try{
