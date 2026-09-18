@@ -147,8 +147,8 @@ Still fail-closed:
 
 All applicable gates must be complete:
 
-1. confirm that the designated initial Philippine natural-person operator is the actual PIC for the relevant processing and verify that person's legal identity/contact for governance/publication;
-2. treat that individual PIC as de facto DPO under current NPC guidance unless the operating structure changes;
+1. complete factual controller allocation between the Project Owner and designated Philippine operator for the relevant processing, and verify the confirmed controller/controller-structure legal identity/contact for governance/publication;
+2. treat any confirmed individual PIC as de facto DPO under current NPC guidance unless the operating structure changes;
 3. controller/privacy approval of the processing purpose and lawful basis;
 4. approved LIA if legitimate interest is selected;
 5. EFFECTIVE privacy notice;
@@ -195,4 +195,4 @@ Status remains: **prepared / privacy-controller activation HOLD**.
 
 ## 12. Initial Philippine operator/controller checkpoint
 
-Owner designated a natural person in the Philippines as the initial Business & Life operator. Business & Life is not yet a formed Philippine legal entity. The operator is the provisional PIC candidate if she actually controls the relevant personal-data processing decisions. Under current NPC guidance, an individual PIC is a de facto DPO. Legal name/contact and NPCRS applicability remain pre-launch verification items; do not publish placeholders.
+Owner designated a natural person in the Philippines as the initial Business & Life operator. Business & Life is not yet a formed Philippine legal entity. The operator is a provisional PIC candidate, but the Project Owner also has controller-level decision evidence in referral/growth processing. Final controller allocation must follow actual authority over purpose, data categories, retention, processors and material changes. Under current NPC guidance, any confirmed individual PIC is a de facto DPO. Legal name/contact and NPCRS applicability remain pre-launch verification items; do not publish placeholders.
