@@ -18,11 +18,23 @@ test('WhatsApp Telegram and groups remain user initiated', () => {
   assert.equal(p.modes.group.automaticPosting, false);
 });
 
-test('direct server sending is blocked until providers policy and abuse controls exist', () => {
-  assert.equal(p.productionGates.emailProviderConfigured, false);
-  assert.equal(p.productionGates.smsProviderConfigured, false);
+test('notification and legal foundations exist but referral server-send remains gated', () => {
+  assert.equal(p.productionGates.notificationLayerReady, true);
+  assert.equal(p.productionGates.versionedLegalConsentReady, true);
+  assert.equal(p.productionGates.referralEmailTemplateConfigured, false);
+  assert.equal(p.productionGates.referralMarketingConsentBindingConfigured, false);
   assert.equal(p.productionGates.rateLimitConfigured, false);
+  assert.equal(p.productionGates.recipientDeduplicationConfigured, false);
+  assert.equal(p.productionGates.suppressionHandlingConfigured, false);
   assert.equal(p.productionGates.abuseMonitoringConfigured, false);
+  assert.equal(p.productionGates.smsProviderConfigured, false);
+});
+
+test('marketing consent references current legal infrastructure', () => {
+  assert.equal(p.infrastructure.marketingConsentAction, 'marketing.opt_in');
+  assert.equal(p.infrastructure.marketingConsentDocument, 'marketing_consent');
+  assert.equal(p.infrastructure.canonicalNotificationLayerReady, true);
+  assert.equal(p.infrastructure.versionedLegalConsentReady, true);
 });
 
 test('direct invitation cannot become privileged profile authorization', () => {
