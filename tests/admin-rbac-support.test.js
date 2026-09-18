@@ -7,6 +7,7 @@ const server=readFileSync(new URL('../server-admin-operations.js',import.meta.ur
 const governance=readFileSync(new URL('../server-profile-governance.js',import.meta.url),'utf8');
 const accounting=readFileSync(new URL('../server-business-accounting.js',import.meta.url),'utf8');
 const ui=readFileSync(new URL('../public/admin-operations-ui.js',import.meta.url),'utf8');
+const adminConsole=readFileSync(new URL('../public/admin-console.js',import.meta.url),'utf8');
 
 test('internal scoped Admin assertions are signed, expiring and tamper-resistant',()=>{
   const secret='test-secret-value';
@@ -69,11 +70,12 @@ test('support UI offers voice transcription, English translation and Admin routi
   assert.match(ui,/\.md/);
 });
 
-test('Admin Operations UI contains scoped queues and delegated Admin editor',()=>{
-  assert.match(ui,/Admin Operations/);
-  assert.match(ui,/Delegate administration/);
-  assert.match(ui,/adminTargetRole/);
-  assert.match(ui,/Support/);
-  assert.match(ui,/Incidents/);
-  assert.match(ui,/Audit/);
+test('dedicated Admin workspace contains scoped queues and delegated function editor',()=>{
+  assert.match(ui,/window\.location\.assign\('\/admin'\)/);
+  assert.match(adminConsole,/Admin Workspace|Privileged workspace/);
+  assert.match(adminConsole,/Delegate responsibility/);
+  assert.match(adminConsole,/function_codes/);
+  assert.match(adminConsole,/Support/);
+  assert.match(adminConsole,/Trust & Safety/);
+  assert.match(adminConsole,/Audit & Metrics/);
 });
