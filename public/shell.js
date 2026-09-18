@@ -275,12 +275,17 @@ function hideMerchantWorkspace() {
   document.querySelectorAll('#shell > .view').forEach(v => v.classList.add('hidden'));
   document.querySelector('.bottomNav')?.classList.add('hidden');
 }
-function showMerchantWorkspace() {
+function showLegacyMerchantWorkspace() {
   document.getElementById('roleHub')?.classList.add('hidden');
+  document.getElementById('businessFinanceWorkspace')?.classList.add('hidden');
   document.querySelector('.bottomNav')?.classList.remove('hidden');
   const dashboard = document.querySelector('.bottomNav [data-view="Dashboard"]');
   if (dashboard) dashboard.click();
   else document.getElementById('viewDashboard')?.classList.remove('hidden');
+}
+function showMerchantWorkspace() {
+  hideMerchantWorkspace();
+  renderRoleHub('merchant');
 }
 
 function hideFeatureWorkspaces() {
@@ -303,10 +308,20 @@ function showActiveWorkspace() {
 }
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
+  openLegacyMerchantWorkspace:showLegacyMerchantWorkspace,
   getProfileState:()=>window.BusinessLifeProfileState||null
 });
 
 const HUBS = {
+  merchant: [
+    ['💼','Business Finance','Revenue, receivables, payables and financial accounts','Finance'],
+    ['📦','Products & Catalog','Food and non-food products for your Marketplace','Catalog'],
+    ['🏪','Storefront','Public store, opening state and Marketplace settings','Storefront'],
+    ['🧾','Orders','Customer orders and fulfilment','Orders'],
+    ['🤝','Suppliers','Restock, purchase orders and Supplier relationships','Suppliers'],
+    ['🚚','Delivery','Delivery requests and Merchant handoff','Delivery'],
+    ['🍳','Food Operations','Optional menu, recipes, kitchen stock and food sales','Food Operations']
+  ],
   customer: [
     ['🍲','Food','Local food merchants, menus and ordering','Marketplace'],
     ['🧺','Non-food','Everyday goods from nearby merchants','Marketplace'],
