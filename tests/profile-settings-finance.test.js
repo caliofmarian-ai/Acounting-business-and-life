@@ -44,8 +44,9 @@ test('Settings is inserted into the avatar drawer and works across all five publ
 test('real withdrawal execution remains disabled until a verified adapter exists',()=>{
   assert.match(server,/payout_execution_ready:false/);
   assert.match(server,/PROVIDER_DISBURSEMENT_ADAPTER_NOT_CONNECTED/);
-  assert.match(ui,/Real transfer is not active yet/);
-  assert.match(ui,/will not mark money as withdrawn or transferred until a provider\/bank\/e-wallet confirms/);
+  assert.match(ui,/Withdraw is not active yet/);
+  assert.match(ui,/Withdraw will use the default payout destination configured above in Avatar → Money & Banking/);
+  assert.match(ui,/will not reduce the external\/provider balance or mark a withdrawal succeeded until the provider confirms/);
   assert.doesNotMatch(server,/status='paid'.*settings\/financial/s);
 });
 
@@ -116,7 +117,19 @@ test('real movement requests are account-scoped and capability-gated',()=>{
 test('Settings finance payload exposes budgets and movement history without raw provider balance invention',()=>{
   assert.match(server,/listProfileBudgetEnvelopes/);
   assert.match(server,/listProfileMoneyMovements/);
-  assert.match(server,/financial_accounts:accounts,preferences,budgets,money_movements:movements/);
+  assert.match(server,/financial_accounts:accounts,legacy_profile_financial_accounts:accounts,preferences,budgets,money_movements:movements/);
   assert.match(server,/budget_purposes:BUDGET_PURPOSES/);
   assert.match(server,/movement_types:MONEY_MOVEMENT_TYPES/);
+});
+
+
+test('account-level Money & Banking is the normal external-finance setup while profile destinations remain legacy',()=>{
+  assert.match(server,/accountMoneySettings\(pool,\{accountId:me\.account\.id/);
+  assert.match(server,/account_money:accountMoney/);
+  assert.match(server,/legacy_profile_financial_accounts:accounts/);
+  const render=ui.slice(ui.indexOf('function renderSettings'),ui.indexOf('function bindSettings'));
+  assert.match(render,/accountMoneySettingsCard\(\)/);
+  assert.doesNotMatch(render,/Financial accounts & payout destinations/);
+  assert.match(ui,/One external financial identity for this account/);
+  assert.match(ui,/Shared across profiles/);
 });

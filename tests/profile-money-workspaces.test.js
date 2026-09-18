@@ -53,10 +53,12 @@ test('shell exposes role-specific Money destinations without changing Merchant o
   assert.doesNotMatch(supplier,/['"]Money['"]/);
 });
 
-test('Money workspace uses financial destinations from Settings and can open the same profile Settings',()=>{
-  assert.match(server,/listProfileFinancialAccounts/);
-  assert.match(server,/listMoneyPreferences/);
-  assert.match(ui,/financialDestinations/);
+test('Money workspace uses shared account-level Money & Banking while preserving legacy profile references',()=>{
+  assert.match(server,/accountMoneySettings\(pool,\{accountId:me\.account\.id/);
+  assert.match(server,/account_money:accountMoney/);
+  assert.match(server,/legacy_profile_financial_accounts:profileAccounts/);
+  assert.match(ui,/External banking and saved payment methods belong to your Avatar\/Account and are shared across your profiles/);
+  assert.match(ui,/Open Money & Banking/);
   assert.match(ui,/BusinessLifeProfileSettings\?\.open\?\.\(pmRole\)/);
 });
 
