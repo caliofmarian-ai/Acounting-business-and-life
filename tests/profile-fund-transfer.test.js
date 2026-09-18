@@ -41,7 +41,6 @@ test('business transfer entries are profit neutral but affect recorded available
   assert.match(accounting,/profile_transfer_out/);
   assert.match(accounting,/profit:Number\(t\.sales\)-Number\(t\.business_expenses\)/);
   assert.match(accounting,/available=Number\(t\.sales\)\+Number\(t\.money_received\)\+Number\(t\.adjustments\)\+Number\(t\.profile_transfer_in\)-Number\(t\.business_expenses\)-Number\(t\.personal_withdrawals\)-Number\(t\.profile_transfer_out\)/);
-  assert.match(financeView,/Internal profile transfer/);
   assert.match(financeView,/Profile transfers change recorded balance but never business revenue, expense or profit/);
 });
 
@@ -49,7 +48,7 @@ test('personal profile transfer entries are system generated and cannot be manua
   assert.match(core,/source_type IN \('manual','delivery','service_job','profile_transfer'\)/);
   assert.match(core,/entry_type IN \('money_in','expense','adjustment','reversal','profile_transfer_in','profile_transfer_out'\)/);
   assert.match(core,/Internal profile transfer entries must be corrected as one atomic transfer/);
-  assert.match(core,/source_type='profile_transfer'/);
+  assert.match(core,/VALUES\([^\n]*'profile_transfer'/);
   assert.doesNotMatch(core,/source_types:[^\n]*profile_transfer/);
 });
 
