@@ -126,3 +126,11 @@ test('mobile Money form is responsive',()=>{
   assert.match(css,/\.moneyFormGrid/);
   assert.match(css,/@media\(max-width:560px\)[\s\S]*\.moneyFormGrid\{grid-template-columns:1fr\}/);
 });
+
+
+test('idempotency keys cannot leak across Money scopes',()=>{
+  assert.match(core,/Idempotency key belongs to another Money scope/);
+  assert.match(core,/Idempotency key belongs to another Money correction/);
+  assert.match(core,/oldKey\.profile_role!==role/);
+  assert.match(core,/Number\(oldKey\.reversal_of_id\)!==Number\(entryId\)/);
+});
