@@ -35,3 +35,19 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
 
 @media(min-width:650px){.activeRolePill{display:inline-flex}.profileDrawerBackdrop{align-items:stretch;justify-content:flex-end}.profileDrawerPanel{width:430px;max-height:100dvh;height:100dvh;border-radius:28px 0 0 28px;padding:18px 18px 30px;animation:drawerSide .22s ease-out}.drawerHandle{display:none}@keyframes drawerSide{from{transform:translateX(26px);opacity:.6}to{transform:translateX(0);opacity:1}}.hubGrid{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:420px){.topbar{padding:11px 12px}.accountAvatar{width:39px;height:39px}.roleHub{padding-inline:14px}.hubHero{border-radius:24px;padding:20px 18px}.hubHero h1{font-size:24px}.hubTile{padding:13px;min-height:122px}.profileDrawerPanel{padding-inline:13px}}
+
+
+/* Mobile topbar regression guard: injected action buttons must never widen the document. */
+.topbar{width:100%;max-width:100%;min-width:0;gap:10px;overflow:hidden}
+.topbar>div:first-child{min-width:0;flex:1 1 auto}
+.topbar>div:first-child strong,.topbar>div:first-child small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topActions{min-width:0;flex:0 1 auto;max-width:min(72vw,560px);overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.topActions::-webkit-scrollbar{display:none}
+.topActions>*{flex:0 0 auto}
+.shellProfileControls{flex:0 0 auto}
+
+@media(max-width:640px){
+  .topbar{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:10px 12px}
+  .topbar>div:first-child{display:none}
+  .topActions{width:100%;max-width:100%;justify-content:flex-start;padding:1px 0 2px}
+}
