@@ -50,3 +50,16 @@ test('Promotion Center links the selected sharing profile into the runtime Marke
   assert.match(html, /\/referral\/marketing-kit\.html\?profile=/);
   assert.match(html, /syncMarketingKit\(\)/);
 });
+
+
+test('Promotion Center shows a truthful referral progress summary without invented counters', () => {
+  assert.match(html, /id="progressSummary"/);
+  assert.match(html, /id="progressLink"/);
+  assert.match(html, /id="progressQr"/);
+  assert.match(html, /Ready through account creation start/);
+  assert.match(html, /id="progressConversions">Not counted yet/);
+  assert.match(html, /id="progressRewards">Not enabled/);
+  assert.match(html, /durable conversion attribution and reward policy are not enabled yet/i);
+  assert.doesNotMatch(html, />\s*0 referrals\s*</i);
+  assert.doesNotMatch(html, />\s*0 rewards\s*</i);
+});
