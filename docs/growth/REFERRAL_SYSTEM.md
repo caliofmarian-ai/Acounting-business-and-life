@@ -102,3 +102,13 @@ After PR #42 stabilizes, a separate integration slice may:
 7. feature-flag rollout.
 
 The integration slice must be rebased from current `main` after #42 and must not copy stale gateway code.
+
+## Pending attribution readiness — 2026-09-18
+
+A fail-closed pre-conversion persistence adapter is prepared in `growth/referral-unconverted-attribution.js`.
+
+It may persist only `referral_landing_viewed` and `referral_signup_started` into `referral_pending_attributions`, with a fixed 90-day expiry and HMAC-pseudonymized correlation identity.
+
+It is inactive unless all privacy/activation gates are explicitly satisfied. It cannot bind a referred account, qualify a referral or create reward state.
+
+See `docs/growth/UNCONVERTED_ATTRIBUTION_RUNTIME.md`.

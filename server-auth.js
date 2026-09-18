@@ -11,6 +11,7 @@ import { buildLiveReferralPayload, ensureAccountReferral, ensureReferralAccountS
 import { buildLocalReferralQr } from './growth/referral-qr.js';
 import { isValidReferralCode } from './growth/referral-domain.js';
 import { deliverReferralAnalyticsEvent, sanitizeReferralAnalyticsEvent } from './growth/referral-analytics.js';
+import { persistUnconvertedReferralEvent } from './growth/referral-unconverted-attribution.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -491,7 +492,7 @@ app.post('/api/growth/referral-analytics/public', jsonBody, async (req, res, nex
 
   try {
     const known = await pool.query(
-      `SELECT 1
+      `SELECT ra.account_id AS referrer_account_id
          FROM referral_accounts ra
          JOIN profiles p ON p.account_id=ra.account_id
          WHERE ra.referral_code=$1 AND p.role=$2 AND p.enabled=TRUE
@@ -500,6 +501,16 @@ app.post('/api/growth/referral-analytics/public', jsonBody, async (req, res, nex
     );
     if (!known.rowCount) {
       return res.status(202).json({ accepted: false, delivered: false, reason: 'unknown_referral' });
+    }
+    try {
+      await persistUnconvertedReferralEvent(pool, {
+        referrerAccountId: Number(known.rows[0].referrer_account_id),
+        referralCode,
+        event,
+        properties
+      });
+    } catch (error) {
+      console.warn('Referral attribution persistence suppressed:', error.message);
     }
     return sendReferralAnalytics(res, { event, properties });
   } catch (err) {
