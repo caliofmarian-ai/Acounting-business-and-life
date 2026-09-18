@@ -51,7 +51,8 @@ test('Account/Auth exposes authenticated referral identity without role-grant si
 
 test('unified profile drawer exposes one universal Promotion Center entry', () => {
   const shell = read('public/shell.js');
-  assert.match(shell, /INVITE &amp; EARN/);
+  assert.match(shell, /INVITE &amp; SHARE/);
+  assert.doesNotMatch(shell, /INVITE &amp; EARN/);
   assert.match(shell, /id="promotionCenterButton"/);
   assert.match(shell, /promotion-center\.html\?profile=/);
 });

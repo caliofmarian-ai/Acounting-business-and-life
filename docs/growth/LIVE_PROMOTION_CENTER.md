@@ -50,7 +50,7 @@ Response includes:
 
 ## Unified shell
 
-`Account & Profiles` exposes a universal **Invite & Earn / Promotion Center** entry.
+`Account & Profiles` exposes a universal **Invite & Share / Promotion Center** entry.
 
 Navigation path:
 
@@ -81,6 +81,8 @@ Promotion Center includes a truthful state summary for the selected sharing prof
 - rewards: `Not enabled`.
 
 The UI deliberately does not display fabricated zero conversion/reward counts. Completed-referral counts require durable converted attribution, and reward progress requires an approved reward policy.
+
+Because the reward policy is currently disabled, user-facing navigation deliberately says **Invite & Share**, not **Invite & Earn**. The product must not imply a reward exists before an approved reward policy is activated.
 
 ## Personal QR — live local rendering
 
