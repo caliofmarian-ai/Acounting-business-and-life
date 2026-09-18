@@ -8,7 +8,7 @@ Business & Life is a mobile-first local economic ecosystem for the Philippines. 
 - Courier / Delivery Provider
 - Service Provider / Local Services
 
-The current production runtime is **V0.8.7**. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
+The current release target is **V0.10.0**; V0.9 multi-business accounting is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
 
 ## What is implemented
 
@@ -80,10 +80,12 @@ Accounting
   -> Delivery Finance
   -> Incidents
   -> Auth Hardening
-  -> Profile Governance (public entry)
+  -> Profile Governance
+  -> Multi-business Accounting
+  -> Scoped Admin + Support (public entry)
 ```
 
-The public process is `server-profile-governance.js` and the Railway health check is `/health`.
+The public process is `server-admin-operations.js` and the Railway health check is `/health`.
 
 ## Current country edition
 
@@ -96,11 +98,13 @@ This repository currently represents **Business & Life — Philippines**:
 
 A future Ireland/Romania/other edition must use an isolated deployment/database/configuration rather than mixing jurisdictions into one production data plane.
 
-## Important open boundary
+## Current platform boundaries
 
-The next major implementation lane is **Issue #28 — Multi-business Accounting**.
+**V0.9 Multi-business Accounting is implemented.** Legacy accounting rows are tenant-scoped to the initial business and Merchant/Supplier profiles resolve through explicit economic workspaces.
 
-The legacy accounting tables still belong to the original business ledger. New Merchant accounts are intentionally prevented from using that legacy ledger until transactions, inventory, products, reports and reconciliations are safely scoped to an authorized business/economic workspace. Supplier Accounting must reuse the same engine rather than create a second incompatible ledger.
+**V0.10 Scoped Admin + Support is the current release target.** Admin authority is separate from public profiles and uses explicit Super Admin / Country Admin / Territory Admin assignments, delegated permissions, territory scope and audit events. Support is separate from safety Incidents and supports image/PDF/Word/Markdown/audio evidence, editable voice transcripts, and optional browser-assisted English translation.
+
+The next major implementation lane after V0.10 is **Issue #33 — Notifications**.
 
 The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**.
 
@@ -112,6 +116,7 @@ The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**
 - Railway deployment
 - GitHub Actions CI
 - Figma design-system work for application UI
+- browser-native speech recognition / translation when supported, with editable fallbacks
 
 ## Environment
 

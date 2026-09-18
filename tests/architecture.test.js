@@ -6,10 +6,10 @@ import { spawnSync } from 'node:child_process';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const read = relative => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
 
-test('production entry point is the business-accounting tenancy gateway with bootstrap hardening', () => {
-  assert.equal(pkg.version, '0.9.0');
+test('production entry point is the scoped Admin and Support gateway with bootstrap hardening', () => {
+  assert.equal(pkg.version, '0.10.0');
   assert.match(pkg.scripts.start, /--import \.\/bootstrap-env\.js/);
-  assert.match(pkg.scripts.start, /server-business-accounting\.js/);
+  assert.match(pkg.scripts.start, /server-admin-operations\.js/);
 });
 
 test('all executable domain gateways required by the current platform exist', () => {
@@ -25,13 +25,14 @@ test('all executable domain gateways required by the current platform exist', ()
     'server-incidents.js',
     'server-auth-hardening.js',
     'server-profile-governance.js',
-    'server-business-accounting.js'
+    'server-business-accounting.js',
+    'server-admin-operations.js'
   ];
   for (const file of required) assert.equal(existsSync(new URL(`../${file}`, import.meta.url)), true, `${file} must exist`);
 });
 
 test('syntax check covers the public production gateway chain', () => {
-  for (const file of ['server-business-accounting.js','server-profile-governance.js','server-auth-hardening.js','server-incidents.js','server-delivery-finance.js','server-delivery.js','server-suppliers.js','server-services.js','server-marketplace.js','server-orders.js','server-auth.js','server-v03.js']) {
+  for (const file of ['server-admin-operations.js','server-business-accounting.js','server-profile-governance.js','server-auth-hardening.js','server-incidents.js','server-delivery-finance.js','server-delivery.js','server-suppliers.js','server-services.js','server-marketplace.js','server-orders.js','server-auth.js','server-v03.js']) {
     assert.ok(pkg.scripts.check.includes(file), `${file} is missing from npm run check`);
   }
 });
@@ -46,8 +47,9 @@ test('database bootstrap upgrades legacy ambiguous SSL modes to verify-full', ()
   assert.match(probe.stdout, /sslmode=verify-full/);
 });
 
-test('current-state document identifies the pilot roadmap and completed multi-business boundary', () => {
+test('current-state document identifies the pilot roadmap and completed tenancy/admin sequence', () => {
   const state = read('docs/CURRENT_STATE.md');
   assert.match(state, /Issue #37/);
   assert.match(state, /multi-business/i);
+  assert.match(state, /Admin RBAC|scoped Admin/i);
 });

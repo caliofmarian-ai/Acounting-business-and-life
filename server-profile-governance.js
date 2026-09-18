@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyAdminAssertion } from './admin-authorization.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,6 +17,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process
 const body = express.json({ limit: '2800kb' });
 const INVITE_ROLES = new Set(['merchant','supplier','courier']);
 const GOVERNED_ROLES = new Set(['merchant','supplier','courier','service_provider']);
+const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const APPLICATION_STATES = new Set(['application_started','requirements_pending','submitted','under_review','approved','rejected','suspended','revoked']);
 let child;
 let shuttingDown = false;
@@ -27,7 +29,7 @@ const randomToken=()=>crypto.randomBytes(30).toString('base64url');
 const hash=v=>crypto.createHash('sha256').update(String(v)).digest('hex');
 async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
-async function requireAdmin(req){const me=await identity(req);if(Number(me.account.id)!==1)throw Object.assign(new Error('Bootstrap Super Admin access required'),{status:403});return me}
+async function requireAdmin(req){const me=await identity(req);if(Number(me.account.id)===1)return me;const assertion=verifyAdminAssertion(TOKEN_SECRET,req.headers['x-bl-admin-assertion'],me.account.id);if(!assertion)throw Object.assign(new Error('Scoped Admin assertion required'),{status:403});me.admin_assertion=assertion;return me}
 function validTerritoryType(v){return ['country','region','province','city','municipality','district','barangay','custom_cell'].includes(v)}
 function validTerritoryStatus(v){return ['planned','onboarding','active','paused','suspended','closed'].includes(v)}
 async function activeAuthorization(accountId,role,territoryId=null){const args=[accountId,role];let q=`SELECT * FROM profile_authorizations WHERE account_id=$1 AND role=$2 AND status='active'`;if(territoryId!=null){args.push(territoryId);q+=` AND (territory_id=$3 OR territory_id IS NULL)`}q+=` ORDER BY territory_id NULLS LAST,id DESC LIMIT 1`;const r=await pool.query(q,args);return r.rows[0]||null}
