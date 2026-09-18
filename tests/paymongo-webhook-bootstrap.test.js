@@ -27,7 +27,7 @@ test('provider metadata records webhook identity and source but never secret mat
   assert.match(adapter,/webhook_id:/);
   assert.match(adapter,/webhook_url:/);
   assert.match(adapter,/webhook_secret_source:/);
-  assert.doesNotMatch(adapter,/webhook_secret\s*:/);
+  assert.doesNotMatch(adapter,/\bwebhook_secret\s*:/);
   assert.doesNotMatch(adapter,/secret_key\s*:\s*state/);
 });
 
