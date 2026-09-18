@@ -54,7 +54,7 @@ async function legalGuard(req,res,next,{actionCode,role,businessId=null,territor
 async function affectedRecipients(documentCode){
   let rows=[];
   if(['platform_terms','privacy_notice','code_of_conduct','location_tracking_notice','marketing_consent'].includes(documentCode)){
-    ({rows}=await pool.query(`SELECT id account_id FROM accounts WHERE status='active' ORDER BY id`).catch(()=>({rows:[]})));
+    ({rows}=await pool.query(`SELECT id account_id FROM accounts WHERE auth_status='active' ORDER BY id`).catch(()=>({rows:[]})));
   }else if(documentCode==='merchant_agreement'){
     ({rows}=await pool.query(`SELECT DISTINCT account_id FROM profiles WHERE role='merchant' AND enabled=TRUE`));
   }else if(documentCode==='supplier_agreement'){
