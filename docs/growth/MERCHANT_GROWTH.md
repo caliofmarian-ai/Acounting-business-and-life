@@ -74,3 +74,18 @@ After merge + verified deployment report:
 - route/files changed;
 - exact in-app destination;
 - gates that remain.
+
+## Visual implementation
+
+Figma:
+https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT
+
+- `9:2` — Merchant Growth mobile reference;
+- `9:21` — social square;
+- `9:32` — Story;
+- `9:61` — A5 flyer.
+
+Editable Canva masters:
+- `Business & Life — Merchant Social Square V1`;
+- `Business & Life — Merchant Story V1`;
+- `Business & Life — Merchant A5 Flyer V1`.
