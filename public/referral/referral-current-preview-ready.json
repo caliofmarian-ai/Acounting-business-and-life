@@ -1,0 +1,5 @@
+{
+  "service": "accounting-growth-referral-current-preview",
+  "route": "/referral/promotion",
+  "proof": "current-referral-branch-deploy"
+}
