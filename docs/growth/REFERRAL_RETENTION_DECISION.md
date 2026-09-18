@@ -52,8 +52,9 @@ Examples:
 
 These events are acquisition analytics, not accounting records. The retention period should therefore be the shortest period that supports the declared acquisition-analysis purpose.
 
-Owner decision recorded on 2026-09-18:
-- `unconvertedReferralEventDays = 60`.
+Owner decision corrected on 2026-09-18:
+- `unconvertedReferralEventDays = 90`.
+- This supersedes the temporary 60-day value recorded earlier the same day and restores the project-wide 90-day standard.
 
 No current Philippine source found in this research imposes a fixed number of days for this ordinary referral-analytics class.
 
@@ -94,12 +95,12 @@ The following values are design candidates based on data minimization. They are 
 
 | Data class | Candidate | Rationale | Current status |
 | --- | ---: | --- | --- |
-| Unconverted identifiable referral events | 60 days | Owner-approved shorter acquisition-analysis window; delete or irreversibly aggregate after expiry unless a documented exception applies | OWNER APPROVED — NOT YET ACTIVATED |
+| Unconverted identifiable referral events | 90 days | Owner-approved project-standard acquisition-analysis window; delete or irreversibly aggregate after expiry unless a documented exception applies | OWNER APPROVED — NOT YET ACTIVATED |
 | Converted referral attribution, when no financial reward is involved | 12 months after conversion | Supports attribution/support analysis, then should be deleted or irreversibly aggregated unless another documented basis applies | OWNER / LEGAL DECISION |
 | Aggregated/de-identified growth statistics | Longer, subject to genuine de-identification | DPA/IRR allows longer storage where data no longer permits identification, with safeguards | DESIGN |
 | Reward/payment/accounting evidence | No value yet | Depends on future reward economics, accounting/tax classification and dispute obligations | HOLD |
 
-The Owner-approved 60-day unconverted value is recorded in the canonical machine-readable guardrails. That partial approval does not make referral analytics production-ready; the remaining retention/legal gates below must still be resolved before external analytics or durable attribution is activated.
+The Owner-approved 90-day unconverted value is recorded in the canonical machine-readable guardrails. That partial approval does not make referral analytics production-ready; the remaining retention/legal gates below must still be resolved before external analytics or durable attribution is activated.
 
 ## 5. Required disposal behavior
 
@@ -147,7 +148,7 @@ Therefore:
 
 Recorded Owner decision:
 
-- Unconverted referral-event retention: **60 days**.
+- Unconverted referral-event retention: **90 days**. This supersedes the temporary 60-day setting recorded earlier on 2026-09-18.
 
 Still requiring explicit approval/resolution before Growth enables production referral analytics or durable attribution:
 
