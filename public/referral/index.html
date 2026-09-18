@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en-PH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="Join Business & Life through a referral invitation.">
+  <title>Business & Life — Invitation</title>
+  <link rel="stylesheet" href="/referral/referral.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="card" aria-labelledby="title">
+      <div class="eyebrow">BUSINESS &amp; LIFE · PHILIPPINES</div>
+      <h1 id="title">You’ve been invited.</h1>
+      <p class="lead">Keep business and personal money easier to understand, while using the same account across the profiles available to you.</p>
+
+      <div class="referral-card">
+        <span class="label">Referral code</span>
+        <strong id="referralCode">Checking…</strong>
+        <span id="profileSource" class="profile-source" hidden></span>
+      </div>
+
+      <p class="boundary">
+        A referral helps attribute who introduced you to Business &amp; Life. It does not automatically approve Merchant, Supplier, Courier or Service Provider access.
+      </p>
+
+      <div class="actions">
+        <a id="continueButton" class="primary" href="/">Continue to Business &amp; Life</a>
+        <button id="shareButton" class="secondary" type="button">Share invitation</button>
+        <button id="copyButton" class="secondary" type="button">Copy link</button>
+      </div>
+
+      <div class="channels" aria-label="Share options">
+        <a id="whatsappLink" rel="noopener noreferrer">WhatsApp</a>
+        <a id="telegramLink" rel="noopener noreferrer">Telegram</a>
+        <a id="smsLink">SMS</a>
+        <a id="emailLink">Email</a>
+      </div>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script type="module" src="/referral/referral.js"></script>
+</body>
+</html>
