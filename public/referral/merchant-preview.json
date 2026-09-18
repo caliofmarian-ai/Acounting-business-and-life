@@ -1,0 +1,7 @@
+{
+  "service": "accounting-growth-merchant-preview",
+  "branch": "feat/growth-merchants-v1-current",
+  "purpose": "verify isolated Merchant growth preview",
+  "expectedRoute": "/referral/merchant",
+  "containsProductionSecrets": false
+}
