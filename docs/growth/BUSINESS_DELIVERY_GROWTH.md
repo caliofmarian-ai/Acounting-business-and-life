@@ -77,3 +77,20 @@ After merge + verified deployment report:
 - direct production inspection URL;
 - exact in-app destination;
 - explicit note that standalone external parcel booking remains future-only until implemented.
+
+## Visual implementation
+
+Figma:
+https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT
+
+- `11:2` — Business Delivery mobile reference;
+- `11:29` — social square;
+- `11:40` — Story;
+- `11:69` — A5 flyer.
+
+Editable Canva masters:
+- `Business & Life — Business Delivery Social Square V1`;
+- `Business & Life — Business Delivery Story V1`;
+- `Business & Life — Business Delivery A5 Flyer V1`.
+
+Standalone external/off-platform Courier booking is tracked separately in Issue #86 and remains NOT LIVE.
