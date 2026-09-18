@@ -34,10 +34,10 @@ function phaseAt(completedAt,promoEndsAt){
 
 export async function ensureMonetizationSchema(pool){
   const statements=[
-    "CREATE TABLE IF NOT EXISTS service_monetization_entitlements(id BIGSERIAL PRIMARY KEY,country_code TEXT NOT NULL DEFAULT 'PH',service_scope TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id BIGINT NOT NULL,territory_id BIGINT REFERENCES territories(id),promo_duration_days INTEGER NOT NULL DEFAULT 90,promo_started_at TIMESTAMPTZ NOT NULL,promo_ends_at TIMESTAMPTZ NOT NULL,first_event_type TEXT NOT NULL,first_event_id BIGINT NOT NULL,first_post_promo_completed_at TIMESTAMPTZ,first_post_promo_event_type TEXT NOT NULL DEFAULT '',first_post_promo_event_id BIGINT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(country_code,service_scope,subject_type,subject_id),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services')),CHECK(subject_type IN ('business','account')),CHECK(promo_duration_days=90),CHECK(promo_ends_at>promo_started_at))",
+    "CREATE TABLE IF NOT EXISTS service_monetization_entitlements(id BIGSERIAL PRIMARY KEY,country_code TEXT NOT NULL DEFAULT 'PH',service_scope TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id BIGINT NOT NULL,territory_id BIGINT,promo_duration_days INTEGER NOT NULL DEFAULT 90,promo_started_at TIMESTAMPTZ NOT NULL,promo_ends_at TIMESTAMPTZ NOT NULL,first_event_type TEXT NOT NULL,first_event_id BIGINT NOT NULL,first_post_promo_completed_at TIMESTAMPTZ,first_post_promo_event_type TEXT NOT NULL DEFAULT '',first_post_promo_event_id BIGINT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(country_code,service_scope,subject_type,subject_id),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services')),CHECK(subject_type IN ('business','account')),CHECK(promo_duration_days=90),CHECK(promo_ends_at>promo_started_at))",
     "CREATE INDEX IF NOT EXISTS service_monetization_entitlements_period_idx ON service_monetization_entitlements(country_code,service_scope,promo_started_at,promo_ends_at)",
     "CREATE INDEX IF NOT EXISTS service_monetization_entitlements_territory_idx ON service_monetization_entitlements(territory_id,service_scope,promo_ends_at)",
-    "CREATE TABLE IF NOT EXISTS service_monetization_events(id BIGSERIAL PRIMARY KEY,event_key TEXT NOT NULL UNIQUE,entitlement_id BIGINT NOT NULL REFERENCES service_monetization_entitlements(id) ON DELETE RESTRICT,country_code TEXT NOT NULL DEFAULT 'PH',service_scope TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id BIGINT NOT NULL,territory_id BIGINT REFERENCES territories(id),source_type TEXT NOT NULL,source_id BIGINT NOT NULL,completed_at TIMESTAMPTZ NOT NULL,phase_snapshot TEXT NOT NULL,gross_value NUMERIC(14,2) NOT NULL DEFAULT 0,currency_code TEXT NOT NULL DEFAULT 'PHP',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services')),CHECK(subject_type IN ('business','account')),CHECK(phase_snapshot IN ('promotional','post_promo')),CHECK(gross_value>=0))",
+    "CREATE TABLE IF NOT EXISTS service_monetization_events(id BIGSERIAL PRIMARY KEY,event_key TEXT NOT NULL UNIQUE,entitlement_id BIGINT NOT NULL REFERENCES service_monetization_entitlements(id) ON DELETE RESTRICT,country_code TEXT NOT NULL DEFAULT 'PH',service_scope TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id BIGINT NOT NULL,territory_id BIGINT,source_type TEXT NOT NULL,source_id BIGINT NOT NULL,completed_at TIMESTAMPTZ NOT NULL,phase_snapshot TEXT NOT NULL,gross_value NUMERIC(14,2) NOT NULL DEFAULT 0,currency_code TEXT NOT NULL DEFAULT 'PHP',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services')),CHECK(subject_type IN ('business','account')),CHECK(phase_snapshot IN ('promotional','post_promo')),CHECK(gross_value>=0))",
     "CREATE INDEX IF NOT EXISTS service_monetization_events_period_idx ON service_monetization_events(country_code,service_scope,phase_snapshot,completed_at)",
     "CREATE INDEX IF NOT EXISTS service_monetization_events_subject_idx ON service_monetization_events(subject_type,subject_id,service_scope,completed_at)"
   ];
@@ -73,6 +73,11 @@ export async function recordMonetizableCompletion(db,input={}){
   `,[serviceScope,subjectType,subjectId,territoryId,PROMOTIONAL_DAYS,completedAt,sourceType,sourceId]);
 
   const e=entitlement.rows[0];
+  await db.query(`
+    UPDATE service_monetization_events SET phase_snapshot=
+      CASE WHEN completed_at<$1::timestamptz THEN 'promotional' ELSE 'post_promo' END
+    WHERE entitlement_id=$2
+  `,[e.promo_ends_at,e.id]);
   const phase=phaseAt(completedAt,e.promo_ends_at);
   const event=await db.query(`
     INSERT INTO service_monetization_events(
@@ -83,23 +88,21 @@ export async function recordMonetizableCompletion(db,input={}){
     RETURNING *
   `,[key,e.id,serviceScope,subjectType,subjectId,territoryId,sourceType,sourceId,completedAt,phase,grossValue,currencyCode]);
 
-  if(phase==='post_promo'){
-    await db.query(`
-      UPDATE service_monetization_entitlements SET
-        first_post_promo_completed_at=CASE
-          WHEN first_post_promo_completed_at IS NULL OR $1::timestamptz<first_post_promo_completed_at THEN $1::timestamptz
-          ELSE first_post_promo_completed_at END,
-        first_post_promo_event_type=CASE
-          WHEN first_post_promo_completed_at IS NULL OR $1::timestamptz<first_post_promo_completed_at THEN $2
-          ELSE first_post_promo_event_type END,
-        first_post_promo_event_id=CASE
-          WHEN first_post_promo_completed_at IS NULL OR $1::timestamptz<first_post_promo_completed_at THEN $3
-          ELSE first_post_promo_event_id END,
-        updated_at=NOW()
-      WHERE id=$4
-    `,[completedAt,sourceType,sourceId,e.id]);
-  }
-  return{entitlement:e,event:event.rows[0],phase};
+  const firstPost=await db.query(`
+    SELECT completed_at,source_type,source_id FROM service_monetization_events
+    WHERE entitlement_id=$1 AND phase_snapshot='post_promo'
+    ORDER BY completed_at,id LIMIT 1
+  `,[e.id]);
+  const pp=firstPost.rows[0]||null;
+  await db.query(`
+    UPDATE service_monetization_entitlements SET
+      first_post_promo_completed_at=$1,
+      first_post_promo_event_type=$2,
+      first_post_promo_event_id=$3,
+      updated_at=NOW()
+    WHERE id=$4
+  `,[pp?.completed_at||null,pp?.source_type||'',pp?.source_id||null,e.id]);
+  return{entitlement:{...e,first_post_promo_completed_at:pp?.completed_at||null},event:event.rows[0],phase};
 }
 
 export async function monetizationStatus(pool,{serviceScope,subjectType,subjectId,at=new Date()}={}){
