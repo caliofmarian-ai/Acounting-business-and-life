@@ -1,0 +1,54 @@
+{
+  "version": "1.0.0",
+  "countryCode": "PH",
+  "operatingName": "Business & Life",
+  "legalEntity": {
+    "formed": false,
+    "legalName": null,
+    "registrationNumber": null
+  },
+  "initialOperator": {
+    "type": "natural_person",
+    "legalName": null,
+    "publicContact": null,
+    "status": "owner_designated_initial_philippine_operator"
+  },
+  "pic": {
+    "status": "provisional_candidate_pending_actual_control_confirmation",
+    "candidate": "initial_operator",
+    "condition": "initial_operator_actually_controls_business_and_life_personal_data_processing_decisions",
+    "legalName": null,
+    "publicContact": null,
+    "activationApproved": false
+  },
+  "dpo": {
+    "status": "de_facto_if_initial_operator_is_confirmed_individual_pic",
+    "candidate": "same_as_individual_pic",
+    "legalName": null,
+    "officialEmail": null,
+    "separatePersonRequiredByThisRecord": false,
+    "activationApproved": false
+  },
+  "npcRegistration": {
+    "status": "assessment_required_before_public_launch",
+    "mandatoryRegistrationDecision": null,
+    "assessmentTriggers": [
+      "employs_250_or_more_persons",
+      "processes_sensitive_personal_information_of_1000_or_more_individuals",
+      "processing_likely_to_pose_risk_to_rights_and_freedoms",
+      "data_processing_system_involving_automated_decision_making_or_profiling"
+    ],
+    "npcrsRegistrationId": null,
+    "certificate": null
+  },
+  "privacyNotice": {
+    "effectiveControllerIdentityReady": false,
+    "effectiveDpoContactReady": false,
+    "placeholderPublicationAllowed": false
+  },
+  "sourceFacts": {
+    "npcDpoGuidance": "https://privacy.gov.ph/appointing-a-data-protection-officer/",
+    "npcRegistrationCircular2022_04": "https://privacy.gov.ph/wp-content/uploads/2023/05/Circular-2022-04.pdf",
+    "npcRegistrationFaq2026": "https://privacy.gov.ph/pips-and-pics/faqs/"
+  }
+}
