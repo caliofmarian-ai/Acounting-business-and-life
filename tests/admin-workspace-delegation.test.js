@@ -8,6 +8,7 @@ const auth=readFileSync(new URL('../admin-authorization.js',import.meta.url),'ut
 const server=readFileSync(new URL('../server-admin-operations.js',import.meta.url),'utf8');
 const html=readFileSync(new URL('../public/admin-console.html',import.meta.url),'utf8');
 const ui=readFileSync(new URL('../public/admin-console.js',import.meta.url),'utf8');
+const legacyAdminUi=readFileSync(new URL('../public/admin-operations-ui.js',import.meta.url),'utf8');
 
 test('Admin rank hierarchy separates protected owner authority from delegated specialist work',()=>{
   assert.equal(ADMIN_RANKS.super_admin.level,100);
@@ -49,4 +50,5 @@ test('dedicated Admin workspace is a separate permission-driven surface',()=>{
   assert.match(ui,/Team & Delegation/);
   assert.match(ui,/function_codes/);
   assert.match(ui,/state\.me\.permissions/);
+  assert.match(legacyAdminUi,/window\.location\.assign\('\/admin'\)/);
 });
