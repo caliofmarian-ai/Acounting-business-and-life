@@ -18,7 +18,7 @@ test('Owner pilot decision records selected product policy', () => {
   assert.match(decision, /registration_context_v1/);
   assert.match(decision, /12 months after conversion/);
   assert.match(decision, /legitimate-interest assessment path/);
-  assert.match(decision, /rewards OFF for the initial pilot/i);
+  assert.match(decision, /Referral rewards — OWNER APPROVED OFF FOR INITIAL PILOT/);
   assert.match(decision, /PostHog.*remain OFF/is);
 });
 
