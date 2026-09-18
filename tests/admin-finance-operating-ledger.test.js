@@ -72,7 +72,7 @@ test('recorded company balance never pretends to be provider or bank cash',()=>{
 
 test('Admin finance writes are idempotent and audited',()=>{
   assert.match(core,/entry_key TEXT NOT NULL UNIQUE/);
-  assert.match(server,/Idempotency-Key/);
+  assert.match(server,/idempotency-key/i);
   assert.match(server,/admin_finance_entry_created/);
   assert.match(server,/admin_finance_budget_created/);
   assert.match(server,/appendAdminAudit/);
