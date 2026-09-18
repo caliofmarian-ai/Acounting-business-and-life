@@ -147,16 +147,17 @@ Still fail-closed:
 
 All applicable gates must be complete:
 
-1. actual Philippine PIC/controller identity;
-2. controller/privacy approval of the processing purpose and lawful basis;
-3. approved LIA if legitimate interest is selected;
-4. EFFECTIVE privacy notice;
-5. verified objection/data-subject request process;
-6. exact calendar-month retention runtime matching the approved 12-month policy;
-7. pending-attribution activation prerequisites;
-8. dedicated HMAC secret;
-9. explicit production activation variables;
-10. regression/runtime evidence.
+1. confirm that the designated initial Philippine natural-person operator is the actual PIC for the relevant processing and verify that person's legal identity/contact for governance/publication;
+2. treat that individual PIC as de facto DPO under current NPC guidance unless the operating structure changes;
+3. controller/privacy approval of the processing purpose and lawful basis;
+4. approved LIA if legitimate interest is selected;
+5. EFFECTIVE privacy notice;
+6. verified objection/data-subject request process;
+7. exact calendar-month retention runtime matching the approved 12-month policy;
+8. pending-attribution activation prerequisites;
+9. dedicated HMAC secret;
+10. explicit production activation variables;
+11. regression/runtime evidence.
 
 ## 9. Gates still required before PostHog activation
 
@@ -191,3 +192,7 @@ The runtime now has a fail-closed exact-calendar implementation for the Owner-ap
 - no production variable is enabled by this preparation.
 
 Status remains: **prepared / privacy-controller activation HOLD**.
+
+## 12. Initial Philippine operator/controller checkpoint
+
+Owner designated a natural person in the Philippines as the initial Business & Life operator. Business & Life is not yet a formed Philippine legal entity. The operator is the provisional PIC candidate if she actually controls the relevant personal-data processing decisions. Under current NPC guidance, an individual PIC is a de facto DPO. Legal name/contact and NPCRS applicability remain pre-launch verification items; do not publish placeholders.
