@@ -6,6 +6,8 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 
 const shell=read('public/shell.js');
 const app=read('public/app.js');
+const productionAccounting=read('public/v03.js');
+const indexHtml=read('public/index.html');
 const help=read('public/help-linking.js');
 const adminCss=read('public/admin-console.css');
 const adminUi=read('public/admin-console.js');
@@ -32,9 +34,12 @@ test('Slice A remains reconciled: one canonical profile-state owner and no ident
   }
 });
 
-test('Slice B remains reconciled: Merchant data is isolated and normal Back never hard reloads',()=>{
+test('Slice B remains reconciled on the actual production accounting entry point',()=>{
+  assert.match(indexHtml,/src="\/v03\.js"/);
+  assert.match(productionAccounting,/isMerchantBaseActive/);
+  assert.match(productionAccounting,/if\(!isMerchantBaseActive\(\)\)return/);
+  assert.match(productionAccounting,/abl:profile-state/);
   assert.match(app,/isMerchantBaseActive/);
-  assert.match(app,/if\(!isMerchantBaseActive\(\)\)return/);
   assert.match(help,/accountingPath/);
   assert.match(help,/activeRole\(\)==='merchant'/);
   assert.match(shell,/BusinessLifeShell/);

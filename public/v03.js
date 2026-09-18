@@ -20,8 +20,10 @@ async function api(path,options={}){
   }catch(e){if(!e.status)setOnline(false);throw e}
 }
 async function cachedJson(path,key){try{const data=await api(path);localStorage.setItem(cacheKey(key),JSON.stringify(data));return data}catch(e){if(e.status===401)throw e;const cached=localStorage.getItem(cacheKey(key));if(cached)return JSON.parse(cached);throw e}}
-function logout(){token='';localStorage.removeItem('abl_token');$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
-function showShell(){$('login').classList.add('hidden');$('shell').classList.remove('hidden');refreshAll()}
+let baseActiveRole=window.BusinessLifeProfileState?.activeRole||null;
+function isMerchantBaseActive(){return baseActiveRole==='merchant'}
+function logout(){token='';baseActiveRole=null;localStorage.removeItem('abl_token');$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
+function showShell(){$('login').classList.add('hidden');$('shell').classList.remove('hidden')}
 function typeLabel(t){return({sale:'Sale',business_expense:'Business expense',money_received:'Money received',personal_withdrawal:'Personal withdrawal',adjustment:'Adjustment'})[t]||t}
 function accountLabel(a){return({cash:'Cash',gcash:'GCash',bank:'Bank',other:'Other'})[a]||a}
 function signedAmount(t,a){return['business_expense','personal_withdrawal'].includes(t)?`−${money(a)}`:`+${money(a)}`}
@@ -75,7 +77,7 @@ async function loadProductSales(){const rows=await cachedJson('/api/product-sale
 function profitRows(report){if(!report.products?.length)return[emptyRow('No menu sales in this period.')];return report.products.map(p=>{const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(p.name)}</strong><small>${num(p.quantity)} portions • revenue ${money(p.revenue)} • cost ${money(p.cogs)}</small></div><div class="rowRight"><span class="${Number(p.gross_profit)>=0?'positive':'negative'}">${money(p.gross_profit)}</span><small>${Number(p.margin_pct).toFixed(1)}%</small></div>`;return d})}
 async function loadProfitability(days){const r=await cachedJson(`/api/product-profitability?days=${days}`,`profit_${days}`);$(`profit${days}Totals`).textContent=`${num(r.totals.portions)} portions • revenue ${money(r.totals.revenue)} • ingredient cost ${money(r.totals.cogs)} • gross ${money(r.totals.gross_profit)} • margin ${Number(r.totals.margin_pct).toFixed(1)}%`;$(`profit${days}List`).replaceChildren(...profitRows(r))}
 
-async function refreshAll(){try{await Promise.all([loadSummary(),loadTransactions(),loadStock(),loadRemittances(),loadDay(),loadBudget(),loadAnalysis(7),loadAnalysis(30),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)])}catch(e){console.error(e)}}
+async function refreshAll(){if(!isMerchantBaseActive())return;try{await Promise.all([loadSummary(),loadTransactions(),loadStock(),loadRemittances(),loadDay(),loadBudget(),loadAnalysis(7),loadAnalysis(30),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)])}catch(e){console.error(e)}}
 $('refreshBtn').onclick=refreshAll;
 
 $('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';await refreshAll();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
@@ -99,4 +101,4 @@ $('editCancel').onclick=()=>$('editDialog').close();$('editForm').addEventListen
 function setView(name){document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));$(`view${name}`).classList.remove('hidden');document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.view===name));window.scrollTo({top:0,behavior:'smooth'});if(name==='Sell')updateSellPreview()}
 document.querySelectorAll('.bottomNav button').forEach(b=>b.onclick=()=>setView(b.dataset.view));document.querySelectorAll('[data-view-link]').forEach(b=>b.onclick=()=>setView(b.dataset.viewLink));
 $('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv',{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}catch(err){alert(err.message)}};
-window.addEventListener('online',()=>{setOnline(true);refreshAll()});window.addEventListener('offline',()=>setOnline(false));setOnline(navigator.onLine);if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});if(token)showShell();
+document.addEventListener('abl:profile-state',event=>{baseActiveRole=event.detail?.activeRole||null;if(isMerchantBaseActive())refreshAll()});window.addEventListener('online',()=>{setOnline(true);if(isMerchantBaseActive())refreshAll()});window.addEventListener('offline',()=>setOnline(false));setOnline(navigator.onLine);if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});if(token){showShell();if(window.BusinessLifeProfileState){baseActiveRole=window.BusinessLifeProfileState.activeRole||null;if(isMerchantBaseActive())refreshAll()}}
