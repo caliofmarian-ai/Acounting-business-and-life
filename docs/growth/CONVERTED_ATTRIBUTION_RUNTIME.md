@@ -40,13 +40,13 @@ Binding is inactive unless all of these are true:
 - `REFERRAL_ATTRIBUTION_CONVERTED_MODEL=<explicit approved model>`
 - `REFERRAL_ATTRIBUTION_HMAC_SECRET=<same dedicated secret used by pending attribution>`
 
-There is intentionally **no default converted retention period and no default attribution model**.
+There is intentionally **no runtime-activated converted retention period by default**. Project Owner has selected the attribution model `registration_context_v1` and a 12-month-after-conversion product retention target, but production activation remains fail-closed.
 
-The current implementation supports `registration_context_v1`: bind the valid referral context that is present on the registration flow. Merely supporting that implementation does not select it as policy. `growth/privacy-guardrails.json` keeps the chosen attribution model at `null`, and activation requires `REFERRAL_ATTRIBUTION_CONVERTED_MODEL=registration_context_v1` to be set explicitly after Owner/policy approval.
+The current implementation supports and the Project Owner has selected `registration_context_v1`: bind the valid referral context present on the registration flow. Activation still requires `REFERRAL_ATTRIBUTION_CONVERTED_MODEL=registration_context_v1` to be set explicitly only after privacy/controller approval and all remaining gates pass.
 
-If Owner policy chooses first-touch, last-touch or another model, converted binding remains fail-closed until that model is implemented and added to the supported set.
+First-touch, last-touch and other models are not selected for the initial pilot. A future model change requires a new versioned Owner decision and implementation.
 
-The code accepts a configured retention period only as an implementation parameter after policy approval. Repository documentation and machine-readable guardrails keep converted retention at `null` while the Owner/legal decision is unresolved.
+The Owner product target is 12 months after conversion. The current runtime still requires an explicit retention value/configuration and remains inactive until privacy/controller approval and exact retention implementation are verified; no production retention variable is set by the Owner decision alone.
 
 ## Binding evidence
 
@@ -89,9 +89,11 @@ Qualification and reward transitions remain separate, disabled domains.
 
 ## Current production state
 
-Current canonical policy still has:
-- converted-attribution retention rule: **unresolved / null**;
-- converted binding: **disabled by default**;
-- reward economics: **disabled**.
+Current canonical policy has:
+- attribution model: **registration_context_v1 — Owner approved**;
+- converted-attribution retention target: **12 months after conversion — Owner approved product target**;
+- privacy/controller activation approval: **PENDING**;
+- converted binding: **disabled by default / HOLD**;
+- initial-pilot reward economics: **Owner approved OFF**.
 
 Therefore no production environment should set the converted-attribution activation variables yet.
