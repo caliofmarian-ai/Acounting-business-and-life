@@ -132,10 +132,11 @@ PR #109 added fail-closed referral analytics delivery.
 External PostHog delivery requires all of:
 - `REFERRAL_ANALYTICS_ENABLED=true`;
 - `REFERRAL_ANALYTICS_RETENTION_APPROVED=true`;
+- `REFERRAL_ANALYTICS_PROJECT_VERIFIED=true`;
 - `POSTHOG_PROJECT_TOKEN`;
 - `POSTHOG_INGEST_HOST`.
 
-Production currently has none of those activation variables configured.
+Production currently has none of those activation variables configured. Current PostHog revalidation exposes only `DROPi / Default project` (project id `273401`, no ingested events), which is not accepted as verified Business & Life destination evidence.
 
 Therefore:
 - browser instrumentation can call Business & Life same-origin validation endpoints;

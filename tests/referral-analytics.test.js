@@ -55,7 +55,7 @@ test('runtime referral analytics accepts only privacy-minimized properties', () 
   );
 });
 
-test('delivery is fail-closed until analytics, retention and PostHog config are all ready', () => {
+test('delivery is fail-closed until analytics, retention, project identity and PostHog config are all ready', () => {
   assert.equal(referralAnalyticsDeliveryState({}).reason, 'disabled');
   assert.equal(referralAnalyticsDeliveryState({
     REFERRAL_ANALYTICS_ENABLED: 'true',
@@ -65,6 +65,11 @@ test('delivery is fail-closed until analytics, retention and PostHog config are 
   assert.equal(referralAnalyticsDeliveryState({
     REFERRAL_ANALYTICS_ENABLED: 'true',
     REFERRAL_ANALYTICS_RETENTION_APPROVED: 'true'
+  }).reason, 'project_not_verified');
+  assert.equal(referralAnalyticsDeliveryState({
+    REFERRAL_ANALYTICS_ENABLED: 'true',
+    REFERRAL_ANALYTICS_RETENTION_APPROVED: 'true',
+    REFERRAL_ANALYTICS_PROJECT_VERIFIED: 'true'
   }).reason, 'posthog_not_configured');
 });
 
@@ -74,6 +79,7 @@ test('PostHog delivery uses correlation id, disables person profiles and forward
     env: {
       REFERRAL_ANALYTICS_ENABLED: 'true',
       REFERRAL_ANALYTICS_RETENTION_APPROVED: 'true',
+      REFERRAL_ANALYTICS_PROJECT_VERIFIED: 'true',
       POSTHOG_PROJECT_TOKEN: 'phc_test',
       POSTHOG_INGEST_HOST: 'https://eu.i.posthog.com'
     },
@@ -116,5 +122,6 @@ test('referral UI is wired to the same-origin analytics gateway, never directly 
   assert.match(server, /referral-analytics\/public/);
   assert.match(adapter, /'referral_qr_opened'/);
   assert.match(adapter, /REFERRAL_ANALYTICS_RETENTION_APPROVED/);
+  assert.match(adapter, /REFERRAL_ANALYTICS_PROJECT_VERIFIED/);
   assert.doesNotMatch(helper, /POSTHOG_PROJECT_TOKEN|\.posthog\.com/);
 });
