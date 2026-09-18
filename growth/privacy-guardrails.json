@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "status": "production_gate",
   "classification": {
     "referralCode": "pseudonymous_public_identifier",
@@ -49,11 +49,11 @@
     "locationConsent": "separate_from_marketing"
   },
   "retention": {
-    "unconvertedReferralEventDays": null,
+    "unconvertedReferralEventDays": 60,
     "convertedAttributionRetentionRule": null,
     "rewardEvidenceRetentionRule": null,
     "productionReady": false,
-    "gateReason": "Retention periods must be configured under legal/privacy and production-readiness policy before production referral tracking is enabled."
+    "gateReason": "Owner approved 60-day retention for unconverted referral events. Converted attribution and reward-evidence retention rules remain unresolved, so production referral tracking and external analytics stay gated."
   },
   "analytics": {
     "allowedProperties": [
