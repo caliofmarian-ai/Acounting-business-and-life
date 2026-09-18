@@ -1,3 +1,5 @@
+import { captureReferralEvent } from './referral/referral-analytics.js';
+
 const authStyle = document.createElement('style');
 authStyle.textContent = `
 .accountAuthChoices{display:grid;gap:9px;width:min(100%,520px);margin:12px auto 0}.accountAuthDivider{display:flex;align-items:center;gap:10px;color:#7b8797;font-size:11px}.accountAuthDivider::before,.accountAuthDivider::after{content:"";height:1px;background:#dfe6e3;flex:1}.accountAuthBtn{border:1px solid #d8e2df;background:#fff;color:#17233c;border-radius:15px;padding:12px 14px;font-weight:800;font-size:13px;box-shadow:0 4px 14px rgba(23,35,60,.04)}.accountAuthBtn.primaryAlt{background:#0a7c66;color:#fff;border-color:#0a7c66}.accountAuthHint{font-size:10px;color:#687386;text-align:center;line-height:1.45}
@@ -8,6 +10,31 @@ document.head.appendChild(authStyle);
 
 let mode = 'login';
 let currentProfile = null;
+let referralSignupStartedSent = false;
+const REFERRAL_CODE_RE = /^r1_[A-Za-z0-9_-]{16}$/;
+const REFERRAL_ROLES = new Set(['customer','merchant','supplier','courier','service_provider']);
+
+function referralSignupContext(){
+  const params=new URLSearchParams(location.search);
+  const referralCode=params.get('ref')||'';
+  const sourceProfileRole=params.get('profile')||'';
+  if(!REFERRAL_CODE_RE.test(referralCode)||!REFERRAL_ROLES.has(sourceProfileRole))return null;
+  return {
+    referralCode,
+    properties:{
+      campaign:sourceProfileRole+'_referral_v1',
+      source:'profile',
+      source_profile_role:sourceProfileRole
+    }
+  };
+}
+function trackReferralSignupStarted(){
+  if(referralSignupStartedSent)return;
+  const context=referralSignupContext();
+  if(!context)return;
+  referralSignupStartedSent=true;
+  void captureReferralEvent({event:'referral_signup_started',...context});
+}
 
 function authToken(){return localStorage.getItem('abl_token') || ''}
 async function authFetch(path, options={}){
@@ -29,7 +56,7 @@ function renderAuth(nextMode){
   host.innerHTML=mode==='login'?`<form id="accountAuthForm" class="authForm"><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Password<input id="authPassword" type="password" autocomplete="current-password" required></label><button>Sign in</button><div id="authError" class="authError"></div></form>`:`<form id="accountAuthForm" class="authForm"><label>Name<input id="authName" autocomplete="name" required></label><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Phone (optional)<input id="authPhone" inputmode="tel" autocomplete="tel"></label><label>Primary address (optional)<textarea id="authAddress" rows="2" autocomplete="street-address"></textarea></label><label>Password<input id="authPassword" type="password" autocomplete="new-password" minlength="8" required></label><button>Create Customer account</button><div class="authLegal">Your account starts with a private Customer profile. You can activate additional profiles later from your avatar.</div><div id="authError" class="authError"></div></form>`;
   host.querySelector('#accountAuthForm').onsubmit=submitAuth;
 }
-async function submitAuth(e){e.preventDefault();const err=document.getElementById('authError');err.textContent='';const email=document.getElementById('authEmail').value;const password=document.getElementById('authPassword').value;try{const payload=mode==='login'?{email,password}:{display_name:document.getElementById('authName').value,email,password,phone:document.getElementById('authPhone').value,address:document.getElementById('authAddress').value};const result=await authFetch(mode==='login'?'/api/auth/login':'/api/auth/register',{method:'POST',body:JSON.stringify(payload)});localStorage.setItem('abl_token',result.token);localStorage.setItem('abl_active_role',result.profile?.account?.active_role||'customer');location.reload()}catch(ex){err.textContent=ex.message}}
+async function submitAuth(e){e.preventDefault();const err=document.getElementById('authError');err.textContent='';const email=document.getElementById('authEmail').value;const password=document.getElementById('authPassword').value;if(mode==='register')trackReferralSignupStarted();try{const payload=mode==='login'?{email,password}:{display_name:document.getElementById('authName').value,email,password,phone:document.getElementById('authPhone').value,address:document.getElementById('authAddress').value};const result=await authFetch(mode==='login'?'/api/auth/login':'/api/auth/register',{method:'POST',body:JSON.stringify(payload)});localStorage.setItem('abl_token',result.token);localStorage.setItem('abl_active_role',result.profile?.account?.active_role||'customer');location.reload()}catch(ex){err.textContent=ex.message}}
 
 async function logoutAccount(){try{await authFetch('/api/auth/logout',{method:'POST',body:'{}'})}catch{}localStorage.removeItem('abl_token');localStorage.removeItem('abl_active_role');location.reload()}
 async function updatePassword(form){const message=form.querySelector('.securityMessage');message.textContent='';try{await authFetch('/api/auth/password',{method:'POST',body:JSON.stringify({current_password:form.querySelector('[name=current_password]')?.value||'',new_password:form.querySelector('[name=new_password]').value})});message.textContent='Password saved.';await loadProfile();decorateDrawer()}catch(e){message.textContent=e.message}}
