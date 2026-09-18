@@ -113,6 +113,89 @@ function renderPricingScenario(s){
     +'</div>';
 }
 
+function renderCommissionPlannerResult(s){
+  const current=s?.rates?.current_rollout||{},mature=s?.rates?.mature_100pct_fee_eligible||{},cost=s?.cost_model||{},vol=s?.volume||{},staff=s?.staffing||{},ops=s?.operating_costs||{};
+  const pct=v=>v==null?'—':Number(v).toFixed(2)+'%';
+  const status=current.status==='PROMOTIONAL_VOLUME_REQUIRES_EXTERNAL_FUNDING'
+    ?'<div class="notice"><strong>Promo-funded period</strong><br>Fee-eligible volume is 0%. Commission revenue cannot fund this modeled operation yet; Owner/company capital or another legitimate funding source is required.</div>'
+    :current.status==='NOT_VIABLE_AT_MODELED_VOLUME'
+      ?'<div class="error"><strong>Modeled volume is not viable.</strong><br>The sustainable rate exceeds 100% of the current eligible fee base. Increase volume/fee base or reduce costs.</div>'
+      :'';
+  return '<div class="commissionPlannerResults">'
+    +status
+    +'<div class="financeSummary">'
+      +'<div class="metric"><strong>'+pct(mature.break_even_pct)+'</strong><span>Mature break-even</span></div>'
+      +'<div class="metric"><strong>'+pct(mature.sustainable_pct)+'</strong><span>Mature sustainable</span></div>'
+      +'<div class="metric"><strong>'+pct(current.break_even_pct)+'</strong><span>Current rollout break-even</span></div>'
+      +'<div class="metric"><strong>'+pct(current.sustainable_pct)+'</strong><span>Current rollout sustainable</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(cost.base_operating_cost||0)+'</strong><span>Base monthly operating cost</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(cost.safety_reserve_amount||0)+'</strong><span>Safety reserve</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(cost.growth_reinvestment_surplus_amount||0)+'</strong><span>Growth / reinvestment surplus</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(cost.sustainable_revenue_need||0)+'</strong><span>Revenue needed for sustainability</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>What drives the rate</strong><span>'
+      +'Staffing '+financeMoney(staff.total_monthly_staffing_cost||0)
+      +' · Operating overhead '+financeMoney(ops.total_monthly_operating_overhead||0)
+      +' · Processor '+financeMoney(cost.processor_total_cost||0)
+      +' · Risk allowance '+financeMoney(cost.refund_chargeback_bad_debt_allowance||0)
+      +'<br>Mature fee base '+financeMoney(vol.mature_monthly_fee_base||0)
+      +' · Current fee-eligible base '+financeMoney(vol.current_fee_eligible_monthly_base||0)
+    +'</span></div>'
+    +'<div class="financeTruth"><strong>Boundary</strong><span>'+esc(s?.guardrails?.owner_distribution_note||'Owner distribution is excluded.')+'<br>'+esc(s?.guardrails?.fee_base_rule||'')+'</span></div>'
+    +'</div>';
+}
+function commissionPlannerForm(k,promo){
+  const promotional=(promo?.totals||[]).find(x=>x.phase==='promotional')||{},post=(promo?.totals||[]).find(x=>x.phase==='post_promo')||{};
+  const totalGross=Number(promotional.gross_value||0)+Number(post.gross_value||0);
+  const actualEligiblePct=totalGross>0?Math.round((Number(post.gross_value||0)/totalGross)*10000)/100:null;
+  return '<section class="commissionPlannerCard">'
+    +'<div class="commissionPlannerHead"><div><small>COMMISSION PLANNER</small><h3>What is the lowest sustainable platform fee?</h3><p>Enter a monthly operating scenario. Business & Life calculates the rate; nothing here activates a live fee.</p></div><span class="badge">SIMULATION</span></div>'
+    +(actualEligiblePct!=null?'<div class="financeTruth"><strong>Current evidence context</strong><span>'+esc(k.completed_transactions||0)+' completed transactions in the Finance period · post-promo gross share '+financePct(actualEligiblePct)+'. This is context only, not an automatic assumption.</span></div>':'')
+    +'<form id="commissionPlannerForm" class="adminForm commissionPlannerForm">'
+      +'<div class="sectionTitle"><h3>1. Volume</h3></div><div class="financeFormGrid">'
+        +'<label>Completed orders / services per month<input name="completed_events_per_month" type="number" min="0" step="1" required placeholder="e.g. 10000"></label>'
+        +'<label>Average fee-base value (PHP)<input name="average_fee_base_value" type="number" min="0" step="0.01" required placeholder="e.g. 500"></label>'
+        +'<label>Fee-eligible / post-promo share %<input name="fee_eligible_share_pct" type="number" min="0" max="100" step="0.01" required placeholder="0–100"></label>'
+        +'<label>Online-payment share %<input name="online_payment_share_pct" type="number" min="0" max="100" step="0.01" required placeholder="0–100"></label>'
+      +'</div>'
+      +'<details class="commissionAssumptions"><summary>2. Admins, staff & remuneration</summary><div class="financeFormGrid">'
+        +staffingInputs()
+      +'</div><div class="notice"><strong>Owner distribution is not included here.</strong><br>If the Owner receives salary/contractor remuneration for actual work, use Super Admin remuneration. Profit distribution/withdrawal remains outside operating cost.</div></details>'
+      +'<details class="commissionAssumptions"><summary>3. Monthly operating costs</summary><div class="financeFormGrid">'
+        +costInput('infrastructure','Servers / infrastructure')
+        +costInput('database_storage_monitoring','Database, storage & monitoring')
+        +costInput('ai_api_maps_notifications','AI, APIs, maps & notifications')
+        +costInput('support_operations','Support operations')
+        +costInput('marketing_growth','Marketing & growth')
+        +costInput('legal_accounting_compliance','Legal, accounting & compliance')
+        +costInput('insurance_licences','Insurance & licences')
+        +costInput('other_overhead','Other operating overhead')
+      +'</div></details>'
+      +'<details class="commissionAssumptions"><summary>4. Payments, risk & sustainability</summary><div class="financeFormGrid">'
+        +'<label>Blended processor rate %<input name="processor_rate_pct" type="number" min="0" max="100" step="0.0001" value="0"></label>'
+        +'<label>Fixed processor cost / online event<input name="processor_fixed_per_online_event" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Refund / chargeback / bad-debt allowance %<input name="risk_allowance_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
+        +'<label>Safety reserve % of operating cost<input name="safety_reserve_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
+        +'<label>Growth / reinvestment surplus % of operating cost<input name="growth_surplus_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
+        +'<label>Processor cost treatment<select name="platform_absorbs_processor_fees"><option value="true">Business & Life absorbs it</option><option value="false">Passed through / funded separately</option></select></label>'
+        +'<label>Risk allowance treatment<select name="platform_absorbs_risk_allowance"><option value="true">Business & Life bears it</option><option value="false">Funded separately</option></select></label>'
+      +'</div></details>'
+      +'<button class="primary" type="submit">Calculate minimum sustainable fee</button>'
+      +'<div id="commissionPlannerResult"></div>'
+    +'</form></section>';
+}
+function staffingInputs(){
+  const labels={
+    super_admin_remuneration:'Super Admin remuneration',
+    country_admin:'Country Admins',
+    territory_admin:'Territory Admins',
+    specialist_admin:'Specialist Admins',
+    support_staff:'Support staff',
+    other_employee_contractor:'Other employees / contractors'
+  };
+  return Object.entries(labels).map(([key,label])=>'<div class="staffingPair"><label>'+esc(label)+' · count<input name="'+key+'_count" type="number" min="0" step="1" value="0"></label><label>Monthly cost / person<input name="'+key+'_cost" type="number" min="0" step="0.01" value="0"></label></div>').join('');
+}
+function costInput(name,label){return '<label>'+esc(label)+' (PHP/month)<input name="'+name+'" type="number" min="0" step="0.01" value="0"></label>'}
 function adminFinanceScopeFields(op){
   const territories=state.overview?.territories||[],scope=op?.scope||{},ids=scope.territory_ids||[],fn=scope.function_codes||[];
   const territory=scope.country_wide
@@ -196,7 +279,7 @@ async function financePanel(){
       +'<div id="pricingScenarioResult"></div>'
     +'</form>';
   const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
-  return hero()+operatingHtml+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
+  return hero()+operatingHtml+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
     +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
     +'<div class="financeSummary">'
       +'<div class="metric"><strong>'+financeMoney(k.gross_payment_volume)+'</strong><span>Gross payment volume · context, not revenue</span></div>'
@@ -245,6 +328,36 @@ async function financePanel(){
     +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>')
     +'</div></details>';
 }
+async function wireCommissionPlanner(){
+  const form=document.getElementById('commissionPlannerForm');if(!form)return;
+  form.onsubmit=async e=>{
+    e.preventDefault();const fd=new FormData(form),out=document.getElementById('commissionPlannerResult');
+    const staffing={};
+    for(const key of ['super_admin_remuneration','country_admin','territory_admin','specialist_admin','support_staff','other_employee_contractor']){
+      staffing[key]={count:Number(fd.get(key+'_count')||0),monthly_cost_per_person:Number(fd.get(key+'_cost')||0)};
+    }
+    const monthlyCosts={};
+    for(const key of ['infrastructure','database_storage_monitoring','ai_api_maps_notifications','support_operations','marketing_growth','legal_accounting_compliance','insurance_licences','other_overhead'])monthlyCosts[key]=Number(fd.get(key)||0);
+    const payload={
+      territory_id:financeTerritoryId()||null,
+      completed_events_per_month:Number(fd.get('completed_events_per_month')),
+      average_fee_base_value:Number(fd.get('average_fee_base_value')),
+      fee_eligible_share_pct:Number(fd.get('fee_eligible_share_pct')),
+      online_payment_share_pct:Number(fd.get('online_payment_share_pct')),
+      processor_rate_pct:Number(fd.get('processor_rate_pct')||0),
+      processor_fixed_per_online_event:Number(fd.get('processor_fixed_per_online_event')||0),
+      risk_allowance_pct:Number(fd.get('risk_allowance_pct')||0),
+      safety_reserve_pct:Number(fd.get('safety_reserve_pct')||0),
+      growth_surplus_pct:Number(fd.get('growth_surplus_pct')||0),
+      platform_absorbs_processor_fees:fd.get('platform_absorbs_processor_fees')!=='false',
+      platform_absorbs_risk_allowance:fd.get('platform_absorbs_risk_allowance')!=='false',
+      staffing,monthly_costs:monthlyCosts
+    };
+    out.innerHTML='<div class="notice">Calculating scenario…</div>';
+    try{const s=await api('/api/payments/admin/commission-planner',{method:'POST',body:JSON.stringify(payload)});out.innerHTML=renderCommissionPlannerResult(s)}
+    catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
+  };
+}
 async function wireOperatingFinance(){
   const refresh=async()=>{const panel=document.getElementById('adminPanel');if(panel){panel.innerHTML=await financePanel();await wireFinance()}};
   const budget=document.getElementById('adminBudgetForm');
@@ -256,6 +369,7 @@ async function wireOperatingFinance(){
 }
 async function wireFinance(){
   await wireOperatingFinance();
+  await wireCommissionPlanner();
   const pricing=document.getElementById('pricingScenarioForm');
   if(pricing)pricing.onsubmit=async e=>{
     e.preventDefault();
