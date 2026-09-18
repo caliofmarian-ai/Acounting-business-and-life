@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensurePayMongoSchema,payMongoRuntimeConfig,createPayMongoCheckout,
-  processPayMongoWebhook,executePayMongoRefund
+  processPayMongoWebhook,executePayMongoRefund,ensurePayMongoWebhook,payMongoWebhookBootstrapStatus
 } from './paymongo-adapter.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { emitNotificationEvent,businessNotificationRecipients } from './notification-core.js';
@@ -72,9 +72,9 @@ app.get('/health',async(_req,res)=>{
     res.status(childAlive?200:503).json({
       ok:childAlive,db:true,payment_core:childAlive,paymongo:true,
       paymongo_mode:cfg.mode,paymongo_secret_ready:cfg.secretReady,paymongo_webhook_ready:cfg.webhookReady,
-      version:'0.14-paymongo-sandbox'
+      version:'0.15-paymongo-webhook-bootstrap'
     });
-  }catch{res.status(503).json({ok:false,db:false,payment_core:false,paymongo:false,version:'0.14-paymongo-sandbox'})}
+  }catch{res.status(503).json({ok:false,db:false,payment_core:false,paymongo:false,version:'0.15-paymongo-webhook-bootstrap'})}
 });
 
 app.get('/api/payments/paymongo/status',async(req,res,next)=>{
@@ -82,9 +82,11 @@ app.get('/api/payments/paymongo/status',async(req,res,next)=>{
     await identity(req);
     const cfg=payMongoRuntimeConfig();
     const p=await pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account,config_metadata,updated_at FROM payment_provider_configs WHERE provider_code='paymongo'");
+    const bootstrap=payMongoWebhookBootstrapStatus();
     res.json({
       provider:'paymongo',mode:cfg.mode,secret_ready:cfg.secretReady,webhook_ready:cfg.webhookReady,
       live_enabled:cfg.liveAllowed,methods:cfg.methods,ready:Boolean(cfg.secretReady&&cfg.webhookReady),
+      webhook:{id:bootstrap.id,url:bootstrap.url,status:bootstrap.status,source:bootstrap.source,updated_at:bootstrap.updated_at,error:bootstrap.error},
       configuration:p.rows[0]||null
     });
   }catch(e){next(e)}
@@ -95,6 +97,21 @@ app.post('/api/payments/paymongo/checkout/:intent',async(req,res,next)=>{
     const me=await identity(req);
     const result=await createPayMongoCheckout(pool,{intentPublicId:req.params.intent,accountId:Number(me.account.id)});
     res.status(result.already_paid?200:201).json(result);
+  }catch(e){next(e)}
+});
+
+app.post('/api/payments/admin/paymongo/webhook/bootstrap',async(req,res,next)=>{
+  try{
+    const me=await identity(req);
+    const assignment=await requireAdminPermission(pool,me.account.id,'payment.manage');
+    const state=await ensurePayMongoWebhook(pool,{force:true});
+    await appendAdminAudit(pool,{
+      actorAccountId:me.account.id,assignmentId:assignment.id,permission:'payment.manage',
+      targetType:'payment_provider_config',targetId:'paymongo',eventCode:'paymongo_webhook_bootstrap',
+      after:{id:state.id,url:state.url,status:state.status,source:state.source,ready:state.ready,error:state.error},
+      reason:'PayMongo webhook bootstrap/retry',correlationId:correlation(req)
+    });
+    res.status(state.ready?200:503).json(state);
   }catch(e){next(e)}
 });
 
@@ -126,7 +143,12 @@ function proxy(req,res){
 app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected PayMongo adapter error',code:err.code||undefined})});
 
-async function initDb(){await ensurePayMongoSchema(pool)}
+async function initDb(){
+  await ensurePayMongoSchema(pool);
+  const state=await ensurePayMongoWebhook(pool);
+  if(state.ready)console.log('PayMongo webhook ready: '+state.status+' via '+state.source);
+  else console.log('PayMongo webhook not ready: '+state.status+(state.error?' ('+state.error+')':''));
+}
 function start(){
   child=spawn(process.execPath,['server-payments.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});
   child.on('exit',code=>{if(!shuttingDown){console.error('Payment Core child exited '+code);process.exit(code||1)}});
@@ -147,4 +169,4 @@ async function shutdown(sig){
 process.on('SIGTERM',()=>shutdown('SIGTERM'));
 process.on('SIGINT',()=>shutdown('SIGINT'));
 start();
-wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log('Business & Life PayMongo sandbox gateway listening on '+port))).catch(e=>{console.error(e);process.exit(1)});
+wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log('Business & Life PayMongo webhook-bootstrap gateway listening on '+port))).catch(e=>{console.error(e);process.exit(1)});
