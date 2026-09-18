@@ -1,0 +1,77 @@
+{
+  "version": "1.0.0",
+  "locale": "en-PH",
+  "productArea": "delivery",
+  "publicLabel": "Business Delivery",
+  "headline": "Need a courier for an order? Business & Life can coordinate the delivery.",
+  "body": "Restaurants, fast-food businesses and local shops can connect eligible Business & Life customer orders to an approved Courier pickup, tracking and secure handoff workflow.",
+  "businessAudience": [
+    "restaurant",
+    "fast-food / takeaway",
+    "bakery",
+    "food stall",
+    "convenience shop",
+    "grocery",
+    "local retail shop",
+    "other approved Merchant"
+  ],
+  "dualEntry": {
+    "business": {
+      "intent": "merchant_needs_delivery",
+      "cta": "Use delivery for an order",
+      "headline": "You have the order. Coordinate the courier.",
+      "body": "For eligible Business & Life customer orders, the app can quote delivery, dispatch an approved Courier after payment/readiness gates, track status and keep the delivery fee separate from merchandise revenue."
+    },
+    "courier": {
+      "intent": "courier_wants_work",
+      "cta": "Become an approved Courier",
+      "headline": "Want to deliver local orders?",
+      "body": "Approved Couriers can set vehicle/capacity/radius, availability and receive eligible assignments inside the delivery workflow."
+    }
+  },
+  "flow": [
+    "Customer chooses Delivery on a Business & Life order",
+    "System creates a delivery quote from the active pricing rule",
+    "Payment/readiness gates are satisfied",
+    "Approved available Courier is assigned",
+    "Courier travels to the Merchant",
+    "Merchant hands over the order",
+    "Courier travels to the Customer",
+    "Customer uses secure handoff code",
+    "Delivery completes and delivery money stays separate from merchandise revenue"
+  ],
+  "visibility": [
+    "courier assigned",
+    "courier ETA to Merchant",
+    "merchant arrival",
+    "pickup confirmed",
+    "in transit",
+    "customer arrival",
+    "delivered"
+  ],
+  "claims": {
+    "arbitraryExternalParcelBooking": false,
+    "guaranteedCourierAvailability": false,
+    "inventedPricing": false,
+    "cashDeliveryEnabled": false,
+    "courierApprovalAutomatic": false,
+    "deliveryFeeSeparateFromMerchandise": true
+  },
+  "standaloneExtension": {
+    "status": "future_product_extension_not_live",
+    "name": "Standalone Business Courier Booking",
+    "desiredPromise": "A Merchant could request a Courier for a delivery created outside the Business & Life Marketplace by entering pickup, dropoff and package/order details.",
+    "requiredBeforeMarketingLive": [
+      "delivery-domain implementation",
+      "pricing/quote integration",
+      "dispatch authorization",
+      "tracking/handoff model",
+      "payment/cash-custody policy",
+      "legal/compliance validation"
+    ]
+  },
+  "share": {
+    "business": "Run a restaurant, fast-food business or shop? For eligible Business & Life customer orders, the app can coordinate an approved Courier pickup and delivery workflow. {REFERRAL_URL}",
+    "courier": "Want to deliver local orders? Approved Business & Life Couriers can receive eligible assignments with pickup, tracking and secure handoff workflows. {REFERRAL_URL}"
+  }
+}
