@@ -25,6 +25,7 @@ test('role feature decorators are event-driven and never poll identity in backgr
     assert.doesNotMatch(source,/setInterval\(\(\)=>decorate|setInterval\(\(\)=>decorate[A-Za-z]*/,name+' must not periodically redecorate profile state');
     assert.match(source,/abl:profile-state/,name+' must subscribe to canonical profile-state');
     assert.match(source,/BusinessLifeProfileState/,name+' must consume cached profile-state');
+    assert.doesNotMatch(source,/if\(!(?:svcMe|delMe|supMe|marketMe|orderMe)\)await/,name+' must not fall back to its own identity fetch');
   }
 });
 
