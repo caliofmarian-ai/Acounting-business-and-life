@@ -26,10 +26,13 @@ test('marketing consent does not collapse legal, operational or location categor
   assert.equal(rules.consentBoundary.locationConsent, 'separate_from_marketing');
 });
 
-test('retention remains a production gate until policy is explicitly configured', () => {
+test('Owner-approved 60-day unconverted retention stays gated until remaining policy is resolved', () => {
   assert.equal(rules.retention.productionReady, false);
-  assert.equal(rules.retention.unconvertedReferralEventDays, null);
-  assert.match(rules.retention.gateReason, /before production referral tracking is enabled/i);
+  assert.equal(rules.retention.unconvertedReferralEventDays, 60);
+  assert.equal(rules.retention.convertedAttributionRetentionRule, null);
+  assert.equal(rules.retention.rewardEvidenceRetentionRule, null);
+  assert.match(rules.retention.gateReason, /60-day retention/i);
+  assert.match(rules.retention.gateReason, /remain unresolved/i);
 });
 
 test('referral attribution cannot grant authority', () => {
