@@ -56,10 +56,30 @@
     return dock;
   }
 
+  function safeMessage(message,status){
+    const raw=String(message||'').trim();
+    if(status>=500 && /upstream unavailable|gateway|ECONN|health check|internal server|temporarily unavailable/i.test(raw)){
+      return 'This feature is temporarily unavailable. Please try again in a moment.';
+    }
+    return raw;
+  }
+
+  function shouldSurface(path){
+    if(path.startsWith('/api/payments/')){
+      const panel=document.getElementById('paymentBackdrop');
+      return Boolean(panel&&!panel.classList.contains('hidden'));
+    }
+    if(path.startsWith('/api/admin/')){
+      const panel=document.getElementById('supportOpsBackdrop');
+      return Boolean(panel&&!panel.classList.contains('hidden'));
+    }
+    return true;
+  }
+
   function suggest({path,message,status}){
-    if(!message || status<400) return;
+    if(!message || status<400 || !shouldSurface(path)) return;
     const target=resolve(path,message,status),dock=ensureDock(),notice=dock.querySelector('.contextHelpNotice');
-    notice.querySelector('span').textContent=message;
+    notice.querySelector('span').textContent=safeMessage(message,status);
     const link=notice.querySelector('a');
     link.href=target.href;
     link.textContent=target.label+(target.code?' · '+target.code:'');

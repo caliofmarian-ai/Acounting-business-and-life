@@ -46,6 +46,7 @@ async function loadFeature(name){
   const spec=FEATURE_SPECS[name];
   if(!spec)throw new Error('Unknown feature: '+name);
   loadCss(spec.css);
+  window.__ABL_LAZY_FEATURES__=true;
   const promise=import(spec.js).catch(error=>{
     featurePromises.delete(name);
     throw error;
@@ -80,30 +81,25 @@ function hideNativeButton(id){
 
 async function loadAdminOps(){
   await loadFeature('admin');
-  await waitFor('supportOpsBtn',1500);
-  hideNativeButton('supportOpsBtn');
-  hideNativeButton('supportFloating');
-  const admin=await waitFor('adminOpsBtn',2200);
-  if(admin)hideNativeButton('adminOpsBtn');
+  const api=window.BusinessLifeAdminOps;
+  if(!api)throw new Error('Admin tools could not finish loading.');
+  return api;
 }
 
 async function openSupport(){
   try{
     closeMore();
-    await loadAdminOps();
-    const b=document.getElementById('supportOpsBtn');
-    if(!b)throw new Error('Support is temporarily unavailable.');
-    b.click();
+    const api=await loadAdminOps();
+    api.openSupport();
   }catch(error){toast(error.message||'Could not open Support.')}
 }
 
 async function openAdmin(){
   try{
     closeMore();
-    await loadAdminOps();
-    const b=document.getElementById('adminOpsBtn');
-    if(!b)throw new Error('Admin access is unavailable for this account.');
-    b.click();
+    if(!(await fetchAdminAccess()))throw new Error('Admin access is unavailable for this account.');
+    const api=await loadAdminOps();
+    api.openAdmin();
   }catch(error){toast(error.message||'Could not open Admin.')}
 }
 

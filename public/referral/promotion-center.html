@@ -133,7 +133,18 @@ async function loadIdentity(){
     applyIdentity(data);
     setStatus('');
   }catch(err){
-    live=null;clearQr();codeNode.textContent='Unavailable';urlNode.textContent='';disableSharing(true);setStatus(err.message);
+    live=null;clearQr();urlNode.textContent='';disableSharing(true);
+    const message=String(err?.message||'Could not load referral identity');
+    if(/profile is not enabled/i.test(message)){
+      codeNode.textContent='Profile not enabled';
+      setStatus('This sharing profile is not enabled for your account yet. Choose another enabled profile or complete its approval first.');
+    }else if(/public referral origin|temporarily|unavailable/i.test(message)){
+      codeNode.textContent='Sharing temporarily unavailable';
+      setStatus('Your referral identity is safe, but a public share link could not be prepared right now. Try again shortly.');
+    }else{
+      codeNode.textContent='Could not load referral';
+      setStatus(message);
+    }
   }
 }
 role.addEventListener('change',loadIdentity);

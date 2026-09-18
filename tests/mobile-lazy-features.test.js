@@ -49,7 +49,7 @@ test('mobile launcher preserves Help Admin More and lazy feature recovery',()=>{
   assert.match(loader,/lazySupportBtn/);
   assert.match(loader,/lazyAdminBtn/);
   assert.match(loader,/lazyMoreBtn/);
-  assert.match(loader,/Support is temporarily unavailable/);
+  assert.match(loader,/BusinessLifeAdminOps/);
   assert.match(loader,/Admin access is unavailable for this account/);
   assert.match(loader,/Could not load this feature/);
 });
