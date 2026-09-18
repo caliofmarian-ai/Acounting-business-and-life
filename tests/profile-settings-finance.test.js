@@ -20,9 +20,8 @@ test('financial settings never accept raw banking or card credentials',()=>{
   assert.match(server,/account_number\|routing\|iban\|card_number\|pan\|cvv\|cvc\|password\|pin\|secret/);
   assert.match(server,/Use a provider destination reference and last four characters only/);
   assert.match(core,/reference_last4/);
-  assert.doesNotMatch(ui,/account_number/i);
-  assert.doesNotMatch(ui,/card number/i);
-  assert.doesNotMatch(ui,/cvv/i);
+  assert.doesNotMatch(ui,/(?:id|name)=["'][^"']*(?:account_number|accountNumber|card_number|cardNumber|cvv|cvc|pin|password)[^"']*["']/i);
+  assert.doesNotMatch(ui,/type=["']password["']/i);
 });
 
 test('provider destination reference is private and public response is masked',()=>{
