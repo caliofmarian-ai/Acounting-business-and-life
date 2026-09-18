@@ -10,7 +10,7 @@ import {
 } from './paymongo-adapter.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { emitNotificationEvent,businessNotificationRecipients } from './notification-core.js';
-import { payMongoPilotReadiness } from './pilot-payment-readiness.js';
+import { payMongoPilotReadiness,payMongoCheckoutPolicy } from './pilot-payment-readiness.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -100,11 +100,13 @@ app.get('/api/payments/paymongo/status',async(req,res,next)=>{
     const bootstrap=payMongoWebhookBootstrapStatus();
     const internalQa=payMongoPilotReadiness(cfg,bootstrap,'internal');
     const controlledPilot=payMongoPilotReadiness(cfg,bootstrap,'controlled_pilot');
+    const checkoutPolicy=payMongoCheckoutPolicy(cfg,bootstrap,{productionSurface:railwayServiceName==='accounting-business-life'});
     res.json({
       provider:'paymongo',mode:cfg.mode,secret_ready:cfg.secretReady,webhook_ready:cfg.webhookReady,
       live_enabled:cfg.liveAllowed,methods:cfg.methods,ready:Boolean(cfg.secretReady&&cfg.webhookReady),
       webhook:{id:bootstrap.id,url:bootstrap.url,status:bootstrap.status,source:bootstrap.source,updated_at:bootstrap.updated_at,error:bootstrap.error},
       pilot_readiness:{internal_qa:internalQa,controlled_pilot:controlledPilot},
+      checkout_policy:checkoutPolicy,
       configuration:p.rows[0]||null
     });
   }catch(e){next(e)}
@@ -113,6 +115,13 @@ app.get('/api/payments/paymongo/status',async(req,res,next)=>{
 app.post('/api/payments/paymongo/checkout/:intent',async(req,res,next)=>{
   try{
     const me=await identity(req);
+    const cfg=payMongoRuntimeConfig();
+    const bootstrap=payMongoWebhookBootstrapStatus();
+    const policy=payMongoCheckoutPolicy(cfg,bootstrap,{productionSurface:railwayServiceName==='accounting-business-life'});
+    if(!policy.checkout_enabled){
+      const e=new Error(policy.required_stage==='controlled_pilot'?'PayMongo LIVE is not ready for the controlled customer pilot':'PayMongo sandbox is not ready for internal checkout testing');
+      e.status=503;e.code='PAYMONGO_CHECKOUT_NOT_READY';e.blockers=policy.blockers;throw e;
+    }
     const result=await createPayMongoCheckout(pool,{intentPublicId:req.params.intent,accountId:Number(me.account.id)});
     res.status(result.already_paid?200:201).json(result);
   }catch(e){next(e)}
@@ -165,7 +174,7 @@ function proxy(req,res){
   if(payload)up.end(payload);else req.pipe(up);
 }
 app.use(proxy);
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected PayMongo adapter error',code:err.code||undefined})});
+app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected PayMongo adapter error',code:err.code||undefined,blockers:Array.isArray(err.blockers)?err.blockers:undefined})});
 
 async function initDb(){
   await ensurePayMongoSchema(pool);
