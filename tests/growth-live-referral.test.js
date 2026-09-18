@@ -15,7 +15,7 @@ test('live account referral codes are opaque and valid', () => {
   for (let i = 0; i < 50; i += 1) {
     const code = createOpaqueReferralCode();
     assert.equal(isValidReferralCode(code), true);
-    assert.equal(/\d{5,}/.test(code), false, 'code must not expose a long account-id-like sequence');
+    assert.match(code, /^r1_[A-Za-z0-9_-]{16}$/);
     seen.add(code);
   }
   assert.equal(seen.size, 50);
