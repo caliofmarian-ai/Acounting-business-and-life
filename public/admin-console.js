@@ -82,7 +82,7 @@ async function queuePanel(kind){
   const isSupport=kind==='support';
   const data=await api(isSupport?'/api/admin/support':'/api/admin/incidents');
   const list=Array.isArray(data)?data:(data.items||data.tickets||data.incidents||[]);
-  return hero()+'<p class="moduleIntro">'+(isSupport?'Support tickets assigned or visible in your scope.':'Incident queue visible under your delegated Trust & Safety authority.')+'</p>'+rows(list,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.subject||x.category||('Case #'+x.id))+'</strong><span class="status">'+esc(x.status||'open')+'</span></div><span class="muted">'+esc(x.requester_name||x.reporter_name||x.priority||'')+'</span></div>');
+  return hero()+'<p class="moduleIntro">'+(isSupport?'Support tickets assigned or visible in your scope.':'Incident queue visible under your delegated Trust & Safety authority.')+'</p>'+rows(list,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.subject||x.category||('Case #'+x.id))+'</strong><span class="status">'+esc(x.status||'open')+'</span></div><span class="muted">'+esc((isSupport?(x.category+' • '):'')+(x.requester_name||x.reporter_name||x.priority||''))+'</span></div>');
 }
 function territoriesPanel(){
   return hero()+'<p class="moduleIntro">Operating cells visible to your assignment.</p>'+rows(state.overview?.territories||[],x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.territory_type)+' · '+esc(x.code||'')+'</span></div>');
