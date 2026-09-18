@@ -101,6 +101,12 @@ Canonical state:
 
 `referralAnalyticsLawfulBasis = TO_BE_CONFIRMED`
 
+A controlled legitimate-interest assessment draft is available at:
+
+`docs/growth/REFERRAL_LEGITIMATE_INTEREST_ASSESSMENT_DRAFT.md`
+
+That assessment remains `PENDING_CONTROLLER_APPROVAL` and does not select a lawful basis.
+
 ## 5. Retention
 
 ### Unconverted referral events
