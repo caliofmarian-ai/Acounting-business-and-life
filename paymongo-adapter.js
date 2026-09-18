@@ -166,7 +166,7 @@ export async function ensurePayMongoWebhook(pool,{force=false}={}){
     })||null;
     let created=false;
     if(hook&&webhookAttrs(hook).status==='disabled'){
-      await payMongoRequest('/v1/webhooks/'+encodeURIComponent(hook.id)+'/enable',{method:'POST',body:{}});
+      await payMongoRequest('/v1/webhooks/'+encodeURIComponent(hook.id)+'/enable',{method:'POST'});
       const refreshed=await payMongoRequest('/v1/webhooks/'+encodeURIComponent(hook.id));
       hook=refreshed?.data||hook;
     }
