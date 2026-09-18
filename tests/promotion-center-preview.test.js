@@ -43,3 +43,10 @@ test('Promotion Center renders the authenticated local QR and keeps code fallbac
   assert.match(html, /Use your referral code if QR is unavailable/i);
   assert.doesNotMatch(html, /api\.qrserver|quickchart|chart\.google/);
 });
+
+
+test('Promotion Center links the selected sharing profile into the runtime Marketing Kit', () => {
+  assert.match(html, /id="marketingKit"/);
+  assert.match(html, /\/referral\/marketing-kit\.html\?profile=/);
+  assert.match(html, /syncMarketingKit\(\)/);
+});
