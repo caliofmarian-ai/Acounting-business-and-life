@@ -17,7 +17,7 @@ const modules=[
   {id:'support',label:'Support',any:['support.manage']},
   {id:'safety',label:'Trust & Safety',any:['incident.triage']},
   {id:'territories',label:'Territories',any:['territory.manage']},
-  {id:'finance',label:'Finance',any:['finance.summary.view','finance.cost.manage','accounting.export.view','payment.view','payment.manage','payment.reconcile','settlement.manage']},
+  {id:'finance',label:'Finance',any:['admin.console']},
   {id:'audit',label:'Audit & Metrics',any:['audit.view','metrics.view']},
   {id:'team',label:'Team & Delegation',any:['admin.assign_limited','admin.delegate']}
 ];
@@ -113,10 +113,53 @@ function renderPricingScenario(s){
     +'</div>';
 }
 
+function adminFinanceScopeFields(op){
+  const territories=state.overview?.territories||[],scope=op?.scope||{},ids=scope.territory_ids||[],fn=scope.function_codes||[];
+  const territory=scope.country_wide
+    ?'<label>Scope / territory<select name="territory_id"><option value="">Platform / country-wide</option>'+territories.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join('')+'</select></label>'
+    :ids.length===1?'<input type="hidden" name="territory_id" value="'+esc(ids[0])+'"><div class="financeScopeNote">Territory scope #'+esc(ids[0])+'</div>'
+    :'<label>Territory<select name="territory_id">'+ids.map(id=>{const t=territories.find(x=>Number(x.id)===Number(id));return '<option value="'+esc(id)+'">'+esc(t?.name||('Territory '+id))+'</option>'}).join('')+'</select></label>';
+  const func=fn.length===1?'<input type="hidden" name="function_code" value="'+esc(fn[0])+'"><div class="financeScopeNote">Function: '+esc(fn[0])+'</div>'
+    :fn.length>1?'<label>Function<select name="function_code">'+fn.map(x=>'<option value="'+esc(x)+'">'+esc(x.replaceAll('_',' '))+'</option>').join('')+'</select></label>'
+    :'<input type="hidden" name="function_code" value="">';
+  return territory+func;
+}
+function renderOperatingFinance(op){
+  const s=op?.summary||{},a=op?.authority||{},budgets=op?.budgets||[],entries=op?.recent_entries||[];
+  const canLedger=hasAny(['finance.ledger.manage']),canBudget=hasAny(['finance.budget.manage']);
+  const isSuper=op?.actor_rank==='super_admin',canOwner=isSuper&&hasAny(['finance.owner_distribution.manage']);
+  const scopeFields=adminFinanceScopeFields(op);
+  const budgetForm=canBudget?'<details class="adminFinanceAdvanced"><summary>Create operating budget</summary><form id="adminBudgetForm" class="adminForm"><div class="financeFormGrid">'+scopeFields+'<label>Budget purpose<select name="budget_category">'+(op.catalog?.budget_categories||[]).map(x=>'<option value="'+esc(x)+'">'+esc(x.replaceAll('_',' '))+'</option>').join('')+'</select></label><label>Label<input name="label" required placeholder="September AI & API budget"></label><label>Allocated amount (PHP)<input name="allocated_amount" type="number" min="0.01" step="0.01" required></label><label>Period start<input name="period_start" type="date"></label><label>Period end<input name="period_end" type="date"></label></div><button class="primary" type="submit">Create budget</button><div id="adminBudgetResult"></div></form></details>':'';
+  const entryTypes=(op.catalog?.entry_types||[]).filter(x=>x!=='owner_distribution');
+  const ledgerForm=canLedger?'<details class="adminFinanceAdvanced"><summary>Record company income or payment</summary><form id="adminFinanceEntryForm" class="adminForm"><div class="financeFormGrid">'+scopeFields+'<label>Type<select name="entry_type">'+entryTypes.map(x=>'<option value="'+esc(x)+'">'+esc(x.replaceAll('_',' '))+'</option>').join('')+'</select></label><label>Category<select name="category">'+(op.catalog?.categories||[]).filter(x=>x!=='owner_distribution').map(x=>'<option value="'+esc(x)+'">'+esc(x.replaceAll('_',' '))+'</option>').join('')+'</select></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Counterparty<input name="counterparty" placeholder="Railway / OpenAI / employee / client"></label><label>Evidence reference<input name="evidence_reference" placeholder="Invoice, receipt, payroll ref, provider statement"></label></div><label>Description<textarea name="description" placeholder="What this money movement is for"></textarea></label><button class="primary" type="submit">Record entry</button><div id="adminFinanceEntryResult"></div></form></details>':'';
+  const owner=canOwner?'<section class="adminOwnerDistribution"><div><small>SUPER ADMIN ONLY</small><h3>Owner withdrawal / distribution</h3><p>This is not a business expense and not payroll. It reduces recorded company funds without distorting operating P/L.</p></div><form id="adminOwnerDistributionForm" class="adminForm"><div class="financeFormGrid"><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Evidence / transfer reference<input name="evidence_reference" required placeholder="Bank transfer / board record / withdrawal ref"></label></div><label>Note<textarea name="description" required placeholder="Owner distribution reason / period"></textarea></label><button class="primary" type="submit">Record owner distribution</button><div id="adminOwnerDistributionResult"></div></form></section>':'';
+  return '<section class="adminOperatingFinance">'
+    +'<div class="adminFinanceHero"><div><small>'+esc(String(op.actor_rank||'admin').replaceAll('_',' ').toUpperCase())+' · COMPANY FINANCE</small><h2>Company money</h2><p>Income, operating budgets, bills, payroll and company payments in your delegated scope.</p></div><span class="badge">'+(op.scope?.country_wide?'Country / platform scope':(op.scope?.function_codes?.length?'Function scope':'Territory scope'))+'</span></div>'
+    +'<div class="companyBalance"><span>Recorded company balance</span><strong>'+financeMoney(s.recorded_company_balance)+'</strong><small>'+esc(a.recorded_company_balance||'Internal recorded balance')+' · Provider/bank balance: '+esc(a.provider_balance_status||'UNKNOWN')+'</small></div>'
+    +'<div class="financeSummary adminPrimaryFinance">'
+      +'<div class="metric"><strong>'+financeMoney(s.income)+'</strong><span>Income</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(s.money_out)+'</strong><span>Money out</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(s.allocated_budget)+'</strong><span>Allocated budgets</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(s.payroll)+'</strong><span>Payroll / contractors</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(s.infrastructure)+'</strong><span>Infrastructure</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(s.api_ai)+'</strong><span>API & AI</span></div>'
+      +(isSuper?'<div class="metric"><strong>'+financeMoney(s.owner_distributions)+'</strong><span>Owner distributions</span></div>':'')
+      +'<div class="metric"><strong>'+financeMoney(s.recorded_unallocated)+'</strong><span>Recorded funds after budgets</span></div>'
+    +'</div>'
+    +'<div class="sectionTitle"><h3>Operating budgets</h3><span class="muted">'+esc(s.budget_count||0)+' active / recorded</span></div>'
+    +(budgets.length?'<div class="list">'+budgets.slice(0,20).map(b=>'<div class="row"><div class="rowHeader"><strong>'+esc(b.label)+'</strong><span class="status">'+financeMoney(b.allocated_amount,b.currency_code||'PHP')+'</span></div><span class="muted">'+esc(String(b.budget_category).replaceAll('_',' '))+(b.territory_name?' · '+esc(b.territory_name):'')+(b.function_code?' · '+esc(b.function_code.replaceAll('_',' ')):'')+'</span></div>').join('')+'</div>':'<div class="empty">No operating budgets recorded in this Admin scope yet.</div>')
+    +budgetForm
+    +'<div class="sectionTitle"><h3>Recent company money</h3></div>'
+    +(entries.length?'<div class="list">'+entries.slice(0,30).map(e=>'<div class="row"><div class="rowHeader"><strong>'+esc(String(e.entry_type).replaceAll('_',' '))+' · '+esc(String(e.category).replaceAll('_',' '))+'</strong><span class="'+(e.direction==='in'?'moneyPos':'moneyNeg')+'">'+(e.direction==='in'?'+':'−')+financeMoney(e.amount,e.currency_code||'PHP')+'</span></div><span class="muted">'+esc(e.counterparty||e.description||'')+(e.evidence_reference?' · '+esc(e.evidence_reference):'')+'</span></div>').join('')+'</div>':'<div class="empty">No company finance entries recorded in this scope yet.</div>')
+    +ledgerForm+owner
+    +'<div class="financeTruth"><strong>Accounting boundary</strong><span>Owner distribution is separate from expenses and payroll. Budgets are planning allocations. Provider/bank balance remains unavailable until verified provider evidence exists.</span></div>'
+    +'</section>';
+}
 async function financePanel(){
+  const operating=await api('/api/admin/finance/operating');
+  const operatingHtml=renderOperatingFinance(operating);
   if(!hasAny(['finance.summary.view'])){
-    let m={};try{m=await api('/api/admin/metrics')}catch(e){m={error:e.message}}
-    return hero()+'<p class="moduleIntro">Finance visibility follows your exact delegated permissions.</p>'+metrics()+(m.error?'<div class="notice">'+esc(m.error)+'</div>':'<div class="notice">Unit economics are not delegated to this account. Payment-specific controls remain available only under their own permissions.</div>');
+    return hero()+operatingHtml+'<details class="adminFinanceAdvanced"><summary>Advanced platform economics</summary><div class="notice">Unit economics and payment-specific controls are not delegated to this Admin account.</div></details>';
   }
   const k=await api('/api/payments/admin/unit-economics'+financeScopeQuery());
   const p=k.period||{};
@@ -153,7 +196,7 @@ async function financePanel(){
       +'<div id="pricingScenarioResult"></div>'
     +'</form>';
   const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
-  return hero()
+  return hero()+operatingHtml+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
     +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
     +'<div class="financeSummary">'
       +'<div class="metric"><strong>'+financeMoney(k.gross_payment_volume)+'</strong><span>Gross payment volume · context, not revenue</span></div>'
@@ -199,9 +242,20 @@ async function financePanel(){
     +pricingForm
     +costForm
     +'<div class="sectionTitle"><h3>Recent cost entries</h3></div>'
-    +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>');
+    +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>')
+    +'</div></details>';
+}
+async function wireOperatingFinance(){
+  const refresh=async()=>{const panel=document.getElementById('adminPanel');if(panel){panel.innerHTML=await financePanel();await wireFinance()}};
+  const budget=document.getElementById('adminBudgetForm');
+  if(budget)budget.onsubmit=async e=>{e.preventDefault();const fd=new FormData(budget),out=document.getElementById('adminBudgetResult');try{await api('/api/admin/finance/budgets',{method:'POST',body:JSON.stringify({territory_id:fd.get('territory_id')||null,function_code:fd.get('function_code')||'',budget_category:fd.get('budget_category'),label:fd.get('label'),allocated_amount:Number(fd.get('allocated_amount')),period_start:fd.get('period_start')||null,period_end:fd.get('period_end')||null,reason:'Admin operating budget'})});out.innerHTML='<div class="notice">Budget recorded.</div>';await refresh()}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+  const entry=document.getElementById('adminFinanceEntryForm');
+  if(entry)entry.onsubmit=async e=>{e.preventDefault();const fd=new FormData(entry),out=document.getElementById('adminFinanceEntryResult'),key='admin-fin-'+Date.now()+'-'+Math.random().toString(16).slice(2);try{await api('/api/admin/finance/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({territory_id:fd.get('territory_id')||null,function_code:fd.get('function_code')||'',entry_type:fd.get('entry_type'),category:fd.get('category'),amount:Number(fd.get('amount')),counterparty:fd.get('counterparty')||'',evidence_reference:fd.get('evidence_reference')||'',description:fd.get('description')||''})});out.innerHTML='<div class="notice">Company finance entry recorded.</div>';await refresh()}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+  const owner=document.getElementById('adminOwnerDistributionForm');
+  if(owner)owner.onsubmit=async e=>{e.preventDefault();const fd=new FormData(owner),out=document.getElementById('adminOwnerDistributionResult'),key='owner-dist-'+Date.now()+'-'+Math.random().toString(16).slice(2);try{await api('/api/admin/finance/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({entry_type:'owner_distribution',category:'owner_distribution',amount:Number(fd.get('amount')),evidence_reference:fd.get('evidence_reference'),description:fd.get('description'),function_code:'',territory_id:null})});out.innerHTML='<div class="notice">Owner distribution recorded separately from company expenses.</div>';await refresh()}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
 }
 async function wireFinance(){
+  await wireOperatingFinance();
   const pricing=document.getElementById('pricingScenarioForm');
   if(pricing)pricing.onsubmit=async e=>{
     e.preventDefault();
