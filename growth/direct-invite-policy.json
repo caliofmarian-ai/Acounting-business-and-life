@@ -1,0 +1,73 @@
+{
+  "version": "1.1.0",
+  "status": "runtime_sending_disabled_pending_referral_specific_controls",
+  "infrastructure": {
+    "canonicalNotificationLayerReady": true,
+    "inAppNotificationsReady": true,
+    "emailDeliveryLedgerReady": true,
+    "webPushReady": true,
+    "emailProviderConfiguration": "environment_dependent_resend",
+    "smsProviderReady": false,
+    "versionedLegalConsentReady": true,
+    "marketingConsentAction": "marketing.opt_in",
+    "marketingConsentDocument": "marketing_consent"
+  },
+  "modes": {
+    "email": {
+      "recipientEntry": "single_recipient_manual_entry",
+      "serverDelivery": "notification_layer_available_but_referral_template_and_policy_binding_required",
+      "bulkUpload": false,
+      "addressBookImport": false
+    },
+    "sms": {
+      "recipientEntry": "single_recipient_manual_entry",
+      "serverDelivery": "requires_approved_sms_provider_and_referral_policy_binding",
+      "bulkUpload": false,
+      "addressBookImport": false
+    },
+    "whatsapp": {
+      "recipientEntry": "optional_manual_or_share_sheet",
+      "serverDelivery": false,
+      "mechanism": "user_initiated_share_intent"
+    },
+    "telegram": {
+      "recipientEntry": "share_sheet_or_share_url",
+      "serverDelivery": false,
+      "mechanism": "user_initiated_share_intent"
+    },
+    "group": {
+      "serverDelivery": false,
+      "mechanism": "user_initiated_share_only",
+      "automaticPosting": false
+    }
+  },
+  "uiRules": {
+    "title": "Invite someone you know",
+    "emailLabel": "Email address",
+    "phoneLabel": "Phone number",
+    "confirmRecipient": "I chose this person to receive my invitation.",
+    "noContactUploadNotice": "Business & Life does not need to upload your address book to send a referral invitation.",
+    "authorityNotice": "This referral invitation does not approve restricted operational profiles."
+  },
+  "productionGates": {
+    "notificationLayerReady": true,
+    "versionedLegalConsentReady": true,
+    "referralEmailTemplateConfigured": false,
+    "referralMarketingConsentBindingConfigured": false,
+    "emailProviderConfigured": "environment_dependent",
+    "smsProviderConfigured": false,
+    "rateLimitConfigured": false,
+    "recipientDeduplicationConfigured": false,
+    "suppressionHandlingConfigured": false,
+    "abuseMonitoringConfigured": false
+  },
+  "requiredServerControls": [
+    "per-account invitation rate limit",
+    "per-recipient deduplication window",
+    "bounded retry only for transient provider errors",
+    "delivery status without copying message secrets into analytics",
+    "suppression/stop handling where required by channel/provider/policy",
+    "versioned marketing consent binding where server-sent marketing requires it",
+    "no privileged profile activation side effect"
+  ]
+}
