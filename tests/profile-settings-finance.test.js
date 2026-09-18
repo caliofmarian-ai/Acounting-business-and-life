@@ -44,8 +44,9 @@ test('Settings is inserted into the avatar drawer and works across all five publ
 test('real withdrawal execution remains disabled until a verified adapter exists',()=>{
   assert.match(server,/payout_execution_ready:false/);
   assert.match(server,/PROVIDER_DISBURSEMENT_ADAPTER_NOT_CONNECTED/);
-  assert.match(ui,/Real transfer is not active yet/);
-  assert.match(ui,/will not mark money as withdrawn or transferred until a provider\/bank\/e-wallet confirms/);
+  assert.match(ui,/Withdraw is not active yet/);
+  assert.match(ui,/Withdraw will use the default payout destination configured above in Avatar → Money & Banking/);
+  assert.match(ui,/will not reduce the external\/provider balance or mark a withdrawal succeeded until the provider confirms/);
   assert.doesNotMatch(server,/status='paid'.*settings\/financial/s);
 });
 
