@@ -1,5 +1,5 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "status": "production_gate",
   "classification": {
     "referralCode": "pseudonymous_public_identifier",
@@ -50,10 +50,16 @@
   },
   "retention": {
     "unconvertedReferralEventDays": 90,
-    "convertedAttributionRetentionRule": null,
+    "convertedAttributionRetentionRule": {
+      "ownerProductPolicyApproved": true,
+      "period": "12_months_after_conversion",
+      "activationApproved": false,
+      "privacyControllerApprovalRequired": true,
+      "disposalAtPurposeEnd": "delete_or_irreversibly_aggregate_unless_documented_exception"
+    },
     "rewardEvidenceRetentionRule": null,
     "productionReady": false,
-    "gateReason": "Owner confirmed 90-day retention for unconverted referral events. Converted attribution and reward-evidence retention rules remain unresolved, so production referral tracking and external analytics stay gated."
+    "gateReason": "Owner approved 90-day unconverted retention and a 12-month converted-attribution product-policy target. Converted activation still requires privacy/controller lawful-basis approval, effective transparency, processor/runtime verification, and explicit activation gates. Reward evidence retention remains unresolved."
   },
   "analytics": {
     "allowedProperties": [
@@ -99,7 +105,7 @@
   "convertedAttribution": {
     "enabledByDefault": false,
     "retentionDays": null,
-    "retentionPolicyVersion": null,
+    "retentionPolicyVersion": "owner-pilot-policy-2026-09-18",
     "requiresRetentionApproval": true,
     "requiresLawfulBasisApproval": true,
     "requiresDedicatedHmacSecret": true,
@@ -109,9 +115,19 @@
     "rewardStateAllowed": false,
     "requiresPendingAttributionActivation": true,
     "requiresExplicitAttributionModel": true,
-    "attributionModel": null,
+    "attributionModel": "registration_context_v1",
     "supportedImplementationModels": [
       "registration_context_v1"
-    ]
+    ],
+    "retentionMonthsTarget": 12,
+    "retentionActivationApproved": false,
+    "attributionModelOwnerApproved": true,
+    "attributionModelActivationApproved": false,
+    "lawfulBasisPath": "legitimate_interest_assessment",
+    "lawfulBasisSelected": false,
+    "retentionRuntimeUnit": "calendar_months",
+    "retentionRuntimeExpectedMonths": 12,
+    "retentionRuntimeConfig": "REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS",
+    "retentionDaysLegacyOnly": true
   }
 }

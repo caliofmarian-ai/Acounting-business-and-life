@@ -88,7 +88,7 @@ Referral attribution is never an authorization mechanism and cannot:
 
 **LEGAL DECISION REQUIRED.**
 
-The final controller/PIC must select and document the applicable lawful basis for this processing under Philippine law before an EFFECTIVE notice or external referral analytics activation.
+The Project Owner approved pursuing the legitimate-interest assessment path. The final controller/PIC must still select and document the actual applicable lawful basis under Philippine law before an EFFECTIVE notice or external referral analytics/converted-attribution activation.
 
 This draft intentionally does **not** state:
 - that consent is necessarily the lawful basis;
@@ -99,7 +99,9 @@ If consent is required for a particular processing purpose, it must be specific,
 
 Canonical state:
 
-`referralAnalyticsLawfulBasis = TO_BE_CONFIRMED`
+`referralAnalyticsLawfulBasisPath = LEGITIMATE_INTEREST_ASSESSMENT`
+
+`referralAnalyticsLawfulBasisSelected = false`
 
 A controlled legitimate-interest assessment draft is available at:
 
@@ -122,11 +124,14 @@ At expiry, and absent a documented legal/business exception:
 
 ### Converted attribution
 
-**TO BE CONFIRMED — HOLD.**
+**OWNER PRODUCT POLICY RECORDED — ACTIVATION HOLD.**
 
-No converted-attribution period is asserted by this draft. Durable converted attribution must remain gated until its retention/deletion rule and lawful purpose/basis are explicitly approved.
+Project Owner selected:
+- attribution model: `registration_context_v1`;
+- product retention target: **12 months after conversion**;
+- at purpose end: delete or irreversibly aggregate/de-identify unless a documented lawful exception applies.
 
-The attribution-selection model is also unresolved. The implementation can support registration-context binding, but that support is not a policy decision. First-touch, last-touch or registration-context behavior must not be activated without an explicit approved model.
+These product-policy decisions do not activate durable attribution. Converted binding remains gated until the Philippine PIC/controller approves the lawful basis/purpose, the EFFECTIVE privacy notice and rights workflow are ready, and the exact runtime retention/activation configuration is verified.
 
 ### Reward/payment/accounting evidence
 
@@ -226,7 +231,7 @@ All of the following remain required:
 2. privacy/DPO contact;
 3. applicable NPC registration details, if any, after operator-specific assessment;
 4. referral-analytics lawful-basis decision;
-5. converted-attribution retention/deletion rule;
+5. privacy/controller validation and runtime implementation of the Owner-approved 12-month converted-attribution retention/deletion rule;
 6. reward evidence rule only after reward economics/accounting classification exists;
 7. correct Business & Life analytics processor/project/region;
 8. processor/vendor register and applicable data-processing terms;

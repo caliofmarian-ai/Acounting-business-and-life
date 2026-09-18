@@ -13,9 +13,11 @@ function boundedToken(value, name, max = 100) {
   return token;
 }
 
-function retentionDaysFromEnv(env = process.env) {
-  const value = Number.parseInt(String(env.REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_DAYS || ''), 10);
-  return Number.isInteger(value) && value >= 1 && value <= 3650 ? value : null;
+export const OWNER_APPROVED_CONVERTED_RETENTION_MONTHS = 12;
+
+function retentionMonthsFromEnv(env = process.env) {
+  const value = Number.parseInt(String(env.REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS || ''), 10);
+  return Number.isInteger(value) && value >= 1 && value <= 120 ? value : null;
 }
 
 export function convertedReferralBindingState(env = process.env) {
@@ -23,7 +25,8 @@ export function convertedReferralBindingState(env = process.env) {
   const pendingState = unconvertedReferralPersistenceState(env);
   const retentionApproved = isTrue(env.REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_APPROVED);
   const lawfulBasisApproved = isTrue(env.REFERRAL_ATTRIBUTION_CONVERTED_LAWFUL_BASIS_APPROVED);
-  const retentionDays = retentionDaysFromEnv(env);
+  const retentionMonths = retentionMonthsFromEnv(env);
+  const retentionPolicyMatchesOwner = retentionMonths === OWNER_APPROVED_CONVERTED_RETENTION_MONTHS;
   const policyVersion = String(env.REFERRAL_ATTRIBUTION_CONVERTED_POLICY_VERSION || '').trim();
   const attributionModel = String(env.REFERRAL_ATTRIBUTION_CONVERTED_MODEL || '').trim();
   const hmacSecret = String(env.REFERRAL_ATTRIBUTION_HMAC_SECRET || '');
@@ -36,7 +39,8 @@ export function convertedReferralBindingState(env = process.env) {
   else if (!pendingState.persistable) reason = `pending_${pendingState.reason}`;
   else if (!retentionApproved) reason = 'retention_not_approved';
   else if (!lawfulBasisApproved) reason = 'lawful_basis_not_approved';
-  else if (!retentionDays) reason = 'retention_days_not_configured';
+  else if (!retentionMonths) reason = 'retention_months_not_configured';
+  else if (!retentionPolicyMatchesOwner) reason = 'retention_policy_mismatch';
   else if (!policyConfigured) reason = 'policy_version_not_configured';
   else if (!attributionModel) reason = 'attribution_model_not_configured';
   else if (!modelSupported) reason = 'attribution_model_not_supported';
@@ -48,7 +52,8 @@ export function convertedReferralBindingState(env = process.env) {
     pendingReason: pendingState.reason,
     retentionApproved,
     lawfulBasisApproved,
-    retentionDays,
+    retentionMonths,
+    retentionPolicyMatchesOwner,
     policyVersion: policyConfigured ? policyVersion : '',
     attributionModel,
     modelSupported,
@@ -58,7 +63,7 @@ export function convertedReferralBindingState(env = process.env) {
       pendingState.persistable &&
       retentionApproved &&
       lawfulBasisApproved &&
-      Boolean(retentionDays) &&
+      retentionPolicyMatchesOwner &&
       policyConfigured &&
       modelSupported &&
       secretConfigured,
@@ -115,6 +120,7 @@ export async function ensureConvertedReferralSchema(pool) {
     ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS correlation_hash TEXT;
     ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_policy_version TEXT;
     ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_days INTEGER;
+    ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS retention_months INTEGER;
     ALTER TABLE referral_attributions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
     CREATE UNIQUE INDEX IF NOT EXISTS referral_attributions_correlation_hash_unique
       ON referral_attributions(correlation_hash)
@@ -190,7 +196,7 @@ export async function bindReferralSignupConversion(pool, input = {}, options = {
   const existing = await pool.query(
     `SELECT id,referrer_account_id,referred_account_id,referral_code_snapshot,
             source_profile_role,campaign,source,medium,state,
-            retention_policy_version,retention_days,expires_at
+            retention_policy_version,retention_days,retention_months,expires_at
        FROM referral_attributions
       WHERE referred_account_id=$1
       LIMIT 1`,
@@ -233,10 +239,10 @@ export async function bindReferralSignupConversion(pool, input = {}, options = {
       `INSERT INTO referral_attributions(
          referrer_account_id,referred_account_id,referral_code_snapshot,
          source_profile_role,campaign,source,medium,state,signed_up_at,
-         correlation_hash,retention_policy_version,retention_days,expires_at
+         correlation_hash,retention_policy_version,retention_months,expires_at
        ) VALUES(
          $1,$2,$3,$4,$5,$6,$7,'signed_up',NOW(),
-         $8,$9,$10,NOW()+($10::int * INTERVAL '1 day')
+         $8,$9,$10,NOW()+($10::int * INTERVAL '1 month')
        )
        RETURNING id,state,signed_up_at,expires_at`,
       [
@@ -249,7 +255,7 @@ export async function bindReferralSignupConversion(pool, input = {}, options = {
         boundedToken(row.medium || 'referral', 'medium', 40),
         correlationHash,
         state.policyVersion,
-        state.retentionDays
+        state.retentionMonths
       ]
     );
   } catch (error) {
@@ -291,7 +297,7 @@ export async function bindReferralSignupConversion(pool, input = {}, options = {
     source: row.source,
     medium: row.medium,
     sourceProfileRole: row.source_profile_role,
-    retentionDays: state.retentionDays,
+    retentionMonths: state.retentionMonths,
     retentionPolicyVersion: state.policyVersion,
     expiresAt: inserted.rows[0].expires_at
   });
