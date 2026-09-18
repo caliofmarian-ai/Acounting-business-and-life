@@ -42,7 +42,11 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/abl_admin_ci
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_admin_ci
       TOKEN_SECRET: ci-admin-runtime-secret-not-for-production
       APP_PIN: '0000'
       NODE_ENV: test
