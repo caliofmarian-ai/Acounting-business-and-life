@@ -127,6 +127,10 @@ async function financePanel(){
   const promoTotals=(promo.totals||[]).find(x=>x.phase==='promotional')||{};
   const postPromoTotals=(promo.totals||[]).find(x=>x.phase==='post_promo')||{};
   const promoServices=promo.services||[];
+  const promoDirect=promo.direct_cost||{};
+  const promoDirectNow=promoDirect.promotional||{};
+  const postPromoDirect=promoDirect.post_promo||{};
+  const promoDirectServices=promoDirect.services||[];
   const canManage=hasAny(['finance.cost.manage']);
   const fixedTerritory=financeTerritoryId();
   const territoryField=fixedTerritory
@@ -180,7 +184,18 @@ async function financePanel(){
     +'<div class="financeTruth"><strong>Monetization status</strong><span>Promotional duration: '+esc(promo.promotional_days||90)+' days · Paid conversion: '+(promo.paid_conversion_status==='NOT_AVAILABLE_UNTIL_ACTIVE_FEE_POLICY'?'not available until an active fee policy collects a platform fee':'available from configured fee evidence')+'. Activity conversion means an expired trial subject completed at least one later service; it is not the same as paid conversion.</span></div>'
     +'<div class="sectionTitle"><h3>Promotion activity by service</h3></div>'
     +(promoServices.length?rows(promoServices,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+esc(x.phase)+'</span></div><div class="financeLine"><span>'+esc(x.completed_events)+' completions</span><span>'+esc(x.active_subjects)+' subjects</span><span>Gross '+financeMoney(x.gross_value)+'</span></div></div>'):'<div class="empty">No promotional or post-promo completion events in this reporting period.</div>')
-    +'<div class="notice"><strong>Promo cost attribution</strong><br>Platform costs are recorded in the Finance ledger, but exact subsidy per promotional transaction is not shown until those direct costs are linked to promotional completion events. No subsidy amount is inferred.</div>'
+    +'<div class="sectionTitle"><h3>Direct promotional cost</h3></div>'
+    +'<div class="financeSummary">'
+      +'<div class="metric"><strong>'+financeMoney(promoDirectNow.total_direct_cost||0)+'</strong><span>Direct promo cost</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(promoDirectNow.direct_processor_cost||0)+'</strong><span>Promo processor cost</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(promoDirectNow.direct_ledger_cost||0)+'</strong><span>Explicit Finance-ledger cost</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(promoDirectNow.direct_cost_per_completion||0)+'</strong><span>Direct cost / promo completion</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(promoDirectNow.direct_cost_per_active_subject||0)+'</strong><span>Direct cost / active promo subject</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(postPromoDirect.total_direct_cost||0)+'</strong><span>Post-promo direct cost</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>Evidence boundary</strong><span>'+esc(promoDirect.warning||'Direct costs only.')+'<br>Coverage: '+esc(promoDirect.coverage_status||'DIRECT_ONLY_EXCLUDES_SHARED_FIXED')+' · '+esc(promoDirect.terminology||'DIRECT_PROMOTIONAL_SUBSIDY_FLOOR')+'. This is a minimum evidenced subsidy/cost floor, not the full economic cost of the promotion.</span></div>'
+    +'<div class="sectionTitle"><h3>Direct promo cost by service</h3></div>'
+    +(promoDirectServices.length?rows(promoDirectServices,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+esc(x.phase)+'</span></div><div class="financeLine"><span>Processor '+financeMoney(x.direct_processor_cost)+'</span><span>Ledger '+financeMoney(x.direct_ledger_cost)+'</span><strong>Total '+financeMoney(x.total_direct_cost)+'</strong></div><span class="muted">Cost/completion '+financeMoney(x.direct_cost_per_completion||0)+' · Cost/active subject '+financeMoney(x.direct_cost_per_active_subject||0)+'</span></div>'):'<div class="empty">No directly attributable payment/provider cost for completed promo events in this period.</div>')
     +pricingForm
     +costForm
     +'<div class="sectionTitle"><h3>Recent cost entries</h3></div>'
