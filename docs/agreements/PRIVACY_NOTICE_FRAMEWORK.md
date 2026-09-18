@@ -20,10 +20,19 @@ legal_review: LEGAL_REVIEW_RECOMMENDED
 
 ## 1. Who is responsible
 
-Data controller / PIC as applicable: {{privacy_operator_name}}  
-Address: {{privacy_operator_address}}  
-Privacy/DPO contact: {{privacy_contact}}  
-NPC registration details if applicable/verified: {{npc_registration_details}}
+Current pre-launch facts:
+- operating name: **Business & Life**;
+- Philippine legal entity: **not yet formed**;
+- initial Philippine operator: natural person designated by the Project Owner;
+- legal name/address/public privacy contact: **not yet verified for publication**.
+
+Controller/PIC rule:
+- the initial operator is the provisional PIC candidate if that person actually controls the relevant personal-data processing decisions;
+- if confirmed as an individual PIC, NPC guidance treats that individual PIC as the de facto DPO.
+
+The EFFECTIVE notice must still contain the verified legal identity/contact facts appropriate to the actual controller.
+
+NPC registration details must appear only if applicable and verified.
 
 Do not publish placeholders as facts.
 
@@ -125,11 +134,14 @@ Maintain version/effective date and contact method.
 
 ## Pre-publication checklist
 
-- actual PIC/PIP/operator assessment;
-- DPO/NPCRS applicability assessment;
+- confirm actual controller allocation for the designated initial natural-person operator;
+- verify legal name/address/public privacy contact;
+- complete DPO/NPCRS applicability assessment;
 - vendor/processor register;
 - processing inventory/legal-basis map;
 - retention schedule;
 - data-subject rights workflow;
 - security/breach procedure;
 - review against DPA/IRR/NPC guidance.
+
+Canonical pre-launch controller/DPO record: `docs/privacy/INITIAL_PIC_DPO_GOVERNANCE.md`.
