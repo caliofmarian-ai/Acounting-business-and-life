@@ -72,3 +72,48 @@ test('Finance dashboard exposes promotional activity per service and phase',()=>
   assert.match(ui,/x\.phase/);
   assert.match(ui,/x\.gross_value/);
 });
+
+
+test('Pricing Lab is visibly simulation-only and exposes no activation control',()=>{
+  assert.match(ui,/Pricing Lab — simulation only/);
+  assert.match(ui,/No live fee is changed here/);
+  assert.match(ui,/Run non-charging simulation/);
+  assert.match(ui,/SIMULATION ONLY/);
+  assert.doesNotMatch(ui,/Activate fee policy/);
+  assert.doesNotMatch(ui,/fee-policies\/[^'"]*activate/);
+});
+
+test('Pricing Lab submits explicit hypothetical service rates to read-only scenario API',()=>{
+  assert.match(ui,/id="pricingScenarioForm"/);
+  assert.match(ui,/name="marketplace"[^>]*required/);
+  assert.match(ui,/name="delivery"[^>]*required/);
+  assert.match(ui,/name="supplier"[^>]*required/);
+  assert.match(ui,/name="local_services"[^>]*required/);
+  assert.match(ui,/api\('\/api\/payments\/admin\/pricing-scenario'/);
+  assert.match(ui,/marketplace:Number\(fd\.get\('marketplace'\)\)/);
+  assert.match(ui,/local_services:Number\(fd\.get\('local_services'\)\)/);
+});
+
+test('Pricing Lab has no prefilled commission rate that could be mistaken for an approved price',()=>{
+  const start=ui.indexOf('id="pricingScenarioForm"');
+  const end=ui.indexOf('id="pricingScenarioResult"',start);
+  const form=ui.slice(start,end);
+  assert.doesNotMatch(form,/value="(?:1|1\.5|2|3|0\.5|0\.25)"/);
+  assert.match(form,/placeholder="Hypothetical %"/);
+});
+
+test('Pricing Lab distinguishes actual post-promo economics from mature-volume simulation',()=>{
+  assert.match(ui,/Actual post-promo gross value/);
+  assert.match(ui,/Projected revenue · post-promo actual/);
+  assert.match(ui,/Projected revenue · mature simulation/);
+  assert.match(ui,/Projected P\/L · post-promo actual/);
+  assert.match(ui,/Projected P\/L · mature simulation/);
+  assert.match(ui,/Break-even rate · total volume/);
+});
+
+test('Pricing Lab discloses shared cost and missing-cost evidence limitations',()=>{
+  assert.match(ui,/Shared \/ unallocated recorded cost/);
+  assert.match(ui,/Evidence boundary/);
+  assert.match(ui,/missing_cost_warning/);
+  assert.match(ui,/shared_cost_warning/);
+});
