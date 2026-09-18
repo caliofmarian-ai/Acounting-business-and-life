@@ -47,7 +47,7 @@ Applies to Support handling across account, profile, order, accounting, Supplier
 
 1. Identify the user goal/problem before requesting additional data.
 2. Use the least-sensitive information necessary to locate the issue.
-3. Classify domain: account/auth, profile authorization, order/marketplace, accounting/money, Supplier, Delivery, Local Services, incident/safety, compliance/legal or technical.
+3. Classify domain: account/auth, profile authorization, order/marketplace, accounting/money, Supplier, Delivery, Local Services, incident/safety, compliance/legal, privacy/data-subject request or technical.
 4. Provide public Help Center/article guidance when self-service can safely solve the issue.
 5. If private account/business context is needed, use authorized support access only.
 6. Do not ask for passwords/secrets.
@@ -111,3 +111,17 @@ Applies to Support handling across account, profile, order, accounting, Supplier
 ## Version control
 
 This SOP is a controlled DRAFT until approved/effective. If product behavior, legal/compliance requirements or delegated authority changes, this SOP must be reviewed before being treated as current.
+
+## Privacy/data-subject requests
+
+When a ticket category starts with `privacy_`:
+- treat it as a privacy-rights request, not a normal product complaint;
+- do not ask for passwords/secrets;
+- do not request identity documents by default when the authenticated account already establishes initial identity context;
+- keep internal notes internal;
+- do not promise deletion, objection acceptance or a legal outcome before the controller/privacy review;
+- do not reroute the case to a Territory Admin-only queue;
+- do not conflate marketing opt-out with a privacy objection or vice versa;
+- use the canonical request/ticket history rather than copying the user's full request into analytics.
+
+Canonical technical workflow: `docs/privacy/PRIVACY_RIGHTS_REQUEST_WORKFLOW.md`.
