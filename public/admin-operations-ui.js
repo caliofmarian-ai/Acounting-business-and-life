@@ -1,6 +1,6 @@
 const token=()=>localStorage.getItem('abl_token')||'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token())headers.Authorization=`Bearer ${token()}`;const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}
+async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token())headers.Authorization=`Bearer ${token()}`;const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}catch(e){if(e?.name==='AbortError')throw new Error('The server is taking too long to respond. Close this panel and try again.');throw e}finally{if(timer)clearTimeout(timer)}}
 const fileDataUrl=file=>new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(new Error('Could not read '+file.name));r.onload=()=>resolve(String(r.result));r.readAsDataURL(file)});
 let pendingAudio=null,voiceRecorder=null,voiceStream=null,voiceRecognition=null,voiceTimer=null,liveTranscript='',adminState=null,adminAccess=null;
 
@@ -14,6 +14,7 @@ function ensureUi(){
   addButtons();
 }
 function addButtons(){
+  if(!token())return;
   const top=document.querySelector('.topActions');
   if(top&&!document.getElementById('supportOpsBtn')){const b=document.createElement('button');b.id='supportOpsBtn';b.className='supportOpsBtn';b.type='button';b.textContent='Help';b.onclick=openSupport;top.prepend(b)}
   if(!document.getElementById('supportFloating')){const b=document.createElement('button');b.id='supportFloating';b.className='supportFloating';b.type='button';b.textContent='?';b.setAttribute('aria-label','Help and Support');b.onclick=openSupport;document.body.appendChild(b)}
@@ -144,5 +145,5 @@ async function createAdminAssignment(e){
   e.preventDefault();const role=document.getElementById('adminTargetRole').value,territory=document.getElementById('adminTargetTerritory').value,permissions=[...document.querySelectorAll('input[name="adminPermission"]:checked')].map(x=>x.value);try{await api('/api/admin/assignments',{method:'POST',body:JSON.stringify({target_email:document.getElementById('adminTargetEmail').value,admin_role:role,territory_id:role==='territory_admin'?Number(territory)||null:null,permissions,reason:document.getElementById('adminAssignReason').value})});toast('Admin assignment saved.');const b=document.querySelector('[data-admin-tab="admins"]');await renderAdminTab('admins',b)}catch(err){toast(err.message)}
 }
 
-function boot(){ensureUi();const shell=document.getElementById('shell');if(shell)new MutationObserver(()=>{addButtons()}).observe(shell,{attributes:true,subtree:true,childList:true});setInterval(()=>addButtons(),2500)}
+function boot(){ensureUi();addButtons();document.addEventListener('abl:profile-state',()=>addButtons());window.addEventListener('focus',()=>refreshAdminButton().catch(()=>{}),{passive:true})}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
