@@ -12,6 +12,7 @@ export const MONEY_MOVEMENT_TYPES=Object.freeze(['transfer','withdrawal','payout
 export const MONEY_MOVEMENT_STATUSES=Object.freeze(['draft','pending_provider','processing','succeeded','failed','reversed','cancelled','manual_review']);
 export const PERSONAL_MONEY_ROLES=Object.freeze(['customer','courier','service_provider']);
 export const PROFILE_MONEY_ENTRY_TYPES=Object.freeze(['money_in','expense','adjustment','reversal']);
+export const PROFILE_FUND_TRANSFER_STATUSES=Object.freeze(['succeeded','reversed']);
 export const PROFILE_MONEY_ENTRY_CATEGORIES=Object.freeze({
   customer:['income','remittance','household','groceries','housing','transport','health','education','family','personal','other','adjustment'],
   courier:['fuel','maintenance','parking_toll','vehicle_insurance','mobile_data','equipment','other_work','adjustment'],
@@ -333,7 +334,34 @@ export async function ensureProfileFinanceSchema(pool){
     `CREATE INDEX IF NOT EXISTS profile_money_entries_scope_idx
       ON profile_money_entries(account_id,profile_role,occurred_at DESC,id DESC)`,
     `CREATE INDEX IF NOT EXISTS profile_money_entries_source_idx
-      ON profile_money_entries(source_type,source_id) WHERE source_id IS NOT NULL`
+      ON profile_money_entries(source_type,source_id) WHERE source_id IS NOT NULL`,
+    `ALTER TABLE profile_money_entries DROP CONSTRAINT IF EXISTS profile_money_entries_source_type_check`,
+    `ALTER TABLE profile_money_entries ADD CONSTRAINT profile_money_entries_source_type_check CHECK(source_type IN ('manual','delivery','service_job','profile_transfer'))`,
+    `ALTER TABLE profile_money_entries DROP CONSTRAINT IF EXISTS profile_money_entries_entry_type_check`,
+    `ALTER TABLE profile_money_entries ADD CONSTRAINT profile_money_entries_entry_type_check CHECK(entry_type IN ('money_in','expense','adjustment','reversal','profile_transfer_in','profile_transfer_out'))`,
+    `ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check`,
+    `ALTER TABLE transactions ADD CONSTRAINT transactions_type_check CHECK(type IN ('sale','business_expense','money_received','personal_withdrawal','adjustment','profile_transfer_in','profile_transfer_out'))`,
+    `CREATE TABLE IF NOT EXISTS profile_fund_transfers(
+      id BIGSERIAL PRIMARY KEY,
+      public_id TEXT NOT NULL UNIQUE,
+      transfer_key TEXT NOT NULL UNIQUE,
+      account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      source_profile_role TEXT NOT NULL,
+      source_business_id BIGINT REFERENCES businesses(id) ON DELETE RESTRICT,
+      destination_profile_role TEXT NOT NULL,
+      destination_business_id BIGINT REFERENCES businesses(id) ON DELETE RESTRICT,
+      amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      currency_code TEXT NOT NULL DEFAULT 'PHP',
+      status TEXT NOT NULL DEFAULT 'succeeded',
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      reversed_at TIMESTAMPTZ,
+      CHECK(source_profile_role IN ('customer','merchant','supplier','courier','service_provider')),
+      CHECK(destination_profile_role IN ('customer','merchant','supplier','courier','service_provider')),
+      CHECK(status IN ('succeeded','reversed')),
+      CHECK(NOT(source_profile_role=destination_profile_role AND COALESCE(source_business_id,0)=COALESCE(destination_business_id,0)))
+    )`,
+    `CREATE INDEX IF NOT EXISTS profile_fund_transfers_account_idx ON profile_fund_transfers(account_id,created_at DESC,id DESC)`
   ];
   for(const sql of statements)await pool.query(sql);
 }
@@ -845,6 +873,168 @@ export async function reverseProfileMoneyEntry(pool,{
     ]);
     await client.query('COMMIT');
     return{entry_id:Number(old.id),reversal_id:Number(ins.rows[0].id),status:'reversed',provider_balance_effect:false};
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+}
+
+
+function normalizeFundScope(profileRole,businessId){
+  const role=normalizeRole(profileRole);
+  if(BUSINESS_ROLE_SET.has(role)){
+    const id=Number(businessId);
+    if(!Number.isInteger(id)||id<=0)fail('Merchant/Supplier transfer requires a business workspace');
+    return{profileRole:role,businessId:id};
+  }
+  if(businessId!=null&&businessId!=='')fail('Personal profile transfer cannot use a business workspace');
+  return{profileRole:role,businessId:null};
+}
+
+async function assertOwnedActiveFundScope(db,{accountId,profileRole,businessId=null}){
+  const scope=normalizeFundScope(profileRole,businessId);
+  const p=await db.query("SELECT enabled,status FROM profiles WHERE account_id=$1 AND role=$2",[Number(accountId),scope.profileRole]);
+  if(!p.rowCount||!p.rows[0].enabled||p.rows[0].status!=='active')fail('Transfer profile must be active',403);
+  if(BUSINESS_ROLE_SET.has(scope.profileRole)){
+    const b=await db.query(`
+      SELECT b.id,b.name,b.currency_code
+      FROM profile_business_bindings pb
+      JOIN businesses b ON b.id=pb.business_id
+      JOIN business_memberships bm ON bm.business_id=b.id AND bm.account_id=pb.account_id AND bm.active=TRUE
+      WHERE pb.account_id=$1 AND pb.role=$2 AND pb.business_id=$3 AND pb.status='active'
+    `,[Number(accountId),scope.profileRole,scope.businessId]);
+    if(!b.rowCount)fail('Business workspace is not active for this profile',403);
+    return{...scope,label:(b.rows[0].name||'Business')+' · '+scope.profileRole,currencyCode:b.rows[0].currency_code||'PHP'};
+  }
+  return{...scope,label:scope.profileRole,currencyCode:'PHP'};
+}
+
+async function recordedFundBalance(db,{accountId,profileRole,businessId=null}){
+  if(BUSINESS_ROLE_SET.has(profileRole)){
+    const q=await db.query(`
+      SELECT COALESCE(SUM(CASE
+        WHEN type IN ('sale','money_received','adjustment','profile_transfer_in') THEN amount
+        WHEN type IN ('business_expense','personal_withdrawal','profile_transfer_out') THEN -amount
+        ELSE 0 END),0) balance
+      FROM transactions WHERE business_id=$1
+    `,[Number(businessId)]);
+    return Math.round((Number(q.rows[0]?.balance||0)+Number.EPSILON)*100)/100;
+  }
+  const q=await db.query(`
+    SELECT COALESCE(SUM(CASE WHEN direction='in' THEN amount ELSE -amount END),0) balance
+    FROM profile_money_entries
+    WHERE account_id=$1 AND profile_role=$2 AND status='active' AND entry_type<>'reversal'
+  `,[Number(accountId),profileRole]);
+  return Math.round((Number(q.rows[0]?.balance||0)+Number.EPSILON)*100)/100;
+}
+
+export async function listProfileFundScopes(pool,accountId){
+  const profiles=await pool.query("SELECT role FROM profiles WHERE account_id=$1 AND enabled=TRUE AND status='active' ORDER BY role",[Number(accountId)]);
+  const out=[];
+  for(const p of profiles.rows){
+    const role=p.role;
+    if(BUSINESS_ROLE_SET.has(role)){
+      const businesses=await pool.query(`
+        SELECT b.id,b.name,b.currency_code
+        FROM profile_business_bindings pb
+        JOIN businesses b ON b.id=pb.business_id
+        JOIN business_memberships bm ON bm.business_id=b.id AND bm.account_id=pb.account_id AND bm.active=TRUE
+        WHERE pb.account_id=$1 AND pb.role=$2 AND pb.status='active'
+        ORDER BY pb.is_primary DESC,b.name,b.id
+      `,[Number(accountId),role]);
+      for(const b of businesses.rows){
+        const balance=await recordedFundBalance(pool,{accountId,profileRole:role,businessId:b.id});
+        out.push({profile_role:role,business_id:Number(b.id),label:(b.name||'Business')+' · '+role,currency_code:b.currency_code||'PHP',transferable_balance:balance,balance_type:'recorded_internal_balance',provider_cash_balance:null});
+      }
+    }else{
+      const balance=await recordedFundBalance(pool,{accountId,profileRole:role,businessId:null});
+      out.push({profile_role:role,business_id:null,label:role,currency_code:'PHP',transferable_balance:balance,balance_type:'recorded_internal_balance',provider_cash_balance:null});
+    }
+  }
+  return out;
+}
+
+export async function listProfileFundTransfers(pool,accountId){
+  const {rows}=await pool.query(`
+    SELECT * FROM profile_fund_transfers
+    WHERE account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
+  `,[Number(accountId)]);
+  return rows.map(r=>({
+    id:Number(r.id),public_id:r.public_id,
+    source_profile_role:r.source_profile_role,source_business_id:r.source_business_id==null?null:Number(r.source_business_id),
+    destination_profile_role:r.destination_profile_role,destination_business_id:r.destination_business_id==null?null:Number(r.destination_business_id),
+    amount:Number(r.amount),currency_code:r.currency_code,status:r.status,note:r.note||'',created_at:r.created_at,reversed_at:r.reversed_at,
+    provider_money_moved:false,transfer_type:'INTERNAL_PROFILE_FUNDS'
+  }));
+}
+
+async function writeProfileFundLedgerEntry(db,{accountId,scope,direction,amount,currencyCode,transferId,transferKey,note}){
+  const inwards=direction==='in';
+  if(BUSINESS_ROLE_SET.has(scope.profileRole)){
+    await db.query(`
+      INSERT INTO transactions(business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at)
+      VALUES($1,$2,'Internal profile transfer',$3,'other','other',$4,'profile_fund_transfer',$5,NOW())
+    `,[scope.businessId,inwards?'profile_transfer_in':'profile_transfer_out',amount,clean(note,250),Number(transferId)]);
+    return;
+  }
+  await db.query(`
+    INSERT INTO profile_money_entries(
+      public_id,entry_key,account_id,profile_role,financial_account_id,source_type,source_id,
+      entry_type,direction,category,amount,currency_code,note,evidence_reference,status,actor_account_id,occurred_at
+    ) VALUES($1,$2,$3,$4,NULL,'profile_transfer',$5,$6,$7,'profile_transfer',$8,$9,$10,'','active',$3,NOW())
+  `,[
+    'pme_'+crypto.randomUUID().replaceAll('-',''),
+    transferKey+(inwards?':in':':out'),Number(accountId),scope.profileRole,Number(transferId),
+    inwards?'profile_transfer_in':'profile_transfer_out',inwards?'in':'out',amount,currencyCode,clean(note,700)
+  ]);
+}
+
+export async function transferFundsBetweenProfiles(pool,{
+  publicId,transferKey,accountId,sourceProfileRole,sourceBusinessId=null,
+  destinationProfileRole,destinationBusinessId=null,amount,currencyCode='PHP',note=''
+}){
+  const value=normalizePositiveMoney(amount,'Transfer amount'),key=clean(transferKey,220),currency=normalizeCurrency(currencyCode);
+  if(!key)fail('Idempotency key is required');
+  const source=normalizeFundScope(sourceProfileRole,sourceBusinessId),destination=normalizeFundScope(destinationProfileRole,destinationBusinessId);
+  if(source.profileRole===destination.profileRole&&Number(source.businessId||0)===Number(destination.businessId||0))fail('Choose two different profiles/workspaces');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)',[Number(accountId)]);
+    const existing=await client.query('SELECT * FROM profile_fund_transfers WHERE transfer_key=$1',[key]);
+    if(existing.rowCount){
+      const x=existing.rows[0];
+      if(Number(x.account_id)!==Number(accountId))fail('Idempotency key belongs to another account',409);
+      await client.query('COMMIT');
+      return{...(await listProfileFundTransfers(pool,accountId)).find(t=>t.id===Number(x.id)),idempotent:true};
+    }
+    const ownedSource=await assertOwnedActiveFundScope(client,{accountId,profileRole:source.profileRole,businessId:source.businessId});
+    const ownedDestination=await assertOwnedActiveFundScope(client,{accountId,profileRole:destination.profileRole,businessId:destination.businessId});
+    if(ownedSource.currencyCode!==currency||ownedDestination.currencyCode!==currency)fail('Both profiles must use the same transfer currency',409);
+    const available=await recordedFundBalance(client,{accountId,profileRole:source.profileRole,businessId:source.businessId});
+    if(value>available+0.001)fail('Transfer exceeds the source profile recorded balance',409);
+    const ins=await client.query(`
+      INSERT INTO profile_fund_transfers(
+        public_id,transfer_key,account_id,source_profile_role,source_business_id,
+        destination_profile_role,destination_business_id,amount,currency_code,status,note
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'succeeded',$10) RETURNING *
+    `,[
+      clean(publicId,120),key,Number(accountId),source.profileRole,source.businessId,
+      destination.profileRole,destination.businessId,value,currency,clean(note,700)
+    ]);
+    const transferId=Number(ins.rows[0].id);
+    await writeProfileFundLedgerEntry(client,{accountId,scope:source,direction:'out',amount:value,currencyCode:currency,transferId,transferKey:key,note});
+    await writeProfileFundLedgerEntry(client,{accountId,scope:destination,direction:'in',amount:value,currencyCode:currency,transferId,transferKey:key,note});
+    for(const scope of [source,destination]){
+      await client.query(`
+        INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,event_code,detail_json)
+        VALUES($1,$2,$3,'internal_profile_fund_transfer',$4::jsonb)
+      `,[
+        Number(accountId),scope.profileRole,scope.businessId,
+        JSON.stringify({transfer_id:transferId,amount:value,currency_code:currency,source_profile_role:source.profileRole,source_business_id:source.businessId,destination_profile_role:destination.profileRole,destination_business_id:destination.businessId,provider_money_moved:false})
+      ]);
+    }
+    await client.query('COMMIT');
+    const [transfers,scopes]=await Promise.all([listProfileFundTransfers(pool,accountId),listProfileFundScopes(pool,accountId)]);
+    return{...transfers.find(t=>t.id===transferId),source_balance_before:available,scopes};
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
   finally{client.release()}
 }
