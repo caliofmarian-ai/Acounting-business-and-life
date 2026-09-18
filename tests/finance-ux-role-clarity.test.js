@@ -37,7 +37,7 @@ test('Customer hub contains shopper features and no Merchant accounting/menu cre
 
 test('Customer Settings default view is payments-first and hides business finance clutter',()=>{
   const render=between(settings,'function renderSettings(){','function bindSettings(){');
-  assert.match(render,/simpleMoneyBankingCard\(\)/);
+  assert.match(render,/accountMoneySettingsCard\(\)/);
   assert.match(settings,/Pay, buy and get refunds without accounting clutter/);
   assert.match(settings,/You do not need to add banking details just to shop/);
   assert.match(settings,/Advanced personal money tools/);
