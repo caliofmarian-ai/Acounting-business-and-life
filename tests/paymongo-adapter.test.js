@@ -93,7 +93,7 @@ test('PayMongo refunds use provider payment id and official refunds endpoint',()
 });
 
 test('PayMongo provider metadata declares adapter readiness without storing credentials',()=>{
-  assert.match(adapter,/v0\.14-hosted-checkout-v2/);
+  assert.match(adapter,/v0\.15-hosted-checkout-v2/);
   assert.match(adapter,/secret_ready/);
   assert.match(adapter,/webhook_ready/);
   assert.doesNotMatch(adapter,/JSON\.stringify\(\{[^}]*secretKey/);
