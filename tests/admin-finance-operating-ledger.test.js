@@ -51,7 +51,7 @@ test('Country Territory and Specialist finance are scope-limited',()=>{
   assert.match(server,/Specialist budget requires its delegated function/);
   assert.match(server,/Specialist cannot manage another function budget/);
   assert.match(server,/Specialist finance entry requires its delegated function/);
-  assert.match(core,/function_code=ANY/);
+  assert.match(core,/function_code=ANY\(\$\$\{scope\.args\.length\+1\}::text\[\]\)/);
   assert.doesNotMatch(core,/function_code='' OR .*function_code=ANY/);
 });
 
