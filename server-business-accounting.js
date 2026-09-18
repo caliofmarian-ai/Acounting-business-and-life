@@ -278,7 +278,7 @@ app.get('/help/product-map.svg',(_req,res)=>res.type('image/svg+xml').send(readF
 app.get('/help-linking.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','help-linking.css'),'utf8')));
 app.get('/help-linking.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','help-linking.js'),'utf8')));
 
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/business-accounting.css" />\n  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script type="module" src="/business-accounting-ui.js"></script>\n  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/accounting/workspaces',async(req,res,next)=>{try{const ctx=await accountingContext(req);res.json({role:ctx.role,active_business_id:Number(ctx.business.id),businesses:ctx.businesses.map(b=>({id:Number(b.id),name:b.name,country_code:b.country_code,currency_code:b.currency_code,territory_id:b.territory_id,membership_role:b.membership_role,is_primary:Boolean(b.is_primary)}))})}catch(e){next(e)}});
