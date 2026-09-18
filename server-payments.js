@@ -13,7 +13,7 @@ import {
 } from './payment-core.js';
 import {
   ensureFinanceSchema,createPlatformCostEntry,allocatePlatformCost,voidPlatformCostEntry,
-  listPlatformCostEntries,financeKpiOverview,FINANCE_EVIDENCE_CLASSES
+  listPlatformCostEntries,financeKpiOverview,pricingScenario,FINANCE_EVIDENCE_CLASSES
 } from './finance-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetization-core.js';
@@ -118,6 +118,17 @@ app.get('/api/payments/admin/unit-economics',async(req,res,next)=>{try{
     evidenceClasses:financeEvidence(req)
   });
   res.json(data);
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/pricing-scenario',body,async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',territoryId);
+  const scenario=await pricingScenario(pool,{
+    from:req.body?.from,to:req.body?.to,territoryId,
+    evidenceClasses:Array.isArray(req.body?.evidence_classes)?req.body.evidence_classes:undefined,
+    rates:req.body?.rates||{}
+  });
+  res.json(scenario);
 }catch(e){next(e)}});
 
 app.get('/api/payments/admin/costs',async(req,res,next)=>{try{
