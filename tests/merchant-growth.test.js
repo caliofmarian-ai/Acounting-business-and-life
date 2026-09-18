@@ -1,0 +1,5 @@
+import test from 'node:test';import assert from 'node:assert/strict';import{readFileSync}from'node:fs';
+const c=JSON.parse(readFileSync(new URL('../growth/merchant-growth.en-PH.json',import.meta.url),'utf8'));const h=readFileSync(new URL('../public/referral/merchant.html',import.meta.url),'utf8');
+test('merchant campaign is grounded in current executable lanes',()=>{for(const id of ['money','stock','sell','network'])assert.ok(c.pillars.some(x=>x.id===id));assert.match(h,/inventory/i);assert.match(h,/Supplier/i);assert.match(h,/customer orders/i)});
+test('merchant campaign does not guarantee profit approval or compliance',()=>{assert.equal(c.governance.guaranteedProfit,false);assert.equal(c.governance.merchantApprovalAutomatic,false);assert.equal(c.governance.taxComplianceGuaranteed,false);assert.match(h,/activation is not automatic/i)});
+test('delivery claim is limited to eligible in-app customer orders',()=>{assert.equal(c.governance.arbitraryExternalParcelDeliveryClaim,false);assert.match(h,/eligible in-app customer orders/i)});
