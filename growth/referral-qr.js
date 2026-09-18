@@ -19,7 +19,7 @@ export async function buildLocalReferralQr(referralUrl) {
   }
 
   if (parsed.hash) throw new TypeError('canonical referral URL must not contain a fragment');
-  const referralUrl = parsed.toString();
+  const canonicalUrl = parsed.toString();
   parsed.hash = 'qr';
   const payload = parsed.toString();
   if (payload.length > MAX_REFERRAL_URL_LENGTH) {
@@ -37,7 +37,7 @@ export async function buildLocalReferralQr(referralUrl) {
     format: 'png',
     encoder: 'local',
     marker: 'qr',
-    referralUrl,
+    referralUrl: canonicalUrl,
     payload,
     dataUrl
   });
