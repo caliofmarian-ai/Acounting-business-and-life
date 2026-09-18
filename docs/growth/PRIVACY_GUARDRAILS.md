@@ -65,6 +65,12 @@ Do not merge these categories into one checkbox:
 
 Issue #35 remains authoritative for versioned legal consent/acceptance architecture.
 
+Growth product/legal input for referral analytics is maintained in:
+
+`docs/growth/REFERRAL_PRIVACY_NOTICE_DRAFT.md`
+
+That supplement is explicitly `DRAFT / NOT_FOR_PUBLICATION`. It must be incorporated or superseded through Issue #35 legal governance before any EFFECTIVE privacy notice or external referral analytics activation.
+
 ## Analytics
 
 The canonical analytics allowlist and denylist are machine-readable in:
