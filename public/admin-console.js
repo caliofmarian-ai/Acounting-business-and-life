@@ -41,14 +41,17 @@ function hero(){
   return '<div class="hero"><div><h2>'+esc(a?rankLabel(a.effective_rank||a.authority_rank||a.admin_role):'Admin')+'</h2><p>Privileged workspace. Only functions explicitly delegated to this account are shown.</p></div><div class="badgeRow">'+scopes.map(x=>'<span class="badge">'+esc(x)+'</span>').join('')+'</div></div>';
 }
 function metrics(){
-  const s=state.overview?.summary||{};
-  const items=[
-    ['Orders',s.orders||0],['Deliveries',s.deliveries||0],['Service jobs',s.service_jobs||0],
-    ['Open support',s.support?.open||0],['Open incidents',s.incidents?.open||0],
-    ['Applications',(state.overview?.applications||[]).filter(x=>!['active','approved','rejected'].includes(x.status)).length]
-  ];
+  const s=state.overview?.summary||{},items=[];
+  if(s.orders!=null)items.push(['Orders',s.orders]);
+  if(s.deliveries!=null)items.push(['Deliveries',s.deliveries]);
+  if(s.service_jobs!=null)items.push(['Service jobs',s.service_jobs]);
+  if(s.support!=null)items.push(['Open support',s.support.open||0]);
+  if(s.incidents!=null)items.push(['Open incidents',s.incidents.open||0]);
+  if(hasAny(['merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider','profile.suspend']))items.push(['Applications',(state.overview?.applications||[]).filter(x=>!['active','approved','rejected'].includes(x.status)).length]);
+  if(!items.length)return '<div class="empty">No operational metrics are delegated to this account.</div>';
   return '<div class="grid">'+items.map(x=>'<div class="metric"><strong>'+esc(x[1])+'</strong><span>'+esc(x[0])+'</span></div>').join('')+'</div>';
 }
+
 function rows(items,formatter){
   if(!items?.length)return '<div class="empty">Nothing in this scoped view.</div>';
   return '<div class="list">'+items.map(formatter).join('')+'</div>';
