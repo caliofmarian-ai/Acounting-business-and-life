@@ -43,10 +43,12 @@ test('Admin schema and authorization support specialists without turning Admin i
 });
 
 test('Admin overview scopes each data family by its delegated permission',()=>{
-  assert.match(server,/scopeClause\(accountId,'support\.manage'/);
-  assert.match(server,/scopeClause\(accountId,'incident\.triage'/);
+  assert.match(server,/scopeFromContext\(ctx,'support\.manage'/);
+  assert.match(server,/scopeFromContext\(ctx,'incident\.triage'/);
   assert.match(server,/profilePermissionByRole/);
   assert.match(server,/metricPermissions/);
+  assert.match(server,/a\.admin_role==='country_admin'/);
+  assert.match(server,/a\.admin_role==='territory_admin'/);
   assert.match(server,/already holds a higher Admin rank in the same scope/);
 });
 

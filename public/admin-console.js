@@ -131,9 +131,10 @@ async function renderActive(){
   else if(state.active==='team'){p.innerHTML=await teamPanel();await wireTeam()}
 }
 async function loadBase(){
-  const [me,catalog,overview]=await Promise.all([api('/api/admin/me'),api('/api/admin/catalog'),api('/api/admin/overview')]);
+  const bootstrap=await api('/api/admin/bootstrap');
+  const me=bootstrap.me||{};
   if(!me.is_admin)throw Object.assign(new Error('No delegated Admin workspace is available for this account.'),{code:'NOT_ADMIN'});
-  state.me=me;state.catalog=catalog;state.overview=overview;
+  state.me=me;state.catalog=bootstrap.catalog||{};state.overview=bootstrap.overview||{};
 }
 async function boot(){
   if(!token()){root.className='adminDenied';root.innerHTML='<h2>Admin sign-in required</h2><p>Open the main app and sign in with the account that received delegated Admin authority.</p><a class="adminButton" href="/">Return to app</a>';return}
