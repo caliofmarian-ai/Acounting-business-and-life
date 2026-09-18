@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "figma": {
+    "fileUrl": "https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT",
+    "productReference": {
+      "nodeId": "9:2",
+      "status": "ready"
+    }
+  },
+  "assets": [
+    {
+      "id": "MERCHANT_GROWTH_SQUARE_V1",
+      "figmaNodeId": "9:21",
+      "size": {
+        "width": 1080,
+        "height": 1080
+      },
+      "canvaTitle": "Business & Life — Merchant Social Square V1",
+      "canvaStatus": "editable_master_ready"
+    },
+    {
+      "id": "MERCHANT_GROWTH_STORY_V1",
+      "figmaNodeId": "9:32",
+      "size": {
+        "width": 1080,
+        "height": 1920
+      },
+      "canvaTitle": "Business & Life — Merchant Story V1",
+      "canvaStatus": "editable_master_ready"
+    },
+    {
+      "id": "MERCHANT_GROWTH_A5_V1",
+      "figmaNodeId": "9:61",
+      "size": {
+        "width": 559,
+        "height": 794
+      },
+      "canvaTitle": "Business & Life — Merchant A5 Flyer V1",
+      "canvaStatus": "editable_master_ready"
+    }
+  ],
+  "claims": {
+    "guaranteedProfit": false,
+    "automaticMerchantApproval": false,
+    "arbitraryExternalParcelDelivery": false
+  },
+  "privacy": {
+    "publicRepoStoresPrivateCanvaEditUrls": false
+  }
+}
