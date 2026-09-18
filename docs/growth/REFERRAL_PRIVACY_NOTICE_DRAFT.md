@@ -168,7 +168,7 @@ The following wording is a product draft for incorporation into the final Privac
 
 > When you use Business & Life referral features, we may process an opaque referral code and limited campaign, profile-source, share-channel and session-correlation information to understand how the referral journey is used. We do not need to upload your address book to provide the initial referral sharing flow, and our referral analytics contract prohibits raw recipient email, phone number and contact-list contents. Unconverted referral event data is scheduled for a 90-day retention period under the approved product policy. Any different retention period for converted referral attribution or future reward records will be documented before those functions are activated. Details of the applicable lawful basis, responsible Philippine operator, processors and data-protection contact must appear in the final reviewed Privacy Notice.
 
-This wording is **not publishable yet** because the lawful basis, operator/PIC/PIP facts, contact information and external processor facts remain incomplete.
+This wording is **not publishable yet**. The Project Owner has identified Business & Life as the operating name and designated an initial natural-person operator in the Philippines, who is the provisional PIC candidate if she actually controls the relevant processing decisions. Her verified legal identity/public privacy contact, final controller confirmation, applicable NPC registration facts, lawful basis and external processor facts remain incomplete.
 
 ## 8. Data-subject rights
 
@@ -187,7 +187,7 @@ The final EFFECTIVE notice must explain applicable rights and the verified contr
 - complaint process;
 - other rights recognized by the Data Privacy Act, its IRR and applicable NPC rules.
 
-The final notice must provide the actual controller/PIC or representative contact and privacy/DPO contact. Do not publish placeholders as facts. The in-app request channel does not replace those required controller/contact disclosures.
+The final notice must provide the actual verified controller/PIC identity or representative contact and privacy/DPO contact. If the designated initial natural-person operator is confirmed as the individual PIC, current NPC guidance treats that same individual as de facto DPO. Do not publish unverified legal name/address/email placeholders as facts. The in-app request channel does not replace required controller/contact disclosures.
 
 ## 9. Security/minimization controls already implemented
 
@@ -220,6 +220,12 @@ These controls must be described accurately and must not be presented as a guara
   https://privacy.gov.ph/the-right-to-be-informed/
 - National Privacy Commission — Data Subject Rights:
   https://privacy.gov.ph/data-subject-rights/
+- National Privacy Commission — Appointing a Data Protection Officer:
+  https://privacy.gov.ph/appointing-a-data-protection-officer/
+- National Privacy Commission — Registration / NPCRS guidance:
+  https://privacy.gov.ph/pips-and-pics/register/
+- National Privacy Commission — Registration FAQ:
+  https://privacy.gov.ph/pips-and-pics/faqs/
 - National Privacy Commission — Advisory Opinion 2017-024:
   https://privacy.gov.ph/wp-content/uploads/2022/01/NPC_AdvisoryOpinionNo._2017-024.pdf
 
@@ -233,9 +239,9 @@ Key constraints reflected here:
 ## 11. Gates before incorporation into the EFFECTIVE Privacy Notice
 
 All of the following remain required:
-1. actual Philippine operator/PIC/PIP identity;
-2. privacy/DPO contact;
-3. applicable NPC registration details, if any, after operator-specific assessment;
+1. confirm the designated initial Philippine natural-person operator as the actual PIC for the relevant processing and verify the legal identity;
+2. establish/verify the public privacy/DPO contact; if the operator is confirmed as the individual PIC, treat that individual as de facto DPO under current NPC guidance;
+3. complete the operator-specific NPC registration assessment and add registration details only if applicable/verified;
 4. referral-analytics lawful-basis decision;
 5. privacy/controller validation and runtime implementation of the Owner-approved 12-month converted-attribution retention/deletion rule;
 6. reward evidence rule only after reward economics/accounting classification exists;
