@@ -68,6 +68,12 @@ on:
       - 'public/marketplace-ui.js'
       - 'public/orders-ui.js'
       - '.github/workflows/admin-runtime.yml'
+      - 'profile-finance-core.js'
+      - 'profile-money-core.js'
+      - 'public/profile-settings-ui.js'
+      - 'public/profile-settings.css'
+      - 'public/profile-money-ui.js'
+      - 'public/profile-money.css'
 
 permissions:
   contents: read
