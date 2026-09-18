@@ -1,5 +1,5 @@
 -- Business & Life referral/growth persistence contract.
--- This file is intentionally NOT auto-executed in the first isolated batch.
+-- Dedicated runtime modules may create only the subset they own when their fail-closed gates permit it.
 -- Marketing referral attribution must remain separate from Issue #30 privileged-profile invitations.
 
 CREATE TABLE IF NOT EXISTS referral_accounts (
@@ -9,6 +9,34 @@ CREATE TABLE IF NOT EXISTS referral_accounts (
   rotated_at TIMESTAMPTZ,
   CHECK (referral_code ~ '^r1_[A-Za-z0-9_-]{16}$')
 );
+
+CREATE TABLE IF NOT EXISTS referral_pending_attributions (
+  id BIGSERIAL PRIMARY KEY,
+  referrer_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  referral_code_snapshot TEXT NOT NULL,
+  correlation_hash TEXT NOT NULL UNIQUE,
+  source_profile_role TEXT NOT NULL,
+  campaign TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'profile',
+  medium TEXT NOT NULL DEFAULT 'referral',
+  first_landing_at TIMESTAMPTZ,
+  signup_started_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (source_profile_role IN ('customer','merchant','supplier','courier','service_provider'))
+);
+
+CREATE INDEX IF NOT EXISTS referral_pending_attributions_expiry_idx
+  ON referral_pending_attributions(expires_at);
+
+CREATE INDEX IF NOT EXISTS referral_pending_attributions_referrer_idx
+  ON referral_pending_attributions(referrer_account_id, created_at DESC);
+
+-- This pending table is intentionally incapable of storing a referred account id,
+-- qualification state or reward evidence. It is the 90-day pre-conversion boundary.
+-- Conversion into referral_attributions remains HOLD until the separate converted
+-- retention/deletion and lawful-purpose rules are approved.
 
 CREATE TABLE IF NOT EXISTS referral_attributions (
   id BIGSERIAL PRIMARY KEY,
