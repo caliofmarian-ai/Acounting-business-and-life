@@ -106,7 +106,11 @@ Business & Life may have an actual business interest in:
 
 **POTENTIALLY ESTABLISHED — CONTROLLER CONFIRMATION REQUIRED.**
 
-The interest is concrete and related to operation/growth of the referral feature, but the actual Philippine PIC/controller must confirm the declared purpose before relying on it.
+The Project Owner has designated the initial Philippine operator as a natural person. That operator is the provisional PIC candidate if she actually controls the relevant Business & Life processing decisions. The final controller allocation must follow the real operating facts.
+
+If confirmed as the individual PIC, current NPC guidance treats that individual PIC as the de facto DPO.
+
+The interest is concrete and related to operation/growth of the referral feature, but the confirmed PIC/controller must approve the declared purpose before relying on it.
 
 The interest must not be expanded into unrelated tracking merely because the data exists.
 
@@ -270,7 +274,7 @@ Marketing preferences/consent remain separate where required.
 | Actual legitimate interest articulated | DRAFT candidate |
 | Necessity/proportionality analysis | DRAFT candidate |
 | Balancing test | PENDING controller approval |
-| PIC/controller identified | PENDING |
+| PIC/controller identified | PROVISIONAL NATURAL-PERSON OPERATOR CANDIDATE — legal identity/control confirmation pending |
 | Effective privacy notice | PENDING |
 | Objection/request channel | IMPLEMENTED TECHNICALLY — controller/privacy operating process still PENDING |
 | 90-day unconverted retention | OWNER APPROVED |
@@ -292,7 +296,7 @@ No production flag may be enabled solely because this draft exists.
 
 Before legitimate interest can be recorded as the selected basis for this processing activity:
 
-1. identify the actual Philippine PIC/controller;
+1. confirm the designated initial Philippine natural-person operator as the actual PIC for the relevant processing and verify the legal identity/contact facts;
 2. confirm the exact declared referral-attribution purpose;
 3. complete/approve the legitimate-interest, necessity and balancing tests;
 4. validate the Owner-selected `registration_context_v1` model under the controller/privacy assessment;
