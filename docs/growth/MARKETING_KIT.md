@@ -69,7 +69,7 @@ Do not insert raw recipient email, phone, contact-list data or private profile d
 
 ## QR contract
 
-QR payload must be the canonical referral URL.
+QR payload must preserve the canonical referral URL and may add only the local one-shot `#qr` fragment used to distinguish a QR scan. The fragment is removed on landing and is not propagated when resharing.
 
 Required properties:
 - no email/phone in QR payload;
@@ -79,7 +79,7 @@ Required properties:
 - QR remains visually isolated from decorative patterns;
 - human-readable referral code remains visible as fallback.
 
-All current masters use a clearly named `QR_SLOT`. The live production QR renderer now exists and enforces the canonical four-module quiet zone. Runtime Marketing Kit export still needs to place that generated QR asset into each template's `QR_SLOT`; this document does not mark template export complete yet.
+All current masters use a clearly named `QR_SLOT`. The live production QR renderer enforces the canonical four-module quiet zone, and runtime Marketing Kit export now embeds that generated local PNG QR asset into the exported SVG. The editable Figma/Canva masters remain design sources; runtime export does not mutate those external masters.
 
 ## Channel coverage
 
@@ -122,11 +122,15 @@ Canva autofill was checked against the connected Brand Kit and returned **0 temp
 
 The planned V1 visual master family is complete in Figma and mirrored as editable Canva designs.
 
-Remaining work under this issue is implementation-oriented rather than missing master artwork:
-1. place production-generated QR assets into `QR_SLOT` during runtime Marketing Kit export;
-2. validate print QR scannability at physical output size;
-3. connect runtime Marketing Kit generation to the canonical field contract;
-4. add locale variants when localization is ready.
+Completed implementation items under this issue:
+1. production-generated QR assets are embedded in runtime SVG export;
+2. runtime Marketing Kit generation is connected to the canonical field contract;
+3. runtime creative copy supports the canonical `en-PH` and `fil-PH` locale packs.
+
+Remaining validation/optional automation:
+1. validate print QR scannability at physical output size;
+2. create localized editable Figma/Canva master variants if the visual-production workflow requires them;
+3. Canva Bulk Create remains unavailable until an autofill-capable Brand Template exists.
 
 The live QR renderer itself is no longer a missing dependency: it now produces locally generated PNG QR assets with the four-module quiet zone required by this contract.
 
@@ -146,9 +150,15 @@ It:
 
 The runtime SVG is a safe canonical production layout; it does not claim pixel-identical reproduction of the editable Figma/Canva master artwork.
 
+Runtime creative localization:
+- `en-PH` uses `marketing-kit/copy.en-PH.json`;
+- `fil-PH` uses `marketing-kit/copy.fil-PH.json`;
+- both expose the same three canonical message variants and keep referral identity unchanged;
+- locale and message variant are selected per exported creative and included in runtime validation.
+
 Still not claimed complete:
 - physical print QR scan validation;
-- locale-specific creative variants;
+- localized editable Figma/Canva master variants;
 - Canva Bulk Create automation.
 
 ## Coordination
