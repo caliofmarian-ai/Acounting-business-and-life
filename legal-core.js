@@ -198,16 +198,12 @@ async function activeVersionFor(pool,documentCode,preferredLocale='en-PH'){
   return q.rows[0]||null;
 }
 
-async function latestAcceptance(pool,accountId,versionId,{actionCode='',role='',businessId=null,adminAssignmentId=null,territoryId=null}={}){
+async function latestAcceptance(pool,accountId,versionId,{role=''}={}){
   const q=await pool.query(`
     SELECT * FROM legal_acceptances
-    WHERE account_id=$1 AND document_version_id=$2
-      AND action_code=$3 AND role_context=$4
-      AND COALESCE(business_id,0)=COALESCE($5::bigint,0)
-      AND COALESCE(admin_assignment_id,0)=COALESCE($6::bigint,0)
-      AND COALESCE(territory_id,0)=COALESCE($7::bigint,0)
+    WHERE account_id=$1 AND document_version_id=$2 AND role_context=$3
     ORDER BY created_at DESC,id DESC LIMIT 1
-  `,[accountId,versionId,clean(actionCode,100),clean(role,40),businessId,adminAssignmentId,territoryId]);
+  `,[accountId,versionId,clean(role,40)]);
   return q.rows[0]||null;
 }
 
