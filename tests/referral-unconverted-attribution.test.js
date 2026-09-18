@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   UNCONVERTED_REFERRAL_RETENTION_DAYS,
   hashReferralCorrelation,
@@ -28,6 +29,11 @@ const readyEnv = {
 };
 
 test('pending attribution is fail-closed behind activation, retention, lawful-basis and secret gates', () => {
+  const guardrails = JSON.parse(readFileSync(new URL('../growth/privacy-guardrails.json', import.meta.url), 'utf8'));
+  assert.equal(guardrails.retention.unconvertedReferralEventDays, UNCONVERTED_REFERRAL_RETENTION_DAYS);
+  assert.equal(guardrails.pendingAttribution.enabledByDefault, false);
+  assert.equal(guardrails.pendingAttribution.convertedAccountBindingAllowed, false);
+  assert.equal(guardrails.pendingAttribution.rawCorrelationIdStored, false);
   assert.equal(unconvertedReferralPersistenceState({}).reason, 'disabled');
   assert.equal(unconvertedReferralPersistenceState({
     REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED: 'true'
