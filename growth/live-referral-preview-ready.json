@@ -1,0 +1,7 @@
+{
+  "service": "accounting-growth-live-referral-preview",
+  "route": "/preview",
+  "healthcheck": "/promotion_preview",
+  "proof": "live-referral-shell-branch-deploy",
+  "usesProductionSecrets": false
+}
