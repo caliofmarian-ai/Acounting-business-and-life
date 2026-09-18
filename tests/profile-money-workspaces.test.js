@@ -65,3 +65,20 @@ test('Money workspace does not invent untracked settlement as zero earnings',()=
   assert.match(ui,/Money received<\/span><strong>Not tracked/);
   assert.match(ui,/Settlement amount is not configured yet/);
 });
+
+
+test('Money workspaces expose only budgets belonging to the active personal profile',()=>{
+  assert.match(server,/listProfileBudgetEnvelopes/);
+  assert.match(server,/const profileBudgets=budgets\.filter\(b=>b\.profile_role===role&&b\.business_id==null\)/);
+  assert.match(server,/budgets:profileBudgets/);
+  assert.match(ui,/Profile budget/);
+  assert.match(ui,/planned allocations for this profile only/);
+  assert.match(ui,/They are not bank\/e-wallet balances/);
+  assert.match(ui,/allocated budget/);
+});
+
+test('personal Money UI keeps profile budget distinct from financial destinations',()=>{
+  assert.match(ui,/budgetSummary\(\)\+financialDestinations\(\)/);
+  assert.match(ui,/Planning only/);
+  assert.match(ui,/Create one in Settings/);
+});
