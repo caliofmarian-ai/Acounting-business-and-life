@@ -78,3 +78,13 @@ Develop:
 Only documents explicitly classified PUBLIC may appear in the public Help Center.
 
 Canonical controller/DPO record: `docs/privacy/INITIAL_PIC_DPO_GOVERNANCE.md` and `privacy/controller-profile.json`.
+
+## NPC registration assessment artifact
+
+Controlled pre-launch assessment:
+`docs/privacy/NPC_REGISTRATION_ASSESSMENT_DRAFT.md`
+
+Machine-readable state:
+`privacy/npc-registration-assessment.json`
+
+The current result is **PENDING**. Development may continue, but public launch must not proceed with the applicability decision unresolved.

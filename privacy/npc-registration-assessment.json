@@ -1,0 +1,92 @@
+{
+  "version": "1.0.0",
+  "countryCode": "PH",
+  "status": "assessment_in_progress",
+  "finalRegistrationDecision": null,
+  "launchGateIfUnresolved": true,
+  "operator": {
+    "operatingName": "Business & Life",
+    "legalEntityFormed": false,
+    "operatorType": "natural_person",
+    "confirmedPic": false,
+    "individualPicDeFactoDpoIfConfirmed": true
+  },
+  "mandatoryTriggerAssessment": {
+    "employees250OrMore": {
+      "threshold": 250,
+      "verifiedEmployeeCount": null,
+      "status": "unresolved"
+    },
+    "sensitivePersonalInformation1000OrMoreIndividuals": {
+      "thresholdIndividuals": 1000,
+      "currentDesignCanProcessSensitivePersonalInformation": true,
+      "verifiedSensitivePersonalInformationIndividuals": null,
+      "status": "unresolved",
+      "evidenceCategories": [
+        "education_or_qualification_data_in_private_cv_credential_evidence",
+        "government_issued_licence_or_credential_evidence_where_applicable",
+        "potential_health_related_information_if_processed_in_personal_money_or_support_evidence"
+      ]
+    },
+    "processingLikelyToPoseRiskToRightsAndFreedoms": {
+      "status": "formal_risk_assessment_required",
+      "potentialRiskRelevantDomains": [
+        "private_credentials_and_cv_evidence",
+        "government_issued_licence_evidence",
+        "active_delivery_location",
+        "payment_settlement_and_accounting_records",
+        "support_and_incident_evidence",
+        "admin_authorization_and_audit_evidence",
+        "privacy_rights_requests"
+      ],
+      "triggerMet": null
+    },
+    "automatedDecisionMakingOrProfilingDps": {
+      "status": "dps_inventory_review_required",
+      "triggerMet": null,
+      "currentKnownBoundaries": [
+        "referral_external_analytics_off",
+        "referral_profiling_not_activated",
+        "profile_authority_requires_governed_platform_admin_review_where_applicable"
+      ]
+    }
+  },
+  "currentDataDomains": [
+    "account_identity_and_contact",
+    "merchant_supplier_business_records",
+    "service_provider_private_cv_credentials",
+    "courier_eligibility_vehicle_evidence",
+    "active_delivery_location",
+    "payments_settlement_accounting",
+    "support_incident_evidence",
+    "legal_acceptance_audit",
+    "admin_authorization_audit",
+    "privacy_rights_requests",
+    "referral_acquisition_metadata_fail_closed_for_durable_external_processing"
+  ],
+  "registrationPath": {
+    "mandatoryRegistration": null,
+    "voluntaryRegistrationDecision": null,
+    "swornDeclarationIfApplicableAndNotRegistered": "review_current_NPC_Circular_2022_04_requirements_before_action",
+    "npcrsAccount": null,
+    "registrationId": null,
+    "certificate": null
+  },
+  "requiredBeforeFinalDecision": [
+    "confirm_actual_pic_and_operator_legal_identity",
+    "verify_launch_employee_count",
+    "estimate_and_then_measure_spi_data_subject_count",
+    "complete_data_processing_system_inventory",
+    "complete_privacy_risk_assessment",
+    "assess_automated_decision_making_and_profiling_per_dps",
+    "confirm_final_launch_feature_set",
+    "review_current_npcrs_rules_at_decision_time"
+  ],
+  "sources": {
+    "npcCircular2022_04": "https://privacy.gov.ph/wp-content/uploads/2023/05/Circular-2022-04.pdf",
+    "npcRegistration": "https://privacy.gov.ph/pips-and-pics/register/",
+    "npcFaq2026": "https://privacy.gov.ph/pips-and-pics/faqs/",
+    "npcDpoGuidance": "https://privacy.gov.ph/appointing-a-data-protection-officer/",
+    "npcSensitivePersonalInformationDefinition": "https://privacy.gov.ph/glossary-of-data-privacy-terms/"
+  }
+}
