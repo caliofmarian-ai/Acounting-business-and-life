@@ -1,6 +1,6 @@
 # Referral Retention Decision Brief — Philippines
 
-Status: **OWNER / LEGAL DECISION REQUIRED — NOT ACTIVE**
+Status: **PARTIAL OWNER DECISION RECORDED — NOT ACTIVE**
 
 Verified: 2026-09-18
 
@@ -52,8 +52,8 @@ Examples:
 
 These events are acquisition analytics, not accounting records. The retention period should therefore be the shortest period that supports the declared acquisition-analysis purpose.
 
-Decision required:
-- `unconvertedReferralEventDays`.
+Owner decision recorded on 2026-09-18:
+- `unconvertedReferralEventDays = 60`.
 
 No current Philippine source found in this research imposes a fixed number of days for this ordinary referral-analytics class.
 
@@ -94,12 +94,12 @@ The following values are design candidates based on data minimization. They are 
 
 | Data class | Candidate | Rationale | Current status |
 | --- | ---: | --- | --- |
-| Unconverted identifiable referral events | 90 days | Enough for short acquisition-cycle analysis while limiting identifiable history | OWNER / LEGAL DECISION |
+| Unconverted identifiable referral events | 60 days | Owner-approved shorter acquisition-analysis window; delete or irreversibly aggregate after expiry unless a documented exception applies | OWNER APPROVED — NOT YET ACTIVATED |
 | Converted referral attribution, when no financial reward is involved | 12 months after conversion | Supports attribution/support analysis, then should be deleted or irreversibly aggregated unless another documented basis applies | OWNER / LEGAL DECISION |
 | Aggregated/de-identified growth statistics | Longer, subject to genuine de-identification | DPA/IRR allows longer storage where data no longer permits identification, with safeguards | DESIGN |
 | Reward/payment/accounting evidence | No value yet | Depends on future reward economics, accounting/tax classification and dispute obligations | HOLD |
 
-These candidates must not be copied into production configuration until approved.
+The Owner-approved 60-day unconverted value is recorded in the canonical machine-readable guardrails. That partial approval does not make referral analytics production-ready; the remaining retention/legal gates below must still be resolved before external analytics or durable attribution is activated.
 
 ## 5. Required disposal behavior
 
@@ -143,15 +143,18 @@ Therefore:
 - `referral_growth_v1` remains inactive at 0%;
 - event definitions remain unverified until correct-project real events are observed and audited.
 
-## 8. Owner decision record — pending
+## 8. Owner decision record
 
-The following must be explicitly approved before Growth changes `growth/privacy-guardrails.json` or Railway analytics variables:
+Recorded Owner decision:
 
-1. Unconverted referral-event retention period.
-2. Converted attribution retention rule.
-3. Whether/when converted attribution becomes irreversibly aggregated.
-4. Privacy-notice wording/basis for referral analytics.
-5. Correct Business & Life PostHog project/region and project token.
-6. Reward-evidence retention only after reward economics are separately approved.
+- Unconverted referral-event retention: **60 days**.
+
+Still requiring explicit approval/resolution before Growth enables production referral analytics or durable attribution:
+
+1. Converted attribution retention rule.
+2. Whether/when converted attribution becomes irreversibly aggregated.
+3. Privacy-notice wording/basis for referral analytics.
+4. Correct Business & Life PostHog project/region and project token.
+5. Reward-evidence retention only after reward economics are separately approved.
 
 Until then the canonical state is **HOLD** for external analytics and durable referral attribution retention.
