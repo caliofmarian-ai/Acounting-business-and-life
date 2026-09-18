@@ -1,0 +1,36 @@
+{
+  "locale": "en-PH",
+  "version": "1.0.0",
+  "brand": "Business & Life",
+  "reusable": {
+    "brandLine": "BUSINESS & LIFE",
+    "scanCta": "SCAN TO START",
+    "referralCodeLabel": "Referral code: {REFERRAL_CODE}",
+    "recommendedBy": "Recommended by {REFERRER_NAME}",
+    "governanceNote": "Referral credit never bypasses operational profile approval."
+  },
+  "variants": [
+    {
+      "id": "clarity_v1",
+      "headline": "Run your business. Understand your money.",
+      "body": "One account for the tools and profiles available to you."
+    },
+    {
+      "id": "money_visibility_v1",
+      "headline": "Know where your money goes.",
+      "body": "Business and personal money can be easier to understand when the right information lives in one place."
+    },
+    {
+      "id": "personal_share_v1",
+      "headline": "You’ve been invited to try Business & Life.",
+      "body": "Use the referral link or QR code to get started."
+    }
+  ],
+  "prohibitedClaims": [
+    "Guaranteed savings",
+    "Guaranteed profit",
+    "Automatic business approval",
+    "Government-approved accounting",
+    "Guaranteed tax compliance"
+  ]
+}
