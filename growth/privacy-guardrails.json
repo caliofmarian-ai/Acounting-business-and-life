@@ -53,7 +53,7 @@
     "convertedAttributionRetentionRule": null,
     "rewardEvidenceRetentionRule": null,
     "productionReady": false,
-    "gateReason": "Owner reconfirmed 90-day retention for unconverted referral events, superseding the temporary 60-day setting. Converted attribution and reward-evidence retention rules remain unresolved, so production referral tracking and external analytics stay gated."
+    "gateReason": "Owner confirmed 90-day retention for unconverted referral events. Converted attribution and reward-evidence retention rules remain unresolved, so production referral tracking and external analytics stay gated."
   },
   "analytics": {
     "allowedProperties": [
