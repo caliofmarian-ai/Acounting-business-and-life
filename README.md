@@ -8,7 +8,7 @@ Business & Life is a mobile-first local economic ecosystem for the Philippines. 
 - Courier / Delivery Provider
 - Service Provider / Local Services
 
-The current release target is **V0.12.0**; V0.11 unified notifications is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
+The current release target is **V0.13.0**; V0.12 versioned Legal & Consent is already merged into `main`. GitHub `main` is the source of truth and `docs/CURRENT_STATE.md` is the compact fresh-agent handoff.
 
 ## What is implemented
 
@@ -84,10 +84,11 @@ Accounting
   -> Multi-business Accounting
   -> Scoped Admin + Support
   -> Notifications
-  -> Legal & Consent (public entry)
+  -> Legal & Consent
+  -> Payment Core (public entry)
 ```
 
-The public process is `server-legal.js` and the Railway health check is `/health`.
+The public process is `server-payments.js` and the Railway health check is `/health`.
 
 ## Current country edition
 
@@ -108,9 +109,11 @@ A future Ireland/Romania/other edition must use an isolated deployment/database/
 
 **V0.11 Notifications is implemented.** It adds one canonical event/delivery layer across Orders, Delivery, Suppliers, Local Services, Support, Incidents and Profile Governance, with in-app inbox, preferences/locales, email delivery ledger, PWA Web Push, bounded retries and idempotency. Password-reset and verification email now use the same delivery ledger without storing secure reset/verification links in notification history.
 
-**V0.12 Legal & Consent is the current release target.** It adds versioned legal documents, exact content hashes, role/action requirements, acceptance/withdrawal evidence, localization review state, re-consent and controlled Admin activation. Existing repository agreements are imported only as `draft / legal review pending`; they do not become active Terms automatically.
+**V0.12 Legal & Consent is implemented.** It adds versioned legal documents, exact content hashes, role/action requirements, acceptance/withdrawal evidence, localization review state, re-consent and controlled Admin activation. Existing repository agreements are imported only as `draft / legal review pending`; they do not become active Terms automatically.
 
-The next major implementation lane after V0.12 is **Issue #34 — real payment provider, settlement and reconciliation**.
+**V0.13 Payment Core is the current release target.** It introduces provider-neutral payment intents, allocation records, refund requests, settlement/reconciliation ledgers and versioned fee-policy drafts. Existing Merchant-confirmed payments are mirrored for traceability without posting revenue twice. No online intent becomes paid from a client success screen, and no platform/operator fee is activated or invented by this release.
+
+The next payment step requires selecting and onboarding a real Philippine payment service provider (PSP), then implementing its signed webhook/intent/refund/statement adapter.
 
 The canonical delivery order is maintained in **Issue #37 — PH PILOT ROADMAP**.
 
