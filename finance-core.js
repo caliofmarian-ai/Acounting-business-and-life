@@ -530,6 +530,161 @@ function pctRatio(n,d){
   return b>0?Math.round((a/b)*1000000)/10000:null;
 }
 
+
+function scenarioNonNegative(value,label,{integer=false,max=1e12}={}){
+  const n=Number(value??0);
+  if(!Number.isFinite(n)||n<0||n>max)throw Object.assign(new Error(label+' must be a non-negative number'),{status:400});
+  return integer?Math.floor(n):Math.round(n*10000)/10000;
+}
+function scenarioPercent(value,label){
+  const n=Number(value??0);
+  if(!Number.isFinite(n)||n<0||n>100)throw Object.assign(new Error(label+' must be between 0 and 100 percent'),{status:400});
+  return Math.round(n*10000)/10000;
+}
+const COMMISSION_STAFFING_KEYS=Object.freeze([
+  'super_admin_remuneration','country_admin','territory_admin','specialist_admin','support_staff','other_employee_contractor'
+]);
+const COMMISSION_OPERATING_COST_KEYS=Object.freeze([
+  'infrastructure','database_storage_monitoring','ai_api_maps_notifications','support_operations',
+  'marketing_growth','legal_accounting_compliance','insurance_licences','other_overhead'
+]);
+function staffingScenario(raw={}){
+  const rows=[],byKey={};
+  let total=0;
+  for(const key of COMMISSION_STAFFING_KEYS){
+    const item=raw?.[key]||{};
+    const count=scenarioNonNegative(item.count,key+' count',{integer:true,max:1e6});
+    const monthlyCost=scenarioNonNegative(item.monthly_cost_per_person,key+' monthly cost',{max:1e9});
+    const amount=money(count*monthlyCost);
+    rows.push({key,count,monthly_cost_per_person:money(monthlyCost),monthly_cost:amount});
+    byKey[key]=amount;total=money(total+amount);
+  }
+  return{rows,by_key:byKey,total_monthly_staffing_cost:total};
+}
+function operatingCostScenario(raw={}){
+  const rows=[],byKey={};
+  let total=0;
+  for(const key of COMMISSION_OPERATING_COST_KEYS){
+    const amount=money(scenarioNonNegative(raw?.[key],key+' monthly cost',{max:1e12}));
+    rows.push({key,monthly_cost:amount});
+    byKey[key]=amount;total=money(total+amount);
+  }
+  return{rows,by_key:byKey,total_monthly_operating_overhead:total};
+}
+
+export function commissionSustainabilityScenario(input={}){
+  const events=scenarioNonNegative(input.completedEventsPerMonth,'completed events per month',{integer:true,max:1e9});
+  const averageFeeBase=money(scenarioNonNegative(input.averageFeeBaseValue,'average fee-base value',{max:1e12}));
+  const feeEligibleSharePct=scenarioPercent(input.feeEligibleSharePct,'fee-eligible share');
+  const onlineSharePct=scenarioPercent(input.onlinePaymentSharePct,'online-payment share');
+  const processorRatePct=scenarioPercent(input.processorRatePct,'processor rate');
+  const processorFixedPerOnlineEvent=money(scenarioNonNegative(input.processorFixedPerOnlineEvent,'processor fixed cost per online event',{max:1e9}));
+  const riskAllowancePct=scenarioPercent(input.riskAllowancePct,'refund/chargeback/bad-debt allowance');
+  const safetyReservePct=scenarioPercent(input.safetyReservePct,'safety reserve');
+  const growthSurplusPct=scenarioPercent(input.growthSurplusPct,'growth/reinvestment surplus');
+  const platformAbsorbsProcessorFees=input.platformAbsorbsProcessorFees!==false;
+  const platformAbsorbsRiskAllowance=input.platformAbsorbsRiskAllowance!==false;
+
+  const staffing=staffingScenario(input.staffing||{});
+  const overhead=operatingCostScenario(input.monthlyCosts||{});
+  const matureFeeBase=money(events*averageFeeBase);
+  const currentFeeEligibleBase=money(matureFeeBase*feeEligibleSharePct/100);
+  const onlineEvents=Math.round(events*onlineSharePct/100);
+  const onlineFeeBase=money(matureFeeBase*onlineSharePct/100);
+  const processorVariable=platformAbsorbsProcessorFees?money(onlineFeeBase*processorRatePct/100):0;
+  const processorFixed=platformAbsorbsProcessorFees?money(onlineEvents*processorFixedPerOnlineEvent):0;
+  const processorCost=money(processorVariable+processorFixed);
+  const riskAllowance=platformAbsorbsRiskAllowance?money(matureFeeBase*riskAllowancePct/100):0;
+
+  const baseOperatingCost=money(
+    staffing.total_monthly_staffing_cost+
+    overhead.total_monthly_operating_overhead+
+    processorCost+
+    riskAllowance
+  );
+  const safetyReserveAmount=money(baseOperatingCost*safetyReservePct/100);
+  const growthSurplusAmount=money(baseOperatingCost*growthSurplusPct/100);
+  const sustainableRevenueNeed=money(baseOperatingCost+safetyReserveAmount);
+  const growthRevenueNeed=money(sustainableRevenueNeed+growthSurplusAmount);
+
+  const rate=(need,base)=>base>0?Math.round((need/base)*1000000)/10000:null;
+  const currentBreakEven=rate(baseOperatingCost,currentFeeEligibleBase);
+  const currentSustainable=rate(sustainableRevenueNeed,currentFeeEligibleBase);
+  const currentGrowth=rate(growthRevenueNeed,currentFeeEligibleBase);
+  const matureBreakEven=rate(baseOperatingCost,matureFeeBase);
+  const matureSustainable=rate(sustainableRevenueNeed,matureFeeBase);
+  const matureGrowth=rate(growthRevenueNeed,matureFeeBase);
+  const currentStatus=currentFeeEligibleBase<=0
+    ?'PROMOTIONAL_VOLUME_REQUIRES_EXTERNAL_FUNDING'
+    :(currentSustainable!=null&&currentSustainable>100?'NOT_VIABLE_AT_MODELED_VOLUME':'CALCULABLE');
+  const matureStatus=matureFeeBase<=0
+    ?'NO_MODELED_ECONOMIC_VOLUME'
+    :(matureSustainable!=null&&matureSustainable>100?'NOT_VIABLE_AT_MODELED_VOLUME':'CALCULABLE');
+
+  return{
+    simulation_only:true,
+    applies_live_fees:false,
+    currency_code:'PHP',
+    assumptions:{
+      completed_events_per_month:events,
+      average_fee_base_value:averageFeeBase,
+      fee_eligible_share_pct:feeEligibleSharePct,
+      online_payment_share_pct:onlineSharePct,
+      processor_rate_pct:processorRatePct,
+      processor_fixed_per_online_event:processorFixedPerOnlineEvent,
+      platform_absorbs_processor_fees:platformAbsorbsProcessorFees,
+      risk_allowance_pct:riskAllowancePct,
+      platform_absorbs_risk_allowance:platformAbsorbsRiskAllowance,
+      safety_reserve_pct: safetyReservePct,
+      growth_reinvestment_surplus_pct_of_operating_cost:growthSurplusPct
+    },
+    staffing,
+    operating_costs:overhead,
+    volume:{
+      mature_monthly_fee_base:matureFeeBase,
+      current_fee_eligible_monthly_base:currentFeeEligibleBase,
+      online_events_per_month:onlineEvents,
+      online_fee_base:onlineFeeBase
+    },
+    cost_model:{
+      staffing_cost:staffing.total_monthly_staffing_cost,
+      operating_overhead:overhead.total_monthly_operating_overhead,
+      processor_variable_cost:processorVariable,
+      processor_fixed_cost:processorFixed,
+      processor_total_cost:processorCost,
+      refund_chargeback_bad_debt_allowance:riskAllowance,
+      base_operating_cost:baseOperatingCost,
+      safety_reserve_amount:safetyReserveAmount,
+      growth_reinvestment_surplus_amount:growthSurplusAmount,
+      sustainable_revenue_need:sustainableRevenueNeed,
+      growth_revenue_need:growthRevenueNeed
+    },
+    rates:{
+      current_rollout:{
+        status:currentStatus,
+        break_even_pct:currentBreakEven,
+        sustainable_pct:currentSustainable,
+        growth_reinvestment_pct:currentGrowth,
+        fee_base:currentFeeEligibleBase
+      },
+      mature_100pct_fee_eligible:{
+        status:matureStatus,
+        break_even_pct:matureBreakEven,
+        sustainable_pct:matureSustainable,
+        growth_reinvestment_pct:matureGrowth,
+        fee_base:matureFeeBase
+      }
+    },
+    guardrails:{
+      owner_distribution_in_operating_cost:false,
+      owner_distribution_note:'Owner withdrawal/distribution is not payroll or an operating expense and is excluded from the required platform-fee calculation.',
+      promotional_rule:'The first 90 eligible days use zero Business & Life platform fee. If fee-eligible share is 0%, modeled operations require Owner/company capital or another legitimate funding source.',
+      fee_base_rule:'Average fee-base value is the value to which the future fee policy applies, not automatically the full Customer payment.',
+      activation:'NOT_PERFORMED'
+    }
+  };
+}
+
 export async function pricingScenario(pool,input={}){
   const p=period(input);
   const territoryId=input.territoryId==null?null:Number(input.territoryId);

@@ -11,3 +11,12 @@
 .adminFinanceAdvanced{border:1px solid var(--line);border-radius:16px;background:#0c1727;overflow:hidden}.adminFinanceAdvanced>summary{cursor:pointer;list-style:none;padding:13px 14px;font-weight:900;color:#d8e4ef}.adminFinanceAdvanced>summary::-webkit-details-marker{display:none}.adminFinanceAdvanced>summary:after{content:"›";float:right;transform:rotate(90deg);color:var(--muted)}.adminFinanceAdvanced[open]>summary:after{transform:rotate(-90deg)}.adminFinanceAdvanced>.adminForm{border:0;border-top:1px solid var(--line);border-radius:0}.adminFinanceAdvancedBody{padding:12px}
 .adminOwnerDistribution{display:grid;gap:12px;border:1px solid #7a4b23;background:#2b1b12;border-radius:18px;padding:14px}.adminOwnerDistribution small{font-size:10px;font-weight:900;letter-spacing:.12em;color:#ffd19b}.adminOwnerDistribution h3{margin:4px 0}.adminOwnerDistribution p{margin:0;color:#e7c9a9;line-height:1.45}
 @media(min-width:760px){.adminPrimaryFinance{grid-template-columns:repeat(4,minmax(0,1fr))}.adminFinanceHero{grid-template-columns:1fr auto;align-items:start}}
+
+.commissionPlannerCard{display:grid;gap:12px;margin:14px 0;background:#0d1928;border:1px solid #28425f;border-radius:20px;padding:14px}
+.commissionPlannerHead{display:grid;gap:5px}.commissionPlannerHead small{font-size:10px;font-weight:900;letter-spacing:.12em;color:var(--accent)}.commissionPlannerHead h3{margin:0;font-size:20px}.commissionPlannerHead p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
+.commissionPlannerForm{background:transparent;border:0;padding:0}.commissionPlannerForm>.sectionTitle{margin-top:2px}
+.commissionAssumptions{border:1px solid var(--line);border-radius:14px;background:#0a1422;overflow:hidden}.commissionAssumptions>summary{cursor:pointer;list-style:none;padding:12px 13px;font-size:12px;font-weight:900;color:#d8e4ef}.commissionAssumptions>summary::-webkit-details-marker{display:none}.commissionAssumptions>summary:after{content:"›";float:right;transform:rotate(90deg);color:var(--muted)}.commissionAssumptions[open]>summary:after{transform:rotate(-90deg)}.commissionAssumptions>.financeFormGrid,.commissionAssumptions>.notice{margin:0 12px 12px}
+.staffingPair{display:grid;grid-template-columns:1fr 1fr;gap:8px;border:1px solid #20334a;border-radius:12px;padding:9px;background:#0b1625}
+.commissionPlannerResults{display:grid;gap:10px;margin-top:12px}
+@media(min-width:760px){.commissionPlannerHead{grid-template-columns:1fr auto;align-items:start}.staffingPair{grid-column:span 2}}
+@media(max-width:520px){.staffingPair{grid-template-columns:1fr}}
