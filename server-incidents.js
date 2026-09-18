@@ -119,8 +119,8 @@ app.get('/health',async(_req,res)=>{
 app.get('/incidents.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','incidents.css'),'utf8')));
 app.get('/incidents-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','incidents-ui.js'),'utf8')));
 async function root(req,res){
-  const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();
-  html=html.replace('</head>','  <link rel="stylesheet" href="/incidents.css" />\n</head>').replace('</body>','  <script type="module" src="/incidents-ui.js"></script>\n</body>');
+  const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});
+  const html=await r.text();
   res.status(r.status).type('html').send(html);
 }
 app.get('/',root);app.get('/index.html',root);
