@@ -192,6 +192,7 @@ test('registration carries referral context but only emits signup-completed afte
   const server = readFileSync(new URL('../server-auth.js', import.meta.url), 'utf8');
   const analytics = readFileSync(new URL('../growth/referral-analytics.js', import.meta.url), 'utf8');
 
+  assert.match(authUi, /await trackReferralSignupStarted\(\)/);
   assert.match(authUi, /referral_conversion:referralConversion/);
   assert.match(authUi, /correlation_id:referralCorrelationId\(\)/);
   assert.match(server, /bindReferralSignupConversion/);
