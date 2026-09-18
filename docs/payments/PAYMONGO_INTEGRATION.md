@@ -1,6 +1,6 @@
-# PayMongo Integration — Philippines Sandbox
+# PayMongo Integration — Philippines Sandbox + Live Pilot
 
-Status: **V0.15 sandbox adapter + automatic webhook bootstrap**
+Status: **Hosted Checkout + automatic webhook bootstrap + live-pilot reconciliation gate**
 
 This document is operational/technical. It does not claim that PayMongo onboarding, KYC, payment-method activation, or live processing has been completed.
 
@@ -44,6 +44,7 @@ Optional:
 
 Live protection:
 - live processing is **disabled by default**;
+- public production Hosted Checkout remains blocked until the controlled-pilot evidence gate is READY;
 - `sk_live_...` is not accepted unless both:
   - `PAYMONGO_MODE=live`
   - `PAYMONGO_LIVE_ENABLED=true`
@@ -115,6 +116,40 @@ Until payout reconciliation is activated:
 
 Later payout reconciliation should use PayMongo payout/payment exports/API evidence and move provider-clearing balances to the actual destination account without creating a second sale.
 
+## Programmatic live-payment reconciliation
+
+For the controlled live validation payment, Business & Life does not rely only on its own webhook record.
+
+Finance Admin can trigger:
+
+`POST /api/payments/admin/paymongo/reconcile-live/:intent`
+
+The adapter retrieves PayMongo payment records through:
+
+`GET https://api.paymongo.com/v1/payments`
+
+and matches the stored provider Payment id. The reconciliation checks:
+- `paid` provider status;
+- `livemode=true`;
+- exact PHP amount and currency;
+- PayMongo processor fee;
+- provider net amount.
+
+A successful comparison writes:
+- a `reconciliation_runs` record with status `matched`;
+- a matching `reconciliation_items` payment record;
+- an immutable payment/Admin audit event.
+
+If any value differs, the run is `mismatch` and real-customer checkout remains HOLD.
+
+Official references:
+- https://docs.paymongo.com/reference/list-all-payments
+- https://docs.paymongo.com/docs/payment-acceptance-payment-reconciliation
+- https://docs.paymongo.com/reference/getpayoutlist
+- https://docs.paymongo.com/reference/getpayouttransactions
+
+Payment reconciliation proves the customer payment. Payout/settlement reconciliation remains a separate later evidence layer because a paid customer transaction does not prove funds have reached a Merchant bank/e-wallet.
+
 ## Required owner/provider action before end-to-end sandbox test
 
 1. Create or use a PayMongo account.
@@ -127,3 +162,14 @@ Later payout reconciliation should use PayMongo payout/payment exports/API evide
    - test checkout
    - verified webhook
    - order becomes paid only after webhook.
+
+## Required live activation sequence before first external customer
+
+1. Complete PayMongo live merchant approval/KYC/KYB and enable the actual methods to be offered.
+2. Store `sk_live_...` only as `PAYMONGO_SECRET_KEY` in production secret storage.
+3. Set `PAYMONGO_MODE=live` and `PAYMONGO_LIVE_ENABLED=true`.
+4. Confirm automatic live webhook bootstrap/signature verification.
+5. Finance Admin runs one small LIVE validation order/payment.
+6. Verified webhook must mark the matching internal payment succeeded.
+7. Finance Admin runs provider reconciliation and obtains `matched` evidence.
+8. Only then can `controlled_pilot` become `READY` for external customers.
