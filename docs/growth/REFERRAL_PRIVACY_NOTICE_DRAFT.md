@@ -40,7 +40,7 @@ Current instrumented event names:
 - `referral_signup_started`.
 
 The following are **not current runtime claims**:
-- `referral_signup_completed` — HOLD until durable attribution is approved and implemented;
+- `referral_signup_completed` — code path prepared, but HOLD and not emitted unless durable converted attribution is explicitly approved and successfully bound;
 - `referral_qualified` — HOLD until qualification policy exists;
 - `referral_rewarded` — HOLD until reward economics, accounting and retention are approved.
 
@@ -173,6 +173,8 @@ The final notice must provide the actual controller/PIC or representative contac
 ## 9. Security/minimization controls already implemented
 
 Current Growth guardrails include:
+- converted account binding is disabled by default, has no default retention period and requires explicit converted-retention/lawful-basis approval;
+- registration referral context cannot grant authority and binding failure never blocks account creation;
 - pending pre-conversion attribution persistence is disabled by default and separately gated by lawful-basis approval;
 - raw browser correlation IDs are not stored by the pending-attribution design; only a dedicated-secret HMAC is permitted;
 - opaque public referral identifier;
