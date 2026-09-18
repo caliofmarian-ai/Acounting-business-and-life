@@ -6,8 +6,8 @@ import { spawnSync } from 'node:child_process';
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const read = relative => readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
 
-test('production entry point is the PayMongo sandbox adapter over Payment Core', () => {
-  assert.equal(pkg.version, '0.14.0');
+test('production entry point is the PayMongo webhook-bootstrap adapter over Payment Core', () => {
+  assert.equal(pkg.version, '0.15.0');
   assert.match(pkg.scripts.start, /--import \.\/bootstrap-env\.js/);
   assert.match(pkg.scripts.start, /server-paymongo\.js/);
 });
@@ -51,7 +51,7 @@ test('database bootstrap upgrades legacy ambiguous SSL modes to verify-full', ()
   assert.match(probe.stdout, /sslmode=verify-full/);
 });
 
-test('current-state document identifies the pilot roadmap and PayMongo sandbox sequence', () => {
+test('current-state document identifies the pilot roadmap and PayMongo webhook-bootstrap sequence', () => {
   const state = read('docs/CURRENT_STATE.md');
   assert.match(state, /Issue #37/);
   assert.match(state, /multi-business/i);

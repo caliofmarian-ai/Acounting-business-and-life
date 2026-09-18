@@ -1,6 +1,6 @@
 # PayMongo Integration — Philippines Sandbox
 
-Status: **V0.14 sandbox adapter**
+Status: **V0.15 sandbox adapter + automatic webhook bootstrap**
 
 This document is operational/technical. It does not claim that PayMongo onboarding, KYC, payment-method activation, or live processing has been completed.
 
@@ -32,8 +32,12 @@ Required for checkout:
 - `PAYMONGO_PAYMENT_METHODS=card,gcash,paymaya,qrph`
 - `AUTH_PUBLIC_BASE_URL=https://<public Business & Life domain>`
 
-Required before payment confirmation can be trusted:
-- `PAYMONGO_WEBHOOK_SECRET=<webhook endpoint secret>`
+Webhook bootstrap:
+- `PAYMONGO_WEBHOOK_SECRET` is **optional** in V0.15.
+- If it is absent but `PAYMONGO_SECRET_KEY` is configured, Business & Life lists webhooks for the exact public endpoint and reuses the matching test webhook.
+- If no matching webhook exists, it creates one through `POST /v1/webhooks` for `checkout_session.payment.paid`.
+- The returned/retrieved webhook secret is kept only in process memory and reacquired from PayMongo after restart.
+- An explicit `PAYMONGO_WEBHOOK_SECRET` environment variable remains supported as an override.
 
 Optional:
 - `PAYMONGO_WEBHOOK_TOLERANCE_SECONDS=300`
@@ -114,13 +118,10 @@ Later payout reconciliation should use PayMongo payout/payment exports/API evide
 ## Required owner/provider action before end-to-end sandbox test
 
 1. Create or use a PayMongo account.
-2. Complete any PayMongo requirements necessary to access test API keys.
-3. Put the test secret key in Railway as `PAYMONGO_SECRET_KEY`.
-4. Create a **test-mode** webhook in PayMongo:
-   - URL: `https://<V0.14 preview domain>/api/payments/webhooks/paymongo`
-   - event: `checkout_session.payment.paid`
-5. Put the webhook secret in Railway as `PAYMONGO_WEBHOOK_SECRET`.
-6. Redeploy and verify:
+2. Complete any PayMongo requirements necessary to access the test secret key.
+3. Put the **test** secret key directly in Railway as `PAYMONGO_SECRET_KEY=sk_test_...` — do not paste it into GitHub or public chat.
+4. Redeploy. Business & Life will automatically discover/create the test webhook at `https://<V0.15 preview domain>/api/payments/webhooks/paymongo` for `checkout_session.payment.paid` and recover its verification secret server-side.
+5. Verify:
    - `/health`
    - `/api/payments/paymongo/status`
    - test checkout

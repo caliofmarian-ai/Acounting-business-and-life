@@ -4,13 +4,13 @@ GitHub `main` is the source of truth. This file is the compact fresh-agent hando
 
 ## Current executable target
 
-- merged baseline before this slice: **V0.13 Provider-neutral Payment Core**;
-- current implementation slice: **V0.14 PayMongo Sandbox Adapter**;
+- merged baseline before this slice: **V0.14 PayMongo Sandbox Adapter**;
+- current implementation slice: **V0.15 PayMongo Automatic Webhook Bootstrap**;
 - country edition: `PH`;
 - currency: `PHP`;
 - default business timezone: `Asia/Manila`.
 
-The public runtime chain after V0.14 is:
+The public runtime chain after V0.15 is:
 
 `Accounting -> Account/Auth -> Orders -> Marketplace -> Local Services -> Suppliers -> Delivery -> Delivery Finance -> Incidents -> Auth Hardening -> Profile Governance -> Multi-business Accounting -> Scoped Admin + Support -> Notifications -> Legal & Consent -> Payment Core -> PayMongo Sandbox`
 
@@ -124,7 +124,7 @@ Implemented in the provider-neutral slice:
 - client success pages are never payment authority;
 - Payment Center and Finance Admin UI showing provider readiness explicitly.
 
-## V0.14 — current boundary: PayMongo sandbox implementation
+## V0.14 — completed boundary: PayMongo sandbox implementation
 
 Implemented:
 - PayMongo provider registration and sandbox/live-mode guard;
@@ -140,12 +140,24 @@ Implemented:
 - PayMongo refund API execution for approved internal refund requests;
 - Payment Center redirect flow that never trusts browser success redirects.
 
-Still required for end-to-end PayMongo sandbox:
+## V0.15 — current boundary: automatic PayMongo webhook bootstrap
+
+Implemented:
+- after `PAYMONGO_SECRET_KEY` is configured, startup queries PayMongo for the exact current webhook URL;
+- an existing test webhook for `checkout_session.payment.paid` is reused rather than duplicated;
+- a missing webhook is created once through `POST /v1/webhooks`;
+- a disabled matching webhook is re-enabled;
+- the webhook verification secret is retrieved from PayMongo and retained in process memory only;
+- database/provider metadata stores webhook id/url/status/source/error, never the webhook secret;
+- `PAYMONGO_WEBHOOK_SECRET` remains a supported explicit environment override;
+- scoped Finance Admin can trigger a safe webhook-bootstrap retry;
+- signature verification remains mandatory even when automatic bootstrap fails.
+
+Still required for the first end-to-end PayMongo sandbox:
 - PayMongo account with access to a test secret key;
-- `PAYMONGO_SECRET_KEY=sk_test_...` in Railway;
-- PayMongo test webhook subscribed to `checkout_session.payment.paid`;
-- `PAYMONGO_WEBHOOK_SECRET` in Railway;
-- provider test checkout + signed webhook verification.
+- `PAYMONGO_SECRET_KEY=sk_test_...` added directly to Railway secret variables;
+- redeploy;
+- provider test checkout + verified signed webhook.
 
 Operational setup: `docs/payments/PAYMONGO_INTEGRATION.md`.
 
@@ -159,13 +171,14 @@ Backups/restore proof, staging, monitoring, private object storage, rate limits 
 
 Issue #37 — `PH PILOT ROADMAP — Minimum launch gates and post-pilot expansion order` remains the launch-order authority.
 
-Continuation after V0.14 code integration:
-1. configure PayMongo test key and webhook secret in Railway;
-2. execute one end-to-end PayMongo sandbox checkout and refund test;
-3. reconcile PayMongo payout/statement evidence once the account exposes it;
-4. end-to-end economic-loop revalidation;
-5. #36 production-readiness gate;
-6. controlled Philippines pilot in one explicitly configured operating territory.
+Continuation after V0.15:
+1. add the PayMongo test secret key directly to Railway and redeploy;
+2. automatic webhook bootstrap must report ready;
+3. execute one end-to-end PayMongo sandbox checkout and refund test;
+4. reconcile PayMongo payout/statement evidence once the account exposes it;
+5. end-to-end economic-loop revalidation;
+6. #36 production-readiness gate;
+7. controlled Philippines pilot in one explicitly configured operating territory.
 
 ## Country / commerce separation
 

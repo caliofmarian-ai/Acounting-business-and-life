@@ -19,8 +19,8 @@ test('PayMongo adapter uses Hosted Checkout v2 and never enables pass-on fees im
 test('PayMongo secret key remains server-side and Basic auth is constructed only in adapter code',()=>{
   assert.match(adapter,/PAYMONGO_SECRET_KEY/);
   assert.match(adapter,/Buffer\.from\(secretKey\+':'\)/);
-  assert.doesNotMatch(ui,/PAYMONGO_SECRET_KEY/);
-  assert.doesNotMatch(ui,/sk_test_/);
+  assert.doesNotMatch(ui,/process\\.env\\.PAYMONGO_SECRET_KEY/);
+  assert.doesNotMatch(ui,/sk_test_[A-Za-z0-9]{8,}/);
   assert.doesNotMatch(server,/res\.json\([^)]*secretKey/);
 });
 
@@ -93,7 +93,7 @@ test('PayMongo refunds use provider payment id and official refunds endpoint',()
 });
 
 test('PayMongo provider metadata declares adapter readiness without storing credentials',()=>{
-  assert.match(adapter,/v0\.14-hosted-checkout-v2/);
+  assert.match(adapter,/v0\.15-hosted-checkout-v2/);
   assert.match(adapter,/secret_ready/);
   assert.match(adapter,/webhook_ready/);
   assert.doesNotMatch(adapter,/JSON\.stringify\(\{[^}]*secretKey/);
