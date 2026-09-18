@@ -87,6 +87,32 @@ async function queuePanel(kind){
 function territoriesPanel(){
   return hero()+'<p class="moduleIntro">Operating cells visible to your assignment.</p>'+rows(state.overview?.territories||[],x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.territory_type)+' · '+esc(x.code||'')+'</span></div>');
 }
+function renderPricingScenario(s){
+  const p=s?.portfolio||{},services=s?.services||[],g=s?.guardrails||{};
+  return '<div class="pricingScenarioResults">'
+    +'<div class="notice"><strong>SIMULATION ONLY</strong><br>This scenario does not activate a fee policy, change prices or charge any Customer, Merchant, Supplier, Courier or Service Provider.</div>'
+    +'<div class="financeSummary">'
+      +'<div class="metric"><strong>'+financeMoney(p.total_completed_gross_value||0)+'</strong><span>Total completed service value</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.actual_post_promo_gross_value||0)+'</strong><span>Actual post-promo gross value</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.projected_revenue_post_promo_actual||0)+'</strong><span>Projected revenue · post-promo actual</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.projected_revenue_mature_volume||0)+'</strong><span>Projected revenue · mature simulation</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(p.total_recorded_cost||0)+'</strong><span>Recorded cost</span></div>'
+      +'<div class="metric"><strong class="'+financeTone(p.projected_operating_pl_post_promo_actual)+'">'+financeMoney(p.projected_operating_pl_post_promo_actual||0)+'</strong><span>Projected P/L · post-promo actual</span></div>'
+      +'<div class="metric"><strong class="'+financeTone(p.projected_operating_pl_mature_volume)+'">'+financeMoney(p.projected_operating_pl_mature_volume||0)+'</strong><span>Projected P/L · mature simulation</span></div>'
+      +'<div class="metric"><strong>'+financePct(p.break_even_rate_total_volume_pct)+'</strong><span>Break-even rate · total volume</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>Scenario bases</strong><span><b>Post-promo actual:</b> '+esc(s?.bases?.post_promo_actual||'')+'<br><b>Mature-volume simulation:</b> '+esc(s?.bases?.all_activity_mature_simulation||'')+'</span></div>'
+    +'<div class="sectionTitle"><h3>Scenario by service</h3></div>'
+    +rows(services,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+financePct(x.proposed_rate_pct)+'</span></div>'
+      +'<div class="financeLine"><span>Promo gross '+financeMoney(x.promotional_gross_value)+'</span><span>Post-promo gross '+financeMoney(x.post_promo_gross_value)+'</span><span>Total gross '+financeMoney(x.total_completed_gross_value)+'</span></div>'
+      +'<div class="financeLine"><span>Projected mature revenue '+financeMoney(x.projected_revenue_mature_volume)+'</span><span>Recorded cost '+financeMoney(x.recorded_service_cost)+'</span><strong class="'+financeTone(x.projected_operating_pl_mature_volume)+'">Mature P/L '+financeMoney(x.projected_operating_pl_mature_volume)+'</strong></div>'
+      +'<span class="muted">Break-even on total volume: '+financePct(x.break_even_rate_total_volume_pct)+' · Post-promo actual break-even: '+financePct(x.break_even_rate_post_promo_volume_pct)+' · '+esc(x.data_status)+'</span></div>')
+    +'<div class="financeTruth"><strong>Cost coverage</strong><span>Shared / unallocated recorded cost: '+financeMoney(p.unallocated_shared_cost||0)+'. '+esc(g.shared_cost_warning||'All recorded costs in this period are allocated to service scopes.')+'</span></div>'
+    +'<div class="notice"><strong>Evidence boundary</strong><br>'+esc(g.missing_cost_warning||'Only canonical recorded costs are used.')+'</div>'
+    +'<div class="notice"><strong>Live fee state</strong><br>'+esc(g.fee_activation||'NOT_PERFORMED')+' · Promotional live charge remains zero until a future explicit fee-resolution implementation.</div>'
+    +'</div>';
+}
+
 async function financePanel(){
   if(!hasAny(['finance.summary.view'])){
     let m={};try{m=await api('/api/admin/metrics')}catch(e){m={error:e.message}}
@@ -106,6 +132,22 @@ async function financePanel(){
   const territoryField=fixedTerritory
     ?'<input type="hidden" name="territory_id" value="'+esc(fixedTerritory)+'"><div class="financeScopeNote">Cost scope: delegated territory #'+esc(fixedTerritory)+'</div>'
     :'<label>Territory / allocation scope<select name="territory_id"><option value="">Shared / country-wide</option>'+((state.overview?.territories||[]).map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join(''))+'</select></label>';
+  const pricingTerritoryField=fixedTerritory
+    ?'<input type="hidden" name="territory_id" value="'+esc(fixedTerritory)+'"><div class="financeScopeNote">Simulation scope: delegated territory #'+esc(fixedTerritory)+'</div>'
+    :'<label>Scenario territory<select name="territory_id"><option value="">Country-wide / shared view</option>'+((state.overview?.territories||[]).map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join(''))+'</select></label>';
+  const pricingForm='<div class="sectionTitle"><h3>Pricing Lab — simulation only</h3></div>'
+    +'<form id="pricingScenarioForm" class="adminForm pricingLabForm">'
+      +'<div class="notice"><strong>No live fee is changed here.</strong><br>Enter hypothetical commission percentages to compare projected revenue with the costs already recorded in Finance.</div>'
+      +'<div class="financeFormGrid">'
+        +'<label>Marketplace %<input name="marketplace" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +'<label>Delivery %<input name="delivery" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +'<label>Supplier B2B %<input name="supplier" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +'<label>Local Services %<input name="local_services" type="number" min="0" max="100" step="0.01" required placeholder="Hypothetical %"></label>'
+        +pricingTerritoryField
+      +'</div>'
+      +'<button class="primary" type="submit">Run non-charging simulation</button>'
+      +'<div id="pricingScenarioResult"></div>'
+    +'</form>';
   const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
   return hero()
     +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
@@ -139,13 +181,33 @@ async function financePanel(){
     +'<div class="sectionTitle"><h3>Promotion activity by service</h3></div>'
     +(promoServices.length?rows(promoServices,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.service_scope)+'</strong><span class="status">'+esc(x.phase)+'</span></div><div class="financeLine"><span>'+esc(x.completed_events)+' completions</span><span>'+esc(x.active_subjects)+' subjects</span><span>Gross '+financeMoney(x.gross_value)+'</span></div></div>'):'<div class="empty">No promotional or post-promo completion events in this reporting period.</div>')
     +'<div class="notice"><strong>Promo cost attribution</strong><br>Platform costs are recorded in the Finance ledger, but exact subsidy per promotional transaction is not shown until those direct costs are linked to promotional completion events. No subsidy amount is inferred.</div>'
+    +pricingForm
     +costForm
     +'<div class="sectionTitle"><h3>Recent cost entries</h3></div>'
     +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>');
 }
 async function wireFinance(){
-  const form=document.getElementById('financeCostForm');if(!form)return;
-  form.onsubmit=async e=>{
+  const pricing=document.getElementById('pricingScenarioForm');
+  if(pricing)pricing.onsubmit=async e=>{
+    e.preventDefault();
+    const fd=new FormData(pricing),out=document.getElementById('pricingScenarioResult');
+    const payload={
+      territory_id:fd.get('territory_id')||null,
+      rates:{
+        marketplace:Number(fd.get('marketplace')),
+        delivery:Number(fd.get('delivery')),
+        supplier:Number(fd.get('supplier')),
+        local_services:Number(fd.get('local_services'))
+      }
+    };
+    out.innerHTML='<div class="notice">Running scenario against canonical Finance data…</div>';
+    try{
+      const scenario=await api('/api/payments/admin/pricing-scenario',{method:'POST',body:JSON.stringify(payload)});
+      out.innerHTML=renderPricingScenario(scenario);
+    }catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
+  };
+  const form=document.getElementById('financeCostForm');
+  if(form)form.onsubmit=async e=>{
     e.preventDefault();
     const fd=new FormData(form),out=document.getElementById('financeCostResult');
     const payload={
