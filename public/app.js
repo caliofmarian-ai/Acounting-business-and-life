@@ -172,5 +172,5 @@ $('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/a
 window.addEventListener('online',()=>{setOnline(true);refreshAll();});
 window.addEventListener('offline',()=>setOnline(false));
 setOnline(navigator.onLine);
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(reg=>reg.update().catch(()=>{})).catch(()=>{});
 if (token) showShell();
