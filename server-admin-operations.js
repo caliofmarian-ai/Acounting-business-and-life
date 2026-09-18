@@ -187,24 +187,140 @@ function scopedWhere(scope,offset=1){
   if(!scope.ids.length)return{sql:'FALSE',args:[]};
   return{sql:`${scope.column}=ANY($${offset}::bigint[])`,args:[scope.ids]};
 }
+async function unionPermissionScope(accountId,permissions){
+  const ids=new Set();let countryWide=false;
+  for(const permission of permissions){
+    if(await isCountryWide(accountId,permission))countryWide=true;
+    for(const id of await visibleTerritoryIds(pool,accountId,permission))ids.add(Number(id));
+  }
+  return{ids:[...ids],countryWide};
+}
 async function adminOverview(accountId){
   const assignments=await getAdminAssignments(pool,accountId);
-  const scope=await scopeClause(accountId,'admin.console','territory_id');
-  const ids=scope.ids.length?scope.ids:[-1];
-  const territoryWhere=scope.countryWide?`country_code='PH'`:`id=ANY($1::bigint[])`;
-  const territoryArgs=scope.countryWide?[]:[ids];
-  const [territories,apps,invites,auths,support,incidents,orderCount,deliveryCount,serviceCount]=await Promise.all([
-    pool.query(`SELECT id,country_code,parent_id,territory_type,name,code,status,created_at FROM territories WHERE ${territoryWhere} ORDER BY name`,territoryArgs),
-    pool.query(`SELECT pa.id,pa.account_id,pa.role,pa.territory_id,pa.status,pa.proposed_business_name,pa.submitted_at,pa.updated_at,a.display_name,a.email,t.name territory_name,(SELECT COUNT(*)::int FROM profile_application_documents d WHERE d.application_id=pa.id) document_count FROM profile_applications pa JOIN accounts a ON a.id=pa.account_id JOIN territories t ON t.id=pa.territory_id WHERE ${scope.countryWide?"t.country_code='PH'":"pa.territory_id=ANY($1::bigint[])"} ORDER BY pa.updated_at DESC LIMIT 150`,scope.countryWide?[]:[ids]),
-    pool.query(`SELECT i.id,i.target_email,i.role,i.territory_id,i.status,i.expires_at,i.created_at,t.name territory_name FROM profile_invitations i JOIN territories t ON t.id=i.territory_id WHERE ${scope.countryWide?"t.country_code='PH'":"i.territory_id=ANY($1::bigint[])"} ORDER BY i.created_at DESC LIMIT 100`,scope.countryWide?[]:[ids]),
-    pool.query(`SELECT a.id,a.account_id,a.role,a.territory_id,a.status,a.approved_at,a.reason,ac.display_name,ac.email,t.name territory_name FROM profile_authorizations a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id WHERE ${scope.countryWide?"(t.country_code='PH' OR a.territory_id IS NULL)":"a.territory_id=ANY($1::bigint[])"} ORDER BY a.updated_at DESC LIMIT 150`,scope.countryWide?[]:[ids]),
-    pool.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed'))::int open FROM support_tickets WHERE ${scope.countryWide?"country_code='PH'":"territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
-    pool.query(`SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','dismissed'))::int open FROM incident_reports WHERE ${scope.countryWide?"(territory_id IS NULL OR territory_id IN (SELECT id FROM territories WHERE country_code='PH'))":"territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
-    pool.query(`SELECT COUNT(*)::int n FROM orders o JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
-    pool.query(`SELECT COUNT(*)::int n FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
-    pool.query(`SELECT COUNT(*)::int n FROM service_jobs j JOIN service_provider_profiles sp ON sp.account_id=j.provider_account_id LEFT JOIN profile_authorizations pa ON pa.account_id=sp.account_id AND pa.role='service_provider' AND pa.status='active' WHERE ${scope.countryWide?"TRUE":"pa.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]).catch(()=>({rows:[{n:0}]}))
+  const permissions=new Set();
+  const superAdmin=assignments.some(a=>assignmentRank(a)==='super_admin');
+  if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
+  else for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
+
+  const consoleScope=await scopeClause(accountId,'admin.console','territory_id');
+  const consoleIds=consoleScope.ids.length?consoleScope.ids:[-1];
+  const territories=await pool.query(
+    `SELECT id,country_code,parent_id,territory_type,name,code,status,created_at
+     FROM territories
+     WHERE ${consoleScope.countryWide?"country_code='PH'":"id=ANY($1::bigint[])"}
+     ORDER BY name`,
+    consoleScope.countryWide?[]:[consoleIds]
+  );
+
+  const profilePermissionByRole=new Map([
+    ['merchant','merchant.approve'],
+    ['supplier','supplier.approve'],
+    ['courier','courier.verify'],
+    ['service_provider','profiles.review_service_provider']
   ]);
-  return{assignments,territories:territories.rows,applications:apps.rows,invitations:invites.rows,authorizations:auths.rows,summary:{support:support.rows[0],incidents:incidents.rows[0],orders:Number(orderCount.rows[0]?.n||0),deliveries:Number(deliveryCount.rows[0]?.n||0),service_jobs:Number(serviceCount.rows[0]?.n||0)}};
+  const invitationPermissionByRole=new Map([
+    ['merchant','profiles.invite_merchant'],
+    ['supplier','profiles.invite_supplier'],
+    ['courier','profiles.invite_courier']
+  ]);
+
+  const applications=[];
+  for(const [role,permission] of profilePermissionByRole){
+    if(!permissions.has(permission))continue;
+    const scope=await scopeClause(accountId,permission,'pa.territory_id');
+    const ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT pa.id,pa.account_id,pa.role,pa.territory_id,pa.status,pa.proposed_business_name,pa.submitted_at,pa.updated_at,
+              a.display_name,a.email,t.name territory_name,
+              (SELECT COUNT(*)::int FROM profile_application_documents d WHERE d.application_id=pa.id) document_count
+       FROM profile_applications pa
+       JOIN accounts a ON a.id=pa.account_id
+       JOIN territories t ON t.id=pa.territory_id
+       WHERE pa.role=$1 AND ${scope.countryWide?"t.country_code='PH'":"pa.territory_id=ANY($2::bigint[])"}
+       ORDER BY pa.updated_at DESC LIMIT 150`,
+      scope.countryWide?[role]:[role,ids]
+    );
+    applications.push(...q.rows);
+  }
+
+  const invitations=[];
+  for(const [role,permission] of invitationPermissionByRole){
+    if(!permissions.has(permission))continue;
+    const scope=await scopeClause(accountId,permission,'i.territory_id');
+    const ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT i.id,i.target_email,i.role,i.territory_id,i.status,i.expires_at,i.created_at,t.name territory_name
+       FROM profile_invitations i JOIN territories t ON t.id=i.territory_id
+       WHERE i.role=$1 AND ${scope.countryWide?"t.country_code='PH'":"i.territory_id=ANY($2::bigint[])"}
+       ORDER BY i.created_at DESC LIMIT 100`,
+      scope.countryWide?[role]:[role,ids]
+    );
+    invitations.push(...q.rows);
+  }
+
+  const authorizationById=new Map();
+  const authorizationPermissions=[];
+  if(permissions.has('profile.suspend'))authorizationPermissions.push(['*','profile.suspend']);
+  for(const [role,permission] of profilePermissionByRole)if(permissions.has(permission))authorizationPermissions.push([role,permission]);
+  for(const [role,permission] of authorizationPermissions){
+    const scope=await scopeClause(accountId,permission,'a.territory_id');
+    const ids=scope.ids.length?scope.ids:[-1];
+    const roleClause=role==='*'?'TRUE':'a.role=$1';
+    const scopeClauseSql=scope.countryWide?"(t.country_code='PH' OR a.territory_id IS NULL)":`a.territory_id=ANY($${role==='*'?1:2}::bigint[])`;
+    const args=role==='*'?(scope.countryWide?[]:[ids]):(scope.countryWide?[role]:[role,ids]);
+    const q=await pool.query(
+      `SELECT a.id,a.account_id,a.role,a.territory_id,a.status,a.approved_at,a.reason,
+              ac.display_name,ac.email,t.name territory_name
+       FROM profile_authorizations a
+       JOIN accounts ac ON ac.id=a.account_id
+       LEFT JOIN territories t ON t.id=a.territory_id
+       WHERE ${roleClause} AND ${scopeClauseSql}
+       ORDER BY a.updated_at DESC LIMIT 150`,
+      args
+    );
+    for(const row of q.rows)authorizationById.set(String(row.id),row);
+  }
+
+  let support=null;
+  if(permissions.has('support.manage')){
+    const scope=await scopeClause(accountId,'support.manage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed'))::int open
+       FROM support_tickets WHERE ${scope.countryWide?"country_code='PH'":"territory_id=ANY($1::bigint[])"}`,
+      scope.countryWide?[]:[ids]
+    );support=q.rows[0];
+  }
+
+  let incidents=null;
+  if(permissions.has('incident.triage')){
+    const scope=await scopeClause(accountId,'incident.triage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE status NOT IN ('resolved','dismissed'))::int open
+       FROM incident_reports WHERE ${scope.countryWide?"(territory_id IS NULL OR territory_id IN (SELECT id FROM territories WHERE country_code='PH'))":"territory_id=ANY($1::bigint[])"}`,
+      scope.countryWide?[]:[ids]
+    );incidents=q.rows[0];
+  }
+
+  let orders=null,deliveries=null,serviceJobs=null;
+  const metricPermissions=['metrics.view','finance.summary.view'].filter(p=>permissions.has(p));
+  if(metricPermissions.length){
+    const scope=await unionPermissionScope(accountId,metricPermissions),ids=scope.ids.length?scope.ids:[-1];
+    const [oq,dq,sq]=await Promise.all([
+      pool.query(`SELECT COUNT(*)::int n FROM orders o JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
+      pool.query(`SELECT COUNT(*)::int n FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=o.business_id WHERE ${scope.countryWide?"b.country_code='PH'":"b.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]),
+      pool.query(`SELECT COUNT(*)::int n FROM service_jobs j JOIN service_provider_profiles sp ON sp.account_id=j.provider_account_id LEFT JOIN profile_authorizations pa ON pa.account_id=sp.account_id AND pa.role='service_provider' AND pa.status='active' WHERE ${scope.countryWide?"TRUE":"pa.territory_id=ANY($1::bigint[])"}`,scope.countryWide?[]:[ids]).catch(()=>({rows:[{n:0}]}))
+    ]);
+    orders=Number(oq.rows[0]?.n||0);deliveries=Number(dq.rows[0]?.n||0);serviceJobs=Number(sq.rows[0]?.n||0);
+  }
+
+  applications.sort((a,b)=>String(b.updated_at||'').localeCompare(String(a.updated_at||'')));
+  invitations.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
+  const authorizations=[...authorizationById.values()].sort((a,b)=>String(b.approved_at||'').localeCompare(String(a.approved_at||'')));
+  return{
+    assignments,territories:territories.rows,
+    applications:applications.slice(0,150),invitations:invitations.slice(0,100),authorizations:authorizations.slice(0,150),
+    summary:{support,incidents,orders,deliveries,service_jobs:serviceJobs}
+  };
 }
 
 async function forwardAdmin(req,res,permission,territoryId,targetType='',targetId=''){
@@ -284,6 +400,13 @@ app.post('/api/admin/assignments',body,async(req,res,next)=>{try{
   const account=await pool.query('SELECT id,display_name,email FROM accounts WHERE LOWER(email)=$1',[targetEmail]);if(!account.rowCount)return res.status(404).json({error:'The target must create a Business & Life account first'});
   for(const p of requested){if(actorRank!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,territoryId);if(!x.allowed)return res.status(403).json({error:'You cannot delegate permission: '+p})}}
   const technicalRole=role==='specialist'?(territoryId?'territory_admin':'country_admin'):role;
+  const existing=await pool.query(
+    "SELECT id,COALESCE(NULLIF(authority_rank,''),admin_role) effective_rank FROM platform_admin_assignments WHERE account_id=$1 AND admin_role=$2 AND country_code='PH' AND COALESCE(territory_id,0)=COALESCE($3::bigint,0) LIMIT 1",
+    [account.rows[0].id,technicalRole,territoryId]
+  );
+  if(existing.rowCount&&rankLevel(existing.rows[0].effective_rank)>rankLevel(role)){
+    return res.status(409).json({error:'This account already holds a higher Admin rank in the same scope. Update the existing assignment instead of downgrading it.'});
+  }
   const client=await pool.connect();try{
     await client.query('BEGIN');
     const q=await client.query("INSERT INTO platform_admin_assignments(account_id,admin_role,authority_rank,country_code,territory_id,status,assigned_by_account_id,reason) VALUES($1,$2,$3,'PH',$4,'active',$5,$6) ON CONFLICT(account_id,admin_role,country_code,COALESCE(territory_id,0)) DO UPDATE SET authority_rank=EXCLUDED.authority_rank,status='active',assigned_by_account_id=EXCLUDED.assigned_by_account_id,reason=EXCLUDED.reason,effective_until=NULL,updated_at=NOW() RETURNING *",[account.rows[0].id,technicalRole,role,territoryId,me.account.id,clean(req.body?.reason,1000)]);
