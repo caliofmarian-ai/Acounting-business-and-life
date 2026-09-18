@@ -26,12 +26,12 @@ test('marketing consent does not collapse legal, operational or location categor
   assert.equal(rules.consentBoundary.locationConsent, 'separate_from_marketing');
 });
 
-test('Owner-approved 60-day unconverted retention stays gated until remaining policy is resolved', () => {
+test('Owner-approved 90-day unconverted retention stays gated until remaining policy is resolved', () => {
   assert.equal(rules.retention.productionReady, false);
-  assert.equal(rules.retention.unconvertedReferralEventDays, 60);
+  assert.equal(rules.retention.unconvertedReferralEventDays, 90);
   assert.equal(rules.retention.convertedAttributionRetentionRule, null);
   assert.equal(rules.retention.rewardEvidenceRetentionRule, null);
-  assert.match(rules.retention.gateReason, /60-day retention/i);
+  assert.match(rules.retention.gateReason, /90-day retention/i);
   assert.match(rules.retention.gateReason, /remain unresolved/i);
 });
 
