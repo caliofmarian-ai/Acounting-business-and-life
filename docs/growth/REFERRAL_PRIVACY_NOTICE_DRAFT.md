@@ -172,7 +172,13 @@ This wording is **not publishable yet** because the lawful basis, operator/PIC/P
 
 ## 8. Data-subject rights
 
-The final EFFECTIVE notice must explain applicable rights and the verified request process, including as applicable:
+The application now has a technical authenticated request channel at:
+
+`Help -> New issue -> Privacy & data rights`
+
+This routes privacy requests through canonical Support with country-level scope and an audit trail. It is a request channel, not an automatic legal outcome or deletion engine.
+
+The final EFFECTIVE notice must explain applicable rights and the verified controller/privacy handling process, including as applicable:
 - right to be informed;
 - access;
 - correction/rectification;
@@ -181,7 +187,7 @@ The final EFFECTIVE notice must explain applicable rights and the verified reque
 - complaint process;
 - other rights recognized by the Data Privacy Act, its IRR and applicable NPC rules.
 
-The final notice must provide the actual controller/PIC or representative contact and privacy/DPO contact. Do not publish placeholders as facts.
+The final notice must provide the actual controller/PIC or representative contact and privacy/DPO contact. Do not publish placeholders as facts. The in-app request channel does not replace those required controller/contact disclosures.
 
 ## 9. Security/minimization controls already implemented
 
