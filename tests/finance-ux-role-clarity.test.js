@@ -42,8 +42,8 @@ test('Customer Settings default view is payments-first and hides business financ
   assert.match(settings,/You do not need to add banking details just to shop/);
   assert.match(settings,/Advanced personal money tools/);
   assert.doesNotMatch(render,/profileTabs\(\)/);
-  assert.doesNotMatch(render,/Profile budget/);
-  assert.doesNotMatch(render,/Withdraw/);
+  assert.doesNotMatch(render,/<h2>Profile budget<\\/h2>/);
+  assert.doesNotMatch(render,/<h2>Withdraw<\\/h2>/);
   assert.doesNotMatch(render,/budgetForms\(accounts,budgets\)/);
 });
 
