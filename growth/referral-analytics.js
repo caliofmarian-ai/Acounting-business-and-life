@@ -4,7 +4,8 @@ const CHANNELS = new Set(['native_share','copy_link','whatsapp','telegram','sms'
 export const RUNTIME_REFERRAL_EVENTS = Object.freeze([
   'referral_link_created',
   'referral_shared',
-  'referral_landing_viewed'
+  'referral_landing_viewed',
+  'referral_signup_started'
 ]);
 
 const RUNTIME_EVENTS = new Set(RUNTIME_REFERRAL_EVENTS);
@@ -23,7 +24,8 @@ const ALLOWED_PROPERTIES = new Set([
 const REQUIRED = Object.freeze({
   referral_link_created: ['campaign','source_profile_role','correlation_id'],
   referral_shared: ['channel','campaign','source_profile_role','correlation_id'],
-  referral_landing_viewed: ['campaign','source','medium','source_profile_role','correlation_id']
+  referral_landing_viewed: ['campaign','source','medium','source_profile_role','correlation_id'],
+  referral_signup_started: ['campaign','source','source_profile_role','correlation_id']
 });
 
 function boundedToken(value, name, max = 80) {
