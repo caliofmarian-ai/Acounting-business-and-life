@@ -1,11 +1,11 @@
 {
   "name": "accounting-business-and-life",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "packageManager": "npm@10.8.2",
   "scripts": {
-    "start": "node --import ./bootstrap-env.js server-legal.js",
+    "start": "node --import ./bootstrap-env.js server-payments.js",
     "start:business-accounting": "node --import ./bootstrap-env.js server-business-accounting.js",
     "start:governance": "node --import ./bootstrap-env.js server-profile-governance.js",
     "start:auth-hardening": "node --import ./bootstrap-env.js server-auth-hardening.js",
@@ -20,12 +20,13 @@
     "start:accounting": "node --import ./bootstrap-env.js server-v03.js",
     "start:unified": "node --import ./bootstrap-env.js server-unified.js",
     "start:identity": "node --import ./bootstrap-env.js identity-server.js",
-    "check": "node --check bootstrap-env.js && node --check admin-authorization.js && node --check server-admin-operations.js && node --check server-help.js && node --check server-business-accounting.js && node --check server-profile-governance.js && node --check server-auth-hardening.js && node --check server-incidents.js && node --check server-delivery-finance.js && node --check server-delivery.js && node --check server-suppliers.js && node --check server-services.js && node --check server-marketplace.js && node --check server-orders.js && node --check server-auth.js && node --check server-unified.js && node --check server-v03.js && node --check public/v03.js && node --check public/shell.js && node --check public/auth-ui.js && node --check public/auth-hardening-ui.js && node --check public/profile-governance-ui.js && node --check public/business-accounting-ui.js && node --check public/admin-operations-ui.js && node --check public/orders-ui.js && node --check public/tracker.js && node --check public/marketplace-ui.js && node --check public/services-ui.js && node --check public/suppliers-ui.js && node --check public/delivery-ui.js && node --check public/incidents-ui.js && node --check public/help/help.js && node --check public/help-linking.js && node --check identity-server.js && node --check identity-public/identity.js && node --check tests/architecture.test.js && node --check tests/multibusiness-accounting.test.js && node --check tests/admin-rbac-support.test.js && node --check notification-core.js && node --check server-notifications.js && node --check public/notifications-ui.js && node --check public/notifications-sw.js && node --check tests/notifications.test.js && node --check legal-core.js && node --check server-legal.js && node --check public/legal-ui.js && node --check tests/legal-consent.test.js",
+    "check": "node --check bootstrap-env.js && node --check admin-authorization.js && node --check server-admin-operations.js && node --check server-help.js && node --check server-business-accounting.js && node --check server-profile-governance.js && node --check server-auth-hardening.js && node --check server-incidents.js && node --check server-delivery-finance.js && node --check server-delivery.js && node --check server-suppliers.js && node --check server-services.js && node --check server-marketplace.js && node --check server-orders.js && node --check server-auth.js && node --check server-unified.js && node --check server-v03.js && node --check public/v03.js && node --check public/shell.js && node --check public/auth-ui.js && node --check public/auth-hardening-ui.js && node --check public/profile-governance-ui.js && node --check public/business-accounting-ui.js && node --check public/admin-operations-ui.js && node --check public/orders-ui.js && node --check public/tracker.js && node --check public/marketplace-ui.js && node --check public/services-ui.js && node --check public/suppliers-ui.js && node --check public/delivery-ui.js && node --check public/incidents-ui.js && node --check public/help/help.js && node --check public/help-linking.js && node --check identity-server.js && node --check identity-public/identity.js && node --check tests/architecture.test.js && node --check tests/multibusiness-accounting.test.js && node --check tests/admin-rbac-support.test.js && node --check notification-core.js && node --check server-notifications.js && node --check public/notifications-ui.js && node --check public/notifications-sw.js && node --check tests/notifications.test.js && node --check legal-core.js && node --check server-legal.js && node --check public/legal-ui.js && node --check tests/legal-consent.test.js && node --check payment-core.js && node --check server-payments.js && node --check public/payments-ui.js && node --check tests/payment-core.test.js",
     "test": "npm run check && node --test tests/*.test.js",
     "start:help": "node server-help.js",
     "start:admin-operations": "node --import ./bootstrap-env.js server-admin-operations.js",
     "start:notifications": "node --import ./bootstrap-env.js server-notifications.js",
-    "start:legal": "node --import ./bootstrap-env.js server-legal.js"
+    "start:legal": "node --import ./bootstrap-env.js server-legal.js",
+    "start:payments": "node --import ./bootstrap-env.js server-payments.js"
   },
   "engines": {
     "node": ">=20"
