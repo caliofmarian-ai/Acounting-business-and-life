@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildLiveReferralPayload, ensureAccountReferral, ensureReferralAccountSchema, normalizeReferralProfileRole } from './growth/referral-account.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -31,6 +32,16 @@ function safeEqualHex(a, b) {
 }
 function validEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
 function passwordOkay(value) { return typeof value === 'string' && value.length >= 8 && value.length <= 160; }
+
+function referralRequestOrigin(req) {
+  const host = clean(req.get('host'), 255);
+  if (!host || !/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/.test(host)) {
+    throw Object.assign(new Error('Invalid public host'), { status: 400 });
+  }
+  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const protocol = forwarded === 'https' ? 'https' : forwarded === 'http' ? 'http' : req.secure ? 'https' : 'http';
+  return `${protocol}://${host}`;
+}
 
 async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -203,6 +214,7 @@ async function initDb() {
     SELECT setval(pg_get_serial_sequence('accounts','id'), GREATEST((SELECT MAX(id) FROM accounts),1));
     SELECT setval(pg_get_serial_sequence('businesses','id'), GREATEST((SELECT MAX(id) FROM businesses),1));
   `);
+  await ensureReferralAccountSchema(pool);
 }
 
 async function profileSnapshot(accountId) {
@@ -312,6 +324,39 @@ app.post('/api/auth/password', jsonBody, auth, async (req, res, next) => {
 });
 
 app.get('/api/me', auth, async (req, res, next) => { try { res.json(await profileSnapshot(req.accountId)); } catch (err) { next(err); } });
+
+app.get('/api/growth/referral', auth, async (req, res, next) => {
+  try {
+    const account = await pool.query(
+      `SELECT display_name,active_role FROM accounts WHERE id=$1`,
+      [req.accountId]
+    );
+    if (!account.rowCount) return res.status(404).json({ error: 'Account not found' });
+
+    let role;
+    try {
+      role = normalizeReferralProfileRole(req.query?.profile, account.rows[0].active_role || 'customer');
+    } catch {
+      return res.status(400).json({ error: 'Unknown public profile role' });
+    }
+
+    const enabled = await pool.query(
+      `SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 AND enabled=TRUE`,
+      [req.accountId, role]
+    );
+    if (!enabled.rowCount) return res.status(403).json({ error: 'This profile is not enabled' });
+
+    const identity = await ensureAccountReferral(pool, req.accountId);
+    res.json(buildLiveReferralPayload({
+      code: identity.referral_code,
+      origin: referralRequestOrigin(req),
+      profileRole: role,
+      inviterDisplayName: account.rows[0].display_name || ''
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
 app.patch('/api/me', jsonBody, auth, async (req, res, next) => {
   const name = clean(req.body?.display_name, 120);
   const phone = clean(req.body?.phone, 40);
