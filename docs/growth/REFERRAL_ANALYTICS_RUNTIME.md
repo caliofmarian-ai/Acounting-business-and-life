@@ -31,8 +31,11 @@ External analytics delivery is fail-closed and requires all of:
 
 - `REFERRAL_ANALYTICS_ENABLED=true`
 - `REFERRAL_ANALYTICS_RETENTION_APPROVED=true`
+- `REFERRAL_ANALYTICS_PROJECT_VERIFIED=true`
 - `POSTHOG_PROJECT_TOKEN=<correct project token>`
 - `POSTHOG_INGEST_HOST=<correct HTTPS ingest origin>`
+
+`REFERRAL_ANALYTICS_PROJECT_VERIFIED=true` is a separate operator assertion made only after the exact Business & Life PostHog organization/project/region has been revalidated. A configured token by itself is not sufficient proof that the destination is correct.
 
 If any gate is missing, the server accepts valid instrumentation calls but returns a non-delivered state and sends nothing externally.
 
@@ -44,9 +47,10 @@ When all gates are satisfied, the server uses PostHog's current single-event HTT
 
 ## Current HOLD
 
-At implementation time:
-- Railway production has no `POSTHOG_*` variables configured;
-- retention approval is not configured;
-- the PostHog connection exposed to this session points to a different project and must not be modified.
+Revalidated on 2026-09-18:
+- Railway production has no `POSTHOG_*` or referral-analytics activation variables configured;
+- the connected PostHog account exposes organization `DROPi` with only project `Default project` (project id `273401`);
+- that project reports `ingested_event=false` and is not verified as the Business & Life analytics destination;
+- therefore `REFERRAL_ANALYTICS_PROJECT_VERIFIED` must remain unset/false.
 
 Therefore production event delivery must remain **HOLD** until the correct Business & Life PostHog project and retention policy are resolved.
