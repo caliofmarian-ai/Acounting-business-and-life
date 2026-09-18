@@ -1,0 +1,76 @@
+{
+  "version": "1.0.0",
+  "locale": "en-PH",
+  "productArea": "supplier",
+  "publicLabel": "Supplier",
+  "headline": "Supply local businesses. Keep orders, stock and payments easier to follow.",
+  "body": "Business & Life connects your Supplier catalog, trusted Merchant relationships, procurement orders, readiness, receiving and business accounting.",
+  "audiences": [
+    "local food producer",
+    "ingredient supplier",
+    "farmer/grower",
+    "packaging/material supplier",
+    "small manufacturer",
+    "wholesaler",
+    "family producer",
+    "other eligible local supplier"
+  ],
+  "pillars": [
+    {
+      "id": "catalog",
+      "title": "Present what you supply",
+      "points": [
+        "catalog items",
+        "pack sizes and base-unit conversion",
+        "price snapshots",
+        "availability and lead time"
+      ]
+    },
+    {
+      "id": "relationships",
+      "title": "Work with trusted Merchants",
+      "points": [
+        "explicit Merchant↔Supplier relationships",
+        "relationship-scoped procurement",
+        "no automatic access for every Merchant"
+      ]
+    },
+    {
+      "id": "orders",
+      "title": "Manage procurement orders",
+      "points": [
+        "purchase orders",
+        "amendments",
+        "ETA/readiness",
+        "pickup/delivery states",
+        "partial receiving"
+      ]
+    },
+    {
+      "id": "money",
+      "title": "Follow Supplier money",
+      "points": [
+        "business-scoped accounting workspace",
+        "payments recorded only when money actually moves",
+        "procurement evidence and history"
+      ]
+    }
+  ],
+  "ctas": {
+    "primary": "Explore Supplier tools",
+    "secondary": "Share with a local producer or supplier"
+  },
+  "governance": {
+    "supplierApprovalAutomatic": false,
+    "universalMerchantTrust": false,
+    "guaranteedSales": false,
+    "guaranteedPayment": false,
+    "universalMarketplaceDiscovery": false,
+    "taxComplianceGuaranteed": false
+  },
+  "share": {
+    "short": "Supply local businesses? Business & Life helps eligible Suppliers manage catalog, trusted Merchant relationships, procurement orders, readiness and payments. {REFERRAL_URL}",
+    "socialHeadline": "Supply local businesses. Keep the workflow clear.",
+    "socialBody": "Catalog • Merchant relationships • Purchase orders • Readiness • Receiving • Supplier accounting"
+  }
+}
