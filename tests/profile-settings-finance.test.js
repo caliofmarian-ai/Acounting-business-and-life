@@ -62,3 +62,61 @@ test('profile finance schema records auditable settings changes',()=>{
   assert.match(core,/financial_account_updated/);
   assert.match(core,/money_preferences_updated/);
 });
+
+
+test('profile budgets are scoped independently from provider balances',()=>{
+  assert.match(core,/CREATE TABLE IF NOT EXISTS profile_budget_envelopes/);
+  assert.match(core,/CREATE TABLE IF NOT EXISTS profile_budget_entries/);
+  assert.match(core,/profile_role IN \('customer','merchant','supplier','courier','service_provider'\)/);
+  assert.match(core,/balance_type:'planned_allocation'/);
+  assert.match(core,/provider_cash_balance:null/);
+  assert.match(core,/NOT_AVAILABLE_WITHOUT_PROVIDER_EVIDENCE/);
+  assert.match(ui,/Allocated budget/);
+  assert.match(ui,/planning allocation, not a provider-confirmed cash balance/);
+});
+
+test('one human account can keep different budgets for different profile and business scopes',()=>{
+  assert.match(core,/account_id BIGINT NOT NULL REFERENCES accounts\(id\)/);
+  assert.match(core,/profile_role TEXT NOT NULL/);
+  assert.match(core,/business_id BIGINT REFERENCES businesses\(id\)/);
+  assert.match(core,/profile_budget_envelopes_scope_idx/);
+  assert.match(server,/financeScope\(me,role,req\.body\?\.business_id\)/);
+  assert.match(ui,/Budget envelopes keep planned money for this profile\/business separate from your other profiles/);
+});
+
+test('internal budget reallocation is atomic and never claims provider money moved',()=>{
+  assert.match(core,/profile_budget_transfers/);
+  assert.match(core,/FOR UPDATE/);
+  assert.match(core,/Budget reallocation exceeds the source allocated budget/);
+  assert.match(core,/reallocation_out/);
+  assert.match(core,/reallocation_in/);
+  assert.match(core,/execution_type:'INTERNAL_BUDGET_REALLOCATION'/);
+  assert.match(core,/provider_money_moved:false/);
+  assert.match(ui,/internal budget reallocation\. No bank\/e-wallet\/provider transfer occurs/);
+});
+
+test('real money movement requests stay HOLD without provider execution evidence',()=>{
+  assert.match(core,/CREATE TABLE IF NOT EXISTS profile_money_movements/);
+  assert.match(core,/status TEXT NOT NULL DEFAULT 'pending_provider'/);
+  assert.match(core,/PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED/);
+  assert.match(server,/execution_status:'HOLD'/);
+  assert.match(server,/CONNECT_VERIFIED_MONEY_MOVEMENT_ADAPTER/);
+  assert.match(ui,/Create HOLD request/);
+  assert.match(ui,/stays on HOLD until a verified adapter confirms real execution/);
+  assert.doesNotMatch(server,/money-movements[^]*status:'succeeded'/);
+});
+
+test('real movement requests are account-scoped and capability-gated',()=>{
+  assert.match(core,/source account is not enabled to transfer money/i);
+  assert.match(core,/Destination account is not enabled to receive money/);
+  assert.match(core,/Destination account is not enabled as a payout\/withdrawal destination/);
+  assert.match(core,/Financial account is outside this account or inactive/);
+});
+
+test('Settings finance payload exposes budgets and movement history without raw provider balance invention',()=>{
+  assert.match(server,/listProfileBudgetEnvelopes/);
+  assert.match(server,/listProfileMoneyMovements/);
+  assert.match(server,/financial_accounts:accounts,preferences,budgets,money_movements:movements/);
+  assert.match(server,/budget_purposes:BUDGET_PURPOSES/);
+  assert.match(server,/movement_types:MONEY_MOVEMENT_TYPES/);
+});
