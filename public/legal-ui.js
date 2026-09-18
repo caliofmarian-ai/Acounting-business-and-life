@@ -173,5 +173,5 @@ function openGate(gate){
   Array.prototype.forEach.call(body.querySelectorAll("[data-gate-version]"),function(b){b.onclick=function(){viewDoc(Number(b.dataset.gateVersion),gate.action_code,gate.role);};});
   document.getElementById("gateCenter").onclick=openCenter;
 }
-function boot(){ensureUi();var shell=document.getElementById("shell");if(shell)new MutationObserver(addButton).observe(shell,{childList:true,subtree:true,attributes:true});setInterval(addButton,3000);}
+function boot(){ensureUi();addButton();document.addEventListener("abl:profile-state",addButton);}
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();
