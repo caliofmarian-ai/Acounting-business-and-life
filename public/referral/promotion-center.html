@@ -43,6 +43,7 @@
 <div class="actions">
 <button class="primary" id="share" type="button">Share invitation</button>
 <button id="copy" type="button">Copy referral link</button>
+<a href="/referral/marketing-kit.html?profile=customer" id="marketingKit">Create Marketing Kit</a>
 <a href="/" id="backToApp">Back to Business &amp; Life</a>
 </div>
 
@@ -73,6 +74,7 @@ const signin=document.querySelector('#signin');
 const channels=document.querySelector('#channels');
 const shareButton=document.querySelector('#share');
 const copyButton=document.querySelector('#copy');
+const marketingKit=document.querySelector('#marketingKit');
 const modeState=document.querySelector('#modeState');
 const qrImage=document.querySelector('#qrImage');
 const qrFallback=document.querySelector('#qrFallback');
@@ -82,6 +84,7 @@ const requestedRole=PUBLIC_ROLES.has(params.get('profile'))?params.get('profile'
 role.value=requestedRole;
 
 function setStatus(message){status.textContent=message}
+function syncMarketingKit(){marketingKit.href='/referral/marketing-kit.html?profile='+encodeURIComponent(role.value)}
 function disableSharing(disabled){
   shareButton.disabled=disabled;copyButton.disabled=disabled;channels.classList.toggle('hidden',disabled);
 }
@@ -161,7 +164,7 @@ async function loadIdentity(){
     }
   }
 }
-role.addEventListener('change',loadIdentity);
+role.addEventListener('change',()=>{syncMarketingKit();loadIdentity()});
 copyButton.addEventListener('click',async()=>{
   if(!live?.referralUrl)return;
   try{await navigator.clipboard.writeText(live.referralUrl);trackShare('copy_link');setStatus('Referral link copied.')}catch{setStatus('Copy unavailable — use the browser address/share menu.')}
@@ -176,6 +179,7 @@ for(const [id,channel] of [['wa','whatsapp'],['tg','telegram'],['sms','sms'],['m
   document.querySelector('#'+id)?.addEventListener('click',()=>trackShare(channel));
 }
 modeState.textContent='LIVE';
+syncMarketingKit();
 loadIdentity();
 </script>
 </body></html>

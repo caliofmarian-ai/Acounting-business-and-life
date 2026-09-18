@@ -130,6 +130,27 @@ Remaining work under this issue is implementation-oriented rather than missing m
 
 The live QR renderer itself is no longer a missing dependency: it now produces locally generated PNG QR assets with the four-module quiet zone required by this contract.
 
+## Runtime personalized export
+
+Business & Life now has a first-party runtime export surface at:
+
+`/referral/marketing-kit.html`
+
+It:
+- loads the authenticated account referral identity from `GET /api/growth/referral?profile=<role>`;
+- exposes all ten canonical template IDs/dimensions;
+- binds `REFERRER_NAME`, `REFERRAL_CODE`, `REFERRAL_URL` and the locally generated PNG QR asset;
+- produces a scalable SVG without uploading referral data to Canva, Figma or a third-party QR service;
+- supports user-initiated file sharing when the browser supports Web Share files, with local SVG export fallback;
+- is linked from Promotion Center while preserving the selected sharing profile.
+
+The runtime SVG is a safe canonical production layout; it does not claim pixel-identical reproduction of the editable Figma/Canva master artwork.
+
+Still not claimed complete:
+- physical print QR scan validation;
+- locale-specific creative variants;
+- Canva Bulk Create automation.
+
 ## Coordination
 
 This work does not modify:
