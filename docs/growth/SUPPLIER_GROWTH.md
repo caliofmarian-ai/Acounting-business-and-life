@@ -49,3 +49,18 @@ Do not promise:
 
 ## Inspection protocol
 After merge + verified deployment report PR/SHA, files/routes/screens, deployed SHA/status, direct inspection URL, exact in-app destination and remaining gates.
+
+## Visual implementation
+
+Figma:
+https://www.figma.com/design/vi8SsQ2bPrrnTxlOoSpbHT
+
+- `10:2` — Supplier Growth mobile reference;
+- `10:21` — social square;
+- `10:32` — Story;
+- `10:61` — A5 flyer.
+
+Editable Canva masters:
+- `Business & Life — Supplier Social Square V1`;
+- `Business & Life — Supplier Story V1`;
+- `Business & Life — Supplier A5 Flyer V1`.
