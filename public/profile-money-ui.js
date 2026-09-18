@@ -68,8 +68,8 @@ function customerSimpleBanking(){
 function customerOptionalTracking(){return '<details class="moneyAdvanced"><summary>Optional personal money tracking</summary><div class="moneyAdvancedBody">'+profileLedgerSection()+'</div></details>'}
 function renderCustomer(){
   const s=pmData.summary||{};
-  return '<section class="moneyHero moneyHeroCustomer"><small>MY MONEY</small><h2>Purchases and payments.</h2><p>No business accounting. Only what you bought, what you paid, what is still due and what was refunded.</p></section>'
-    +'<div class="moneyMetrics moneyMetricsPrimary">'+metric('Paid',s.confirmed_payments,'Confirmed payments')+metric('Still due',s.outstanding_purchases,'Unpaid purchase amount')+metric('Refunded',s.refunded,'Completed refunds')+metric('Purchases',s.purchase_value,(s.order_count||0)+' orders')+'</div>'
+  return '<section class="moneyHero moneyHeroCustomer"><small>MY MONEY</small><h2>Purchases and payments.</h2><p>Personal purchase activity only — no business accounting. Only what you bought, what you paid, what is still due and what was refunded.</p></section>'
+    +'<div class="moneyMetrics moneyMetricsPrimary">'+metric('Confirmed payments',s.confirmed_payments,'Paid successfully')+metric('Outstanding purchases',s.outstanding_purchases,'Still due')+metric('Refunded',s.refunded,'Completed refunds')+metric('Purchases',s.purchase_value,(s.order_count||0)+' orders')+'</div>'
     +(Number(s.pending_payments||0)>0||Number(s.pending_refunds||0)>0?'<section class="moneyCard"><h2>In progress</h2><div class="moneyMetrics">'+metric('Pending payment',s.pending_payments)+metric('Pending refund',s.pending_refunds)+'</div></section>':'')
     +customerOrders()+customerPayments()+customerSimpleBanking()+customerOptionalTracking();
 }
