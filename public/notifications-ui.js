@@ -77,5 +77,5 @@ async function enablePush(){
     toast('Web Push enabled on this device.');
   }catch(e){toast(e.message)}
 }
-function boot(){ensureNotificationUi();refreshUnread();pollTimer=setInterval(refreshUnread,30000);const shell=document.getElementById('shell');if(shell)new MutationObserver(()=>{addBell()}).observe(shell,{childList:true,subtree:true,attributes:true})}
+function boot(){ensureNotificationUi();addBell();refreshUnread();pollTimer=setInterval(()=>{if(!document.hidden)refreshUnread()},60000);document.addEventListener('abl:profile-state',()=>addBell());document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshUnread()})}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
