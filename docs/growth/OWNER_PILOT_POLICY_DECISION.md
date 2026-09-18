@@ -152,7 +152,7 @@ All applicable gates must be complete:
 3. approved LIA if legitimate interest is selected;
 4. EFFECTIVE privacy notice;
 5. verified objection/data-subject request process;
-6. technical retention implementation matching the approved 12-month policy;
+6. exact calendar-month retention runtime matching the approved 12-month policy;
 7. pending-attribution activation prerequisites;
 8. dedicated HMAC secret;
 9. explicit production activation variables;
@@ -180,3 +180,14 @@ In addition to applicable privacy/controller gates:
 `REWARD_ACTIVATION_APPROVED = false`
 
 No broad activation is authorized by this record.
+
+## 11. Technical retention preparation checkpoint
+
+The runtime now has a fail-closed exact-calendar implementation for the Owner-approved target:
+- required future config: `REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS=12`;
+- any different configured month count is rejected as a policy mismatch;
+- expiry uses PostgreSQL calendar-month arithmetic (`INTERVAL '1 month'`);
+- `retention_months` is stored as policy evidence;
+- no production variable is enabled by this preparation.
+
+Status remains: **prepared / privacy-controller activation HOLD**.
