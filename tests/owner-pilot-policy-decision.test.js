@@ -38,6 +38,9 @@ test('canonical machine-readable policy matches Owner decision', () => {
   assert.equal(privacy.convertedAttribution.attributionModelActivationApproved, false);
   assert.equal(privacy.convertedAttribution.retentionMonthsTarget, 12);
   assert.equal(privacy.convertedAttribution.retentionActivationApproved, false);
+  assert.equal(privacy.convertedAttribution.retentionRuntimeUnit, 'calendar_months');
+  assert.equal(privacy.convertedAttribution.retentionRuntimeExpectedMonths, 12);
+  assert.equal(privacy.convertedAttribution.retentionRuntimeConfig, 'REFERRAL_ATTRIBUTION_CONVERTED_RETENTION_MONTHS');
   assert.equal(privacy.retention.convertedAttributionRetentionRule.period, '12_months_after_conversion');
   assert.equal(privacy.retention.convertedAttributionRetentionRule.activationApproved, false);
 });
@@ -50,4 +53,5 @@ test('rewards stay disabled with no invented economics', () => {
   assert.equal(rewards.defaultPolicy.referredUserReward, null);
   assert.equal(rewards.defaultPolicy.rewardCurrency, null);
   assert.equal(rewards.defaultPolicy.rewardKind, null);
+  assert.match(decision, /prepared \/ privacy-controller activation HOLD/);
 });
