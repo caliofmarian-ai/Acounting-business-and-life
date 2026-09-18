@@ -89,6 +89,7 @@ function safePostHogHost(value) {
 export function referralAnalyticsDeliveryState(env = process.env) {
   const enabled = String(env.REFERRAL_ANALYTICS_ENABLED || '').toLowerCase() === 'true';
   const retentionApproved = String(env.REFERRAL_ANALYTICS_RETENTION_APPROVED || '').toLowerCase() === 'true';
+  const projectVerified = String(env.REFERRAL_ANALYTICS_PROJECT_VERIFIED || '').toLowerCase() === 'true';
   const projectToken = String(env.POSTHOG_PROJECT_TOKEN || '').trim();
   const ingestHost = safePostHogHost(env.POSTHOG_INGEST_HOST);
   const configured = Boolean(projectToken && ingestHost);
@@ -96,13 +97,15 @@ export function referralAnalyticsDeliveryState(env = process.env) {
   let reason = 'ready';
   if (!enabled) reason = 'disabled';
   else if (!retentionApproved) reason = 'retention_not_approved';
+  else if (!projectVerified) reason = 'project_not_verified';
   else if (!configured) reason = 'posthog_not_configured';
 
   return Object.freeze({
     enabled,
     retentionApproved,
+    projectVerified,
     configured,
-    deliverable: enabled && retentionApproved && configured,
+    deliverable: enabled && retentionApproved && projectVerified && configured,
     reason,
     ingestHost
   });
