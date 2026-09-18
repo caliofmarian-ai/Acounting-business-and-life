@@ -9,7 +9,7 @@ const read = relative => readFileSync(new URL(`../${relative}`, import.meta.url)
 test('production entry point is the provider-neutral Payment Core over Legal & Consent', () => {
   assert.equal(pkg.version, '0.13.0');
   assert.match(pkg.scripts.start, /--import \.\/bootstrap-env\.js/);
-  assert.match(pkg.scripts.start, /server-legal\.js/);
+  assert.match(pkg.scripts.start, /server-payments\\.js/);
 });
 
 test('all executable domain gateways required by the current platform exist', () => {
