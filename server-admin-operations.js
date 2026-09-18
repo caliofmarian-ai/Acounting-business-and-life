@@ -426,21 +426,30 @@ app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'p
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});const html=await r.text();res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
-app.get('/api/admin/me',async(req,res,next)=>{try{const me=await identity(req);const assignments=await getAdminAssignments(pool,me.account.id);const permissions=new Set();for(const a of assignments){if(assignmentRank(a)==='super_admin')ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));else(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p))}res.json({is_admin:assignments.length>0,assignments,permissions:[...permissions].sort()})}catch(e){next(e)}});
-app.get('/api/admin/catalog',async(req,res,next)=>{try{
-  const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
-  if(!assignments.length)throw Object.assign(new Error('Admin assignment required'),{status:403});
-  const permissions=new Set(),superAdmin=assignments.some(a=>assignmentRank(a)==='super_admin');
-  for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
-  if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
-  const highest=[...assignments].sort((a,b)=>rankLevel(assignmentRank(b))-rankLevel(assignmentRank(a)))[0];
-  const catalog=publicAdminCatalog(),actorRank=assignmentRank(highest);
-  const functions=catalog.functions.map(fn=>({...fn,can_delegate:superAdmin||fn.permissions.every(p=>permissions.has(p))}));
-  const delegable_roles=catalog.ranks.filter(r=>canDelegateRank(actorRank,r.code)).map(r=>r.code);
-  res.json({...catalog,functions,delegable_roles,actor_rank:actorRank});
+app.get('/api/admin/me',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  res.json(adminMePayload(ctx));
 }catch(e){next(e)}});
-app.get('/api/admin/overview',async(req,res,next)=>{try{const{me}=await adminFor(req,'admin.console');res.json(await adminOverview(me.account.id))}catch(e){next(e)}});
-app.get('/api/governance/admin/overview',async(req,res,next)=>{try{const{me}=await adminFor(req,'admin.console');res.json(await adminOverview(me.account.id))}catch(e){next(e)}});
+app.get('/api/admin/catalog',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  res.json(adminCatalogPayload(ctx));
+}catch(e){next(e)}});
+app.get('/api/admin/bootstrap',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  requirePermissionFromContext(ctx,'admin.console');
+  const overview=await adminOverview(me.account.id,ctx);
+  res.json({me:adminMePayload(ctx),catalog:adminCatalogPayload(ctx),overview});
+}catch(e){next(e)}});
+app.get('/api/admin/overview',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  requirePermissionFromContext(ctx,'admin.console');
+  res.json(await adminOverview(me.account.id,ctx));
+}catch(e){next(e)}});
+app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  requirePermissionFromContext(ctx,'admin.console');
+  res.json(await adminOverview(me.account.id,ctx));
+}catch(e){next(e)}});
 
 app.get('/api/admin/assignments',async(req,res,next)=>{try{
   const me=await identity(req),mine=await getAdminAssignments(pool,me.account.id);
@@ -590,8 +599,20 @@ app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{
 app.post('/api/governance/admin/applications/:id/review',body,async(req,res,next)=>{try{const q=await pool.query(`SELECT role,territory_id FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Application not found'});return forwardAdmin(req,res,rolePermission(q.rows[0].role),q.rows[0].territory_id,'profile_application',req.params.id)}catch(e){next(e)}});
 app.post('/api/governance/admin/authorizations/:id/status',body,async(req,res,next)=>{try{const q=await pool.query(`SELECT territory_id FROM profile_authorizations WHERE id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Authorization not found'});return forwardAdmin(req,res,'profile.suspend',q.rows[0].territory_id,'profile_authorization',req.params.id)}catch(e){next(e)}});
 
-app.get('/api/admin/metrics',async(req,res,next)=>{try{const{me}=await adminFor(req,'metrics.view');const overview=await adminOverview(me.account.id);res.json({version:'v1',generated_at:new Date().toISOString(),metrics:overview.summary})}catch(e){next(e)}});
-app.post('/api/admin/metrics/snapshot',body,async(req,res,next)=>{try{const{me,assignment}=await adminFor(req,'metrics.view',req.body?.territory_id?Number(req.body.territory_id):null);const overview=await adminOverview(me.account.id);const{rows}=await pool.query(`INSERT INTO admin_metric_snapshots(territory_id,metrics_json,created_by_account_id) VALUES($1,$2::jsonb,$3) RETURNING *`,[req.body?.territory_id?Number(req.body.territory_id):null,JSON.stringify(overview.summary),me.account.id]);await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'metrics.view',territoryId:req.body?.territory_id?Number(req.body.territory_id):null,targetType:'metric_snapshot',targetId:String(rows[0].id),eventCode:'metrics_snapshot_created',correlationId:correlation(req)});res.status(201).json(rows[0])}catch(e){next(e)}});
+app.get('/api/admin/metrics',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  requirePermissionFromContext(ctx,'metrics.view');
+  const summary=await adminSummaryFromContext(ctx);
+  res.json({version:'v1',generated_at:new Date().toISOString(),metrics:summary});
+}catch(e){next(e)}});
+app.post('/api/admin/metrics/snapshot',body,async(req,res,next)=>{try{
+  const territoryId=req.body?.territory_id?Number(req.body.territory_id):null;
+  const{me,assignment}=await adminFor(req,'metrics.view',territoryId);
+  const ctx=await buildAdminScopeContext(me.account.id),summary=await adminSummaryFromContext(ctx);
+  const{rows}=await pool.query(`INSERT INTO admin_metric_snapshots(territory_id,metrics_json,created_by_account_id) VALUES($1,$2::jsonb,$3) RETURNING *`,[territoryId,JSON.stringify(summary),me.account.id]);
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'metrics.view',territoryId,targetType:'metric_snapshot',targetId:String(rows[0].id),eventCode:'metrics_snapshot_created',correlationId:correlation(req)});
+  res.status(201).json(rows[0]);
+}catch(e){next(e)}});
 
 function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Admin upstream unavailable'})});req.pipe(up)}
 app.use(proxy);
