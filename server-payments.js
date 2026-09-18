@@ -17,6 +17,11 @@ import {
 } from './finance-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetization-core.js';
+import {
+  ensureProfileFinanceSchema,listProfileFinancialAccounts,listMoneyPreferences,
+  createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
+  isBusinessFinanceRole,PROFILE_FINANCE_ROLES,FINANCIAL_ACCOUNT_KINDS,MONEY_METHODS,PAYOUT_SCHEDULES
+} from './profile-finance-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -55,13 +60,115 @@ async function canSeeIntent(me,intent){
   if((me.businesses||[]).some(b=>Number(b.id)===Number(intent.business_id)&&b.active!==false))return true;
   try{await requireAdminPermission(pool,me.account.id,'payment.view',intent.territory_id);return true}catch{return false}
 }
-async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
+async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileFinanceSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));
 app.get('/payments-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','payments-ui.js'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+app.get('/profile-settings.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','profile-settings.css'),'utf8')));
+app.get('/profile-settings-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','profile-settings-ui.js'),'utf8')));
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n  <link rel="stylesheet" href="/profile-settings.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n  <script type="module" src="/profile-settings-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
+
+function rejectSensitiveFinancialFields(value){
+  const blocked=/account_number|routing|iban|card_number|pan|cvv|cvc|password|pin|secret|private_key/i;
+  for(const key of Object.keys(value||{}))if(blocked.test(key))throw Object.assign(new Error('Do not store raw bank/card credentials in Business & Life settings. Use a provider destination reference and last four characters only.'),{status:400});
+}
+function enabledProfile(me,role){return Boolean((me.profiles||[]).find(p=>p.role===role&&p.enabled))}
+function authorizedBusiness(me,businessId){
+  const id=Number(businessId);
+  return Number.isInteger(id)&&(me.businesses||[]).some(b=>Number(b.id)===id&&b.active!==false);
+}
+function financeScope(me,role,businessId){
+  if(!PROFILE_FINANCE_ROLES.includes(role))throw Object.assign(new Error('Unsupported profile role'),{status:400});
+  if(!enabledProfile(me,role))throw Object.assign(new Error('Enable this profile before configuring its financial settings'),{status:403});
+  if(isBusinessFinanceRole(role)){
+    if(!authorizedBusiness(me,businessId))throw Object.assign(new Error('Choose a business workspace that this account is allowed to manage'),{status:403});
+    return{owner_scope:'business',business_id:Number(businessId)};
+  }
+  return{owner_scope:'account',business_id:null};
+}
+async function financialAccountOwnedForScope(accountId,id,role,businessId,purpose){
+  if(id==null||id==='')return null;
+  const q=await pool.query(
+    `SELECT * FROM profile_financial_accounts
+     WHERE id=$1 AND account_id=$2 AND profile_role=$3 AND status='active'
+       AND COALESCE(business_id,0)=COALESCE($4::bigint,0)`,
+    [Number(id),Number(accountId),role,businessId==null?null:Number(businessId)]
+  );
+  if(!q.rowCount)throw Object.assign(new Error('Selected financial account is outside this profile/business scope'),{status:403});
+  const row=q.rows[0];
+  if(purpose==='receive'&&!row.can_receive)throw Object.assign(new Error('Selected account is not enabled to receive money'),{status:409});
+  if(purpose==='pay'&&!row.can_pay)throw Object.assign(new Error('Selected account is not enabled for payments'),{status:409});
+  if(purpose==='payout'&&!row.can_payout)throw Object.assign(new Error('Selected account is not enabled as a payout destination'),{status:409});
+  return Number(row.id);
+}
+
+app.get('/api/settings/finance',async(req,res,next)=>{try{
+  const me=await identity(req);
+  const [accounts,preferences,providers]=await Promise.all([
+    listProfileFinancialAccounts(pool,me.account.id),
+    listMoneyPreferences(pool,me.account.id),
+    pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account FROM payment_provider_configs WHERE country_code='PH' ORDER BY provider_code")
+  ]);
+  const defaultProvider=clean(process.env.PAYMENT_PROVIDER_DEFAULT,80);
+  const selected=providers.rows.find(x=>x.provider_code===defaultProvider&&['sandbox','active'].includes(x.status))||null;
+  res.json({
+    account:{id:Number(me.account.id),display_name:me.account.display_name,email:me.account.email||'',phone:me.account.phone||'',address:me.account.address||'',avatar_data_url:me.account.avatar_data_url||''},
+    active_role:me.account.active_role,
+    profiles:(me.profiles||[]).map(p=>({role:p.role,enabled:Boolean(p.enabled),status:p.status,visibility:p.visibility})),
+    businesses:(me.businesses||[]).map(b=>({id:Number(b.id),name:b.name,active:b.active!==false})),
+    financial_accounts:accounts,preferences,
+    catalog:{roles:PROFILE_FINANCE_ROLES,account_kinds:FINANCIAL_ACCOUNT_KINDS,methods:MONEY_METHODS,payout_schedules:PAYOUT_SCHEDULES},
+    provider:{
+      default_provider:defaultProvider,provider_ready:Boolean(selected),selected_provider:selected,
+      payout_execution_ready:false,
+      payout_execution_code:'PROVIDER_DISBURSEMENT_ADAPTER_NOT_CONNECTED',
+      note:'Financial destinations can be configured now. Real withdrawals/transfers remain disabled until a verified money-movement adapter confirms execution.'
+    }
+  });
+}catch(e){next(e)}});
+
+app.post('/api/settings/financial-accounts',body,async(req,res,next)=>{try{
+  rejectSensitiveFinancialFields(req.body);
+  const me=await identity(req),role=clean(req.body?.profile_role,40),scope=financeScope(me,role,req.body?.business_id);
+  const row=await createProfileFinancialAccount(pool,{
+    publicId:'fa_'+crypto.randomUUID().replaceAll('-',''),
+    accountId:me.account.id,profileRole:role,ownerScope:scope.owner_scope,businessId:scope.business_id,
+    accountKind:req.body?.account_kind,providerCode:req.body?.provider_code,
+    providerDestinationRef:req.body?.provider_destination_ref,displayName:req.body?.display_name,
+    institutionName:req.body?.institution_name,accountName:req.body?.account_name,
+    referenceLast4:req.body?.reference_last4,currencyCode:req.body?.currency_code||'PHP',
+    canPay:req.body?.can_pay,canReceive:req.body?.can_receive,canPayout:req.body?.can_payout
+  });
+  res.status(201).json(row);
+}catch(e){next(e)}});
+
+app.patch('/api/settings/financial-accounts/:id',body,async(req,res,next)=>{try{
+  rejectSensitiveFinancialFields(req.body);
+  const me=await identity(req);
+  const row=await updateProfileFinancialAccount(pool,{
+    accountId:me.account.id,id:Number(req.params.id),displayName:req.body?.display_name,
+    institutionName:req.body?.institution_name,accountName:req.body?.account_name,
+    referenceLast4:req.body?.reference_last4,providerCode:req.body?.provider_code,
+    providerDestinationRef:req.body?.provider_destination_ref,canPay:req.body?.can_pay,
+    canReceive:req.body?.can_receive,canPayout:req.body?.can_payout,status:req.body?.status
+  });
+  res.json(row);
+}catch(e){next(e)}});
+
+app.put('/api/settings/money-preferences/:role',body,async(req,res,next)=>{try{
+  const me=await identity(req),role=clean(req.params.role,40),scope=financeScope(me,role,req.body?.business_id);
+  const receive=await financialAccountOwnedForScope(me.account.id,req.body?.default_receive_account_id,role,scope.business_id,'receive');
+  const spend=await financialAccountOwnedForScope(me.account.id,req.body?.default_spend_account_id,role,scope.business_id,'pay');
+  const payout=await financialAccountOwnedForScope(me.account.id,req.body?.default_payout_account_id,role,scope.business_id,'payout');
+  const pref=await upsertMoneyPreference(pool,{
+    accountId:me.account.id,profileRole:role,businessId:scope.business_id,
+    defaultReceiveAccountId:receive,defaultSpendAccountId:spend,defaultPayoutAccountId:payout,
+    acceptedMethods:req.body?.accepted_methods,payoutSchedulePreference:req.body?.payout_schedule_preference
+  });
+  res.json(pref);
+}catch(e){next(e)}});
 
 app.get('/api/payments/config',async(req,res,next)=>{try{
   await identity(req);
