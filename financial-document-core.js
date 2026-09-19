@@ -587,6 +587,20 @@ export async function listFinancialDocuments(pool,{accountId,profileRole,busines
   return rows;
 }
 
+export async function getFinancialDocumentByPublicId(pool,{accountId,profileRole,businessId=null,publicId}){
+  const scope=scopeWhere({accountId,profileRole,businessId},1);
+  const params=[...scope.params,clean(publicId,120)];
+  const {rows}=await pool.query(`
+    SELECT d.*,
+      COALESCE((SELECT jsonb_agg(l ORDER BY l.id) FROM financial_document_lines l WHERE l.document_id=d.id),'[]'::jsonb) lines,
+      COALESCE((SELECT jsonb_agg(s ORDER BY s.id) FROM financial_document_source_links s WHERE s.document_id=d.id),'[]'::jsonb) source_links
+    FROM financial_documents d
+    WHERE ${scope.sql} AND d.public_id=${params.length}
+    LIMIT 1
+  `,params);
+  return rows[0]||null;
+}
+
 export async function financialStatementForScope(pool,{accountId,profileRole,businessId=null,period='month',anchor}){
   const range=financialPeriodRange(period,anchor);
   await synchronizeFinancialDocumentsForScope(pool,{accountId,profileRole,businessId});
