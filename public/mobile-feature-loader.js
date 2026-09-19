@@ -84,6 +84,14 @@ async function loadAdminOps(){
   if(!api)throw new Error('Admin tools could not finish loading.');
   return api;
 }
+async function openSupportTicket(ticketId){
+  const id=Number(ticketId);
+  if(!Number.isInteger(id)||id<1)throw new Error('Invalid support ticket.');
+  closeMore();
+  const api=await loadAdminOps();
+  return api.openTicket(id);
+}
+window.BusinessLifeFeatureLoader=Object.freeze({openSupportTicket});
 
 async function openSupport(){
   try{

@@ -8,6 +8,8 @@ const admin=read('public/admin-console.js');
 const user=read('public/admin-operations-ui.js');
 const notifications=read('public/notifications-ui.js');
 const core=read('notification-core.js');
+const notificationServer=read('server-notifications.js');
+const loader=read('public/mobile-feature-loader.js');
 
 test('support messages preserve user versus Admin context even for one account',()=>{
   assert.match(server,/actor_context TEXT NOT NULL DEFAULT 'user'/);
@@ -25,6 +27,14 @@ test('support reply notification opens its exact ticket',()=>{
   assert.match(user,/abl:open-support-ticket/);
   assert.match(user,/support_ticket/);
   assert.match(core,/\?support_ticket=/);
+  assert.match(loader,/BusinessLifeFeatureLoader=Object\.freeze\(\{openSupportTicket\}\)/);
+  assert.match(notifications,/BusinessLifeFeatureLoader\?\.openSupportTicket/);
+});
+
+test('one inbox notification thread is shown per support ticket',()=>{
+  assert.match(notificationServer,/ROW_NUMBER\(\) OVER\(PARTITION BY CASE WHEN e\.entity_type='support_ticket'/);
+  assert.match(notificationServer,/WHERE thread_rank=1/);
+  assert.match(notificationServer,/e\.entity_type='support_ticket' AND e\.entity_id=\$2/);
 });
 
 test('Admin Support has editable voice transcription and AI drafting',()=>{
