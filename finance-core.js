@@ -584,7 +584,7 @@ export function commissionSustainabilityScenario(input={}){
     supplier:money(scenarioNonNegative(input.subscriptionAmounts?.supplier,'supplier subscription amount',{max:1e9})),
     local_services:money(scenarioNonNegative(input.subscriptionAmounts?.local_services,'local services subscription amount',{max:1e9}))
   };
-  const deliveryEligibleEarnings=money(scenarioNonNegative(input.deliveryEligibleEarnings,'delivery eligible earnings',{max:1e12}));
+  const deliveryEligiblePrice=money(scenarioNonNegative(input.deliveryEligiblePrice??input.deliveryEligibleEarnings,'delivery eligible price',{max:1e12}));
   const deliveryProductionRatePct=scenarioPercent(input.deliveryProductionRatePct??10,'delivery production rate');
   const averageFeeBase=money(scenarioNonNegative(input.averageFeeBaseValue,'average fee-base value',{max:1e12}));
   const feeEligibleSharePct=scenarioPercent(input.feeEligibleSharePct,'fee-eligible share');
@@ -624,7 +624,7 @@ export function commissionSustainabilityScenario(input={}){
     paidProfiles.supplier*subscriptionAmounts.supplier+
     paidProfiles.local_services*subscriptionAmounts.local_services
   );
-  const deliveryProductionFeeRevenue=money(deliveryEligibleEarnings*deliveryProductionRatePct/100);
+  const deliveryProductionFeeRevenue=money(deliveryEligiblePrice*deliveryProductionRatePct/100);
   const nonTransactionPlatformRevenue=money(subscriptionRevenue+deliveryProductionFeeRevenue);
   const breakEvenTransactionRevenueNeed=money(Math.max(0,baseOperatingCost-nonTransactionPlatformRevenue));
   const sustainableTransactionRevenueNeed=money(Math.max(0,sustainableRevenueNeed-nonTransactionPlatformRevenue));
@@ -662,7 +662,7 @@ export function commissionSustainabilityScenario(input={}){
       growth_reinvestment_surplus_pct_of_operating_cost:growthSurplusPct,
       paid_profiles:paidProfiles,
       monthly_subscription_amounts:subscriptionAmounts,
-      delivery_eligible_earnings:deliveryEligibleEarnings,
+      delivery_eligible_price:deliveryEligiblePrice,
       delivery_production_rate_pct:deliveryProductionRatePct
     },
     revenue_mix:{
@@ -714,7 +714,7 @@ export function commissionSustainabilityScenario(input={}){
       owner_distribution_in_operating_cost:false,
       owner_distribution_note:'Owner withdrawal/distribution is not payroll or an operating expense and is excluded from the required platform-fee calculation.',
       promotional_rule:'The first 90 eligible days use zero Business & Life platform fee. If fee-eligible share is 0%, modeled operations require Owner/company capital or another legitimate funding source.',
-      fee_base_rule:'Average fee-base value is the value to which the future Merchant/Supplier/Local Services transaction fee applies, not automatically the full Customer payment or Delivery earnings.',
+      fee_base_rule:'Average fee-base value is the value to which the future Merchant/Supplier/Local Services transaction fee applies. Delivery uses the separate verified delivery price as its 10% fee base.',
       hybrid_revenue_rule:'Subscription revenue and Delivery production-fee revenue reduce the transaction-fee revenue still required for sustainability.',
       activation:'NOT_PERFORMED'
     }
