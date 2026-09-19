@@ -100,6 +100,16 @@ test('scoped APIs expose documents profile statements and consolidated own-accou
   assert.match(server,/no_cross_account_or_cross_business_data:true/);
 });
 
+
+test('Merchant and Supplier document reads require an exact active profile-business binding',()=>{
+  assert.match(server,/FROM profile_business_bindings pb/);
+  assert.match(server,/pb\.account_id=\$1/);
+  assert.match(server,/pb\.role=\$2/);
+  assert.match(server,/pb\.business_id=\$3/);
+  assert.match(server,/pb\.status='active'/);
+  assert.match(server,/This business workspace is not bound to the selected financial profile/);
+});
+
 test('financial document schema is initialized by Payment Core',()=>{
   assert.match(server,/ensureFinancialDocumentSchema\(pool\)/);
   assert.match(server,/synchronizeFinancialDocumentsForScope/);
