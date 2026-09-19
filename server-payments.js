@@ -543,7 +543,7 @@ app.post('/api/payments/admin/commission-planner',body,async(req,res,next)=>{try
     growthSurplusPct:req.body?.growth_surplus_pct,
     paidProfiles:req.body?.paid_profiles||{},
     subscriptionAmounts:req.body?.subscription_amounts||{},
-    deliveryEligibleEarnings:req.body?.delivery_eligible_earnings,
+    deliveryEligiblePrice:req.body?.delivery_eligible_price??req.body?.delivery_eligible_earnings,
     deliveryProductionRatePct:req.body?.delivery_production_rate_pct,
     platformAbsorbsProcessorFees:req.body?.platform_absorbs_processor_fees!==false,
     platformAbsorbsRiskAllowance:req.body?.platform_absorbs_risk_allowance!==false,

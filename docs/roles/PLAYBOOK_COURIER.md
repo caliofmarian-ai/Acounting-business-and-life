@@ -9,7 +9,7 @@ country_code: PH
 territory_scope: country
 owner_role: Country Admin
 approver_role: Project Owner
-version: 1.0
+version: 1.1
 legal_classification: PLATFORM_POLICY
 ---
 
@@ -34,7 +34,7 @@ Perform only approved delivery assignments safely and transparently within eligi
 
 - Submit eligibility documents.
 - Go available when approved.
-- Work assigned deliveries.
+- Work assigned deliveries only when the quoted required vehicle class/capacity/radius matches the approved Courier profile.
 - Share active location.
 - Complete with correct handoff code.
 
@@ -63,6 +63,9 @@ Perform only approved delivery assignments safely and transparently within eligi
 
 ## Money / commercial handling
 
+- Customer Delivery price is separate from merchandise/product price.
+- During the applicable 90-day promotion, Business & Life Delivery fee remains 0% unless a later Owner-approved policy explicitly changes it.
+- Owner-approved post-promo target: Business & Life receives 10% of the verified Delivery price and Courier gross Delivery entitlement is 90%, subject to later live fee-policy activation and legitimate external adjustments.
 - Do not collect/hold money outside approved payment/cash-custody policy.
 - Do not alter delivery/merchandise financial records.
 

@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
+import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePricingRule} from './delivery-pricing-v2-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,28 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     UNIQUE(country_code,version)
   );
 
+  CREATE TABLE IF NOT EXISTS delivery_vehicle_pricing_rules (
+    id BIGSERIAL PRIMARY KEY,
+    pricing_rule_id BIGINT NOT NULL REFERENCES delivery_pricing_rules(id) ON DELETE CASCADE,
+    vehicle_class TEXT NOT NULL,
+    formula_type TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 100,
+    base_fee NUMERIC(12,2) NOT NULL DEFAULT 0,
+    per_km NUMERIC(12,2) NOT NULL DEFAULT 0,
+    per_kg NUMERIC(12,2) NOT NULL DEFAULT 0,
+    per_liter NUMERIC(12,2) NOT NULL DEFAULT 0,
+    minimum_fee NUMERIC(12,2) NOT NULL DEFAULT 0,
+    maximum_distance_km NUMERIC(12,2),
+    max_weight_kg NUMERIC(12,4),
+    max_volume_l NUMERIC(12,4),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(pricing_rule_id,vehicle_class),
+    CHECK(vehicle_class IN ('bicycle','car','van')),
+    CHECK(formula_type IN ('base_plus_km','distance_weight_volume'))
+  );
+  CREATE INDEX IF NOT EXISTS delivery_vehicle_pricing_rule_parent_idx
+    ON delivery_vehicle_pricing_rules(pricing_rule_id,priority,vehicle_class);
+
   CREATE TABLE IF NOT EXISTS delivery_quotes (
     id BIGSERIAL PRIMARY KEY,
     customer_account_id BIGINT NOT NULL REFERENCES accounts(id),
@@ -164,11 +187,39 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     UNIQUE(event_type,source_payment_id)
   );
 
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS vehicle_pricing_rule_id BIGINT REFERENCES delivery_vehicle_pricing_rules(id);
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS required_vehicle_class TEXT NOT NULL DEFAULT '';
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS formula_type TEXT NOT NULL DEFAULT '';
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS pricing_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
+  ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS required_vehicle_class TEXT NOT NULL DEFAULT '';
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS merchandise_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 `)}
 
 async function activeRule(){const r=await pool.query(`SELECT * FROM delivery_pricing_rules WHERE country_code='PH' AND active=TRUE ORDER BY version DESC LIMIT 1`);return r.rows[0]||null}
+async function vehicleRulesForPricingRule(pricingRuleId){
+  const {rows}=await pool.query(`SELECT * FROM delivery_vehicle_pricing_rules WHERE pricing_rule_id=$1 ORDER BY priority,vehicle_class`,[pricingRuleId]);
+  return rows;
+}
+async function activePricingBundle(){
+  const rule=await activeRule();
+  if(!rule)return null;
+  const vehicleRules=await vehicleRulesForPricingRule(rule.id);
+  return{rule,vehicleRules};
+}
+function legacyDeliveryPrice(rule,{distanceKm,weightKg,volumeL}){
+  let fee=Number(rule.base_fee)+Number(distanceKm)*Number(rule.per_km)+Number(weightKg)*Number(rule.per_kg)+Number(volumeL)*Number(rule.per_liter);
+  fee=Math.max(Number(rule.minimum_fee||0),fee);
+  return{
+    vehicle_class:'',
+    formula_type:'legacy_generic',
+    distance_km:Number(distanceKm),
+    weight_kg:Number(weightKg),
+    volume_l:Number(volumeL),
+    delivery_price:Math.round(fee*100)/100,
+    rule:null
+  };
+}
 async function deliveryDetail(id){const r=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,b.name business_name,cu.display_name customer_name,cp.display_name courier_name,cp.vehicle_type courier_vehicle FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id JOIN accounts cu ON cu.id=d.customer_account_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.id=$1`,[id]);return r.rows[0]||null}
 async function allowedDelivery(req,d){const me=await identity(req);const id=Number(me.account.id);if(id===Number(d.customer_account_id)||id===Number(d.courier_account_id)||Boolean(business(me,d.business_id))||id===1)return me;throw Object.assign(new Error('Not allowed to view this delivery'),{status:403})}
 function activeTracking(status){return !['delivered','failed','cancelled'].includes(status)}
@@ -181,9 +232,87 @@ async function root(req,res){const r=await upstream(req.path,{headers:{...req.he
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/delivery/config',async(req,res,next)=>{try{await identity(req);const rule=await activeRule();res.json({enabled:Boolean(rule),pricing_rule_version:rule?.version||null,routing_provider:'straight_line_estimate',live_map_provider:'OpenStreetMap/Leaflet preview'})}catch(e){next(e)}})
-app.post('/api/delivery/quote',body,async(req,res,next)=>{try{const me=await requireCustomer(req),businessId=Number(req.body?.business_id),lat=Number(req.body?.dropoff_lat),lng=Number(req.body?.dropoff_lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid delivery coordinates are required'});const store=await pool.query(`SELECT business_id,pickup_lat,pickup_lng,delivery_enabled FROM merchant_storefronts WHERE business_id=$1 AND publication_status='published'`,[businessId]);if(!store.rowCount||!store.rows[0].delivery_enabled)return res.status(409).json({error:'Delivery is not enabled for this merchant'});const s=store.rows[0];if(!finite(s.pickup_lat)||!finite(s.pickup_lng))return res.status(409).json({error:'Merchant pickup location is not configured yet'});const rule=await activeRule();if(!rule)return res.status(409).json({error:'Delivery pricing is not configured by Admin yet'});const raw=Array.isArray(req.body?.items)?req.body.items:[];let weight=0,volume=0;if(raw.length){const ids=[...new Set(raw.map(x=>Number(x.product_id)).filter(Number.isInteger))];const p=await pool.query(`SELECT id,estimated_weight_kg,estimated_volume_l FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE`,[businessId,ids]);const map=new Map(p.rows.map(x=>[Number(x.id),x]));for(const x of raw){const item=map.get(Number(x.product_id)),q=Number(x.quantity);if(item&&q>0){weight+=Number(item.estimated_weight_kg||0)*q;volume+=Number(item.estimated_volume_l||0)*q}}}const straight=haversine(Number(s.pickup_lat),Number(s.pickup_lng),lat,lng),distance=straight*Number(rule.route_factor||1);if(rule.maximum_distance_km!=null&&distance>Number(rule.maximum_distance_km))return res.status(409).json({error:'Delivery destination is outside the configured service distance'});let fee=Number(rule.base_fee)+distance*Number(rule.per_km)+weight*Number(rule.per_kg)+volume*Number(rule.per_liter);fee=Math.max(Number(rule.minimum_fee||0),fee);fee=Math.round(fee*100)/100;const{rows}=await pool.query(`INSERT INTO delivery_quotes(customer_account_id,business_id,pricing_rule_id,pricing_rule_version,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,route_distance_km,estimated_weight_kg,estimated_volume_l,fee,currency_code,status,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'PHP','quoted',NOW()+INTERVAL '15 minutes') RETURNING *`,[me.account.id,businessId,rule.id,rule.version,s.pickup_lat,s.pickup_lng,lat,lng,distance,weight,volume,fee]);res.status(201).json(rows[0])}catch(e){next(e)}})
+app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
+  const me=await requireCustomer(req),businessId=Number(req.body?.business_id),lat=Number(req.body?.dropoff_lat),lng=Number(req.body?.dropoff_lng);
+  if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid delivery coordinates are required'});
+  const store=await pool.query(`SELECT business_id,pickup_lat,pickup_lng,delivery_enabled FROM merchant_storefronts WHERE business_id=$1 AND publication_status='published'`,[businessId]);
+  if(!store.rowCount||!store.rows[0].delivery_enabled)return res.status(409).json({error:'Delivery is not enabled for this merchant'});
+  const s=store.rows[0];
+  if(!finite(s.pickup_lat)||!finite(s.pickup_lng))return res.status(409).json({error:'Merchant pickup location is not configured yet'});
+  const bundle=await activePricingBundle();
+  if(!bundle)return res.status(409).json({error:'Delivery pricing is not configured by Admin yet'});
+  const {rule,vehicleRules}=bundle;
 
-app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{if(req.body?.fulfilment_method!=='delivery'){const r=await upstream('/api/marketplace/checkout',{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:JSON.stringify(req.body)});return res.status(r.status).json(await r.json())}const me=await requireCustomer(req),quoteId=Number(req.body?.delivery_quote_id);const q=await pool.query(`SELECT * FROM delivery_quotes WHERE id=$1 AND customer_account_id=$2 AND business_id=$3 AND status='quoted' AND expires_at>NOW() FOR UPDATE`,[quoteId,me.account.id,Number(req.body.business_id)]);if(!q.rowCount)return res.status(409).json({error:'Delivery quote is missing or expired. Get a new quote.'});if(req.body?.payment_method!=='online')return res.status(409).json({error:'Cash delivery is not enabled. Use online/digital payment.'});const quote=q.rows[0];const r=await upstream('/api/marketplace/checkout',{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:JSON.stringify(req.body)});const order=await r.json();if(!r.ok)return res.status(r.status).json(order);const store=await pool.query(`SELECT pickup_address FROM merchant_storefronts WHERE business_id=$1`,[quote.business_id]);const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE delivery_quotes SET status='used' WHERE id=$1`,[quote.id]);await client.query(`UPDATE orders SET delivery_fee=$1,total=subtotal+$1,outstanding_amount=(subtotal+$1)-paid_amount,updated_at=NOW() WHERE id=$2`,[quote.fee,order.id]);const d=await client.query(`INSERT INTO deliveries(order_id,quote_id,business_id,customer_account_id,status,delivery_fee,currency_code,route_distance_km,estimated_weight_kg,estimated_volume_l,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng) VALUES($1,$2,$3,$4,'quoted',$5,'PHP',$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,[order.id,quote.id,quote.business_id,me.account.id,quote.fee,quote.route_distance_km,quote.estimated_weight_kg,quote.estimated_volume_l,store.rows[0]?.pickup_address||'',quote.pickup_lat,quote.pickup_lng,clean(req.body?.delivery_address||me.account.address,500),quote.dropoff_lat,quote.dropoff_lng]);await client.query('COMMIT');const updated=await upstream(`/api/orders/${order.id}`,{headers:{Authorization:authHeader(req)}}).then(x=>x.json());res.status(201).json({...updated,delivery_id:d.rows[0].id})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
+  const raw=Array.isArray(req.body?.items)?req.body.items:[];
+  let weight=0,volume=0;
+  if(raw.length){
+    const ids=[...new Set(raw.map(x=>Number(x.product_id)).filter(Number.isInteger))];
+    const p=await pool.query(`SELECT id,estimated_weight_kg,estimated_volume_l FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE`,[businessId,ids]);
+    const map=new Map(p.rows.map(x=>[Number(x.id),x]));
+    for(const x of raw){
+      const item=map.get(Number(x.product_id)),q=Number(x.quantity);
+      if(item&&q>0){
+        weight+=Number(item.estimated_weight_kg||0)*q;
+        volume+=Number(item.estimated_volume_l||0)*q;
+      }
+    }
+  }
+
+  const straight=haversine(Number(s.pickup_lat),Number(s.pickup_lng),lat,lng);
+  const distance=straight*Number(rule.route_factor||1);
+  if(rule.maximum_distance_km!=null&&distance>Number(rule.maximum_distance_km))return res.status(409).json({error:'Delivery destination is outside the configured service distance'});
+
+  let quoteCalc,vehiclePricingRuleId=null,requiredVehicleClass='',formulaType='',pricingSnapshot={};
+  if(vehicleRules.length){
+    quoteCalc=selectDeliveryVehicleQuote(vehicleRules,{distanceKm:distance,weightKg:weight,volumeL:volume,minimumVehicleClass:req.body?.minimum_vehicle_class||null});
+    const selected=vehicleRules.find(x=>String(x.vehicle_class)===String(quoteCalc.vehicle_class));
+    vehiclePricingRuleId=selected?.id||null;
+    requiredVehicleClass=quoteCalc.vehicle_class;
+    formulaType=quoteCalc.formula_type;
+    pricingSnapshot={
+      pricing_rule_version:Number(rule.version),
+      vehicle_pricing_rule_id:vehiclePricingRuleId,
+      vehicle_class:requiredVehicleClass,
+      formula_type:formulaType,
+      base_fee:quoteCalc.rule.base_fee,
+      per_km:quoteCalc.rule.per_km,
+      per_kg:quoteCalc.rule.per_kg,
+      per_liter:quoteCalc.rule.per_liter,
+      minimum_fee:quoteCalc.rule.minimum_fee,
+      maximum_distance_km:quoteCalc.rule.maximum_distance_km,
+      max_weight_kg:quoteCalc.rule.max_weight_kg,
+      max_volume_l:quoteCalc.rule.max_volume_l,
+      distance_component:quoteCalc.distance_component,
+      weight_component:quoteCalc.weight_component,
+      volume_component:quoteCalc.volume_component
+    };
+  }else{
+    quoteCalc=legacyDeliveryPrice(rule,{distanceKm:distance,weightKg:weight,volumeL:volume});
+    pricingSnapshot={pricing_rule_version:Number(rule.version),formula_type:'legacy_generic'};
+  }
+
+  const {rows}=await pool.query(`
+    INSERT INTO delivery_quotes(
+      customer_account_id,business_id,pricing_rule_id,pricing_rule_version,vehicle_pricing_rule_id,
+      pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,route_distance_km,
+      estimated_weight_kg,estimated_volume_l,required_vehicle_class,formula_type,pricing_snapshot,
+      fee,currency_code,status,expires_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,'PHP','quoted',NOW()+INTERVAL '15 minutes')
+    RETURNING *
+  `,[
+    me.account.id,businessId,rule.id,rule.version,vehiclePricingRuleId,
+    s.pickup_lat,s.pickup_lng,lat,lng,distance,weight,volume,
+    requiredVehicleClass,formulaType,JSON.stringify(pricingSnapshot),quoteCalc.delivery_price
+  ]);
+  res.status(201).json({...rows[0],price_breakdown:{
+    base:quoteCalc.base_component||Number(rule.base_fee||0),
+    distance:quoteCalc.distance_component||Math.round(distance*Number(rule.per_km||0)*100)/100,
+    weight:quoteCalc.weight_component||0,
+    volume:quoteCalc.volume_component||0
+  }});
+}catch(e){next(e)}})
+
+app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{if(req.body?.fulfilment_method!=='delivery'){const r=await upstream('/api/marketplace/checkout',{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:JSON.stringify(req.body)});return res.status(r.status).json(await r.json())}const me=await requireCustomer(req),quoteId=Number(req.body?.delivery_quote_id);const q=await pool.query(`SELECT * FROM delivery_quotes WHERE id=$1 AND customer_account_id=$2 AND business_id=$3 AND status='quoted' AND expires_at>NOW() FOR UPDATE`,[quoteId,me.account.id,Number(req.body.business_id)]);if(!q.rowCount)return res.status(409).json({error:'Delivery quote is missing or expired. Get a new quote.'});if(req.body?.payment_method!=='online')return res.status(409).json({error:'Cash delivery is not enabled. Use online/digital payment.'});const quote=q.rows[0];const r=await upstream('/api/marketplace/checkout',{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:JSON.stringify(req.body)});const order=await r.json();if(!r.ok)return res.status(r.status).json(order);const store=await pool.query(`SELECT pickup_address FROM merchant_storefronts WHERE business_id=$1`,[quote.business_id]);const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE delivery_quotes SET status='used' WHERE id=$1`,[quote.id]);await client.query(`UPDATE orders SET delivery_fee=$1,total=subtotal+$1,outstanding_amount=(subtotal+$1)-paid_amount,updated_at=NOW() WHERE id=$2`,[quote.fee,order.id]);const d=await client.query(`INSERT INTO deliveries(order_id,quote_id,business_id,customer_account_id,status,delivery_fee,currency_code,route_distance_km,estimated_weight_kg,estimated_volume_l,required_vehicle_class,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng) VALUES($1,$2,$3,$4,'quoted',$5,'PHP',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,[order.id,quote.id,quote.business_id,me.account.id,quote.fee,quote.route_distance_km,quote.estimated_weight_kg,quote.estimated_volume_l,quote.required_vehicle_class||'',store.rows[0]?.pickup_address||'',quote.pickup_lat,quote.pickup_lng,clean(req.body?.delivery_address||me.account.address,500),quote.dropoff_lat,quote.dropoff_lng]);await client.query('COMMIT');const updated=await upstream(`/api/orders/${order.id}`,{headers:{Authorization:authHeader(req)}}).then(x=>x.json());res.status(201).json({...updated,delivery_id:d.rows[0].id})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
 app.put('/api/delivery/store-location',body,async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.body?.business_id||undefined)),lat=Number(req.body?.lat),lng=Number(req.body?.lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid coordinates required'});await pool.query(`UPDATE merchant_storefronts SET pickup_lat=$1,pickup_lng=$2,updated_at=NOW() WHERE business_id=$3`,[lat,lng,b.id]);res.json({ok:true,pickup_lat:lat,pickup_lng:lng})}catch(e){next(e)}})
 app.get('/api/delivery/merchant',async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.query.business_id||undefined));const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,cp.display_name courier_name,cp.vehicle_type FROM deliveries d JOIN orders o ON o.id=d.order_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.business_id=$1 ORDER BY d.created_at DESC LIMIT 200`,[b.id]);res.json(rows)}catch(e){next(e)}})
@@ -199,11 +328,136 @@ app.post('/api/courier/deliveries/:id/complete',body,async(req,res,next)=>{try{c
 app.get('/api/delivery/mine',async(req,res,next)=>{try{const me=await requireCustomer(req);const{rows}=await pool.query(`SELECT d.*,o.order_number,b.name business_name,cp.display_name courier_name,cp.vehicle_type FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.customer_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id]);res.json(rows.map(d=>({...d,completion_code:activeTracking(d.status)?completionCode(d.id):null,last_lat:activeTracking(d.status)?d.last_lat:null,last_lng:activeTracking(d.status)?d.last_lng:null})))}catch(e){next(e)}})
 app.get('/api/delivery/:id/live',async(req,res,next)=>{try{const d=await deliveryDetail(Number(req.params.id));if(!d)return res.status(404).json({error:'Delivery not found'});const me=await allowedDelivery(req,d),rule=await activeRule();const customer=Number(me.account.id)===Number(d.customer_account_id);res.json({...d,last_lat:activeTracking(d.status)?d.last_lat:null,last_lng:activeTracking(d.status)?d.last_lng:null,completion_code:customer&&activeTracking(d.status)?completionCode(d.id):undefined,eta_minutes:etaMinutes(d,rule),distance_to_dropoff_km:d.last_lat&&d.last_lng?Math.round(haversine(Number(d.last_lat),Number(d.last_lng),Number(d.dropoff_lat),Number(d.dropoff_lng))*100)/100:null})}catch(e){next(e)}})
 
-app.get('/api/admin/delivery/pricing',async(req,res,next)=>{try{await requireAdmin(req);const{rows}=await pool.query(`SELECT * FROM delivery_pricing_rules WHERE country_code='PH' ORDER BY version DESC`);res.json(rows)}catch(e){next(e)}})
-app.put('/api/admin/delivery/pricing',body,async(req,res,next)=>{try{const me=await requireAdmin(req);for(const k of ['base_fee','per_km','per_kg','per_liter','minimum_fee','route_factor'])if(!finite(req.body?.[k])||Number(req.body[k])<0)return res.status(400).json({error:`${k} must be zero or greater`});if(Number(req.body.route_factor)<1)return res.status(400).json({error:'route_factor must be at least 1'});const v=await pool.query(`SELECT COALESCE(MAX(version),0)+1 version FROM delivery_pricing_rules WHERE country_code='PH'`),version=Number(v.rows[0].version);const client=await pool.connect();try{await client.query('BEGIN');if(req.body?.active!==false)await client.query(`UPDATE delivery_pricing_rules SET active=FALSE WHERE country_code='PH'`);const{rows}=await client.query(`INSERT INTO delivery_pricing_rules(country_code,version,active,base_fee,per_km,per_kg,per_liter,minimum_fee,maximum_distance_km,route_factor,average_speed_bicycle_kmh,average_speed_motorbike_kmh,average_speed_car_kmh,created_by_account_id) VALUES('PH',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[version,req.body?.active!==false,req.body.base_fee,req.body.per_km,req.body.per_kg,req.body.per_liter,req.body.minimum_fee,req.body?.maximum_distance_km==null?null:Number(req.body.maximum_distance_km),req.body.route_factor,req.body?.average_speed_bicycle_kmh||null,req.body?.average_speed_motorbike_kmh||null,req.body?.average_speed_car_kmh||null,me.account.id]);await client.query('COMMIT');res.json(rows[0])}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
-app.get('/api/admin/couriers',async(req,res,next)=>{try{await requireAdmin(req);const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note,(SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id ORDER BY c.eligibility_status='approved' DESC,a.display_name`);res.json(rows)}catch(e){next(e)}})
+app.get('/api/admin/delivery/pricing',async(req,res,next)=>{try{
+  await requireAdmin(req);
+  const {rows}=await pool.query(`
+    SELECT r.*,
+      COALESCE((
+        SELECT jsonb_agg(v ORDER BY v.priority,v.vehicle_class)
+        FROM delivery_vehicle_pricing_rules v
+        WHERE v.pricing_rule_id=r.id
+      ),'[]'::jsonb) vehicle_rules
+    FROM delivery_pricing_rules r
+    WHERE r.country_code='PH'
+    ORDER BY r.version DESC
+  `);
+  res.json(rows);
+}catch(e){next(e)}})
+
+app.put('/api/admin/delivery/pricing',body,async(req,res,next)=>{try{
+  const me=await requireAdmin(req);
+  const routeFactor=Number(req.body?.route_factor);
+  if(!Number.isFinite(routeFactor)||routeFactor<1)return res.status(400).json({error:'route_factor must be at least 1'});
+  const rawVehicleRules=Array.isArray(req.body?.vehicle_rules)?req.body.vehicle_rules:null;
+
+  let normalizedVehicleRules=[];
+  if(rawVehicleRules){
+    try{normalizedVehicleRules=rawVehicleRules.map(normalizeVehiclePricingRule)}
+    catch(e){return res.status(e.status||400).json({error:e.message})}
+    const classes=new Set(normalizedVehicleRules.map(x=>x.vehicle_class));
+    for(const cls of ['bicycle','car','van'])if(!classes.has(cls))return res.status(400).json({error:'V2 pricing requires bicycle, car and van rules'});
+    if(classes.size!==normalizedVehicleRules.length)return res.status(400).json({error:'Each V2 vehicle class may appear only once'});
+  }else{
+    for(const k of ['base_fee','per_km','per_kg','per_liter','minimum_fee'])if(!finite(req.body?.[k])||Number(req.body[k])<0)return res.status(400).json({error:`${k} must be zero or greater`});
+  }
+
+  const v=await pool.query(`SELECT COALESCE(MAX(version),0)+1 version FROM delivery_pricing_rules WHERE country_code='PH'`);
+  const version=Number(v.rows[0].version);
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    if(req.body?.active!==false)await client.query(`UPDATE delivery_pricing_rules SET active=FALSE WHERE country_code='PH'`);
+    const parent=await client.query(`
+      INSERT INTO delivery_pricing_rules(
+        country_code,version,active,base_fee,per_km,per_kg,per_liter,minimum_fee,
+        maximum_distance_km,route_factor,
+        average_speed_bicycle_kmh,average_speed_motorbike_kmh,average_speed_car_kmh,
+        created_by_account_id
+      ) VALUES('PH',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      RETURNING *
+    `,[
+      version,req.body?.active!==false,
+      rawVehicleRules?0:Number(req.body.base_fee),
+      rawVehicleRules?0:Number(req.body.per_km),
+      rawVehicleRules?0:Number(req.body.per_kg),
+      rawVehicleRules?0:Number(req.body.per_liter),
+      rawVehicleRules?0:Number(req.body.minimum_fee),
+      req.body?.maximum_distance_km==null?null:Number(req.body.maximum_distance_km),
+      routeFactor,
+      req.body?.average_speed_bicycle_kmh||null,
+      req.body?.average_speed_motorbike_kmh||null,
+      req.body?.average_speed_car_kmh||null,
+      me.account.id
+    ]);
+    const pricingRule=parent.rows[0];
+
+    const saved=[];
+    for(const vr of normalizedVehicleRules){
+      const q=await client.query(`
+        INSERT INTO delivery_vehicle_pricing_rules(
+          pricing_rule_id,vehicle_class,formula_type,priority,
+          base_fee,per_km,per_kg,per_liter,minimum_fee,
+          maximum_distance_km,max_weight_kg,max_volume_l
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        RETURNING *
+      `,[
+        pricingRule.id,vr.vehicle_class,vr.formula_type,vr.priority,
+        vr.base_fee,vr.per_km,vr.per_kg,vr.per_liter,vr.minimum_fee,
+        vr.maximum_distance_km,vr.max_weight_kg,vr.max_volume_l
+      ]);
+      saved.push(q.rows[0]);
+    }
+
+    await client.query('COMMIT');
+    res.json({...pricingRule,vehicle_rules:saved});
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw e;
+  }finally{client.release()}
+}catch(e){next(e)}})
+
+app.get('/api/admin/couriers',async(req,res,next)=>{try{await requireAdmin(req);const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note,(SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id ORDER BY c.eligibility_status='approved' DESC,a.display_name`);res.json(rows)}catch(e){next(e)}})
 app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{try{const me=await requireAdmin(req),id=Number(req.params.accountId),status=clean(req.body?.eligibility_status,30);if(!['pending','approved','suspended','revoked','expired'].includes(status))return res.status(400).json({error:'Invalid eligibility status'});await pool.query(`UPDATE courier_profiles SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,approval_note=$4,available=CASE WHEN $1='approved' THEN available ELSE FALSE END,updated_at=NOW() WHERE account_id=$5`,[status,clean(req.body?.approved_vehicle_class,40),req.body?.eligibility_expires_at||null,clean(req.body?.approval_note,600),id]);if(Array.isArray(req.body?.document_updates))for(const d of req.body.document_updates){if(!['verified','rejected','expired'].includes(d.status))continue;await pool.query(`UPDATE courier_documents SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 AND account_id=$5`,[d.status,me.account.id,clean(d.rejection_reason,500),Number(d.id),id])}res.json({ok:true})}catch(e){next(e)}})
-app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{await requireAdmin(req);const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),d=await deliveryDetail(id);if(!d)return res.status(404).json({error:'Delivery not found'});if(!['awaiting_courier','requested'].includes(d.status))return res.status(409).json({error:'Delivery is not waiting for assignment'});const c=await pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1 AND eligibility_status='approved' AND available=TRUE AND (eligibility_expires_at IS NULL OR eligibility_expires_at>NOW())`,[courierId]);if(!c.rowCount)return res.status(409).json({error:'Courier is not approved and available'});await pool.query(`UPDATE deliveries SET courier_account_id=$1,vehicle_class=COALESCE(NULLIF($2,''),$3),status='courier_assigned',assigned_at=NOW(),updated_at=NOW() WHERE id=$4`,[courierId,clean(req.body?.vehicle_class,40),c.rows[0].approved_vehicle_class||c.rows[0].vehicle_type,id]);res.json(await deliveryDetail(id))}catch(e){next(e)}})
+app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{
+  await requireAdmin(req);
+  const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),d=await deliveryDetail(id);
+  if(!d)return res.status(404).json({error:'Delivery not found'});
+  if(!['awaiting_courier','requested'].includes(d.status))return res.status(409).json({error:'Delivery is not waiting for assignment'});
+  const cq=await pool.query(`
+    SELECT * FROM courier_profiles
+    WHERE account_id=$1
+      AND eligibility_status='approved'
+      AND available=TRUE
+      AND (eligibility_expires_at IS NULL OR eligibility_expires_at>NOW())
+  `,[courierId]);
+  if(!cq.rowCount)return res.status(409).json({error:'Courier is not approved and available'});
+  const courier=cq.rows[0];
+  const approvedClass=clean(courier.approved_vehicle_class||courier.vehicle_type,40);
+  if(d.required_vehicle_class){
+    let gate;
+    try{gate=courierCanServeDelivery(courier,d)}
+    catch(e){return res.status(e.status||409).json({error:e.message})}
+    if(!gate.allowed){
+      const copy={
+        VEHICLE_CLASS_MISMATCH:`Delivery requires ${d.required_vehicle_class}; this Courier is approved for ${approvedClass||'no vehicle class'}`,
+        COURIER_WEIGHT_CAPACITY_EXCEEDED:'Courier weight capacity is below this delivery requirement',
+        COURIER_VOLUME_CAPACITY_EXCEEDED:'Courier volume capacity is below this delivery requirement',
+        COURIER_SERVICE_RADIUS_EXCEEDED:'Delivery distance exceeds this Courier service radius'
+      };
+      return res.status(409).json({error:copy[gate.reason]||'Courier cannot serve this delivery',code:gate.reason});
+    }
+  }
+  await pool.query(`
+    UPDATE deliveries
+       SET courier_account_id=$1,
+           vehicle_class=$2,
+           status='courier_assigned',
+           assigned_at=NOW(),
+           updated_at=NOW()
+     WHERE id=$3
+  `,[courierId,approvedClass,id]);
+  res.json(await deliveryDetail(id));
+}catch(e){next(e)}})
 
 function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Delivery upstream unavailable'})});req.pipe(up)}
 app.use(proxy)

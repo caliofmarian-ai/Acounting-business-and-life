@@ -142,10 +142,11 @@ After applicable promotion:
 Owner-approved commercial rule:
 - no monthly profile subscription;
 - **10% production fee**;
-- basis: **verified eligible delivery earnings**;
+- basis: **verified delivery price charged separately to the Customer**;
 - 10% applies only after the applicable 90-day promotional entitlement;
 - cancelled, failed or otherwise non-eligible delivery activity is not a fee base;
-- the fee is not calculated from merchandise/order value.
+- the fee is not calculated from merchandise/order value;
+- post-promo economic split before other legitimate adjustments: **10% Business & Life / 90% Courier gross delivery entitlement**.
 
 The 10% rate is now an Owner-approved policy target, but live collection still requires the later versioned fee-policy activation and settlement evidence.
 
@@ -237,4 +238,4 @@ Implemented:
   - Shared company cost 50/50 simulator;
   - Commission Planner integration for subscription + Delivery production-fee revenue.
 
-No live subscription price or operator split has been activated. Delivery has an Owner-approved **10% production-fee target on verified eligible delivery earnings**, but live collection is not activated yet.
+No live subscription price or operator split has been activated. Delivery has an Owner-approved **10% production-fee target on verified delivery price**, but live collection is not activated yet.

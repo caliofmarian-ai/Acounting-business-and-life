@@ -1,6 +1,6 @@
 export const MONETIZED_PROFILE_ROLES=Object.freeze(['customer','merchant','supplier','local_services','courier']);
 export const OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT=10;
-export const DELIVERY_PRODUCTION_FEE_BASIS='verified_eligible_delivery_earnings';
+export const DELIVERY_PRODUCTION_FEE_BASIS='verified_delivery_price';
 
 export const PROFILE_MONETIZATION_MODEL=Object.freeze({
   customer:Object.freeze({
