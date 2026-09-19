@@ -11,6 +11,8 @@ export const ADMIN_PERMISSIONS = Object.freeze([
   'merchant.approve',
   'supplier.approve',
   'courier.verify',
+  'delivery.dispatch.manage',
+  'delivery.pricing.manage',
   'profiles.review_service_provider',
   'credential.verify',
   'profile.suspend',
