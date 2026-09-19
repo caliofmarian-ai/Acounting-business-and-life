@@ -82,8 +82,37 @@ async function queuePanel(kind){
   const isSupport=kind==='support';
   const data=await api(isSupport?'/api/admin/support':'/api/admin/incidents');
   const list=Array.isArray(data)?data:(data.items||data.tickets||data.incidents||[]);
-  return hero()+'<p class="moduleIntro">'+(isSupport?'Support tickets assigned or visible in your scope.':'Incident queue visible under your delegated Trust & Safety authority.')+'</p>'+rows(list,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.subject||x.category||('Case #'+x.id))+'</strong><span class="status">'+esc(x.status||'open')+'</span></div><span class="muted">'+esc((isSupport?(x.category+' • '):'')+(x.requester_name||x.reporter_name||x.priority||''))+'</span></div>');
+  return hero()+'<p class="moduleIntro">'+(isSupport?'Support tickets assigned or visible in your scope. Tap a ticket to read it and reply.':'Incident queue visible under your delegated Trust & Safety authority.')+'</p>'+rows(list,x=>isSupport
+    ?'<button type="button" class="row queueRow" data-support-ticket="'+Number(x.id)+'"><div class="rowHeader"><strong>'+esc(x.subject||('Ticket #'+x.id))+'</strong><span class="status">'+esc(x.status||'open')+'</span></div><span class="muted">'+esc(x.category+' • '+(x.requester_name||x.requester_email||x.priority||''))+'</span></button>'
+    :'<div class="row"><div class="rowHeader"><strong>'+esc(x.subject||x.category||('Case #'+x.id))+'</strong><span class="status">'+esc(x.status||'open')+'</span></div><span class="muted">'+esc(x.reporter_name||x.priority||'')+'</span></div>');
 }
+function supportMessage(m){
+  return '<div class="supportMessage '+(m.visibility==='internal'?'internal':'')+'"><div class="rowHeader"><strong>'+esc(m.actor_name||'Account '+m.actor_account_id)+'</strong><span class="muted">'+esc(m.visibility==='internal'?'Internal note':'Visible to user')+'</span></div><p>'+esc(m.message)+'</p></div>';
+}
+async function openAdminSupportTicket(id){
+  const p=document.getElementById('adminPanel');
+  p.innerHTML='<div class="adminLoading">Loading ticket…</div>';
+  try{
+    const t=await api('/api/support/tickets/'+id);
+    p.innerHTML='<button type="button" class="secondary supportBack" id="supportBack">← Back to Support</button>'
+      +'<section class="supportTicketDetail"><div class="sectionTitle"><div><small class="muted">TICKET #'+Number(t.id)+'</small><h2>'+esc(t.subject)+'</h2></div><span class="status">'+esc(t.status)+'</span></div>'
+      +'<div class="supportMeta"><span>'+esc(t.category)+'</span><span>'+esc(t.priority)+'</span><span>'+esc(t.requested_destination)+'</span></div>'
+      +'<div class="card"><h3>Issue</h3><p>'+esc(t.description)+'</p>'+(t.english_translation?'<div class="translationBox"><strong>English translation</strong><p>'+esc(t.english_translation)+'</p></div>':'')+'</div>'
+      +'<div class="sectionTitle"><h3>Conversation</h3></div><div class="supportConversation">'+(t.messages||[]).map(supportMessage).join('')+'</div>'
+      +'<form id="adminSupportReply" class="adminForm"><label>Reply<textarea name="message" maxlength="3000" required placeholder="Write a reply to the user"></textarea></label><label class="inlineChoice"><input name="internal" type="checkbox"> Save as internal note (not visible to user)</label><button class="primary" type="submit">Send reply</button><div id="supportReplyResult"></div></form>'
+      +'<form id="adminSupportUpdate" class="adminForm"><div class="supportControls"><label>Status<select name="status">'+['new','triaged','in_progress','waiting_user','waiting_internal','resolved','closed','reopened'].map(x=>'<option value="'+x+'" '+(x===t.status?'selected':'')+'>'+x.replaceAll('_',' ')+'</option>').join('')+'</select></label><label>Priority<select name="priority">'+['low','normal','high','urgent'].map(x=>'<option value="'+x+'" '+(x===t.priority?'selected':'')+'>'+x+'</option>').join('')+'</select></label></div><label class="inlineChoice"><input name="assign_to_self" type="checkbox"> Assign this ticket to me</label><button class="secondary" type="submit">Save ticket</button><div id="supportUpdateResult"></div></form></section>';
+    document.getElementById('supportBack').onclick=async()=>{state.active='support';shell();await renderActive()};
+    document.getElementById('adminSupportReply').onsubmit=async e=>{
+      e.preventDefault();const form=e.currentTarget,button=form.querySelector('button'),out=document.getElementById('supportReplyResult');button.disabled=true;
+      try{await api('/api/admin/support/'+id+'/messages',{method:'POST',body:JSON.stringify({message:form.message.value,visibility:form.internal.checked?'internal':'user'})});await openAdminSupportTicket(id)}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>';button.disabled=false}
+    };
+    document.getElementById('adminSupportUpdate').onsubmit=async e=>{
+      e.preventDefault();const form=e.currentTarget,button=form.querySelector('button'),out=document.getElementById('supportUpdateResult');button.disabled=true;
+      try{await api('/api/admin/support/'+id,{method:'PATCH',body:JSON.stringify({status:form.status.value,priority:form.priority.value,assign_to_self:form.assign_to_self.checked})});await openAdminSupportTicket(id)}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>';button.disabled=false}
+    };
+  }catch(e){showError(e)}
+}
+function bindSupportQueue(){document.querySelectorAll('[data-support-ticket]').forEach(button=>button.onclick=()=>openAdminSupportTicket(Number(button.dataset.supportTicket)))}
 function territoriesPanel(){
   return hero()+'<p class="moduleIntro">Operating cells visible to your assignment.</p>'+rows(state.overview?.territories||[],x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.territory_type)+' · '+esc(x.code||'')+'</span></div>');
 }
@@ -634,7 +663,7 @@ async function renderActive(){
   p.innerHTML='<div class="adminLoading">Loading scoped Admin data…</div>';
   if(state.active==='overview')p.innerHTML=overviewPanel();
   else if(state.active==='profiles')p.innerHTML=profilesPanel();
-  else if(state.active==='support')p.innerHTML=await queuePanel('support');
+  else if(state.active==='support'){p.innerHTML=await queuePanel('support');bindSupportQueue()}
   else if(state.active==='safety')p.innerHTML=await queuePanel('safety');
   else if(state.active==='territories')p.innerHTML=territoriesPanel();
   else if(state.active==='finance'){p.innerHTML=await financePanel();await wireFinance()}
