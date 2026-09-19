@@ -90,7 +90,7 @@ Prefer:
 
 ## Activation boundary
 
-Owner approval of 0.50% establishes the canonical commercial target.
+Owner approval of **₱99/month + 0.50%** establishes the canonical post-promo commercial target for Merchant, Supplier and Local Services.
 
 Live collection remains HOLD until:
 - active versioned fee policy exists;
