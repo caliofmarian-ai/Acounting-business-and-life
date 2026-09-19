@@ -41,6 +41,6 @@ test('security settings mount only inside the Security route and reuse canonical
 
 test('every operational profile retains its own Profile Settings card',()=>{
   assert.match(shell,/\['⚙️','Profile Settings'/);
-  assert.match(shell,/merchantProfileSettingsCard/);
+  assert.doesNotMatch(shell,/merchantProfileSettingsCard/);
   assert.match(profileSettings,/openProfileSettings\(role=['"]{2}\)/);
 });

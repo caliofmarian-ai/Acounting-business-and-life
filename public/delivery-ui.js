@@ -20,7 +20,7 @@ async function renderDeliveryMap(id,d){const el=document.getElementById(id);if(!
 
 function statusStep(label,done){return `<div class="deliveryStep ${done?'done':''}"><strong>${done?'✓':''}</strong><div><strong>${dh(label)}</strong></div></div>`}
 function deliveryTimeline(status){const order=['courier_assigned','courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer','delivered'];const pos=order.indexOf(status);return `<div class="deliveryTimeline">${order.map((x,i)=>statusStep(dnice(x),pos>=i)).join('')}</div>`}
-function deliveryRow(d,side){const title=side==='merchant'?d.order_number:(d.business_name||d.order_number);const detail=side==='courier'?`${d.order_number} • ${d.business_name||''}`:`${d.order_number} • ${dphp(d.delivery_fee)}`;let actions=`<button class="deliveryBtn" data-del-live="${d.id}">Details</button>`;if(side==='merchant'&&['quoted','requested'].includes(d.status)&&d.order_status==='ready'&&d.payment_status==='paid')actions+=`<button class="deliveryBtn primary" data-del-request="${d.id}">Request courier</button>`;if(side==='merchant'&&d.status==='awaiting_courier'&&Number(delMe?.account?.id)===1)actions+=`<button class="deliveryBtn navy" data-del-assign="${d.id}">Assign</button>`;if(side==='courier')actions+=courierActionButtons(d);return `<article class="deliveryRow"><div><strong>${dh(title||'Delivery')}</strong><small>${dh(detail)}</small><div class="deliveryMeta"><span class="${['delivered'].includes(d.status)?'good':['in_transit','courier_en_route_to_merchant'].includes(d.status)?'live':'warm'}">${dh(dnice(d.status))}</span>${d.route_distance_km!=null?`<span>${Number(d.route_distance_km).toFixed(1)} km</span>`:''}${d.courier_name?`<span>${dh(d.courier_name)}</span>`:''}</div><div class="deliveryActions">${actions}</div></div><span class="deliveryStatus">${dh(dnice(d.status))}</span></article>`}
+function deliveryRow(d,side){const title=side==='merchant'?d.order_number:(d.business_name||d.order_number);const detail=side==='courier'?`${d.order_number} • ${d.business_name||''}`:`${d.order_number} • ${dphp(d.delivery_fee)}`;let actions=`<button class="deliveryBtn" data-del-live="${d.id}">Details</button>`;if(side==='merchant'&&['quoted','requested'].includes(d.status)&&d.order_status==='ready'&&d.payment_status==='paid')actions+=`<button class="deliveryBtn primary" data-del-request="${d.id}">Request courier</button>`;if(side==='courier')actions+=courierActionButtons(d);return `<article class="deliveryRow"><div><strong>${dh(title||'Delivery')}</strong><small>${dh(detail)}</small><div class="deliveryMeta"><span class="${['delivered'].includes(d.status)?'good':['in_transit','courier_en_route_to_merchant'].includes(d.status)?'live':'warm'}">${dh(dnice(d.status))}</span>${d.route_distance_km!=null?`<span>${Number(d.route_distance_km).toFixed(1)} km</span>`:''}${d.courier_name?`<span>${dh(d.courier_name)}</span>`:''}</div><div class="deliveryActions">${actions}</div></div><span class="deliveryStatus">${dh(dnice(d.status))}</span></article>`}
 function courierActionButtons(d){const next={courier_assigned:['courier_en_route_to_merchant','Start route'],courier_en_route_to_merchant:['courier_arrived_at_merchant','At merchant'],courier_arrived_at_merchant:['picked_up','Picked up'],picked_up:['in_transit','Start delivery'],in_transit:['courier_arrived_at_customer','At customer']}[d.status];let h='';if(next)h+=`<button class="deliveryBtn primary" data-courier-status="${d.id}" data-status="${next[0]}">${next[1]}</button>`;if(['courier_assigned','courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer'].includes(d.status))h+=`<button class="deliveryBtn" data-share-location="${d.id}">Share location</button>`;if(d.status==='courier_arrived_at_customer')h+=`<button class="deliveryBtn navy" data-complete-delivery="${d.id}">Complete</button>`;return h}
 
 async function openCustomerDelivery(){ensureDelivery();hideDeliveryBase();delWorkspace.classList.remove('hidden');await renderCustomerDelivery()}
@@ -30,115 +30,9 @@ async function renderLiveDelivery(id,back){const d=await dapi(`/api/delivery/${i
 function drawLiveDelivery(d,back){delWorkspace.innerHTML=deliveryHeader(d.order_number||'Live delivery',`${d.business_name||''} • ${dnice(d.status)}`)+`<div class="deliveryLiveTop"><div><div class="deliveryMeta"><span class="live">${dh(dnice(d.status))}</span>${d.eta_minutes!=null?`<span>ETA ~${d.eta_minutes} min</span>`:''}${d.distance_to_dropoff_km!=null?`<span>${Number(d.distance_to_dropoff_km).toFixed(1)} km away</span>`:''}</div></div>${d.completion_code?`<div class="deliveryCode"><small>Handoff code</small><strong>${dh(d.completion_code)}</strong></div>`:''}</div><div id="liveDeliveryMap" class="deliveryMap"><div class="deliveryMapFallback">Loading live map…</div></div><section class="deliveryCard" style="margin-top:11px"><h2>Delivery progress</h2>${deliveryTimeline(d.status)}<div class="deliveryMeta"><span>Fee ${dphp(d.delivery_fee)}</span>${d.courier_name?`<span>Courier ${dh(d.courier_name)}</span>`:''}${d.courier_vehicle?`<span>${dh(dnice(d.courier_vehicle))}</span>`:''}</div></section>`;bindDeliveryBack(back||(()=>renderCustomerDelivery()));renderDeliveryMap('liveDeliveryMap',d)}
 
 async function openMerchantDelivery(){ensureDelivery();hideDeliveryBase();delWorkspace.classList.remove('hidden');await renderMerchantDelivery()}
-async function renderMerchantDelivery(){const businessId=Number(delMe?.businesses?.[0]?.id||1);const [config,list]=await Promise.all([dapi('/api/delivery/config').catch(()=>({enabled:false})),dapi(`/api/delivery/merchant?business_id=${businessId}`).catch(()=>[])]);const admin=Number(delMe?.account?.id)===1;let adminSection='';if(admin){const [rules,couriers]=await Promise.all([dapi('/api/admin/delivery/pricing').catch(()=>[]),dapi('/api/admin/couriers').catch(()=>[])]);adminSection=adminDeliveryControls(rules,couriers)}delWorkspace.innerHTML=deliveryHeader('Delivery Operations','Pickup location, dispatch and courier handoff')+`<section class="deliveryHero"><small>Merchant dispatch</small><h2>Ready order → approved courier → verified handoff.</h2><p>Delivery pricing, courier eligibility and product revenue are independent controls. Delivery fees are not counted as merchandise sales.</p></section><section class="deliveryCard"><h2>Merchant pickup location</h2><p>Coordinates are required before customers can receive a delivery quote.</p><form id="pickupLocationForm" class="deliveryForm"><div class="deliveryTwo"><label>Latitude<input id="pickupLat" type="number" step="0.000001" placeholder="Latitude"></label><label>Longitude<input id="pickupLng" type="number" step="0.000001" placeholder="Longitude"></label></div><div class="deliveryActions"><button id="useMerchantLocation" type="button" class="deliveryBtn">Use this device location</button><button class="deliveryBtn primary">Save pickup point</button></div><div id="pickupMsg" class="fileNote"></div></form></section>${!config.enabled?'<div class="deliveryHold">New delivery quotes are HOLD because no active Admin pricing rule exists. This is intentional: no commercial rate is hardcoded.</div>':''}<section class="deliveryCard" style="margin-top:11px"><h2>Delivery board</h2><p>Orders become dispatchable only after they are paid and ready.</p><div class="deliveryGrid cols2">${list.length?list.map(x=>deliveryRow(x,'merchant')).join(''):'<div class="deliveryEmpty">No delivery orders yet.</div>'}</div></section>${adminSection}`;bindDeliveryBack();bindMerchantDelivery(businessId);bindDeliveryRows('merchant');if(admin)bindAdminDelivery()}
-function vehiclePricingSummary(rule){
-  const vr=Array.isArray(rule?.vehicle_rules)?rule.vehicle_rules:[];
-  if(!vr.length)return '<div class="deliveryMeta"><span class="good">Active v'+dh(rule?.version||'')+'</span><span>Legacy generic pricing</span></div>';
-  return '<div class="deliveryVehicleSummary">'+vr.map(x=>'<div><strong>'+dh(dnice(x.vehicle_class))+'</strong><span>'+dh(x.formula_type==='base_plus_km'?'Base + km':'Base + km + kg + volume')+'</span><small>Base '+dphp(x.base_fee)+' · '+dphp(x.per_km)+'/km'+(x.formula_type==='distance_weight_volume'?' · '+dphp(x.per_kg)+'/kg · '+dphp(x.per_liter)+'/L':'')+'</small></div>').join('')+'</div>';
-}
-function vehiclePricingFields(prefix,label,weighted){
-  return '<fieldset class="deliveryVehiclePricingCard"><legend>'+dh(label)+'</legend>'
-    +'<p>'+(weighted?'Base + distance + weight + volume':'Base + distance. Weight and volume only decide whether this vehicle class can carry the delivery.')+'</p>'
-    +'<div class="deliveryTwo"><label>Base fee ₱<input id="'+prefix+'Base" type="number" min="0" step="0.01" required></label><label>Per km ₱<input id="'+prefix+'Km" type="number" min="0" step="0.01" required></label></div>'
-    +(weighted?'<div class="deliveryTwo"><label>Per kg ₱<input id="'+prefix+'Kg" type="number" min="0" step="0.01" required></label><label>Per litre ₱<input id="'+prefix+'Liter" type="number" min="0" step="0.01" required></label></div>':'')
-    +'<div class="deliveryTwo"><label>Minimum fee ₱<input id="'+prefix+'Min" type="number" min="0" step="0.01" required></label><label>Max distance km<input id="'+prefix+'MaxDistance" type="number" min="0" step="0.1"></label></div>'
-    +'<div class="deliveryTwo"><label>Max weight kg<input id="'+prefix+'MaxWeight" type="number" min="0" step="0.01"></label><label>Max volume litres<input id="'+prefix+'MaxVolume" type="number" min="0" step="0.01"></label></div>'
-    +'</fieldset>';
-}
-function adminDeliveryControls(rules,couriers){
-  const current=rules.find(x=>x.active);
-  return '<section class="deliveryCard"><h2>Admin • Delivery pricing V2</h2><p>Customer pays product price + a separate delivery price. Business & Life takes 10% of the delivery price after promo; 90% is the Courier gross delivery entitlement before other legitimate adjustments.</p>'
-    +(current?vehiclePricingSummary(current):'<div class="deliveryHold">No active pricing rule.</div>')
-    +'<form id="deliveryPricingForm" class="deliveryForm" style="margin-top:10px">'
-      +'<div class="deliveryNotice"><strong>No commercial rate is hardcoded.</strong><br>Enter the actual PHP pricing for each vehicle class. Quote selects the smallest configured class that can carry the shipment.</div>'
-      +vehiclePricingFields('bike','Bicycle · food / small parcel',false)
-      +vehiclePricingFields('car','Car',true)
-      +vehiclePricingFields('van','Van',true)
-      +'<div class="deliveryTwo"><label>Route factor ≥ 1<input id="priceRouteFactor" type="number" min="1" step="0.01" value="1" required></label><label>Global max distance km<input id="priceMaxDistance" type="number" min="0" step="0.1"></label></div>'
-      +'<div class="deliveryTwo"><label>Bicycle average km/h<input id="speedBike" type="number" min="0" step="0.1"></label><label>Car / Van average km/h<input id="speedCar" type="number" min="0" step="0.1"></label></div>'
-      +'<button>Save & activate vehicle pricing version</button><div id="priceMsg" class="fileNote"></div>'
-    +'</form></section>'
-    +'<section class="deliveryCard"><h2>Admin • Couriers</h2><p>Courier access stays blocked until eligibility is explicitly approved. Assignment also checks quote vehicle class, weight, volume and radius.</p><div class="deliveryAdminGrid">'
-    +(couriers.length?couriers.map(c=>'<article class="deliveryAdminCourier"><strong>'+dh(c.courier_name||c.display_name)+'</strong><small>'+dh(c.email||'')+' • '+dh(dnice(c.eligibility_status))+' • '+dh(c.approved_vehicle_class||c.vehicle_type||'no vehicle')+' • '+c.submitted_documents+' submitted docs</small><div class="deliveryActions"><button class="deliveryBtn primary" data-approve-courier="'+c.account_id+'">Approve</button><button class="deliveryBtn danger" data-suspend-courier="'+c.account_id+'">Suspend</button></div></article>').join(''):'<div class="deliveryEmpty">No Courier profiles yet.</div>')
-    +'</div></section>';
-}
+async function renderMerchantDelivery(){const businessId=Number(delMe?.businesses?.[0]?.id||1);const [config,list]=await Promise.all([dapi('/api/delivery/config').catch(()=>({enabled:false})),dapi(`/api/delivery/merchant?business_id=${businessId}`).catch(()=>[])]);delWorkspace.innerHTML=deliveryHeader('Delivery Operations','Pickup location, dispatch and courier handoff')+`<section class="deliveryHero"><small>Merchant dispatch</small><h2>Ready order → approved courier → verified handoff.</h2><p>Delivery pricing, courier eligibility and product revenue are independent controls. Delivery fees are not counted as merchandise sales.</p></section><section class="deliveryCard"><h2>Merchant pickup location</h2><p>Coordinates are required before customers can receive a delivery quote.</p><form id="pickupLocationForm" class="deliveryForm"><div class="deliveryTwo"><label>Latitude<input id="pickupLat" type="number" step="0.000001" placeholder="Latitude"></label><label>Longitude<input id="pickupLng" type="number" step="0.000001" placeholder="Longitude"></label></div><div class="deliveryActions"><button id="useMerchantLocation" type="button" class="deliveryBtn">Use this device location</button><button class="deliveryBtn primary">Save pickup point</button></div><div id="pickupMsg" class="fileNote"></div></form></section>${!config.enabled?'<div class="deliveryHold">New delivery quotes are HOLD because no active Admin pricing rule exists. This is intentional: no commercial rate is hardcoded.</div>':''}<section class="deliveryCard" style="margin-top:11px"><h2>Delivery board</h2><p>Orders become dispatchable only after they are paid and ready.</p><div class="deliveryGrid cols2">${list.length?list.map(x=>deliveryRow(x,'merchant')).join(''):'<div class="deliveryEmpty">No delivery orders yet.</div>'}</div></section>`;bindDeliveryBack();bindMerchantDelivery(businessId);bindDeliveryRows('merchant')}
 function bindMerchantDelivery(businessId){const f=document.getElementById('pickupLocationForm');document.getElementById('useMerchantLocation').onclick=async()=>{try{const p=await currentPosition();document.getElementById('pickupLat').value=p.lat.toFixed(6);document.getElementById('pickupLng').value=p.lng.toFixed(6)}catch(e){document.getElementById('pickupMsg').textContent=e.message}};f.onsubmit=async e=>{e.preventDefault();const msg=document.getElementById('pickupMsg');try{await dapi('/api/delivery/store-location',{method:'PUT',body:JSON.stringify({business_id:businessId,lat:Number(document.getElementById('pickupLat').value),lng:Number(document.getElementById('pickupLng').value)})});msg.textContent='Pickup coordinates saved.'}catch(err){msg.textContent=err.message}}}
-function deliveryVehicleRulePayload(prefix,vehicleClass,weighted,priority){
-  const val=id=>{const el=document.getElementById(id);return el&&el.value!==''?Number(el.value):null};
-  return{
-    vehicle_class:vehicleClass,
-    formula_type:weighted?'distance_weight_volume':'base_plus_km',
-    priority,
-    base_fee:Number(document.getElementById(prefix+'Base').value),
-    per_km:Number(document.getElementById(prefix+'Km').value),
-    per_kg:weighted?Number(document.getElementById(prefix+'Kg').value):0,
-    per_liter:weighted?Number(document.getElementById(prefix+'Liter').value):0,
-    minimum_fee:Number(document.getElementById(prefix+'Min').value),
-    maximum_distance_km:val(prefix+'MaxDistance'),
-    max_weight_kg:val(prefix+'MaxWeight'),
-    max_volume_l:val(prefix+'MaxVolume')
-  };
-}
-function bindAdminDelivery(){
-  const pf=document.getElementById('deliveryPricingForm');
-  if(pf)pf.onsubmit=async e=>{
-    e.preventDefault();const msg=document.getElementById('priceMsg');
-    try{
-      const body={
-        route_factor:Number(document.getElementById('priceRouteFactor').value),
-        maximum_distance_km:document.getElementById('priceMaxDistance').value?Number(document.getElementById('priceMaxDistance').value):null,
-        average_speed_bicycle_kmh:document.getElementById('speedBike').value?Number(document.getElementById('speedBike').value):null,
-        average_speed_motorbike_kmh:null,
-        average_speed_car_kmh:document.getElementById('speedCar').value?Number(document.getElementById('speedCar').value):null,
-        active:true,
-        vehicle_rules:[
-          deliveryVehicleRulePayload('bike','bicycle',false,10),
-          deliveryVehicleRulePayload('car','car',true,20),
-          deliveryVehicleRulePayload('van','van',true,30)
-        ]
-      };
-      await dapi('/api/admin/delivery/pricing',{method:'PUT',body:JSON.stringify(body)});
-      dtoast('Vehicle-class delivery pricing activated.');
-      await renderMerchantDelivery();
-    }catch(err){msg.textContent=err.message}
-  };
-  delWorkspace.querySelectorAll('[data-approve-courier]').forEach(b=>b.onclick=()=>courierAdminStatus(Number(b.dataset.approveCourier),'approved'));
-  delWorkspace.querySelectorAll('[data-suspend-courier]').forEach(b=>b.onclick=()=>courierAdminStatus(Number(b.dataset.suspendCourier),'suspended'));
-}
-async function courierAdminStatus(id,status){openDeliveryModal(`<h2>${dnice(status)} courier</h2><form id="courierAdminForm" class="deliveryForm"><label>Approved vehicle class<input id="adminVehicle" placeholder="bicycle, motorbike, car, van"></label><label>Eligibility expiry<input id="adminExpiry" type="date"></label><label>Admin note<textarea id="adminCourierNote" rows="3"></textarea></label><div class="deliveryActions"><button type="button" class="deliveryBtn" id="adminCourierCancel">Cancel</button><button class="deliveryBtn primary">Save ${dnice(status)}</button></div></form>`);document.getElementById('adminCourierCancel').onclick=closeDeliveryModal;document.getElementById('courierAdminForm').onsubmit=async e=>{e.preventDefault();try{await dapi(`/api/admin/couriers/${id}`,{method:'PATCH',body:JSON.stringify({eligibility_status:status,approved_vehicle_class:document.getElementById('adminVehicle').value,eligibility_expires_at:document.getElementById('adminExpiry').value||null,approval_note:document.getElementById('adminCourierNote').value})});closeDeliveryModal();dtoast(`Courier ${status}.`);await renderMerchantDelivery()}catch(err){dtoast(err.message)}}}
-async function assignCourier(id){
-  const [couriers,delivery]=await Promise.all([
-    dapi('/api/admin/couriers'),
-    dapi('/api/delivery/'+id+'/live')
-  ]);
-  const required=String(delivery.required_vehicle_class||'').toLowerCase();
-  const weight=Number(delivery.estimated_weight_kg||0),volume=Number(delivery.estimated_volume_l||0),distance=Number(delivery.route_distance_km||0);
-  const available=couriers.filter(c=>{
-    if(c.eligibility_status!=='approved'||!c.available)return false;
-    const cls=String(c.approved_vehicle_class||c.vehicle_type||'').toLowerCase();
-    if(required&&cls!==required)return false;
-    if(c.max_weight_kg!=null&&Number(c.max_weight_kg)<weight)return false;
-    if(c.max_volume_l!=null&&Number(c.max_volume_l)<volume)return false;
-    if(c.service_radius_km!=null&&Number(c.service_radius_km)<distance)return false;
-    return true;
-  });
-  const requirement=required
-    ?'<div class="deliveryNotice"><strong>Required vehicle: '+dh(dnice(required))+'</strong><br>'+weight.toFixed(2)+' kg · '+volume.toFixed(2)+' L · '+distance.toFixed(1)+' km</div>'
-    :'<div class="deliveryNotice">Legacy delivery quote has no required vehicle class snapshot.</div>';
-  openDeliveryModal('<h2>Assign approved courier</h2>'+requirement+(available.length
-    ?'<form id="assignCourierForm" class="deliveryForm"><label>Compatible courier<select id="assignCourierSelect">'+available.map(c=>'<option value="'+c.account_id+'">'+dh(c.courier_name||c.display_name)+' • '+dh(c.approved_vehicle_class||c.vehicle_type||'vehicle')+'</option>').join('')+'</select></label><div class="deliveryActions"><button type="button" id="assignCancel" class="deliveryBtn">Cancel</button><button class="deliveryBtn primary">Assign</button></div></form>'
-    :'<div class="deliveryEmpty">No approved and available courier currently matches this vehicle, capacity and radius requirement.</div><button id="assignCancel" class="deliveryBtn">Close</button>'));
-  document.getElementById('assignCancel').onclick=closeDeliveryModal;
-  const form=document.getElementById('assignCourierForm');
-  if(form)form.onsubmit=async e=>{
-    e.preventDefault();
-    try{
-      await dapi('/api/admin/deliveries/'+id+'/assign',{method:'POST',body:JSON.stringify({courier_account_id:Number(document.getElementById('assignCourierSelect').value)})});
-      closeDeliveryModal();dtoast('Compatible courier assigned.');await renderMerchantDelivery();
-    }catch(err){dtoast(err.message)}
-  };
-}
-function bindDeliveryRows(side){delWorkspace.querySelectorAll('[data-del-live]').forEach(b=>b.onclick=()=>openLiveDelivery(Number(b.dataset.delLive),side==='merchant'?renderMerchantDelivery:side==='courier'?renderCourierWorkspace:renderCustomerDelivery));delWorkspace.querySelectorAll('[data-del-request]').forEach(b=>b.onclick=async()=>{try{await dapi(`/api/delivery/${b.dataset.delRequest}/request-courier`,{method:'POST',body:'{}'});dtoast('Courier requested.');await renderMerchantDelivery()}catch(e){dtoast(e.message)}});delWorkspace.querySelectorAll('[data-del-assign]').forEach(b=>b.onclick=()=>assignCourier(Number(b.dataset.delAssign)));delWorkspace.querySelectorAll('[data-courier-status]').forEach(b=>b.onclick=()=>setCourierDeliveryStatus(Number(b.dataset.courierStatus),b.dataset.status));delWorkspace.querySelectorAll('[data-share-location]').forEach(b=>b.onclick=()=>shareCourierLocation(Number(b.dataset.shareLocation)));delWorkspace.querySelectorAll('[data-complete-delivery]').forEach(b=>b.onclick=()=>completeCourierDelivery(Number(b.dataset.completeDelivery)))}
+function bindDeliveryRows(side){delWorkspace.querySelectorAll('[data-del-live]').forEach(b=>b.onclick=()=>openLiveDelivery(Number(b.dataset.delLive),side==='merchant'?renderMerchantDelivery:side==='courier'?renderCourierWorkspace:renderCustomerDelivery));delWorkspace.querySelectorAll('[data-del-request]').forEach(b=>b.onclick=async()=>{try{await dapi(`/api/delivery/${b.dataset.delRequest}/request-courier`,{method:'POST',body:'{}'});dtoast('Courier requested.');await renderMerchantDelivery()}catch(e){dtoast(e.message)}});delWorkspace.querySelectorAll('[data-courier-status]').forEach(b=>b.onclick=()=>setCourierDeliveryStatus(Number(b.dataset.courierStatus),b.dataset.status));delWorkspace.querySelectorAll('[data-share-location]').forEach(b=>b.onclick=()=>shareCourierLocation(Number(b.dataset.shareLocation)));delWorkspace.querySelectorAll('[data-complete-delivery]').forEach(b=>b.onclick=()=>completeCourierDelivery(Number(b.dataset.completeDelivery)))}
 
 const COURIER_SECTION_META={
   Eligibility:['Eligibility','Approval, vehicle profile and evidence'],

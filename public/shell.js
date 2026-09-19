@@ -119,10 +119,6 @@ function ensureShellChrome() {
     workspace.className = 'accountSettingsWorkspace hidden';
     shell.querySelector('.topbar')?.insertAdjacentElement('afterend', workspace);
   }
-  if(!document.getElementById('merchantProfileSettingsCard')){
-    const dashboard=document.getElementById('viewDashboard');
-    const card=document.createElement('button');card.id='merchantProfileSettingsCard';card.className='card profileSettingsWorkspaceCard';card.type='button';card.innerHTML='<span class="hubTileIcon">⚙️</span><span><strong>Profile Settings</strong><small>Preferences, banking and tools for this Merchant profile</small></span><b>›</b>';card.onclick=()=>window.BusinessLifeProfileSettings?.open?.('merchant');dashboard?.appendChild(card);
-  }
   if (!document.getElementById('profileDrawerBackdrop')) {
     const backdrop = document.createElement('div');
     backdrop.id = 'profileDrawerBackdrop';

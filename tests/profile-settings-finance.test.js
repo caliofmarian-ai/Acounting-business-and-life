@@ -7,6 +7,7 @@ const core=read('profile-finance-core.js');
 const server=read('server-payments.js');
 const ui=read('public/profile-settings-ui.js');
 const shell=read('public/shell.js');
+const loader=read('public/mobile-feature-loader.js');
 
 test('financial destinations separate personal/profile scope from business accounting scope',()=>{
   assert.match(core,/BUSINESS_FINANCE_ROLES=Object\.freeze\(\['merchant','supplier'\]\)/);
@@ -35,9 +36,10 @@ test('provider destination reference is private and public response is masked',(
 
 test('profile Settings is opened from the active profile and stays out of the avatar drawer',()=>{
   assert.doesNotMatch(shell,/activeProfileSettingsButton/);
-  assert.match(shell,/profileSettingsWorkspaceCard/);
   assert.match(shell,/profileSettingsTile/);
   assert.match(shell,/BusinessLifeProfileSettings\?\.open/);
+  assert.match(loader,/\['profileSettings','⚙️','Profile Settings'\]/);
+  assert.match(loader,/settings\.open\('merchant'\)/);
   assert.doesNotMatch(ui,/document\.addEventListener\('abl:drawer-rendered',injectSettingsEntry/);
   for(const role of ['customer','merchant','supplier','courier','service_provider'])assert.match(ui,new RegExp(role));
   assert.match(ui,/Account & profile settings/);
