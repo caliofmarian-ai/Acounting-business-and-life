@@ -151,7 +151,9 @@ async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS avatar_data_url TEXT NOT NULL DEFAULT '';
-    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS active_role TEXT NOT NULL DEFAULT 'merchant';
+    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS active_role TEXT;
+    ALTER TABLE accounts ALTER COLUMN active_role DROP NOT NULL;
+    ALTER TABLE accounts ALTER COLUMN active_role DROP DEFAULT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_salt TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_hash TEXT;
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
@@ -359,10 +361,8 @@ app.post('/api/auth/register', jsonBody, async (req, res, next) => {
     if (exists.rowCount) return res.status(409).json({ error: 'An account with this email already exists' });
     const { salt, hash } = await hashPassword(password);
     await client.query('BEGIN');
-    const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status) VALUES($1,$2,$3,$4,'customer',$5,$6,'active') RETURNING id`, [name, phone, email, address, salt, hash]);
+    const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status) VALUES($1,$2,$3,$4,NULL,$5,$6,'active') RETURNING id`, [name, phone, email, address, salt, hash]);
     const accountId = Number(account.rows[0].id);
-    await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,'customer',TRUE,'private','active')`, [accountId]);
-    await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2)`, [accountId, address]);
     await client.query('COMMIT');
     clearThrottle(req, email);
 
@@ -587,8 +587,9 @@ app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
   const enabled = req.body?.enabled !== false;
   const visibility = ['public', 'relationship_only', 'private'].includes(req.body?.visibility) ? req.body.visibility : 'private';
   if (role === 'merchant' && req.accountId === 1 && !enabled) return res.status(409).json({ error: 'The bootstrap Merchant profile cannot be disabled during migration.' });
+  if (enabled) return res.status(409).json({ error: 'Start and complete this profile onboarding before activation.' });
   try {
-    await pool.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,$2,$3,$4,'active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=EXCLUDED.enabled,visibility=EXCLUDED.visibility,updated_at=NOW()`, [req.accountId, role, enabled, visibility]);
+    await pool.query(`UPDATE profiles SET enabled=FALSE,visibility=$3,status='disabled',updated_at=NOW() WHERE account_id=$1 AND role=$2`, [req.accountId, role, visibility]);
     if (enabled && role === 'customer') await pool.query(`INSERT INTO customer_profiles(account_id) VALUES($1) ON CONFLICT(account_id) DO NOTHING`, [req.accountId]);
     if (enabled && role === 'supplier') await pool.query(`INSERT INTO supplier_profiles(account_id,supplier_name) SELECT id,display_name FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`, [req.accountId]);
     if (enabled && role === 'courier') await pool.query(`INSERT INTO courier_profiles(account_id,display_name) SELECT id,display_name FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`, [req.accountId]);
@@ -602,11 +603,23 @@ app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
       }
     }
     if (!enabled) {
-      const fallback = req.accountId === 1 ? 'merchant' : 'customer';
-      await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2 AND active_role=$3`, [fallback, req.accountId, role]);
+      const nextRole=await pool.query(`SELECT role FROM profiles WHERE account_id=$1 AND enabled=TRUE AND role<>$2 ORDER BY created_at LIMIT 1`,[req.accountId,role]);
+      await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2 AND active_role=$3`, [nextRole.rows[0]?.role||null, req.accountId, role]);
     }
     res.json(await profileSnapshot(req.accountId));
   } catch (err) { next(err); }
+});
+
+app.post('/api/profiles/customer/activate', jsonBody, auth, async (req,res,next)=>{
+  try{
+    const account=await pool.query(`SELECT display_name,email,address,email_verified_at FROM accounts WHERE id=$1`,[req.accountId]);
+    const a=account.rows[0];
+    if(!a||!clean(a.display_name,120)||!validEmail(a.email)||!clean(a.address,300))return res.status(409).json({error:'Complete your name, email and primary address in Account Settings first.'});
+    if(!a.email_verified_at)return res.status(409).json({error:'Verify your email before activating Customer.'});
+    const client=await pool.connect();
+    try{await client.query('BEGIN');await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,'customer',TRUE,'private','active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',updated_at=NOW()`,[req.accountId]);await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET preferred_address=CASE WHEN customer_profiles.preferred_address='' THEN EXCLUDED.preferred_address ELSE customer_profiles.preferred_address END,updated_at=NOW()`,[req.accountId,a.address]);await client.query(`UPDATE accounts SET active_role=COALESCE(active_role,'customer'),updated_at=NOW() WHERE id=$1`,[req.accountId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+    res.status(201).json(await profileSnapshot(req.accountId));
+  }catch(err){next(err)}
 });
 
 app.get('/api/context/:role', auth, async (req, res, next) => {
