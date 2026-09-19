@@ -107,7 +107,38 @@ function bindAdminDelivery(){
   delWorkspace.querySelectorAll('[data-suspend-courier]').forEach(b=>b.onclick=()=>courierAdminStatus(Number(b.dataset.suspendCourier),'suspended'));
 }
 async function courierAdminStatus(id,status){openDeliveryModal(`<h2>${dnice(status)} courier</h2><form id="courierAdminForm" class="deliveryForm"><label>Approved vehicle class<input id="adminVehicle" placeholder="bicycle, motorbike, car, van"></label><label>Eligibility expiry<input id="adminExpiry" type="date"></label><label>Admin note<textarea id="adminCourierNote" rows="3"></textarea></label><div class="deliveryActions"><button type="button" class="deliveryBtn" id="adminCourierCancel">Cancel</button><button class="deliveryBtn primary">Save ${dnice(status)}</button></div></form>`);document.getElementById('adminCourierCancel').onclick=closeDeliveryModal;document.getElementById('courierAdminForm').onsubmit=async e=>{e.preventDefault();try{await dapi(`/api/admin/couriers/${id}`,{method:'PATCH',body:JSON.stringify({eligibility_status:status,approved_vehicle_class:document.getElementById('adminVehicle').value,eligibility_expires_at:document.getElementById('adminExpiry').value||null,approval_note:document.getElementById('adminCourierNote').value})});closeDeliveryModal();dtoast(`Courier ${status}.`);await renderMerchantDelivery()}catch(err){dtoast(err.message)}}}
-async function assignCourier(id){const couriers=await dapi('/api/admin/couriers');const available=couriers.filter(c=>c.eligibility_status==='approved'&&c.available);openDeliveryModal(`<h2>Assign approved courier</h2>${available.length?`<form id="assignCourierForm" class="deliveryForm"><label>Courier<select id="assignCourierSelect">${available.map(c=>`<option value="${c.account_id}">${dh(c.courier_name||c.display_name)} • ${dh(c.approved_vehicle_class||c.vehicle_type||'vehicle')}</option>`).join('')}</select></label><label>Vehicle override (optional)<input id="assignVehicle"></label><div class="deliveryActions"><button type="button" id="assignCancel" class="deliveryBtn">Cancel</button><button class="deliveryBtn primary">Assign</button></div></form>`:'<div class="deliveryEmpty">No approved courier is currently available.</div><button id="assignCancel" class="deliveryBtn">Close</button>'}`);document.getElementById('assignCancel').onclick=closeDeliveryModal;const f=document.getElementById('assignCourierForm');if(f)f.onsubmit=async e=>{e.preventDefault();try{await dapi(`/api/admin/deliveries/${id}/assign`,{method:'POST',body:JSON.stringify({courier_account_id:Number(document.getElementById('assignCourierSelect').value),vehicle_class:document.getElementById('assignVehicle').value})});closeDeliveryModal();dtoast('Courier assigned.');await renderMerchantDelivery()}catch(err){dtoast(err.message)}}}
+async function assignCourier(id){
+  const [couriers,delivery]=await Promise.all([
+    dapi('/api/admin/couriers'),
+    dapi('/api/delivery/'+id+'/live')
+  ]);
+  const required=String(delivery.required_vehicle_class||'').toLowerCase();
+  const weight=Number(delivery.estimated_weight_kg||0),volume=Number(delivery.estimated_volume_l||0),distance=Number(delivery.route_distance_km||0);
+  const available=couriers.filter(c=>{
+    if(c.eligibility_status!=='approved'||!c.available)return false;
+    const cls=String(c.approved_vehicle_class||c.vehicle_type||'').toLowerCase();
+    if(required&&cls!==required)return false;
+    if(c.max_weight_kg!=null&&Number(c.max_weight_kg)<weight)return false;
+    if(c.max_volume_l!=null&&Number(c.max_volume_l)<volume)return false;
+    if(c.service_radius_km!=null&&Number(c.service_radius_km)<distance)return false;
+    return true;
+  });
+  const requirement=required
+    ?'<div class="deliveryNotice"><strong>Required vehicle: '+dh(dnice(required))+'</strong><br>'+weight.toFixed(2)+' kg · '+volume.toFixed(2)+' L · '+distance.toFixed(1)+' km</div>'
+    :'<div class="deliveryNotice">Legacy delivery quote has no required vehicle class snapshot.</div>';
+  openDeliveryModal('<h2>Assign approved courier</h2>'+requirement+(available.length
+    ?'<form id="assignCourierForm" class="deliveryForm"><label>Compatible courier<select id="assignCourierSelect">'+available.map(c=>'<option value="'+c.account_id+'">'+dh(c.courier_name||c.display_name)+' • '+dh(c.approved_vehicle_class||c.vehicle_type||'vehicle')+'</option>').join('')+'</select></label><div class="deliveryActions"><button type="button" id="assignCancel" class="deliveryBtn">Cancel</button><button class="deliveryBtn primary">Assign</button></div></form>'
+    :'<div class="deliveryEmpty">No approved and available courier currently matches this vehicle, capacity and radius requirement.</div><button id="assignCancel" class="deliveryBtn">Close</button>'));
+  document.getElementById('assignCancel').onclick=closeDeliveryModal;
+  const form=document.getElementById('assignCourierForm');
+  if(form)form.onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await dapi('/api/admin/deliveries/'+id+'/assign',{method:'POST',body:JSON.stringify({courier_account_id:Number(document.getElementById('assignCourierSelect').value)})});
+      closeDeliveryModal();dtoast('Compatible courier assigned.');await renderMerchantDelivery();
+    }catch(err){dtoast(err.message)}
+  };
+}
 function bindDeliveryRows(side){delWorkspace.querySelectorAll('[data-del-live]').forEach(b=>b.onclick=()=>openLiveDelivery(Number(b.dataset.delLive),side==='merchant'?renderMerchantDelivery:side==='courier'?renderCourierWorkspace:renderCustomerDelivery));delWorkspace.querySelectorAll('[data-del-request]').forEach(b=>b.onclick=async()=>{try{await dapi(`/api/delivery/${b.dataset.delRequest}/request-courier`,{method:'POST',body:'{}'});dtoast('Courier requested.');await renderMerchantDelivery()}catch(e){dtoast(e.message)}});delWorkspace.querySelectorAll('[data-del-assign]').forEach(b=>b.onclick=()=>assignCourier(Number(b.dataset.delAssign)));delWorkspace.querySelectorAll('[data-courier-status]').forEach(b=>b.onclick=()=>setCourierDeliveryStatus(Number(b.dataset.courierStatus),b.dataset.status));delWorkspace.querySelectorAll('[data-share-location]').forEach(b=>b.onclick=()=>shareCourierLocation(Number(b.dataset.shareLocation)));delWorkspace.querySelectorAll('[data-complete-delivery]').forEach(b=>b.onclick=()=>completeCourierDelivery(Number(b.dataset.completeDelivery)))}
 
 const COURIER_SECTION_META={
