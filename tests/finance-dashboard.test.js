@@ -50,9 +50,11 @@ test('Finance dashboard stays mobile-first with dedicated KPI and form layouts',
 });
 
 
-test('Finance dashboard renders real 90-day cohort metrics without inventing paid conversion',()=>{
-  assert.match(ui,/90-day promotional cohorts/);
-  assert.match(ui,/Active 90-day trials/);
+test('Finance dashboard renders service-specific cohort metrics without inventing paid conversion',()=>{
+  assert.match(ui,/Promotional cohorts/);
+  assert.match(ui,/Active promotional cohorts/);
+  assert.match(ui,/promotional_days_by_service\?\.marketplace\|\|90/);
+  assert.match(ui,/promotional_days_by_service\?\.delivery\|\|30/);
   assert.match(ui,/Trials started this period/);
   assert.match(ui,/Promo completions this period/);
   assert.match(ui,/Post-promo activity conversion/);
