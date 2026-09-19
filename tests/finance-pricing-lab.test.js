@@ -19,7 +19,7 @@ test('Pricing Lab models only the four monetizable service scopes',()=>{
 });
 
 test('Pricing Lab separates post-promo actual basis from mature-volume planning basis',()=>{
-  assert.match(core,/post_promo_actual:'Only completed gross service value already outside the 90-day promotional window\.'/);
+  assert.match(core,/post_promo_actual:'Only completed gross service value already outside the applicable service-specific promotional window\.'/);
   assert.match(core,/all_activity_mature_simulation:'All completed service value in the period treated hypothetically as mature\/post-promo volume/);
   assert.match(core,/projected_revenue_post_promo_actual/);
   assert.match(core,/projected_revenue_mature_volume/);
