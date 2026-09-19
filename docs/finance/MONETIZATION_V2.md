@@ -139,10 +139,15 @@ After applicable promotion:
 
 ### Delivery Provider / Courier
 
+Owner-approved commercial rule:
 - no monthly profile subscription;
-- percentage production fee based on verified eligible delivery earnings.
+- **10% production fee**;
+- basis: **verified eligible delivery earnings**;
+- 10% applies only after the applicable 90-day promotional entitlement;
+- cancelled, failed or otherwise non-eligible delivery activity is not a fee base;
+- the fee is not calculated from merchandise/order value.
 
-Exact amounts/rates are not defined in this document.
+The 10% rate is now an Owner-approved policy target, but live collection still requires the later versioned fee-policy activation and settlement evidence.
 
 ## 5. Per-profile billing
 
@@ -232,4 +237,4 @@ Implemented:
   - Shared company cost 50/50 simulator;
   - Commission Planner integration for subscription + Delivery production-fee revenue.
 
-No live fee amount, subscription price or operator split has been activated.
+No live subscription price or operator split has been activated. Delivery has an Owner-approved **10% production-fee target on verified eligible delivery earnings**, but live collection is not activated yet.
