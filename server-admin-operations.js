@@ -41,8 +41,8 @@ const MAX_SUPPORT_AUDIO_BYTES=10_000_000;
 const MAX_SUPPORT_TOTAL_BYTES=22_000_000;
 const SUPPORT_AI_PROVIDER=String(process.env.SUPPORT_AI_PROVIDER||'').toLowerCase();
 const OPENAI_API_KEY=process.env.OPENAI_API_KEY||'';
-const SUPPORT_AI_TRANSCRIPTION_MODEL=clean(process.env.SUPPORT_AI_TRANSCRIPTION_MODEL||'gpt-4o-mini-transcribe',120);
-const SUPPORT_AI_TRANSLATION_MODEL=clean(process.env.SUPPORT_AI_TRANSLATION_MODEL||'gpt-5.6-luna',120);
+const SUPPORT_AI_TRANSCRIPTION_MODEL=String(process.env.SUPPORT_AI_TRANSCRIPTION_MODEL||'gpt-4o-mini-transcribe').trim().slice(0,120);
+const SUPPORT_AI_TRANSLATION_MODEL=String(process.env.SUPPORT_AI_TRANSLATION_MODEL||'gpt-5.6-luna').trim().slice(0,120);
 function decodeSupportDataUrl(dataUrl){
   const m=String(dataUrl||'').match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
   if(!m)throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
