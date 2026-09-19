@@ -30,6 +30,18 @@ export const ADMIN_FUNCTION_BUNDLES = Object.freeze({
     assignable_to:['country_admin','territory_admin','specialist'],
     permissions:['admin.console','credential.verify','courier.verify','profiles.review_service_provider','legal.view']
   }),
+  delivery_operations:Object.freeze({
+    code:'delivery_operations',label:'Delivery Operations',
+    description:'Verify couriers and coordinate territory-scoped delivery dispatch.',
+    assignable_to:['country_admin','territory_admin','specialist'],
+    permissions:['admin.console','courier.verify','delivery.dispatch.manage']
+  }),
+  delivery_pricing:Object.freeze({
+    code:'delivery_pricing',label:'Delivery Pricing',
+    description:'Manage country-level delivery pricing versions and vehicle rules.',
+    assignable_to:['country_admin'],
+    permissions:['admin.console','delivery.pricing.manage']
+  }),
   finance_accounting:Object.freeze({
     code:'finance_accounting',label:'Finance & Accounting',
     description:'Financial summaries, accounting exports and operational metrics.',

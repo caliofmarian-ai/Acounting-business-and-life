@@ -538,10 +538,11 @@ async function adminOverview(accountId,seedContext=null){
 
 async function forwardAdmin(req,res,permission,territoryId,targetType='',targetId=''){
   const{me,assignment}=await adminFor(req,permission,territoryId);
-  const headers={Authorization:authHeader(req),'Content-Type':'application/json','x-bl-admin-assertion':signAdminAssertion(TOKEN_SECRET,{accountId:me.account.id,permission,territoryId,assignmentId:assignment.id})};
+  const scopedTerritoryId=territoryId??assignment.territory_id??null;
+  const headers={Authorization:authHeader(req),'Content-Type':'application/json','x-bl-admin-assertion':signAdminAssertion(TOKEN_SECRET,{accountId:me.account.id,permission,territoryId:scopedTerritoryId,assignmentId:assignment.id})};
   const r=await upstream(req.originalUrl,{method:req.method,headers,body:['GET','HEAD'].includes(req.method)?undefined:JSON.stringify(req.body||{})});
   const text=await r.text();
-  if(r.ok&&!['GET','HEAD'].includes(req.method))await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission,territoryId,targetType,targetId,eventCode:'admin_forwarded_action',after:{path:req.path,method:req.method},reason:clean(req.body?.reason||req.body?.note,800),correlationId:correlation(req)});
+  if(r.ok&&!['GET','HEAD'].includes(req.method))await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission,territoryId:scopedTerritoryId,targetType,targetId,eventCode:'admin_forwarded_action',after:{path:req.path,method:req.method},reason:clean(req.body?.reason||req.body?.note,800),correlationId:correlation(req)});
   res.status(r.status);const ct=r.headers.get('content-type');if(ct)res.type(ct);res.send(text);
 }
 
@@ -583,6 +584,14 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
   requirePermissionFromContext(ctx,'admin.console');
   res.json(await adminOverview(me.account.id,ctx));
 }catch(e){next(e)}});
+
+app.get('/api/admin/delivery/pricing',(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
+app.put('/api/admin/delivery/pricing',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
+app.get('/api/admin/couriers',(req,res,next)=>forwardAdmin(req,res,'courier.verify',null,'courier').catch(next));
+app.patch('/api/admin/couriers/:accountId',body,(req,res,next)=>forwardAdmin(req,res,'courier.verify',null,'courier',req.params.accountId).catch(next));
+app.get('/api/admin/deliveries',(req,res,next)=>forwardAdmin(req,res,'delivery.dispatch.manage',null,'delivery').catch(next));
+app.get('/api/admin/delivery/eligible-couriers',(req,res,next)=>forwardAdmin(req,res,'delivery.dispatch.manage',null,'courier').catch(next));
+app.post('/api/admin/deliveries/:id/assign',body,(req,res,next)=>forwardAdmin(req,res,'delivery.dispatch.manage',null,'delivery',req.params.id).catch(next));
 
 app.get('/api/admin/assignments',async(req,res,next)=>{try{
   const me=await identity(req),mine=await getAdminAssignments(pool,me.account.id);
