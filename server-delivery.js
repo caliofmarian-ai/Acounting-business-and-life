@@ -232,7 +232,85 @@ async function root(req,res){const r=await upstream(req.path,{headers:{...req.he
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/delivery/config',async(req,res,next)=>{try{await identity(req);const rule=await activeRule();res.json({enabled:Boolean(rule),pricing_rule_version:rule?.version||null,routing_provider:'straight_line_estimate',live_map_provider:'OpenStreetMap/Leaflet preview'})}catch(e){next(e)}})
-app.post('/api/delivery/quote',body,async(req,res,next)=>{try{const me=await requireCustomer(req),businessId=Number(req.body?.business_id),lat=Number(req.body?.dropoff_lat),lng=Number(req.body?.dropoff_lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid delivery coordinates are required'});const store=await pool.query(`SELECT business_id,pickup_lat,pickup_lng,delivery_enabled FROM merchant_storefronts WHERE business_id=$1 AND publication_status='published'`,[businessId]);if(!store.rowCount||!store.rows[0].delivery_enabled)return res.status(409).json({error:'Delivery is not enabled for this merchant'});const s=store.rows[0];if(!finite(s.pickup_lat)||!finite(s.pickup_lng))return res.status(409).json({error:'Merchant pickup location is not configured yet'});const rule=await activeRule();if(!rule)return res.status(409).json({error:'Delivery pricing is not configured by Admin yet'});const raw=Array.isArray(req.body?.items)?req.body.items:[];let weight=0,volume=0;if(raw.length){const ids=[...new Set(raw.map(x=>Number(x.product_id)).filter(Number.isInteger))];const p=await pool.query(`SELECT id,estimated_weight_kg,estimated_volume_l FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE`,[businessId,ids]);const map=new Map(p.rows.map(x=>[Number(x.id),x]));for(const x of raw){const item=map.get(Number(x.product_id)),q=Number(x.quantity);if(item&&q>0){weight+=Number(item.estimated_weight_kg||0)*q;volume+=Number(item.estimated_volume_l||0)*q}}}const straight=haversine(Number(s.pickup_lat),Number(s.pickup_lng),lat,lng),distance=straight*Number(rule.route_factor||1);if(rule.maximum_distance_km!=null&&distance>Number(rule.maximum_distance_km))return res.status(409).json({error:'Delivery destination is outside the configured service distance'});let fee=Number(rule.base_fee)+distance*Number(rule.per_km)+weight*Number(rule.per_kg)+volume*Number(rule.per_liter);fee=Math.max(Number(rule.minimum_fee||0),fee);fee=Math.round(fee*100)/100;const{rows}=await pool.query(`INSERT INTO delivery_quotes(customer_account_id,business_id,pricing_rule_id,pricing_rule_version,pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,route_distance_km,estimated_weight_kg,estimated_volume_l,fee,currency_code,status,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'PHP','quoted',NOW()+INTERVAL '15 minutes') RETURNING *`,[me.account.id,businessId,rule.id,rule.version,s.pickup_lat,s.pickup_lng,lat,lng,distance,weight,volume,fee]);res.status(201).json(rows[0])}catch(e){next(e)}})
+app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
+  const me=await requireCustomer(req),businessId=Number(req.body?.business_id),lat=Number(req.body?.dropoff_lat),lng=Number(req.body?.dropoff_lng);
+  if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid delivery coordinates are required'});
+  const store=await pool.query(`SELECT business_id,pickup_lat,pickup_lng,delivery_enabled FROM merchant_storefronts WHERE business_id=$1 AND publication_status='published'`,[businessId]);
+  if(!store.rowCount||!store.rows[0].delivery_enabled)return res.status(409).json({error:'Delivery is not enabled for this merchant'});
+  const s=store.rows[0];
+  if(!finite(s.pickup_lat)||!finite(s.pickup_lng))return res.status(409).json({error:'Merchant pickup location is not configured yet'});
+  const bundle=await activePricingBundle();
+  if(!bundle)return res.status(409).json({error:'Delivery pricing is not configured by Admin yet'});
+  const {rule,vehicleRules}=bundle;
+
+  const raw=Array.isArray(req.body?.items)?req.body.items:[];
+  let weight=0,volume=0;
+  if(raw.length){
+    const ids=[...new Set(raw.map(x=>Number(x.product_id)).filter(Number.isInteger))];
+    const p=await pool.query(`SELECT id,estimated_weight_kg,estimated_volume_l FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE`,[businessId,ids]);
+    const map=new Map(p.rows.map(x=>[Number(x.id),x]));
+    for(const x of raw){
+      const item=map.get(Number(x.product_id)),q=Number(x.quantity);
+      if(item&&q>0){
+        weight+=Number(item.estimated_weight_kg||0)*q;
+        volume+=Number(item.estimated_volume_l||0)*q;
+      }
+    }
+  }
+
+  const straight=haversine(Number(s.pickup_lat),Number(s.pickup_lng),lat,lng);
+  const distance=straight*Number(rule.route_factor||1);
+  if(rule.maximum_distance_km!=null&&distance>Number(rule.maximum_distance_km))return res.status(409).json({error:'Delivery destination is outside the configured service distance'});
+
+  let quoteCalc,vehiclePricingRuleId=null,requiredVehicleClass='',formulaType='',pricingSnapshot={};
+  if(vehicleRules.length){
+    quoteCalc=selectDeliveryVehicleQuote(vehicleRules,{distanceKm:distance,weightKg:weight,volumeL:volume,minimumVehicleClass:req.body?.minimum_vehicle_class||null});
+    const selected=vehicleRules.find(x=>String(x.vehicle_class)===String(quoteCalc.vehicle_class));
+    vehiclePricingRuleId=selected?.id||null;
+    requiredVehicleClass=quoteCalc.vehicle_class;
+    formulaType=quoteCalc.formula_type;
+    pricingSnapshot={
+      pricing_rule_version:Number(rule.version),
+      vehicle_pricing_rule_id:vehiclePricingRuleId,
+      vehicle_class:requiredVehicleClass,
+      formula_type:formulaType,
+      base_fee:quoteCalc.rule.base_fee,
+      per_km:quoteCalc.rule.per_km,
+      per_kg:quoteCalc.rule.per_kg,
+      per_liter:quoteCalc.rule.per_liter,
+      minimum_fee:quoteCalc.rule.minimum_fee,
+      maximum_distance_km:quoteCalc.rule.maximum_distance_km,
+      max_weight_kg:quoteCalc.rule.max_weight_kg,
+      max_volume_l:quoteCalc.rule.max_volume_l,
+      distance_component:quoteCalc.distance_component,
+      weight_component:quoteCalc.weight_component,
+      volume_component:quoteCalc.volume_component
+    };
+  }else{
+    quoteCalc=legacyDeliveryPrice(rule,{distanceKm:distance,weightKg:weight,volumeL:volume});
+    pricingSnapshot={pricing_rule_version:Number(rule.version),formula_type:'legacy_generic'};
+  }
+
+  const {rows}=await pool.query(`
+    INSERT INTO delivery_quotes(
+      customer_account_id,business_id,pricing_rule_id,pricing_rule_version,vehicle_pricing_rule_id,
+      pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,route_distance_km,
+      estimated_weight_kg,estimated_volume_l,required_vehicle_class,formula_type,pricing_snapshot,
+      fee,currency_code,status,expires_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,'PHP','quoted',NOW()+INTERVAL '15 minutes')
+    RETURNING *
+  `,[
+    me.account.id,businessId,rule.id,rule.version,vehiclePricingRuleId,
+    s.pickup_lat,s.pickup_lng,lat,lng,distance,weight,volume,
+    requiredVehicleClass,formulaType,JSON.stringify(pricingSnapshot),quoteCalc.delivery_price
+  ]);
+  res.status(201).json({...rows[0],price_breakdown:{
+    base:quoteCalc.base_component||Number(rule.base_fee||0),
+    distance:quoteCalc.distance_component||Math.round(distance*Number(rule.per_km||0)*100)/100,
+    weight:quoteCalc.weight_component||0,
+    volume:quoteCalc.volume_component||0
+  }});
+}catch(e){next(e)}})
 
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{if(req.body?.fulfilment_method!=='delivery'){const r=await upstream('/api/marketplace/checkout',{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:JSON.stringify(req.body)});return res.status(r.status).json(await r.json())}const me=await requireCustomer(req),quoteId=Number(req.body?.delivery_quote_id);const q=await pool.query(`SELECT * FROM delivery_quotes WHERE id=$1 AND customer_account_id=$2 AND business_id=$3 AND status='quoted' AND expires_at>NOW() FOR UPDATE`,[quoteId,me.account.id,Number(req.body.business_id)]);if(!q.rowCount)return res.status(409).json({error:'Delivery quote is missing or expired. Get a new quote.'});if(req.body?.payment_method!=='online')return res.status(409).json({error:'Cash delivery is not enabled. Use online/digital payment.'});const quote=q.rows[0];const r=await upstream('/api/marketplace/checkout',{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:JSON.stringify(req.body)});const order=await r.json();if(!r.ok)return res.status(r.status).json(order);const store=await pool.query(`SELECT pickup_address FROM merchant_storefronts WHERE business_id=$1`,[quote.business_id]);const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE delivery_quotes SET status='used' WHERE id=$1`,[quote.id]);await client.query(`UPDATE orders SET delivery_fee=$1,total=subtotal+$1,outstanding_amount=(subtotal+$1)-paid_amount,updated_at=NOW() WHERE id=$2`,[quote.fee,order.id]);const d=await client.query(`INSERT INTO deliveries(order_id,quote_id,business_id,customer_account_id,status,delivery_fee,currency_code,route_distance_km,estimated_weight_kg,estimated_volume_l,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng) VALUES($1,$2,$3,$4,'quoted',$5,'PHP',$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,[order.id,quote.id,quote.business_id,me.account.id,quote.fee,quote.route_distance_km,quote.estimated_weight_kg,quote.estimated_volume_l,store.rows[0]?.pickup_address||'',quote.pickup_lat,quote.pickup_lng,clean(req.body?.delivery_address||me.account.address,500),quote.dropoff_lat,quote.dropoff_lng]);await client.query('COMMIT');const updated=await upstream(`/api/orders/${order.id}`,{headers:{Authorization:authHeader(req)}}).then(x=>x.json());res.status(201).json({...updated,delivery_id:d.rows[0].id})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
