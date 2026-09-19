@@ -50,3 +50,7 @@ Merchant is no longer treated as an undeletable bootstrap identity by any profil
 ## Slice 5 update
 
 Shared external Money & Banking configuration now belongs to Account Settings rather than being rendered inside every Profile Settings screen. Account financial identity, tokenized payment methods and payout destinations use one dedicated account route. Profile Settings retains only the selected profile context, operational tools, planning/transfer functions and a clear link to the shared account banking route. Back navigation returns to the surface that opened Money & Banking.
+
+## Slice 6 update
+
+Profile Settings now opens as a route-owned center for the currently selected Profile surface. It cannot be opened for a different role or used as an implicit profile switcher. Each center shows the immutable derived Profile ID and provides explicit destinations for profile identity, profile-scoped money preferences, statements/documents, promotion tools and lifecycle status. Account Money & Banking remains a separate linked destination, while profile activation and deactivation remain in Account Settings. Back navigation restores the same active profile workspace.
