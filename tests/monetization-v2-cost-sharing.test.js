@@ -154,7 +154,8 @@ test('read-only Admin endpoints expose policy and 50/50 simulator without live m
 test('Admin Finance UI presents profile policy and shared cost model clearly',()=>{
   assert.match(ui,/MONETIZATION V2/);
   assert.match(ui,/Customer/);
-  assert.match(ui,/Subscription \+ transaction fee/);
+  assert.match(ui,/owner_approved_monthly_subscription_php\|\|99/);
+  assert.match(ui,/owner_approved_transaction_rate_pct\|\|0\.5/);
   assert.match(ui,/owner_approved_delivery_production_rate_pct\|\|10/);
   assert.match(ui,/of verified delivery price/);
   assert.match(ui,/x\.promotional_days\|\|30/);
