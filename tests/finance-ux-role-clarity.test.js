@@ -91,6 +91,7 @@ test('banking copy explains one external setup without pretending it is a provid
   assert.match(settings,/This does not mix their accounting/);
   assert.match(settings,/Provider balance/);
   assert.match(settings,/Shown only when provider evidence exists/);
-  assert.match(accounting,/Banking & payouts/);
+  assert.match(accounting,/Payout setup/);
+  assert.match(accounting,/External bank accounts stay under Account · Money & Banking/);
   assert.doesNotMatch(accounting,/provider balance UNKNOWN/);
 });

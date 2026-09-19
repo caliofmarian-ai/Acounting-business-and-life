@@ -33,12 +33,13 @@ test('governance remains reachable without duplicate topbar Admin',()=>{
 
 test('Merchant mobile navigation exposes the same core workspace tools as desktop',()=>{
   assert.match(loader,/merchantMobileTools/);
-  for(const id of ['ordersQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton','accountAvatarButton']){
+  for(const id of ['ordersQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton','profileSettings']){
     assert.match(loader,new RegExp(id));
   }
-  for(const label of ['Orders','Storefront','Suppliers','Delivery','Merchant']){
+  for(const label of ['Orders','Storefront','Suppliers','Delivery','Profile Settings']){
     assert.match(loader,new RegExp(label));
   }
+  assert.doesNotMatch(loader,/\['accountAvatarButton','👤','Merchant'\]/);
   assert.match(loader,/businessWorkspaceBar/);
   assert.match(loaderCss,/@media\(max-width:649px\)/);
   assert.match(loaderCss,/merchantMobileToolsGrid/);

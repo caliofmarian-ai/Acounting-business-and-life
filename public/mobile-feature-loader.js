@@ -141,10 +141,16 @@ const MERCHANT_MOBILE_ACTIONS=[
   ['marketQuickButton','🏪','Storefront'],
   ['supQuickButton','📦','Suppliers'],
   ['deliveryQuickButton','🛵','Delivery'],
-  ['accountAvatarButton','👤','Merchant']
+  ['profileSettings','⚙️','Profile Settings']
 ];
 
 async function openMerchantMobileAction(id){
+  if(id==='profileSettings'){
+    const settings=window.BusinessLifeProfileSettings;
+    if(!settings?.open)return toast('Profile Settings is still loading. Try again in a moment.');
+    settings.open('merchant');
+    return;
+  }
   const button=await waitFor(id,2200);
   if(!button)return toast('This Merchant tool is still loading. Try again in a moment.');
   button.click();
@@ -167,7 +173,7 @@ function mountMerchantMobileTools(role,surface='account'){
     tools.innerHTML='<div class="merchantMobileToolsHead"><strong>Merchant tools</strong><span>Business workspace</span></div><div class="merchantMobileToolsGrid"></div>';
   }
   const grid=tools.querySelector('.merchantMobileToolsGrid');
-  grid.innerHTML=MERCHANT_MOBILE_ACTIONS.map(([id,icon,label])=>`<button type="button" data-merchant-mobile-action="${id}" class="${id==='accountAvatarButton'?'active':''}"><span aria-hidden="true">${icon}</span><strong>${label}</strong></button>`).join('');
+  grid.innerHTML=MERCHANT_MOBILE_ACTIONS.map(([id,icon,label])=>`<button type="button" data-merchant-mobile-action="${id}"><span aria-hidden="true">${icon}</span><strong>${label}</strong></button>`).join('');
   grid.querySelectorAll('[data-merchant-mobile-action]').forEach(button=>button.onclick=()=>openMerchantMobileAction(button.dataset.merchantMobileAction));
   const workspace=document.getElementById('businessWorkspaceBar');
   if(workspace)workspace.insertAdjacentElement('afterend',tools);

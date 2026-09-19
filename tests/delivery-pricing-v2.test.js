@@ -109,30 +109,24 @@ test('delivery runtime stores class-specific quote snapshot and required vehicle
   assert.match(server,/quote\.required_vehicle_class/);
 });
 
-test('Admin V2 pricing requires Bicycle Car and Van rules without hardcoded PHP rates',()=>{
+test('Admin V2 pricing API requires Bicycle Car and Van rules without hardcoded PHP rates',()=>{
   assert.match(server,/V2 pricing requires bicycle, car and van rules/);
   assert.match(server,/normalizeVehiclePricingRule/);
   assert.match(server,/delivery_vehicle_pricing_rules/);
-  assert.match(ui,/Bicycle · food \/ small parcel/);
-  assert.match(ui,/Car/);
-  assert.match(ui,/Van/);
-  assert.match(ui,/Base \+ distance/);
-  assert.match(ui,/Base \+ distance \+ weight \+ volume/);
-  assert.match(ui,/No commercial rate is hardcoded/);
-  assert.doesNotMatch(ui,/value="\d+(?:\.\d+)?"[^>]*id="bike(?:Base|Km|Min)"/);
+  assert.match(server,/for\(const cls of \['bicycle','car','van'\]\)/);
+  assert.doesNotMatch(ui,/\/api\/admin\/delivery\/pricing/);
+  assert.doesNotMatch(ui,/Admin • Delivery pricing/);
 });
 
-test('Admin assignment filters and server enforce quote vehicle/capacity/radius',()=>{
+test('Admin assignment server enforces quote vehicle capacity and radius outside Merchant UI',()=>{
   assert.match(server,/courierCanServeDelivery\(courier,d\)/);
   assert.match(server,/VEHICLE_CLASS_MISMATCH/);
   assert.match(server,/COURIER_WEIGHT_CAPACITY_EXCEEDED/);
   assert.match(server,/COURIER_VOLUME_CAPACITY_EXCEEDED/);
   assert.match(server,/COURIER_SERVICE_RADIUS_EXCEEDED/);
   assert.match(server,/c\.max_weight_kg,c\.max_volume_l,c\.service_radius_km/);
-  assert.match(ui,/required_vehicle_class/);
-  assert.match(ui,/max_weight_kg/);
-  assert.match(ui,/max_volume_l/);
-  assert.match(ui,/service_radius_km/);
+  assert.doesNotMatch(ui,/data-del-assign/);
+  assert.doesNotMatch(ui,/\/api\/admin\/deliveries/);
   assert.doesNotMatch(ui,/Vehicle override \(optional\)/);
 });
 
