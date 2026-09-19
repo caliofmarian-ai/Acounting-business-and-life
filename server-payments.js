@@ -29,6 +29,7 @@ import {
 } from './profile-finance-core.js';
 import {profileMoneySnapshot} from './profile-money-core.js';
 import {allocateSharedCompanyCost50x50,PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,monetizationPolicyDraft} from './monetization-policy-v2.js';
+import {PAYMONGO_PH_BENCHMARK_AS_OF,PAYMONGO_PH_PAYMENT_BENCHMARKS,digitalPaymentIncentiveScenario,compareDigitalPaymentRails} from './digital-payment-incentive-core.js';
 import {
   ensureAccountMoneySchema,accountMoneySettings,updateAccountMoneyIdentity,
   createAccountFinancialDestination,updateAccountFinancialDestination,setDefaultAccountPayoutDestination
@@ -402,6 +403,51 @@ app.get('/api/payments/admin/unit-economics',async(req,res,next)=>{try{
     evidenceClasses:financeEvidence(req)
   });
   res.json(data);
+}catch(e){next(e)}});
+
+app.get('/api/payments/admin/digital-payment-incentive/benchmarks',async(req,res,next)=>{try{
+  const me=await identity(req);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',null);
+  res.json({
+    benchmark_as_of:PAYMONGO_PH_BENCHMARK_AS_OF,
+    pricing_exclusive_of_vat:true,
+    rails:PAYMONGO_PH_PAYMENT_BENCHMARKS,
+    source:'https://www.paymongo.com/en/pricing',
+    qrph_source:'https://docs.paymongo.com/docs/payment-acceptance-qr-ph',
+    activation:'NOT_PERFORMED'
+  });
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/digital-payment-incentive/scenario',body,async(req,res,next)=>{try{
+  const me=await identity(req),territoryId=financeTerritory(req.body?.territory_id);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',territoryId);
+  const input={
+    commercialAmount:req.body?.commercial_amount,
+    railCode:req.body?.rail_code,
+    cashHandlingCostPct:req.body?.cash_handling_cost_pct,
+    cashHandlingFixedCost:req.body?.cash_handling_fixed_cost,
+    providerFeeTaxPct:req.body?.provider_fee_tax_pct,
+    returnSavingsPct:req.body?.return_savings_pct,
+    creditCap:req.body?.credit_cap,
+    growthBudgetRemaining:req.body?.growth_budget_remaining
+  };
+  const selected=digitalPaymentIncentiveScenario(input);
+  const comparison=compareDigitalPaymentRails(input);
+  await appendAdminAudit(pool,{
+    actorAccountId:me.account.id,permission:'finance.summary.view',territoryId,
+    targetType:'digital_payment_incentive_scenario',targetId:'simulation',
+    eventCode:'digital_payment_incentive_scenario_run',
+    after:{
+      rail_code:selected.provider_cost.rail_code,
+      commercial_amount:selected.provider_cost.commercial_amount,
+      modeled_cash_total_cost:selected.cash_cost_model.modeled_cash_total_cost,
+      modeled_total_processor_cost:selected.provider_cost.modeled_total_processor_cost,
+      supported_credit:selected.incentive.supported_credit,
+      state:selected.state
+    },
+    reason:'Read-only digital payment incentive simulation',correlationId:correlation(req)
+  });
+  res.json({selected,comparison,territory_id:territoryId});
 }catch(e){next(e)}});
 
 app.get('/api/payments/admin/monetization-v2/model',async(req,res,next)=>{try{
