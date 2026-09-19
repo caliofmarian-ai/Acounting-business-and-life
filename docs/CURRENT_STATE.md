@@ -252,7 +252,7 @@ Fiscal boundary:
 - no internal record becomes BIR-valid merely because its label contains “invoice”;
 - a later PH fiscal-rules layer will determine statutory document classification and numbering.
 
-Canonical design: `docs/finance/FINANCIAL_DOCUMENT_ENGINE_V1.md`.
+Canonical design: `docs/finance/FINANCIAL_DOCUMENT_ENGINE_V1.md`. Figma: file `sRwVQFpQchn9kv72vOoUbg`, page `Financial Documents V1` (`17:50`).
 
 ## Validation rule
 
