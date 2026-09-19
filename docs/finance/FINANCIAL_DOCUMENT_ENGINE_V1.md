@@ -147,6 +147,20 @@ Initial synchronization covers:
 
 Additional source adapters may be added without creating a second ledger.
 
+## Figma source
+
+File:
+https://www.figma.com/design/sRwVQFpQchn9kv72vOoUbg
+
+Page:
+`Financial Documents V1` — `17:50`
+
+Android frames:
+- `Android / Statements & Documents` — `17:51`
+- `Android / Consolidated Financial View` — `17:113`
+
+The runtime Android workspace follows this same hierarchy: profile/consolidated mode, period selection, financial metrics, evidence boundary and document drill-down.
+
 ## Next slices
 
 1. Android statement/document UI.
