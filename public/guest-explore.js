@@ -192,9 +192,9 @@ async function renderPricing(){
       '<section class="guestPricingPromise"><strong>What the promotion really means</strong><p>'+gh(data.promotion_disclosure)+'</p></section>'+
       '<div class="guestPricingGrid">'+
         '<article class="guestPricingCard"><small>CUSTOMER</small><strong>Free Business & Life profile</strong><p>0% Business & Life Customer platform fee.</p></article>'+
-        roleCard('MERCHANT','merchant','Marketplace, business tools and accounting. Monthly subscription pricing will be shown separately when an active plan exists.')+
-        roleCard('SUPPLIER','supplier','B2B procurement and Supplier financial workspace. Processor charges remain separate from the Business & Life fee.')+
-        roleCard('LOCAL SERVICES','local_services','Professional profile, quotes, jobs and financial tools. The 0.50% policy applies only after the promotional entitlement.')+
+        roleCard('MERCHANT','merchant','Marketplace, business tools and accounting. Monthly subscription after promo: ₱'+Number(p.monthly_subscription_amount||0).toFixed(0)+'/month.')+
+        roleCard('SUPPLIER','supplier','B2B procurement and Supplier financial workspace. Monthly subscription after promo: ₱'+Number(p.monthly_subscription_amount||0).toFixed(0)+'/month. Processor charges remain separate from the Business & Life fee.')+
+        roleCard('LOCAL SERVICES','local_services','Professional profile, quotes, jobs and financial tools. Monthly subscription after promo: ₱'+Number(p.monthly_subscription_amount||0).toFixed(0)+'/month. The 0.50% policy applies only after the promotional entitlement.')+
         roleCard('DELIVERY','courier','No monthly subscription. The post-promo production fee is based only on verified delivery price.')+
       '</div>'+
       '<section class="guestFeeBreakdown"><div class="guestSectionHead"><div><small>THIRD-PARTY PROCESSING</small><h2>PayMongo benchmark rates</h2></div><span>as of '+gh(data.payment_processor.benchmark_as_of)+'</span></div>'+rails+
