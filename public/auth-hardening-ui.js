@@ -28,7 +28,41 @@ function renderForgot(){const body=document.getElementById('modernAuthBody');set
 function renderReset(raw){const root=document.getElementById('modernAuthRoot');if(!root)return;root.innerHTML=`<section class="modernAuthCard"><div class="modernBackRow"><div><h2>Choose a new password</h2><p>This link can be used once.</p></div></div><form id="resetForm" class="modernAuthForm"><label>New password<input id="resetPassword" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirm password<input id="resetConfirm" type="password" minlength="8" autocomplete="new-password" required></label><button class="modernPrimary">Reset password</button></form><div id="modernAuthMessage" class="modernAuthMessage"></div></section>`;document.getElementById('resetForm').onsubmit=async e=>{e.preventDefault();const p=document.getElementById('resetPassword').value;if(p!==document.getElementById('resetConfirm').value)return msg('Passwords do not match','error');msg('Resetting…');try{await api('/api/auth/reset-password',{method:'POST',body:JSON.stringify({token:raw,new_password:p})});clearQuery();document.getElementById('modernAuthRoot').innerHTML=`<section class="modernAuthCard"><div class="modernSuccess"><h2>Password updated</h2><p>All previous sessions were revoked. Sign in again with your new password.</p><button id="backAfterReset" class="modernPrimary">Sign in</button></div></section>`;document.getElementById('backAfterReset').onclick=()=>location.reload()}catch(e){msg(e.message,'error')}}}
 async function verifyFromUrl(raw){try{await api('/api/auth/email-verification/verify',{method:'POST',body:JSON.stringify({token:raw})});clearQuery();sessionStorage.setItem('abl_flash','Email verified successfully.');location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
 async function oauthHandoff(raw){try{const r=await api('/api/auth/oauth/handoff',{method:'POST',body:JSON.stringify({code:raw})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);clearQuery();location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
-async function decorateSecurity(){if(!isV2())return;const panel=document.getElementById('profileDrawerPanel');if(!panel||panel.querySelector('.authUpgradeCard'))return;let me,ids;try{[me,ids]=await Promise.all([api('/api/me'),api('/api/auth/identities')])}catch{return}const googleLinked=ids.some(x=>x.provider==='google');const section=document.createElement('section');section.className='drawerSection authUpgradeCard';section.innerHTML=`<h3>Account protection</h3><div class="authSecurityLine"><span>Email</span><strong>${me.account.email_verified_at?'Verified':'Not verified'}</strong></div>${!me.account.email_verified_at?'<button id="sendVerify" type="button">Send verification email</button>':''}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;panel.appendChild(section);section.querySelector('#sendVerify')?.addEventListener('click',async()=>{const out=section.querySelector('#authDrawerMsg');out.textContent='Sending…';try{const r=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'});out.innerHTML=r.preview_verify_url?`Preview: <a href="${esc(r.preview_verify_url)}">verify now</a>`:esc(r.message||'Verification prepared.')}catch(e){out.textContent=e.message}});section.querySelector('#revokeOthers').onclick=async()=>{const out=section.querySelector('#authDrawerMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}}}
+async function decorateSecurity(){
+  if(!isV2())return;
+  const panel=document.getElementById('profileDrawerPanel');
+  if(!panel)return;
+  const existing=[...panel.querySelectorAll('.authUpgradeCard')];
+  if(existing.length){existing.slice(1).forEach(x=>x.remove());return}
+  if(panel.dataset.authSecurityDecorating==='1')return;
+  panel.dataset.authSecurityDecorating='1';
+  try{
+    const [me,ids]=await Promise.all([api('/api/me'),api('/api/auth/identities')]);
+    if(!document.body.contains(panel))return;
+    const raced=[...panel.querySelectorAll('.authUpgradeCard')];
+    if(raced.length){raced.slice(1).forEach(x=>x.remove());return}
+    const googleLinked=ids.some(x=>x.provider==='google');
+    const section=document.createElement('section');
+    section.className='drawerSection authUpgradeCard';
+    const deliveryNote=!me.account.email_verified_at&&!status.email_delivery_configured
+      ?'<div class="avatarHint authDeliveryWarning">Email delivery is not configured in this environment. A preview may offer a direct verification link.</div>'
+      :'';
+    section.innerHTML=`<h3>Account protection</h3><div class="authSecurityLine"><span>Email</span><strong>${me.account.email_verified_at?'Verified':'Not verified'}</strong></div>${!me.account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;
+    panel.appendChild(section);
+    section.querySelector('#sendVerify')?.addEventListener('click',async()=>{
+      const out=section.querySelector('#authDrawerMsg');out.textContent='Preparing verification…';
+      try{
+        const r=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'});
+        if(r.delivery_status==='sent')out.textContent='Verification email sent. Check your inbox and spam folder.';
+        else if(r.preview_verify_url)out.innerHTML=`Email sending is unavailable in this preview. <a href="${esc(r.preview_verify_url)}">Verify directly here</a>.`;
+        else if(r.delivery_status==='not_configured')out.textContent='Email delivery is not configured yet. Your verification request was not emailed.';
+        else out.textContent='Verification email could not be delivered. Please try again later.';
+      }catch(e){out.textContent=e.message}
+    });
+    section.querySelector('#revokeOthers').onclick=async()=>{const out=section.querySelector('#authDrawerMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}};
+  }catch{}finally{delete panel.dataset.authSecurityDecorating}
+}
+
 function watchDrawer(){document.addEventListener('abl:drawer-rendered',()=>decorateSecurity().catch(()=>{}))}
 async function boot(){
   if(token()&&!isV2())localStorage.removeItem(ABL_AUTH_TOKEN);

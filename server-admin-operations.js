@@ -39,12 +39,24 @@ const MAX_SUPPORT_IMAGE_BYTES=1_500_000;
 const MAX_SUPPORT_DOC_BYTES=5_000_000;
 const MAX_SUPPORT_AUDIO_BYTES=10_000_000;
 const MAX_SUPPORT_TOTAL_BYTES=22_000_000;
+const SUPPORT_AI_PROVIDER=String(process.env.SUPPORT_AI_PROVIDER||'').toLowerCase();
+const OPENAI_API_KEY=process.env.OPENAI_API_KEY||'';
+const SUPPORT_AI_TRANSCRIPTION_MODEL=String(process.env.SUPPORT_AI_TRANSCRIPTION_MODEL||'gpt-4o-mini-transcribe').trim().slice(0,120);
+const SUPPORT_AI_TRANSLATION_MODEL=String(process.env.SUPPORT_AI_TRANSLATION_MODEL||'gpt-5.6-luna').trim().slice(0,120);
 function decodeSupportDataUrl(dataUrl){
-  const m=String(dataUrl||'').match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
-  if(!m)throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
-  let bytes;try{bytes=Buffer.from(m[2],'base64')}catch{throw Object.assign(new Error('Attachment could not be decoded'),{status:400})}
-  return{mime:m[1].toLowerCase(),bytes};
+  const raw=String(dataUrl||'');
+  if(!raw.startsWith('data:'))throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
+  const comma=raw.indexOf(',');
+  if(comma<6)throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
+  const meta=raw.slice(5,comma),parts=meta.split(';').filter(Boolean);
+  const mime=String(parts.shift()||'').toLowerCase();
+  if(!mime||!parts.some(x=>x.toLowerCase()==='base64'))throw Object.assign(new Error('Attachment must be base64 encoded'),{status:400});
+  const payload=raw.slice(comma+1);
+  if(!/^[A-Za-z0-9+/=]+$/.test(payload))throw Object.assign(new Error('Attachment could not be decoded'),{status:400});
+  let bytes;try{bytes=Buffer.from(payload,'base64')}catch{throw Object.assign(new Error('Attachment could not be decoded'),{status:400})}
+  return{mime,bytes};
 }
+
 function validateSupportAttachments(raw){
   const files=Array.isArray(raw)?raw:[];
   if(files.length>9)throw Object.assign(new Error('Support allows up to 5 images, 3 documents and 1 audio recording'),{status:400});
@@ -61,6 +73,56 @@ function validateSupportAttachments(raw){
   if(images>5||docs>3||audio>1||total>MAX_SUPPORT_TOTAL_BYTES)throw Object.assign(new Error('Support attachment limits exceeded'),{status:413});
   return out;
 }
+function supportAiReady(){
+  return SUPPORT_AI_PROVIDER==='openai'&&Boolean(OPENAI_API_KEY);
+}
+function responseTextFromOpenAI(payload){
+  for(const item of Array.isArray(payload?.output)?payload.output:[]){
+    if(item?.type!=='message'||!Array.isArray(item.content))continue;
+    for(const part of item.content)if(part?.type==='output_text'&&part.text)return clean(part.text,12000);
+  }
+  return'';
+}
+async function translateSupportText(text,sourceLanguage=''){
+  if(!supportAiReady())throw Object.assign(new Error('Server translation is not configured yet'),{status:503,code:'SUPPORT_AI_NOT_CONFIGURED'});
+  const input=clean(text,12000);
+  if(!input)throw Object.assign(new Error('Text is required for translation'),{status:400});
+  const instruction='Translate the user support message faithfully into clear English. Preserve names, numbers, order IDs, URLs, amounts and technical terms. Do not add advice, commentary or explanations. Return only the English translation.';
+  const r=await fetch('https://api.openai.com/v1/responses',{
+    method:'POST',
+    headers:{Authorization:`Bearer ${OPENAI_API_KEY}`,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:SUPPORT_AI_TRANSLATION_MODEL,
+      store:false,
+      input:[
+        {role:'developer',content:[{type:'input_text',text:instruction}]},
+        {role:'user',content:[{type:'input_text',text:`Source language: ${clean(sourceLanguage||'auto',32)}\n\n${input}`}]}
+      ]
+    })
+  });
+  const payload=await r.json().catch(()=>({}));
+  if(!r.ok)throw Object.assign(new Error('Server translation provider failed'),{status:502,code:'SUPPORT_TRANSLATION_PROVIDER_FAILED'});
+  const translated=responseTextFromOpenAI(payload);
+  if(!translated)throw Object.assign(new Error('Translation provider returned no text'),{status:502,code:'SUPPORT_TRANSLATION_EMPTY'});
+  return translated;
+}
+async function transcribeSupportAudio(dataUrl,fileName='voice-recording.webm',sourceLanguage=''){
+  if(!supportAiReady())throw Object.assign(new Error('Server voice transcription is not configured yet'),{status:503,code:'SUPPORT_AI_NOT_CONFIGURED'});
+  const {mime,bytes}=decodeSupportDataUrl(dataUrl);
+  if(!SUPPORT_AUDIO_MIMES.has(mime))throw Object.assign(new Error('Unsupported voice recording format'),{status:400});
+  if(bytes.length>MAX_SUPPORT_AUDIO_BYTES)throw Object.assign(new Error('Voice recording exceeds 10 MB'),{status:413});
+  const form=new FormData();
+  form.append('file',new Blob([bytes],{type:mime}),clean(fileName,180)||'voice-recording.webm');
+  form.append('model',SUPPORT_AI_TRANSCRIPTION_MODEL);
+  const r=await fetch('https://api.openai.com/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${OPENAI_API_KEY}`},body:form});
+  const payload=await r.json().catch(()=>({}));
+  if(!r.ok)throw Object.assign(new Error('Server voice transcription provider failed'),{status:502,code:'SUPPORT_TRANSCRIPTION_PROVIDER_FAILED'});
+  const transcript=clean(payload?.text,12000);
+  if(!transcript)throw Object.assign(new Error('Voice transcription returned no text'),{status:502,code:'SUPPORT_TRANSCRIPTION_EMPTY'});
+  const english=/^en(?:-|$)/i.test(clean(sourceLanguage,32))?transcript:await translateSupportText(transcript,sourceLanguage||'auto');
+  return{transcript,english_translation:english};
+}
+
 const INCIDENT_STATUSES=new Set(['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated']);
 let child;let shuttingDown=false;
 
@@ -651,6 +713,29 @@ app.post('/api/admin/finance/entries',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.get('/api/admin/audit',async(req,res,next)=>{try{const{me}=await adminFor(req,'audit.view');const ids=await visibleTerritoryIds(pool,me.account.id,'audit.view'),countryWide=await isCountryWide(me.account.id,'audit.view'),limit=Math.max(1,Math.min(300,Number(req.query.limit)||100));const{rows}=await pool.query(`SELECT e.*,a.display_name actor_name FROM admin_audit_events e LEFT JOIN accounts a ON a.id=e.actor_account_id WHERE ${countryWide?"e.country_code='PH'":"e.territory_id=ANY($1::bigint[])"} ORDER BY e.created_at DESC LIMIT ${limit}`,countryWide?[]:[ids.length?ids:[-1]]);res.json(rows)}catch(e){next(e)}});
+
+app.get('/api/support/assist/status',async(req,res,next)=>{try{
+  await identity(req);
+  res.json({
+    server_assist_ready:supportAiReady(),
+    provider:supportAiReady()?SUPPORT_AI_PROVIDER:'none',
+    transcription:supportAiReady()?'ready':'not_configured',
+    translation:supportAiReady()?'ready':'not_configured',
+    browser_fallback:true
+  });
+}catch(e){next(e)}});
+
+app.post('/api/support/assist/transcribe',body,async(req,res,next)=>{try{
+  await identity(req);
+  const result=await transcribeSupportAudio(req.body?.data_url,req.body?.file_name||'voice-recording.webm',req.body?.source_language||'');
+  res.json({...result,provider:SUPPORT_AI_PROVIDER});
+}catch(e){next(e)}});
+
+app.post('/api/support/assist/translate',body,async(req,res,next)=>{try{
+  await identity(req);
+  const translated=await translateSupportText(req.body?.text,req.body?.source_language||'');
+  res.json({english_translation:translated,provider:SUPPORT_AI_PROVIDER});
+}catch(e){next(e)}});
 
 app.post('/api/support/tickets',body,async(req,res,next)=>{const client=await pool.connect();try{
   const me=await identity(req),category=clean(req.body?.category,80),subject=clean(req.body?.subject,180),description=clean(req.body?.description,5000),requestedRelatedType=clean(req.body?.related_type,50),requestedRelatedId=req.body?.related_id?Number(req.body.related_id):null,requestedDestination=SUPPORT_DESTINATIONS.has(req.body?.requested_destination)?req.body.requested_destination:'support',sourceLanguage=clean(req.body?.source_language,32),englishTranslation=clean(req.body?.english_translation,12000);

@@ -128,6 +128,44 @@ function closeMore(){
   document.body.classList.remove('lazyModalOpen');
 }
 
+const MERCHANT_MOBILE_ACTIONS=[
+  ['ordersQuickButton','🧾','Orders'],
+  ['marketQuickButton','🏪','Storefront'],
+  ['supQuickButton','📦','Suppliers'],
+  ['deliveryQuickButton','🛵','Delivery'],
+  ['accountAvatarButton','👤','Merchant']
+];
+
+async function openMerchantMobileAction(id){
+  const button=await waitFor(id,2200);
+  if(!button)return toast('This Merchant tool is still loading. Try again in a moment.');
+  button.click();
+}
+
+function mountMerchantMobileTools(role){
+  let tools=document.getElementById('merchantMobileTools');
+  if(String(role||'')!=='merchant'){
+    tools?.remove();
+    return;
+  }
+  const shell=document.getElementById('shell');
+  const topbar=shell?.querySelector('.topbar');
+  if(!shell||!topbar)return;
+  if(!tools){
+    tools=document.createElement('section');
+    tools.id='merchantMobileTools';
+    tools.className='merchantMobileTools';
+    tools.setAttribute('aria-label','Merchant tools');
+    tools.innerHTML='<div class="merchantMobileToolsHead"><strong>Merchant tools</strong><span>Business workspace</span></div><div class="merchantMobileToolsGrid"></div>';
+  }
+  const grid=tools.querySelector('.merchantMobileToolsGrid');
+  grid.innerHTML=MERCHANT_MOBILE_ACTIONS.map(([id,icon,label])=>`<button type="button" data-merchant-mobile-action="${id}" class="${id==='accountAvatarButton'?'active':''}"><span aria-hidden="true">${icon}</span><strong>${label}</strong></button>`).join('');
+  grid.querySelectorAll('[data-merchant-mobile-action]').forEach(button=>button.onclick=()=>openMerchantMobileAction(button.dataset.merchantMobileAction));
+  const workspace=document.getElementById('businessWorkspaceBar');
+  if(workspace)workspace.insertAdjacentElement('afterend',tools);
+  else topbar.insertAdjacentElement('afterend',tools);
+}
+
 async function mountLaunchers(){
   if(!token())return;
   const top=document.querySelector('.topActions');
@@ -162,19 +200,28 @@ async function loadDrawerFeatures(){
 }
 
 async function loadAccountingForRole(role){
-  if(!['merchant','supplier'].includes(String(role||'')))return;
-  try{await loadFeature('accounting')}catch(error){console.warn('Accounting lazy-load:',error.message)}
+  if(!['merchant','supplier'].includes(String(role||''))){mountMerchantMobileTools(role);return}
+  try{
+    await loadFeature('accounting');
+    mountMerchantMobileTools(role);
+  }catch(error){console.warn('Accounting lazy-load:',error.message)}
 }
 
 function boot(){
   ensureMore();
   mountLaunchers();
+  const initialRole=window.BusinessLifeProfileState?.activeRole||localStorage.getItem('abl_active_role')||'';
+  mountMerchantMobileTools(initialRole);
+  loadAccountingForRole(initialRole);
   document.addEventListener('abl:profile-state',event=>{
+    const role=event.detail?.activeRole||'';
     mountLaunchers();
-    loadAccountingForRole(event.detail?.activeRole);
+    mountMerchantMobileTools(role);
+    loadAccountingForRole(role);
   });
+  document.addEventListener('abl:business-workspace-changed',()=>mountMerchantMobileTools(window.BusinessLifeProfileState?.activeRole||localStorage.getItem('abl_active_role')||''));
   document.addEventListener('abl:drawer-rendered',()=>loadDrawerFeatures(),{passive:true});
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden)mountLaunchers()});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){mountLaunchers();mountMerchantMobileTools(window.BusinessLifeProfileState?.activeRole||localStorage.getItem('abl_active_role')||'')}});
 }
 
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});

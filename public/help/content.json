@@ -1,5 +1,5 @@
 {
-  "version": "0.11-docs-pricing-subscription",
+  "version": "0.12-docs-financial-documents-v1",
   "locale": "en-PH",
   "product": {
     "name": "Business & Life — Philippines",
@@ -1952,6 +1952,70 @@
           "paragraphs": [
             "The in-app Pricing & Benefits view reads the current dated public pricing snapshot and displays the PayMongo benchmark by payment rail. Because provider pricing can change, the Help Center does not hard-code a permanent PayMongo percentage table.",
             "Before a real payment is confirmed, transaction-specific provider evidence and the active pricing policy take precedence over an older benchmark."
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "financial-statements-and-documents",
+      "title": "Statements & Documents",
+      "section": "Money & pricing",
+      "profiles": [
+        "customer",
+        "merchant",
+        "supplier",
+        "courier",
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "See traceable financial evidence for individual operations and derived daily, weekly, monthly and yearly statements without mixing separate profile or business ledgers.",
+      "shortAnswer": "Statements & Documents is a read layer over the financial records Business & Life already trusts. Every supported financial event can be traced to source evidence, while day, week, month and year statements are calculated from those records. A consolidated view combines only your own authorized scopes and does not merge their underlying ledgers.",
+      "steps": [
+        "Open your Avatar and choose Statements & Documents.",
+        "Choose This profile to inspect the active profile/business workspace, or My consolidated view for your own authorized scopes.",
+        "Choose Day, Week, Month or Year and set the anchor date.",
+        "Review revenue, expenses, fees, purchases, refunds, transfers and derived result separately.",
+        "Open the financial-document list to trace amounts back to their source type and source id.",
+        "Check the fiscal badge: Internal evidence is not automatically a BIR-valid tax invoice."
+      ],
+      "notes": [
+        "Merchant and Supplier documents remain business-scoped; Customer, Delivery and Local Services are account/profile-scoped.",
+        "A shared business workspace is counted once in the consolidated view even if the same user uses both Merchant and Supplier roles for that business.",
+        "PayMongo processor cost is displayed separately and is not automatically treated as a Merchant or Supplier expense unless an applicable fee policy explicitly charges it to that participant.",
+        "Corrections and reversals keep traceable evidence instead of silently deleting the original economic event.",
+        "The source ledgers remain authoritative. Statements are derived views.",
+        "Future Philippine fiscal rules will determine which internal documents qualify as statutory invoices, receipts, debit/credit memos or other tax documents."
+      ],
+      "sections": [
+        {
+          "title": "One operation, traceable evidence",
+          "paragraphs": [
+            "Business & Life does not create a second accounting ledger just to produce documents. The financial-document layer references the existing source transaction, payment, refund, settlement, service job, delivery or subscription record.",
+            "This lets a statement total be traced down to individual financial documents and then to the underlying source event."
+          ]
+        },
+        {
+          "title": "Why not every document is called an invoice",
+          "paragraphs": [
+            "An internal commercial or accounting record may prove that an event occurred without automatically satisfying Philippine statutory invoicing requirements.",
+            "Business & Life therefore keeps document type separate from fiscal status. A sale or service can be an invoice candidate while remaining Internal evidence until a separate fiscal-rules layer validates the statutory requirements."
+          ]
+        },
+        {
+          "title": "Period statements",
+          "bullets": [
+            "Day — one Manila calendar day.",
+            "Week — ISO-style Monday-to-Sunday week.",
+            "Month — one calendar month.",
+            "Year — one calendar year.",
+            "Consolidated — combines only the authenticated user's own authorized scopes while preserving the underlying separation."
+          ]
+        },
+        {
+          "title": "Fee ownership stays visible",
+          "paragraphs": [
+            "Business & Life fees, subscription charges, PayMongo/payment-processor costs, delivery amounts and tax/statutory components remain distinct lines where evidence exists.",
+            "A processor fee does not silently become the Merchant's expense simply because it appears on the same payment. Participant expense treatment requires an explicit applicable policy."
           ]
         }
       ]
