@@ -55,7 +55,7 @@ export async function ensureMonetizationSchema(pool){
   for(const sql of statements)await pool.query(sql);
 
   await pool.query(`
-    DO $
+    DO $promo$
     DECLARE c RECORD;
     BEGIN
       FOR c IN
@@ -68,7 +68,7 @@ export async function ensureMonetizationSchema(pool){
       LOOP
         EXECUTE format('ALTER TABLE service_monetization_entitlements DROP CONSTRAINT %I',c.conname);
       END LOOP;
-    END $;
+    END $promo$;
   `);
   await pool.query(`
     UPDATE service_monetization_entitlements
@@ -79,7 +79,7 @@ export async function ensureMonetizationSchema(pool){
         OR promo_ends_at<>promo_started_at+(CASE WHEN service_scope='delivery' THEN INTERVAL '30 days' ELSE INTERVAL '90 days' END)
   `);
   await pool.query(`
-    DO $
+    DO $promo$
     BEGIN
       IF NOT EXISTS(
         SELECT 1 FROM pg_constraint
@@ -90,7 +90,7 @@ export async function ensureMonetizationSchema(pool){
           ADD CONSTRAINT service_monetization_entitlements_scope_promo_days_check
           CHECK((service_scope='delivery' AND promo_duration_days=30) OR (service_scope<>'delivery' AND promo_duration_days=90));
       END IF;
-    END $;
+    END $promo$;
   `);
   await pool.query(`
     UPDATE service_monetization_events e
