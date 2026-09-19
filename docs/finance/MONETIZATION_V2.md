@@ -1,6 +1,6 @@
 # Monetization V2 — Profile Revenue + Shared Company Cost Allocation
 
-Status: **OWNER-APPROVED PRODUCT MODEL / 0.50% TRANSACTION RATE APPROVED / LIVE COLLECTION GATED**
+Status: **OWNER-APPROVED PRODUCT MODEL / ₱99 SUBSCRIPTION + 0.50% TRANSACTION RATE APPROVED / LIVE COLLECTION GATED**
 
 Canonical issue: #232.
 
@@ -118,7 +118,7 @@ A country/territory operator may therefore have:
 
 After applicable promotion:
 
-- monthly profile subscription;
+- **₱99/month Business & Life profile subscription**;
 - **0.50% Business & Life platform transaction fee** on each eligible transaction.
 
 The 0.50% rate is Owner-approved. Live collection still requires an active versioned fee policy, processor routing, disclosure, accounting/settlement reconciliation and legal/tax readiness.
@@ -127,7 +127,7 @@ The 0.50% rate is Owner-approved. Live collection still requires an active versi
 
 After applicable promotion:
 
-- monthly profile subscription;
+- **₱99/month Business & Life profile subscription**;
 - **0.50% Business & Life platform transaction fee** on each eligible B2B transaction.
 
 ### Artisan / Local Services Provider
@@ -136,7 +136,7 @@ Canonical runtime scope: `local_services`.
 
 After applicable promotion:
 
-- monthly profile subscription;
+- **₱99/month Business & Life profile subscription**;
 - **0.50% Business & Life platform transaction fee** on each eligible completed job/transaction.
 
 ### Delivery Provider / Courier
@@ -177,7 +177,7 @@ Default rollout:
 - Local Services: **90 days** under the current policy;
 - Delivery / Courier: **30 days**;
 - Merchant/Supplier/Local Services Business & Life subscription and Business & Life transaction fee remain zero during their applicable promotional period;
-- after promo, the Owner-approved Business & Life transaction fee is **0.50%** for Merchant/Supplier/Local Services;
+- after promo, the Owner-approved Business & Life pricing for Merchant/Supplier/Local Services is **₱99/month + 0.50% per eligible transaction**;
 - Delivery production fee remains 0% during its 30-day promotional entitlement.
 
 **Promotion is not the same as zero total third-party cost.** PayMongo/payment-processor charges may still apply to digital payment during a Business & Life promotional window and must be disclosed separately.
@@ -268,4 +268,4 @@ Every economic surface must separate, where relevant:
 
 Do not collapse these into an ambiguous single “service fee”.
 
-The public API `GET /api/public/pricing` is the runtime source for public pricing disclosures. UI surfaces should read that source rather than duplicating rate constants.
+The public API `GET /api/public/pricing` is the runtime source for public pricing disclosures, including the Owner-approved **₱99/month** subscription target. UI surfaces should read that source rather than duplicating rate constants.
