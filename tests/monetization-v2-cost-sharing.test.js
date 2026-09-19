@@ -35,11 +35,11 @@ test('profile monetization matrix follows Owner model without invented prices',(
   assert.equal(OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,10);
   assert.equal(courier.owner_approved_delivery_production_rate_pct,10);
   assert.equal(courier.delivery_production_fee_basis,DELIVERY_PRODUCTION_FEE_BASIS);
-  assert.equal(DELIVERY_PRODUCTION_FEE_BASIS,'verified_eligible_delivery_earnings');
+  assert.equal(DELIVERY_PRODUCTION_FEE_BASIS,'verified_delivery_price');
   assert.equal(courier.live_activation,false);
   const courierDraft=monetizationPolicyDraft('courier');
   assert.equal(courierDraft.delivery_production_rate_pct,10);
-  assert.equal(courierDraft.delivery_production_fee_basis,'verified_eligible_delivery_earnings');
+  assert.equal(courierDraft.delivery_production_fee_basis,'verified_delivery_price');
 
   const merchantDraft=monetizationPolicyDraft('merchant');
   assert.equal(merchantDraft.monthly_subscription_amount,null);
@@ -114,7 +114,7 @@ test('subscription and Delivery revenues reduce transaction-fee revenue requirem
     },
     paidProfiles:{merchant:100,supplier:20,local_services:30},
     subscriptionAmounts:{merchant:500,supplier:400,local_services:300},
-    deliveryEligibleEarnings:1000000,
+    deliveryEligiblePrice:1000000,
     deliveryProductionRatePct:10
   });
   assert.equal(s.revenue_mix.subscription_revenue,67000);
@@ -153,7 +153,7 @@ test('Admin Finance UI presents profile policy and shared cost model clearly',()
   assert.match(ui,/Customer/);
   assert.match(ui,/Subscription \+ transaction fee/);
   assert.match(ui,/owner_approved_delivery_production_rate_pct\|\|10/);
-  assert.match(ui,/of verified delivery earnings/);
+  assert.match(ui,/of verified delivery price/);
   assert.match(ui,/Shared company cost simulator/);
   assert.match(ui,/50% equal \+ 50% activity/);
   assert.match(ui,/Digital-payment incentive/);
@@ -166,7 +166,7 @@ test('Commission Planner collects hybrid revenue assumptions',()=>{
   assert.match(ui,/Merchant monthly subscription/);
   assert.match(ui,/Paid Supplier profiles/);
   assert.match(ui,/Paid Artisan \/ Local Services profiles/);
-  assert.match(ui,/Monthly eligible Delivery earnings/);
+  assert.match(ui,/Monthly eligible Delivery price charged to customers/);
   assert.match(ui,/Delivery production fee % · Owner-approved/);
   assert.match(ui,/Subscriptions/);
   assert.match(ui,/Remaining sustainable transaction-fee revenue need/);
@@ -188,7 +188,7 @@ test('Commission Planner defaults Delivery production revenue to Owner-approved 
     safetyReservePct:0,
     growthSurplusPct:0,
     staffing:{},monthlyCosts:{},paidProfiles:{},subscriptionAmounts:{},
-    deliveryEligibleEarnings:10000
+    deliveryEligiblePrice:10000
   });
   assert.equal(s.assumptions.delivery_production_rate_pct,10);
   assert.equal(s.revenue_mix.delivery_production_fee_revenue,1000);
