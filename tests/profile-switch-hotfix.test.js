@@ -21,13 +21,14 @@ test('normal profile switching still uses the canonical active-role API',()=>{
   assert.match(shell,/activeRole = snapshot\.account\.active_role \|\| role/);
 });
 
-test('Admin authority is exposed as a privileged switcher workspace without becoming a public role',()=>{
+test('Admin authority is exposed separately from public profiles',()=>{
   assert.match(shell,/ADMIN_RANK_LABELS/);
   assert.match(shell,/super_admin:'Super Admin'/);
-  assert.match(shell,/adminProfileRole/);
   assert.match(shell,/profileApi\('\/api\/admin\/me'\)/);
-  assert.match(shell,/data-admin-profile/);
+  assert.match(shell,/id="adminWorkspaceButton"/);
+  assert.match(shell,/Delegated administrative access — not a personal or commercial profile/);
   assert.match(shell,/window\.location\.assign\('\/admin'\)/);
+  assert.doesNotMatch(shell,/data-admin-profile/);
   assert.doesNotMatch(shell,/ROLE_ORDER = \[[^\]]*super_admin/);
   assert.match(governance,/!panel\.querySelector\('#adminProfileRole'\)/);
 });

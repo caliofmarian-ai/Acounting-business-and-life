@@ -9,10 +9,13 @@ const hardening=read('public/auth-hardening-ui.js');
 const profileSettings=read('public/profile-settings-ui.js');
 const css=read('public/shell.css');
 
-test('avatar drawer stays a switcher with one Account Settings entry',()=>{
+test('avatar drawer separates Account Home profiles Admin access and Account Settings',()=>{
   const drawer=shell.slice(shell.indexOf('function renderDrawer()'),shell.indexOf('function profileManagementMarkup()'));
   assert.match(drawer,/Active profiles/);
+  assert.match(drawer,/id="accountHomeButton"/);
+  assert.match(drawer,/id="adminWorkspaceButton"/);
   assert.match(drawer,/id="accountSettingsButton"/);
+  assert.doesNotMatch(drawer,/data-admin-profile/);
   assert.doesNotMatch(drawer,/id="accountIdentityForm"/);
   assert.doesNotMatch(drawer,/Security & session/);
 });

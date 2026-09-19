@@ -141,7 +141,7 @@ function rejectSensitiveFinancialFields(value){
   const blocked=/account_number|routing|iban|card_number|pan|cvv|cvc|password|pin|secret|private_key/i;
   for(const key of Object.keys(value||{}))if(blocked.test(key))throw Object.assign(new Error('Do not store raw bank/card credentials in Business & Life settings. Use a provider destination reference and last four characters only.'),{status:400});
 }
-function enabledProfile(me,role){return Boolean((me.profiles||[]).find(p=>p.role===role&&p.enabled))}
+function enabledProfile(me,role){return Boolean((me.profiles||[]).find(p=>p.role===role&&p.enabled&&p.status==='active'))}
 function authorizedBusiness(me,businessId){
   const id=Number(businessId);
   return Number.isInteger(id)&&(me.businesses||[]).some(b=>Number(b.id)===id&&b.active!==false);
@@ -231,6 +231,7 @@ app.get('/api/financial-documents',async(req,res,next)=>{try{
     accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id,
     fromDate:req.query?.from||null,toDate:req.query?.to||null,limit:req.query?.limit||200
   });
+  res.set('Cache-Control','private, no-store, max-age=0');
   res.json({
     profile_role:scope.role,business_id:scope.business_id,currency_code:'PHP',
     fiscal_boundary:'Documents are internal financial evidence unless a separate fiscal status says otherwise.',
@@ -370,10 +371,11 @@ app.get('/api/settings/finance',async(req,res,next)=>{try{
   ]);
   const defaultProvider=clean(process.env.PAYMENT_PROVIDER_DEFAULT,80);
   const selected=providers.rows.find(x=>x.provider_code===defaultProvider&&['sandbox','active'].includes(x.status))||null;
+  res.set('Cache-Control','private, no-store, max-age=0');
   res.json({
     account:{id:Number(me.account.id),display_name:me.account.display_name,email:me.account.email||'',phone:me.account.phone||'',address:me.account.address||'',avatar_data_url:me.account.avatar_data_url||''},
     active_role:me.account.active_role,
-    profiles:(me.profiles||[]).map(p=>({role:p.role,enabled:Boolean(p.enabled),status:p.status,visibility:p.visibility})),
+    profiles:(me.profiles||[]).map(p=>({role:p.role,profile_id:p.profile_id||null,enabled:Boolean(p.enabled),status:p.status,visibility:p.visibility})),
     businesses:(me.businesses||[]).map(b=>({id:Number(b.id),name:b.name,active:b.active!==false})),
     financial_accounts:accounts,legacy_profile_financial_accounts:accounts,preferences,budgets,money_movements:movements,profile_fund_scopes:fundScopes,profile_fund_transfers:fundTransfers,account_money:accountMoney,
     catalog:{roles:PROFILE_FINANCE_ROLES,account_kinds:FINANCIAL_ACCOUNT_KINDS,methods:MONEY_METHODS,payout_schedules:PAYOUT_SCHEDULES,budget_purposes:BUDGET_PURPOSES,movement_types:MONEY_MOVEMENT_TYPES},

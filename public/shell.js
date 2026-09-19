@@ -55,24 +55,11 @@ function avatarMarkup(account, extraClass = '') {
   return `<span class="accountAvatar ${extraClass}" aria-hidden="true">${escapeHtml(initial)}</span>`;
 }
 function roleProfile(role) { return snapshot?.profiles?.find(p => p.role === role); }
-function isEnabled(role) { return Boolean(roleProfile(role)?.enabled); }
+function isEnabled(role) { const profile=roleProfile(role);return Boolean(profile?.enabled&&profile?.status==='active'); }
 function adminRank(assignment){ return assignment?.effective_rank || assignment?.authority_rank || assignment?.admin_role || 'admin'; }
 function highestAdminAssignment(){
   const levels={super_admin:100,country_admin:80,territory_admin:60,specialist:40};
   return [...(adminContext?.assignments||[])].sort((a,b)=>(levels[adminRank(b)]||0)-(levels[adminRank(a)]||0))[0]||null;
-}
-function adminProfileRow(){
-  if(!adminContext?.is_admin)return '';
-  const assignment=highestAdminAssignment();
-  const rank=adminRank(assignment);
-  const label=ADMIN_RANK_LABELS[rank]||'Admin';
-  const scope=assignment?.territory_name||assignment?.country_code||'Platform';
-  const desc=rank==='super_admin'?'Platform control • all administrative functions':scope+' • delegated administration';
-  return `<div id="adminProfileRole" class="profileRole adminProfileRole">
-    <span class="roleIcon">🛡️</span>
-    <span class="roleCopy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(desc)}</small><code>${escapeHtml(snapshot?.account?.admin_profile_id||'')}</code></span>
-    <button class="roleAction" type="button" data-admin-profile>Switch</button>
-  </div>`;
 }
 function countryMeta(code){return COUNTRY_META[code]||{flag:'🌐',label:code||'Country not set'}}
 function identityLine(id,label='ID'){
@@ -165,7 +152,6 @@ function renderDrawer() {
   const account = snapshot.account;
   const panel = document.getElementById('profileDrawerPanel');
   if (!panel) return;
-  const adminRow = adminProfileRow();
   const profileRows = ROLE_ORDER.filter(isEnabled).map(role => {
     const meta = ROLE_META[role];
     const profile = roleProfile(role);
@@ -180,11 +166,14 @@ function renderDrawer() {
   }).join('');
   panel.innerHTML = `
     ${drawerHeader(account)}
-    <section class="drawerSection"><h3>Active profiles</h3><div class="profileRoleList">${adminRow}${profileRows}</div></section>
+    <button id="accountHomeButton" class="accountSettingsEntry" type="button"><span>👤</span><span><strong>Account Home</strong><small>Personal identity and profile selection</small></span><b>›</b></button>
+    <section class="drawerSection"><h3>Active profiles</h3><div class="profileRoleList">${profileRows||'<p class="drawerEmpty">No active profiles yet.</p>'}</div></section>
+    ${adminContext?.is_admin?'<button id="adminWorkspaceButton" class="accountSettingsEntry adminWorkspaceEntry" type="button"><span>🛡️</span><span><strong>Admin Workspace</strong><small>Delegated administrative access</small></span><b>›</b></button>':''}
     <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>Personal details, security and profile management</small></span><b>›</b></button>`;
   panel.querySelector('#drawerClose').onclick = closeDrawer;
+  panel.querySelector('#accountHomeButton').onclick = () => { closeDrawer(); renderAccountHome(); };
   panel.querySelector('#accountSettingsButton').onclick = () => openAccountSettings();
-  panel.querySelector('[data-admin-profile]')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
+  panel.querySelector('#adminWorkspaceButton')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
   panel.querySelectorAll('[data-role-action]').forEach(btn => btn.onclick = () => enableOrSwitch(btn.dataset.roleAction));
   bindCopyIds(panel);
   document.dispatchEvent(new CustomEvent('abl:drawer-rendered', { detail: { activeRole, accountId: Number(account.id) || null, view:'profiles' } }));
@@ -192,7 +181,7 @@ function renderDrawer() {
 
 function profileManagementMarkup(){
   const account=snapshot.account;
-  return ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),state=profile?.status||'not_started',reactivable=state==='disabled',inProgress=['application_started','requirements_pending','submitted','under_review','rejected'].includes(state),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:reactivable?`data-profile-reactivate="${role}"`:`data-role-action="${role}"`,status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':inProgress?state.replaceAll('_',' '):'Not active',label=enabled?'Disable':reactivable?'Reactivate':inProgress?'Continue onboarding':'Start onboarding';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`}).join('');
+  return ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled&&profile?.status==='active'),state=profile?.status||'not_started',reactivable=state==='disabled',inProgress=['application_started','requirements_pending','submitted','under_review','rejected'].includes(state),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:reactivable?`data-profile-reactivate="${role}"`:`data-role-action="${role}"`,status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':inProgress?state.replaceAll('_',' '):'Not active',label=enabled?'Disable':reactivable?'Reactivate':inProgress?'Continue onboarding':'Start onboarding';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`}).join('');
 }
 
 function accountSettingsHeader(title,subtitle){return `<div class="accountSettingsHeader"><button id="accountSettingsBack" type="button" aria-label="Back">‹</button><div><span>ACCOUNT SETTINGS</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div></div>`}
@@ -387,6 +376,7 @@ function showActiveWorkspace() {
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
   openAccountSettings,
+  refreshProfile,
   getProfileState:()=>window.BusinessLifeProfileState||null
 });
 
@@ -431,8 +421,8 @@ function renderAccountHome(){
   if(!hub)return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   const profiles=ROLE_ORDER.filter(isEnabled).map(role=>{const meta=ROLE_META[role];return `<button class="hubTile" type="button" data-account-role="${role}"><span class="hubTileIcon">${meta.icon}</span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.desc)}</small><span class="hubStatus">Open profile</span></button>`}).join('');
-  const admin=adminContext?.is_admin?`<button class="hubTile" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin')}</strong><small>Administrative workspace and delegated functions</small><span class="hubStatus">Open profile</span></button>`:'';
-  hub.innerHTML=`<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><p>${countryMeta(account.country_code).flag} ${escapeHtml(countryMeta(account.country_code).label)} · ${escapeHtml(account.personal_id||'')}</p><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid">${admin}${profiles}<button class="hubTile profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>Personal details, security and profile onboarding</small></button></div>`;
+  const admin=adminContext?.is_admin?`<section class="accountAdminAccess"><h2>Admin access</h2><button class="hubTile" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin Workspace')}</strong><small>Delegated administrative access — not a personal or commercial profile</small><span class="hubStatus">Open workspace</span></button></section>`:'';
+  hub.innerHTML=`<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><p>${countryMeta(account.country_code).flag} Account registration edition: ${escapeHtml(countryMeta(account.country_code).label)} · ${escapeHtml(account.personal_id||'')}</p><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid">${profiles||'<p class="hubEmpty">No active profiles yet. Open Account Settings to start onboarding.</p>'}</div>${admin}<section class="accountSettingsAccess"><h2>Account</h2><button class="hubTile profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>Personal details, security and profile onboarding</small></button></section>`;
   hub.querySelectorAll('[data-account-role]').forEach(button=>button.onclick=()=>enableOrSwitch(button.dataset.accountRole));
   hub.querySelector('#accountAdminProfile')?.addEventListener('click',()=>window.location.assign('/admin'));
   hub.querySelector('#accountHomeSettings')?.addEventListener('click',()=>openAccountSettings());

@@ -16,9 +16,10 @@ test('Admin mobile navigation stays compact instead of stretching to viewport he
   assert.match(css,/@media\(min-width:760px\)\{\.workspace\{[^}]*grid-template-rows:1fr;[^}]*align-content:stretch/);
 });
 
-test('Super Admin has one canonical switcher entry and no topbar duplicate',()=>{
-  assert.match(shell,/adminProfileRow/);
-  assert.match(shell,/data-admin-profile/);
+test('Super Admin has one separate Admin Workspace entry and no topbar duplicate',()=>{
+  assert.match(shell,/id="adminWorkspaceButton"/);
+  assert.match(shell,/Admin Workspace/);
+  assert.doesNotMatch(shell,/data-admin-profile/);
   assert.match(shell,/window\.location\.assign\('\/admin'\)/);
   assert.doesNotMatch(loader,/lazyAdminBtn/);
   assert.doesNotMatch(loader,/fetchAdminAccess/);

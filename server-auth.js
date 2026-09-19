@@ -175,7 +175,7 @@ async function initDb() {
     CREATE TABLE IF NOT EXISTS profiles (
       account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
-      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY(account_id, role)
@@ -183,7 +183,9 @@ async function initDb() {
     ALTER TABLE profiles DROP CONSTRAINT IF EXISTS profiles_role_check;
     ALTER TABLE profiles ADD CONSTRAINT profiles_role_check CHECK (role IN ('merchant','customer','supplier','courier','service_provider'));
     ALTER TABLE profiles ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
-    ALTER TABLE profiles ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+    ALTER TABLE profiles ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'not_started';
+    ALTER TABLE profiles ALTER COLUMN enabled SET DEFAULT FALSE;
+    ALTER TABLE profiles ALTER COLUMN status SET DEFAULT 'not_started';
 
     CREATE TABLE IF NOT EXISTS businesses (
       id BIGSERIAL PRIMARY KEY,
@@ -238,9 +240,20 @@ async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    INSERT INTO accounts(id,display_name,active_role) VALUES(1,'Business owner','merchant') ON CONFLICT(id) DO NOTHING;
-    INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES(1,'merchant',TRUE,'public','active')
-      ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE;
+    CREATE TABLE IF NOT EXISTS app_migrations (
+      migration_key TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    INSERT INTO accounts(id,display_name,active_role) VALUES(1,'Business owner',NULL) ON CONFLICT(id) DO NOTHING;
+    INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES(1,'merchant',FALSE,'private','disabled')
+      ON CONFLICT(account_id,role) DO NOTHING;
+    WITH first_run AS (
+      INSERT INTO app_migrations(migration_key) VALUES('2026-09-19-remove-forced-owner-merchant')
+      ON CONFLICT(migration_key) DO NOTHING RETURNING migration_key
+    )
+    UPDATE profiles SET enabled=FALSE,visibility='private',status='disabled',updated_at=NOW()
+      WHERE account_id=1 AND role='merchant' AND EXISTS(SELECT 1 FROM first_run);
     INSERT INTO businesses(id,name,country_code,currency_code) VALUES(1,'My Business','PH','PHP') ON CONFLICT(id) DO NOTHING;
     INSERT INTO business_memberships(business_id,account_id,membership_role,active) VALUES(1,1,'owner',TRUE)
       ON CONFLICT(business_id,account_id) DO NOTHING;
@@ -262,6 +275,12 @@ async function profileSnapshot(accountId) {
     pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`, [accountId])
   ]);
   if (!account.rows[0]) throw Object.assign(new Error('Account not found'), { status: 404 });
+  const activeRole=account.rows[0].active_role;
+  const activeProfile=profiles.rows.find(profile=>profile.role===activeRole&&profile.enabled===true&&profile.status==='active');
+  if(activeRole&&!activeProfile){
+    await pool.query(`UPDATE accounts SET active_role=NULL,updated_at=NOW() WHERE id=$1 AND active_role=$2`,[accountId,activeRole]);
+    account.rows[0].active_role=null;
+  }
   return withPublicProfileIds({ account: account.rows[0], profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
 }
 
@@ -574,7 +593,7 @@ app.patch('/api/me/active-role', jsonBody, auth, async (req, res, next) => {
   const role = clean(req.body?.role, 40);
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
   try {
-    const enabled = await pool.query(`SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 AND enabled=TRUE`, [req.accountId, role]);
+    const enabled = await pool.query(`SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 AND enabled=TRUE AND status='active'`, [req.accountId, role]);
     if (!enabled.rowCount) return res.status(403).json({ error: 'Enable this profile first' });
     await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2`, [role, req.accountId]);
     res.json(await profileSnapshot(req.accountId));
