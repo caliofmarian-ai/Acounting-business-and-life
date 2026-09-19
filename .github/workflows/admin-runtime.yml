@@ -165,7 +165,7 @@ jobs:
           DO UPDATE SET active=TRUE;
           SQL
 
-          TX_ID=$(psql -v ON_ERROR_STOP=1 -Atc "
+          TX_ID=$(psql -qAt -v ON_ERROR_STOP=1 -c "
             INSERT INTO transactions(
               business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
             ) VALUES(
