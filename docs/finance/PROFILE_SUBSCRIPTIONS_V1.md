@@ -27,7 +27,7 @@ Business & Life subscription policy is per monetized economic profile/service sc
 ### Artisan / Local Services
 - canonical service scope: `local_services`
 - subject type: `account`
-- monthly subscription after applicable 90-day promotion
+- Owner-approved monthly subscription: **₱99/month** after applicable 90-day promotion
 - Owner-approved transaction fee: **0.50%**, separate from subscription and processor charges
 
 ### Delivery / Courier
