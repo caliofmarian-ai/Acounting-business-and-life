@@ -42,3 +42,7 @@ Profile feature decorators now require `surface=profile` before consuming `activ
 ## Slice 3 update
 
 The avatar drawer is now a destination switcher only: account identity, active profiles, assigned Admin access and one Account Settings entry. Account Settings is a dedicated workspace with focused Personal details, Security & access and Manage profiles routes. Password, verification and session controls mount only in the Security route and reuse the canonical bootstrap identity. Operational preferences remain inside the dedicated Profile Settings card of each active profile.
+
+## Slice 4 update
+
+Merchant is no longer treated as an undeletable bootstrap identity by any profile endpoint. Voluntary deactivation preserves the derived Profile ID and history, chooses another enabled profile preference or `null`, and never falls back to Merchant. Governed profiles with an unexpired active authorization can be reactivated without repeating onboarding. Account Settings presents exactly one lifecycle action for each state: Start onboarding, Continue onboarding, Disable or Reactivate.
