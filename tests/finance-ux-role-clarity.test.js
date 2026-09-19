@@ -18,7 +18,8 @@ function between(source,start,end){
 test('role shell is fail-closed and never defaults unresolved identity to Merchant UI',()=>{
   assert.match(shell,/let activeRole = null/);
   assert.match(shell,/function boot\(\) \{[\s\S]*hideMerchantWorkspace\(\)/);
-  assert.match(shell,/if \(!activeRole\) return hideMerchantWorkspace\(\)/);
+  assert.match(shell,/if \(!activeRole\)\{hideMerchantWorkspace\(\)/);
+  assert.match(shell,/Choose your first profile/);
   assert.match(shell,/if\(activeRole!=='merchant'\)return hideMerchantWorkspace\(\)/);
 });
 

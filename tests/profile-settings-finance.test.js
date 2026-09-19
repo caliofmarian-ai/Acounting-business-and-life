@@ -34,7 +34,9 @@ test('provider destination reference is private and public response is masked',(
 });
 
 test('profile Settings is opened from the active profile and stays out of the avatar drawer',()=>{
-  assert.match(shell,/activeProfileSettingsButton/);
+  assert.doesNotMatch(shell,/activeProfileSettingsButton/);
+  assert.match(shell,/profileSettingsWorkspaceCard/);
+  assert.match(shell,/profileSettingsTile/);
   assert.match(shell,/BusinessLifeProfileSettings\?\.open/);
   assert.doesNotMatch(ui,/document\.addEventListener\('abl:drawer-rendered',injectSettingsEntry/);
   for(const role of ['customer','merchant','supplier','courier','service_provider'])assert.match(ui,new RegExp(role));
