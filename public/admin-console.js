@@ -281,7 +281,7 @@ function commissionPlannerForm(k,promo){
         +'<label>Supplier monthly subscription (PHP)<input name="supplier_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
         +'<label>Paid Artisan / Local Services profiles<input name="local_services_paid_profiles" type="number" min="0" step="1" value="0"></label>'
         +'<label>Artisan / Local Services monthly subscription (PHP)<input name="local_services_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
-        +'<label>Monthly eligible Delivery earnings (PHP)<input name="delivery_eligible_earnings" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Monthly eligible Delivery price charged to customers (PHP)<input name="delivery_eligible_price" type="number" min="0" step="0.01" value="0"></label>'
         +'<label>Delivery production fee % · Owner-approved<input name="delivery_production_rate_pct" type="number" min="0" max="100" step="0.01" value="10"></label>'
       +'</div><div class="notice"><strong>These revenues reduce the transaction fee still required.</strong><br>Customer remains free. Delivery has no monthly subscription.</div></details>'
       +'<details class="commissionAssumptions"><summary>5. Payments, risk & sustainability</summary><div class="financeFormGrid">'
@@ -523,7 +523,7 @@ async function wireCommissionPlanner(){
         supplier:Number(fd.get('supplier_subscription_amount')||0),
         local_services:Number(fd.get('local_services_subscription_amount')||0)
       },
-      delivery_eligible_earnings:Number(fd.get('delivery_eligible_earnings')||0),
+      delivery_eligible_price:Number(fd.get('delivery_eligible_price')||0),
       delivery_production_rate_pct:Number(fd.get('delivery_production_rate_pct')||0),
       platform_absorbs_processor_fees:fd.get('platform_absorbs_processor_fees')!=='false',
       platform_absorbs_risk_allowance:fd.get('platform_absorbs_risk_allowance')!=='false',
