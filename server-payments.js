@@ -155,10 +155,29 @@ function financeScope(me,role,businessId){
   }
   return{owner_scope:'account',business_id:null};
 }
-function financialDocumentScope(me,rawRole,rawBusinessId){
+async function financialDocumentScope(me,rawRole,rawBusinessId){
   const role=normalizeFinancialProfileRole(rawRole);
-  const scope=financeScope(me,role,rawBusinessId);
-  return{role,business_id:scope.business_id};
+  if(!enabledProfile(me,role))throw Object.assign(new Error('Enable this profile before opening its financial documents'),{status:403});
+  if(['merchant','supplier'].includes(role)){
+    const businessId=Number(rawBusinessId);
+    if(!Number.isInteger(businessId)||businessId<=0)throw Object.assign(new Error('Choose the active business workspace for this profile'),{status:400});
+    const q=await pool.query(`
+      SELECT 1
+      FROM profile_business_bindings pb
+      JOIN business_memberships bm
+        ON bm.business_id=pb.business_id
+       AND bm.account_id=pb.account_id
+       AND bm.active=TRUE
+      WHERE pb.account_id=$1
+        AND pb.role=$2
+        AND pb.business_id=$3
+        AND pb.status='active'
+      LIMIT 1
+    `,[Number(me.account.id),role,businessId]);
+    if(!q.rowCount)throw Object.assign(new Error('This business workspace is not bound to the selected financial profile'),{status:403});
+    return{role,business_id:businessId};
+  }
+  return{role,business_id:null};
 }
 function emptyImpactTotals(){
   return Object.fromEntries(FINANCIAL_IMPACT_CLASSES.map(k=>[k,{amount:0,line_count:0}]));
@@ -204,7 +223,7 @@ async function financialAccountOwnedForScope(accountId,id,role,businessId,purpos
 
 app.get('/api/financial-documents',async(req,res,next)=>{try{
   const me=await identity(req);
-  const scope=financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
+  const scope=await financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
   await synchronizeFinancialDocumentsForScope(pool,{
     accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id
   });
@@ -221,7 +240,7 @@ app.get('/api/financial-documents',async(req,res,next)=>{try{
 
 app.get('/api/financial-documents/:publicId',async(req,res,next)=>{try{
   const me=await identity(req);
-  const scope=financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
+  const scope=await financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
   await synchronizeFinancialDocumentsForScope(pool,{
     accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id
   });
@@ -279,7 +298,7 @@ app.get('/api/financial-statements/consolidated/:period',async(req,res,next)=>{t
 
 app.get('/api/financial-statements/:period',async(req,res,next)=>{try{
   const me=await identity(req);
-  const scope=financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
+  const scope=await financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
   const statement=await financialStatementForScope(pool,{
     accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id,
     period:req.params.period,anchor:req.query?.anchor||undefined
