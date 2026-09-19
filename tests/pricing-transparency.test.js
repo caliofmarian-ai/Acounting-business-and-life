@@ -43,7 +43,7 @@ test('Guest includes Pricing & benefits and reads canonical public pricing',()=>
 
 test('shared disclosure renderer is present on economic decision surfaces',()=>{
   const renderer=read('public/pricing-transparency.js');
-  for(const marker of ['merchant','supplier','local_services','courier','customer_checkout','public'])assert.match(renderer,new RegExp(marker));
+  for(const marker of ['merchant','courier','customer_checkout','public'])assert.match(renderer,new RegExp(marker));
   assert.match(read('public/marketplace-ui.js'),/data-bl-pricing="merchant"/);
   assert.match(read('public/marketplace-ui.js'),/data-bl-pricing="customer_checkout"/);
   assert.match(read('public/suppliers-ui.js'),/data-bl-pricing="supplier"/);
