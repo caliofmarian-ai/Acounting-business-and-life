@@ -418,7 +418,46 @@ app.put('/api/admin/delivery/pricing',body,async(req,res,next)=>{try{
 
 app.get('/api/admin/couriers',async(req,res,next)=>{try{await requireAdmin(req);const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note,(SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id ORDER BY c.eligibility_status='approved' DESC,a.display_name`);res.json(rows)}catch(e){next(e)}})
 app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{try{const me=await requireAdmin(req),id=Number(req.params.accountId),status=clean(req.body?.eligibility_status,30);if(!['pending','approved','suspended','revoked','expired'].includes(status))return res.status(400).json({error:'Invalid eligibility status'});await pool.query(`UPDATE courier_profiles SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,approval_note=$4,available=CASE WHEN $1='approved' THEN available ELSE FALSE END,updated_at=NOW() WHERE account_id=$5`,[status,clean(req.body?.approved_vehicle_class,40),req.body?.eligibility_expires_at||null,clean(req.body?.approval_note,600),id]);if(Array.isArray(req.body?.document_updates))for(const d of req.body.document_updates){if(!['verified','rejected','expired'].includes(d.status))continue;await pool.query(`UPDATE courier_documents SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 AND account_id=$5`,[d.status,me.account.id,clean(d.rejection_reason,500),Number(d.id),id])}res.json({ok:true})}catch(e){next(e)}})
-app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{await requireAdmin(req);const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),d=await deliveryDetail(id);if(!d)return res.status(404).json({error:'Delivery not found'});if(!['awaiting_courier','requested'].includes(d.status))return res.status(409).json({error:'Delivery is not waiting for assignment'});const c=await pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1 AND eligibility_status='approved' AND available=TRUE AND (eligibility_expires_at IS NULL OR eligibility_expires_at>NOW())`,[courierId]);if(!c.rowCount)return res.status(409).json({error:'Courier is not approved and available'});await pool.query(`UPDATE deliveries SET courier_account_id=$1,vehicle_class=COALESCE(NULLIF($2,''),$3),status='courier_assigned',assigned_at=NOW(),updated_at=NOW() WHERE id=$4`,[courierId,clean(req.body?.vehicle_class,40),c.rows[0].approved_vehicle_class||c.rows[0].vehicle_type,id]);res.json(await deliveryDetail(id))}catch(e){next(e)}})
+app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{
+  await requireAdmin(req);
+  const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),d=await deliveryDetail(id);
+  if(!d)return res.status(404).json({error:'Delivery not found'});
+  if(!['awaiting_courier','requested'].includes(d.status))return res.status(409).json({error:'Delivery is not waiting for assignment'});
+  const cq=await pool.query(`
+    SELECT * FROM courier_profiles
+    WHERE account_id=$1
+      AND eligibility_status='approved'
+      AND available=TRUE
+      AND (eligibility_expires_at IS NULL OR eligibility_expires_at>NOW())
+  `,[courierId]);
+  if(!cq.rowCount)return res.status(409).json({error:'Courier is not approved and available'});
+  const courier=cq.rows[0];
+  const approvedClass=clean(courier.approved_vehicle_class||courier.vehicle_type,40);
+  if(d.required_vehicle_class){
+    let gate;
+    try{gate=courierCanServeDelivery(courier,d)}
+    catch(e){return res.status(e.status||409).json({error:e.message})}
+    if(!gate.allowed){
+      const copy={
+        VEHICLE_CLASS_MISMATCH:`Delivery requires ${d.required_vehicle_class}; this Courier is approved for ${approvedClass||'no vehicle class'}`,
+        COURIER_WEIGHT_CAPACITY_EXCEEDED:'Courier weight capacity is below this delivery requirement',
+        COURIER_VOLUME_CAPACITY_EXCEEDED:'Courier volume capacity is below this delivery requirement',
+        COURIER_SERVICE_RADIUS_EXCEEDED:'Delivery distance exceeds this Courier service radius'
+      };
+      return res.status(409).json({error:copy[gate.reason]||'Courier cannot serve this delivery',code:gate.reason});
+    }
+  }
+  await pool.query(`
+    UPDATE deliveries
+       SET courier_account_id=$1,
+           vehicle_class=$2,
+           status='courier_assigned',
+           assigned_at=NOW(),
+           updated_at=NOW()
+     WHERE id=$3
+  `,[courierId,approvedClass,id]);
+  res.json(await deliveryDetail(id));
+}catch(e){next(e)}})
 
 function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Delivery upstream unavailable'})});req.pipe(up)}
 app.use(proxy)
