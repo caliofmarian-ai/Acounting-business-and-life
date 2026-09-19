@@ -42,6 +42,7 @@ function ensureGuestRoot(){
     '<nav class="guestTabs" aria-label="Guest navigation">'+
       '<button class="active" data-guest-tab="discover" type="button">Discover</button>'+
       '<button data-guest-tab="guide" type="button">How it works</button>'+
+      '<button data-guest-tab="pricing" type="button">Pricing & benefits</button>'+
       '<button data-guest-tab="privacy" type="button">Privacy</button>'+
     '</nav>'+
     '<main id="guestBody" class="guestBody"></main>';
@@ -55,6 +56,7 @@ function ensureGuestRoot(){
       const tab=button.dataset.guestTab;
       if(tab==='discover') renderDiscover();
       if(tab==='guide') renderGuide();
+      if(tab==='pricing') renderPricing();
       if(tab==='privacy') renderPrivacy();
     });
   });
@@ -94,6 +96,7 @@ async function renderDiscover(domain=''){
       '<h1>See the public side of the ecosystem.</h1>'+
       '<p>Browse only information that businesses chose to publish. Private profiles, finances and internal activity stay private.</p>'+
     '</section>'+
+    '<div data-bl-pricing="public"></div>'+
     '<div class="guestFilters">'+
       '<button class="'+(!domain?'active':'')+'" data-domain="" type="button">All</button>'+
       '<button class="'+(domain==='food'?'active':'')+'" data-domain="food" type="button">Food</button>'+
@@ -133,6 +136,7 @@ async function renderStore(businessId){
         '<span class="guestStoreLogo large">'+(store.logo_data_url?'<img src="'+gh(store.logo_data_url)+'" alt="">':'🏪')+'</span>'+
         '<div><small>'+gh(String(store.merchant_domain||'').replace('_',' '))+' · '+gh(store.opening_status||'')+'</small><h1>'+gh(store.store_name)+'</h1><p>'+gh(store.description||'')+'</p><div class="guestChips">'+(store.pickup_enabled?'<span>Pickup</span>':'')+(store.delivery_enabled?'<span>Delivery</span>':'')+(store.cash_enabled?'<span>Cash</span>':'')+(store.online_enabled?'<span>Online payment</span>':'')+'</div></div>'+
       '</section>'+
+      '<div data-bl-pricing="public"></div>'+
       '<section class="guestSectionHead"><div><small>Published catalog</small><h2>Products</h2></div><span>Public information only</span></section>'+
       '<div class="guestProductGrid">'+
         (store.products?.length?store.products.map(product=>
@@ -159,6 +163,7 @@ function renderGuide(){
       '<article><span>3</span><div><strong>Email verified</strong><p>Verify identity/contact information where required for protected actions.</p></div></article>'+
       '<article><span>4</span><div><strong>Activated profile</strong><p>Use Customer, Merchant, Supplier, Delivery or Local Services according to each profile’s authorization rules.</p></div></article>'+
     '</div>'+
+    '<div data-bl-pricing="public"></div>'+
     '<section class="guestRoleGrid">'+
       '<article><b>Customer</b><span>Orders, payments and private purchase history after sign-in.</span></article>'+
       '<article><b>Merchant</b><span>Storefront plus private business workspace. Publishing a shop never publishes its accounting.</span></article>'+
@@ -168,6 +173,41 @@ function renderGuide(){
     '</section>'+
     '<div class="guestGuideActions"><button id="guestGuideJoin" type="button">Create account</button><a href="/help/">Open Help Center</a></div>';
   guestBody.querySelector('#guestGuideJoin')?.addEventListener('click',openRegistration);
+}
+
+async function renderPricing(){
+  guestBody.innerHTML='<div class="guestLoading">Loading transparent pricing…</div>';
+  try{
+    const data=await guestFetch('/api/public/pricing');
+    const pct=v=>Number(v||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
+    const roleCard=(title,key,copy)=>{
+      const p=data.profiles[key];
+      const rate=key==='courier'?pct(p.post_promo_delivery_production_rate_pct):pct(p.post_promo_transaction_rate_pct);
+      const promo=Number(p.promo_days||0);
+      return '<article class="guestPricingCard"><small>'+gh(title)+'</small><strong>'+gh(key==='courier'?'0% for '+promo+' days → '+rate+' after promo':promo+' days at 0% Business & Life fee → '+rate+' after promo')+'</strong><p>'+gh(copy)+'</p></article>';
+    };
+    const rails=(data.payment_processor?.rails||[]).map(r=>'<div class="guestFeeRow"><span>'+gh(r.label)+'</span><strong>'+gh(pct(r.variable_rate_pct)+(Number(r.fixed_fee_php||0)>0?' + ₱'+Number(r.fixed_fee_php).toFixed(2):''))+'</strong></div>').join('');
+    guestBody.innerHTML=
+      '<section class="guestHero"><span class="guestEyebrow">Transparent pricing</span><h1>'+gh(data.principle.headline)+'</h1><p>'+gh(data.principle.message)+' Every fee has an owner, a reason and a separate line.</p></section>'+
+      '<section class="guestPricingPromise"><strong>What the promotion really means</strong><p>'+gh(data.promotion_disclosure)+'</p></section>'+
+      '<div class="guestPricingGrid">'+
+        '<article class="guestPricingCard"><small>CUSTOMER</small><strong>Free Business & Life profile</strong><p>0% Business & Life Customer platform fee.</p></article>'+
+        roleCard('MERCHANT','merchant','Marketplace, business tools and accounting. Monthly subscription pricing will be shown separately when an active plan exists.')+
+        roleCard('SUPPLIER','supplier','B2B procurement and Supplier financial workspace. Processor charges remain separate from the Business & Life fee.')+
+        roleCard('LOCAL SERVICES','local_services','Professional profile, quotes, jobs and financial tools. The 0.50% policy applies only after the promotional entitlement.')+
+        roleCard('DELIVERY','courier','No monthly subscription. The post-promo production fee is based only on verified delivery price.')+
+      '</div>'+
+      '<section class="guestFeeBreakdown"><div class="guestSectionHead"><div><small>THIRD-PARTY PROCESSING</small><h2>PayMongo benchmark rates</h2></div><span>as of '+gh(data.payment_processor.benchmark_as_of)+'</span></div>'+rails+
+        '<p>Published PayMongo rates shown here exclude VAT. Actual provider transaction evidence overrides the benchmark. Business & Life does not relabel PayMongo fees as its own fee.</p></section>'+
+      '<section class="guestBenefits"><h2>What you get around the fee</h2><div class="guestBenefitGrid">'+
+        '<article><strong>Understand your money</strong><span>Cash, Bank, GCash, expenses, income, receivables and budgets stay understandable.</span></article>'+
+        '<article><strong>Separate business and personal activity</strong><span>Profiles and business workspaces keep money and permissions from mixing.</span></article>'+
+        '<article><strong>Operate, not just advertise</strong><span>Orders, stock, Suppliers, Delivery and Local Services connect to financial evidence.</span></article>'+
+        '<article><strong>Private by default</strong><span>Your sales, balances and internal business performance are not public marketplace content.</span></article>'+
+      '</div></section>'+
+      '<div class="guestGuideActions"><button id="guestPricingJoin" type="button">Create account</button><a href="/help/article/pricing-fees-and-promotions">Read pricing guide</a></div>';
+    guestBody.querySelector('#guestPricingJoin')?.addEventListener('click',openRegistration);
+  }catch(error){renderGuestError(error.message)}
 }
 
 function renderPrivacy(){
