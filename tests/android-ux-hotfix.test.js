@@ -9,6 +9,8 @@ const authServer=read('server-auth-hardening.js');
 const supportUi=read('public/admin-operations-ui.js');
 const supportServer=read('server-admin-operations.js');
 const supportCss=read('public/admin-operations.css');
+const shell=read('public/shell.js');
+const shellCss=read('public/shell.css');
 const pkg=read('package.json');
 
 test('Statements & Documents closes Avatar overlay before opening the workspace',()=>{
@@ -18,6 +20,14 @@ test('Statements & Documents closes Avatar overlay before opening the workspace'
   const openIndex=fdUi.indexOf("document.getElementById('profileDrawerBackdrop')");
   const showIndex=fdUi.indexOf("fdWorkspace.classList.remove('hidden')");
   assert.ok(openIndex>=0&&showIndex>openIndex);
+});
+
+
+test('Avatar hydration never fabricates a Business owner B before account identity loads',()=>{
+  assert.doesNotMatch(shell,/accountAvatar\">B<\/span>/);
+  assert.doesNotMatch(shell,/String\(name \|\| 'Business owner'\)/);
+  assert.match(shell,/accountAvatarLoading/);
+  assert.match(shellCss,/accountAvatarHydrate/);
 });
 
 test('Account protection rendering is race-safe and cannot append duplicate cards',()=>{
