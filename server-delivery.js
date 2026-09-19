@@ -328,8 +328,94 @@ app.post('/api/courier/deliveries/:id/complete',body,async(req,res,next)=>{try{c
 app.get('/api/delivery/mine',async(req,res,next)=>{try{const me=await requireCustomer(req);const{rows}=await pool.query(`SELECT d.*,o.order_number,b.name business_name,cp.display_name courier_name,cp.vehicle_type FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.customer_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id]);res.json(rows.map(d=>({...d,completion_code:activeTracking(d.status)?completionCode(d.id):null,last_lat:activeTracking(d.status)?d.last_lat:null,last_lng:activeTracking(d.status)?d.last_lng:null})))}catch(e){next(e)}})
 app.get('/api/delivery/:id/live',async(req,res,next)=>{try{const d=await deliveryDetail(Number(req.params.id));if(!d)return res.status(404).json({error:'Delivery not found'});const me=await allowedDelivery(req,d),rule=await activeRule();const customer=Number(me.account.id)===Number(d.customer_account_id);res.json({...d,last_lat:activeTracking(d.status)?d.last_lat:null,last_lng:activeTracking(d.status)?d.last_lng:null,completion_code:customer&&activeTracking(d.status)?completionCode(d.id):undefined,eta_minutes:etaMinutes(d,rule),distance_to_dropoff_km:d.last_lat&&d.last_lng?Math.round(haversine(Number(d.last_lat),Number(d.last_lng),Number(d.dropoff_lat),Number(d.dropoff_lng))*100)/100:null})}catch(e){next(e)}})
 
-app.get('/api/admin/delivery/pricing',async(req,res,next)=>{try{await requireAdmin(req);const{rows}=await pool.query(`SELECT * FROM delivery_pricing_rules WHERE country_code='PH' ORDER BY version DESC`);res.json(rows)}catch(e){next(e)}})
-app.put('/api/admin/delivery/pricing',body,async(req,res,next)=>{try{const me=await requireAdmin(req);for(const k of ['base_fee','per_km','per_kg','per_liter','minimum_fee','route_factor'])if(!finite(req.body?.[k])||Number(req.body[k])<0)return res.status(400).json({error:`${k} must be zero or greater`});if(Number(req.body.route_factor)<1)return res.status(400).json({error:'route_factor must be at least 1'});const v=await pool.query(`SELECT COALESCE(MAX(version),0)+1 version FROM delivery_pricing_rules WHERE country_code='PH'`),version=Number(v.rows[0].version);const client=await pool.connect();try{await client.query('BEGIN');if(req.body?.active!==false)await client.query(`UPDATE delivery_pricing_rules SET active=FALSE WHERE country_code='PH'`);const{rows}=await client.query(`INSERT INTO delivery_pricing_rules(country_code,version,active,base_fee,per_km,per_kg,per_liter,minimum_fee,maximum_distance_km,route_factor,average_speed_bicycle_kmh,average_speed_motorbike_kmh,average_speed_car_kmh,created_by_account_id) VALUES('PH',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[version,req.body?.active!==false,req.body.base_fee,req.body.per_km,req.body.per_kg,req.body.per_liter,req.body.minimum_fee,req.body?.maximum_distance_km==null?null:Number(req.body.maximum_distance_km),req.body.route_factor,req.body?.average_speed_bicycle_kmh||null,req.body?.average_speed_motorbike_kmh||null,req.body?.average_speed_car_kmh||null,me.account.id]);await client.query('COMMIT');res.json(rows[0])}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
+app.get('/api/admin/delivery/pricing',async(req,res,next)=>{try{
+  await requireAdmin(req);
+  const {rows}=await pool.query(`
+    SELECT r.*,
+      COALESCE((
+        SELECT jsonb_agg(v ORDER BY v.priority,v.vehicle_class)
+        FROM delivery_vehicle_pricing_rules v
+        WHERE v.pricing_rule_id=r.id
+      ),'[]'::jsonb) vehicle_rules
+    FROM delivery_pricing_rules r
+    WHERE r.country_code='PH'
+    ORDER BY r.version DESC
+  `);
+  res.json(rows);
+}catch(e){next(e)}})
+
+app.put('/api/admin/delivery/pricing',body,async(req,res,next)=>{try{
+  const me=await requireAdmin(req);
+  const routeFactor=Number(req.body?.route_factor);
+  if(!Number.isFinite(routeFactor)||routeFactor<1)return res.status(400).json({error:'route_factor must be at least 1'});
+  const rawVehicleRules=Array.isArray(req.body?.vehicle_rules)?req.body.vehicle_rules:null;
+
+  let normalizedVehicleRules=[];
+  if(rawVehicleRules){
+    try{normalizedVehicleRules=rawVehicleRules.map(normalizeVehiclePricingRule)}
+    catch(e){return res.status(e.status||400).json({error:e.message})}
+    const classes=new Set(normalizedVehicleRules.map(x=>x.vehicle_class));
+    for(const cls of ['bicycle','car','van'])if(!classes.has(cls))return res.status(400).json({error:'V2 pricing requires bicycle, car and van rules'});
+    if(classes.size!==normalizedVehicleRules.length)return res.status(400).json({error:'Each V2 vehicle class may appear only once'});
+  }else{
+    for(const k of ['base_fee','per_km','per_kg','per_liter','minimum_fee'])if(!finite(req.body?.[k])||Number(req.body[k])<0)return res.status(400).json({error:`${k} must be zero or greater`});
+  }
+
+  const v=await pool.query(`SELECT COALESCE(MAX(version),0)+1 version FROM delivery_pricing_rules WHERE country_code='PH'`);
+  const version=Number(v.rows[0].version);
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    if(req.body?.active!==false)await client.query(`UPDATE delivery_pricing_rules SET active=FALSE WHERE country_code='PH'`);
+    const parent=await client.query(`
+      INSERT INTO delivery_pricing_rules(
+        country_code,version,active,base_fee,per_km,per_kg,per_liter,minimum_fee,
+        maximum_distance_km,route_factor,
+        average_speed_bicycle_kmh,average_speed_motorbike_kmh,average_speed_car_kmh,
+        created_by_account_id
+      ) VALUES('PH',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      RETURNING *
+    `,[
+      version,req.body?.active!==false,
+      rawVehicleRules?0:Number(req.body.base_fee),
+      rawVehicleRules?0:Number(req.body.per_km),
+      rawVehicleRules?0:Number(req.body.per_kg),
+      rawVehicleRules?0:Number(req.body.per_liter),
+      rawVehicleRules?0:Number(req.body.minimum_fee),
+      req.body?.maximum_distance_km==null?null:Number(req.body.maximum_distance_km),
+      routeFactor,
+      req.body?.average_speed_bicycle_kmh||null,
+      req.body?.average_speed_motorbike_kmh||null,
+      req.body?.average_speed_car_kmh||null,
+      me.account.id
+    ]);
+    const pricingRule=parent.rows[0];
+
+    const saved=[];
+    for(const vr of normalizedVehicleRules){
+      const q=await client.query(`
+        INSERT INTO delivery_vehicle_pricing_rules(
+          pricing_rule_id,vehicle_class,formula_type,priority,
+          base_fee,per_km,per_kg,per_liter,minimum_fee,
+          maximum_distance_km,max_weight_kg,max_volume_l
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        RETURNING *
+      `,[
+        pricingRule.id,vr.vehicle_class,vr.formula_type,vr.priority,
+        vr.base_fee,vr.per_km,vr.per_kg,vr.per_liter,vr.minimum_fee,
+        vr.maximum_distance_km,vr.max_weight_kg,vr.max_volume_l
+      ]);
+      saved.push(q.rows[0]);
+    }
+
+    await client.query('COMMIT');
+    res.json({...pricingRule,vehicle_rules:saved});
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw e;
+  }finally{client.release()}
+}catch(e){next(e)}})
+
 app.get('/api/admin/couriers',async(req,res,next)=>{try{await requireAdmin(req);const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note,(SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id ORDER BY c.eligibility_status='approved' DESC,a.display_name`);res.json(rows)}catch(e){next(e)}})
 app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{try{const me=await requireAdmin(req),id=Number(req.params.accountId),status=clean(req.body?.eligibility_status,30);if(!['pending','approved','suspended','revoked','expired'].includes(status))return res.status(400).json({error:'Invalid eligibility status'});await pool.query(`UPDATE courier_profiles SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,approval_note=$4,available=CASE WHEN $1='approved' THEN available ELSE FALSE END,updated_at=NOW() WHERE account_id=$5`,[status,clean(req.body?.approved_vehicle_class,40),req.body?.eligibility_expires_at||null,clean(req.body?.approval_note,600),id]);if(Array.isArray(req.body?.document_updates))for(const d of req.body.document_updates){if(!['verified','rejected','expired'].includes(d.status))continue;await pool.query(`UPDATE courier_documents SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 AND account_id=$5`,[d.status,me.account.id,clean(d.rejection_reason,500),Number(d.id),id])}res.json({ok:true})}catch(e){next(e)}})
 app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{await requireAdmin(req);const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),d=await deliveryDetail(id);if(!d)return res.status(404).json({error:'Delivery not found'});if(!['awaiting_courier','requested'].includes(d.status))return res.status(409).json({error:'Delivery is not waiting for assignment'});const c=await pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1 AND eligibility_status='approved' AND available=TRUE AND (eligibility_expires_at IS NULL OR eligibility_expires_at>NOW())`,[courierId]);if(!c.rowCount)return res.status(409).json({error:'Courier is not approved and available'});await pool.query(`UPDATE deliveries SET courier_account_id=$1,vehicle_class=COALESCE(NULLIF($2,''),$3),status='courier_assigned',assigned_at=NOW(),updated_at=NOW() WHERE id=$4`,[courierId,clean(req.body?.vehicle_class,40),c.rows[0].approved_vehicle_class||c.rows[0].vehicle_type,id]);res.json(await deliveryDetail(id))}catch(e){next(e)}})
