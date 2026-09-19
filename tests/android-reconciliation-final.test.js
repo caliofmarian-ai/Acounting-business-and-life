@@ -50,9 +50,9 @@ test('Slice B remains reconciled on the actual production accounting entry point
   }
 });
 
-test('Slice C remains reconciled: Super Admin is switcher-only and mobile Admin nav stays compact',()=>{
-  assert.match(shell,/adminProfileRow/);
-  assert.match(shell,/data-admin-profile/);
+test('Slice C remains reconciled: Super Admin is a separate workspace and mobile Admin nav stays compact',()=>{
+  assert.match(shell,/id="adminWorkspaceButton"/);
+  assert.doesNotMatch(shell,/data-admin-profile/);
   assert.doesNotMatch(loader,/lazyAdminBtn/);
   assert.doesNotMatch(loader,/fetchAdminAccess/);
   assert.doesNotMatch(legacyAdmin,/adminOpsBtn/);
