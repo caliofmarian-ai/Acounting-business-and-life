@@ -78,7 +78,7 @@ function bindFdControls(){
 async function renderFd(){
   if(!fdContext)return;
   fdWorkspace.innerHTML='<div class="fdHeader"><button id="fdBack" class="fdBack" type="button">‹</button><div><h1>Statements & Documents</h1><p>'+fdEsc(fdMode==='scope'?fdContext.label:'All my active financial scopes')+'</p></div></div>'+
-    '<section class="fdHero"><small>FINANCIAL EVIDENCE</small><h2>Every amount should be traceable.</h2><p>Review each profile separately or see your own consolidated financial picture. Source ledgers remain authoritative.</p></section>'+
+    '<section class="fdHero"><small>FINANCIAL EVIDENCE</small><h2>Every amount should be traceable.</h2><p>Review each profile separately or see your own consolidated financial picture. Source ledgers remain authoritative.</p><a class="fdHelpLink" href="/help/article/financial-statements-and-documents">How Statements & Documents works</a></section>'+
     '<section class="fdControls">'+modeTabs()+periodTabs()+'<label>Anchor date<input id="fdAnchor" type="date" value="'+fdEsc(fdAnchor)+'"></label></section>'+
     '<div id="fdContent"><div class="fdEmpty">Loading statement…</div></div>';
   bindFdControls();
