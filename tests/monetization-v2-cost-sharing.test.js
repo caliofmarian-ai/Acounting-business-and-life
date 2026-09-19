@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
   PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,
+  OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,DELIVERY_PRODUCTION_FEE_BASIS,
   allocateSharedCompanyCost50x50,profileMonetizationModel,monetizationPolicyDraft
 } from '../monetization-policy-v2.js';
 import {commissionSustainabilityScenario} from '../finance-core.js';
@@ -31,6 +32,14 @@ test('profile monetization matrix follows Owner model without invented prices',(
   assert.equal(courier.transaction_fee,false);
   assert.equal(courier.delivery_production_fee,true);
   assert.equal(courier.service_scope,'delivery');
+  assert.equal(OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,10);
+  assert.equal(courier.owner_approved_delivery_production_rate_pct,10);
+  assert.equal(courier.delivery_production_fee_basis,DELIVERY_PRODUCTION_FEE_BASIS);
+  assert.equal(DELIVERY_PRODUCTION_FEE_BASIS,'verified_eligible_delivery_earnings');
+  assert.equal(courier.live_activation,false);
+  const courierDraft=monetizationPolicyDraft('courier');
+  assert.equal(courierDraft.delivery_production_rate_pct,10);
+  assert.equal(courierDraft.delivery_production_fee_basis,'verified_eligible_delivery_earnings');
 
   const merchantDraft=monetizationPolicyDraft('merchant');
   assert.equal(merchantDraft.monthly_subscription_amount,null);
@@ -106,15 +115,15 @@ test('subscription and Delivery revenues reduce transaction-fee revenue requirem
     paidProfiles:{merchant:100,supplier:20,local_services:30},
     subscriptionAmounts:{merchant:500,supplier:400,local_services:300},
     deliveryEligibleEarnings:1000000,
-    deliveryProductionRatePct:5
+    deliveryProductionRatePct:10
   });
   assert.equal(s.revenue_mix.subscription_revenue,67000);
-  assert.equal(s.revenue_mix.delivery_production_fee_revenue,50000);
-  assert.equal(s.revenue_mix.non_transaction_platform_revenue,117000);
-  assert.equal(s.revenue_mix.break_even_transaction_revenue_need,661000);
-  assert.equal(s.revenue_mix.sustainable_transaction_revenue_need,738800);
-  assert.equal(s.rates.mature_100pct_fee_eligible.break_even_pct,13.22);
-  assert.equal(s.rates.mature_100pct_fee_eligible.sustainable_pct,14.776);
+  assert.equal(s.revenue_mix.delivery_production_fee_revenue,100000);
+  assert.equal(s.revenue_mix.non_transaction_platform_revenue,167000);
+  assert.equal(s.revenue_mix.break_even_transaction_revenue_need,611000);
+  assert.equal(s.revenue_mix.sustainable_transaction_revenue_need,688800);
+  assert.equal(s.rates.mature_100pct_fee_eligible.break_even_pct,12.22);
+  assert.equal(s.rates.mature_100pct_fee_eligible.sustainable_pct,13.776);
 });
 
 test('digital payment incentive defaults fail closed and require provider confirmation',()=>{
@@ -143,7 +152,8 @@ test('Admin Finance UI presents profile policy and shared cost model clearly',()
   assert.match(ui,/MONETIZATION V2/);
   assert.match(ui,/Customer/);
   assert.match(ui,/Subscription \+ transaction fee/);
-  assert.match(ui,/% of delivery production/);
+  assert.match(ui,/owner_approved_delivery_production_rate_pct\|\|10/);
+  assert.match(ui,/of verified delivery earnings/);
   assert.match(ui,/Shared company cost simulator/);
   assert.match(ui,/50% equal \+ 50% activity/);
   assert.match(ui,/Digital-payment incentive/);
@@ -157,11 +167,29 @@ test('Commission Planner collects hybrid revenue assumptions',()=>{
   assert.match(ui,/Paid Supplier profiles/);
   assert.match(ui,/Paid Artisan \/ Local Services profiles/);
   assert.match(ui,/Monthly eligible Delivery earnings/);
-  assert.match(ui,/Delivery production fee %/);
+  assert.match(ui,/Delivery production fee % · Owner-approved/);
   assert.match(ui,/Subscriptions/);
   assert.match(ui,/Remaining sustainable transaction-fee revenue need/);
 });
 
 test('project syntax contract includes Monetization V2 test',()=>{
   assert.match(pkg,/node --check tests\/monetization-v2-cost-sharing\.test\.js/);
+});
+
+test('Commission Planner defaults Delivery production revenue to Owner-approved 10% when rate is omitted',()=>{
+  const s=commissionSustainabilityScenario({
+    completedEventsPerMonth:100,
+    averageFeeBaseValue:100,
+    feeEligibleSharePct:100,
+    onlinePaymentSharePct:0,
+    processorRatePct:0,
+    processorFixedPerOnlineEvent:0,
+    riskAllowancePct:0,
+    safetyReservePct:0,
+    growthSurplusPct:0,
+    staffing:{},monthlyCosts:{},paidProfiles:{},subscriptionAmounts:{},
+    deliveryEligibleEarnings:10000
+  });
+  assert.equal(s.assumptions.delivery_production_rate_pct,10);
+  assert.equal(s.revenue_mix.delivery_production_fee_revenue,1000);
 });

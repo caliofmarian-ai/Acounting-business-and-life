@@ -1,4 +1,6 @@
 export const MONETIZED_PROFILE_ROLES=Object.freeze(['customer','merchant','supplier','local_services','courier']);
+export const OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT=10;
+export const DELIVERY_PRODUCTION_FEE_BASIS='verified_eligible_delivery_earnings';
 
 export const PROFILE_MONETIZATION_MODEL=Object.freeze({
   customer:Object.freeze({
@@ -40,6 +42,9 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     monthly_subscription:false,
     transaction_fee:false,
     delivery_production_fee:true,
+    owner_approved_delivery_production_rate_pct:OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,
+    delivery_production_fee_basis:DELIVERY_PRODUCTION_FEE_BASIS,
+    live_activation:false,
     promotional_entitlement:true,
     customer_free:false
   })
@@ -154,7 +159,8 @@ export function monetizationPolicyDraft(role,input={}){
     transaction_rate_pct:model.transaction_fee?nullablePct(input.transaction_rate_pct):0,
     transaction_fixed_amount:model.transaction_fee?nullableMoney(input.transaction_fixed_amount):0,
     delivery_production_fee_enabled:model.delivery_production_fee,
-    delivery_production_rate_pct:model.delivery_production_fee?nullablePct(input.delivery_production_rate_pct):0,
+    delivery_production_rate_pct:model.delivery_production_fee?nullablePct(input.delivery_production_rate_pct??OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT):0,
+    delivery_production_fee_basis:model.delivery_production_fee?DELIVERY_PRODUCTION_FEE_BASIS:'',
     promotional_days:model.promotional_entitlement?90:0,
     digital_payment_credit:DIGITAL_PAYMENT_INCENTIVE_DEFAULT
   };

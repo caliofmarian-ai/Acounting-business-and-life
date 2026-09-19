@@ -585,7 +585,7 @@ export function commissionSustainabilityScenario(input={}){
     local_services:money(scenarioNonNegative(input.subscriptionAmounts?.local_services,'local services subscription amount',{max:1e9}))
   };
   const deliveryEligibleEarnings=money(scenarioNonNegative(input.deliveryEligibleEarnings,'delivery eligible earnings',{max:1e12}));
-  const deliveryProductionRatePct=scenarioPercent(input.deliveryProductionRatePct,'delivery production rate');
+  const deliveryProductionRatePct=scenarioPercent(input.deliveryProductionRatePct??10,'delivery production rate');
   const averageFeeBase=money(scenarioNonNegative(input.averageFeeBaseValue,'average fee-base value',{max:1e12}));
   const feeEligibleSharePct=scenarioPercent(input.feeEligibleSharePct,'fee-eligible share');
   const onlineSharePct=scenarioPercent(input.onlinePaymentSharePct,'online-payment share');
