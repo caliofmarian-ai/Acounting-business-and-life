@@ -10,7 +10,7 @@ country_code: PH
 territory_scope: country
 owner_role: Documentation Governance Owner
 approver_role: Country Admin
-version: 1.0
+version: 1.1
 legal_classification: PLATFORM_POLICY
 ---
 
@@ -43,8 +43,9 @@ Applies to current Business & Life delivery workflows.
 ## Inputs / evidence
 
 - Pickup/dropoff coordinates.
-- Pricing-version inputs.
+- Pricing-version inputs, including vehicle-class rule snapshot.
 - Estimated weight/volume if available.
+- Required vehicle class selected by the quote engine.
 - Delivery quote.
 - Order readiness/payment.
 - Courier eligibility/vehicle class.
@@ -55,16 +56,23 @@ Applies to current Business & Life delivery workflows.
 
 1. Customer requests a Delivery quote for a Delivery-enabled Merchant.
 2. System validates coordinates, active pricing and configured maximum service distance.
-3. Review quote fee/distance and use it before its current 15-minute expiry.
-4. Delivery checkout currently requires online/digital payment; cash delivery remains disabled.
-5. Merchant prepares order and confirms payment.
-6. When order is Ready and Paid, Merchant requests Courier dispatch.
-7. Assign/select only an approved eligible Courier who may become available under current rules.
-8. Courier follows allowed delivery statuses from assignment toward Merchant pickup and Customer arrival.
-9. Courier may share location only while active tracking is open for that assigned delivery.
-10. At Customer destination, Courier reaches customer-arrival state before completion.
-11. Customer provides the active completion/handoff code at actual handoff.
-12. Courier enters code; system marks Delivery delivered, clears live location and completes linked order.
+3. System totals estimated shipment weight and volume.
+4. For Delivery Pricing V2, the quote engine selects the smallest configured eligible vehicle class:
+   - Bicycle: base fee + distance; weight/volume are capacity gates only.
+   - Car: base fee + distance + weight + volume.
+   - Van: base fee + distance + weight + volume.
+5. System snapshots required vehicle class, pricing formula and pricing-rule version into the quote.
+6. Review quote fee/distance and use it before its current 15-minute expiry.
+7. Delivery checkout currently requires online/digital payment; cash delivery remains disabled.
+8. Merchant prepares order and confirms payment.
+9. When order is Ready and Paid, Merchant requests Courier dispatch.
+10. Assign only an approved/available Courier whose approved vehicle class, weight/volume capacity and radius satisfy the quoted Delivery requirement.
+11. Courier follows allowed delivery statuses from assignment toward Merchant pickup and Customer arrival.
+12. Courier may share location only while active tracking is open for that assigned delivery.
+13. At Customer destination, Courier reaches customer-arrival state before completion.
+14. Customer provides the active completion/handoff code at actual handoff.
+15. Courier enters code; system marks Delivery delivered, clears live location and completes linked order.
+16. Delivery monetization evidence uses the separate verified Delivery price. After promo and only after live policy activation, Business & Life's target is 10% of that Delivery price; Courier gross Delivery entitlement is 90% before other legitimate adjustments.
 
 ## Control points
 
@@ -72,6 +80,7 @@ Applies to current Business & Life delivery workflows.
 - Current quote expiry is 15 minutes.
 - Dispatch blocked unless order Ready + Paid.
 - Courier availability blocked unless eligibility approved and unexpired.
+- V2 assignment blocked when Courier vehicle class/capacity/radius does not satisfy the quote.
 - Status transitions are constrained.
 - Tracking closes after delivered/failed/cancelled.
 - Correct Customer delivery code required.
