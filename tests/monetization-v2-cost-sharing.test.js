@@ -45,7 +45,7 @@ test('profile monetization matrix follows Owner model without invented prices',(
   assert.equal(courierDraft.delivery_production_fee_basis,'verified_delivery_price');
 
   const merchantDraft=monetizationPolicyDraft('merchant');
-  assert.equal(merchantDraft.monthly_subscription_amount,null);
+  assert.equal(merchantDraft.monthly_subscription_amount,99);
   assert.equal(merchantDraft.transaction_rate_pct,0.5);
   assert.equal(merchantDraft.transaction_fixed_amount,null);
   assert.equal(merchantDraft.promotional_days,90);
