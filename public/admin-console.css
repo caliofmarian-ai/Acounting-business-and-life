@@ -36,3 +36,10 @@
 .paymentRailRow>div{display:grid;gap:2px}.paymentRailRow strong{font-size:12px}.paymentRailRow small{font-size:9px;color:var(--muted);line-height:1.35}.paymentRailRow b{font-size:11px;text-align:right;color:#9ef0da;white-space:nowrap}
 .digitalIncentiveResults{display:grid;gap:10px;margin-top:12px}
 @media(max-width:520px){.paymentRailRow{display:grid}.paymentRailRow b{text-align:left}}
+
+.subscriptionBillingCard{display:grid;gap:12px;margin:14px 0;background:#0d1928;border:1px solid #28425f;border-radius:20px;padding:14px}
+.subscriptionBillingRows{display:grid;gap:7px}
+.subscriptionBillingRow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:11px;border:1px solid #20344b;border-radius:13px;background:#0a1422}
+.subscriptionBillingRow>div:first-child{display:grid;gap:2px}.subscriptionBillingRow strong{font-size:12px}.subscriptionBillingRow small{font-size:9px;color:var(--muted)}
+.subscriptionStateGrid{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.subscriptionStateGrid span{display:grid;gap:1px;min-width:56px;text-align:center;padding:6px 7px;border-radius:10px;background:#111f31;border:1px solid #28415d;font-size:9px;color:var(--muted)}.subscriptionStateGrid b{font-size:12px;color:#d9f7ee}
+@media(max-width:600px){.subscriptionBillingRow{grid-template-columns:1fr}.subscriptionStateGrid{justify-content:flex-start}}

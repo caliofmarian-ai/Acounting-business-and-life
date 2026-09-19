@@ -133,6 +133,38 @@ function monetizationV2Card(model){
     +'<details class="commissionAssumptions"><summary>Shared company cost simulator · 50% equal + 50% activity</summary><form id="sharedCostScenarioForm" class="adminForm"><div class="financeFormGrid"><label>Total shared company cost (PHP)<input name="total_amount" type="number" min="0" step="0.01" required></label><label>Activity driver<select name="driver_code">'+(shared.supported_driver_examples||[]).map(x=>'<option value="'+esc(x)+'">'+esc(x.replaceAll('_',' '))+'</option>').join('')+'</select></label></div><div id="sharedCostScopeRows">'+sharedCostScopeRow(1)+sharedCostScopeRow(2)+'</div><button type="button" class="secondary" id="addSharedCostScope">Add country / zone</button><button class="primary" type="submit">Calculate 50/50 allocation</button><div id="sharedCostScenarioResult"></div></form></details>'
     +'</section>';
 }
+function subscriptionBillingCard(data){
+  const scopes=data?.scopes||{},policies=data?.policies||[],canDraft=hasAny(['fee_policy.manage_limited']);
+  const scopeOrder=['marketplace','supplier','local_services'];
+  const scopeRow=scope=>{
+    const x=scopes?.[scope]||{},states=x.states||{};
+    const latest=policies.find(p=>p.service_scope===scope)||null;
+    const plan=latest
+      ?((latest.monthly_amount==null?'Amount not set':financeMoney(latest.monthly_amount,latest.currency_code||'PHP'))+' · '+String(latest.status||'draft').toUpperCase()+' · v'+esc(latest.version))
+      :'No plan draft';
+    return '<div class="subscriptionBillingRow"><div><strong>'+esc(x.label||data?.scope_labels?.[scope]||scope)+'</strong><small>'+esc(plan)+'</small></div>'
+      +'<div class="subscriptionStateGrid">'
+        +'<span><b>'+esc(x.promotional||0)+'</b> Promo</span>'
+        +'<span><b>'+esc(x.hold_no_active_policy||0)+'</b> HOLD</span>'
+        +'<span><b>'+esc(x.ready_to_invoice||0)+'</b> Ready</span>'
+      +'</div></div>';
+  };
+  const draftForm=canDraft
+    ?'<details class="commissionAssumptions"><summary>Create subscription plan draft</summary><form id="subscriptionPolicyDraftForm" class="adminForm"><div class="financeFormGrid">'
+      +'<label>Profile type<select name="service_scope"><option value="marketplace">Merchant</option><option value="supplier">Supplier</option><option value="local_services">Artisan / Local Services</option></select></label>'
+      +'<label>Policy code<input name="policy_code" placeholder="Optional · auto by profile"></label>'
+      +'<label>Monthly amount (PHP)<input name="monthly_amount" type="number" min="0" step="0.01" placeholder="Leave blank until decided"></label>'
+      +'<label>Description<input name="description" placeholder="Owner pricing scenario / rationale"></label>'
+      +'</div><div class="notice"><strong>Draft only.</strong><br>Creating this record does not activate billing and does not generate an invoice.</div><button class="primary" type="submit">Create plan draft</button><div id="subscriptionPolicyDraftResult"></div></form></details>'
+    :'';
+  return '<section class="subscriptionBillingCard">'
+    +'<div class="commissionPlannerHead"><div><small>SUBSCRIPTION BILLING</small><h3>90-day promo → billing readiness</h3><p>Merchant, Supplier and Artisan billing stays blocked until promo has ended and an active Owner-approved plan exists.</p></div><span class="badge">FAIL-CLOSED</span></div>'
+    +'<div class="subscriptionBillingRows">'+scopeOrder.map(scopeRow).join('')+'</div>'
+    +'<div class="financeTruth"><strong>Non-billable profiles</strong><span>Customer = FREE. Delivery = no monthly subscription; Delivery uses production fee only.</span></div>'
+    +'<div class="financeTruth"><strong>Current activation boundary</strong><span>'+esc(data?.guardrails?.invoice_generation||'NOT_PERFORMED')+' · live policy activation '+esc(data?.guardrails?.live_policy_activation||'NOT_AVAILABLE')+'.</span></div>'
+    +draftForm
+    +'</section>';
+}
 function renderDigitalIncentiveResult(x){
   const s=x?.selected||{},p=s?.provider_cost||{},cash=s?.cash_cost_model||{},i=s?.incentive||{};
   const comparison=x?.comparison||[];
@@ -325,10 +357,11 @@ async function financePanel(){
   if(!hasAny(['finance.summary.view'])){
     return hero()+operatingHtml+'<details class="adminFinanceAdvanced"><summary>Advanced platform economics</summary><div class="notice">Unit economics and payment-specific controls are not delegated to this Admin account.</div></details>';
   }
-  const [k,monetizationV2,digitalBenchmarks]=await Promise.all([
+  const [k,monetizationV2,digitalBenchmarks,subscriptionBilling]=await Promise.all([
     api('/api/payments/admin/unit-economics'+financeScopeQuery()),
     api('/api/payments/admin/monetization-v2/model'),
-    api('/api/payments/admin/digital-payment-incentive/benchmarks')
+    api('/api/payments/admin/digital-payment-incentive/benchmarks'),
+    api('/api/payments/admin/subscriptions/readiness')
   ]);
   const p=k.period||{};
   const serviceRows=k.services||[];
@@ -364,7 +397,7 @@ async function financePanel(){
       +'<div id="pricingScenarioResult"></div>'
     +'</form>';
   const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
-  return hero()+operatingHtml+monetizationV2Card(monetizationV2)+digitalPaymentIncentiveCard(digitalBenchmarks)+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
+  return hero()+operatingHtml+monetizationV2Card(monetizationV2)+subscriptionBillingCard(subscriptionBilling)+digitalPaymentIncentiveCard(digitalBenchmarks)+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
     +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
     +'<div class="financeSummary">'
       +'<div class="metric"><strong>'+financeMoney(k.gross_payment_volume)+'</strong><span>Gross payment volume · context, not revenue</span></div>'
@@ -412,6 +445,26 @@ async function financePanel(){
     +'<div class="sectionTitle"><h3>Recent cost entries</h3></div>'
     +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>')
     +'</div></details>';
+}
+async function wireSubscriptionBilling(){
+  const form=document.getElementById('subscriptionPolicyDraftForm');if(!form)return;
+  form.onsubmit=async e=>{
+    e.preventDefault();const fd=new FormData(form),out=document.getElementById('subscriptionPolicyDraftResult');
+    const amount=fd.get('monthly_amount');
+    const payload={
+      service_scope:fd.get('service_scope'),
+      policy_code:fd.get('policy_code')||null,
+      monthly_amount:amount===''?null:Number(amount),
+      description:fd.get('description')||'',
+      reason:'Owner subscription pricing draft'
+    };
+    out.innerHTML='<div class="notice">Creating draft…</div>';
+    try{
+      const x=await api('/api/payments/admin/subscriptions/policies/drafts',{method:'POST',body:JSON.stringify(payload)});
+      out.innerHTML='<div class="notice">Draft '+esc(x.policy_code)+' v'+esc(x.version)+' created. Billing is still inactive.</div>';
+      const panel=document.getElementById('adminPanel');if(panel){panel.innerHTML=await financePanel();await wireFinance()}
+    }catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
+  };
 }
 async function wireDigitalPaymentIncentive(){
   const form=document.getElementById('digitalPaymentIncentiveForm');if(!form)return;
@@ -493,6 +546,7 @@ async function wireOperatingFinance(){
 async function wireFinance(){
   await wireOperatingFinance();
   await wireMonetizationV2();
+  await wireSubscriptionBilling();
   await wireDigitalPaymentIncentive();
   await wireCommissionPlanner();
   const pricing=document.getElementById('pricingScenarioForm');

@@ -17,6 +17,7 @@ import {
 } from './finance-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetization-core.js';
+import {ensureProfileSubscriptionSchema,createSubscriptionPolicyDraft,listSubscriptionPolicies,subscriptionBillingReadiness,SUBSCRIPTION_SERVICE_SCOPES,SUBSCRIPTION_SCOPE_LABELS} from './profile-subscription-core.js';
 import {
   ensureProfileFinanceSchema,listProfileFinancialAccounts,listMoneyPreferences,
   createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
@@ -72,7 +73,7 @@ async function canSeeIntent(me,intent){
   if((me.businesses||[]).some(b=>Number(b.id)===Number(intent.business_id)&&b.active!==false))return true;
   try{await requireAdminPermission(pool,me.account.id,'payment.view',intent.territory_id);return true}catch{return false}
 }
-async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileFinanceSchema(pool);await ensureAccountMoneySchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
+async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileSubscriptionSchema(pool);await ensureProfileFinanceSchema(pool);await ensureAccountMoneySchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));
@@ -403,6 +404,44 @@ app.get('/api/payments/admin/unit-economics',async(req,res,next)=>{try{
     evidenceClasses:financeEvidence(req)
   });
   res.json(data);
+}catch(e){next(e)}});
+
+app.get('/api/payments/admin/subscriptions/readiness',async(req,res,next)=>{try{
+  const me=await identity(req);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',null);
+  const [readiness,policies]=await Promise.all([
+    subscriptionBillingReadiness(pool),
+    listSubscriptionPolicies(pool)
+  ]);
+  res.json({
+    ...readiness,
+    policies,
+    service_scopes:SUBSCRIPTION_SERVICE_SCOPES,
+    scope_labels:SUBSCRIPTION_SCOPE_LABELS
+  });
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/subscriptions/policies/drafts',body,async(req,res,next)=>{try{
+  const me=await identity(req);
+  const assignment=await requireAdminPermission(pool,me.account.id,'fee_policy.manage_limited',null);
+  const policy=await createSubscriptionPolicyDraft(pool,{
+    serviceScope:req.body?.service_scope,
+    policyCode:req.body?.policy_code,
+    monthlyAmount:req.body?.monthly_amount,
+    description:req.body?.description,
+    createdByAccountId:me.account.id
+  });
+  await appendAdminAudit(pool,{
+    actorAccountId:me.account.id,assignmentId:assignment.id,permission:'fee_policy.manage_limited',
+    targetType:'subscription_policy',targetId:String(policy.id),
+    eventCode:'subscription_policy_draft_created',
+    after:{
+      public_id:policy.public_id,policy_code:policy.policy_code,version:policy.version,
+      service_scope:policy.service_scope,monthly_amount:policy.monthly_amount,status:policy.status
+    },
+    reason:req.body?.reason||'Subscription policy draft',correlationId:correlation(req)
+  });
+  res.status(201).json(policy);
 }catch(e){next(e)}});
 
 app.get('/api/payments/admin/digital-payment-incentive/benchmarks',async(req,res,next)=>{try{
