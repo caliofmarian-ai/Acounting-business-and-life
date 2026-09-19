@@ -78,6 +78,11 @@ test('PayMongo processor cost is not automatically counted as Merchant or Suppli
   assert.match(core,/Visible as separate fee context; not counted as this profile expense/);
 });
 
+test('document detail query binds public id instead of interpolating it as a literal',()=>{
+  assert.match(core,/d\.public_id=\$\$\{params\.length\}/);
+  assert.doesNotMatch(core,/d\.public_id=\$\{params\.length\}/);
+});
+
 test('periodic statement exposes separated financial impact classes',()=>{
   for(const impact of ['revenue','expense','purchase','cash_in','cash_out','refund_in','transfer_in','transfer_out','fee_expense','tax_expense','neutral']){
     assert.ok(FINANCIAL_IMPACT_CLASSES.includes(impact));
