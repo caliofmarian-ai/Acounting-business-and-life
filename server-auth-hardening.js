@@ -196,7 +196,7 @@ async function sendEmail({ accountId, to, subject, html, template }) {
     data:{title:subject,body:safeBody}
   });
   await recordEmail(accountId,template,to,result.sent?'sent':result.not_configured?'not_configured':'failed',result.sent?'resend':AUTH_EMAIL_PROVIDER||'none',result.reference||'',result.sent?'':result.not_configured?'provider_not_configured':'notification_delivery_failed');
-  return {sent:Boolean(result.sent)};
+  return {sent:Boolean(result.sent),not_configured:Boolean(result.not_configured),reference:result.reference||''};
 }
 async function ownerMigrationRequired() {
   const q = await pool.query(`SELECT email,(password_hash IS NOT NULL) has_password,legacy_pin_retired_at FROM accounts WHERE id=1`);
@@ -275,9 +275,20 @@ app.post('/api/auth/email-verification/request', jsonBody, async (req, res, next
     if (a.email_verified_at) return res.json({ ok: true, already_verified: true });
     const token = await issueActionToken(session.accountId, 'verify_email', `INTERVAL '${VERIFY_TTL_HOURS} hours'`);
     const link = `${publicBase(req)}/?verify_token=${encodeURIComponent(token)}`;
-    await sendEmail({ accountId: session.accountId, to: a.email, template: 'verify_email', subject: 'Verify your Business & Life email', html: `<p>Verify your email for Business & Life.</p><p><a href="${link}">Verify email</a></p>` });
-    await audit(session.accountId, 'email_verification_requested', req);
-    const result = { ok: true, message: 'Verification instructions have been prepared.' }; if (PREVIEW_SHOW_LINK) result.preview_verify_url = link; res.json(result);
+    const delivery=await sendEmail({ accountId: session.accountId, to: a.email, template: 'verify_email', subject: 'Verify your Business & Life email', html: `<p>Verify your email for Business & Life.</p><p><a href="${link}">Verify email</a></p>` });
+    await audit(session.accountId, 'email_verification_requested', req,{delivery_status:delivery.sent?'sent':delivery.not_configured?'not_configured':'failed'});
+    const deliveryStatus=delivery.sent?'sent':delivery.not_configured?'not_configured':'failed';
+    const result={
+      ok:true,
+      delivery_status:deliveryStatus,
+      message:deliveryStatus==='sent'
+        ?'Verification email sent.'
+        :deliveryStatus==='not_configured'
+          ?'Email delivery is not configured in this environment. The verification request was not emailed.'
+          :'Verification email could not be delivered.'
+    };
+    if(PREVIEW_SHOW_LINK)result.preview_verify_url=link;
+    res.json(result);
   } catch (e) { next(e); }
 });
 
