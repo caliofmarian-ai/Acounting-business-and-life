@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
+import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePricingRule} from './delivery-pricing-v2-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -89,6 +90,28 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     UNIQUE(country_code,version)
   );
 
+  CREATE TABLE IF NOT EXISTS delivery_vehicle_pricing_rules (
+    id BIGSERIAL PRIMARY KEY,
+    pricing_rule_id BIGINT NOT NULL REFERENCES delivery_pricing_rules(id) ON DELETE CASCADE,
+    vehicle_class TEXT NOT NULL,
+    formula_type TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 100,
+    base_fee NUMERIC(12,2) NOT NULL DEFAULT 0,
+    per_km NUMERIC(12,2) NOT NULL DEFAULT 0,
+    per_kg NUMERIC(12,2) NOT NULL DEFAULT 0,
+    per_liter NUMERIC(12,2) NOT NULL DEFAULT 0,
+    minimum_fee NUMERIC(12,2) NOT NULL DEFAULT 0,
+    maximum_distance_km NUMERIC(12,2),
+    max_weight_kg NUMERIC(12,4),
+    max_volume_l NUMERIC(12,4),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(pricing_rule_id,vehicle_class),
+    CHECK(vehicle_class IN ('bicycle','car','van')),
+    CHECK(formula_type IN ('base_plus_km','distance_weight_volume'))
+  );
+  CREATE INDEX IF NOT EXISTS delivery_vehicle_pricing_rule_parent_idx
+    ON delivery_vehicle_pricing_rules(pricing_rule_id,priority,vehicle_class);
+
   CREATE TABLE IF NOT EXISTS delivery_quotes (
     id BIGSERIAL PRIMARY KEY,
     customer_account_id BIGINT NOT NULL REFERENCES accounts(id),
@@ -164,11 +187,39 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     UNIQUE(event_type,source_payment_id)
   );
 
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS vehicle_pricing_rule_id BIGINT REFERENCES delivery_vehicle_pricing_rules(id);
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS required_vehicle_class TEXT NOT NULL DEFAULT '';
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS formula_type TEXT NOT NULL DEFAULT '';
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS pricing_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
+  ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS required_vehicle_class TEXT NOT NULL DEFAULT '';
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS merchandise_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 `)}
 
 async function activeRule(){const r=await pool.query(`SELECT * FROM delivery_pricing_rules WHERE country_code='PH' AND active=TRUE ORDER BY version DESC LIMIT 1`);return r.rows[0]||null}
+async function vehicleRulesForPricingRule(pricingRuleId){
+  const {rows}=await pool.query(`SELECT * FROM delivery_vehicle_pricing_rules WHERE pricing_rule_id=$1 ORDER BY priority,vehicle_class`,[pricingRuleId]);
+  return rows;
+}
+async function activePricingBundle(){
+  const rule=await activeRule();
+  if(!rule)return null;
+  const vehicleRules=await vehicleRulesForPricingRule(rule.id);
+  return{rule,vehicleRules};
+}
+function legacyDeliveryPrice(rule,{distanceKm,weightKg,volumeL}){
+  let fee=Number(rule.base_fee)+Number(distanceKm)*Number(rule.per_km)+Number(weightKg)*Number(rule.per_kg)+Number(volumeL)*Number(rule.per_liter);
+  fee=Math.max(Number(rule.minimum_fee||0),fee);
+  return{
+    vehicle_class:'',
+    formula_type:'legacy_generic',
+    distance_km:Number(distanceKm),
+    weight_kg:Number(weightKg),
+    volume_l:Number(volumeL),
+    delivery_price:Math.round(fee*100)/100,
+    rule:null
+  };
+}
 async function deliveryDetail(id){const r=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,b.name business_name,cu.display_name customer_name,cp.display_name courier_name,cp.vehicle_type courier_vehicle FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id JOIN accounts cu ON cu.id=d.customer_account_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.id=$1`,[id]);return r.rows[0]||null}
 async function allowedDelivery(req,d){const me=await identity(req);const id=Number(me.account.id);if(id===Number(d.customer_account_id)||id===Number(d.courier_account_id)||Boolean(business(me,d.business_id))||id===1)return me;throw Object.assign(new Error('Not allowed to view this delivery'),{status:403})}
 function activeTracking(status){return !['delivered','failed','cancelled'].includes(status)}
