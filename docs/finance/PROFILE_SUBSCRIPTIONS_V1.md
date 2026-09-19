@@ -1,6 +1,6 @@
 # Profile Subscriptions V1
 
-Status: **BILLING READINESS IMPLEMENTED / LIVE BILLING DISABLED**
+Status: **OWNER-APPROVED ₱99/MONTH TARGET / BILLING READINESS IMPLEMENTED / LIVE BILLING DISABLED**
 
 Canonical issue: #236.
 
@@ -15,13 +15,13 @@ Business & Life subscription policy is per monetized economic profile/service sc
 ### Merchant
 - canonical service scope: `marketplace`
 - subject type: `business`
-- monthly subscription after applicable 90-day promotion
+- Owner-approved monthly subscription: **₱99/month** after applicable 90-day promotion
 - Owner-approved transaction fee: **0.50%**, separate from subscription and separate from processor charges
 
 ### Supplier
 - canonical service scope: `supplier`
 - subject type: `account`
-- monthly subscription after applicable 90-day promotion
+- Owner-approved monthly subscription: **₱99/month** after applicable 90-day promotion
 - Owner-approved transaction fee: **0.50%**, separate from subscription and processor charges
 
 ### Artisan / Local Services
@@ -174,6 +174,6 @@ V1 intentionally has no:
 
 ## Pricing transparency note
 
-The monthly subscription amount is still not activated and must not be invented.
+The monthly subscription amount is Owner-approved at **₱99/month** for Merchant, Supplier and Local Services. Live billing remains disabled until an active versioned subscription policy is explicitly activated.
 
 The approved 0.50% Business & Life transaction rate does not include PayMongo/payment-processor charges. During the 90-day Business & Life promotion, Business & Life subscription/transaction charges are waived according to entitlement, while third-party processor charges may still apply.
