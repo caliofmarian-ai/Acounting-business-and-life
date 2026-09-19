@@ -207,10 +207,10 @@ Crypto is developed as a later optional rail and does not block the first pilot.
 
 ## Pricing transparency checkpoint — Owner decision 2026-09-19
 
-Owner-approved Business & Life transaction rate after the applicable promotional entitlement:
-- Merchant: **0.50%** of each eligible transaction after 90-day promo;
-- Supplier: **0.50%** of each eligible B2B transaction after 90-day promo;
-- Local Services: **0.50%** of each eligible completed job/transaction after 90-day promo;
+Owner-approved Business & Life pricing after the applicable promotional entitlement:
+- Merchant: **₱99/month + 0.50%** of each eligible transaction after 90-day promo;
+- Supplier: **₱99/month + 0.50%** of each eligible B2B transaction after 90-day promo;
+- Local Services: **₱99/month + 0.50%** of each eligible completed job/transaction after 90-day promo;
 - Customer: **0% Business & Life platform fee**;
 - Delivery/Courier: separate model — 30 days at 0%, then Owner-approved **10%** production fee on verified delivery price; no monthly subscription.
 
@@ -218,7 +218,7 @@ Important:
 - Business & Life promotion waives applicable **Business & Life** charges only;
 - PayMongo/payment-processor fees remain separate and may still apply during promotion;
 - processor, platform, delivery and applicable tax/statutory costs must never be collapsed into one ambiguous service fee;
-- monthly subscription amount for Merchant/Supplier/Local Services is still not activated and must not be invented;
+- the Owner-approved monthly subscription target for Merchant/Supplier/Local Services is **₱99/month**; live billing remains gated and is not auto-activated;
 - public runtime source: `GET /api/public/pricing`;
 - live collection of the 0.50% rate remains gated by versioned active policy, disclosure, payment routing, accounting/settlement reconciliation and PH legal/tax readiness.
 
