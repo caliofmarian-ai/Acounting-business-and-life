@@ -22,6 +22,15 @@ test('in-flight profile and Admin context requests are deduplicated',()=>{
   assert.match(shell,/finally\{adminContextRefreshPromise=null\}/);
 });
 
+test('drawer never shows an incomplete profile list while Admin authority is loading',()=>{
+  assert.match(shell,/const adminStale=!adminContextFetchedAt/);
+  assert.match(shell,/Loading account and Admin access/);
+  assert.match(shell,/Preparing the complete profile list/);
+  const open=shell.slice(shell.indexOf('async function openDrawer'),shell.indexOf('function closeDrawer'));
+  assert.match(open,/if\(snapshot\?\.account&&!profileStale&&!adminStale\)renderDrawer\(\)/);
+  assert.match(open,/if\(adminStale\)tasks\.push\(refreshAdminContext\(\)\)/);
+});
+
 test('Admin identity endpoint does not build territory scope tree',()=>{
   const start=server.indexOf("app.get('/api/admin/me'");
   const end=server.indexOf("app.get('/api/admin/catalog'",start);
