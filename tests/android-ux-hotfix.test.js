@@ -67,6 +67,18 @@ test('Support English translation is server-capable and retains browser fallback
   assert.match(supportServer,/Preserve names, numbers, order IDs, URLs, amounts and technical terms/);
 });
 
+test('MediaRecorder codec data URLs are normalized to their base audio MIME',()=>{
+  assert.match(supportServer,/const meta=raw\.slice\(5,comma\),parts=meta\.split\(';'\)/);
+  assert.match(supportServer,/const mime=String\(parts\.shift\(\)\|\|''\)\.toLowerCase\(\)/);
+  assert.match(supportServer,/parts\.some\(x=>x\.toLowerCase\(\)==='base64'\)/);
+});
+
+test('ticket submit waits until voice processing finishes',()=>{
+  assert.match(supportUi,/else voiceProcessing=true/);
+  assert.match(supportUi,/await waitForVoiceProcessing\(\)/);
+  assert.match(supportUi,/supportAiPrivacy/);
+});
+
 test('Support AI credentials are environment-only and never hardcoded',()=>{
   assert.match(supportServer,/process\.env\.OPENAI_API_KEY/);
   assert.match(supportServer,/process\.env\.SUPPORT_AI_PROVIDER/);
