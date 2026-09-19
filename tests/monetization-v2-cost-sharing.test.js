@@ -152,7 +152,8 @@ test('Admin Finance UI presents profile policy and shared cost model clearly',()
   assert.match(ui,/MONETIZATION V2/);
   assert.match(ui,/Customer/);
   assert.match(ui,/Subscription \+ transaction fee/);
-  assert.match(ui,/10\.00% of verified delivery earnings/);
+  assert.match(ui,/owner_approved_delivery_production_rate_pct\|\|10/);
+  assert.match(ui,/of verified delivery earnings/);
   assert.match(ui,/Shared company cost simulator/);
   assert.match(ui,/50% equal \+ 50% activity/);
   assert.match(ui,/Digital-payment incentive/);
