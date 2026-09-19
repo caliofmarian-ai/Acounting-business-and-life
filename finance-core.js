@@ -713,7 +713,7 @@ export function commissionSustainabilityScenario(input={}){
     guardrails:{
       owner_distribution_in_operating_cost:false,
       owner_distribution_note:'Owner withdrawal/distribution is not payroll or an operating expense and is excluded from the required platform-fee calculation.',
-      promotional_rule:'The first 90 eligible days use zero Business & Life platform fee. If fee-eligible share is 0%, modeled operations require Owner/company capital or another legitimate funding source.',
+      promotional_rule:'Business & Life promotional windows are service-specific: Marketplace/Merchant 90 days and Delivery/Courier 30 days under the current Owner policy. If fee-eligible share is 0%, modeled operations require Owner/company capital or another legitimate funding source.',
       fee_base_rule:'Average fee-base value is the value to which the future Merchant/Supplier/Local Services transaction fee applies. Delivery uses the separate verified delivery price as its 10% fee base.',
       hybrid_revenue_rule:'Subscription revenue and Delivery production-fee revenue reduce the transaction-fee revenue still required for sustainability.',
       activation:'NOT_PERFORMED'
@@ -780,7 +780,7 @@ export async function pricingScenario(pool,input={}){
     included_evidence_classes:evidence,
     rates,
     bases:{
-      post_promo_actual:'Only completed gross service value already outside the 90-day promotional window.',
+      post_promo_actual:'Only completed gross service value already outside the applicable service-specific promotional window.',
       all_activity_mature_simulation:'All completed service value in the period treated hypothetically as mature/post-promo volume. This is not actual billable revenue.'
     },
     services:rows,
