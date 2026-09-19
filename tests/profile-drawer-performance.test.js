@@ -31,6 +31,12 @@ test('drawer never shows an incomplete profile list while Admin authority is loa
   assert.match(open,/if\(adminStale\)tasks\.push\(refreshAdminContext\(\)\)/);
 });
 
+test('drawer extensions wait until the loading placeholder is replaced',()=>{
+  const auth=read('public/auth-ui.js');
+  assert.match(auth,/panel\.querySelector\('\.drawerContextLoading'\)/);
+  assert.match(auth,/!panel\.querySelector\('#accountIdentityForm'\)/);
+});
+
 test('Admin identity endpoint does not build territory scope tree',()=>{
   const start=server.indexOf("app.get('/api/admin/me'");
   const end=server.indexOf("app.get('/api/admin/catalog'",start);
