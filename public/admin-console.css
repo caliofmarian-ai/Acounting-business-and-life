@@ -29,3 +29,10 @@
 .sharedCostResults{display:grid;gap:10px;margin-top:12px}
 @media(max-width:720px){.sharedCostScopeRow{grid-template-columns:1fr 1fr}.sharedCostScopeRow .secondary{grid-column:span 2}.monetizationRoleRow{align-items:flex-start}.monetizationRoleRow b{max-width:56%}}
 @media(max-width:480px){.sharedCostScopeRow{grid-template-columns:1fr}.sharedCostScopeRow .secondary{grid-column:auto}.monetizationRoleRow{display:grid}.monetizationRoleRow b{max-width:none;text-align:left}}
+
+.digitalPaymentIncentiveCard{display:grid;gap:12px;margin:14px 0;background:#0d1928;border:1px solid #28425f;border-radius:20px;padding:14px}
+.paymentRailBenchmarks{display:grid;gap:7px}
+.paymentRailRow{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:10px 11px;border:1px solid #20344b;border-radius:13px;background:#0a1422}
+.paymentRailRow>div{display:grid;gap:2px}.paymentRailRow strong{font-size:12px}.paymentRailRow small{font-size:9px;color:var(--muted);line-height:1.35}.paymentRailRow b{font-size:11px;text-align:right;color:#9ef0da;white-space:nowrap}
+.digitalIncentiveResults{display:grid;gap:10px;margin-top:12px}
+@media(max-width:520px){.paymentRailRow{display:grid}.paymentRailRow b{text-align:left}}
