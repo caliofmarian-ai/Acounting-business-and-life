@@ -1,5 +1,6 @@
 export const MONETIZED_PROFILE_ROLES=Object.freeze(['customer','merchant','supplier','local_services','courier']);
 export const OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT=10;
+export const OWNER_APPROVED_DELIVERY_PROMO_DAYS=30;
 export const DELIVERY_PRODUCTION_FEE_BASIS='verified_delivery_price';
 
 export const PROFILE_MONETIZATION_MODEL=Object.freeze({
@@ -16,6 +17,7 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     monthly_subscription:true,
     transaction_fee:true,
     delivery_production_fee:false,
+    promotional_days:90,
     promotional_entitlement:true,
     customer_free:false
   }),
@@ -24,6 +26,7 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     monthly_subscription:true,
     transaction_fee:true,
     delivery_production_fee:false,
+    promotional_days:90,
     promotional_entitlement:true,
     customer_free:false
   }),
@@ -33,6 +36,7 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     monthly_subscription:true,
     transaction_fee:true,
     delivery_production_fee:false,
+    promotional_days:90,
     promotional_entitlement:true,
     customer_free:false
   }),
@@ -42,6 +46,7 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     monthly_subscription:false,
     transaction_fee:false,
     delivery_production_fee:true,
+    promotional_days:OWNER_APPROVED_DELIVERY_PROMO_DAYS,
     owner_approved_delivery_production_rate_pct:OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,
     delivery_production_fee_basis:DELIVERY_PRODUCTION_FEE_BASIS,
     live_activation:false,
@@ -161,7 +166,7 @@ export function monetizationPolicyDraft(role,input={}){
     delivery_production_fee_enabled:model.delivery_production_fee,
     delivery_production_rate_pct:model.delivery_production_fee?nullablePct(input.delivery_production_rate_pct??OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT):0,
     delivery_production_fee_basis:model.delivery_production_fee?DELIVERY_PRODUCTION_FEE_BASIS:'',
-    promotional_days:model.promotional_entitlement?90:0,
+    promotional_days:model.promotional_entitlement?Number(model.promotional_days||90):0,
     digital_payment_credit:DIGITAL_PAYMENT_INCENTIVE_DEFAULT
   };
   for(const k of ['monthly_subscription_amount','transaction_fixed_amount']){
