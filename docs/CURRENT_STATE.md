@@ -1,5 +1,7 @@
 # Business & Life — Current State
 
+> Target architecture: [Reconciled Application Architecture](architecture/RECONCILED_APP_ARCHITECTURE.md). Its product direction is approved, but implementation is pending and must follow the [Reconciliation Implementation Plan](implementation/RECONCILIATION_IMPLEMENTATION_PLAN.md). This file continues to describe deployed/current behavior until each target phase is verified and merged.
+
 GitHub `main` is the source of truth. This file is the compact fresh-agent handoff for the Philippines Edition.
 
 ## Current executable target
