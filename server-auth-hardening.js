@@ -18,6 +18,7 @@ const upstreamPort = Number(process.env.INTERNAL_INCIDENTS_PORT || 3907);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
 const APP_PIN = process.env.APP_PIN || '';
+const OWNER_MIGRATION_ENABLED = process.env.OWNER_MIGRATION_ENABLED === 'true';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const AUTH_EMAIL_PROVIDER = String(process.env.AUTH_EMAIL_PROVIDER || '').toLowerCase();
@@ -224,7 +225,14 @@ async function root(req, res) {
 app.get('/', root); app.get('/index.html', root);
 
 app.get('/api/auth/hardening/status', async (_req, res, next) => {
-  try { res.json({ owner_migration_required: await ownerMigrationRequired(), google_enabled: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET), email_delivery_configured: AUTH_EMAIL_PROVIDER === 'resend' && Boolean(RESEND_API_KEY && AUTH_FROM_EMAIL), preview_link_enabled: PREVIEW_SHOW_LINK }); } catch (e) { next(e); }
+  try {
+    // Public authentication capability only. Bootstrap-owner lifecycle state is intentionally not exposed.
+    res.json({
+      google_enabled: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
+      email_delivery_configured: AUTH_EMAIL_PROVIDER === 'resend' && Boolean(RESEND_API_KEY && AUTH_FROM_EMAIL),
+      preview_link_enabled: PREVIEW_SHOW_LINK
+    });
+  } catch (e) { next(e); }
 });
 
 app.post('/api/auth/forgot-password', jsonBody, async (req, res, next) => {
@@ -282,8 +290,11 @@ app.post('/api/auth/email-verification/verify', jsonBody, async (req, res, next)
 });
 
 app.post('/api/auth/owner-migrate', jsonBody, async (req, res, next) => {
+  // Bootstrap recovery is infrastructure-gated and never part of the public login experience.
+  if (!OWNER_MIGRATION_ENABLED) return res.status(404).json({ error: 'Not found' });
   const pin = String(req.body?.pin || ''), email = normalizeEmail(req.body?.email), password = String(req.body?.password || ''), displayName = clean(req.body?.display_name, 120);
   try {
+    if (!(await ownerMigrationRequired())) return res.status(410).json({ error: 'Owner migration is already retired. Use email/password recovery.' });
     const q = await pool.query(`SELECT legacy_pin_retired_at FROM accounts WHERE id=1`); if (q.rows[0]?.legacy_pin_retired_at) return res.status(410).json({ error: 'Owner PIN migration is already retired. Use email/password recovery.' });
     if (!APP_PIN || !safeTextEqual(pin, APP_PIN)) { await audit(1, 'owner_migration_failed', req); return res.status(401).json({ error: 'Owner migration credential is incorrect' }); }
     if (!validEmail(email) || !passwordOkay(password)) return res.status(400).json({ error: 'Valid email and password of at least 8 characters are required' });
