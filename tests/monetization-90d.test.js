@@ -46,6 +46,8 @@ test('trial starts from earliest completed economic event and cannot restart on 
 
 
 test('schema migration recalibrates existing Delivery entitlements to 30 days without restarting them',()=>{
+  assert.match(core,/DO \$promo\$/);
+  assert.match(core,/END \$promo\$;/);
   assert.match(core,/UPDATE service_monetization_entitlements[\s\S]*service_scope='delivery' THEN 30 ELSE 90/);
   assert.match(core,/promo_ends_at=promo_started_at\+\(CASE WHEN service_scope='delivery' THEN INTERVAL '30 days' ELSE INTERVAL '90 days' END\)/);
   assert.match(core,/UPDATE service_monetization_events e[\s\S]*phase_snapshot=CASE WHEN e\.completed_at<x\.promo_ends_at THEN 'promotional' ELSE 'post_promo' END/);
