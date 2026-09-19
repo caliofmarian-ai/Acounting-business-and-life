@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  PROMOTIONAL_DAYS,MONETIZATION_SERVICE_SCOPES,MONETIZATION_SUBJECT_TYPES,monetizationInternals
+  PROMOTIONAL_DAYS,DELIVERY_PROMOTIONAL_DAYS,MONETIZATION_PROMO_DAYS_BY_SCOPE,promoDaysForScope,MONETIZATION_SERVICE_SCOPES,MONETIZATION_SUBJECT_TYPES,monetizationInternals
 } from '../monetization-core.js';
 
 const core=readFileSync(new URL('../monetization-core.js',import.meta.url),'utf8');
@@ -13,12 +13,18 @@ const services=readFileSync(new URL('../server-services.js',import.meta.url),'ut
 const payments=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
 const finance=readFileSync(new URL('../finance-core.js',import.meta.url),'utf8');
 
-test('owner promotional policy is exactly 90 days and limited to monetizable service scopes',()=>{
+test('Owner promotional policy is service-specific: Merchant 90 days and Delivery 30 days',()=>{
   assert.equal(PROMOTIONAL_DAYS,90);
+  assert.equal(DELIVERY_PROMOTIONAL_DAYS,30);
+  assert.deepEqual(MONETIZATION_PROMO_DAYS_BY_SCOPE,{marketplace:90,delivery:30,supplier:90,local_services:90});
+  assert.equal(promoDaysForScope('marketplace'),90);
+  assert.equal(promoDaysForScope('delivery'),30);
+  assert.equal(promoDaysForScope('supplier'),90);
+  assert.equal(promoDaysForScope('local_services'),90);
   assert.deepEqual(MONETIZATION_SERVICE_SCOPES,['marketplace','delivery','supplier','local_services']);
   assert.deepEqual(MONETIZATION_SUBJECT_TYPES,['business','account']);
-  assert.match(core,/CHECK\(promo_duration_days=90\)/);
-  assert.match(core,/INTERVAL '90 days'/);
+  assert.match(core,/service_scope='delivery' AND promo_duration_days=30/);
+  assert.match(core,/service_scope<>'delivery' AND promo_duration_days=90/);
 });
 
 test('one promotional entitlement exists per economic subject and service scope',()=>{
@@ -30,11 +36,21 @@ test('one promotional entitlement exists per economic subject and service scope'
 
 test('trial starts from earliest completed economic event and cannot restart on retry',()=>{
   assert.match(core,/promo_started_at=LEAST/);
-  assert.match(core,/promo_ends_at=LEAST\([^\n]+promo_started_at[^\n]+\)\+INTERVAL '90 days'/);
+  assert.match(core,/promo_duration_days=\$5/);
+  assert.match(core,/promo_ends_at=LEAST\([^\n]+promo_started_at[^\n]+\)\+\(\$5::text\|\|' days'\)::interval/);
   assert.match(core,/event_key TEXT NOT NULL UNIQUE/);
   assert.match(core,/ON CONFLICT\(event_key\)/);
   assert.doesNotMatch(core,/DELETE FROM service_monetization_entitlements/);
   assert.doesNotMatch(core,/DELETE FROM service_monetization_events/);
+});
+
+
+test('schema migration recalibrates existing Delivery entitlements to 30 days without restarting them',()=>{
+  assert.match(core,/UPDATE service_monetization_entitlements[\s\S]*service_scope='delivery' THEN 30 ELSE 90/);
+  assert.match(core,/promo_ends_at=promo_started_at\+\(CASE WHEN service_scope='delivery' THEN INTERVAL '30 days' ELSE INTERVAL '90 days' END\)/);
+  assert.match(core,/UPDATE service_monetization_events e[\s\S]*phase_snapshot=CASE WHEN e\.completed_at<x\.promo_ends_at THEN 'promotional' ELSE 'post_promo' END/);
+  assert.match(core,/first_post_promo_completed_at=\([\s\S]*phase_snapshot='post_promo'/);
+  assert.doesNotMatch(core,/promo_started_at=NOW\(\)/);
 });
 
 test('historical backfill can correct phase snapshots if an earlier completion is discovered',()=>{
@@ -84,8 +100,10 @@ test('Payment/Finance layer backfills existing canonical history and reports rea
   assert.match(core,/paid_conversion_status:'NOT_AVAILABLE_UNTIL_ACTIVE_FEE_POLICY'/);
 });
 
-test('phase boundary is promotional before the end instant and post-promo at the end instant',()=>{
-  assert.equal(monetizationInternals.phaseAt('2026-01-01T00:00:00Z','2026-04-01T00:00:00Z'),'promotional');
-  assert.equal(monetizationInternals.phaseAt('2026-04-01T00:00:00Z','2026-04-01T00:00:00Z'),'post_promo');
+test('phase boundary is promotional before the service end instant and post-promo at the exact end instant',()=>{
+  assert.equal(monetizationInternals.phaseAt('2026-01-30T23:59:59Z','2026-01-31T00:00:00Z'),'promotional');
+  assert.equal(monetizationInternals.phaseAt('2026-01-31T00:00:00Z','2026-01-31T00:00:00Z'),'post_promo');
+  assert.equal(monetizationInternals.promoDaysForScope('delivery'),30);
+  assert.equal(monetizationInternals.promoDaysForScope('marketplace'),90);
   assert.equal(monetizationInternals.eventKey({serviceScope:'marketplace',subjectType:'business',subjectId:7,sourceType:'order',sourceId:12}),'marketplace:business:7:order:12');
 });
