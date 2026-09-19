@@ -430,7 +430,15 @@ function applyActiveRole() {
   activeRole = snapshot?.account?.active_role || null;
   renderTopAccount();
   hideFeatureWorkspaces();
-  if (!activeRole){hideMerchantWorkspace();const hub=document.getElementById('roleHub');if(hub){hub.innerHTML='<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT READY</div><h1>Choose your first profile.</h1><p>Complete Account Settings, verify your email, then start onboarding only for the profiles you want to use.</p><button id="openFirstAccountSettings" class="hubOnboardingButton" type="button">Open Account Settings</button></div>';hub.classList.remove('hidden');hub.querySelector('#openFirstAccountSettings').onclick=()=>openAccountSettings()}return}
+  if (!activeRole){hideMerchantWorkspace();
+    const hub=document.getElementById('roleHub'),account=snapshot?.account;
+    if(hub&&account){
+      const detailsReady=Boolean(String(account.display_name||'').trim()&&String(account.address||'').trim());
+      const emailReady=Boolean(account.email_verified_at);
+      hub.innerHTML=`<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>Choose your first profile when ready.</h1><p>Set up your account first. No Customer, Merchant, Supplier, Delivery or Local Services profile is active. You decide which onboarding to start.</p><span class="hubStatus">${countryMeta(account.country_code).flag} ${escapeHtml(account.personal_id||'Personal ID preparing')}</span></div><div class="hubSectionTitle"><h2>Before your first profile</h2><span>${detailsReady&&emailReady?'Ready to choose':'Setup required'}</span></div><div class="hubGrid"><div class="hubTile"><span class="hubTileIcon">${detailsReady?'✓':'1'}</span><strong>Personal details</strong><small>${detailsReady?'Name and primary address completed':'Add your name and primary address'}</small></div><div class="hubTile"><span class="hubTileIcon">${emailReady?'✓':'2'}</span><strong>Email verification</strong><small>${emailReady?'Email verified':'Open the verification message or request a new one'}</small></div><button class="hubTile profileSettingsTile" id="openFirstAccountSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>Complete setup and choose a profile to onboard</small></button></div>`;
+      hub.classList.remove('hidden');hub.querySelector('#openFirstAccountSettings').onclick=()=>openAccountSettings();
+    }return
+  }
   if (activeRole === 'merchant') showMerchantWorkspace();
   else { hideMerchantWorkspace(); renderRoleHub(activeRole); }
 }
