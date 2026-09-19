@@ -590,14 +590,16 @@ export async function listFinancialDocuments(pool,{accountId,profileRole,busines
 export async function getFinancialDocumentByPublicId(pool,{accountId,profileRole,businessId=null,publicId}){
   const scope=scopeWhere({accountId,profileRole,businessId},1);
   const params=[...scope.params,clean(publicId,120)];
-  const {rows}=await pool.query(`
+  const publicIdBind='$'+params.length;
+  const sql=`
     SELECT d.*,
       COALESCE((SELECT jsonb_agg(l ORDER BY l.id) FROM financial_document_lines l WHERE l.document_id=d.id),'[]'::jsonb) lines,
       COALESCE((SELECT jsonb_agg(s ORDER BY s.id) FROM financial_document_source_links s WHERE s.document_id=d.id),'[]'::jsonb) source_links
     FROM financial_documents d
-    WHERE ${scope.sql} AND d.public_id=${params.length}
+    WHERE ${scope.sql} AND d.public_id=${publicIdBind}
     LIMIT 1
-  `,params);
+  `;
+  const {rows}=await pool.query(sql,params);
   return rows[0]||null;
 }
 
