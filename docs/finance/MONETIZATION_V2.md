@@ -143,7 +143,7 @@ Owner-approved commercial rule:
 - no monthly profile subscription;
 - **10% production fee**;
 - basis: **verified delivery price charged separately to the Customer**;
-- 10% applies only after the applicable 90-day promotional entitlement;
+- **Delivery promotional entitlement is 30 days**; the 10% applies only after that 30-day period;
 - cancelled, failed or otherwise non-eligible delivery activity is not a fee base;
 - the fee is not calculated from merchandise/order value;
 - post-promo economic split before other legitimate adjustments: **10% Business & Life / 90% Courier gross delivery entitlement**.
@@ -164,15 +164,18 @@ One human account may therefore have:
 
 The same login does not collapse the commercial rules of different profiles.
 
-## 6. 90-day promotion
+## 6. Service-specific promotion
 
-The existing 90-day entitlement remains authoritative.
+Promotional duration is service-specific.
 
 Default rollout:
-
 - Customer remains free;
-- Merchant/Supplier/Local Services subscription and transaction fee remain zero during their eligible promotional period;
-- Delivery production fee remains zero during its promotional entitlement unless a later Owner-approved policy explicitly changes this.
+- Marketplace / Merchant: **90 days**;
+- Supplier: **90 days** under the current policy;
+- Local Services: **90 days** under the current policy;
+- Delivery / Courier: **30 days**;
+- Merchant/Supplier/Local Services subscription and transaction fee remain zero during their applicable promotional period;
+- Delivery production fee remains 0% during its 30-day promotional entitlement.
 
 Historical transactions are never re-priced.
 
@@ -217,7 +220,7 @@ Before any live amount/rate is activated:
 - Owner approves the rate/amount;
 - fee/subscription policy is versioned;
 - PayMongo/provider routing is verified where online collection is involved;
-- 90-day promo boundary is respected;
+- the service-specific promo boundary is respected (Merchant 90 days; Delivery 30 days);
 - affected profiles see transparent pricing;
 - accounting and settlement evidence reconcile;
 - legal/tax treatment is reviewed for the operating country.

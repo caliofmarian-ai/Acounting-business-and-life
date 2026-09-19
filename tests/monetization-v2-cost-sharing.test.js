@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
   PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,
-  OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,DELIVERY_PRODUCTION_FEE_BASIS,
+  OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,OWNER_APPROVED_DELIVERY_PROMO_DAYS,DELIVERY_PRODUCTION_FEE_BASIS,
   allocateSharedCompanyCost50x50,profileMonetizationModel,monetizationPolicyDraft
 } from '../monetization-policy-v2.js';
 import {commissionSustainabilityScenario} from '../finance-core.js';
@@ -33,12 +33,15 @@ test('profile monetization matrix follows Owner model without invented prices',(
   assert.equal(courier.delivery_production_fee,true);
   assert.equal(courier.service_scope,'delivery');
   assert.equal(OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,10);
+  assert.equal(OWNER_APPROVED_DELIVERY_PROMO_DAYS,30);
+  assert.equal(courier.promotional_days,30);
   assert.equal(courier.owner_approved_delivery_production_rate_pct,10);
   assert.equal(courier.delivery_production_fee_basis,DELIVERY_PRODUCTION_FEE_BASIS);
   assert.equal(DELIVERY_PRODUCTION_FEE_BASIS,'verified_delivery_price');
   assert.equal(courier.live_activation,false);
   const courierDraft=monetizationPolicyDraft('courier');
   assert.equal(courierDraft.delivery_production_rate_pct,10);
+  assert.equal(courierDraft.promotional_days,30);
   assert.equal(courierDraft.delivery_production_fee_basis,'verified_delivery_price');
 
   const merchantDraft=monetizationPolicyDraft('merchant');
@@ -154,6 +157,8 @@ test('Admin Finance UI presents profile policy and shared cost model clearly',()
   assert.match(ui,/Subscription \+ transaction fee/);
   assert.match(ui,/owner_approved_delivery_production_rate_pct\|\|10/);
   assert.match(ui,/of verified delivery price/);
+  assert.match(ui,/x\.promotional_days\|\|30/);
+  assert.match(ui,/-day promo first/);
   assert.match(ui,/Shared company cost simulator/);
   assert.match(ui,/50% equal \+ 50% activity/);
   assert.match(ui,/Digital-payment incentive/);

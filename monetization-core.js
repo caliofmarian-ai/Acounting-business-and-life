@@ -2,6 +2,13 @@ const clean=(v,max=300)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
 
 export const PROMOTIONAL_DAYS=90;
+export const DELIVERY_PROMOTIONAL_DAYS=30;
+export const MONETIZATION_PROMO_DAYS_BY_SCOPE=Object.freeze({
+  marketplace:90,
+  delivery:30,
+  supplier:90,
+  local_services:90
+});
 export const MONETIZATION_SERVICE_SCOPES=Object.freeze(['marketplace','delivery','supplier','local_services']);
 export const MONETIZATION_SUBJECT_TYPES=Object.freeze(['business','account']);
 
@@ -14,6 +21,10 @@ function validScope(v){
   const x=clean(v,40);
   if(!MONETIZATION_SERVICE_SCOPES.includes(x))throw Object.assign(new Error('Unsupported monetization service scope'),{status:400});
   return x;
+}
+export function promoDaysForScope(serviceScope){
+  const scope=validScope(serviceScope);
+  return Number(MONETIZATION_PROMO_DAYS_BY_SCOPE[scope]);
 }
 function validSubjectType(v){
   const x=clean(v,30);
@@ -34,7 +45,7 @@ function phaseAt(completedAt,promoEndsAt){
 
 export async function ensureMonetizationSchema(pool){
   const statements=[
-    "CREATE TABLE IF NOT EXISTS service_monetization_entitlements(id BIGSERIAL PRIMARY KEY,country_code TEXT NOT NULL DEFAULT 'PH',service_scope TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id BIGINT NOT NULL,territory_id BIGINT,promo_duration_days INTEGER NOT NULL DEFAULT 90,promo_started_at TIMESTAMPTZ NOT NULL,promo_ends_at TIMESTAMPTZ NOT NULL,first_event_type TEXT NOT NULL,first_event_id BIGINT NOT NULL,first_post_promo_completed_at TIMESTAMPTZ,first_post_promo_event_type TEXT NOT NULL DEFAULT '',first_post_promo_event_id BIGINT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(country_code,service_scope,subject_type,subject_id),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services')),CHECK(subject_type IN ('business','account')),CHECK(promo_duration_days=90),CHECK(promo_ends_at>promo_started_at))",
+    "CREATE TABLE IF NOT EXISTS service_monetization_entitlements(id BIGSERIAL PRIMARY KEY,country_code TEXT NOT NULL DEFAULT 'PH',service_scope TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id BIGINT NOT NULL,territory_id BIGINT,promo_duration_days INTEGER NOT NULL DEFAULT 90,promo_started_at TIMESTAMPTZ NOT NULL,promo_ends_at TIMESTAMPTZ NOT NULL,first_event_type TEXT NOT NULL,first_event_id BIGINT NOT NULL,first_post_promo_completed_at TIMESTAMPTZ,first_post_promo_event_type TEXT NOT NULL DEFAULT '',first_post_promo_event_id BIGINT,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(country_code,service_scope,subject_type,subject_id),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services')),CHECK(subject_type IN ('business','account')),CONSTRAINT service_monetization_entitlements_scope_promo_days_check CHECK((service_scope='delivery' AND promo_duration_days=30) OR (service_scope<>'delivery' AND promo_duration_days=90)),CHECK(promo_ends_at>promo_started_at))",
     "CREATE INDEX IF NOT EXISTS service_monetization_entitlements_period_idx ON service_monetization_entitlements(country_code,service_scope,promo_started_at,promo_ends_at)",
     "CREATE INDEX IF NOT EXISTS service_monetization_entitlements_territory_idx ON service_monetization_entitlements(territory_id,service_scope,promo_ends_at)",
     "CREATE TABLE IF NOT EXISTS service_monetization_events(id BIGSERIAL PRIMARY KEY,event_key TEXT NOT NULL UNIQUE,entitlement_id BIGINT NOT NULL REFERENCES service_monetization_entitlements(id) ON DELETE RESTRICT,country_code TEXT NOT NULL DEFAULT 'PH',service_scope TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id BIGINT NOT NULL,territory_id BIGINT,source_type TEXT NOT NULL,source_id BIGINT NOT NULL,completed_at TIMESTAMPTZ NOT NULL,phase_snapshot TEXT NOT NULL,gross_value NUMERIC(14,2) NOT NULL DEFAULT 0,currency_code TEXT NOT NULL DEFAULT 'PHP',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(service_scope IN ('marketplace','delivery','supplier','local_services')),CHECK(subject_type IN ('business','account')),CHECK(phase_snapshot IN ('promotional','post_promo')),CHECK(gross_value>=0))",
@@ -42,6 +53,71 @@ export async function ensureMonetizationSchema(pool){
     "CREATE INDEX IF NOT EXISTS service_monetization_events_subject_idx ON service_monetization_events(subject_type,subject_id,service_scope,completed_at)"
   ];
   for(const sql of statements)await pool.query(sql);
+
+  await pool.query(`
+    DO $promo$
+    DECLARE c RECORD;
+    BEGIN
+      FOR c IN
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid='service_monetization_entitlements'::regclass
+          AND contype='c'
+          AND pg_get_constraintdef(oid) LIKE '%promo_duration_days = 90%'
+          AND conname<>'service_monetization_entitlements_scope_promo_days_check'
+      LOOP
+        EXECUTE format('ALTER TABLE service_monetization_entitlements DROP CONSTRAINT %I',c.conname);
+      END LOOP;
+    END $promo$;
+  `);
+  await pool.query(`
+    UPDATE service_monetization_entitlements
+       SET promo_duration_days=CASE WHEN service_scope='delivery' THEN 30 ELSE 90 END,
+           promo_ends_at=promo_started_at+(CASE WHEN service_scope='delivery' THEN INTERVAL '30 days' ELSE INTERVAL '90 days' END),
+           updated_at=NOW()
+     WHERE promo_duration_days<>CASE WHEN service_scope='delivery' THEN 30 ELSE 90 END
+        OR promo_ends_at<>promo_started_at+(CASE WHEN service_scope='delivery' THEN INTERVAL '30 days' ELSE INTERVAL '90 days' END)
+  `);
+  await pool.query(`
+    DO $promo$
+    BEGIN
+      IF NOT EXISTS(
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid='service_monetization_entitlements'::regclass
+          AND conname='service_monetization_entitlements_scope_promo_days_check'
+      ) THEN
+        ALTER TABLE service_monetization_entitlements
+          ADD CONSTRAINT service_monetization_entitlements_scope_promo_days_check
+          CHECK((service_scope='delivery' AND promo_duration_days=30) OR (service_scope<>'delivery' AND promo_duration_days=90));
+      END IF;
+    END $promo$;
+  `);
+  await pool.query(`
+    UPDATE service_monetization_events e
+       SET phase_snapshot=CASE WHEN e.completed_at<x.promo_ends_at THEN 'promotional' ELSE 'post_promo' END
+      FROM service_monetization_entitlements x
+     WHERE x.id=e.entitlement_id
+       AND e.phase_snapshot<>CASE WHEN e.completed_at<x.promo_ends_at THEN 'promotional' ELSE 'post_promo' END
+  `);
+  await pool.query(`
+    UPDATE service_monetization_entitlements x SET
+      first_post_promo_completed_at=(
+        SELECT e.completed_at FROM service_monetization_events e
+        WHERE e.entitlement_id=x.id AND e.phase_snapshot='post_promo'
+        ORDER BY e.completed_at,e.id LIMIT 1
+      ),
+      first_post_promo_event_type=COALESCE((
+        SELECT e.source_type FROM service_monetization_events e
+        WHERE e.entitlement_id=x.id AND e.phase_snapshot='post_promo'
+        ORDER BY e.completed_at,e.id LIMIT 1
+      ),''),
+      first_post_promo_event_id=(
+        SELECT e.source_id FROM service_monetization_events e
+        WHERE e.entitlement_id=x.id AND e.phase_snapshot='post_promo'
+        ORDER BY e.completed_at,e.id LIMIT 1
+      ),
+      updated_at=NOW()
+  `);
 }
 
 export async function recordMonetizableCompletion(db,input={}){
@@ -56,6 +132,7 @@ export async function recordMonetizableCompletion(db,input={}){
   const grossValue=Math.max(0,money(input.grossValue||0));
   const currencyCode=clean(input.currencyCode||'PHP',10)||'PHP';
   const key=eventKey({serviceScope,subjectType,subjectId,sourceType,sourceId});
+  const promotionalDays=promoDaysForScope(serviceScope);
 
   const entitlement=await db.query(`
     INSERT INTO service_monetization_entitlements(
@@ -64,13 +141,14 @@ export async function recordMonetizableCompletion(db,input={}){
     ) VALUES('PH',$1,$2,$3,$4,$5,$6::timestamptz,$6::timestamptz+($5::text||' days')::interval,$7,$8)
     ON CONFLICT(country_code,service_scope,subject_type,subject_id) DO UPDATE SET
       territory_id=COALESCE(service_monetization_entitlements.territory_id,EXCLUDED.territory_id),
+      promo_duration_days=$5,
       promo_started_at=LEAST(service_monetization_entitlements.promo_started_at,EXCLUDED.promo_started_at),
-      promo_ends_at=LEAST(service_monetization_entitlements.promo_started_at,EXCLUDED.promo_started_at)+INTERVAL '90 days',
+      promo_ends_at=LEAST(service_monetization_entitlements.promo_started_at,EXCLUDED.promo_started_at)+($5::text||' days')::interval,
       first_event_type=CASE WHEN EXCLUDED.promo_started_at<service_monetization_entitlements.promo_started_at THEN EXCLUDED.first_event_type ELSE service_monetization_entitlements.first_event_type END,
       first_event_id=CASE WHEN EXCLUDED.promo_started_at<service_monetization_entitlements.promo_started_at THEN EXCLUDED.first_event_id ELSE service_monetization_entitlements.first_event_id END,
       updated_at=NOW()
     RETURNING *
-  `,[serviceScope,subjectType,subjectId,territoryId,PROMOTIONAL_DAYS,completedAt,sourceType,sourceId]);
+  `,[serviceScope,subjectType,subjectId,territoryId,promotionalDays,completedAt,sourceType,sourceId]);
 
   const e=entitlement.rows[0];
   await db.query(`
@@ -108,7 +186,7 @@ export async function recordMonetizableCompletion(db,input={}){
 export async function monetizationStatus(pool,{serviceScope,subjectType,subjectId,at=new Date()}={}){
   const scope=validScope(serviceScope),type=validSubjectType(subjectType),id=validId(subjectId,'subject_id');
   const q=await pool.query("SELECT * FROM service_monetization_entitlements WHERE country_code='PH' AND service_scope=$1 AND subject_type=$2 AND subject_id=$3",[scope,type,id]);
-  if(!q.rowCount)return{service_scope:scope,subject_type:type,subject_id:id,state:'not_started',promo_days:PROMOTIONAL_DAYS};
+  if(!q.rowCount)return{service_scope:scope,subject_type:type,subject_id:id,state:'not_started',promo_days:promoDaysForScope(scope)};
   const row=q.rows[0],now=iso(at,'at');
   const state=new Date(now)<new Date(row.promo_ends_at)?'promotional':'post_promo';
   return{...row,state,promo_days:Number(row.promo_duration_days),days_remaining:state==='promotional'?Math.max(0,Math.ceil((new Date(row.promo_ends_at)-new Date(now))/86400000)):0};
@@ -213,6 +291,7 @@ export async function promotionKpi(pool,{from,to,territoryId=null}={}){
   const expired=Number(x.expired_subjects||0),post=Number(x.post_promo_active_subjects||0);
   return{
     promotional_days:PROMOTIONAL_DAYS,
+    promotional_days_by_service:{...MONETIZATION_PROMO_DAYS_BY_SCOPE},
     active_promotional_subjects:Number(x.active_promotional_subjects||0),
     trials_started:Number(x.trials_started||0),
     trials_ending:Number(x.trials_ending||0),
@@ -225,4 +304,4 @@ export async function promotionKpi(pool,{from,to,territoryId=null}={}){
   };
 }
 
-export const monetizationInternals=Object.freeze({eventKey,phaseAt});
+export const monetizationInternals=Object.freeze({eventKey,phaseAt,promoDaysForScope});

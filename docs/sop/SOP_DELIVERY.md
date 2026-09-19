@@ -10,7 +10,7 @@ country_code: PH
 territory_scope: country
 owner_role: Documentation Governance Owner
 approver_role: Country Admin
-version: 1.1
+version: 1.2
 legal_classification: PLATFORM_POLICY
 ---
 
@@ -72,7 +72,7 @@ Applies to current Business & Life delivery workflows.
 13. At Customer destination, Courier reaches customer-arrival state before completion.
 14. Customer provides the active completion/handoff code at actual handoff.
 15. Courier enters code; system marks Delivery delivered, clears live location and completes linked order.
-16. Delivery monetization evidence uses the separate verified Delivery price. After promo and only after live policy activation, Business & Life's target is 10% of that Delivery price; Courier gross Delivery entitlement is 90% before other legitimate adjustments.
+16. Delivery monetization evidence uses the separate verified Delivery price. The Delivery promotional period is **30 days** from the first canonical completed Delivery. During those 30 days the Business & Life Delivery fee is 0%. After day 30, and only after live policy activation, Business & Life's target is 10% of that Delivery price; Courier gross Delivery entitlement is 90% before other legitimate adjustments.
 
 ## Control points
 
