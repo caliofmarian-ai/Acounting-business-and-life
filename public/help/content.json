@@ -1,5 +1,5 @@
 {
-  "version": "0.9-docs-v2",
+  "version": "0.10-docs-pricing-v1",
   "locale": "en-PH",
   "product": {
     "name": "Business & Life — Philippines",
@@ -1896,6 +1896,63 @@
         "order-statuses-explained",
         "supplier-po-statuses",
         "service-job-statuses"
+      ]
+    },
+    {
+      "slug": "pricing-fees-and-promotions",
+      "title": "Pricing, fees and promotions",
+      "section": "Money & pricing",
+      "profiles": [],
+      "status": "current",
+      "summary": "Understand exactly which fee belongs to Business & Life, which belongs to the payment processor, how promotional periods work, and why fees are displayed separately.",
+      "shortAnswer": "Business & Life uses a low, transparent 0.50% platform transaction fee for Merchant, Supplier and Local Services after the applicable 90-day promotion. Customer stays free. Delivery has a separate 30-day 0% promotion and a 10% post-promo production fee on verified delivery price. PayMongo/payment-processor charges are separate and may still apply during a Business & Life promotion.",
+      "steps": [
+        "Open Pricing & Benefits or the pricing disclosure in your active profile.",
+        "Identify the Business & Life fee separately from any payment-processor fee.",
+        "Check whether your profile is still inside its promotional entitlement.",
+        "For digital payment, review the current dated PayMongo/provider benchmark and the transaction-specific disclosure before confirming.",
+        "Check subscription pricing separately when an active subscription plan exists."
+      ],
+      "notes": [
+        "A Business & Life promotional period waives applicable Business & Life charges; it does not make independent third-party services free.",
+        "Merchant, Supplier and Local Services have an Owner-approved 0.50% post-promo Business & Life transaction rate.",
+        "The monthly subscription amount for Merchant, Supplier and Local Services is not yet activated and must not be invented.",
+        "Customer Business & Life platform fee remains 0%.",
+        "Delivery/Courier has no monthly subscription; its separate Owner-approved post-promo production fee is 10% of verified delivery price after a 30-day promotion.",
+        "Published PayMongo benchmark rates are dated, may exclude VAT and can change. Actual provider evidence overrides the benchmark."
+      ],
+      "sections": [
+        {
+          "title": "The pricing principle",
+          "paragraphs": [
+            "Business & Life is designed to be sustainable, not extractive. The platform publishes its own fee clearly so a participant can decide whether the ecosystem is worth using.",
+            "The current Owner-approved Business & Life transaction rate for Merchant, Supplier and Local Services is 0.50% after the applicable promotional period."
+          ]
+        },
+        {
+          "title": "What 90-day promotion means",
+          "paragraphs": [
+            "For Merchant, Supplier and Local Services, the applicable Business & Life subscription and Business & Life platform transaction fee remain at zero during the 90-day promotional entitlement.",
+            "This is not a promise of zero total cost. A digital payment processor such as PayMongo may still charge its own processing fee, and any applicable tax/VAT or other independent cost must remain separately identified."
+          ]
+        },
+        {
+          "title": "Fees are never one anonymous service fee",
+          "bullets": [
+            "Business & Life platform transaction fee — owned by Business & Life.",
+            "Business & Life subscription — separate monthly pricing when an active plan exists.",
+            "PayMongo/payment-processor fee — owned by the payment processor and dependent on the payment rail.",
+            "Delivery price and Delivery production economics — separate from merchandise/service value.",
+            "Applicable tax/VAT/statutory amounts — separately identified when required."
+          ]
+        },
+        {
+          "title": "Where to see current processor rates",
+          "paragraphs": [
+            "The in-app Pricing & Benefits view reads the current dated public pricing snapshot and displays the PayMongo benchmark by payment rail. Because provider pricing can change, the Help Center does not hard-code a permanent PayMongo percentage table.",
+            "Before a real payment is confirmed, transaction-specific provider evidence and the active pricing policy take precedence over an older benchmark."
+          ]
+        }
       ]
     }
   ]
