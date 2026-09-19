@@ -95,7 +95,7 @@ test('scoped APIs expose documents profile statements and consolidated own-accou
   assert.match(server,/\/api\/financial-statements\/consolidated\/:period/);
   assert.match(server,/\/api\/financial-statements\/:period/);
   assert.match(server,/financialDocumentScope/);
-  assert.match(server,/financeScope\(me,role,rawBusinessId\)/);
+  assert.match(server,/async function financialDocumentScope/);
   assert.match(server,/Shared business workspaces are counted once/);
   assert.match(server,/no_cross_account_or_cross_business_data:true/);
 });
