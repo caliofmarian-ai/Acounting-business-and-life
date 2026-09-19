@@ -33,12 +33,13 @@ test('provider destination reference is private and public response is masked',(
   assert.doesNotMatch(block,/provider_destination_ref:/);
 });
 
-test('Settings is inserted into the avatar drawer and works across all five public profiles',()=>{
-  assert.match(ui,/abl:drawer-rendered/);
-  assert.match(ui,/profileSettingsButton/);
+test('profile Settings is opened from the active profile and stays out of the avatar drawer',()=>{
+  assert.match(shell,/activeProfileSettingsButton/);
+  assert.match(shell,/BusinessLifeProfileSettings\?\.open/);
+  assert.doesNotMatch(ui,/document\.addEventListener\('abl:drawer-rendered',injectSettingsEntry/);
   for(const role of ['customer','merchant','supplier','courier','service_provider'])assert.match(ui,new RegExp(role));
   assert.match(ui,/Account & profile settings/);
-  assert.match(shell,/profileDrawerPanel/);
+  assert.match(ui,/profileSettingsWorkspace/);
 });
 
 test('real withdrawal execution remains disabled until a verified adapter exists',()=>{

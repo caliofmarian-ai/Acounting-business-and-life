@@ -7,6 +7,7 @@ const ROLE_META = {
 };
 const ROLE_ORDER = ['merchant', 'customer', 'supplier', 'courier', 'service_provider'];
 const ADMIN_RANK_LABELS = { super_admin:'Super Admin', country_admin:'Country Admin', territory_admin:'Territory Admin', specialist:'Specialist' };
+const COUNTRY_META = { PH:{flag:'🇵🇭',label:'Philippines'}, RO:{flag:'🇷🇴',label:'Romania'} };
 let snapshot = null;
 let profileFetchedAt = 0;
 let profileRefreshPromise = null;
@@ -67,10 +68,16 @@ function adminProfileRow(){
   const desc=rank==='super_admin'?'Platform control • all administrative functions':scope+' • delegated administration';
   return `<div id="adminProfileRole" class="profileRole adminProfileRole">
     <span class="roleIcon">🛡️</span>
-    <span class="roleCopy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(desc)}</small></span>
+    <span class="roleCopy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(desc)}</small><code>${escapeHtml(snapshot?.account?.admin_profile_id||'')}</code></span>
     <button class="roleAction" type="button" data-admin-profile>Switch</button>
   </div>`;
 }
+function countryMeta(code){return COUNTRY_META[code]||{flag:'🌐',label:code||'Country not set'}}
+function identityLine(id,label='ID'){
+  return `<span class="publicIdentity"><span>${escapeHtml(label)}</span><code>${escapeHtml(id||'Preparing ID…')}</code>${id?`<button type="button" data-copy-id="${escapeHtml(id)}" aria-label="Copy ${escapeHtml(label)}">Copy</button>`:''}</span>`;
+}
+function bindCopyIds(panel){panel.querySelectorAll('[data-copy-id]').forEach(button=>button.onclick=async()=>{try{await navigator.clipboard.writeText(button.dataset.copyId);showToast('ID copied.')}catch{showToast('Select and copy the ID manually.')}})}
+function drawerHeader(account,back=false){const country=countryMeta(account.country_code);return `<div class="drawerHandle"></div><div class="drawerHeader">${back?'<button id="drawerBack" class="drawerBack" type="button" aria-label="Back">‹</button>':avatarMarkup(account)}<div class="drawerIdentity"><h2>${escapeHtml(back?'Account Settings':account.display_name||'Business owner')}</h2><p>${country.flag} ${escapeHtml(country.label)} · ${escapeHtml(account.country_code||'')}</p>${identityLine(account.personal_id,'Personal ID')}</div><button id="drawerClose" class="drawerClose" type="button" aria-label="Close">×</button></div>`}
 async function refreshAdminContext(force=false){
   if(!token()){adminContext=null;adminContextFetchedAt=0;return null}
   if(!force&&adminContextFetchedAt&&Date.now()-adminContextFetchedAt<ADMIN_CONTEXT_CACHE_MS)return adminContext;
@@ -106,9 +113,10 @@ function ensureShellChrome() {
   if (!document.getElementById('accountAvatarButton')) {
     const controls = document.createElement('div');
     controls.className = 'shellProfileControls';
-    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open account and profiles"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
+    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="activeProfileSettingsButton" class="activeProfileSettingsButton" type="button" aria-label="Open settings for active profile">⚙</button><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open account and profiles"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
     topActions.appendChild(controls);
     controls.querySelector('#accountAvatarButton').addEventListener('click', openDrawer);
+    controls.querySelector('#activeProfileSettingsButton').addEventListener('click',()=>window.BusinessLifeProfileSettings?.open?.(activeRole));
   }
   if (!document.getElementById('roleHub')) {
     const hub = document.createElement('section');
@@ -147,7 +155,7 @@ function renderDrawer() {
   const panel = document.getElementById('profileDrawerPanel');
   if (!panel) return;
   const adminRow = adminProfileRow();
-  const profileRows = ROLE_ORDER.map(role => {
+  const profileRows = ROLE_ORDER.filter(isEnabled).map(role => {
     const meta = ROLE_META[role];
     const profile = roleProfile(role);
     const enabled = Boolean(profile?.enabled);
@@ -155,19 +163,28 @@ function renderDrawer() {
     const statusText = role === 'courier' && snapshot.courier ? ` • ${snapshot.courier.eligibility_status.replaceAll('_',' ')}` : '';
     return `<div class="profileRole ${current ? 'active' : ''}">
       <span class="roleIcon">${meta.icon}</span>
-      <span class="roleCopy"><strong>${meta.label}</strong><small>${meta.desc}${statusText}</small></span>
-      <button class="roleAction ${current ? 'active' : enabled ? '' : 'enable'}" type="button" data-role-action="${role}">${current ? 'Active' : enabled ? 'Switch' : 'Enable'}</button>
+      <span class="roleCopy"><strong>${meta.label}</strong><small>${meta.desc}${statusText}</small><code>${escapeHtml(profile?.profile_id||'')}</code></span>
+      <button class="roleAction ${current ? 'active' : ''}" type="button" data-role-action="${role}" ${current?'disabled':''}>${current ? 'Active' : 'Switch'}</button>
     </div>`;
   }).join('');
   panel.innerHTML = `
-    <div class="drawerHandle"></div>
-    <div class="drawerHeader">${avatarMarkup(account)}<div class="drawerIdentity"><h2>${escapeHtml(account.display_name || 'Business owner')}</h2><p>${escapeHtml(account.email || account.phone || 'One account • multiple profiles')}</p></div><button id="drawerClose" class="drawerClose" type="button" aria-label="Close">×</button></div>
-    <section class="drawerSection"><h3>Switch profile</h3><div class="profileRoleList">${adminRow}${profileRows}</div></section>
-    <section class="drawerSection growthDrawerSection">
-      <div class="growthDrawerCopy"><span class="growthDrawerEyebrow">INVITE &amp; SHARE</span><h3>Promotion Center</h3><p>Share your account-level referral link from the active ${escapeHtml(ROLE_META[activeRole]?.label || activeRole)} profile.</p></div>
-      <button id="promotionCenterButton" class="growthDrawerButton" type="button">Open Promotion Center</button>
-    </section>
-    <section class="drawerSection"><h3>Account identity</h3>
+    ${drawerHeader(account)}
+    <section class="drawerSection"><h3>Active profiles</h3><div class="profileRoleList">${adminRow}${profileRows}</div></section>
+    <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>Personal details, security and profile management</small></span><b>›</b></button>`;
+  panel.querySelector('#drawerClose').onclick = closeDrawer;
+  panel.querySelector('#accountSettingsButton').onclick = renderAccountSettings;
+  panel.querySelector('[data-admin-profile]')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
+  panel.querySelectorAll('[data-role-action]').forEach(btn => btn.onclick = () => enableOrSwitch(btn.dataset.roleAction));
+  bindCopyIds(panel);
+  document.dispatchEvent(new CustomEvent('abl:drawer-rendered', { detail: { activeRole, accountId: Number(account.id) || null, view:'profiles' } }));
+}
+
+function renderAccountSettings(){
+  if(!snapshot?.account)return;
+  const account=snapshot.account,panel=document.getElementById('profileDrawerPanel');if(!panel)return;
+  const profileManagement=ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),locked=role==='merchant'&&Number(account.id)===1;const action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`;return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${enabled?'Active profile':'Not active'}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action} ${locked?'disabled':''}>${locked?'Required':enabled?'Disable':'Enable'}</button></div>`}).join('');
+  panel.innerHTML=`${drawerHeader(account,true)}
+    <section class="drawerSection"><h3>Personal details</h3>
       <form id="accountIdentityForm" class="profileForm">
         <div class="avatarEdit"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"><button id="removeAvatar" class="miniBtn" type="button">Remove photo</button></div>
         <div class="avatarHint">Photo is compressed on your phone before it is saved.</div>
@@ -177,16 +194,20 @@ function renderDrawer() {
         <label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>
         <div class="formActions"><button class="primary" type="submit">Save account</button></div>
       </form>
-    </section>`;
+    </section>
+    <section class="drawerSection"><h3>Manage profiles</h3><p class="drawerSectionIntro">Every profile keeps the ID derived from your Personal ID, even when disabled and reactivated.</p><div class="profileRoleList">${profileManagement}</div></section>`;
   panel.querySelector('#drawerClose').onclick = closeDrawer;
-  panel.querySelector('#promotionCenterButton').onclick = () => { window.location.href = `/referral/promotion-center.html?profile=${encodeURIComponent(activeRole)}`; };
-  panel.querySelector('[data-admin-profile]')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
-  panel.querySelectorAll('[data-role-action]').forEach(btn => btn.onclick = () => enableOrSwitch(btn.dataset.roleAction));
+  panel.querySelector('#drawerBack').onclick=renderDrawer;
   panel.querySelector('#accountIdentityForm').onsubmit = saveIdentity;
   panel.querySelector('#avatarFile').onchange = uploadAvatar;
   panel.querySelector('#removeAvatar').onclick = removeAvatar;
-  document.dispatchEvent(new CustomEvent('abl:drawer-rendered', { detail: { activeRole, accountId: Number(account.id) || null } }));
+  panel.querySelectorAll('[data-profile-toggle]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.profileToggle,btn.dataset.enabled!=='1'));
+  panel.querySelectorAll('[data-role-action]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.roleAction,true));
+  bindCopyIds(panel);
+  document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{activeRole,accountId:Number(account.id)||null}}));
 }
+
+async function toggleProfile(role,enabled){try{snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled,visibility:role==='merchant'?'public':'private'})});activeRole=snapshot.account.active_role||activeRole;profileFetchedAt=Date.now();applyActiveRole();publishProfileState();renderAccountSettings();showToast(enabled?'Profile enabled.':'Profile disabled.')}catch(err){showToast(err.message)}}
 
 async function openDrawer() {
   if (!token()) return showToast('Sign in first to open your account.');
@@ -221,7 +242,7 @@ async function saveIdentity(event) {
       phone: document.getElementById('shellPhone').value,
       address: document.getElementById('shellAddress').value
     }) });
-    profileFetchedAt=Date.now(); renderTopAccount(); renderDrawer(); showToast('Account saved.');
+    profileFetchedAt=Date.now(); renderTopAccount(); renderAccountSettings(); showToast('Account saved.');
   } catch (err) { showToast(err.message); }
 }
 
@@ -252,7 +273,7 @@ async function uploadAvatar(event) {
     snapshot = await profileApi('/api/me', { method: 'PATCH', body: JSON.stringify({
       display_name: snapshot.account.display_name || 'Business owner', phone: snapshot.account.phone || '', email: snapshot.account.email || '', address: snapshot.account.address || '', avatar_data_url
     }) });
-    profileFetchedAt=Date.now(); renderTopAccount(); renderDrawer(); showToast('Profile photo updated.');
+    profileFetchedAt=Date.now(); renderTopAccount(); renderAccountSettings(); showToast('Profile photo updated.');
   } catch (err) { showToast(err.message); }
 }
 async function removeAvatar() {
@@ -260,7 +281,7 @@ async function removeAvatar() {
     snapshot = await profileApi('/api/me', { method: 'PATCH', body: JSON.stringify({
       display_name: snapshot.account.display_name || 'Business owner', phone: snapshot.account.phone || '', email: snapshot.account.email || '', address: snapshot.account.address || '', avatar_data_url: ''
     }) });
-    profileFetchedAt=Date.now(); renderTopAccount(); renderDrawer(); showToast('Profile photo removed.');
+    profileFetchedAt=Date.now(); renderTopAccount(); renderAccountSettings(); showToast('Profile photo removed.');
   } catch (err) { showToast(err.message); }
 }
 

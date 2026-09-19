@@ -82,4 +82,5 @@ function guardNonOwnerMerchant(){
 function observeDrawer(){const panel=document.getElementById('profileDrawerPanel');if(!panel)return setTimeout(observeDrawer,100);new MutationObserver(()=>decorateDrawer()).observe(panel,{childList:true,subtree:false})}
 async function boot(){ensureAuthChoices();ensureModal();observeDrawer();if(authToken()){await loadProfile();decorateDrawer();setTimeout(guardNonOwnerMerchant,150);const shell=document.getElementById('shell');if(shell)new MutationObserver(()=>setTimeout(guardNonOwnerMerchant,30)).observe(shell,{attributes:true,attributeFilter:['class']});}}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+document.addEventListener('abl:account-settings-rendered',decorateDrawer,{passive:true});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAuth()});

@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
+import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
 
 const { Pool } = pg;
 const app = express();
@@ -89,18 +90,19 @@ async function initDb(){
     SELECT setval(pg_get_serial_sequence('accounts','id'), GREATEST((SELECT MAX(id) FROM accounts),1));
     SELECT setval(pg_get_serial_sequence('businesses','id'), GREATEST((SELECT MAX(id) FROM businesses),1));
   `);
+  await ensurePersonIdentitySchema(pool);
 }
 
 async function profileSnapshot(accountId=1){
   const [account,profiles,business,cust,supp,cour]=await Promise.all([
-    pool.query(`SELECT id,display_name,phone,email,address,created_at,updated_at FROM accounts WHERE id=$1`,[accountId]),
+    pool.query(`SELECT id,display_name,phone,email,address,identity_country_code,personal_public_id,created_at,updated_at FROM accounts WHERE id=$1`,[accountId]),
     pool.query(`SELECT role,enabled,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role`,[accountId]),
     pool.query(`SELECT b.id,b.name,bm.membership_role,bm.active FROM businesses b JOIN business_memberships bm ON bm.business_id=b.id WHERE bm.account_id=$1 AND bm.active=TRUE ORDER BY b.id`,[accountId]),
     pool.query(`SELECT * FROM customer_profiles WHERE account_id=$1`,[accountId]),
     pool.query(`SELECT * FROM supplier_profiles WHERE account_id=$1`,[accountId]),
     pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[accountId])
   ]);
-  return {account:account.rows[0],profiles:profiles.rows,businesses:business.rows,customer:cust.rows[0]||null,supplier:supp.rows[0]||null,courier:cour.rows[0]||null};
+  return withPublicProfileIds({account:account.rows[0],profiles:profiles.rows,businesses:business.rows,customer:cust.rows[0]||null,supplier:supp.rows[0]||null,courier:cour.rows[0]||null});
 }
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');res.json({ok:true,db:true,version:'0.3.5-profile-foundation'})}catch{res.status(503).json({ok:false,db:false,version:'0.3.5-profile-foundation'})}});
