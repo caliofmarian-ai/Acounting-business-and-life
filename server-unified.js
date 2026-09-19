@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -125,11 +126,12 @@ async function initProfileDb() {
     SELECT setval(pg_get_serial_sequence('accounts','id'), GREATEST((SELECT MAX(id) FROM accounts),1));
     SELECT setval(pg_get_serial_sequence('businesses','id'), GREATEST((SELECT MAX(id) FROM businesses),1));
   `);
+  await ensurePersonIdentitySchema(pool);
 }
 
 async function profileSnapshot(accountId = 1) {
   const [account, profiles, businesses, customer, supplier, courier, serviceProvider] = await Promise.all([
-    pool.query(`SELECT id,display_name,phone,email,address,avatar_data_url,active_role,created_at,updated_at FROM accounts WHERE id=$1`, [accountId]),
+    pool.query(`SELECT id,display_name,phone,email,address,avatar_data_url,active_role,identity_country_code,personal_public_id,created_at,updated_at FROM accounts WHERE id=$1`, [accountId]),
     pool.query(`SELECT role,enabled,visibility,status,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role`, [accountId]),
     pool.query(`SELECT b.id,b.name,bm.membership_role,bm.active FROM businesses b JOIN business_memberships bm ON bm.business_id=b.id WHERE bm.account_id=$1 AND bm.active=TRUE ORDER BY b.id`, [accountId]),
     pool.query(`SELECT * FROM customer_profiles WHERE account_id=$1`, [accountId]),
@@ -137,7 +139,7 @@ async function profileSnapshot(accountId = 1) {
     pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`, [accountId]),
     pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`, [accountId])
   ]);
-  return {
+  return withPublicProfileIds({
     account: account.rows[0],
     profiles: profiles.rows,
     businesses: businesses.rows,
@@ -145,7 +147,7 @@ async function profileSnapshot(accountId = 1) {
     supplier: supplier.rows[0] || null,
     courier: courier.rows[0] || null,
     service_provider: serviceProvider.rows[0] || null
-  };
+  });
 }
 
 function injectedIndex() {

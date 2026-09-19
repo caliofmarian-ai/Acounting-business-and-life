@@ -31,7 +31,7 @@ async function oauthHandoff(raw){try{const r=await api('/api/auth/oauth/handoff'
 async function decorateSecurity(){
   if(!isV2())return;
   const panel=document.getElementById('profileDrawerPanel');
-  if(!panel)return;
+  if(!panel||!panel.querySelector('#accountIdentityForm'))return;
   const existing=[...panel.querySelectorAll('.authUpgradeCard')];
   if(existing.length){existing.slice(1).forEach(x=>x.remove());return}
   if(panel.dataset.authSecurityDecorating==='1')return;
@@ -63,7 +63,7 @@ async function decorateSecurity(){
   }catch{}finally{delete panel.dataset.authSecurityDecorating}
 }
 
-function watchDrawer(){document.addEventListener('abl:drawer-rendered',()=>decorateSecurity().catch(()=>{}))}
+function watchDrawer(){document.addEventListener('abl:account-settings-rendered',()=>decorateSecurity().catch(()=>{}))}
 async function boot(){
   if(token()&&!isV2())localStorage.removeItem(ABL_AUTH_TOKEN);
   const params=new URLSearchParams(location.search);

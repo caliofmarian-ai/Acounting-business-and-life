@@ -49,12 +49,13 @@ test('Account/Auth exposes authenticated referral identity without role-grant si
   assert.doesNotMatch(source, /api\/growth\/referral[\s\S]{0,1600}(INSERT INTO profiles|UPDATE profiles)/);
 });
 
-test('unified profile drawer exposes one universal Promotion Center entry', () => {
+test('Promotion Center belongs to the selected profile settings, not the avatar drawer', () => {
   const shell = read('public/shell.js');
-  assert.match(shell, /INVITE &amp; SHARE/);
-  assert.doesNotMatch(shell, /INVITE &amp; EARN/);
-  assert.match(shell, /id="promotionCenterButton"/);
-  assert.match(shell, /promotion-center\.html\?profile=/);
+  const settings = read('public/profile-settings-ui.js');
+  const drawer=shell.slice(shell.indexOf('function renderDrawer'),shell.indexOf('function renderAccountSettings'));
+  assert.doesNotMatch(drawer,/Promotion Center/);
+  assert.match(settings,/id="profilePromotionCenter"/);
+  assert.match(settings,/promotion-center\.html\?profile=/);
 });
 
 test('Promotion Center loads the authenticated account identity and never defaults to demo identity', () => {

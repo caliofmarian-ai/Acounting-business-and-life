@@ -20,6 +20,7 @@ const modules=[
   {id:'finance',label:'Finance',any:['admin.console']},
   {id:'audit',label:'Audit & Metrics',any:['audit.view','metrics.view']},
   {id:'team',label:'Team & Delegation',any:['admin.assign_limited','admin.delegate']}
+  ,{id:'settings',label:'Settings',any:['admin.console']}
 ];
 function hasAny(list){const p=new Set(state.me?.permissions||[]);return list.some(x=>p.has(x))}
 function rankLabel(code){return state.catalog?.ranks?.find(x=>x.code===code)?.label||code}
@@ -662,6 +663,10 @@ async function teamPanel(){
   state.assignments=await api('/api/admin/assignments');
   return hero()+'<p class="moduleIntro">Ranks define scope and hierarchy. Functions define the actual work delegated to each person.</p>'+delegationForm()+'<div class="sectionTitle"><h3>Delegated team</h3></div>'+rows(state.assignments,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email)+'</strong><span class="status">'+esc(rankLabel(x.effective_rank||x.authority_rank||x.admin_role))+'</span></div><span class="muted">'+esc(x.territory_name||x.country_code||'PH')+'</span><div class="permissionPills">'+(x.functions||[]).map(f=>'<span>'+esc(f)+'</span>').join('')+'</div></div>');
 }
+function adminSettingsPanel(){
+  const account=state.me?.account||{},a=highestAssignment(),country=account.country_code||a?.country_code||'PH',flag=country==='PH'?'🇵🇭':country==='RO'?'🇷🇴':'🌐';
+  return hero()+'<p class="moduleIntro">Settings and identity for this delegated Admin profile.</p><section class="card adminSettingsIdentity"><div class="sectionTitle"><h3>Admin identity</h3></div><div class="row"><div><strong>'+flag+' '+esc(country==='PH'?'Philippines':country==='RO'?'Romania':country)+'</strong><span class="muted">Issuing country · stable identity attribute</span></div></div><div class="row"><div><strong>'+esc(account.admin_profile_id||'Admin ID preparing…')+'</strong><span class="muted">Admin Profile ID · derived from '+esc(account.personal_id||'Personal ID')+'</span></div></div><div class="row"><div><strong>'+esc(a?rankLabel(a.effective_rank||a.authority_rank||a.admin_role):'Admin')+'</strong><span class="muted">Authority is delegated and cannot be increased from Settings.</span></div></div></section><section class="card"><h3>Admin preferences</h3><p class="muted">Support language, AI assistance and notification preferences will live here. Operational permissions remain controlled by Team & Delegation and the audit trail.</p><a class="adminButton" href="/">Open personal Account Settings</a></section>';
+}
 async function wireTeam(){
   drawFunctionChoices();
   const role=document.getElementById('delegateRole');if(role)role.onchange=drawFunctionChoices;
@@ -684,6 +689,7 @@ async function renderActive(){
   else if(state.active==='finance'){p.innerHTML=await financePanel();await wireFinance()}
   else if(state.active==='audit')p.innerHTML=await auditPanel();
   else if(state.active==='team'){p.innerHTML=await teamPanel();await wireTeam()}
+  else if(state.active==='settings')p.innerHTML=adminSettingsPanel();
 }
 async function loadBase(){
   const bootstrap=await api('/api/admin/bootstrap');

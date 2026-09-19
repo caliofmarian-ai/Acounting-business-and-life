@@ -394,14 +394,14 @@ function requirePermissionFromContext(ctx,permission,territoryId=null){
   if(!result.allowed)throw Object.assign(new Error('Admin permission or territory scope is not available'),{status:403});
   return result.assignment;
 }
-function adminIdentityPayload(assignments){
+function adminIdentityPayload(assignments,account=null){
   const permissions=new Set(),superAdmin=assignments.some(a=>assignmentRank(a)==='super_admin');
   if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
   else for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
-  return{is_admin:assignments.length>0,assignments,permissions:[...permissions].sort()};
+  return{is_admin:assignments.length>0,assignments,permissions:[...permissions].sort(),account:account?{personal_id:account.personal_id,country_code:account.country_code,admin_profile_id:account.admin_profile_id,display_name:account.display_name}:undefined};
 }
-function adminMePayload(ctx){
-  return adminIdentityPayload(ctx.assignments);
+function adminMePayload(ctx,account=null){
+  return adminIdentityPayload(ctx.assignments,account);
 }
 function adminCatalogPayload(ctx){
   if(!ctx.assignments.length)throw Object.assign(new Error('Admin assignment required'),{status:403});
@@ -556,7 +556,7 @@ app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/admin/me',async(req,res,next)=>{try{
   const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
-  res.json(adminIdentityPayload(assignments));
+  res.json(adminIdentityPayload(assignments,me.account));
 }catch(e){next(e)}});
 app.get('/api/admin/catalog',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
@@ -566,7 +566,7 @@ app.get('/api/admin/bootstrap',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
   requirePermissionFromContext(ctx,'admin.console');
   const overview=await adminOverview(me.account.id,ctx);
-  res.json({me:adminMePayload(ctx),catalog:adminCatalogPayload(ctx),overview});
+  res.json({me:adminMePayload(ctx,me.account),catalog:adminCatalogPayload(ctx),overview});
 }catch(e){next(e)}});
 app.get('/api/admin/overview',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
