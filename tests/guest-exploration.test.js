@@ -38,3 +38,23 @@ test('guest remains an experience layer, not an identity or business entity', ()
   assert.match(architecture, /Guest -> Registered User -> Email Verified -> Activated Profile/);
   assert.match(architecture, /Server-side authorization\/privacy always wins/);
 });
+
+
+test('mobile guest entry is independent from hidden legacy auth choices', () => {
+  assert.match(guest, /guestExploreEntrySlot/);
+  assert.doesNotMatch(guest, /const choices = document\.getElementById\('accountAuthChoices'\)/);
+  assert.match(guest, /modernAuthRoot/);
+});
+
+test('modern authentication renders before hardening status network request completes', () => {
+  const authUi = readFileSync(new URL('../public/auth-hardening-ui.js', import.meta.url), 'utf8');
+  const panelAt = authUi.indexOf('if(root)panel()');
+  const fetchAt = authUi.indexOf("fetch('/api/auth/hardening/status')");
+  assert.ok(panelAt >= 0 && fetchAt > panelAt, 'auth panel must render before network hardening status fetch');
+  assert.match(authUi, /must never leave the entry screen blank/i);
+});
+
+test('mobile auth CSS keeps entry controls above the fold', () => {
+  const css = readFileSync(new URL('../public/auth-hardening.css', import.meta.url), 'utf8');
+  assert.match(css, /#login\.centered\{align-content:start/);
+});
