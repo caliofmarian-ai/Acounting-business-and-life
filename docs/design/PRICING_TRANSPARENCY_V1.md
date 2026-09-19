@@ -19,17 +19,17 @@ This message is a verifiable pricing principle, not a comparison attack against 
 ### Merchant
 - Business & Life transaction fee during 90-day promo: 0%;
 - Owner-approved post-promo rate: 0.50% of eligible transaction;
-- monthly subscription amount: not activated yet.
+- monthly subscription: **₱99/month after promo**; live billing activation remains gated.
 
 ### Supplier
 - Business & Life transaction fee during 90-day promo: 0%;
 - Owner-approved post-promo rate: 0.50% of eligible B2B transaction;
-- monthly subscription amount: not activated yet.
+- monthly subscription: **₱99/month after promo**; live billing activation remains gated.
 
 ### Local Services
 - Business & Life transaction fee during 90-day promo: 0%;
 - Owner-approved post-promo rate: 0.50% of eligible completed job/transaction;
-- monthly subscription amount: not activated yet.
+- monthly subscription: **₱99/month after promo**; live billing activation remains gated.
 
 ### Delivery / Courier
 - no monthly subscription;
