@@ -1,6 +1,7 @@
 export const MONETIZED_PROFILE_ROLES=Object.freeze(['customer','merchant','supplier','local_services','courier']);
 export const OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT=10;
 export const OWNER_APPROVED_DELIVERY_PROMO_DAYS=30;
+export const OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT=0.5;
 export const DELIVERY_PRODUCTION_FEE_BASIS='verified_delivery_price';
 
 export const PROFILE_MONETIZATION_MODEL=Object.freeze({
@@ -16,6 +17,7 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     role:'merchant',
     monthly_subscription:true,
     transaction_fee:true,
+    owner_approved_transaction_rate_pct:OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,
     delivery_production_fee:false,
     promotional_days:90,
     promotional_entitlement:true,
@@ -25,6 +27,7 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     role:'supplier',
     monthly_subscription:true,
     transaction_fee:true,
+    owner_approved_transaction_rate_pct:OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,
     delivery_production_fee:false,
     promotional_days:90,
     promotional_entitlement:true,
@@ -35,6 +38,7 @@ export const PROFILE_MONETIZATION_MODEL=Object.freeze({
     user_label:'artisan / local services provider',
     monthly_subscription:true,
     transaction_fee:true,
+    owner_approved_transaction_rate_pct:OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,
     delivery_production_fee:false,
     promotional_days:90,
     promotional_entitlement:true,
@@ -161,7 +165,7 @@ export function monetizationPolicyDraft(role,input={}){
     monthly_subscription_enabled:model.monthly_subscription,
     monthly_subscription_amount:model.monthly_subscription?nullableMoney(input.monthly_subscription_amount):0,
     transaction_fee_enabled:model.transaction_fee,
-    transaction_rate_pct:model.transaction_fee?nullablePct(input.transaction_rate_pct):0,
+    transaction_rate_pct:model.transaction_fee?nullablePct(input.transaction_rate_pct??model.owner_approved_transaction_rate_pct):0,
     transaction_fixed_amount:model.transaction_fee?nullableMoney(input.transaction_fixed_amount):0,
     delivery_production_fee_enabled:model.delivery_production_fee,
     delivery_production_rate_pct:model.delivery_production_fee?nullablePct(input.delivery_production_rate_pct??OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT):0,
