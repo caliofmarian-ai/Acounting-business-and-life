@@ -42,7 +42,7 @@ test('platform and operator fee policy exists only as versioned draft-capable co
   assert.match(core,/protected_platform_policy/);
   assert.match(core,/status TEXT NOT NULL DEFAULT 'draft'/);
   assert.doesNotMatch(server,/fee-policies\/:id\/activate/);
-  assert.match(ui,/No platform\/operator fee is invented/);
+  assert.match(ui,/Owner-approved target rates are canonical/);
 });
 
 test('refunds and reconciliation stay non-authoritative until provider adapters are installed',()=>{
