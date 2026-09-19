@@ -165,22 +165,26 @@ async function mountEconomicSummary() {
     if(settings)settings.onclick=()=>window.BusinessLifeProfileSettings?.open?.(overview.role);
   }catch(err){console.warn('Business Finance overview:',err.message)}
 }
-async function bootAccountingWorkspace() {
+async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
   if(!ablToken()) return;
   try{
-    const me=window.BusinessLifeProfileState?.snapshot||await api('/api/me');
-    const role=me.account?.active_role;
-    if(!['merchant','supplier'].includes(role)) return;
+    const state=detail?.snapshot?detail:window.BusinessLifeProfileState;
+    const me=state?.snapshot,role=state?.surface==='profile'?state.activeRole:null;
+    if(!me||!['merchant','supplier'].includes(role)){
+      document.getElementById('businessWorkspaceBar')?.remove();
+      document.getElementById('supplierAccountingTile')?.remove();
+      return;
+    }
     const profile=me.profiles?.find(p=>p.role===role);
     if(!profile?.enabled) return;
-    const state=await api('/api/accounting/workspaces');
-    accountingState={role:state.role,activeBusinessId:Number(state.active_business_id),businesses:state.businesses||[]};
+    const workspaceState=await api('/api/accounting/workspaces');
+    accountingState={role:workspaceState.role,activeBusinessId:Number(workspaceState.active_business_id),businesses:workspaceState.businesses||[]};
     mountWorkspaceBar();
     mountSupplierAccountingTile();
     if(role==='merchant') mountEconomicSummary();
-    document.addEventListener('abl:profile-state',()=>{mountWorkspaceBar();mountSupplierAccountingTile()});
   }catch(err){console.warn('Accounting workspace:',err.message)}
 }
 
-if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(bootAccountingWorkspace,120));
-else setTimeout(bootAccountingWorkspace,120);
+document.addEventListener('abl:profile-state',event=>bootAccountingWorkspace(event.detail),{passive:true});
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>bootAccountingWorkspace(),120));
+else setTimeout(()=>bootAccountingWorkspace(),120);

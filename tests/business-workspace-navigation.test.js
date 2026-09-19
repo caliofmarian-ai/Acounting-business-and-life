@@ -22,8 +22,10 @@ test('workspace switch refreshes visible accounting surfaces without rebuilding 
   assert.match(production,/if\(isMerchantBaseActive\(\)\)refreshAll\(\)/);
 });
 
-test('accounting workspace reuses canonical shell identity before falling back to /api/me',()=>{
-  assert.match(accounting,/window\.BusinessLifeProfileState\?\.snapshot\|\|await api\('\/api\/me'\)/);
+test('accounting workspace requires canonical Profile surface and never refetches identity',()=>{
+  assert.match(accounting,/state\?\.surface===['"]profile['"]\?state\.activeRole:null/);
+  assert.match(accounting,/\['merchant','supplier'\]\.includes\(role\)/);
+  assert.doesNotMatch(accounting,/api\(['"]\/api\/me['"]\)/);
 });
 
 test('failed workspace switch restores the previous client context',()=>{
