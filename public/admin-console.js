@@ -133,6 +133,54 @@ function monetizationV2Card(model){
     +'<details class="commissionAssumptions"><summary>Shared company cost simulator · 50% equal + 50% activity</summary><form id="sharedCostScenarioForm" class="adminForm"><div class="financeFormGrid"><label>Total shared company cost (PHP)<input name="total_amount" type="number" min="0" step="0.01" required></label><label>Activity driver<select name="driver_code">'+(shared.supported_driver_examples||[]).map(x=>'<option value="'+esc(x)+'">'+esc(x.replaceAll('_',' '))+'</option>').join('')+'</select></label></div><div id="sharedCostScopeRows">'+sharedCostScopeRow(1)+sharedCostScopeRow(2)+'</div><button type="button" class="secondary" id="addSharedCostScope">Add country / zone</button><button class="primary" type="submit">Calculate 50/50 allocation</button><div id="sharedCostScenarioResult"></div></form></details>'
     +'</section>';
 }
+function renderDigitalIncentiveResult(x){
+  const s=x?.selected||{},p=s?.provider_cost||{},cash=s?.cash_cost_model||{},i=s?.incentive||{};
+  const comparison=x?.comparison||[];
+  const stateCopy={
+    SUPPORTED:'Credit is economically supportable under these assumptions.',
+    NO_ECONOMIC_SAVINGS:'Digital processing costs at least as much as the modeled Cash handling cost. Supported credit is zero.',
+    SAVINGS_EXIST_BUT_NO_CREDIT_CONFIGURED:'Digital payment saves money, but the configured return-to-user share/cap produces no credit.',
+    BUDGET_EXHAUSTED:'Savings exist, but the Growth/Finance credit budget is exhausted.'
+  };
+  return '<div class="digitalIncentiveResults">'
+    +'<div class="'+(s.state==='SUPPORTED'?'notice':(s.state==='NO_ECONOMIC_SAVINGS'?'error':'notice'))+'"><strong>'+esc(s.state||'SIMULATION')+'</strong><br>'+esc(stateCopy[s.state]||'Read-only scenario.')+'</div>'
+    +'<div class="financeSummary">'
+      +'<div class="metric"><strong>'+financeMoney(p.modeled_total_processor_cost||0)+'</strong><span>Digital processor cost</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(cash.modeled_cash_total_cost||0)+'</strong><span>Modeled Cash handling cost</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(i.gross_operational_savings||0)+'</strong><span>Gross operational savings</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(i.supported_credit||0)+'</strong><span>Max configured credit</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(i.retained_business_life_savings||0)+'</strong><span>Retained Business & Life savings</span></div>'
+      +'<div class="metric"><strong>'+financeMoney(i.net_business_life_impact_after_credit||0)+'</strong><span>Net company impact</span></div>'
+    +'</div>'
+    +'<div class="financeTruth"><strong>'+esc(p.rail_label||'Payment rail')+'</strong><span>Published benchmark '+financePct(p.published_variable_rate_pct)+(Number(p.published_fixed_fee_php||0)>0?' + '+financeMoney(p.published_fixed_fee_php):'')+' · fee benchmark excludes VAT · as of '+esc(p.benchmark_as_of||'')+'. Actual provider evidence overrides this estimate.</span></div>'
+    +'<div class="sectionTitle"><h3>Rail comparison for this ticket</h3></div>'
+    +rows(comparison,r=>'<div class="row"><div class="rowHeader"><strong>'+esc(r.provider_cost?.rail_label||r.provider_cost?.rail_code)+'</strong><span class="status">'+financeMoney(r.provider_cost?.modeled_total_processor_cost||0)+'</span></div><div class="financeLine"><span>Supported credit '+financeMoney(r.incentive?.supported_credit||0)+'</span><span>Net impact '+financeMoney(r.incentive?.net_business_life_impact_after_credit||0)+'</span><span>'+esc(r.state||'')+'</span></div></div>')
+    +'</div>';
+}
+function digitalPaymentIncentiveCard(bench){
+  const rails=bench?.rails||{};
+  const options=Object.values(rails).map(r=>'<option value="'+esc(r.code)+'">'+esc(r.label)+'</option>').join('');
+  const benchmarkRows=Object.values(rails).map(r=>'<div class="paymentRailRow"><div><strong>'+esc(r.label)+'</strong><small>'+esc(r.note||'')+'</small></div><b>'+financePct(r.variable_rate_pct)+(Number(r.fixed_fee_php||0)>0?' + '+financeMoney(r.fixed_fee_php):'')+'</b></div>').join('');
+  return '<section class="digitalPaymentIncentiveCard">'
+    +'<div class="commissionPlannerHead"><div><small>DIGITAL PAYMENT INCENTIVE</small><h3>How much credit can a digital payment safely earn?</h3><p>Compare the measured cost of Cash with PayMongo rails. No reward is activated here.</p></div><span class="badge">SIMULATION</span></div>'
+    +'<div class="paymentRailBenchmarks">'+benchmarkRows+'</div>'
+    +'<div class="financeTruth"><strong>Benchmark boundary</strong><span>PayMongo public pricing snapshot '+esc(bench?.benchmark_as_of||'')+' · published fees are exclusive of VAT. Actual provider statements always take priority.</span></div>'
+    +'<form id="digitalPaymentIncentiveForm" class="adminForm">'
+      +'<div class="financeFormGrid">'
+        +'<label>Average ticket / commercial amount (PHP)<input name="commercial_amount" type="number" min="0" step="0.01" required placeholder="e.g. 500"></label>'
+        +'<label>Payment rail<select name="rail_code">'+options+'</select></label>'
+        +'<label>Measured Cash handling cost %<input name="cash_handling_cost_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
+        +'<label>Cash handling fixed cost / transaction<input name="cash_handling_fixed_cost" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Provider fee VAT/tax %<input name="provider_fee_tax_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
+        +'<label>Return to profile as credit % of savings<input name="return_savings_pct" type="number" min="0" max="100" step="0.01" value="50"></label>'
+        +'<label>Credit cap / transaction<input name="credit_cap" type="number" min="0" step="0.01" placeholder="Optional"></label>'
+        +'<label>Growth/Finance budget remaining<input name="growth_budget_remaining" type="number" min="0" step="0.01" placeholder="Optional"></label>'
+      +'</div>'
+      +'<div class="notice"><strong>No Cash surcharge.</strong><br>If digital processing does not save money under the entered Cash-cost evidence, supported credit becomes ₱0. Credits require verified provider payment and a future versioned policy.</div>'
+      +'<button class="primary" type="submit">Calculate digital-payment credit ceiling</button>'
+      +'<div id="digitalPaymentIncentiveResult"></div>'
+    +'</form></section>';
+}
 function renderCommissionPlannerResult(s){
   const current=s?.rates?.current_rollout||{},mature=s?.rates?.mature_100pct_fee_eligible||{},cost=s?.cost_model||{},vol=s?.volume||{},staff=s?.staffing||{},ops=s?.operating_costs||{},mix=s?.revenue_mix||{};
   const pct=v=>v==null?'—':Number(v).toFixed(2)+'%';
@@ -277,9 +325,10 @@ async function financePanel(){
   if(!hasAny(['finance.summary.view'])){
     return hero()+operatingHtml+'<details class="adminFinanceAdvanced"><summary>Advanced platform economics</summary><div class="notice">Unit economics and payment-specific controls are not delegated to this Admin account.</div></details>';
   }
-  const [k,monetizationV2]=await Promise.all([
+  const [k,monetizationV2,digitalBenchmarks]=await Promise.all([
     api('/api/payments/admin/unit-economics'+financeScopeQuery()),
-    api('/api/payments/admin/monetization-v2/model')
+    api('/api/payments/admin/monetization-v2/model'),
+    api('/api/payments/admin/digital-payment-incentive/benchmarks')
   ]);
   const p=k.period||{};
   const serviceRows=k.services||[];
@@ -315,7 +364,7 @@ async function financePanel(){
       +'<div id="pricingScenarioResult"></div>'
     +'</form>';
   const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
-  return hero()+operatingHtml+monetizationV2Card(monetizationV2)+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
+  return hero()+operatingHtml+monetizationV2Card(monetizationV2)+digitalPaymentIncentiveCard(digitalBenchmarks)+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
     +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
     +'<div class="financeSummary">'
       +'<div class="metric"><strong>'+financeMoney(k.gross_payment_volume)+'</strong><span>Gross payment volume · context, not revenue</span></div>'
@@ -363,6 +412,26 @@ async function financePanel(){
     +'<div class="sectionTitle"><h3>Recent cost entries</h3></div>'
     +rows(costs,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.cost_code)+'</strong><span class="status">'+esc(x.evidence_class)+'</span></div><div class="financeLine"><span>'+financeMoney(x.amount,x.currency_code||'PHP')+'</span><span>'+esc(x.cost_category)+'</span><span>'+esc(x.cost_nature)+'</span><span>'+esc(x.service_scope)+'</span></div><span class="muted">'+esc(x.description||x.evidence_reference||'')+'</span></div>')
     +'</div></details>';
+}
+async function wireDigitalPaymentIncentive(){
+  const form=document.getElementById('digitalPaymentIncentiveForm');if(!form)return;
+  form.onsubmit=async e=>{
+    e.preventDefault();const fd=new FormData(form),out=document.getElementById('digitalPaymentIncentiveResult');
+    const payload={
+      territory_id:financeTerritoryId()||null,
+      commercial_amount:Number(fd.get('commercial_amount')),
+      rail_code:fd.get('rail_code'),
+      cash_handling_cost_pct:Number(fd.get('cash_handling_cost_pct')||0),
+      cash_handling_fixed_cost:Number(fd.get('cash_handling_fixed_cost')||0),
+      provider_fee_tax_pct:Number(fd.get('provider_fee_tax_pct')||0),
+      return_savings_pct:Number(fd.get('return_savings_pct')||0),
+      credit_cap:fd.get('credit_cap')===''?null:Number(fd.get('credit_cap')),
+      growth_budget_remaining:fd.get('growth_budget_remaining')===''?null:Number(fd.get('growth_budget_remaining'))
+    };
+    out.innerHTML='<div class="notice">Calculating payment-rail economics…</div>';
+    try{const x=await api('/api/payments/admin/digital-payment-incentive/scenario',{method:'POST',body:JSON.stringify(payload)});out.innerHTML=renderDigitalIncentiveResult(x)}
+    catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
+  };
 }
 async function wireMonetizationV2(){
   const rowsBox=document.getElementById('sharedCostScopeRows'),add=document.getElementById('addSharedCostScope'),form=document.getElementById('sharedCostScenarioForm');
@@ -424,6 +493,7 @@ async function wireOperatingFinance(){
 async function wireFinance(){
   await wireOperatingFinance();
   await wireMonetizationV2();
+  await wireDigitalPaymentIncentive();
   await wireCommissionPlanner();
   const pricing=document.getElementById('pricingScenarioForm');
   if(pricing)pricing.onsubmit=async e=>{
