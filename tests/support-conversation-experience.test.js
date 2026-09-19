@@ -36,3 +36,14 @@ test('Admin Support has editable voice transcription and AI drafting',()=>{
   assert.match(server,/automatic_send:false/);
   assert.match(server,/never claim it has been sent/);
 });
+
+test('Admin Support can translate an editable reply to English or Tagalog',()=>{
+  assert.match(admin,/adminTranslateLanguage/);
+  assert.match(admin,/option value="English"/);
+  assert.match(admin,/option value="Tagalog"/);
+  assert.match(admin,/Translate with AI/);
+  assert.match(admin,/assist\/translate/);
+  assert.match(server,/\/api\/admin\/support\/:id\/assist\/translate/);
+  assert.match(server,/translateAdminSupportReply/);
+  assert.match(server,/automatic_send:false/);
+});
