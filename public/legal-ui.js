@@ -77,7 +77,8 @@ async function openCenter(){
   var body=document.getElementById("legalBody");body.innerHTML='<div class="legalLoading">Loading…</div>';
   try{
     await loadCtx();
-    var role=(ctx.me.account&&ctx.me.account.active_role)||"customer";
+    var navigation=window.BusinessLifeProfileState||{};
+    var role=navigation.surface==="profile"?(navigation.activeRole||""):"";
     var list=actions(role,!!ctx.admin.is_admin);ctx.gates=[];
     for(var i=0;i<list.length;i++){
       try{

@@ -10,7 +10,7 @@ function closeFd(){fdWorkspace?.classList.add('hidden');window.BusinessLifeShell
 function injectFdEntry(){const panel=document.getElementById('profileDrawerPanel');if(!panel||panel.querySelector('#financialDocumentsButton'))return;const settings=panel.querySelector('#profileSettingsButton')?.closest('.drawerSection');const section=document.createElement('section');section.className='drawerSection';section.innerHTML='<h3>Financial records</h3><button id="financialDocumentsButton" class="fdDrawerButton" type="button"><span class="fdDrawerIcon">▤</span><span><strong>Statements & Documents</strong><small>Day, week, month, year and consolidated view</small></span></button>';if(settings)settings.insertAdjacentElement('afterend',section);else panel.appendChild(section);section.querySelector('#financialDocumentsButton').onclick=()=>openFd()}
 function activeState(){return window.BusinessLifeProfileState||{}}
 async function resolveContext(){
-  const state=activeState(),role=state.activeRole||state.snapshot?.account?.active_role;
+  const state=activeState(),role=state.surface==='profile'?state.activeRole:null;
   if(!role)throw new Error('Choose a profile first.');
   const accountId=Number(state.accountId||state.snapshot?.account?.id||0);
   if(['merchant','supplier'].includes(role)){
