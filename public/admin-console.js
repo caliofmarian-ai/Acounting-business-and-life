@@ -125,7 +125,7 @@ function sharedCostScopeRow(index){
 }
 function monetizationV2Card(model){
   const p=model?.profile_models||{},d=model?.digital_payment_incentive||{},shared=model?.shared_cost_policy||{};
-  const item=(role,label)=>{const x=p?.[role]||{};let value='';if(x.customer_free)value='FREE';else if(x.delivery_production_fee)value='% of delivery production';else if(x.monthly_subscription&&x.transaction_fee)value='Subscription + transaction fee';return '<div class="monetizationRoleRow"><div><strong>'+esc(label)+'</strong><small>'+(x.promotional_entitlement?'90-day promo before monetization':'No paid profile subscription')+'</small></div><b>'+esc(value||'Policy not configured')+'</b></div>'};
+  const item=(role,label)=>{const x=p?.[role]||{};let value='';if(x.customer_free)value='FREE';else if(x.delivery_production_fee)value=financePct(x.owner_approved_delivery_production_rate_pct||10)+' of verified delivery earnings';else if(x.monthly_subscription&&x.transaction_fee)value='Subscription + transaction fee';const meta=x.delivery_production_fee?'No monthly subscription · 90-day promo first':(x.promotional_entitlement?'90-day promo before monetization':'No paid profile subscription');return '<div class="monetizationRoleRow"><div><strong>'+esc(label)+'</strong><small>'+esc(meta)+'</small></div><b>'+esc(value||'Policy not configured')+'</b></div>'};
   return '<section class="monetizationV2Card">'
     +'<div class="commissionPlannerHead"><div><small>MONETIZATION V2</small><h3>Profile model & shared company costs</h3><p>No live amount or percentage is activated here.</p></div><span class="badge">OWNER POLICY</span></div>'
     +'<div class="profileMonetizationGrid">'+item('customer','Customer')+item('merchant','Merchant')+item('supplier','Supplier')+item('local_services','Artisan / Local Services')+item('courier','Delivery')+'</div>'
@@ -282,7 +282,7 @@ function commissionPlannerForm(k,promo){
         +'<label>Paid Artisan / Local Services profiles<input name="local_services_paid_profiles" type="number" min="0" step="1" value="0"></label>'
         +'<label>Artisan / Local Services monthly subscription (PHP)<input name="local_services_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
         +'<label>Monthly eligible Delivery earnings (PHP)<input name="delivery_eligible_earnings" type="number" min="0" step="0.01" value="0"></label>'
-        +'<label>Delivery production fee %<input name="delivery_production_rate_pct" type="number" min="0" max="100" step="0.01" value="0"></label>'
+        +'<label>Delivery production fee % · Owner-approved<input name="delivery_production_rate_pct" type="number" min="0" max="100" step="0.01" value="10"></label>'
       +'</div><div class="notice"><strong>These revenues reduce the transaction fee still required.</strong><br>Customer remains free. Delivery has no monthly subscription.</div></details>'
       +'<details class="commissionAssumptions"><summary>5. Payments, risk & sustainability</summary><div class="financeFormGrid">'
         +'<label>Blended processor rate %<input name="processor_rate_pct" type="number" min="0" max="100" step="0.0001" value="0"></label>'
