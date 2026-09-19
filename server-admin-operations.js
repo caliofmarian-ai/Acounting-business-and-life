@@ -44,11 +44,19 @@ const OPENAI_API_KEY=process.env.OPENAI_API_KEY||'';
 const SUPPORT_AI_TRANSCRIPTION_MODEL=String(process.env.SUPPORT_AI_TRANSCRIPTION_MODEL||'gpt-4o-mini-transcribe').trim().slice(0,120);
 const SUPPORT_AI_TRANSLATION_MODEL=String(process.env.SUPPORT_AI_TRANSLATION_MODEL||'gpt-5.6-luna').trim().slice(0,120);
 function decodeSupportDataUrl(dataUrl){
-  const m=String(dataUrl||'').match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
-  if(!m)throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
-  let bytes;try{bytes=Buffer.from(m[2],'base64')}catch{throw Object.assign(new Error('Attachment could not be decoded'),{status:400})}
-  return{mime:m[1].toLowerCase(),bytes};
+  const raw=String(dataUrl||'');
+  if(!raw.startsWith('data:'))throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
+  const comma=raw.indexOf(',');
+  if(comma<6)throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
+  const meta=raw.slice(5,comma),parts=meta.split(';').filter(Boolean);
+  const mime=String(parts.shift()||'').toLowerCase();
+  if(!mime||!parts.some(x=>x.toLowerCase()==='base64'))throw Object.assign(new Error('Attachment must be base64 encoded'),{status:400});
+  const payload=raw.slice(comma+1);
+  if(!/^[A-Za-z0-9+/=]+$/.test(payload))throw Object.assign(new Error('Attachment could not be decoded'),{status:400});
+  let bytes;try{bytes=Buffer.from(payload,'base64')}catch{throw Object.assign(new Error('Attachment could not be decoded'),{status:400})}
+  return{mime,bytes};
 }
+
 function validateSupportAttachments(raw){
   const files=Array.isArray(raw)?raw:[];
   if(files.length>9)throw Object.assign(new Error('Support allows up to 5 images, 3 documents and 1 audio recording'),{status:400});
