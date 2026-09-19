@@ -29,7 +29,7 @@ import {
   BUDGET_PURPOSES,MONEY_MOVEMENT_TYPES
 } from './profile-finance-core.js';
 import {profileMoneySnapshot} from './profile-money-core.js';
-import {allocateSharedCompanyCost50x50,PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,monetizationPolicyDraft,OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,OWNER_APPROVED_DELIVERY_PROMO_DAYS} from './monetization-policy-v2.js';
+import {allocateSharedCompanyCost50x50,PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,monetizationPolicyDraft,OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,OWNER_APPROVED_MONTHLY_SUBSCRIPTION_PHP,OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,OWNER_APPROVED_DELIVERY_PROMO_DAYS} from './monetization-policy-v2.js';
 import {PAYMONGO_PH_BENCHMARK_AS_OF,PAYMONGO_PH_PAYMENT_BENCHMARKS,digitalPaymentIncentiveScenario,compareDigitalPaymentRails} from './digital-payment-incentive-core.js';
 import {
   ensureAccountMoneySchema,accountMoneySettings,updateAccountMoneyIdentity,
@@ -92,8 +92,8 @@ app.get('/api/public/pricing',(_req,res)=>{
     promo_days:promoDays,
     business_life_transaction_rate_during_promo_pct:0,
     post_promo_transaction_rate_pct:OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,
-    monthly_subscription_amount:null,
-    monthly_subscription_status:'NOT_YET_ACTIVATED'
+    monthly_subscription_amount:OWNER_APPROVED_MONTHLY_SUBSCRIPTION_PHP,
+    monthly_subscription_status:'OWNER_APPROVED_LIVE_BILLING_GATED'
   });
   res.set('Cache-Control','public, max-age=300').json({
     version:'2026-09-19-owner-approved-v1',
