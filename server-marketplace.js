@@ -102,6 +102,22 @@ async function publicStorefronts(domain=''){const args=[];let extra='';if(['food
 async function storefront(businessId,includePrivate=false){const q=await pool.query(`SELECT s.*,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 ${includePrivate?'':"AND s.publication_status='published'"}`,[businessId]);return q.rows[0]||null}
 async function products(businessId,includePrivate=false){const{rows}=await pool.query(`SELECT * FROM marketplace_products WHERE business_id=$1 ${includePrivate?'':"AND published=TRUE AND active=TRUE"} ORDER BY category,name`,[businessId]);return rows}
 
+// Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
+async function guestPublicStorefronts(domain=''){
+  const args=[];let extra='';
+  if(['food','non_food'].includes(domain)){args.push(domain);extra=` AND (s.merchant_domain=$1 OR s.merchant_domain='mixed')`}
+  const {rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);
+  return rows;
+}
+async function guestPublicStorefront(businessId){
+  const q=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 AND s.publication_status='published'`,[businessId]);
+  return q.rows[0]||null;
+}
+async function guestPublicProducts(businessId){
+  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
+  return rows;
+}
+
 async function importLegacyProducts(businessId){if(Number(businessId)!==1)return 0;const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT 1,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`);return r.rowCount}
 
 function manilaStamp(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const x=Object.fromEntries(parts.map(p=>[p.type,p.value]));return `${x.year}${x.month}${x.day}`}
@@ -118,8 +134,13 @@ async function marketplaceCancel(req,res,next){const id=Number(req.params.id);if
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await childFetch('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,orders:r.ok,version:'0.6-marketplace'})}catch{res.status(503).json({ok:false,db:false,orders:false,version:'0.6-marketplace'})}})
 app.get('/marketplace.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','marketplace.css'),'utf8')))
 app.get('/marketplace-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','marketplace-ui.js'),'utf8')))
-async function root(req,res){const r=await childFetch(req.path,{headers:{...req.headers,host:`127.0.0.1:${internalOrdersPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/marketplace.css" />\n</head>').replace('</body>','  <script type="module" src="/marketplace-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+app.get('/guest-explore.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','guest-explore.css'),'utf8')))
+app.get('/guest-explore.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','guest-explore.js'),'utf8')))
+async function root(req,res){const r=await childFetch(req.path,{headers:{...req.headers,host:`127.0.0.1:${internalOrdersPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/marketplace.css" />\n  <link rel="stylesheet" href="/guest-explore.css" />\n</head>').replace('</body>','  <script type="module" src="/marketplace-ui.js"></script>\n  <script type="module" src="/guest-explore.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root)
+
+app.get('/api/public/marketplace/storefronts',async(req,res,next)=>{try{res.set('Cache-Control','public, max-age=30');res.json(await guestPublicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
+app.get('/api/public/marketplace/storefronts/:businessId',async(req,res,next)=>{try{const businessId=Number(req.params.businessId);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'Invalid storefront'});const store=await guestPublicStorefront(businessId);if(!store)return res.status(404).json({error:'Storefront not found'});res.set('Cache-Control','public, max-age=30');res.json({...store,products:await guestPublicProducts(businessId)})}catch(e){next(e)}})
 
 app.get('/api/marketplace/storefronts',async(req,res,next)=>{try{await requireCustomer(req);res.json(await publicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
 app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const s=await storefront(Number(req.params.businessId),false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(Number(req.params.businessId),false)})}catch(e){next(e)}})
