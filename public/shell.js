@@ -113,10 +113,9 @@ function ensureShellChrome() {
   if (!document.getElementById('accountAvatarButton')) {
     const controls = document.createElement('div');
     controls.className = 'shellProfileControls';
-    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="activeProfileSettingsButton" class="activeProfileSettingsButton" type="button" aria-label="Open settings for active profile">⚙</button><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open account and profiles"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
+    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open account and profiles"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
     topActions.appendChild(controls);
     controls.querySelector('#accountAvatarButton').addEventListener('click', openDrawer);
-    controls.querySelector('#activeProfileSettingsButton').addEventListener('click',()=>window.BusinessLifeProfileSettings?.open?.(activeRole));
   }
   if (!document.getElementById('roleHub')) {
     const hub = document.createElement('section');
@@ -124,6 +123,10 @@ function ensureShellChrome() {
     hub.className = 'roleHub hidden';
     const topbar = shell.querySelector('.topbar');
     topbar.insertAdjacentElement('afterend', hub);
+  }
+  if(!document.getElementById('merchantProfileSettingsCard')){
+    const dashboard=document.getElementById('viewDashboard');
+    const card=document.createElement('button');card.id='merchantProfileSettingsCard';card.className='card profileSettingsWorkspaceCard';card.type='button';card.innerHTML='<span class="hubTileIcon">⚙️</span><span><strong>Profile Settings</strong><small>Preferences, banking and tools for this Merchant profile</small></span><b>›</b>';card.onclick=()=>window.BusinessLifeProfileSettings?.open?.('merchant');dashboard?.appendChild(card);
   }
   if (!document.getElementById('profileDrawerBackdrop')) {
     const backdrop = document.createElement('div');
@@ -182,7 +185,7 @@ function renderDrawer() {
 function renderAccountSettings(){
   if(!snapshot?.account)return;
   const account=snapshot.account,panel=document.getElementById('profileDrawerPanel');if(!panel)return;
-  const profileManagement=ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),locked=role==='merchant'&&Number(account.id)===1;const action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`;return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${enabled?'Active profile':'Not active'}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action} ${locked?'disabled':''}>${locked?'Required':enabled?'Disable':'Enable'}</button></div>`}).join('');
+  const profileManagement=ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),locked=role==='merchant'&&Number(account.id)===1;const action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`;return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${enabled?'Active profile':profile?.status?profile.status.replaceAll('_',' '):'Onboarding not started'}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action} ${locked?'disabled':''}>${locked?'Required':enabled?'Disable':'Start onboarding'}</button></div>`}).join('');
   panel.innerHTML=`${drawerHeader(account,true)}
     <section class="drawerSection"><h3>Personal details</h3>
       <form id="accountIdentityForm" class="profileForm">
@@ -207,7 +210,7 @@ function renderAccountSettings(){
   document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{activeRole,accountId:Number(account.id)||null}}));
 }
 
-async function toggleProfile(role,enabled){try{snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled,visibility:role==='merchant'?'public':'private'})});activeRole=snapshot.account.active_role||activeRole;profileFetchedAt=Date.now();applyActiveRole();publishProfileState();renderAccountSettings();showToast(enabled?'Profile enabled.':'Profile disabled.')}catch(err){showToast(err.message)}}
+async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();applyActiveRole();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
 
 async function openDrawer() {
   if (!token()) return showToast('Sign in first to open your account.');
@@ -359,9 +362,10 @@ function renderRoleHub(role) {
   const meta = ROLE_META[role];
   const hub = document.getElementById('roleHub');
   if (!hub || !meta) return;
-  const tiles = (HUBS[role] || []).map((item, index) => `<button class="hubTile ${index === 3 && role === 'customer' ? 'accent' : ''}" type="button" data-hub-feature="${escapeHtml(item[3])}"><span class="hubTileIcon">${item[0]}</span><strong>${escapeHtml(item[1])}</strong><small>${escapeHtml(item[2])}</small>${role === 'courier' && item[1] === 'Eligibility' ? `<span class="miniBadge ${snapshot?.courier?.eligibility_status === 'approved' ? '' : 'pending'}">${escapeHtml(snapshot?.courier?.eligibility_status || 'not requested')}</span>` : ''}</button>`).join('');
+  const items=[...(HUBS[role]||[]),['⚙️','Profile Settings','Preferences, banking and tools for this profile','Profile Settings']];
+  const tiles = items.map((item, index) => `<button class="hubTile ${item[3]==='Profile Settings'?'profileSettingsTile':index === 3 && role === 'customer' ? 'accent' : ''}" type="button" data-hub-feature="${escapeHtml(item[3])}"><span class="hubTileIcon">${item[0]}</span><strong>${escapeHtml(item[1])}</strong><small>${escapeHtml(item[2])}</small>${role === 'courier' && item[1] === 'Eligibility' ? `<span class="miniBadge ${snapshot?.courier?.eligibility_status === 'approved' ? '' : 'pending'}">${escapeHtml(snapshot?.courier?.eligibility_status || 'not requested')}</span>` : ''}</button>`).join('');
   hub.innerHTML = `<div class="hubHero"><div class="hubEyebrow">${escapeHtml(meta.label)} profile</div><h1>${escapeHtml(meta.hero)}</h1><p>One identity, a dedicated workspace, and only the information this role needs.</p><span class="hubStatus">Profile selected</span></div><div class="hubSectionTitle"><h2>Your ${escapeHtml(meta.label)} workspace</h2><span>Philippines Edition</span></div><div class="hubGrid">${tiles}</div>`;
-  hub.querySelectorAll('[data-hub-feature]').forEach(btn => btn.onclick = () => showToast(`${btn.dataset.hubFeature}: implementation continues in the next marketplace/service slice.`));
+  hub.querySelectorAll('[data-hub-feature]').forEach(btn => btn.onclick = () => btn.dataset.hubFeature==='Profile Settings'?window.BusinessLifeProfileSettings?.open?.(role):showToast(`${btn.dataset.hubFeature}: implementation continues in the next marketplace/service slice.`));
   hub.classList.remove('hidden');
 }
 
@@ -369,7 +373,7 @@ function applyActiveRole() {
   activeRole = snapshot?.account?.active_role || null;
   renderTopAccount();
   hideFeatureWorkspaces();
-  if (!activeRole) return hideMerchantWorkspace();
+  if (!activeRole){hideMerchantWorkspace();const hub=document.getElementById('roleHub');if(hub){hub.innerHTML='<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT READY</div><h1>Choose your first profile.</h1><p>Complete Account Settings, verify your email, then start onboarding only for the profiles you want to use.</p><button id="openFirstAccountSettings" class="hubOnboardingButton" type="button">Open Account Settings</button></div>';hub.classList.remove('hidden');hub.querySelector('#openFirstAccountSettings').onclick=openDrawer}return}
   if (activeRole === 'merchant') showMerchantWorkspace();
   else { hideMerchantWorkspace(); renderRoleHub(activeRole); }
 }
@@ -386,7 +390,7 @@ async function refreshProfile(force=false) {
   profileRefreshPromise=(async()=>{
     snapshot = await profileApi('/api/me');
     profileFetchedAt=Date.now();
-    activeRole = snapshot.account?.active_role || 'merchant';
+    activeRole = snapshot.account?.active_role || null;
     ensureShellChrome();
     applyActiveRole();
     publishProfileState();
