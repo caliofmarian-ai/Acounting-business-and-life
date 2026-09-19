@@ -33,13 +33,19 @@ async function decorateSecurity(){if(!isV2())return;const panel=document.getElem
 function watchDrawer(){document.addEventListener('abl:drawer-rendered',()=>decorateSecurity().catch(()=>{}))}
 async function boot(){
   if(token()&&!isV2())localStorage.removeItem(ABL_AUTH_TOKEN);
-  status=await fetch('/api/auth/hardening/status').then(r=>r.json()).catch(()=>status);
   const params=new URLSearchParams(location.search);
   if(params.get('verify_token'))return verifyFromUrl(params.get('verify_token'));
   if(params.get('oauth_handoff'))return oauthHandoff(params.get('oauth_handoff'));
   const root=document.getElementById('modernAuthRoot');
   if(params.get('reset_token'))return renderReset(params.get('reset_token'));
+  // Render immediately. Network/config discovery must never leave the entry screen blank.
   if(root)panel();
+  fetch('/api/auth/hardening/status').then(r=>r.ok?r.json():status).then(next=>{
+    status=next||status;
+    if(!root||document.activeElement?.closest?.('#modernAuthRoot'))return;
+    const active=root.querySelector('[data-auth-mode].active')?.dataset.authMode||'login';
+    if(active==='login'||active==='register')render(active);
+  }).catch(()=>{});
   if(params.get('oauth_error')){const map={existing_email:'That email already has a Business & Life account. Sign in with your password, then link Google from Account protection.',google_failed:'Google sign-in could not be completed.'};setTimeout(()=>msg(map[params.get('oauth_error')]||'Google sign-in failed.','error'),30);clearQuery()}
   const flash=sessionStorage.getItem('abl_flash');if(flash){sessionStorage.removeItem('abl_flash');setTimeout(()=>{const t=document.getElementById('roleToast');if(t){t.textContent=flash;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3500)}},500)}
   watchDrawer();
