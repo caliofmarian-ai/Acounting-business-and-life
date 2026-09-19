@@ -6,6 +6,8 @@ const shellCss=readFileSync(new URL('../public/shell.css',import.meta.url),'utf8
 const baseCss=readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
 const governanceUi=readFileSync(new URL('../public/profile-governance-ui.js',import.meta.url),'utf8');
 const adminUi=readFileSync(new URL('../public/admin-operations-ui.js',import.meta.url),'utf8');
+const loader=readFileSync(new URL('../public/mobile-feature-loader.js',import.meta.url),'utf8');
+const loaderCss=readFileSync(new URL('../public/mobile-feature-loader.css',import.meta.url),'utf8');
 
 test('mobile shell prevents injected top actions from widening the page',()=>{
   assert.match(baseCss,/html,body,#app,#shell\{max-width:100%;overflow-x:hidden\}/);
@@ -26,4 +28,19 @@ test('governance remains reachable without duplicate topbar Admin',()=>{
   assert.match(governanceUi,/govDrawerAdmin/);
   assert.match(governanceUi,/Governance & approvals/);
   assert.match(governanceUi,/openAdminConsole/);
+});
+
+
+test('Merchant mobile navigation exposes the same core workspace tools as desktop',()=>{
+  assert.match(loader,/merchantMobileTools/);
+  for(const id of ['ordersQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton','accountAvatarButton']){
+    assert.match(loader,new RegExp(id));
+  }
+  for(const label of ['Orders','Storefront','Suppliers','Delivery','Merchant']){
+    assert.match(loader,new RegExp(label));
+  }
+  assert.match(loader,/businessWorkspaceBar/);
+  assert.match(loaderCss,/@media\(max-width:649px\)/);
+  assert.match(loaderCss,/merchantMobileToolsGrid/);
+  assert.match(loaderCss,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
 });
