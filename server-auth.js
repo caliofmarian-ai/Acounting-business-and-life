@@ -13,6 +13,7 @@ import { isValidReferralCode } from './growth/referral-domain.js';
 import { deliverReferralAnalyticsEvent, sanitizeReferralAnalyticsEvent } from './growth/referral-analytics.js';
 import { persistUnconvertedReferralEvent } from './growth/referral-unconverted-attribution.js';
 import { bindReferralSignupConversion } from './growth/referral-conversion-binding.js';
+import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -244,12 +245,13 @@ async function initDb() {
     SELECT setval(pg_get_serial_sequence('accounts','id'), GREATEST((SELECT MAX(id) FROM accounts),1));
     SELECT setval(pg_get_serial_sequence('businesses','id'), GREATEST((SELECT MAX(id) FROM businesses),1));
   `);
+  await ensurePersonIdentitySchema(pool);
   await ensureReferralAccountSchema(pool);
 }
 
 async function profileSnapshot(accountId) {
   const [account, profiles, businesses, customer, supplier, courier, serviceProvider] = await Promise.all([
-    pool.query(`SELECT id,display_name,phone,email,address,avatar_data_url,active_role,email_verified_at,phone_verified_at,auth_status,(password_hash IS NOT NULL) has_password,created_at,updated_at FROM accounts WHERE id=$1`, [accountId]),
+    pool.query(`SELECT id,display_name,phone,email,address,avatar_data_url,active_role,identity_country_code,personal_public_id,email_verified_at,phone_verified_at,auth_status,(password_hash IS NOT NULL) has_password,created_at,updated_at FROM accounts WHERE id=$1`, [accountId]),
     pool.query(`SELECT role,enabled,visibility,status,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role`, [accountId]),
     pool.query(`SELECT b.id,b.name,b.country_code,b.currency_code,bm.membership_role,bm.active FROM businesses b JOIN business_memberships bm ON bm.business_id=b.id WHERE bm.account_id=$1 AND bm.active=TRUE ORDER BY b.id`, [accountId]),
     pool.query(`SELECT * FROM customer_profiles WHERE account_id=$1`, [accountId]),
@@ -258,7 +260,7 @@ async function profileSnapshot(accountId) {
     pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`, [accountId])
   ]);
   if (!account.rows[0]) throw Object.assign(new Error('Account not found'), { status: 404 });
-  return { account: account.rows[0], profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null };
+  return withPublicProfileIds({ account: account.rows[0], profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
 }
 
 function injectedIndex() {
