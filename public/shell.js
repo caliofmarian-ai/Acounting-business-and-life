@@ -190,13 +190,17 @@ function renderDrawer() {
 
 async function openDrawer() {
   if (!token()) return showToast('Sign in first to open your account.');
-  if (snapshot?.account) renderDrawer();
+  const profileStale=!snapshot?.account||!profileFetchedAt||Date.now()-profileFetchedAt>=PROFILE_CACHE_MS;
+  const adminStale=!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS;
+  const panel=document.getElementById('profileDrawerPanel');
+  if(snapshot?.account&&!profileStale&&!adminStale)renderDrawer();
+  else if(panel)panel.innerHTML='<div class="drawerHandle"></div><div class="drawerContextLoading" role="status"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span><strong>Loading account and Admin access…</strong><small>Preparing the complete profile list.</small></div>';
   document.getElementById('profileDrawerBackdrop')?.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
   try {
     const tasks=[];
-    if(!snapshot?.account||!profileFetchedAt||Date.now()-profileFetchedAt>=PROFILE_CACHE_MS)tasks.push(refreshProfile());
-    if(!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS)tasks.push(refreshAdminContext());
+    if(profileStale)tasks.push(refreshProfile());
+    if(adminStale)tasks.push(refreshAdminContext());
     if(tasks.length)await Promise.all(tasks);
     renderDrawer();
   } catch (error) {
