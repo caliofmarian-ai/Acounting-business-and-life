@@ -302,7 +302,7 @@ async function syncProfileMoneyEntries(pool,{accountId,profileRole}){
     const sem=profileEntrySemantic(row);
     await upsertDocument(pool,{
       documentKey:`profile_money_entry:${row.id}`,ownerScope:'account',accountId:Number(accountId),
-      profileRole:role,documentType:sem.documentType,documentStatus:row.status==='reversed'?'reversed':'active',
+      profileRole:role,documentType:sem.documentType,documentStatus:'active',
       sourceType:'profile_money_entry',sourceId:String(row.id),currencyCode:row.currency_code||'PHP',
       grossAmount:row.amount,title:sem.title,sourceSnapshot:{
         id:Number(row.id),entry_type:row.entry_type,direction:row.direction,category:row.category,
@@ -385,22 +385,39 @@ async function syncCustomerPayments(pool,{accountId}){
   return count;
 }
 
-async function syncBusinessFees(pool,{profileRole,businessId}){
+async function syncBusinessFees(pool,{accountId,profileRole,businessId}){
   const role=normalizeFinancialProfileRole(profileRole);
   if(!['merchant','supplier'].includes(role))return 0;
+  const chargedTo=role==='merchant'?'merchant_deduction':'supplier_deduction';
+  const args=role==='merchant'?[Number(businessId)]:[Number(accountId)];
+  const ownerJoin=role==='merchant'
+    ?''
+    :" JOIN purchase_orders po ON i.source_type='purchase_order' AND po.id=i.source_id";
+  const ownerWhere=role==='merchant'?'i.business_id=$1':'po.supplier_account_id=$1';
   const {rows}=await pool.query(`
-    SELECT a.*,i.source_type,i.source_id,i.succeeded_at,i.created_at intent_created_at
+    SELECT a.*,i.source_type,i.source_id,i.succeeded_at,i.created_at intent_created_at,
+      r.charged_to,r.beneficiary_type
     FROM payment_allocations a
     JOIN payment_intents i ON i.id=a.payment_intent_id
-    WHERE i.business_id=$1
+    ${ownerJoin}
+    LEFT JOIN fee_policy_rules r
+      ON r.fee_policy_version_id=a.fee_policy_version_id
+     AND r.component_code=a.component_code
+    WHERE ${ownerWhere}
       AND i.status IN ('succeeded','partially_refunded','refunded')
       AND a.settlement_status<>'reversed'
       AND a.component_code IN ('processor_fee','platform_fee','country_operator_fee','territory_operator_fee','tax','withholding')
     ORDER BY a.created_at,a.id
-  `,[Number(businessId)]);
+  `,args);
   for(const a of rows){
-    const type=a.component_code==='processor_fee'?'processor_fee_record':a.component_code==='platform_fee'?'platform_fee_record':a.component_code==='tax'||a.component_code==='withholding'?'tax_record':'generic_financial_evidence';
-    const impact=a.component_code==='tax'||a.component_code==='withholding'?'tax_expense':'fee_expense';
+    const type=a.component_code==='processor_fee'?'processor_fee_record'
+      :a.component_code==='platform_fee'?'platform_fee_record'
+      :a.component_code==='tax'||a.component_code==='withholding'?'tax_record'
+      :'generic_financial_evidence';
+    const explicitlyCharged=a.charged_to===chargedTo;
+    const impact=explicitlyCharged
+      ?(a.component_code==='tax'||a.component_code==='withholding'?'tax_expense':'fee_expense')
+      :'neutral';
     await upsertDocument(pool,{
       documentKey:`business_payment_allocation:${role}:${businessId}:${a.id}`,
       ownerScope:'business',profileRole:role,businessId:Number(businessId),documentType:type,
@@ -409,10 +426,18 @@ async function syncBusinessFees(pool,{profileRole,businessId}){
         id:Number(a.id),payment_intent_id:Number(a.payment_intent_id),component_code:a.component_code,
         economic_party_type:a.economic_party_type,economic_party_id:a.economic_party_id,
         gross_base:money(a.gross_base),amount:money(a.amount),settlement_status:a.settlement_status,
-        rule_snapshot:a.rule_snapshot||{}
-      },metadata:{fee_policy_version_id:a.fee_policy_version_id},occurredAt:a.created_at||a.succeeded_at||a.intent_created_at
+        rule_snapshot:a.rule_snapshot||{},charged_to:a.charged_to||''
+      },metadata:{
+        fee_policy_version_id:a.fee_policy_version_id,
+        charged_to:a.charged_to||'',
+        participant_expense:explicitlyCharged,
+        note:explicitlyCharged
+          ?'This allocation is explicitly charged to this profile by fee policy.'
+          :'Visible as separate fee context; not counted as this profile expense.'
+      },occurredAt:a.created_at||a.succeeded_at||a.intent_created_at
     },[{lineCode:'fee',lineKind:a.component_code,impactClass:impact,economicOwner:a.economic_party_type||'',amount:a.amount,
-      metadata:{settlement_status:a.settlement_status,rule_snapshot:a.rule_snapshot||{}}}],
+      note:explicitlyCharged?'Explicit participant deduction':'Separate provider/platform cost context',
+      metadata:{settlement_status:a.settlement_status,charged_to:a.charged_to||'',rule_snapshot:a.rule_snapshot||{}}}],
     [{sourceType:'payment_intent',sourceId:String(a.payment_intent_id),sourceRelation:'allocated_from'}]);
   }
   return rows.length;
@@ -524,7 +549,7 @@ export async function synchronizeFinancialDocumentsForScope(pool,{accountId,prof
   if(['merchant','supplier'].includes(role)){
     if(!numericId(businessId))fail('Business scope is required');
     synchronized+=await syncBusinessTransactions(pool,{profileRole:role,businessId:Number(businessId)});
-    synchronized+=await syncBusinessFees(pool,{profileRole:role,businessId:Number(businessId)});
+    synchronized+=await syncBusinessFees(pool,{accountId:Number(accountId),profileRole:role,businessId:Number(businessId)});
     synchronized+=await syncSubscriptionInvoices(pool,{accountId,profileRole:role,businessId:Number(businessId)});
   }else{
     synchronized+=await syncProfileMoneyEntries(pool,{accountId:Number(accountId),profileRole:role});
