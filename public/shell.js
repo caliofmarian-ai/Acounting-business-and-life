@@ -41,13 +41,15 @@ async function profileApi(path, options = {}) {
 }
 
 function initials(name) {
-  const bits = String(name || 'Business owner').trim().split(/\s+/).filter(Boolean);
-  return (bits[0]?.[0] || 'B').toUpperCase();
+  const bits = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return (bits[0]?.[0] || '').toUpperCase();
 }
 function avatarMarkup(account, extraClass = '') {
   const image = account?.avatar_data_url;
   if (image) return `<span class="accountAvatar ${extraClass}"><img src="${image}" alt="Account avatar"></span>`;
-  return `<span class="accountAvatar ${extraClass}" aria-hidden="true">${escapeHtml(initials(account?.display_name))}</span>`;
+  const initial=initials(account?.display_name);
+  if(!initial)return `<span class="accountAvatar accountAvatarLoading ${extraClass}" aria-hidden="true"></span>`;
+  return `<span class="accountAvatar ${extraClass}" aria-hidden="true">${escapeHtml(initial)}</span>`;
 }
 function roleProfile(role) { return snapshot?.profiles?.find(p => p.role === role); }
 function isEnabled(role) { return Boolean(roleProfile(role)?.enabled); }
@@ -104,7 +106,7 @@ function ensureShellChrome() {
   if (!document.getElementById('accountAvatarButton')) {
     const controls = document.createElement('div');
     controls.className = 'shellProfileControls';
-    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill">Merchant</span><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open account and profiles"><span class="accountAvatar">B</span></button>`;
+    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open account and profiles"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
     topActions.appendChild(controls);
     controls.querySelector('#accountAvatarButton').addEventListener('click', openDrawer);
   }
