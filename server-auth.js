@@ -586,25 +586,18 @@ app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
   const enabled = req.body?.enabled !== false;
   const visibility = ['public', 'relationship_only', 'private'].includes(req.body?.visibility) ? req.body.visibility : 'private';
-  if (enabled) return res.status(409).json({ error: 'Start and complete this profile onboarding before activation.' });
   try {
+    if(enabled){
+      if(role==='customer')return res.status(409).json({error:'Use Customer activation from Account Settings.'});
+      const authorization=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role=$2 AND status='active' AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`,[req.accountId,role]);
+      if(!authorization.rowCount)return res.status(403).json({error:'Complete onboarding and obtain approval before reactivating this profile.'});
+      await pool.query(`UPDATE profiles SET enabled=TRUE,visibility=$3,status='active',updated_at=NOW() WHERE account_id=$1 AND role=$2`,[req.accountId,role,visibility]);
+      await pool.query(`UPDATE accounts SET active_role=COALESCE(active_role,$1),updated_at=NOW() WHERE id=$2`,[role,req.accountId]);
+      return res.json(await profileSnapshot(req.accountId));
+    }
     await pool.query(`UPDATE profiles SET enabled=FALSE,visibility=$3,status='disabled',updated_at=NOW() WHERE account_id=$1 AND role=$2`, [req.accountId, role, visibility]);
-    if (enabled && role === 'customer') await pool.query(`INSERT INTO customer_profiles(account_id) VALUES($1) ON CONFLICT(account_id) DO NOTHING`, [req.accountId]);
-    if (enabled && role === 'supplier') await pool.query(`INSERT INTO supplier_profiles(account_id,supplier_name) SELECT id,display_name FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`, [req.accountId]);
-    if (enabled && role === 'courier') await pool.query(`INSERT INTO courier_profiles(account_id,display_name) SELECT id,display_name FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`, [req.accountId]);
-    if (enabled && role === 'service_provider') await pool.query(`INSERT INTO service_provider_profiles(account_id,display_name) SELECT id,display_name FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`, [req.accountId]);
-    if (enabled && role === 'merchant') {
-      const membership = await pool.query(`SELECT 1 FROM business_memberships WHERE account_id=$1 AND active=TRUE LIMIT 1`, [req.accountId]);
-      if (!membership.rowCount) {
-        const name = await pool.query(`SELECT display_name FROM accounts WHERE id=$1`, [req.accountId]);
-        const business = await pool.query(`INSERT INTO businesses(name,country_code,currency_code) VALUES($1,'PH','PHP') RETURNING id`, [`${name.rows[0]?.display_name || 'My'} Business`]);
-        await pool.query(`INSERT INTO business_memberships(business_id,account_id,membership_role,active) VALUES($1,$2,'owner',TRUE)`, [business.rows[0].id, req.accountId]);
-      }
-    }
-    if (!enabled) {
-      const nextRole=await pool.query(`SELECT role FROM profiles WHERE account_id=$1 AND enabled=TRUE AND role<>$2 ORDER BY created_at LIMIT 1`,[req.accountId,role]);
-      await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2 AND active_role=$3`, [nextRole.rows[0]?.role||null, req.accountId, role]);
-    }
+    const nextRole=await pool.query(`SELECT role FROM profiles WHERE account_id=$1 AND enabled=TRUE AND role<>$2 ORDER BY created_at LIMIT 1`,[req.accountId,role]);
+    await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2 AND active_role=$3`, [nextRole.rows[0]?.role||null, req.accountId, role]);
     res.json(await profileSnapshot(req.accountId));
   } catch (err) { next(err); }
 });

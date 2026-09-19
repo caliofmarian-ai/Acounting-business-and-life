@@ -121,11 +121,11 @@ app.patch('/api/me',auth,async(req,res)=>{
 app.put('/api/profiles/:role',auth,async(req,res)=>{
   const role=req.params.role;if(!ROLES.has(role))return res.status(400).json({error:'Unknown profile role'});
   const enabled=req.body?.enabled!==false;
-  if(role==='merchant'&&!enabled)return res.status(409).json({error:'The bootstrap merchant profile stays enabled during migration.'});
   await pool.query(`INSERT INTO profiles(account_id,role,enabled) VALUES($1,$2,$3) ON CONFLICT(account_id,role) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=NOW()`,[req.accountId,role,enabled]);
   if(enabled&&role==='customer')await pool.query(`INSERT INTO customer_profiles(account_id) VALUES($1) ON CONFLICT(account_id) DO NOTHING`,[req.accountId]);
   if(enabled&&role==='supplier')await pool.query(`INSERT INTO supplier_profiles(account_id,supplier_name) SELECT id,display_name FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`,[req.accountId]);
   if(enabled&&role==='courier')await pool.query(`INSERT INTO courier_profiles(account_id,display_name) SELECT id,display_name FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`,[req.accountId]);
+  if(!enabled){const next=await pool.query(`SELECT role FROM profiles WHERE account_id=$1 AND enabled=TRUE AND role<>$2 ORDER BY created_at LIMIT 1`,[req.accountId,role]);await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2 AND active_role=$3`,[next.rows[0]?.role||null,req.accountId,role])}
   res.json(await profileSnapshot(req.accountId));
 });
 

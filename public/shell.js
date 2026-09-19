@@ -192,7 +192,7 @@ function renderDrawer() {
 
 function profileManagementMarkup(){
   const account=snapshot.account;
-  return ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`,status=!enabled&&profile?.status==='application_started'?'Onboarding in progress':enabled?'Active profile':'Not active';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${status}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${enabled?'Disable':'Start onboarding'}</button></div>`}).join('');
+  return ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),state=profile?.status||'not_started',reactivable=state==='disabled',inProgress=['application_started','requirements_pending','submitted','under_review','rejected'].includes(state),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:reactivable?`data-profile-reactivate="${role}"`:`data-role-action="${role}"`,status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':inProgress?state.replaceAll('_',' '):'Not active',label=enabled?'Disable':reactivable?'Reactivate':inProgress?'Continue onboarding':'Start onboarding';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`}).join('');
 }
 
 function accountSettingsHeader(title,subtitle){return `<div class="accountSettingsHeader"><button id="accountSettingsBack" type="button" aria-label="Back">‹</button><div><span>ACCOUNT SETTINGS</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div></div>`}
@@ -228,6 +228,7 @@ function renderAccountSettings(view=accountSettingsView){
   workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
   workspace.querySelector('#removeAvatar')?.addEventListener('click',removeAvatar);
   workspace.querySelectorAll('[data-profile-toggle]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.profileToggle,btn.dataset.enabled!=='1'));
+  workspace.querySelectorAll('[data-profile-reactivate]').forEach(btn=>btn.onclick=()=>reactivateProfile(btn.dataset.profileReactivate));
   workspace.querySelectorAll('[data-role-action]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.roleAction,true));
   bindCopyIds(workspace);
   document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{view,activeRole,accountId:Number(account.id)||null}}));
@@ -254,6 +255,8 @@ function closeAccountSettings(){
   publishProfileState();
   window.scrollTo({top:0,behavior:'auto'});
 }
+
+async function reactivateProfile(role){try{snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:true,visibility:'private'})});activeRole=snapshot.account.active_role||role;profileFetchedAt=Date.now();renderAccountSettings('profiles');publishProfileState();showToast('Profile reactivated.')}catch(err){showToast(err.message)}}
 
 async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();if(enabled){activeSurface='profile';applyActiveRole()}else renderAccountHome();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
 
