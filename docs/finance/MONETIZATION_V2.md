@@ -246,7 +246,7 @@ Implemented:
   - Shared company cost 50/50 simulator;
   - Commission Planner integration for subscription + Delivery production-fee revenue.
 
-No live subscription price or operator split has been activated. Delivery has an Owner-approved **10% production-fee target on verified delivery price**, but live collection is not activated yet.
+The Owner-approved subscription target is **₱99/month** for Merchant, Supplier and Local Services, but no live subscription billing policy has been activated. Delivery has an Owner-approved **10% production-fee target on verified delivery price**, but live collection is not activated yet.
 
 
 ## 11. Public pricing transparency principle
