@@ -153,19 +153,26 @@ async function root(req,res){const r=await upstream(req.path,{headers:{...req.he
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/notifications',async(req,res,next)=>{try{const me=await identity(req),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50));const{rows}=await pool.query(`
-  SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at
-  FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
-  JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
-  WHERE r.account_id=$1 AND r.dismissed_at IS NULL ORDER BY e.created_at DESC LIMIT $2
+  WITH inbox AS (
+    SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
+      ROW_NUMBER() OVER(PARTITION BY CASE WHEN e.entity_type='support_ticket' THEN 'support_ticket:'||e.entity_id ELSE 'recipient:'||r.id::text END ORDER BY e.created_at DESC,e.id DESC) thread_rank
+    FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
+    JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
+    WHERE r.account_id=$1 AND r.dismissed_at IS NULL
+  ) SELECT recipient_id,read_at,dismissed_at,locale,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at
+    FROM inbox WHERE thread_rank=1 ORDER BY created_at DESC LIMIT $2
 `,[me.account.id,limit]);const out=[];for(const row of rows){const msg=await renderNotification(pool,row,'in_app');out.push({...row,title:msg.title,body:msg.body})}res.json(out)}catch(e){next(e)}});
 app.get('/api/notifications/unread-count',async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`
-  SELECT COUNT(*)::int n FROM notification_recipients r
-  JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
-  WHERE r.account_id=$1 AND r.read_at IS NULL AND r.dismissed_at IS NULL
+  WITH inbox AS (
+    SELECT r.read_at,ROW_NUMBER() OVER(PARTITION BY CASE WHEN e.entity_type='support_ticket' THEN 'support_ticket:'||e.entity_id ELSE 'recipient:'||r.id::text END ORDER BY e.created_at DESC,e.id DESC) thread_rank
+    FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
+    JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
+    WHERE r.account_id=$1 AND r.dismissed_at IS NULL
+  ) SELECT COUNT(*)::int n FROM inbox WHERE thread_rank=1 AND read_at IS NULL
 `,[me.account.id]);res.json({unread:Number(q.rows[0].n)})}catch(e){next(e)}});
 app.patch('/api/notifications/:id/read',body,async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`UPDATE notification_recipients SET read_at=COALESCE(read_at,NOW()) WHERE id=$1 AND account_id=$2 RETURNING id,read_at`,[Number(req.params.id),me.account.id]);if(!q.rowCount)return res.status(404).json({error:'Notification not found'});res.json(q.rows[0])}catch(e){next(e)}});
 app.post('/api/notifications/read-all',body,async(req,res,next)=>{try{const me=await identity(req);await pool.query(`UPDATE notification_recipients SET read_at=COALESCE(read_at,NOW()) WHERE account_id=$1 AND dismissed_at IS NULL`,[me.account.id]);res.json({ok:true})}catch(e){next(e)}});
-app.delete('/api/notifications/:id',async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`UPDATE notification_recipients SET dismissed_at=NOW() WHERE id=$1 AND account_id=$2 RETURNING id`,[Number(req.params.id),me.account.id]);if(!q.rowCount)return res.status(404).json({error:'Notification not found'});res.json({ok:true})}catch(e){next(e)}});
+app.delete('/api/notifications/:id',async(req,res,next)=>{try{const me=await identity(req),recipientId=Number(req.params.id);const target=await pool.query(`SELECT e.entity_type,e.entity_id FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id WHERE r.id=$1 AND r.account_id=$2`,[recipientId,me.account.id]);if(!target.rowCount)return res.status(404).json({error:'Notification not found'});const x=target.rows[0];if(x.entity_type==='support_ticket')await pool.query(`UPDATE notification_recipients r SET dismissed_at=NOW() FROM notification_events e WHERE r.event_id=e.id AND r.account_id=$1 AND e.entity_type='support_ticket' AND e.entity_id=$2`,[me.account.id,x.entity_id]);else await pool.query(`UPDATE notification_recipients SET dismissed_at=NOW() WHERE id=$1 AND account_id=$2`,[recipientId,me.account.id]);res.json({ok:true})}catch(e){next(e)}});
 
 app.get('/api/notifications/preferences',async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`SELECT preferred_locale FROM accounts WHERE id=$1`,[me.account.id]);const prefs=await pool.query(`SELECT * FROM notification_preferences WHERE account_id=$1 ORDER BY category,profile_role`,[me.account.id]);res.json({preferred_locale:normalizeNotificationLocale(q.rows[0]?.preferred_locale),categories:CATEGORIES,preferences:prefs.rows,push_configured:Boolean(process.env.WEB_PUSH_VAPID_PUBLIC_KEY&&process.env.WEB_PUSH_VAPID_PRIVATE_KEY)})}catch(e){next(e)}});
 app.put('/api/notifications/preferences',body,async(req,res,next)=>{try{const me=await identity(req),category=clean(req.body?.category,40),role=clean(req.body?.profile_role,40);if(!CATEGORIES.includes(category))return res.status(400).json({error:'Unknown notification category'});if(category==='security'&&req.body?.in_app_enabled===false)return res.status(409).json({error:'Security notifications must remain available in-app'});const inApp=category==='security'?true:req.body?.in_app_enabled!==false,email=Boolean(req.body?.email_enabled),push=req.body?.push_enabled!==false;const{rows}=await pool.query(`INSERT INTO notification_preferences(account_id,profile_role,category,in_app_enabled,email_enabled,push_enabled) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(account_id,profile_role,category) DO UPDATE SET in_app_enabled=EXCLUDED.in_app_enabled,email_enabled=EXCLUDED.email_enabled,push_enabled=EXCLUDED.push_enabled,updated_at=NOW() RETURNING *`,[me.account.id,role,category,inApp,email,push]);res.json(rows[0])}catch(e){next(e)}});
