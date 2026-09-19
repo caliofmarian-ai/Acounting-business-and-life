@@ -174,8 +174,8 @@ async function startVoice(){
   }catch(e){
     const overlayHint=/Android/i.test(navigator.userAgent||'')&&e?.name==='NotAllowedError';
     const message=overlayHint
-      ?'Android blocked microphone access. Close screen-recording/floating overlays and try again.'
-      :(e?.name==='NotAllowedError'?'Microphone permission was not granted.':(e.message||'Microphone is unavailable.'));
+      ?'Android blocked microphone access. Close screen-recording/floating overlays and try again. You can still type the message or attach audio.'
+      :(e?.name==='NotAllowedError'?'Microphone permission was not granted. You can still type the message or attach audio.':(e.message||'Microphone is unavailable. You can still type the message or attach audio.'));
     if(statusNode)statusNode.textContent=message;
     toast(message);
   }
