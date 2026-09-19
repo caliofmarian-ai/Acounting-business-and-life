@@ -96,7 +96,8 @@ test('Admin Finance UI shows promo HOLD READY and non-billable Customer Delivery
   assert.match(ui,/Customer = FREE/);
   assert.match(ui,/Delivery = no monthly subscription/);
   assert.match(ui,/Create subscription plan draft/);
-  assert.match(ui,/Leave blank until decided/);
+  assert.match(ui,/value="99"/);
+  assert.match(ui,/Owner-approved price is ₱99\/month/);
   assert.match(ui,/Billing is still inactive/);
   assert.match(css,/\.subscriptionBillingCard/);
   assert.match(css,/\.subscriptionStateGrid/);

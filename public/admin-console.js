@@ -125,7 +125,7 @@ function sharedCostScopeRow(index){
 }
 function monetizationV2Card(model){
   const p=model?.profile_models||{},d=model?.digital_payment_incentive||{},shared=model?.shared_cost_policy||{};
-  const item=(role,label)=>{const x=p?.[role]||{};let value='';if(x.customer_free)value='FREE';else if(x.delivery_production_fee)value=financePct(x.owner_approved_delivery_production_rate_pct||10)+' of verified delivery price';else if(x.monthly_subscription&&x.transaction_fee)value='Subscription + transaction fee';const meta=x.delivery_production_fee?'No monthly subscription · '+esc(x.promotional_days||30)+'-day promo first':(x.promotional_entitlement?esc(x.promotional_days||90)+'-day promo before monetization':'No paid profile subscription');return '<div class="monetizationRoleRow"><div><strong>'+esc(label)+'</strong><small>'+esc(meta)+'</small></div><b>'+esc(value||'Policy not configured')+'</b></div>'};
+  const item=(role,label)=>{const x=p?.[role]||{};let value='';if(x.customer_free)value='FREE';else if(x.delivery_production_fee)value=financePct(x.owner_approved_delivery_production_rate_pct||10)+' of verified delivery price';else if(x.monthly_subscription&&x.transaction_fee)value=financeMoney(x.owner_approved_monthly_subscription_php||99)+'/month + '+financePct(x.owner_approved_transaction_rate_pct||0.5);const meta=x.delivery_production_fee?'No monthly subscription · '+esc(x.promotional_days||30)+'-day promo first':(x.promotional_entitlement?esc(x.promotional_days||90)+'-day promo before monetization':'No paid profile subscription');return '<div class="monetizationRoleRow"><div><strong>'+esc(label)+'</strong><small>'+esc(meta)+'</small></div><b>'+esc(value||'Policy not configured')+'</b></div>'};
   return '<section class="monetizationV2Card">'
     +'<div class="commissionPlannerHead"><div><small>MONETIZATION V2</small><h3>Profile model & shared company costs</h3><p>No live amount or percentage is activated here.</p></div><span class="badge">OWNER POLICY</span></div>'
     +'<div class="profileMonetizationGrid">'+item('customer','Customer')+item('merchant','Merchant')+item('supplier','Supplier')+item('local_services','Artisan / Local Services')+item('courier','Delivery')+'</div>'
@@ -153,12 +153,12 @@ function subscriptionBillingCard(data){
     ?'<details class="commissionAssumptions"><summary>Create subscription plan draft</summary><form id="subscriptionPolicyDraftForm" class="adminForm"><div class="financeFormGrid">'
       +'<label>Profile type<select name="service_scope"><option value="marketplace">Merchant</option><option value="supplier">Supplier</option><option value="local_services">Artisan / Local Services</option></select></label>'
       +'<label>Policy code<input name="policy_code" placeholder="Optional · auto by profile"></label>'
-      +'<label>Monthly amount (PHP)<input name="monthly_amount" type="number" min="0" step="0.01" placeholder="Leave blank until decided"></label>'
+      +'<label>Monthly amount (PHP)<input name="monthly_amount" type="number" min="0" step="0.01" value="99"></label>'
       +'<label>Description<input name="description" placeholder="Owner pricing scenario / rationale"></label>'
       +'</div><div class="notice"><strong>Draft only.</strong><br>Creating this record does not activate billing and does not generate an invoice.</div><button class="primary" type="submit">Create plan draft</button><div id="subscriptionPolicyDraftResult"></div></form></details>'
     :'';
   return '<section class="subscriptionBillingCard">'
-    +'<div class="commissionPlannerHead"><div><small>SUBSCRIPTION BILLING</small><h3>90-day promo → billing readiness</h3><p>Merchant, Supplier and Artisan billing stays blocked until promo has ended and an active Owner-approved plan exists.</p></div><span class="badge">FAIL-CLOSED</span></div>'
+    +'<div class="commissionPlannerHead"><div><small>SUBSCRIPTION BILLING</small><h3>90-day promo → billing readiness</h3><p>Owner-approved price is ₱99/month after the 90-day promo. Billing stays blocked until promo has ended and an active versioned plan exists.</p></div><span class="badge">FAIL-CLOSED</span></div>'
     +'<div class="subscriptionBillingRows">'+scopeOrder.map(scopeRow).join('')+'</div>'
     +'<div class="financeTruth"><strong>Non-billable profiles</strong><span>Customer = FREE. Delivery = no monthly subscription; Delivery uses production fee only.</span></div>'
     +'<div class="financeTruth"><strong>Current activation boundary</strong><span>'+esc(data?.guardrails?.invoice_generation||'NOT_PERFORMED')+' · live policy activation '+esc(data?.guardrails?.live_policy_activation||'NOT_AVAILABLE')+'.</span></div>'
@@ -276,11 +276,11 @@ function commissionPlannerForm(k,promo){
       +'</div></details>'
       +'<details class="commissionAssumptions"><summary>4. Profile subscriptions & Delivery revenue</summary><div class="financeFormGrid">'
         +'<label>Paid Merchant profiles<input name="merchant_paid_profiles" type="number" min="0" step="1" value="0"></label>'
-        +'<label>Merchant monthly subscription (PHP)<input name="merchant_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Merchant monthly subscription (PHP)<input name="merchant_subscription_amount" type="number" min="0" step="0.01" value="99"></label>'
         +'<label>Paid Supplier profiles<input name="supplier_paid_profiles" type="number" min="0" step="1" value="0"></label>'
-        +'<label>Supplier monthly subscription (PHP)<input name="supplier_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Supplier monthly subscription (PHP)<input name="supplier_subscription_amount" type="number" min="0" step="0.01" value="99"></label>'
         +'<label>Paid Artisan / Local Services profiles<input name="local_services_paid_profiles" type="number" min="0" step="1" value="0"></label>'
-        +'<label>Artisan / Local Services monthly subscription (PHP)<input name="local_services_subscription_amount" type="number" min="0" step="0.01" value="0"></label>'
+        +'<label>Artisan / Local Services monthly subscription (PHP)<input name="local_services_subscription_amount" type="number" min="0" step="0.01" value="99"></label>'
         +'<label>Monthly eligible Delivery price charged to customers (PHP)<input name="delivery_eligible_price" type="number" min="0" step="0.01" value="0"></label>'
         +'<label>Delivery production fee % · Owner-approved<input name="delivery_production_rate_pct" type="number" min="0" max="100" step="0.01" value="10"></label>'
       +'</div><div class="notice"><strong>These revenues reduce the transaction fee still required.</strong><br>Customer remains free. Delivery has no monthly subscription.</div></details>'

@@ -69,7 +69,7 @@ async function renderSupplierWorkspace(section=supSupplierSection){
   if(normalized==='Catalog')body=supplierCatalogPanel(me);
   else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierOrdersPanel(pos,'Procurement');
   else body=supplierOrdersPanel(pos,normalized);
-  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section>`+body;
+  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
   bindSupBack();bindSupplierWorkspace();
 }
 function poCardSupplier(p){

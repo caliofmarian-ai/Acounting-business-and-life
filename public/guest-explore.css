@@ -9,7 +9,7 @@
 .guestIconBtn{width:40px;height:40px;border-radius:50%;background:#edf3f1;font-size:20px}
 .guestBrand{display:grid;min-width:0}.guestBrand strong{font-size:14px}.guestBrand span{font-size:10px;color:#697687;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .guestAccountBtn{background:#0a7c66;color:#fff;border-radius:12px;padding:10px 12px;font-size:11px;font-weight:900}
-.guestTabs{position:sticky;top:63px;z-index:4;display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:8px 12px;background:#f5f8f7}
+.guestTabs{position:sticky;top:63px;z-index:4;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:8px 12px;background:#f5f8f7}
 .guestTabs button{padding:10px;border-radius:12px;background:transparent;color:#657282;font-weight:800;font-size:11px}.guestTabs button.active{background:#fff;color:#075f50;box-shadow:0 4px 14px rgba(23,35,60,.07)}
 .guestBody{width:min(100%,920px);margin:0 auto;padding:14px 14px calc(32px + env(safe-area-inset-bottom))}
 .guestHero{background:linear-gradient(145deg,#103c3a,#0a7c66);color:#fff;border-radius:24px;padding:22px;margin-bottom:14px;box-shadow:0 18px 45px rgba(16,60,58,.16)}.guestHero h1{font-size:27px;line-height:1.04;margin:5px 0 9px;letter-spacing:-.04em}.guestHero p{margin:0;color:#d8ece7;font-size:13px;line-height:1.5}.guestEyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:9px;font-weight:900;color:#a9ddd2}
@@ -27,3 +27,10 @@
 .guestPrivacyCard{background:#fff;border:1px solid #e0e7e4;border-radius:19px;padding:15px;margin-bottom:9px}.guestPrivacyCard.protected{border-color:#ecd7d7}.guestPrivacyCard h2{font-size:15px;margin:0 0 8px}.guestPrivacyCard ul{margin:0;padding-left:19px;color:#596777;font-size:11px;line-height:1.7}.guestPrivacyRule{background:#17233c;color:#fff;border-radius:15px;padding:13px;font-size:11px}
 .guestState,.guestLoading{background:#fff;border:1px dashed #cfdad7;border-radius:18px;padding:20px;text-align:center;color:#697687}.guestState{display:grid;gap:6px}.guestState strong{color:#17233c}.guestState p{margin:0;font-size:11px}.guestState button{justify-self:center;background:#0a7c66;color:#fff;border-radius:11px;padding:9px 13px;font-weight:800}
 @media(min-width:700px){.guestProductGrid{grid-template-columns:repeat(3,minmax(0,1fr))}.guestStoreGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.guestRoleGrid{grid-template-columns:repeat(5,minmax(0,1fr))}.guestTabs{top:64px}}
+
+.guestPricingPromise{background:#fff;border:1px solid #dce7e3;border-radius:18px;padding:14px;margin:10px 0}.guestPricingPromise strong{font-size:13px}.guestPricingPromise p{margin:5px 0 0;font-size:10px;line-height:1.5;color:#64746f}
+.guestPricingGrid{display:grid;grid-template-columns:1fr;gap:8px}.guestPricingCard{background:#fff;border:1px solid #e0e7e4;border-radius:18px;padding:14px;display:grid;gap:5px}.guestPricingCard small{font-size:8px;letter-spacing:.1em;color:#0a7c66;font-weight:950}.guestPricingCard strong{font-size:14px;line-height:1.3}.guestPricingCard p{margin:0;font-size:10px;color:#657282;line-height:1.45}
+.guestFeeBreakdown,.guestBenefits{background:#fff;border:1px solid #e0e7e4;border-radius:20px;padding:14px;margin-top:12px}.guestFeeRow{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid #edf1ef;font-size:10px}.guestFeeRow:last-of-type{border-bottom:0}.guestFeeBreakdown>p{font-size:9px;color:#6d7986;line-height:1.45;margin:10px 0 0}
+.guestBenefits h2{font-size:17px;margin:0 0 10px}.guestBenefitGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.guestBenefitGrid article{background:#f2f7f5;border-radius:14px;padding:11px;display:grid;gap:4px}.guestBenefitGrid strong{font-size:11px}.guestBenefitGrid span{font-size:9px;line-height:1.4;color:#63706d}
+@media(min-width:700px){.guestPricingGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:430px){.guestTabs button{font-size:9px;padding:9px 4px}.guestBenefitGrid{grid-template-columns:1fr}}

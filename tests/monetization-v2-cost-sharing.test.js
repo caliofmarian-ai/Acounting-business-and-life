@@ -45,8 +45,8 @@ test('profile monetization matrix follows Owner model without invented prices',(
   assert.equal(courierDraft.delivery_production_fee_basis,'verified_delivery_price');
 
   const merchantDraft=monetizationPolicyDraft('merchant');
-  assert.equal(merchantDraft.monthly_subscription_amount,null);
-  assert.equal(merchantDraft.transaction_rate_pct,null);
+  assert.equal(merchantDraft.monthly_subscription_amount,99);
+  assert.equal(merchantDraft.transaction_rate_pct,0.5);
   assert.equal(merchantDraft.transaction_fixed_amount,null);
   assert.equal(merchantDraft.promotional_days,90);
 });
@@ -154,7 +154,8 @@ test('read-only Admin endpoints expose policy and 50/50 simulator without live m
 test('Admin Finance UI presents profile policy and shared cost model clearly',()=>{
   assert.match(ui,/MONETIZATION V2/);
   assert.match(ui,/Customer/);
-  assert.match(ui,/Subscription \+ transaction fee/);
+  assert.match(ui,/owner_approved_monthly_subscription_php\|\|99/);
+  assert.match(ui,/owner_approved_transaction_rate_pct\|\|0\.5/);
   assert.match(ui,/owner_approved_delivery_production_rate_pct\|\|10/);
   assert.match(ui,/of verified delivery price/);
   assert.match(ui,/x\.promotional_days\|\|30/);
