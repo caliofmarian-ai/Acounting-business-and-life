@@ -41,6 +41,10 @@ on:
       - '.github/workflows/admin-runtime.yml'
 
       - 'business-finance-view-core.js'
+      - 'financial-document-core.js'
+      - 'public/financial-documents-ui.js'
+      - 'public/financial-documents.css'
+      - 'tests/financial-document-engine.test.js'
   push:
     branches: [main]
     paths:
@@ -81,6 +85,10 @@ on:
       - 'public/profile-money-ui.js'
       - 'public/profile-money.css'
       - 'business-finance-view-core.js'
+      - 'financial-document-core.js'
+      - 'public/financial-documents-ui.js'
+      - 'public/financial-documents.css'
+      - 'tests/financial-document-engine.test.js'
 
 
 permissions:
@@ -137,6 +145,134 @@ jobs:
           done
           cat /tmp/abl-admin-runtime.log
           exit 1
+      - name: Verify Financial Document Engine runtime
+        run: |
+          set -euo pipefail
+
+          # Isolated-CI fixture only. This database is destroyed with the workflow job.
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          UPDATE profiles SET enabled=TRUE,status='active'
+          WHERE account_id=1 AND role='merchant';
+
+          INSERT INTO profile_business_bindings(account_id,role,business_id,status,is_primary)
+          VALUES(1,'merchant',1,'active',TRUE)
+          ON CONFLICT(account_id,role,business_id)
+          DO UPDATE SET status='active',is_primary=TRUE,updated_at=NOW();
+
+          INSERT INTO business_memberships(business_id,account_id,membership_role,active)
+          VALUES(1,1,'owner',TRUE)
+          ON CONFLICT(business_id,account_id)
+          DO UPDATE SET active=TRUE;
+          SQL
+
+          TX_ID=$(psql -v ON_ERROR_STOP=1 -Atc "
+            INSERT INTO transactions(
+              business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
+            ) VALUES(
+              1,'sale','CI Financial Documents',123.45,'cash','cash',
+              'CI financial document smoke','ci_financial_document',424242,'2026-09-19T02:00:00Z'
+            ) RETURNING id
+          ")
+          export TX_ID
+
+          psql -Atc "
+            SELECT md5(row_to_json(x)::text)
+            FROM (
+              SELECT id,business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
+              FROM transactions WHERE id=$TX_ID
+            ) x
+          " > /tmp/fd-source-before.txt
+
+          psql -Atc "SELECT COUNT(*) FROM financial_documents" > /tmp/fd-docs-before.txt
+          psql -Atc "SELECT COUNT(*) FROM financial_document_lines" > /tmp/fd-lines-before.txt
+          psql -Atc "SELECT COUNT(*) FROM financial_document_source_links" > /tmp/fd-links-before.txt
+
+          SESSION_ID="ci-financial-documents-runtime-session"
+          psql -v ON_ERROR_STOP=1 -c "
+            INSERT INTO account_sessions(session_id,account_id,expires_at,user_agent,ip_hash)
+            VALUES('$SESSION_ID',1,NOW()+INTERVAL '1 hour','ci-financial-documents','ci')
+            ON CONFLICT(session_id) DO UPDATE SET expires_at=EXCLUDED.expires_at,revoked_at=NULL
+          "
+          export SESSION_ID
+          TOKEN=$(node - <<'NODE'
+          const crypto=require('crypto');
+          const issued=Date.now();
+          const payload='v2.'+issued+'.1.'+process.env.SESSION_ID;
+          const sig=crypto.createHmac('sha256',process.env.TOKEN_SECRET).update(payload).digest('hex');
+          process.stdout.write(payload+'.'+sig);
+          NODE
+          )
+
+          curl --fail --silent             -H "Authorization: Bearer $TOKEN"             "http://127.0.0.1:3000/api/financial-statements/month?profile_role=merchant&business_id=1&anchor=2026-09-19"             > /tmp/fd-statement.json
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const x=JSON.parse(fs.readFileSync('/tmp/fd-statement.json','utf8'));
+          if(x?.period?.start_date!=='2026-09-01')throw new Error('Unexpected month start');
+          if(x?.period?.end_date_exclusive!=='2026-10-01')throw new Error('Unexpected month end');
+          if(x?.period?.timezone!=='Asia/Manila')throw new Error('Unexpected statement timezone');
+          if(x?.scope?.profile_role!=='merchant'||Number(x?.scope?.business_id)!==1)throw new Error('Wrong financial scope');
+          if(Number(x?.document_count||0)<1)throw new Error('Expected at least one derived financial document');
+          if(x?.authority?.source_ledgers_remain_authoritative!==true)throw new Error('Source-ledger authority invariant missing');
+          NODE
+
+          curl --fail --silent             -H "Authorization: Bearer $TOKEN"             "http://127.0.0.1:3000/api/financial-documents?profile_role=merchant&business_id=1&from=2026-09-01&to=2026-10-01&limit=100"             > /tmp/fd-documents.json
+
+          DOC_ID=$(node - <<'NODE'
+          const fs=require('fs');
+          const txId=String(process.env.TX_ID);
+          const x=JSON.parse(fs.readFileSync('/tmp/fd-documents.json','utf8'));
+          const d=(x.documents||[]).find(v=>v.source_type==='transaction'&&String(v.source_id)===txId);
+          if(!d)throw new Error('Fixture transaction document missing');
+          if(d.fiscal_status!=='internal_evidence')throw new Error('Fixture must remain internal evidence');
+          if(!Array.isArray(d.lines)||!d.lines.some(l=>l.impact_class==='revenue'))throw new Error('Revenue line missing');
+          process.stdout.write(d.public_id);
+          NODE
+          )
+          export DOC_ID
+
+          curl --fail --silent             -H "Authorization: Bearer $TOKEN"             "http://127.0.0.1:3000/api/financial-documents/$DOC_ID?profile_role=merchant&business_id=1"             > /tmp/fd-document-detail.json
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const x=JSON.parse(fs.readFileSync('/tmp/fd-document-detail.json','utf8'));
+          if(x.public_id!==process.env.DOC_ID)throw new Error('Document detail mismatch');
+          if(x.source_type!=='transaction')throw new Error('Document source mismatch');
+          NODE
+
+          curl --fail --silent             -H "Authorization: Bearer $TOKEN"             "http://127.0.0.1:3000/api/financial-statements/consolidated/month?anchor=2026-09-19"             > /tmp/fd-consolidated.json
+
+          node - <<'NODE'
+          const fs=require('fs');
+          const x=JSON.parse(fs.readFileSync('/tmp/fd-consolidated.json','utf8'));
+          if(!Array.isArray(x.scopes)||!x.scopes.some(s=>s.scope_key==='business:1'))throw new Error('Business scope missing from consolidation');
+          if(x?.authority?.no_cross_account_or_cross_business_data!==true)throw new Error('Consolidation privacy invariant missing');
+          NODE
+
+          psql -Atc "
+            SELECT md5(row_to_json(x)::text)
+            FROM (
+              SELECT id,business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
+              FROM transactions WHERE id=$TX_ID
+            ) x
+          " > /tmp/fd-source-after.txt
+          cmp /tmp/fd-source-before.txt /tmp/fd-source-after.txt
+
+          DOCS_BEFORE=$(cat /tmp/fd-docs-before.txt)
+          LINES_BEFORE=$(cat /tmp/fd-lines-before.txt)
+          LINKS_BEFORE=$(cat /tmp/fd-links-before.txt)
+          DOCS_AFTER=$(psql -Atc "SELECT COUNT(*) FROM financial_documents")
+          LINES_AFTER=$(psql -Atc "SELECT COUNT(*) FROM financial_document_lines")
+          LINKS_AFTER=$(psql -Atc "SELECT COUNT(*) FROM financial_document_source_links")
+
+          test "$DOCS_AFTER" -gt "$DOCS_BEFORE"
+          test "$LINES_AFTER" -gt "$LINES_BEFORE"
+          test "$LINKS_AFTER" -gt "$LINKS_BEFORE"
+
+          echo "Financial Document Engine runtime smoke PASS"
+          echo "derived_documents_delta=$((DOCS_AFTER-DOCS_BEFORE))"
+          echo "derived_lines_delta=$((LINES_AFTER-LINES_BEFORE))"
+          echo "derived_links_delta=$((LINKS_AFTER-LINKS_BEFORE))"
       - name: Verify dedicated Admin workspace
         run: |
           curl --fail --silent http://127.0.0.1:3000/admin | grep -q 'Admin Workspace'
