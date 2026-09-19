@@ -13,7 +13,7 @@ const payments=read('public/payments-ui.js');
 
 test('lazy Support keeps the Admin module API without injecting duplicate Admin buttons',()=>{
   assert.match(admin,/lazyFeatureMode=Boolean\(window\.__ABL_LAZY_FEATURES__\)/);
-  assert.match(admin,/window\.BusinessLifeAdminOps=Object\.freeze\(\{openSupport,openAdmin,closeOps\}\)/);
+  assert.match(admin,/window\.BusinessLifeAdminOps=Object\.freeze\(\{openSupport,openTicket,openAdmin,closeOps\}\)/);
   assert.match(admin,/if\(lazyFeatureMode\|\|!token\(\)\)return/);
   assert.match(loader,/window\.__ABL_LAZY_FEATURES__=true/);
   assert.match(loader,/window\.BusinessLifeAdminOps/);
