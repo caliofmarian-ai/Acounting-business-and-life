@@ -586,7 +586,6 @@ app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
   const enabled = req.body?.enabled !== false;
   const visibility = ['public', 'relationship_only', 'private'].includes(req.body?.visibility) ? req.body.visibility : 'private';
-  if (role === 'merchant' && req.accountId === 1 && !enabled) return res.status(409).json({ error: 'The bootstrap Merchant profile cannot be disabled during migration.' });
   if (enabled) return res.status(409).json({ error: 'Start and complete this profile onboarding before activation.' });
   try {
     await pool.query(`UPDATE profiles SET enabled=FALSE,visibility=$3,status='disabled',updated_at=NOW() WHERE account_id=$1 AND role=$2`, [req.accountId, role, visibility]);

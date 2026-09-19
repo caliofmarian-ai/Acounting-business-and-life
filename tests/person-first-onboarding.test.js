@@ -30,3 +30,13 @@ test('operational profiles start disabled onboarding and need Admin approval',()
   assert.match(ui,/Start onboarding/);
   assert.match(ui,/Passenger transport is a separate future authorization/);
 });
+
+test('every app entry opens the person account chooser and Merchant can be disabled',()=>{
+  const auth=read('server-auth.js'),shell=read('public/shell.js');
+  assert.doesNotMatch(auth,/bootstrap Merchant profile cannot be disabled/);
+  assert.match(shell,/let profileChosenThisSession = false/);
+  assert.match(shell,/function renderAccountHome\(\)/);
+  assert.match(shell,/You choose every time/);
+  assert.match(shell,/if\(profileChosenThisSession\)applyActiveRole\(\);else renderAccountHome\(\)/);
+  assert.doesNotMatch(shell,/locked=role==='merchant'/);
+});

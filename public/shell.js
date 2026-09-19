@@ -15,6 +15,7 @@ let adminContext = null;
 let adminContextFetchedAt = 0;
 let adminContextRefreshPromise = null;
 let activeRole = null;
+let profileChosenThisSession = false;
 let toastTimer;
 const PROFILE_CACHE_MS = 30000;
 const ADMIN_CONTEXT_CACHE_MS = 60000;
@@ -149,7 +150,7 @@ function renderTopAccount() {
   const button = document.getElementById('accountAvatarButton');
   const pill = document.getElementById('activeRolePill');
   if (button) button.innerHTML = avatarMarkup(snapshot.account);
-  if (pill) pill.textContent = ROLE_META[activeRole]?.label || activeRole;
+  if (pill) pill.textContent = profileChosenThisSession ? (ROLE_META[activeRole]?.label || activeRole || 'Account') : 'Account';
 }
 
 function renderDrawer() {
@@ -185,7 +186,7 @@ function renderDrawer() {
 function renderAccountSettings(){
   if(!snapshot?.account)return;
   const account=snapshot.account,panel=document.getElementById('profileDrawerPanel');if(!panel)return;
-  const profileManagement=ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),locked=role==='merchant'&&Number(account.id)===1;const action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`;return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${enabled?'Active profile':profile?.status?profile.status.replaceAll('_',' '):'Onboarding not started'}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action} ${locked?'disabled':''}>${locked?'Required':enabled?'Disable':'Start onboarding'}</button></div>`}).join('');
+  const profileManagement=ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`,status=!enabled&&profile?.status==='application_started'?'Onboarding in progress':enabled?'Active profile':'Not active';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${status}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${enabled?'Disable':'Start onboarding'}</button></div>`}).join('');
   panel.innerHTML=`${drawerHeader(account,true)}
     <section class="drawerSection"><h3>Personal details</h3>
       <form id="accountIdentityForm" class="profileForm">
@@ -210,7 +211,7 @@ function renderAccountSettings(){
   document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{activeRole,accountId:Number(account.id)||null}}));
 }
 
-async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();applyActiveRole();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
+async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();if(enabled)applyActiveRole();else{profileChosenThisSession=false;renderAccountHome()}publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
 
 async function openDrawer() {
   if (!token()) return showToast('Sign in first to open your account.');
@@ -293,6 +294,7 @@ async function enableOrSwitch(role) {
     if (!isEnabled(role)) snapshot = await profileApi(`/api/profiles/${role}`, { method: 'PUT', body: JSON.stringify({ enabled: true, visibility: role === 'merchant' ? 'public' : 'private' }) });
     snapshot = await profileApi('/api/me/active-role', { method: 'PATCH', body: JSON.stringify({ role }) });
     activeRole = snapshot.account.active_role || role;
+    profileChosenThisSession = true;
     profileFetchedAt=Date.now();
     applyActiveRole();
     publishProfileState();
@@ -369,6 +371,21 @@ function renderRoleHub(role) {
   hub.classList.remove('hidden');
 }
 
+function renderAccountHome(){
+  if(!snapshot?.account)return;
+  hideMerchantWorkspace();
+  const account=snapshot.account,hub=document.getElementById('roleHub');
+  if(!hub)return;
+  const profiles=ROLE_ORDER.filter(isEnabled).map(role=>{const meta=ROLE_META[role];return `<button class="hubTile" type="button" data-account-role="${role}"><span class="hubTileIcon">${meta.icon}</span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.desc)}</small><span class="hubStatus">Open profile</span></button>`}).join('');
+  const admin=adminContext?.is_admin?`<button class="hubTile" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin')}</strong><small>Administrative workspace and delegated functions</small><span class="hubStatus">Open profile</span></button>`:'';
+  hub.innerHTML=`<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><p>${countryMeta(account.country_code).flag} ${escapeHtml(countryMeta(account.country_code).label)} · ${escapeHtml(account.personal_id||'')}</p><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid">${admin}${profiles}<button class="hubTile profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>Personal details, security and profile onboarding</small></button></div>`;
+  hub.querySelectorAll('[data-account-role]').forEach(button=>button.onclick=()=>enableOrSwitch(button.dataset.accountRole));
+  hub.querySelector('#accountAdminProfile')?.addEventListener('click',()=>window.location.assign('/admin'));
+  hub.querySelector('#accountHomeSettings')?.addEventListener('click',async()=>{await openDrawer();renderAccountSettings()});
+  hub.classList.remove('hidden');
+  renderTopAccount();
+}
+
 function applyActiveRole() {
   activeRole = snapshot?.account?.active_role || null;
   renderTopAccount();
@@ -392,7 +409,7 @@ async function refreshProfile(force=false) {
     profileFetchedAt=Date.now();
     activeRole = snapshot.account?.active_role || null;
     ensureShellChrome();
-    applyActiveRole();
+    if(profileChosenThisSession)applyActiveRole();else renderAccountHome();
     publishProfileState();
     return snapshot;
   })();
@@ -414,7 +431,7 @@ function boot() {
   if (shell) new MutationObserver(onShellVisibility).observe(shell, { attributes: true, attributeFilter: ['class'] });
   if (token()) {
     refreshProfile().catch(() => {});
-    refreshAdminContext().then(()=>{if(!document.getElementById('profileDrawerBackdrop')?.classList.contains('hidden'))renderDrawer()}).catch(()=>{});
+    refreshAdminContext().then(()=>{if(!profileChosenThisSession)renderAccountHome();if(!document.getElementById('profileDrawerBackdrop')?.classList.contains('hidden'))renderDrawer()}).catch(()=>{});
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
 }
