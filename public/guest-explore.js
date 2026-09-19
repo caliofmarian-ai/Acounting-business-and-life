@@ -14,15 +14,17 @@ function authToken(){ return localStorage.getItem('abl_token') || ''; }
 
 function ensureGuestEntry(){
   if(authToken() || document.getElementById('guestExploreBtn')) return;
-  const choices = document.getElementById('accountAuthChoices');
-  if(!choices) return setTimeout(ensureGuestEntry,80);
-  const button = document.createElement('button');
-  button.id = 'guestExploreBtn';
-  button.className = 'accountAuthBtn guestExploreEntry';
-  button.type = 'button';
-  button.textContent = 'Explore as Guest';
-  button.addEventListener('click', openGuest);
-  choices.insertBefore(button, choices.querySelector('.accountAuthHint'));
+  const login=document.getElementById('login');
+  const modern=document.getElementById('modernAuthRoot');
+  const legacyForm=document.getElementById('loginForm');
+  if(!login || (!modern&&!legacyForm)) return setTimeout(ensureGuestEntry,80);
+  const slot=document.createElement('section');
+  slot.id='guestExploreEntrySlot';
+  slot.className='guestExploreEntrySlot';
+  slot.innerHTML='<button id="guestExploreBtn" class="guestExploreEntry" type="button"><span>Explore as Guest</span><small>No account needed · public information only</small></button>';
+  if(modern) modern.insertAdjacentElement('beforebegin',slot);
+  else legacyForm.insertAdjacentElement('beforebegin',slot);
+  slot.querySelector('#guestExploreBtn').addEventListener('click',openGuest);
 }
 
 function ensureGuestRoot(){
@@ -73,6 +75,8 @@ function closeGuest(){
 
 function openRegistration(){
   closeGuest();
+  const modernRegister=document.querySelector('[data-auth-mode="register"]');
+  if(modernRegister){modernRegister.click();modernRegister.scrollIntoView({behavior:'smooth',block:'center'});return}
   const button=document.getElementById('createAccountBtn');
   if(button) button.click();
   else setTimeout(()=>document.getElementById('createAccountBtn')?.click(),120);
