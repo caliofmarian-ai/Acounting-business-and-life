@@ -105,6 +105,20 @@ test('financial document schema is initialized by Payment Core',()=>{
   assert.match(server,/synchronizeFinancialDocumentsForScope/);
 });
 
+
+test('Android Statements & Documents workspace is mounted and period-aware',()=>{
+  const ui=read('public/financial-documents-ui.js');
+  assert.match(server,/financial-documents\.css/);
+  assert.match(server,/financial-documents-ui\.js/);
+  assert.match(ui,/Statements & Documents/);
+  assert.match(ui,/My consolidated view/);
+  for(const period of ['day','week','month','year'])assert.match(ui,new RegExp("'"+period+"'"));
+  assert.match(ui,/Internal evidence/);
+  assert.match(ui,/Fiscal candidate/);
+  assert.match(ui,/Source ledgers remain authoritative/);
+  assert.match(pkg,/node --check public\/financial-documents-ui\.js/);
+});
+
 test('package syntax contract covers the new financial-document core and tests',()=>{
   assert.match(pkg,/node --check financial-document-core\.js/);
   assert.match(pkg,/node --check tests\/financial-document-engine\.test\.js/);
