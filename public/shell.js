@@ -206,6 +206,7 @@ function renderAccountSettings(view=accountSettingsView){
       <button type="button" data-account-settings-view="personal"><span>👤</span><strong>Personal details</strong><small>Photo, name, email, phone and primary address</small><b>›</b></button>
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
+      <button type="button" id="accountMoneyBanking"><span>🏦</span><strong>Money & Banking</strong><small>Shared payment methods, payout destination and financial identity</small><b>›</b></button>
     </div><div class="accountSettingsBoundary"><strong>Profile settings stay inside each profile</strong><p>Open Customer, Merchant, Supplier, Delivery or Local Services and use its dedicated Profile Settings card.</p></div>`;
   }else if(view==='personal'){
     workspace.innerHTML=accountSettingsHeader('Personal details','Identity and contact information shared by your account.')+`<section class="accountSettingsCard"><form id="accountIdentityForm" class="profileForm">
@@ -224,6 +225,7 @@ function renderAccountSettings(view=accountSettingsView){
   }
   workspace.querySelector('#accountSettingsBack').onclick=()=>view==='home'?closeAccountSettings():renderAccountSettings('home');
   workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>renderAccountSettings(button.dataset.accountSettingsView));
+  workspace.querySelector('#accountMoneyBanking')?.addEventListener('click',()=>window.BusinessLifeProfileSettings?.openAccountMoney?.());
   workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
   workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
   workspace.querySelector('#removeAvatar')?.addEventListener('click',removeAvatar);
@@ -384,6 +386,7 @@ function showActiveWorkspace() {
 }
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
+  openAccountSettings,
   getProfileState:()=>window.BusinessLifeProfileState||null
 });
 

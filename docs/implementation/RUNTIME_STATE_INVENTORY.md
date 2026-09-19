@@ -46,3 +46,7 @@ The avatar drawer is now a destination switcher only: account identity, active p
 ## Slice 4 update
 
 Merchant is no longer treated as an undeletable bootstrap identity by any profile endpoint. Voluntary deactivation preserves the derived Profile ID and history, chooses another enabled profile preference or `null`, and never falls back to Merchant. Governed profiles with an unexpired active authorization can be reactivated without repeating onboarding. Account Settings presents exactly one lifecycle action for each state: Start onboarding, Continue onboarding, Disable or Reactivate.
+
+## Slice 5 update
+
+Shared external Money & Banking configuration now belongs to Account Settings rather than being rendered inside every Profile Settings screen. Account financial identity, tokenized payment methods and payout destinations use one dedicated account route. Profile Settings retains only the selected profile context, operational tools, planning/transfer functions and a clear link to the shared account banking route. Back navigation returns to the surface that opened Money & Banking.

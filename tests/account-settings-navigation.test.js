@@ -22,6 +22,8 @@ test('Account Settings is a dedicated routed workspace with focused categories',
   assert.match(shell,/data-account-settings-view="personal"/);
   assert.match(shell,/data-account-settings-view="security"/);
   assert.match(shell,/data-account-settings-view="profiles"/);
+  assert.match(shell,/id="accountMoneyBanking"/);
+  assert.match(shell,/openAccountMoney/);
   assert.match(shell,/Profile settings stay inside each profile/);
   assert.match(css,/\.accountSettingsWorkspace/);
 });
