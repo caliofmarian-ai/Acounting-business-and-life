@@ -28,7 +28,7 @@ Net Margin %
   = Operating Profit / Platform Revenue
 ```
 
-When Platform Revenue is zero, especially during the 90-day promotional period, margin percentages are not meaningful. The dashboard must show absolute subsidy/cost instead:
+When Platform Revenue is zero, especially during an applicable promotional period, margin percentages are not meaningful. The dashboard must show absolute subsidy/cost instead:
 
 ```
 Subsidy per Transaction
@@ -165,9 +165,9 @@ Reports must expose the mix of actual vs estimated values. Estimated cost must n
 - retention/churn by financial cohort;
 - LTV and LTV:CAC only after enough real historical evidence exists.
 
-## 8. 90-day promotional-period economics
+## 8. Service-specific promotional-period economics
 
-The promotional period is not “free” to the platform. Finance must measure its cost.
+The promotional period is not “free” to the platform. Finance must measure its cost. Current Owner policy uses 90 days for Marketplace/Merchant and 30 days for Delivery/Courier; Supplier and Local Services remain at 90 days until separately changed.
 
 For each promotional cohort show:
 - active accounts;
