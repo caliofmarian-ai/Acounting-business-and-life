@@ -15,7 +15,7 @@ let adminContext = null;
 let adminContextFetchedAt = 0;
 let adminContextRefreshPromise = null;
 let activeRole = null;
-let profileChosenThisSession = false;
+let activeSurface = 'account';
 let toastTimer;
 const PROFILE_CACHE_MS = 30000;
 const ADMIN_CONTEXT_CACHE_MS = 60000;
@@ -150,7 +150,7 @@ function renderTopAccount() {
   const button = document.getElementById('accountAvatarButton');
   const pill = document.getElementById('activeRolePill');
   if (button) button.innerHTML = avatarMarkup(snapshot.account);
-  if (pill) pill.textContent = profileChosenThisSession ? (ROLE_META[activeRole]?.label || activeRole || 'Account') : 'Account';
+  if (pill) pill.textContent = activeSurface === 'profile' ? (ROLE_META[activeRole]?.label || activeRole || 'Account') : activeSurface === 'admin' ? 'Admin' : 'Account';
 }
 
 function renderDrawer() {
@@ -211,7 +211,7 @@ function renderAccountSettings(){
   document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{activeRole,accountId:Number(account.id)||null}}));
 }
 
-async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();if(enabled)applyActiveRole();else{profileChosenThisSession=false;renderAccountHome()}publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
+async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();if(enabled){activeSurface='profile';applyActiveRole()}else renderAccountHome();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
 
 async function openDrawer() {
   if (!token()) return showToast('Sign in first to open your account.');
@@ -294,7 +294,7 @@ async function enableOrSwitch(role) {
     if (!isEnabled(role)) snapshot = await profileApi(`/api/profiles/${role}`, { method: 'PUT', body: JSON.stringify({ enabled: true, visibility: role === 'merchant' ? 'public' : 'private' }) });
     snapshot = await profileApi('/api/me/active-role', { method: 'PATCH', body: JSON.stringify({ role }) });
     activeRole = snapshot.account.active_role || role;
-    profileChosenThisSession = true;
+    activeSurface = 'profile';
     profileFetchedAt=Date.now();
     applyActiveRole();
     publishProfileState();
@@ -330,6 +330,7 @@ function hideFeatureWorkspaces() {
 function showActiveWorkspace() {
   hideFeatureWorkspaces();
   closeDrawer();
+  activeSurface = 'profile';
   applyActiveRole();
   publishProfileState();
   window.scrollTo({top:0,behavior:'auto'});
@@ -373,6 +374,7 @@ function renderRoleHub(role) {
 
 function renderAccountHome(){
   if(!snapshot?.account)return;
+  activeSurface='account';
   hideMerchantWorkspace();
   const account=snapshot.account,hub=document.getElementById('roleHub');
   if(!hub)return;
@@ -396,7 +398,7 @@ function applyActiveRole() {
 }
 
 function publishProfileState(){
-  const detail={activeRole,accountId:Number(snapshot?.account?.id)||null,snapshot};
+  const detail={surface:activeSurface,activeRole:activeSurface==='profile'?activeRole:null,accountId:Number(snapshot?.account?.id)||null,snapshot};
   window.BusinessLifeProfileState=Object.freeze(detail);
   document.dispatchEvent(new CustomEvent('abl:profile-state',{detail}));
 }
@@ -405,11 +407,14 @@ async function refreshProfile(force=false) {
   if(!force&&snapshot?.account&&profileFetchedAt&&Date.now()-profileFetchedAt<PROFILE_CACHE_MS)return snapshot;
   if(profileRefreshPromise)return profileRefreshPromise;
   profileRefreshPromise=(async()=>{
-    snapshot = await profileApi('/api/me');
+    const bootstrap = await profileApi('/api/session/bootstrap');
+    snapshot = bootstrap.profile;
+    adminContext = bootstrap.admin?.is_admin ? bootstrap.admin : null;
+    adminContextFetchedAt=Date.now();
     profileFetchedAt=Date.now();
     activeRole = snapshot.account?.active_role || null;
     ensureShellChrome();
-    if(profileChosenThisSession)applyActiveRole();else renderAccountHome();
+    renderAccountHome();
     publishProfileState();
     return snapshot;
   })();
@@ -431,7 +436,6 @@ function boot() {
   if (shell) new MutationObserver(onShellVisibility).observe(shell, { attributes: true, attributeFilter: ['class'] });
   if (token()) {
     refreshProfile().catch(() => {});
-    refreshAdminContext().then(()=>{if(!profileChosenThisSession)renderAccountHome();if(!document.getElementById('profileDrawerBackdrop')?.classList.contains('hidden'))renderDrawer()}).catch(()=>{});
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
 }

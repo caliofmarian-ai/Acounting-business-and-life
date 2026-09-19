@@ -11,6 +11,7 @@ import {
 } from './admin-authorization.js';
 import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
 import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
+import {buildSessionBootstrap} from './session-bootstrap-core.js';
 
 const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -557,6 +558,10 @@ app.get('/',root);app.get('/index.html',root);
 app.get('/api/admin/me',async(req,res,next)=>{try{
   const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
   res.json(adminIdentityPayload(assignments,me.account));
+}catch(e){next(e)}});
+app.get('/api/session/bootstrap',async(req,res,next)=>{try{
+  const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
+  res.json(buildSessionBootstrap(me,adminIdentityPayload(assignments,me.account)));
 }catch(e){next(e)}});
 app.get('/api/admin/catalog',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);

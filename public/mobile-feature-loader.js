@@ -150,9 +150,9 @@ async function openMerchantMobileAction(id){
   button.click();
 }
 
-function mountMerchantMobileTools(role){
+function mountMerchantMobileTools(role,surface='account'){
   let tools=document.getElementById('merchantMobileTools');
-  if(String(role||'')!=='merchant'){
+  if(surface!=='profile'||String(role||'')!=='merchant'){
     tools?.remove();
     return;
   }
@@ -207,29 +207,31 @@ async function loadDrawerFeatures(){
   }catch(error){console.warn('Governance lazy-load:',error.message)}
 }
 
-async function loadAccountingForRole(role){
-  if(!['merchant','supplier'].includes(String(role||''))){mountMerchantMobileTools(role);return}
+async function loadAccountingForRole(role,surface='account'){
+  if(surface!=='profile'||!['merchant','supplier'].includes(String(role||''))){mountMerchantMobileTools(role,surface);return}
   try{
     await loadFeature('accounting');
-    mountMerchantMobileTools(role);
+    mountMerchantMobileTools(role,surface);
   }catch(error){console.warn('Accounting lazy-load:',error.message)}
 }
 
 function boot(){
   ensureMore();
   mountLaunchers();
-  const initialRole=window.BusinessLifeProfileState?.activeRole||localStorage.getItem('abl_active_role')||'';
-  mountMerchantMobileTools(initialRole);
-  loadAccountingForRole(initialRole);
+  const initialState=window.BusinessLifeProfileState||{};
+  const initialRole=initialState.activeRole||'';
+  mountMerchantMobileTools(initialRole,initialState.surface||'account');
+  if(initialState.surface==='profile')loadAccountingForRole(initialRole,initialState.surface);
   document.addEventListener('abl:profile-state',event=>{
     const role=event.detail?.activeRole||'';
+    const surface=event.detail?.surface||'account';
     mountLaunchers();
-    mountMerchantMobileTools(role);
-    loadAccountingForRole(role);
+    mountMerchantMobileTools(role,surface);
+    if(surface==='profile')loadAccountingForRole(role,surface);
   });
-  document.addEventListener('abl:business-workspace-changed',()=>mountMerchantMobileTools(window.BusinessLifeProfileState?.activeRole||localStorage.getItem('abl_active_role')||''));
+  document.addEventListener('abl:business-workspace-changed',()=>{const state=window.BusinessLifeProfileState||{};mountMerchantMobileTools(state.activeRole||'',state.surface||'account')});
   document.addEventListener('abl:drawer-rendered',()=>loadDrawerFeatures(),{passive:true});
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){mountLaunchers();mountMerchantMobileTools(window.BusinessLifeProfileState?.activeRole||localStorage.getItem('abl_active_role')||'')}});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){const state=window.BusinessLifeProfileState||{};mountLaunchers();mountMerchantMobileTools(state.activeRole||'',state.surface||'account')}});
 }
 
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});
