@@ -41,7 +41,7 @@ function supportFormHtml(){return `
           <button id="voiceStop" type="button" disabled>■ Stop</button>
           <button id="translateEnglish" type="button">Translate → English</button>
         </div>
-        <small id="voiceStatus">Voice is part of this message. Browser dictation is used when available; server transcription is used when configured.</small>
+        <small id="voiceStatus">Voice is part of this message. Browser dictation is used when available; server transcription is used when configured.</small><small class="supportAiPrivacy">When server speech/translation is enabled, the recording or message is sent to the configured AI processing provider only to create the transcript/English translation.</small>
       </div>
       <div class="supportTranslationPanel">
         <div class="supportComposerHead"><div><strong>English for Support/Admin</strong><small>The original message is preserved. You can edit this translation before sending.</small></div><span>English</span></div>
@@ -184,8 +184,9 @@ function stopVoice(cancel){
   clearTimeout(voiceTimer);voiceTimer=null;
   if(voiceRecognition){try{voiceRecognition.stop()}catch{}voiceRecognition=null}
   if(voiceRecorder&&voiceRecorder.state!=='inactive'){
-    if(cancel){voiceRecorder.onstop=()=>{voiceRecorder=null}}
-    try{voiceRecorder.stop()}catch{}
+    if(cancel){voiceRecorder.onstop=()=>{voiceRecorder=null;voiceProcessing=false}}
+    else voiceProcessing=true;
+    try{voiceRecorder.stop()}catch{voiceProcessing=false}
   }
   if(voiceStream){voiceStream.getTracks().forEach(t=>t.stop());voiceStream=null}
   const s=document.getElementById('voiceStart'),p=document.getElementById('voiceStop');
