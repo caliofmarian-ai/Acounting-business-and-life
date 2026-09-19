@@ -30,24 +30,26 @@ async function verifyFromUrl(raw){try{await api('/api/auth/email-verification/ve
 async function oauthHandoff(raw){try{const r=await api('/api/auth/oauth/handoff',{method:'POST',body:JSON.stringify({code:raw})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);clearQuery();location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
 async function decorateSecurity(){
   if(!isV2())return;
-  const panel=document.getElementById('profileDrawerPanel');
-  if(!panel||!panel.querySelector('#accountIdentityForm'))return;
+  const panel=document.getElementById('accountSecurityMount');
+  if(!panel)return;
+  const account=window.BusinessLifeProfileState?.snapshot?.account;
+  if(!account)return;
   const existing=[...panel.querySelectorAll('.authUpgradeCard')];
   if(existing.length){existing.slice(1).forEach(x=>x.remove());return}
   if(panel.dataset.authSecurityDecorating==='1')return;
   panel.dataset.authSecurityDecorating='1';
   try{
-    const [me,ids]=await Promise.all([api('/api/me'),api('/api/auth/identities')]);
+    const ids=await api('/api/auth/identities');
     if(!document.body.contains(panel))return;
     const raced=[...panel.querySelectorAll('.authUpgradeCard')];
     if(raced.length){raced.slice(1).forEach(x=>x.remove());return}
     const googleLinked=ids.some(x=>x.provider==='google');
     const section=document.createElement('section');
-    section.className='drawerSection authUpgradeCard';
-    const deliveryNote=!me.account.email_verified_at&&!status.email_delivery_configured
+    section.className='accountSettingsCard authUpgradeCard';
+    const deliveryNote=!account.email_verified_at&&!status.email_delivery_configured
       ?'<div class="avatarHint authDeliveryWarning">Email delivery is not configured in this environment. A preview may offer a direct verification link.</div>'
       :'';
-    section.innerHTML=`<h3>Account protection</h3><div class="authSecurityLine"><span>Email</span><strong>${me.account.email_verified_at?'Verified':'Not verified'}</strong></div>${!me.account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;
+    section.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;
     panel.appendChild(section);
     section.querySelector('#sendVerify')?.addEventListener('click',async()=>{
       const out=section.querySelector('#authDrawerMsg');out.textContent='Preparing verification…';
@@ -63,7 +65,7 @@ async function decorateSecurity(){
   }catch{}finally{delete panel.dataset.authSecurityDecorating}
 }
 
-function watchDrawer(){document.addEventListener('abl:account-settings-rendered',()=>decorateSecurity().catch(()=>{}))}
+function watchDrawer(){document.addEventListener('abl:account-settings-rendered',event=>{if(event.detail?.view==='security')decorateSecurity().catch(()=>{})})}
 async function boot(){
   if(token()&&!isV2())localStorage.removeItem(ABL_AUTH_TOKEN);
   const params=new URLSearchParams(location.search);

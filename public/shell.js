@@ -16,6 +16,7 @@ let adminContextFetchedAt = 0;
 let adminContextRefreshPromise = null;
 let activeRole = null;
 let activeSurface = 'account';
+let accountSettingsView = 'home';
 let toastTimer;
 const PROFILE_CACHE_MS = 30000;
 const ADMIN_CONTEXT_CACHE_MS = 60000;
@@ -125,6 +126,12 @@ function ensureShellChrome() {
     const topbar = shell.querySelector('.topbar');
     topbar.insertAdjacentElement('afterend', hub);
   }
+  if (!document.getElementById('accountSettingsWorkspace')) {
+    const workspace = document.createElement('section');
+    workspace.id = 'accountSettingsWorkspace';
+    workspace.className = 'accountSettingsWorkspace hidden';
+    shell.querySelector('.topbar')?.insertAdjacentElement('afterend', workspace);
+  }
   if(!document.getElementById('merchantProfileSettingsCard')){
     const dashboard=document.getElementById('viewDashboard');
     const card=document.createElement('button');card.id='merchantProfileSettingsCard';card.className='card profileSettingsWorkspaceCard';card.type='button';card.innerHTML='<span class="hubTileIcon">⚙️</span><span><strong>Profile Settings</strong><small>Preferences, banking and tools for this Merchant profile</small></span><b>›</b>';card.onclick=()=>window.BusinessLifeProfileSettings?.open?.('merchant');dashboard?.appendChild(card);
@@ -176,39 +183,76 @@ function renderDrawer() {
     <section class="drawerSection"><h3>Active profiles</h3><div class="profileRoleList">${adminRow}${profileRows}</div></section>
     <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>Personal details, security and profile management</small></span><b>›</b></button>`;
   panel.querySelector('#drawerClose').onclick = closeDrawer;
-  panel.querySelector('#accountSettingsButton').onclick = renderAccountSettings;
+  panel.querySelector('#accountSettingsButton').onclick = () => openAccountSettings();
   panel.querySelector('[data-admin-profile]')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
   panel.querySelectorAll('[data-role-action]').forEach(btn => btn.onclick = () => enableOrSwitch(btn.dataset.roleAction));
   bindCopyIds(panel);
   document.dispatchEvent(new CustomEvent('abl:drawer-rendered', { detail: { activeRole, accountId: Number(account.id) || null, view:'profiles' } }));
 }
 
-function renderAccountSettings(){
+function profileManagementMarkup(){
+  const account=snapshot.account;
+  return ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`,status=!enabled&&profile?.status==='application_started'?'Onboarding in progress':enabled?'Active profile':'Not active';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${status}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${enabled?'Disable':'Start onboarding'}</button></div>`}).join('');
+}
+
+function accountSettingsHeader(title,subtitle){return `<div class="accountSettingsHeader"><button id="accountSettingsBack" type="button" aria-label="Back">‹</button><div><span>ACCOUNT SETTINGS</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div></div>`}
+function renderAccountSettings(view=accountSettingsView){
   if(!snapshot?.account)return;
-  const account=snapshot.account,panel=document.getElementById('profileDrawerPanel');if(!panel)return;
-  const profileManagement=ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:`data-role-action="${role}"`,status=!enabled&&profile?.status==='application_started'?'Onboarding in progress':enabled?'Active profile':'Not active';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${status}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${enabled?'Disable':'Start onboarding'}</button></div>`}).join('');
-  panel.innerHTML=`${drawerHeader(account,true)}
-    <section class="drawerSection"><h3>Personal details</h3>
-      <form id="accountIdentityForm" class="profileForm">
-        <div class="avatarEdit"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"><button id="removeAvatar" class="miniBtn" type="button">Remove photo</button></div>
-        <div class="avatarHint">Photo is compressed on your phone before it is saved.</div>
-        <label>Name<input id="shellDisplayName" value="${escapeHtml(account.display_name || '')}" required></label>
-        <label>Email<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}"></label>
-        <label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label>
-        <label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>
-        <div class="formActions"><button class="primary" type="submit">Save account</button></div>
-      </form>
-    </section>
-    <section class="drawerSection"><h3>Manage profiles</h3><p class="drawerSectionIntro">Every profile keeps the ID derived from your Personal ID, even when disabled and reactivated.</p><div class="profileRoleList">${profileManagement}</div></section>`;
-  panel.querySelector('#drawerClose').onclick = closeDrawer;
-  panel.querySelector('#drawerBack').onclick=renderDrawer;
-  panel.querySelector('#accountIdentityForm').onsubmit = saveIdentity;
-  panel.querySelector('#avatarFile').onchange = uploadAvatar;
-  panel.querySelector('#removeAvatar').onclick = removeAvatar;
-  panel.querySelectorAll('[data-profile-toggle]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.profileToggle,btn.dataset.enabled!=='1'));
-  panel.querySelectorAll('[data-role-action]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.roleAction,true));
-  bindCopyIds(panel);
-  document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{activeRole,accountId:Number(account.id)||null}}));
+  const account=snapshot.account,workspace=document.getElementById('accountSettingsWorkspace');if(!workspace)return;
+  workspace.classList.remove('hidden');
+  accountSettingsView=view;
+  if(view==='home'){
+    workspace.innerHTML=accountSettingsHeader('Your account','Settings shared by your personal account, separate from every work profile.')+`<div class="accountSettingsGrid">
+      <button type="button" data-account-settings-view="personal"><span>👤</span><strong>Personal details</strong><small>Photo, name, email, phone and primary address</small><b>›</b></button>
+      <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
+      <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
+    </div><div class="accountSettingsBoundary"><strong>Profile settings stay inside each profile</strong><p>Open Customer, Merchant, Supplier, Delivery or Local Services and use its dedicated Profile Settings card.</p></div>`;
+  }else if(view==='personal'){
+    workspace.innerHTML=accountSettingsHeader('Personal details','Identity and contact information shared by your account.')+`<section class="accountSettingsCard"><form id="accountIdentityForm" class="profileForm">
+      <div class="avatarEdit"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"><button id="removeAvatar" class="miniBtn" type="button">Remove photo</button></div>
+      <div class="avatarHint">Photo is compressed on your phone before it is saved.</div>
+      <label>Name<input id="shellDisplayName" value="${escapeHtml(account.display_name || '')}" required></label>
+      <label>Email<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}"></label>
+      <label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label>
+      <label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>
+      <div class="formActions"><button class="primary" type="submit">Save account</button></div>
+    </form></section>`;
+  }else if(view==='profiles'){
+    workspace.innerHTML=accountSettingsHeader('Manage profiles','Profiles derive from your Personal ID and keep their IDs after deactivation.')+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
+  }else{
+    workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+'<div id="accountSecurityMount"></div>';
+  }
+  workspace.querySelector('#accountSettingsBack').onclick=()=>view==='home'?closeAccountSettings():renderAccountSettings('home');
+  workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>renderAccountSettings(button.dataset.accountSettingsView));
+  workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
+  workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
+  workspace.querySelector('#removeAvatar')?.addEventListener('click',removeAvatar);
+  workspace.querySelectorAll('[data-profile-toggle]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.profileToggle,btn.dataset.enabled!=='1'));
+  workspace.querySelectorAll('[data-role-action]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.roleAction,true));
+  bindCopyIds(workspace);
+  document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{view,activeRole,accountId:Number(account.id)||null}}));
+}
+
+function openAccountSettings(view='home'){
+  closeDrawer();
+  activeSurface='account';
+  hideMerchantWorkspace();
+  hideFeatureWorkspaces();
+  document.getElementById('roleHub')?.classList.add('hidden');
+  document.getElementById('profileSettingsWorkspace')?.classList.add('hidden');
+  const workspace=document.getElementById('accountSettingsWorkspace');
+  workspace?.classList.remove('hidden');
+  renderAccountSettings(view);
+  renderTopAccount();
+  publishProfileState();
+  window.scrollTo({top:0,behavior:'auto'});
+}
+
+function closeAccountSettings(){
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  renderAccountHome();
+  publishProfileState();
+  window.scrollTo({top:0,behavior:'auto'});
 }
 
 async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();if(enabled){activeSurface='profile';applyActiveRole()}else renderAccountHome();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
@@ -365,6 +409,7 @@ function renderRoleHub(role) {
   const meta = ROLE_META[role];
   const hub = document.getElementById('roleHub');
   if (!hub || !meta) return;
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   const items=[...(HUBS[role]||[]),['⚙️','Profile Settings','Preferences, banking and tools for this profile','Profile Settings']];
   const tiles = items.map((item, index) => `<button class="hubTile ${item[3]==='Profile Settings'?'profileSettingsTile':index === 3 && role === 'customer' ? 'accent' : ''}" type="button" data-hub-feature="${escapeHtml(item[3])}"><span class="hubTileIcon">${item[0]}</span><strong>${escapeHtml(item[1])}</strong><small>${escapeHtml(item[2])}</small>${role === 'courier' && item[1] === 'Eligibility' ? `<span class="miniBadge ${snapshot?.courier?.eligibility_status === 'approved' ? '' : 'pending'}">${escapeHtml(snapshot?.courier?.eligibility_status || 'not requested')}</span>` : ''}</button>`).join('');
   hub.innerHTML = `<div class="hubHero"><div class="hubEyebrow">${escapeHtml(meta.label)} profile</div><h1>${escapeHtml(meta.hero)}</h1><p>One identity, a dedicated workspace, and only the information this role needs.</p><span class="hubStatus">Profile selected</span></div><div class="hubSectionTitle"><h2>Your ${escapeHtml(meta.label)} workspace</h2><span>Philippines Edition</span></div><div class="hubGrid">${tiles}</div>`;
@@ -378,12 +423,13 @@ function renderAccountHome(){
   hideMerchantWorkspace();
   const account=snapshot.account,hub=document.getElementById('roleHub');
   if(!hub)return;
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   const profiles=ROLE_ORDER.filter(isEnabled).map(role=>{const meta=ROLE_META[role];return `<button class="hubTile" type="button" data-account-role="${role}"><span class="hubTileIcon">${meta.icon}</span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.desc)}</small><span class="hubStatus">Open profile</span></button>`}).join('');
   const admin=adminContext?.is_admin?`<button class="hubTile" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin')}</strong><small>Administrative workspace and delegated functions</small><span class="hubStatus">Open profile</span></button>`:'';
   hub.innerHTML=`<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><p>${countryMeta(account.country_code).flag} ${escapeHtml(countryMeta(account.country_code).label)} · ${escapeHtml(account.personal_id||'')}</p><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid">${admin}${profiles}<button class="hubTile profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>Personal details, security and profile onboarding</small></button></div>`;
   hub.querySelectorAll('[data-account-role]').forEach(button=>button.onclick=()=>enableOrSwitch(button.dataset.accountRole));
   hub.querySelector('#accountAdminProfile')?.addEventListener('click',()=>window.location.assign('/admin'));
-  hub.querySelector('#accountHomeSettings')?.addEventListener('click',async()=>{await openDrawer();renderAccountSettings()});
+  hub.querySelector('#accountHomeSettings')?.addEventListener('click',()=>openAccountSettings());
   hub.classList.remove('hidden');
   renderTopAccount();
 }
@@ -392,7 +438,7 @@ function applyActiveRole() {
   activeRole = snapshot?.account?.active_role || null;
   renderTopAccount();
   hideFeatureWorkspaces();
-  if (!activeRole){hideMerchantWorkspace();const hub=document.getElementById('roleHub');if(hub){hub.innerHTML='<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT READY</div><h1>Choose your first profile.</h1><p>Complete Account Settings, verify your email, then start onboarding only for the profiles you want to use.</p><button id="openFirstAccountSettings" class="hubOnboardingButton" type="button">Open Account Settings</button></div>';hub.classList.remove('hidden');hub.querySelector('#openFirstAccountSettings').onclick=openDrawer}return}
+  if (!activeRole){hideMerchantWorkspace();const hub=document.getElementById('roleHub');if(hub){hub.innerHTML='<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT READY</div><h1>Choose your first profile.</h1><p>Complete Account Settings, verify your email, then start onboarding only for the profiles you want to use.</p><button id="openFirstAccountSettings" class="hubOnboardingButton" type="button">Open Account Settings</button></div>';hub.classList.remove('hidden');hub.querySelector('#openFirstAccountSettings').onclick=()=>openAccountSettings()}return}
   if (activeRole === 'merchant') showMerchantWorkspace();
   else { hideMerchantWorkspace(); renderRoleHub(activeRole); }
 }

@@ -31,10 +31,11 @@ test('drawer never shows an incomplete profile list while Admin authority is loa
   assert.match(open,/if\(adminStale\)tasks\.push\(refreshAdminContext\(\)\)/);
 });
 
-test('drawer extensions wait until the loading placeholder is replaced',()=>{
+test('account security extensions mount only in their dedicated settings route',()=>{
   const auth=read('public/auth-ui.js');
-  assert.match(auth,/panel\.querySelector\('\.drawerContextLoading'\)/);
-  assert.match(auth,/!panel\.querySelector\('#accountIdentityForm'\)/);
+  assert.match(auth,/getElementById\('accountSecurityMount'\)/);
+  assert.match(auth,/event\.detail\?\.view===['"]security['"]/);
+  assert.doesNotMatch(auth,/profileDrawerPanel.*securityCard/);
 });
 
 test('Admin identity endpoint does not build territory scope tree',()=>{

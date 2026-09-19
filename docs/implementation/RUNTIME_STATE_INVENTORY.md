@@ -38,3 +38,7 @@ Server bootstrap is authoritative for available profile and Admin destinations. 
 ## Slice 2 update
 
 Profile feature decorators now require `surface=profile` before consuming `activeRole`. They no longer infer the visible workspace from `snapshot.account.active_role` and no longer perform private `/api/me` fallback requests. Account Home therefore remains isolated even when an older backend preference still names Merchant.
+
+## Slice 3 update
+
+The avatar drawer is now a destination switcher only: account identity, active profiles, assigned Admin access and one Account Settings entry. Account Settings is a dedicated workspace with focused Personal details, Security & access and Manage profiles routes. Password, verification and session controls mount only in the Security route and reuse the canonical bootstrap identity. Operational preferences remain inside the dedicated Profile Settings card of each active profile.
