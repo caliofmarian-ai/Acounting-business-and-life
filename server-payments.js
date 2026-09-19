@@ -35,6 +35,11 @@ import {
   ensureAccountMoneySchema,accountMoneySettings,updateAccountMoneyIdentity,
   createAccountFinancialDestination,updateAccountFinancialDestination,setDefaultAccountPayoutDestination
 } from './account-money-core.js';
+import {
+  ensureFinancialDocumentSchema,synchronizeFinancialDocumentsForScope,listFinancialDocuments,
+  getFinancialDocumentByPublicId,financialStatementForScope,FINANCIAL_IMPACT_CLASSES,
+  normalizeFinancialProfileRole
+} from './financial-document-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -73,7 +78,7 @@ async function canSeeIntent(me,intent){
   if((me.businesses||[]).some(b=>Number(b.id)===Number(intent.business_id)&&b.active!==false))return true;
   try{await requireAdminPermission(pool,me.account.id,'payment.view',intent.territory_id);return true}catch{return false}
 }
-async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileSubscriptionSchema(pool);await ensureProfileFinanceSchema(pool);await ensureAccountMoneySchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
+async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileSubscriptionSchema(pool);await ensureProfileFinanceSchema(pool);await ensureAccountMoneySchema(pool);await ensureFinancialDocumentSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));
@@ -148,6 +153,37 @@ function financeScope(me,role,businessId){
   }
   return{owner_scope:'account',business_id:null};
 }
+function financialDocumentScope(me,rawRole,rawBusinessId){
+  const role=normalizeFinancialProfileRole(rawRole);
+  const scope=financeScope(me,role,rawBusinessId);
+  return{role,business_id:scope.business_id};
+}
+function emptyImpactTotals(){
+  return Object.fromEntries(FINANCIAL_IMPACT_CLASSES.map(k=>[k,{amount:0,line_count:0}]));
+}
+function combineStatements(statements){
+  const totals=emptyImpactTotals();
+  let documentCount=0;
+  for(const item of statements){
+    documentCount+=Number(item.statement?.document_count||0);
+    for(const key of FINANCIAL_IMPACT_CLASSES){
+      totals[key].amount=Math.round((totals[key].amount+Number(item.statement?.totals?.[key]?.amount||0)+Number.EPSILON)*100)/100;
+      totals[key].line_count+=Number(item.statement?.totals?.[key]?.line_count||0);
+    }
+  }
+  const expenses=Math.round((totals.expense.amount+totals.fee_expense.amount+totals.tax_expense.amount+Number.EPSILON)*100)/100;
+  return{
+    document_count:documentCount,
+    totals,
+    derived:{
+      operating_result:Math.round((totals.revenue.amount-expenses+Number.EPSILON)*100)/100,
+      documented_purchases:totals.purchase.amount,
+      documented_refunds:totals.refund_in.amount,
+      transfers_net:Math.round((totals.transfer_in.amount-totals.transfer_out.amount+Number.EPSILON)*100)/100,
+      cash_movement_context:Math.round((totals.cash_in.amount+totals.refund_in.amount-totals.cash_out.amount-totals.purchase.amount+Number.EPSILON)*100)/100
+    }
+  };
+}
 async function financialAccountOwnedForScope(accountId,id,role,businessId,purpose){
   if(id==null||id==='')return null;
   const q=await pool.query(
@@ -163,6 +199,91 @@ async function financialAccountOwnedForScope(accountId,id,role,businessId,purpos
   if(purpose==='payout'&&!row.can_payout)throw Object.assign(new Error('Selected account is not enabled as a payout destination'),{status:409});
   return Number(row.id);
 }
+
+app.get('/api/financial-documents',async(req,res,next)=>{try{
+  const me=await identity(req);
+  const scope=financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
+  await synchronizeFinancialDocumentsForScope(pool,{
+    accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id
+  });
+  const rows=await listFinancialDocuments(pool,{
+    accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id,
+    fromDate:req.query?.from||null,toDate:req.query?.to||null,limit:req.query?.limit||200
+  });
+  res.json({
+    profile_role:scope.role,business_id:scope.business_id,currency_code:'PHP',
+    fiscal_boundary:'Documents are internal financial evidence unless a separate fiscal status says otherwise.',
+    documents:rows
+  });
+}catch(e){next(e)}});
+
+app.get('/api/financial-documents/:publicId',async(req,res,next)=>{try{
+  const me=await identity(req);
+  const scope=financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
+  await synchronizeFinancialDocumentsForScope(pool,{
+    accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id
+  });
+  const row=await getFinancialDocumentByPublicId(pool,{
+    accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id,publicId:req.params.publicId
+  });
+  if(!row)return res.status(404).json({error:'Financial document not found in this profile/business scope'});
+  res.json(row);
+}catch(e){next(e)}});
+
+app.get('/api/financial-statements/consolidated/:period',async(req,res,next)=>{try{
+  const me=await identity(req),period=clean(req.params.period,20),anchor=clean(req.query?.anchor,10)||undefined;
+  const items=[];
+  for(const role of ['customer','courier','service_provider']){
+    if(!enabledProfile(me,role))continue;
+    const statement=await financialStatementForScope(pool,{accountId:me.account.id,profileRole:role,period,anchor});
+    items.push({scope_key:'account:'+role,label:role,profile_roles:[role],statement});
+  }
+  const bindings=await pool.query(`
+    SELECT pb.role,pb.business_id,b.name business_name,b.currency_code
+    FROM profile_business_bindings pb
+    JOIN business_memberships bm ON bm.business_id=pb.business_id AND bm.account_id=pb.account_id AND bm.active=TRUE
+    JOIN businesses b ON b.id=pb.business_id
+    WHERE pb.account_id=$1 AND pb.status='active' AND pb.role IN ('merchant','supplier')
+    ORDER BY pb.business_id,pb.is_primary DESC,pb.role
+  `,[Number(me.account.id)]);
+  const byBusiness=new Map();
+  for(const row of bindings.rows){
+    const id=Number(row.business_id);
+    if(!byBusiness.has(id))byBusiness.set(id,{business_id:id,business_name:row.business_name||('Business '+id),roles:[]});
+    const x=byBusiness.get(id);if(!x.roles.includes(row.role))x.roles.push(row.role);
+  }
+  for(const x of byBusiness.values()){
+    const role=x.roles.includes('merchant')?'merchant':x.roles[0];
+    const statement=await financialStatementForScope(pool,{
+      accountId:me.account.id,profileRole:role,businessId:x.business_id,period,anchor
+    });
+    items.push({
+      scope_key:'business:'+x.business_id,label:x.business_name,profile_roles:x.roles,
+      shared_business_scope:x.roles.length>1,statement
+    });
+  }
+  const combined=combineStatements(items);
+  res.json({
+    period:items[0]?.statement?.period||null,currency_code:'PHP',
+    scopes:items,consolidated:combined,
+    consolidation_rule:'Shared business workspaces are counted once even when the same account uses both Merchant and Supplier roles.',
+    authority:{
+      source_ledgers_remain_authoritative:true,
+      no_cross_account_or_cross_business_data:true,
+      fiscal_document_status:'Internal financial evidence is not automatically a statutory tax invoice.'
+    }
+  });
+}catch(e){next(e)}});
+
+app.get('/api/financial-statements/:period',async(req,res,next)=>{try{
+  const me=await identity(req);
+  const scope=financialDocumentScope(me,req.query?.profile_role,req.query?.business_id);
+  const statement=await financialStatementForScope(pool,{
+    accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id,
+    period:req.params.period,anchor:req.query?.anchor||undefined
+  });
+  res.json(statement);
+}catch(e){next(e)}});
 
 app.get('/api/profile-money/:role',async(req,res,next)=>{try{
   const me=await identity(req),role=clean(req.params.role,40);
@@ -197,6 +318,7 @@ app.post('/api/profile-money/:role/entries',body,async(req,res,next)=>{try{
     sourceId:req.body?.source_id||null,note:req.body?.note||'',evidenceReference:req.body?.evidence_reference||'',
     occurredAt:req.body?.occurred_at||null,actorAccountId:me.account.id
   });
+  await synchronizeFinancialDocumentsForScope(pool,{accountId:me.account.id,profileRole:role});
   res.status(201).json({...row,provider_balance_effect:false});
 }catch(e){next(e)}});
 
@@ -209,6 +331,7 @@ app.post('/api/profile-money/:role/entries/:id/reverse',body,async(req,res,next)
     publicId:'pme_rev_'+crypto.randomUUID().replaceAll('-',''),reversalKey:key,accountId:me.account.id,
     profileRole:role,entryId:Number(req.params.id),note:req.body?.note||'',actorAccountId:me.account.id
   });
+  await synchronizeFinancialDocumentsForScope(pool,{accountId:me.account.id,profileRole:role});
   res.json({...row,provider_balance_effect:false});
 }catch(e){next(e)}});
 
