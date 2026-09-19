@@ -58,3 +58,25 @@ test('mobile auth CSS keeps entry controls above the fold', () => {
   const css = readFileSync(new URL('../public/auth-hardening.css', import.meta.url), 'utf8');
   assert.match(css, /#login\.centered\{align-content:start/);
 });
+
+
+test('public login never exposes owner bootstrap upgrade controls or lifecycle state', () => {
+  const authUi = readFileSync(new URL('../public/auth-hardening-ui.js', import.meta.url), 'utf8');
+  const authServer = readFileSync(new URL('../server-auth-hardening.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(authUi, /One-time owner security upgrade/i);
+  assert.doesNotMatch(authUi, /ownerSetupBtn|renderOwnerUpgrade|owner_migration_required/);
+  const statusStart = authServer.indexOf("app.get('/api/auth/hardening/status'");
+  const statusEnd = authServer.indexOf("app.post('/api/auth/forgot-password'", statusStart);
+  assert.ok(statusStart >= 0 && statusEnd > statusStart);
+  assert.doesNotMatch(authServer.slice(statusStart, statusEnd), /owner_migration_required|ownerMigrationRequired/);
+});
+
+test('owner migration endpoint is infrastructure-gated and disabled by default', () => {
+  const authServer = readFileSync(new URL('../server-auth-hardening.js', import.meta.url), 'utf8');
+  assert.match(authServer, /OWNER_MIGRATION_ENABLED = process\.env\.OWNER_MIGRATION_ENABLED === 'true'/);
+  const routeStart = authServer.indexOf("app.post('/api/auth/owner-migrate'");
+  const routeEnd = authServer.indexOf("app.post('/api/auth/sessions/revoke-others'", routeStart);
+  assert.ok(routeStart >= 0 && routeEnd > routeStart);
+  const route = authServer.slice(routeStart, routeEnd);
+  assert.match(route, /if \(!OWNER_MIGRATION_ENABLED\) return res\.status\(404\)/);
+});
