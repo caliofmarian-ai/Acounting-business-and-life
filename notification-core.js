@@ -387,7 +387,8 @@ async function sendQueuedPush(pool,row){
   const webpush=(await import('web-push')).default;
   webpush.setVapidDetails(subject,pub,priv);
   const template=await loadTemplate(pool,row.event_code,row.locale,'push',row.data_json);
-  const payload=JSON.stringify({title:template.title,body:template.body,url:'/',event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id});
+  const targetUrl=row.entity_type==='support_ticket'&&row.entity_id?`/?support_ticket=${encodeURIComponent(row.entity_id)}`:'/';
+  const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id});
   let successes=0,lastError='';
   for(const sub of subs){
     try{
