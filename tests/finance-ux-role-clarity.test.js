@@ -36,9 +36,10 @@ test('Customer hub contains shopper features and no Merchant accounting/menu cre
   assert.doesNotMatch(customer,/Stock/);
 });
 
-test('Customer Settings default view is payments-first and hides business finance clutter',()=>{
+test('Customer Settings stays profile-scoped and links to shared account banking',()=>{
   const render=between(settings,'function renderSettings(){','function bindSettings(){');
-  assert.match(render,/accountMoneySettingsCard\(\)/);
+  assert.match(render,/openAccountMoneyFromProfile/);
+  assert.doesNotMatch(render,/accountMoneySettingsCard\(\)/);
   assert.match(settings,/Pay, buy and get refunds without accounting clutter/);
   assert.match(settings,/You do not need to add banking details just to shop/);
   assert.match(settings,/Advanced personal money tools/);

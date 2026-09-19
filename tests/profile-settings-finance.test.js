@@ -131,7 +131,10 @@ test('account-level Money & Banking is the normal external-finance setup while p
   assert.match(server,/account_money:accountMoney/);
   assert.match(server,/legacy_profile_financial_accounts:accounts/);
   const render=ui.slice(ui.indexOf('function renderSettings'),ui.indexOf('function bindSettings'));
-  assert.match(render,/accountMoneySettingsCard\(\)/);
+  const accountRender=ui.slice(ui.indexOf('function renderAccountMoneySettings'),ui.indexOf('async function refreshSettings'));
+  assert.doesNotMatch(render,/accountMoneySettingsCard\(\)/);
+  assert.match(render,/openAccountMoneyFromProfile/);
+  assert.match(accountRender,/accountMoneySettingsCard\(\)/);
   assert.doesNotMatch(render,/Financial accounts & payout destinations/);
   assert.match(ui,/One external financial identity for this account/);
   assert.match(ui,/Shared across profiles/);
