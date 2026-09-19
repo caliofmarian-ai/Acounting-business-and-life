@@ -40,3 +40,24 @@ test('every app entry opens the person account chooser and Merchant can be disab
   assert.match(shell,/renderAccountHome\(\);\n\s*publishProfileState\(\)/);
   assert.doesNotMatch(shell,/locked=role==='merchant'/);
 });
+
+test('the public registration form starts email verification once and explains the result',()=>{
+  const ui=read('public/auth-ui.js');
+  assert.match(ui,/submit\.disabled=true/);
+  assert.match(ui,/if\(!isRegistration\)\{location\.reload\(\);return\}/);
+  assert.match(ui,/authFetch\('\/api\/auth\/email-verification\/request'/);
+  assert.match(ui,/delivery_status==='sent'/);
+  assert.match(ui,/preview_verify_url/);
+  assert.match(ui,/request a new verification link from Account Settings/);
+});
+
+test('a person with no active role sees a truthful first-profile checklist',()=>{
+  const shell=read('public/shell.js');
+  const start=shell.indexOf('function applyActiveRole()');
+  const block=shell.slice(start,shell.indexOf('function publishProfileState',start));
+  assert.match(block,/No Customer, Merchant, Supplier, Delivery or Local Services profile is active/);
+  assert.match(block,/account\.email_verified_at/);
+  assert.match(block,/account\.address/);
+  assert.match(block,/Account Settings/);
+  assert.doesNotMatch(block,/enableOrSwitch\(/);
+});
