@@ -79,8 +79,8 @@ test('PayMongo processor cost is not automatically counted as Merchant or Suppli
 });
 
 test('document detail query binds public id instead of interpolating it as a literal',()=>{
-  assert.match(core,/d\.public_id=\$\$\{params\.length\}/);
-  assert.doesNotMatch(core,/d\.public_id=\$\{params\.length\}/);
+  assert.ok(core.includes("d.public_id=${params.length}"));
+  assert.ok(!core.includes("d.public_id=${params.length}"));
 });
 
 test('periodic statement exposes separated financial impact classes',()=>{
