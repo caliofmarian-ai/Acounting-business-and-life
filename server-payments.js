@@ -29,7 +29,7 @@ import {
   BUDGET_PURPOSES,MONEY_MOVEMENT_TYPES
 } from './profile-finance-core.js';
 import {profileMoneySnapshot} from './profile-money-core.js';
-import {allocateSharedCompanyCost50x50,PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,monetizationPolicyDraft} from './monetization-policy-v2.js';
+import {allocateSharedCompanyCost50x50,PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,monetizationPolicyDraft,OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,OWNER_APPROVED_DELIVERY_PROMO_DAYS} from './monetization-policy-v2.js';
 import {PAYMONGO_PH_BENCHMARK_AS_OF,PAYMONGO_PH_PAYMENT_BENCHMARKS,digitalPaymentIncentiveScenario,compareDigitalPaymentRails} from './digital-payment-incentive-core.js';
 import {
   ensureAccountMoneySchema,accountMoneySettings,updateAccountMoneyIdentity,
@@ -82,8 +82,53 @@ app.get('/profile-settings.css',(_q,res)=>res.type('text/css').send(readFileSync
 app.get('/profile-settings-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','profile-settings-ui.js'),'utf8')));
 app.get('/profile-money.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','profile-money.css'),'utf8')));
 app.get('/profile-money-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','profile-money-ui.js'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n  <link rel="stylesheet" href="/profile-settings.css" />\n  <link rel="stylesheet" href="/profile-money.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n  <script type="module" src="/profile-settings-ui.js"></script>\n  <script type="module" src="/profile-money-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+app.get('/pricing-transparency.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','pricing-transparency.css'),'utf8')));
+app.get('/pricing-transparency.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','pricing-transparency.js'),'utf8')));
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n  <link rel="stylesheet" href="/profile-settings.css" />\n  <link rel="stylesheet" href="/profile-money.css" />\n  <link rel="stylesheet" href="/pricing-transparency.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n  <script type="module" src="/profile-settings-ui.js"></script>\n  <script type="module" src="/profile-money-ui.js"></script>\n  <script type="module" src="/pricing-transparency.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
+
+app.get('/api/public/pricing',(_req,res)=>{
+  const role=(key,promoDays=90)=>({
+    promo_days:promoDays,
+    business_life_transaction_rate_during_promo_pct:0,
+    post_promo_transaction_rate_pct:OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,
+    monthly_subscription_amount:null,
+    monthly_subscription_status:'NOT_YET_ACTIVATED'
+  });
+  res.set('Cache-Control','public, max-age=300').json({
+    version:'2026-09-19-owner-approved-v1',
+    status:'OWNER_APPROVED_TARGET_LIVE_COLLECTION_GATED',
+    country_code:'PH',
+    currency_code:'PHP',
+    principle:{
+      headline:`Low, transparent platform fee — ${OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT.toFixed(2)}%.`,
+      message:'Business & Life is designed to be sustainable, not extractive.',
+      fee_separation:'Business & Life, payment processor, delivery and applicable tax/statutory costs are disclosed separately.'
+    },
+    profiles:{
+      customer:{promo_days:0,customer_free:true,business_life_platform_fee_pct:0,monthly_subscription_amount:0},
+      merchant:role('merchant'),
+      supplier:role('supplier'),
+      local_services:role('local_services'),
+      courier:{
+        promo_days:OWNER_APPROVED_DELIVERY_PROMO_DAYS,
+        monthly_subscription_amount:0,
+        business_life_delivery_production_rate_during_promo_pct:0,
+        post_promo_delivery_production_rate_pct:OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,
+        fee_basis:'verified_delivery_price'
+      }
+    },
+    payment_processor:{
+      provider:'PayMongo',
+      benchmark_as_of:PAYMONGO_PH_BENCHMARK_AS_OF,
+      pricing_exclusive_of_vat:true,
+      actual_provider_evidence_overrides_benchmark:true,
+      rails:Object.values(PAYMONGO_PH_PAYMENT_BENCHMARKS).map(({code,label,variable_rate_pct,fixed_fee_php,published_fee_excludes_vat,source,note})=>({code,label,variable_rate_pct,fixed_fee_php,published_fee_excludes_vat,source,note}))
+    },
+    promotion_disclosure:'Business & Life promotion waives applicable Business & Life charges only. Third-party payment-processing charges may still apply.',
+    live_collection:false
+  });
+});
 
 function rejectSensitiveFinancialFields(value){
   const blocked=/account_number|routing|iban|card_number|pan|cvv|cvc|password|pin|secret|private_key/i;
