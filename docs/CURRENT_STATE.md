@@ -224,6 +224,36 @@ Important:
 
 Figma pricing transparency page: file `sRwVQFpQchn9kv72vOoUbg`, page `Pricing Transparency V1`.
 
+## Financial Document Engine V1 — branch implementation in review
+
+Owner-approved direction:
+- every supported financial operation must remain traceable to financial evidence/documentation;
+- not every internal document is automatically a statutory invoice;
+- existing source ledgers remain authoritative;
+- statements are derived per profile/business scope for day, week, month and year;
+- the authenticated user may view a consolidated overview of their own authorized scopes without merging the underlying ledgers.
+
+Implementation on `finance/financial-document-engine-v1`:
+- `financial_documents`, `financial_document_lines`, `financial_document_source_links`;
+- deterministic document keys/public IDs and source idempotency;
+- separate `fiscal_status` from internal document type;
+- correction/reversal traceability;
+- PayMongo/provider fee context remains separate and becomes participant expense only when an explicit fee policy charges it to that participant;
+- exact Merchant/Supplier profile-business binding enforced on document/statement reads;
+- `GET /api/financial-documents`;
+- `GET /api/financial-documents/:publicId`;
+- `GET /api/financial-statements/:period`;
+- `GET /api/financial-statements/consolidated/:period`;
+- Android `Statements & Documents` workspace with Day / Week / Month / Year and own-account consolidation;
+- Help Center guide: `/help/article/financial-statements-and-documents`.
+
+Fiscal boundary:
+- `internal_evidence` / `fiscal_candidate` / `fiscal_validated` / `not_applicable`;
+- no internal record becomes BIR-valid merely because its label contains “invoice”;
+- a later PH fiscal-rules layer will determine statutory document classification and numbering.
+
+Canonical design: `docs/finance/FINANCIAL_DOCUMENT_ENGINE_V1.md`.
+
 ## Validation rule
 
 Every implementation PR must pass:
