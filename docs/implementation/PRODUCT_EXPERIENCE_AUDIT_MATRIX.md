@@ -18,7 +18,7 @@ The application is mobile-first and the Philippines edition is the reference edi
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Identity / Account | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PASS | PARTIAL | PARTIAL | PARTIAL | PARTIAL | P1: Customer auth/recovery and shared account foundations are evidenced, but complete multi-profile account acceptance is not yet proven role by role. |
 | Customer | PASS | PASS | PARTIAL | PASS | PASS | PARTIAL | PASS | PARTIAL | PARTIAL | Pickup commerce, payment evidence, history, notifications, Support, privacy and recovery are accepted in isolated QA. Full delivery remains dependent on the Courier wave; public live online payment remains behind the PayMongo live gate. |
-| Merchant | PASS | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | UNKNOWN | PARTIAL | PARTIAL | Merchant onboarding, catalog, recipes, stock, Marketplace publication and AI fallback media are evidenced. Launch-quality still requires one complete Merchant experience acceptance covering business finance, notification reception, Settings, Support and session recovery. |
+| Merchant | PASS | PASS | PARTIAL | PASS | PASS | PASS | PASS | PARTIAL | PARTIAL | The dedicated Merchant experience wave is `PASS`: Account Home, catalog persistence, completed Marketplace order, finance reconciliation, notifications, Settings, Support and session recovery are proven. Supplier procurement, Courier delivery and live online payment remain separate `HOLD` boundaries, so cross-profile launch E2E is not overstated. |
 | Supplier | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | PARTIAL | UNKNOWN | PARTIAL | UNKNOWN | P1: procurement capability exists, but no dedicated isolated Supplier acceptance wave currently proves onboarding through commercial settlement and cross-profile Merchant reconciliation. |
 | Courier / Delivery | PARTIAL | PARTIAL | PARTIAL | BLOCKED | PARTIAL | PARTIAL | UNKNOWN | PARTIAL | UNKNOWN | P1: delivery capability exists, but full Courier acceptance is missing and authoritative compensation/payout evidence is not yet configured. Customer full-delivery E2E is therefore still on HOLD. |
 | Service Provider / Local Services | PARTIAL | PARTIAL | PARTIAL | BLOCKED | PARTIAL | PARTIAL | UNKNOWN | PARTIAL | UNKNOWN | P1: service lifecycle exists, but no dedicated end-to-end acceptance proves request → quote → job → completion → finance/support. Online service-job checkout is intentionally fail-closed until its payment/settlement boundary is accepted. |
@@ -41,13 +41,12 @@ No new P0 was proven during the audit-start checkpoint.
 
 Current P1 focus:
 
-1. Merchant complete experience acceptance.
-2. Supplier isolated onboarding/procurement/finance acceptance.
-3. Courier delivery/earnings acceptance and cross-profile Customer delivery completion.
-4. Service Provider job/finance acceptance.
-5. Delegated Admin allowed/denied authority acceptance.
-6. Runtime latency/request-efficiency work, especially the chained gateway architecture and foreground notification polling.
-7. Reconcile stale open issues only after executable evidence proves completion.
+1. Supplier isolated onboarding/procurement/finance acceptance.
+2. Courier delivery/earnings acceptance and cross-profile Customer delivery completion.
+3. Service Provider job/finance acceptance.
+4. Delegated Admin allowed/denied authority acceptance.
+5. Runtime latency/request-efficiency work, especially the chained gateway architecture and foreground notification polling.
+6. Reconcile stale open issues only after executable evidence proves completion.
 
 ## Merchant acceptance target
 
@@ -64,3 +63,40 @@ It must prove, without production test pollution:
 7. Merchant Support can create and retrieve a contextual ticket.
 8. Logout and re-login restore a valid Merchant session.
 9. Supplier, Courier and live-online-payment dependencies remain explicit `HOLD` rather than being falsely marked `PASS`.
+
+
+## Merchant experience acceptance evidence — 2026-09-20
+
+The controlled preview wave `merchant_experience_v1` returned `PASS` on deployment
+`663c9fbf-c92e-4683-8c2e-5f1c035ed374` at canonical commit
+`debc764ef9f40b997a66c8c3a650d7a096588465`.
+
+Direct evidence:
+
+- Merchant Account Home resolved the active Merchant business workspace.
+- The controlled completed Marketplace order persisted as order `6`.
+- Merchant Finance reconciled at least PHP 185 of completed merchandise and confirmed payment evidence.
+- Merchant notification lifecycle returned three expected order events.
+- Merchant Settings preserved profile/business context and shared account Money & Banking.
+- Merchant Support created and retrieved contextual ticket `3`.
+- Logout and re-login restored a valid Merchant session.
+- Supplier procurement, Courier delivery and live PayMongo remain explicit `HOLD` boundaries.
+
+## Supplier acceptance target
+
+The next controlled wave is `supplier_experience_v1`.
+
+It must prove, in isolated preview only:
+
+1. invite-first Supplier onboarding and Admin approval in the QA Philippines territory;
+2. Supplier private profile and catalog persistence;
+3. Merchant ↔ Supplier relationship acceptance;
+4. Merchant PO → Supplier acceptance/status → Merchant receipt → Merchant payment;
+5. Supplier Finance records fulfilled PO and payment evidence without inventing provider/bank settlement;
+6. Supplier notification lifecycle includes relationship invite, PO creation/update and payment receipt;
+7. Supplier Settings preserve business context and shared account Money & Banking;
+8. Supplier Support preserves purchase-order context;
+9. Merchant and Supplier views agree on a received and fully paid PO;
+10. logout/re-login restores the Supplier session.
+
+Until that executable wave returns `PASS`, the Supplier row remains `PARTIAL`.
