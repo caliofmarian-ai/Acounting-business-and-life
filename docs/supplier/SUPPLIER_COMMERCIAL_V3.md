@@ -249,7 +249,20 @@ Product use:
 - retail-channel visibility;
 - quarantine/recall evidence.
 
-## 13. Regression gates
+## 13. Active gateway parity
+
+The runtime currently exposes procurement receiving/payment through both the dedicated Supplier service and the multi-business accounting gateway.
+
+Until that architecture is consolidated, every change to these operations must preserve behavioral parity across both active routes:
+- receiving creates the same `purchase_receipt_items` evidence;
+- receiving creates the same traceable `supply_lots`;
+- linked Inventory conversion and lot base units remain aligned;
+- payment uses the same current commercial outstanding calculation;
+- confirmed Supplier credits reduce the same payable/receivable basis.
+
+A static test must protect both routes. A change is incomplete if only one gateway implements the rule.
+
+## 14. Regression gates
 
 Before V3 merge:
 - Supplier V1 must remain valid;
