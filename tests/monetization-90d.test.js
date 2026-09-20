@@ -36,12 +36,18 @@ test('one promotional entitlement exists per economic subject and service scope'
 
 test('trial starts from earliest completed economic event and cannot restart on retry',()=>{
   assert.match(core,/promo_started_at=LEAST/);
-  assert.match(core,/promo_duration_days=\$5/);
-  assert.match(core,/promo_ends_at=LEAST\([^\n]+promo_started_at[^\n]+\)\+\(\$5::text\|\|' days'\)::interval/);
+  assert.match(core,/promo_duration_days=\$5::integer/);
+  assert.match(core,/promo_ends_at=LEAST\([^\n]+promo_started_at[^\n]+\)\+make_interval\(days => \$5::integer\)/);
   assert.match(core,/event_key TEXT NOT NULL UNIQUE/);
   assert.match(core,/ON CONFLICT\(event_key\)/);
   assert.doesNotMatch(core,/DELETE FROM service_monetization_entitlements/);
   assert.doesNotMatch(core,/DELETE FROM service_monetization_events/);
+});
+
+test('promo-day SQL bind stays integer-typed when the first economic event creates an entitlement',()=>{
+  assert.match(core,/VALUES\('PH',\$1,\$2,\$3,\$4,\$5::integer,\$6::timestamptz,\$6::timestamptz\+make_interval\(days => \$5::integer\),\$7,\$8\)/);
+  assert.match(core,/promo_duration_days=\$5::integer/);
+  assert.doesNotMatch(core,/\$5::text/);
 });
 
 
