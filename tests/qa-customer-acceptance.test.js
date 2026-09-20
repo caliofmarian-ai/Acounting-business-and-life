@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { qaAcceptanceConfig, CUSTOMER_WAVE, CUSTOMER_MARKETPLACE_WAVE } from '../qa-acceptance.js';
+import { qaAcceptanceConfig, CUSTOMER_WAVE, CUSTOMER_MARKETPLACE_WAVE, CUSTOMER_EXPERIENCE_WAVE } from '../qa-acceptance.js';
 
 const safe={
   RAILWAY_SERVICE_NAME:'accounting-preview',
@@ -67,4 +67,30 @@ test('Customer Marketplace E2E wave is isolated and exercises the complete contr
     "['Dish Soap',1]"
   ])assert.ok(source.includes(marker),`missing Customer Marketplace QA marker: ${marker}`);
   assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|verifyToken|previewUrl|secret)/i);
+});
+
+
+test('Customer Experience QA wave covers recovery Money notifications Support privacy and delivery fail-closed',()=>{
+  const cfg=qaAcceptanceConfig({...safe,QA_ACCEPTANCE_WAVE:CUSTOMER_EXPERIENCE_WAVE});
+  assert.equal(cfg.enabled,true);
+  assert.equal(cfg.wave,CUSTOMER_EXPERIENCE_WAVE);
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  for(const marker of [
+    '/api/auth/forgot-password',
+    '/api/auth/reset-password',
+    "template_code='password_reset'",
+    '/api/profile-money/customer',
+    '/api/notifications?limit=100',
+    '/api/notifications/',
+    '/api/support/tickets',
+    '/api/support/tickets/mine',
+    "category:'privacy_access'",
+    "requested_destination:'territory_admin'",
+    "related_type:'privacy_rights'",
+    'Cross-account privacy ticket denial',
+    "fulfilment_method:'delivery'",
+    'Delivery-disabled checkout guard',
+    "full_delivery_e2e:'HOLD_FOR_COURIER_WAVE'"
+  ])assert.ok(source.includes(marker),`missing Customer Experience QA marker: ${marker}`);
+  assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|resetToken|previewUrl|recoveryPassword|secret)/i);
 });
