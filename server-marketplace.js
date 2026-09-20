@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureCatalogMediaSchema,mediaForEntities,listCatalogMedia,buildPreparedFoodImagePrompt,generateCatalogImage,approveCatalogMedia,archiveCatalogMedia } from './catalog-media-core.js';
+import { ensureCatalogMediaSchema,mediaForEntities,listCatalogMedia,buildPreparedFoodImagePrompt,generateCatalogImage,createCatalogUpload,reorderCatalogMedia,approveCatalogMedia,archiveCatalogMedia } from './catalog-media-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,7 +16,7 @@ const internalOrdersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
 const internalAuthPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
-const body = express.json({ limit: '500kb' });
+const body = express.json({ limit: '3mb' });
 let ordersChild;
 let shuttingDown = false;
 
@@ -373,6 +373,38 @@ async function confirmedRecipeForMarketplaceProduct(product){
   `,[Number(product.legacy_product_id),Number(product.business_id)]);
   return rows;
 }
+
+app.post('/api/merchant/storefront/products/:id/images/upload',body,async(req,res,next)=>{
+  try{
+    const{product,me}=await merchantOwnedMarketplaceProduct(req);
+    const media=await createCatalogUpload(pool,{
+      accountId:Number(me.account.id),
+      entityType:'marketplace_product',
+      entityId:Number(product.id),
+      sourceType:'merchant_upload',
+      dataUrl:req.body?.data_url,
+      altText:clean(req.body?.alt_text,300)||`${product.name} product photo`
+    });
+    res.status(201).json({
+      media,
+      images:await listCatalogMedia(pool,{entityType:'marketplace_product',entityId:Number(product.id)}),
+      approval_required:true,
+      image_standard:{aspect_ratio:'1:1',background:'#FFFFFF'}
+    });
+  }catch(e){next(e)}
+});
+
+app.post('/api/merchant/storefront/products/:id/images/reorder',body,async(req,res,next)=>{
+  try{
+    const{product}=await merchantOwnedMarketplaceProduct(req);
+    const images=await reorderCatalogMedia(pool,{
+      entityType:'marketplace_product',
+      entityId:Number(product.id),
+      mediaIds:req.body?.media_ids
+    });
+    res.json({images});
+  }catch(e){next(e)}
+});
 
 app.post('/api/merchant/storefront/products/:id/images/generate',body,async(req,res,next)=>{
   try{
