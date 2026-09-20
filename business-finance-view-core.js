@@ -199,6 +199,9 @@ async function merchantOverview(pool,ctx){
   const o=orders.rows[0]||{},p=profitability.rows[0]||{},rf=refunds.rows[0]||{};
   const domain=store.rows[0]?.merchant_domain||'unknown';
   const lineCount=n(p.line_count),costed=n(p.costed_line_count),rev=money(p.revenue),cogs=money(p.estimated_cogs);
+  const confirmedCustomerPayments=money(o.confirmed_merchandise_received);
+  const recordedLedgerBalance=money(ledger.ledger.recorded_available_balance);
+  const ledgerPaymentDifference=money(recordedLedgerBalance-confirmedCustomerPayments);
   const cogsStatus=lineCount===0?'NO_COMPLETED_ORDER_LINES':
     costed===lineCount?'COST_EVIDENCE_COMPLETE':
     costed>0?'PARTIAL_COST_EVIDENCE':
@@ -220,9 +223,18 @@ async function merchantOverview(pool,ctx){
       authority:'orders.subtotal; delivery_fee is excluded from Merchant merchandise revenue'
     },
     cash_evidence:{
-      confirmed_merchandise_received:money(o.confirmed_merchandise_received),
+      confirmed_merchandise_received:confirmedCustomerPayments,
       provider_merchandise_allocations:merchandiseAlloc,
       rule:'Confirmed merchandise payments / provider allocations are payment evidence, not bank payout evidence.'
+    },
+    ledger_reconciliation:{
+      recorded_available_balance:recordedLedgerBalance,
+      confirmed_customer_payments:confirmedCustomerPayments,
+      difference:ledgerPaymentDifference,
+      status:Math.abs(ledgerPaymentDifference)<0.005?'MATCHED':'SEPARATE_EVIDENCE',
+      note:Math.abs(ledgerPaymentDifference)<0.005
+        ?'The recorded ledger balance currently matches confirmed customer payment evidence.'
+        :'Manual entries, remittances, adjustments, expenses, drawings or profile transfers can change the recorded ledger balance without becoming confirmed customer payments.'
     },
     receivables:{
       completed_customer_receivables:money(o.completed_receivables),

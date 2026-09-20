@@ -30,18 +30,18 @@
       </header>
 
       <section id="viewDashboard" class="view">
-        <div class="hero"><span>Available money recorded</span><strong id="availableTotal">₱0</strong><small>Sales + support received − business expenses − personal withdrawals</small></div>
-        <div id="warningBox" class="warningBox hidden"></div>
+        <div class="hero legacyFinanceSnapshot"><span>Available money recorded</span><strong id="availableTotal">₱0</strong><small>Sales + support received − business expenses − personal withdrawals</small></div>
+        <div id="warningBox" class="warningBox hidden legacyFinanceSnapshot"></div>
 
-        <div class="sectionTitle"><h2>Where the money is</h2><small>Ledger balance by account</small></div>
-        <div class="grid2 accountsGrid">
+        <div class="sectionTitle legacyFinanceSnapshot"><h2>Where the money is</h2><small>Ledger balance by account</small></div>
+        <div class="grid2 accountsGrid legacyFinanceSnapshot">
           <div class="metric"><span>Cash</span><strong id="acctCash">₱0</strong></div>
           <div class="metric"><span>GCash</span><strong id="acctGcash">₱0</strong></div>
           <div class="metric"><span>Bank</span><strong id="acctBank">₱0</strong></div>
           <div class="metric"><span>Other</span><strong id="acctOther">₱0</strong></div>
         </div>
 
-        <div class="grid2 metricsSpace">
+        <div class="grid2 metricsSpace legacyFinanceSnapshot">
           <div class="metric"><span>Today's sales</span><strong id="todaySales">₱0</strong></div>
           <div class="metric"><span>Today's cash operating result</span><strong id="todayProfit">₱0</strong><small>sales − cash business expenses</small></div>
           <div class="metric"><span>Total business expenses</span><strong id="bizExpenses">₱0</strong></div>
@@ -59,7 +59,7 @@
           </div>
         </div>
 
-        <div class="card stack"><div class="sectionHead"><h2>Recent activity</h2><div><button data-view-link="Add" class="linkBtn">+ Add</button><button data-view-link="History" class="linkBtn">History</button></div></div><div id="recentList" class="list"></div></div>
+        <div class="card stack ledgerActivityCard"><div class="sectionHead"><div><h2>Recorded ledger activity</h2><small class="muted">Manual and system entries; these are not automatically confirmed customer payments.</small></div><div><button data-view-link="Add" class="linkBtn">+ Add ledger entry</button><button data-view-link="History" class="linkBtn">History</button></div></div><div id="recentList" class="list"></div></div>
       </section>
 
       <section id="viewSell" class="view hidden">

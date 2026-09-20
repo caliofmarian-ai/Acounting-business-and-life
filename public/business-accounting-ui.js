@@ -61,11 +61,12 @@ function applyFinancePresentation(overview){
   document.getElementById('budgetForm')?.classList.add('roleFinanceHidden');
   document.querySelectorAll('option[value="personal_withdrawal"]').forEach(o=>o.textContent='Owner drawing / withdrawal');
   document.querySelectorAll('[data-view-link="Sell"]').forEach(el=>el.classList.toggle('roleFinanceHidden',!foodAllowed));
+  document.querySelectorAll('#viewDashboard .legacyFinanceSnapshot').forEach(el=>el.classList.add('roleFinanceHidden'));
 }
 const BUSINESS_FINANCE_COMPATIBILITY_COPY=Object.freeze({merchant_sales:'Completed merchandise sales',supplier_orders:'Fulfilled PO value',supplier_received:'Recorded money received',supplier_budget:'Planned Supplier budget',settings:'Money Settings'});
 function financeCompactMetric(label,value,detail=''){return '<div class="businessFinanceMetric primary"><span>'+escapeHtml(label)+'</span><strong>'+(typeof value==='number'?financeMoney(value):escapeHtml(value))+'</strong>'+(detail?'<small>'+escapeHtml(detail)+'</small>':'')+'</div>'}
 function merchantFinanceHtml(o){
-  const p=o.profitability||{},sett=o.settlement?.merchant_net,margin=p.estimated_margin_pct==null?'Not available':Number(p.estimated_margin_pct).toFixed(2)+'%';
+  const p=o.profitability||{},sett=o.settlement?.merchant_net,reconciliation=o.ledger_reconciliation||{},margin=p.estimated_margin_pct==null?'Not available':Number(p.estimated_margin_pct).toFixed(2)+'%';
   const primary='<div class="businessFinancePrimary">'
     +financeCompactMetric('Money received',Number(o.cash_evidence?.confirmed_merchandise_received||0),'Confirmed customer payments')
     +financeCompactMetric('Sales',Number(o.commercial?.completed_merchandise_value||0),'Completed merchandise')
@@ -76,9 +77,10 @@ function merchantFinanceHtml(o){
     +financeMetric('Supplier payables',Number(o.payables?.supplier_payables||0),'Received purchases still due')
     +financeMetric('Inventory value',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')
     +financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Personal withdrawal — not business expense')
+    +financeMetric('Recorded ledger balance',Number(reconciliation.recorded_available_balance||0),'Internal ledger · not provider/bank balance')
     +financeMetric('Estimated margin',margin,p.status||'')
     +financeStatusMetric('Payout / settlement',sett)
-    +'</div></details>';
+    +'</div><div class="ledgerReconciliation '+(reconciliation.status==='MATCHED'?'matched':'separate')+'"><strong>'+(reconciliation.status==='MATCHED'?'Ledger and confirmed payments match':'Ledger and confirmed payments are different evidence')+'</strong><span>'+escapeHtml(reconciliation.note||'Recorded ledger entries are kept separate from confirmed customer payment evidence.')+'</span></div></details>';
   return primary+details;
 }
 function supplierFinanceHtml(o){
