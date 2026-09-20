@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureCatalogMediaSchema,mediaForEntities,listCatalogMedia,buildPreparedFoodImagePrompt,generateCatalogImage,approveCatalogMedia,archiveCatalogMedia } from './catalog-media-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -96,11 +97,19 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`)}
+`);await ensureCatalogMediaSchema(pool)}
 
 async function publicStorefronts(domain=''){const args=[];let extra='';if(['food','non_food'].includes(domain)){args.push(domain);extra=` AND (s.merchant_domain=$1 OR s.merchant_domain='mixed')`}const{rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.pickup_address,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);return rows}
 async function storefront(businessId,includePrivate=false){const q=await pool.query(`SELECT s.*,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 ${includePrivate?'':"AND s.publication_status='published'"}`,[businessId]);return q.rows[0]||null}
-async function products(businessId,includePrivate=false){const{rows}=await pool.query(`SELECT * FROM marketplace_products WHERE business_id=$1 ${includePrivate?'':"AND published=TRUE AND active=TRUE"} ORDER BY category,name`,[businessId]);return rows}
+async function attachProductMedia(rows,publicOnly=false){
+  const media=await mediaForEntities(pool,{entityType:'marketplace_product',entityIds:rows.map(x=>x.id),publicOnly});
+  return rows.map(row=>{
+    const images=media.get(Number(row.id))||[];
+    const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible)||null;
+    return{...row,images,image_data_url:primary?.data_url||row.image_data_url||'',image_source_type:primary?.source_type||(row.image_data_url?'legacy_upload':'')};
+  });
+}
+async function products(businessId,includePrivate=false){const{rows}=await pool.query(`SELECT * FROM marketplace_products WHERE business_id=$1 ${includePrivate?'':"AND published=TRUE AND active=TRUE"} ORDER BY category,name`,[businessId]);return attachProductMedia(rows,!includePrivate)}
 
 // Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
 async function guestPublicStorefronts(domain=''){
@@ -115,7 +124,7 @@ async function guestPublicStorefront(businessId){
 }
 async function guestPublicProducts(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
-  return rows;
+  return attachProductMedia(rows,true);
 }
 
 async function importLegacyProducts(businessId){if(Number(businessId)!==1)return 0;const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT 1,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`);return r.rowCount}
@@ -151,6 +160,69 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{const{business
 app.post('/api/merchant/storefront/import-legacy',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||1));res.json({imported_or_updated:await importLegacyProducts(business.id),products:await products(business.id,true)})}catch(e){next(e)}})
 app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));const domain=['food','non_food'].includes(req.body?.product_domain)?req.body.product_domain:'food';const price=Number(req.body?.selling_price);if(!clean(req.body?.name,120)||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Name and valid selling price are required'});const{rows}=await pool.query(`INSERT INTO marketplace_products(business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,price_comparison_override) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE,$12,$13) RETURNING *`,[business.id,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',domain,clean(req.body?.product_kind,40)||'prepared_food',clean(req.body?.unit_code,20)||'item',positive(req.body?.quantity_per_unit)?Number(req.body.quantity_per_unit):1,price,Boolean(req.body?.stock_tracked),req.body?.stock_quantity==null?null:Number(req.body.stock_quantity),Boolean(req.body?.published),req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override)]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this store'});next(e)}})
 app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{try{const id=Number(req.params.id);const own=await pool.query(`SELECT * FROM marketplace_products WHERE id=$1`,[id]);if(!own.rowCount)return res.status(404).json({error:'Product not found'});const old=own.rows[0];await requireMerchant(req,old.business_id);const{rows}=await pool.query(`UPDATE marketplace_products SET name=$1,description=$2,category=$3,product_domain=$4,product_kind=$5,unit_code=$6,quantity_per_unit=$7,selling_price=$8,stock_tracked=$9,stock_quantity=$10,active=$11,published=$12,price_comparison_override=$13,updated_at=NOW() WHERE id=$14 RETURNING *`,[clean(req.body?.name??old.name,120),clean(req.body?.description??old.description,800),clean(req.body?.category??old.category,100),['food','non_food'].includes(req.body?.product_domain)?req.body.product_domain:old.product_domain,clean(req.body?.product_kind??old.product_kind,40),clean(req.body?.unit_code??old.unit_code,20),Number(req.body?.quantity_per_unit??old.quantity_per_unit),Number(req.body?.selling_price??old.selling_price),req.body?.stock_tracked??old.stock_tracked,req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity,req.body?.active??old.active,req.body?.published??old.published,req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,id]);res.json(rows[0])}catch(e){next(e)}})
+
+async function merchantOwnedMarketplaceProduct(req){
+  const id=Number(req.params.id);
+  if(!Number.isInteger(id)||id<1)throw Object.assign(new Error('Invalid product.'),{status:400});
+  const q=await pool.query(`SELECT * FROM marketplace_products WHERE id=$1`,[id]);
+  if(!q.rowCount)throw Object.assign(new Error('Product not found.'),{status:404});
+  const product=q.rows[0];
+  const owner=await requireMerchant(req,product.business_id);
+  return{product,...owner};
+}
+async function confirmedRecipeForMarketplaceProduct(product){
+  if(!product.legacy_product_id)return[];
+  const {rows}=await pool.query(`
+    SELECT i.item,r.quantity,i.unit
+      FROM recipes r
+      JOIN inventory i ON i.id=r.inventory_id
+      JOIN products p ON p.id=r.product_id
+     WHERE r.product_id=$1 AND p.business_id=$2 AND i.business_id=$2
+     ORDER BY i.item
+  `,[Number(product.legacy_product_id),Number(product.business_id)]);
+  return rows;
+}
+
+app.post('/api/merchant/storefront/products/:id/images/generate',body,async(req,res,next)=>{
+  try{
+    const{product,me}=await merchantOwnedMarketplaceProduct(req);
+    if(product.product_domain!=='food'||product.product_kind!=='prepared_food'){
+      return res.status(409).json({error:'AI fallback generation is currently limited to Merchant-confirmed prepared recipes. Use a real or authorized image for exact resale products.'});
+    }
+    const recipe=await confirmedRecipeForMarketplaceProduct(product);
+    if(!recipe.length)return res.status(409).json({error:'Confirm this product recipe before generating its reference image.'});
+    const prompt=buildPreparedFoodImagePrompt({name:product.name,description:product.description,category:product.category,recipe});
+    const media=await generateCatalogImage(pool,{
+      accountId:Number(me.account.id),
+      entityType:'marketplace_product',
+      entityId:Number(product.id),
+      prompt,
+      altText:`${product.name} — AI-generated reference image`
+    });
+    res.status(201).json({media,disclosure:'AI-generated reference image',approval_required:true});
+  }catch(e){next(e)}
+});
+
+app.post('/api/merchant/storefront/products/:id/images/:mediaId/approve',body,async(req,res,next)=>{
+  try{
+    const{product,me}=await merchantOwnedMarketplaceProduct(req);
+    const media=await approveCatalogMedia(pool,{
+      accountId:Number(me.account.id),
+      entityType:'marketplace_product',
+      entityId:Number(product.id),
+      mediaId:Number(req.params.mediaId),
+      makePrimary:req.body?.primary!==false
+    });
+    res.json({media,images:await listCatalogMedia(pool,{entityType:'marketplace_product',entityId:Number(product.id)})});
+  }catch(e){next(e)}
+});
+
+app.post('/api/merchant/storefront/products/:id/images/:mediaId/archive',body,async(req,res,next)=>{
+  try{
+    const{product}=await merchantOwnedMarketplaceProduct(req);
+    res.json(await archiveCatalogMedia(pool,{entityType:'marketplace_product',entityId:Number(product.id),mediaId:Number(req.params.mediaId)}));
+  }catch(e){next(e)}
+});
 
 app.post('/api/orders/merchant/:id/start',body,marketplaceStart)
 app.post('/api/orders/merchant/:id/cancel',body,marketplaceCancel)
