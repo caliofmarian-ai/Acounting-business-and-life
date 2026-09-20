@@ -99,7 +99,7 @@ function renderSettings(p){
     </details>
 
     <details class="notificationSettingsGroup notificationVoiceGroup">
-      <summary><span><strong>Notification voice</strong><small>Choose a different voice only for the notification types you care about.</small></span><b>${soundSlots.length} types</b></summary>
+      <summary><span><strong>Notification voice</strong><small>Set 2 is the Business & Life default. Open a notification type only if you want to change it.</small></span><b>${soundSlots.length} types</b></summary>
       <div class="notificationSettingsGroupBody">
         ${hasPartialLocalization?'<div class="voiceLocaleNotice">Set 2 speaks Filipino / Tagalog. Set 1 and Set 3 remain in English.</div>':''}
         <div class="voiceAccordionList">
