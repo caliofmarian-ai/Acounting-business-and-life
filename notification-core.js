@@ -342,7 +342,7 @@ async function resendEmail({to,subject,html,eventCode='',category='operational'}
   const cfg=resendConfig(eventCode,category);
   if(cfg.provider!=='resend'||!cfg.apiKey||!cfg.from)return{ok:false,notConfigured:true,error:'email_provider_not_configured',department:cfg.department};
   try{
-    const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${cfg.apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({from:cfg.from,to:[to],subject,html,tags:[{name:'department',value:cfg.department},{name:'event',value:clean(eventCode||'generic',80)}]})});
+    const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${cfg.apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({from:cfg.from,to:[to],subject,html,tags:[{name:'department',value:cfg.department},{name:'event',value:clean(eventCode||'generic',80).replace(/[^A-Za-z0-9_-]/g,'_')||'generic'}]})});
     const b=await r.json().catch(()=>({}));
     if(!r.ok)return{ok:false,error:clean(b?.message||`provider_${r.status}`,300),department:cfg.department};
     return{ok:true,reference:clean(b?.id,300),department:cfg.department};
