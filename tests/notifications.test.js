@@ -110,3 +110,16 @@ test('Web Push consumes attention metadata without combining silent and vibratio
   assert.match(core,/attentionPref\.vibration_enabled\?baseAttention\.vibrate:\[\]/);
   assert.match(core,/attentionPref\.important_alerts_enabled\?baseAttention\.requireInteraction:false/);
 });
+
+
+test('users can choose Set 1 2 or 3 independently for each notification sound slot',()=>{
+  assert.match(core,/notification_sound_preferences/);
+  assert.match(core,/PRIMARY KEY\(account_id,sound_slot\)/);
+  assert.match(core,/DEFAULT_NOTIFICATION_SOUND_VARIANT/);
+  assert.match(server,/\/api\/notifications\/sound-preference/);
+  assert.match(server,/sound_variants:notificationSoundVariants\(\)/);
+  assert.match(server,/sound_slots:notificationSoundSlots\(\)/);
+  assert.match(server,/default_sound_variant:DEFAULT_NOTIFICATION_SOUND_VARIANT/);
+  assert.match(ui,/data-sound-slot/);
+  assert.match(ui,/Set 2 is the Business & Life default/);
+});
