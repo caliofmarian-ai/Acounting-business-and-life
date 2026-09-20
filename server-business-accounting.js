@@ -415,6 +415,105 @@ app.get('/api/transactions/:id/audit',async(req,res,next)=>{try{const{business}=
 
 app.get('/api/inventory',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT * FROM inventory WHERE business_id=$1 ORDER BY (quantity<=reorder_level) DESC,item`,[business.id]);res.json(rows)}catch(e){next(e)}});
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,unit_cost=0}=req.body||{};if(!clean(item,100))return res.status(400).json({error:'Item is required'});const{rows}=await pool.query(`INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(business_id,item) DO UPDATE SET unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,unit_cost=EXCLUDED.unit_cost,updated_at=NOW() RETURNING *`,[business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(unit_cost)||0]);res.status(201).json(rows[0])}catch(e){next(e)}});
+app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const itemName=clean(req.body?.item,100);
+    if(!itemName)return res.status(400).json({error:'Item is required'});
+    const account=clean(req.body?.account||'cash',30);
+    if(!ACCOUNTS.has(account))return res.status(400).json({error:'Choose where the purchase was paid from'});
+    let purchase;
+    try{
+      purchase=deriveStockPurchase({
+        purchase_quantity:req.body?.purchase_quantity,
+        purchase_unit:req.body?.purchase_unit,
+        total_cost:req.body?.total_cost,
+        reorder_quantity:req.body?.reorder_quantity||0,
+        reorder_unit:req.body?.reorder_unit||req.body?.purchase_unit
+      });
+    }catch(error){return res.status(400).json({error:error.message})}
+
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const current=await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND LOWER(item)=LOWER($2) FOR UPDATE`,[ctx.business.id,itemName]);
+      let inventoryRow;
+      if(current.rowCount){
+        const old=current.rows[0];
+        if(old.measurement_family&&old.measurement_family!=='custom'&&old.measurement_family!==purchase.measurement_family){
+          throw Object.assign(new Error('This stock item already uses a different measurement type.'),{status:409});
+        }
+        const nextCost=weightedAverageUnitCost({
+          existing_quantity:old.quantity,
+          existing_unit_cost:old.unit_cost,
+          purchased_base_quantity:purchase.base_quantity,
+          purchase_total_cost:purchase.total_cost
+        });
+        const updated=await client.query(`
+          UPDATE inventory
+             SET quantity=quantity+$1,
+                 unit=$2,
+                 base_unit=$2,
+                 measurement_family=$3,
+                 unit_cost=$4,
+                 reorder_level=CASE WHEN $5>0 THEN $5 ELSE reorder_level END,
+                 last_purchase_quantity=$6,
+                 last_purchase_unit=$7,
+                 last_purchase_total_cost=$8,
+                 last_purchase_at=NOW(),
+                 updated_at=NOW()
+           WHERE id=$9 AND business_id=$10
+           RETURNING *
+        `,[purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,purchase.reorder_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id]);
+        inventoryRow=updated.rows[0];
+      }else{
+        const inserted=await client.query(`
+          INSERT INTO inventory(
+            business_id,item,unit,quantity,reorder_level,unit_cost,
+            measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$3,$8,$9,$10,NOW())
+          RETURNING *
+        `,[ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.base_unit_cost,purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost]);
+        inventoryRow=inserted.rows[0];
+      }
+
+      const purchaseRecord=await client.query(`
+        INSERT INTO inventory_purchases(
+          business_id,inventory_id,purchase_quantity,purchase_unit,base_quantity,base_unit,total_cost,account,note
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING *
+      `,[ctx.business.id,inventoryRow.id,purchase.purchase_quantity,purchase.purchase_unit,purchase.base_quantity,purchase.base_unit,purchase.total_cost,account,clean(req.body?.note,300)]);
+
+      let transaction=null;
+      if(purchase.total_cost>0&&req.body?.record_expense!==false){
+        const tx=await client.query(`
+          INSERT INTO transactions(
+            business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
+          ) VALUES($1,'business_expense','Stock purchase',$2,$3,$3,$4,'inventory_purchase',$5,NOW())
+          RETURNING *
+        `,[ctx.business.id,purchase.total_cost,account,clean(`${itemName} · ${purchase.purchase_quantity} ${purchase.purchase_unit}${req.body?.note?' · '+req.body.note:''}`,250),purchaseRecord.rows[0].id]);
+        transaction=tx.rows[0];
+        await client.query(`UPDATE inventory_purchases SET transaction_id=$1 WHERE id=$2`,[transaction.id,purchaseRecord.rows[0].id]);
+      }
+
+      await client.query('COMMIT');
+      res.status(201).json({
+        inventory:inventoryRow,
+        purchase:purchaseRecord.rows[0],
+        transaction,
+        conversion:{
+          entered:`${purchase.purchase_quantity} ${purchase.purchase_unit}`,
+          stored:`${purchase.base_quantity} ${purchase.base_unit}`,
+          unit_cost:purchase.base_unit_cost
+        }
+      });
+    }catch(error){
+      await client.query('ROLLBACK').catch(()=>{});
+      throw error;
+    }finally{client.release()}
+  }catch(error){next(error)}
+});
 
 app.get('/api/remittances',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT *,(received_php-COALESCE(expected_php,received_php)) difference_php FROM remittances WHERE business_id=$1 ORDER BY sent_at DESC,id DESC LIMIT 100`,[business.id]);res.json(rows)}catch(e){next(e)}});
 app.post('/api/remittances',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),{sent_amount,sent_currency='EUR',fee_amount=0,exchange_rate=null,expected_php=null,received_php,account='gcash',provider='',reference='',note='',sent_at,received_at}=req.body||{};if(!Number.isFinite(Number(sent_amount))||Number(sent_amount)<0||!Number.isFinite(Number(fee_amount))||Number(fee_amount)<0||!Number.isFinite(Number(received_php))||Number(received_php)<0||!ACCOUNTS.has(account))return res.status(400).json({error:'Invalid remittance'});const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`INSERT INTO remittances(business_id,sent_amount,sent_currency,fee_amount,exchange_rate,expected_php,received_php,account,provider,reference,note,sent_at,received_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::timestamptz,NOW()),COALESCE($13::timestamptz,NOW())) RETURNING *`,[business.id,Number(sent_amount),clean(sent_currency,8).toUpperCase()||'EUR',Number(fee_amount),exchange_rate?Number(exchange_rate):null,expected_php===''||expected_php==null?null:Number(expected_php),Number(received_php),account,clean(provider,80),clean(reference,120),clean(note,250),sent_at||null,received_at||null]);const rem=r.rows[0];if(Number(received_php)>0)await client.query(`INSERT INTO transactions(business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at) VALUES($1,'money_received','Remittance',$2,$3,$3,$4,'remittance',$5,COALESCE($6::timestamptz,NOW()))`,[business.id,Number(received_php),account,clean(`${provider}${reference?` • ${reference}`:''}`,250),rem.id,received_at||null]);await client.query('COMMIT');res.status(201).json(rem)}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}});
@@ -429,9 +528,75 @@ app.post('/api/budget',jsonBody,async(req,res,next)=>{try{const{business}=await 
 app.get('/api/analysis',async(req,res,next)=>{try{const{business}=await accountingContext(req),days=Number(req.query.days)===30?30:7;const categories=await pool.query(`SELECT CASE WHEN type='business_expense' THEN 'business' ELSE 'personal' END kind,category,COALESCE(SUM(amount),0) total FROM transactions WHERE business_id=$1 AND type IN ('business_expense','personal_withdrawal') AND occurred_at>=NOW()-($2::int*INTERVAL '1 day') GROUP BY kind,category ORDER BY total DESC`,[business.id,days]);const totals=await pool.query(`SELECT COALESCE(SUM(CASE WHEN type='business_expense' THEN amount ELSE 0 END),0) business,COALESCE(SUM(CASE WHEN type='personal_withdrawal' THEN amount ELSE 0 END),0) personal,COALESCE(SUM(CASE WHEN type='sale' THEN amount ELSE 0 END),0) sales,COALESCE(SUM(CASE WHEN type='money_received' THEN amount ELSE 0 END),0) received FROM transactions WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day')`,[business.id,days]);res.json({days,totals:totals.rows[0],categories:categories.rows})}catch(e){next(e)}});
 
 app.get('/api/products',async(req,res,next)=>{try{const{business}=await accountingContext(req);res.json(await productsWithRecipes(Number(business.id)))}catch(e){next(e)}});
-app.post('/api/products',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),name=clean(req.body?.name,120),category=clean(req.body?.category||'Food',80)||'Food',price=Number(req.body?.selling_price);if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Product name and valid selling price are required.'});const{rows}=await pool.query(`INSERT INTO products(business_id,name,category,selling_price,active) VALUES($1,$2,$3,$4,$5) RETURNING *`,[business.id,name,category,price,req.body?.active!==false]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
-app.patch('/api/products/:id',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),id=Number(req.params.id),old=await pool.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2`,[id,business.id]);if(!old.rowCount)return res.status(404).json({error:'Product not found'});const prev=old.rows[0],name=clean(req.body?.name??prev.name,120),category=clean(req.body?.category??prev.category,80)||'Food',price=Number(req.body?.selling_price??prev.selling_price),active=req.body?.active??prev.active;if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Invalid product'});const{rows}=await pool.query(`UPDATE products SET name=$1,category=$2,selling_price=$3,active=$4,updated_at=NOW() WHERE id=$5 AND business_id=$6 RETURNING *`,[name,category,price,Boolean(active),id,business.id]);res.json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
+app.post('/api/products',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),name=clean(req.body?.name,120),category=clean(req.body?.category||'Food',80)||'Food',price=Number(req.body?.selling_price),kind=normalizedProductKind(req.body?.product_kind||'prepared_recipe','food');if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Product name and valid selling price are required.'});const{rows}=await pool.query(`INSERT INTO products(business_id,name,category,selling_price,active,product_kind) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[business.id,name,category,price,req.body?.active!==false,kind]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
+app.patch('/api/products/:id',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),id=Number(req.params.id),old=await pool.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2`,[id,business.id]);if(!old.rowCount)return res.status(404).json({error:'Product not found'});const prev=old.rows[0],name=clean(req.body?.name??prev.name,120),category=clean(req.body?.category??prev.category,80)||'Food',price=Number(req.body?.selling_price??prev.selling_price),active=req.body?.active??prev.active,kind=normalizedProductKind(req.body?.product_kind??prev.product_kind,'food');if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Invalid product'});const{rows}=await pool.query(`UPDATE products SET name=$1,category=$2,selling_price=$3,active=$4,product_kind=$5,updated_at=NOW() WHERE id=$6 AND business_id=$7 RETURNING *`,[name,category,price,Boolean(active),kind,id,business.id]);res.json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
 app.put('/api/products/:id/recipe',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),productId=Number(req.params.id),components=Array.isArray(req.body?.components)?req.body.components:[];const exists=await pool.query(`SELECT id FROM products WHERE id=$1 AND business_id=$2`,[productId,business.id]);if(!exists.rowCount)return res.status(404).json({error:'Product not found'});const normalized=[],seen=new Set();for(const c of components){const inventoryId=Number(c.inventory_id),quantity=Number(c.quantity);if(!Number.isInteger(inventoryId)||!positive(quantity))return res.status(400).json({error:'Every recipe component needs an inventory item and quantity greater than zero.'});if(seen.has(inventoryId))return res.status(400).json({error:'The same ingredient cannot appear twice in one recipe.'});seen.add(inventoryId);normalized.push({inventoryId,quantity})}if(normalized.length){const check=await pool.query(`SELECT id FROM inventory WHERE business_id=$1 AND id=ANY($2::bigint[])`,[business.id,normalized.map(x=>x.inventoryId)]);if(check.rowCount!==normalized.length)return res.status(400).json({error:'One or more inventory ingredients do not belong to this business.'})}const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM recipes WHERE product_id=$1`,[productId]);for(const c of normalized)await client.query(`INSERT INTO recipes(product_id,inventory_id,quantity) VALUES($1,$2,$3)`,[productId,c.inventoryId,c.quantity]);await client.query('COMMIT');res.json((await productsWithRecipes(Number(business.id))).find(p=>p.id===productId))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}});
+
+
+app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const productId=Number(req.params.id);
+    const product=await pool.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2`,[productId,ctx.business.id]);
+    if(!product.rowCount)return res.status(404).json({error:'Product not found'});
+    if(product.rows[0].product_kind!=='prepared_recipe'){
+      return res.status(409).json({error:'Recipes are only used for products you prepare from ingredients.'});
+    }
+    const inventoryIds=[...new Set((Array.isArray(req.body?.components)?req.body.components:[]).map(x=>Number(x.inventory_id)).filter(Number.isInteger))];
+    const inventory=inventoryIds.length
+      ?(await pool.query(`SELECT * FROM inventory WHERE business_id=$1 AND id=ANY($2::bigint[])`,[ctx.business.id,inventoryIds])).rows
+      :[];
+    let batch;
+    try{
+      batch=computeRecipeBatch({
+        yield_quantity:req.body?.yield_quantity,
+        yield_unit:req.body?.yield_unit,
+        selling_quantity:req.body?.selling_quantity,
+        selling_unit:req.body?.selling_unit,
+        components:req.body?.components,
+        inventory
+      });
+    }catch(error){return res.status(400).json({error:error.message})}
+
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query(`
+        INSERT INTO product_recipe_batches(
+          product_id,yield_quantity,yield_unit,yield_base_quantity,yield_base_unit,
+          selling_quantity,selling_unit,selling_base_quantity,sale_units_per_batch,updated_at
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+        ON CONFLICT(product_id) DO UPDATE SET
+          yield_quantity=EXCLUDED.yield_quantity,
+          yield_unit=EXCLUDED.yield_unit,
+          yield_base_quantity=EXCLUDED.yield_base_quantity,
+          yield_base_unit=EXCLUDED.yield_base_unit,
+          selling_quantity=EXCLUDED.selling_quantity,
+          selling_unit=EXCLUDED.selling_unit,
+          selling_base_quantity=EXCLUDED.selling_base_quantity,
+          sale_units_per_batch=EXCLUDED.sale_units_per_batch,
+          updated_at=NOW()
+      `,[productId,batch.yield_quantity,batch.yield_unit,batch.yield_base_quantity,batch.yield_base_unit,batch.selling_quantity,batch.selling_unit,batch.selling_base_quantity,batch.sale_units_per_batch]);
+      await client.query(`DELETE FROM recipe_batch_components WHERE product_id=$1`,[productId]);
+      await client.query(`DELETE FROM recipes WHERE product_id=$1`,[productId]);
+      for(const component of batch.components){
+        await client.query(`
+          INSERT INTO recipe_batch_components(
+            product_id,inventory_id,batch_quantity,batch_unit,base_quantity,base_unit,per_sale_quantity,percentage
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+        `,[productId,component.inventory_id,component.batch_quantity,component.batch_unit,component.base_quantity,component.base_unit,component.per_sale_quantity,component.percentage]);
+        await client.query(`INSERT INTO recipes(product_id,inventory_id,quantity) VALUES($1,$2,$3)`,[productId,component.inventory_id,component.per_sale_quantity]);
+      }
+      await client.query('COMMIT');
+      const saved=(await productsWithRecipes(Number(ctx.business.id))).find(p=>Number(p.id)===productId);
+      res.json({...saved,recipe_batch_cost:batch.batch_cost,recipe_cost_per_sale_unit:batch.cost_per_sale_unit});
+    }catch(error){
+      await client.query('ROLLBACK').catch(()=>{});
+      throw error;
+    }finally{client.release()}
+  }catch(error){next(error)}
+});
 
 app.post('/api/product-sales',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),productId=Number(req.body?.product_id),quantity=Number(req.body?.quantity),account=req.body?.account||'cash',note=clean(req.body?.note||'',250),occurredAt=req.body?.occurred_at||null;if(!Number.isInteger(productId)||!positive(quantity)||!ACCOUNTS.has(account))return res.status(400).json({error:'Product, quantity and valid account are required.'});const client=await pool.connect();try{await client.query('BEGIN');const pr=await client.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2 FOR SHARE`,[productId,business.id]);if(!pr.rowCount)throw Object.assign(new Error('Product not found.'),{status:404});const product=pr.rows[0];if(!product.active)throw Object.assign(new Error('This product is inactive.'),{status:409});const recipe=await client.query(`SELECT r.inventory_id,r.quantity recipe_quantity,i.item,i.unit,i.quantity stock_quantity,i.unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i`,[productId,business.id]);const shortages=[];let unitCost=0;for(const row of recipe.rows){const needed=Number(row.recipe_quantity)*quantity,stock=Number(row.stock_quantity);unitCost+=Number(row.recipe_quantity)*Number(row.unit_cost);if(stock+1e-9<needed)shortages.push({item:row.item,unit:row.unit,required:needed,available:stock,short:needed-stock})}if(shortages.length)throw Object.assign(new Error('Not enough stock for this sale.'),{status:409,shortages});const unitPrice=Number(product.selling_price),revenue=money(unitPrice*quantity),cogs=money(unitCost*quantity),gross=money(revenue-cogs);const tx=await client.query(`INSERT INTO transactions(business_id,type,category,amount,payment_method,account,note,source,occurred_at) VALUES($1,'sale',$2,$3,$4,$4,$5,'product_sale',COALESCE($6::timestamptz,NOW())) RETURNING *`,[business.id,product.name,revenue,account,clean(`${quantity} × ${product.name}${note?` • ${note}`:''}`,250),occurredAt]);const sale=await client.query(`INSERT INTO product_sales(business_id,product_id,product_name_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,revenue,estimated_cogs,gross_profit,account,transaction_id,note,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13::timestamptz,NOW())) RETURNING *`,[business.id,productId,product.name,quantity,unitPrice,unitCost,revenue,cogs,gross,account,tx.rows[0].id,note,occurredAt]);const saleId=sale.rows[0].id;await client.query(`UPDATE transactions SET source_id=$1 WHERE id=$2`,[saleId,tx.rows[0].id]);for(const row of recipe.rows){const used=Number(row.recipe_quantity)*quantity,componentCost=used*Number(row.unit_cost);await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[used,row.inventory_id,business.id]);await client.query(`INSERT INTO product_sale_ingredients(sale_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6)`,[saleId,row.inventory_id,row.item,used,Number(row.unit_cost),componentCost])}await client.query('COMMIT');res.status(201).json({...sale.rows[0],margin_pct:revenue>0?Math.round((gross/revenue)*1000)/10:0})}catch(e){await client.query('ROLLBACK').catch(()=>{});if(e.shortages)return res.status(e.status||409).json({error:e.message,shortages:e.shortages});throw e}finally{client.release()}}catch(e){next(e)}});
 app.get('/api/product-sales',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT ps.*,t.created_at transaction_created_at FROM product_sales ps JOIN transactions t ON t.id=ps.transaction_id WHERE ps.business_id=$1 ORDER BY ps.occurred_at DESC,ps.id DESC LIMIT 250`,[business.id]);res.json(rows)}catch(e){next(e)}});
