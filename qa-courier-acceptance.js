@@ -19,7 +19,7 @@ async function latestCourierApplication(pool,accountId){
   return q.rows[0]||null;
 }
 
-async function ensureCourierGovernance({pool,base,courier,adminToken,territoryId,requestJson,expectStatus,ensureActiveRole}){
+async function ensureCourierGovernance({pool,base,courier,courierEmail,adminToken,territoryId,requestJson,expectStatus,ensureActiveRole}){
   let application=await latestCourierApplication(pool,courier.accountId);
   let invitationId=Number(application?.invitation_id||0);
 
@@ -30,7 +30,7 @@ async function ensureCourierGovernance({pool,base,courier,adminToken,territoryId
       token:adminToken,
       body:{
         role:'courier',
-        target_email:courier.email,
+        target_email:courierEmail,
         territory_id:territoryId,
         expires_days:7,
         note:'Controlled internal QA Courier invitation. Not a real Courier.'
@@ -464,7 +464,7 @@ export async function runCourierExperienceAcceptance({
 
   const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
   const governance=await ensureCourierGovernance({
-    pool,base,courier,adminToken:admin.token,territoryId,requestJson,expectStatus,ensureActiveRole
+    pool,base,courier,courierEmail:aliases.courier,adminToken:admin.token,territoryId,requestJson,expectStatus,ensureActiveRole
   });
   await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Courier Experience Merchant QA'});
   await ensureActiveRole({base,token:customer.token,role:'customer',label:'Courier Experience Customer QA'});
