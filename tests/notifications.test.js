@@ -150,3 +150,14 @@ test('foreground voice polling establishes a baseline and only plays fresh unrea
   assert.match(ui,/foregroundSoundEnabled/);
   assert.match(ui,/audioUserInteracted/);
 });
+
+
+test('notification settings expose exact spoken transcripts and transparent Filipino fallback messaging',()=>{
+  assert.match(server,/voice_transcripts:notificationVoiceTranscriptMatrix\('en-PH'\)/);
+  assert.match(server,/planned_voice_transcripts:notificationVoiceTranscriptMatrix\(preferredLocale\)/);
+  assert.match(server,/voice_audio_locale:'en-PH'/);
+  assert.match(ui,/data-voice-transcript/);
+  assert.match(ui,/data-planned-voice-transcript/);
+  assert.match(ui,/Filipino \/ Tagalog voice copy is prepared/);
+  assert.match(ui,/updateVoiceTranscript/);
+});

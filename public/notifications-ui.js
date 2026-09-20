@@ -57,13 +57,19 @@ function renderSettings(p){
   const soundVariants=p.sound_variants||[];
   const soundSlots=p.sound_slots||[];
   const soundPreferences=p.sound_preferences||{};
+  const voiceTranscripts=p.voice_transcripts||{};
+  const plannedVoiceTranscripts=p.planned_voice_transcripts||{};
+  const selectedVoiceVariant=slotId=>Number(soundPreferences[slotId]||p.default_sound_variant||2);
+  const voiceTranscript=(slotId,variant)=>voiceTranscripts?.[slotId]?.[variant]||'';
+  const plannedVoiceTranscript=(slotId,variant)=>plannedVoiceTranscripts?.[slotId]?.[variant]||'';
+  const localeFallback=p.preferred_locale==='fil-PH'&&p.voice_audio_locale!=='fil-PH';
   box.innerHTML=`
     <div class="notificationSettingCard"><label>Notification language<select id="notificationLocale"><option value="en-PH" ${p.preferred_locale==='en-PH'?'selected':''}>English (Philippines)</option><option value="fil-PH" ${p.preferred_locale==='fil-PH'?'selected':''}>Filipino / Tagalog</option></select></label></div>
     <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Attention</strong><small>Control how Business & Life gets your attention. Background push sound is controlled by your phone/browser; the Sounds switch applies to branded in-app sounds.</small></span></div><div class="preferenceGrid"><div class="preferenceRow"><div><strong>Sounds</strong><small>Branded sounds while the app is open.</small></div><label><input id="notificationSounds" type="checkbox" ${attention.sound_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Vibration</strong><small>Use supported vibration patterns for push alerts.</small></div><label><input id="notificationVibration" type="checkbox" ${attention.vibration_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Important alerts</strong><small>Keep urgent alerts more prominent when the browser supports it.</small></div><label><input id="notificationImportantAlerts" type="checkbox" ${attention.important_alerts_enabled?'checked':''}> On</label></div></div></div>
-    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Notification voice</strong><small>Set 2 is the Business & Life default. Choose Set 1 or Set 3 separately for any notification type.</small></span></div><div class="preferenceGrid">${soundSlots.map(slot=>`<div class="preferenceRow soundPreferenceRow"><div><strong>${esc(slot.label)}</strong><small>${esc(slot.description||'')}</small></div><div class="soundChoiceControls"><select data-sound-slot="${esc(slot.id)}" aria-label="${esc(slot.label)} voice">${soundVariants.map(v=>`<option value="${v.id}" ${Number(soundPreferences[slot.id]||p.default_sound_variant||2)===Number(v.id)?'selected':''}>${esc(v.label)}${v.isDefault?' (default)':''}</option>`).join('')}</select><button type="button" class="soundPreviewButton" data-preview-sound="${esc(slot.id)}" ${p.audio_configured?'':'disabled'}>▶ Listen</button></div></div>`).join('')}</div></div>
+    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Notification voice</strong><small>Set 2 is the Business & Life default. Choose Set 1 or Set 3 separately for any notification type.</small>${localeFallback?'<small class="voiceLocaleNotice">Filipino / Tagalog voice copy is prepared. Until that audio pack is generated, ▶ Listen and live spoken alerts use the English voice fallback.</small>':''}</span></div><div class="preferenceGrid">${soundSlots.map(slot=>{const selected=selectedVoiceVariant(slot.id);return`<div class="preferenceRow soundPreferenceRow"><div><strong>${esc(slot.label)}</strong><small>${esc(slot.description||'')}</small><small class="voiceTranscript" data-voice-transcript="${esc(slot.id)}">“${esc(voiceTranscript(slot.id,selected))}”</small>${localeFallback?`<small class="voicePlannedTranscript" data-planned-voice-transcript="${esc(slot.id)}">Filipino planned: “${esc(plannedVoiceTranscript(slot.id,selected))}”</small>`:''}</div><div class="soundChoiceControls"><select data-sound-slot="${esc(slot.id)}" aria-label="${esc(slot.label)} voice">${soundVariants.map(v=>`<option value="${v.id}" ${selected===Number(v.id)?'selected':''}>${esc(v.label)}${v.isDefault?' (default)':''}</option>`).join('')}</select><button type="button" class="soundPreviewButton" data-preview-sound="${esc(slot.id)}" ${p.audio_configured?'':'disabled'}>▶ Listen</button></div></div>`}).join('')}</div></div>
     <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Web Push</strong><small>Receive important updates even when the app is not open.</small></span><button id="enablePush" type="button">${p.push_configured?'Enable push':'Push not configured'}</button></div></div>
     <div class="preferenceGrid">${(p.categories||[]).map(cat=>{const x=prefFor(cat),marketing=cat==='marketing',security=cat==='security';const inapp=x?x.in_app_enabled:!marketing,email=x?x.email_enabled:false,push=x?x.push_enabled:!marketing;return`<div class="preferenceRow" data-category="${cat}"><div><strong>${labels[cat]||cat}</strong><small>${security?'Required security notices cannot be fully disabled.':''}</small></div><label><input type="checkbox" data-channel="in_app" ${inapp?'checked':''} ${security?'disabled':''}> In-app</label><label><input type="checkbox" data-channel="email" ${email?'checked':''}> Email</label><label><input type="checkbox" data-channel="push" ${push?'checked':''}> Push</label></div>`}).join('')}</div>`;
-  document.getElementById('notificationLocale').onchange=async e=>{await api('/api/notifications/locale',{method:'PUT',body:JSON.stringify({locale:e.target.value})});toast('Notification language updated.')};
+  document.getElementById('notificationLocale').onchange=async e=>{try{await api('/api/notifications/locale',{method:'PUT',body:JSON.stringify({locale:e.target.value})});const refreshed=await api('/api/notifications/preferences');notificationPanel.prefs=refreshed;renderSettings(refreshed);toast('Notification language updated.')}catch(err){toast(err.message);}};
   document.getElementById('enablePush').onclick=enablePush;
   for(const id of ['notificationSounds','notificationVibration','notificationImportantAlerts'])document.getElementById(id).onchange=saveAttentionPreferences;
   box.querySelectorAll('[data-sound-slot]').forEach(select=>select.onchange=saveSoundPreference);
@@ -110,9 +116,21 @@ async function previewNotificationVoice(e){
   try{await playNotificationVoice(soundSlot,Number(select.value));}
   finally{button.disabled=false;button.textContent=old}
 }
+function updateVoiceTranscript(soundSlot,variant){
+  const prefs=notificationPanel?.prefs||{};
+  const spoken=prefs.voice_transcripts?.[soundSlot]?.[variant]||'';
+  const planned=prefs.planned_voice_transcripts?.[soundSlot]?.[variant]||'';
+  const spokenEl=document.querySelector(`[data-voice-transcript="${soundSlot}"]`);
+  const plannedEl=document.querySelector(`[data-planned-voice-transcript="${soundSlot}"]`);
+  if(spokenEl)spokenEl.textContent=`“${spoken}”`;
+  if(plannedEl)plannedEl.textContent=`Filipino planned: “${planned}”`;
+}
 async function saveSoundPreference(e){
+  const soundSlot=e.target.dataset.soundSlot,variant=Number(e.target.value);
+  updateVoiceTranscript(soundSlot,variant);
   try{
-    await api('/api/notifications/sound-preference',{method:'PUT',body:JSON.stringify({sound_slot:e.target.dataset.soundSlot,variant:Number(e.target.value)})});
+    await api('/api/notifications/sound-preference',{method:'PUT',body:JSON.stringify({sound_slot:soundSlot,variant})});
+    if(notificationPanel?.prefs?.sound_preferences)notificationPanel.prefs.sound_preferences[soundSlot]=variant;
     toast('Notification voice saved.');
   }catch(err){toast(err.message);await renderNotificationCenter()}
 }
