@@ -144,14 +144,171 @@ function bindMerchantProcurement(parties=[],lots=[],returns=[]){
   supWorkspace.querySelectorAll('[data-po-pay]').forEach(b=>b.onclick=()=>payPo(Number(b.dataset.poPay)));
 }
 async function loadInventory(){try{const r=await papi('/api/inventory');supInventory=Array.isArray(r)?r:(r.inventory||[])}catch{supInventory=[]}}
+
+const SUPPLIER_TERM_OPTIONS=[
+  ['prepaid','Prepaid'],['cod','Cash / COD'],['due_on_receipt','Due on receipt'],
+  ['net_7','Net 7'],['net_15','Net 15'],['net_30','Net 30'],['net_45','Net 45'],['net_60','Net 60'],['custom','Custom']
+];
+function termOptions(selected='cod'){return SUPPLIER_TERM_OPTIONS.map(([v,l])=>`<option value="${v}" ${v===selected?'selected':''}>${l}</option>`).join('')}
+async function editExternalTerms(partyId){
+  const current=await papi(`/api/procurement/supply-parties/${partyId}/terms`).catch(()=>null);
+  openSupModal(`<h2>Supplier payment terms</h2><p class="supModalIntro">These are your recorded commercial terms for this external/local supplier. They are not a government or bank approval.</p><form id="partyTermsForm" class="supForm"><label>Terms<select id="partyTermCode">${termOptions(current?.payment_term_code||'cod')}</select></label><div class="supTwo"><label>Custom days<input id="partyCustomDays" type="number" min="0" max="365" value="${current?.custom_days??''}"></label><label>Credit limit ₱<input id="partyCreditLimit" type="number" min="0" step="0.01" value="${current?.credit_limit??''}"></label></div><label>Note<input id="partyTermNote" value="${ph(current?.note||'')}"></label><div id="partyTermsMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="partyTermsCancel">Cancel</button><button>Save terms</button></div></form>`);
+  document.getElementById('partyTermsCancel').onclick=closeSupModal;
+  document.getElementById('partyTermsForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi(`/api/procurement/supply-parties/${partyId}/terms`,{method:'PUT',body:JSON.stringify({
+        paymentTermCode:document.getElementById('partyTermCode').value,
+        customDays:document.getElementById('partyCustomDays').value===''?null:Number(document.getElementById('partyCustomDays').value),
+        creditLimit:document.getElementById('partyCreditLimit').value===''?null:Number(document.getElementById('partyCreditLimit').value),
+        note:document.getElementById('partyTermNote').value
+      })});
+      closeSupModal();ptoast('Supplier terms saved.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('partyTermsMsg').textContent=err.message}
+  };
+}
+async function viewConnectedTerms(supplierId){
+  const t=await papi(`/api/procurement/relationships/${supplierId}/terms`).catch(()=>null);
+  openSupModal(`<h2>Supplier terms</h2>${t?`<div class="supList"><div class="supRow"><div><strong>${ph(pnice(t.payment_term_code))}</strong><small>${t.credit_limit!=null?`Credit limit ${pphp(t.credit_limit)} • `:''}${ph(pnice(t.status))}</small><div class="supMeta"><span>${ph(t.currency_code)}</span>${t.custom_days!=null?`<span>${Number(t.custom_days)} days</span>`:''}</div></div></div></div>`:'<div class="supEmpty">This connected Supplier has not confirmed payment terms yet.</div>'}<button class="supBtn secondary" id="connectedTermsClose">Close</button>`);
+  document.getElementById('connectedTermsClose').onclick=closeSupModal;
+}
+async function requestReturnLot(lotId){
+  const lots=await papi('/api/procurement/supply-lots');
+  const lot=lots.find(x=>Number(x.id)===Number(lotId));
+  if(!lot){ptoast('Lot is unavailable.');return}
+  openSupModal(`<h2>Return stock to Supplier</h2><p class="supModalIntro">${ph(lot.item_name)} • ${Number(lot.quantity_remaining_base)} ${ph(lot.base_unit)} available. Creating a return request does not change stock yet.</p><form id="returnLotForm" class="supForm"><label>Quantity to return<input id="returnQty" type="number" min="0.000001" max="${Number(lot.quantity_remaining_base)}" step="0.000001" required></label><label>Reason<select id="returnReason"><option value="damaged">Damaged</option><option value="expired">Expired</option><option value="wrong_item">Wrong item</option><option value="quality">Quality issue</option><option value="recall">Recall</option><option value="over_delivery">Over-delivery</option><option value="other">Other</option></select></label><label>Expected credit ₱ (optional)<input id="returnCredit" type="number" min="0" step="0.01"></label><label>Note<textarea id="returnNote" rows="2"></textarea></label><div id="returnLotMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="returnLotCancel">Cancel</button><button>Create return request</button></div></form>`);
+  document.getElementById('returnLotCancel').onclick=closeSupModal;
+  document.getElementById('returnLotForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const credit=document.getElementById('returnCredit').value;
+      await papi('/api/procurement/returns',{method:'POST',body:JSON.stringify({
+        supply_lot_id:lotId,
+        quantity_base:Number(document.getElementById('returnQty').value),
+        reason_code:document.getElementById('returnReason').value,
+        expected_credit:credit===''?null:Number(credit),
+        note:document.getElementById('returnNote').value
+      })});
+      closeSupModal();ptoast('Return request created. Stock is unchanged until physical return.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('returnLotMsg').textContent=err.message}
+  };
+}
+async function dispatchReturn(id){
+  try{await papi(`/api/procurement/returns/${id}/dispatch`,{method:'POST',body:'{}'});ptoast('Physical return recorded; lot and Inventory were reduced once.');await renderMerchantProcurement()}catch(e){ptoast(e.message)}
+}
+async function resolveExternalReturn(id){
+  openSupModal(`<h2>Record external Supplier resolution</h2><p class="supModalIntro">Record only what the supplier actually agreed. A credit is not cash received.</p><form id="externalReturnResolve" class="supForm"><label>Resolution<select id="externalResolutionType"><option value="credit">Credit</option><option value="refund_expected">Refund expected</option><option value="replacement">Replacement</option><option value="no_credit">No credit</option></select></label><label>Confirmed credit ₱<input id="externalConfirmedCredit" type="number" min="0" step="0.01" value="0"></label><label>Evidence note<textarea id="externalResolutionNote" rows="2"></textarea></label><div id="externalResolutionMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="externalResolutionCancel">Cancel</button><button>Save resolution</button></div></form>`);
+  document.getElementById('externalResolutionCancel').onclick=closeSupModal;
+  document.getElementById('externalReturnResolve').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi(`/api/procurement/returns/${id}/external-resolution`,{method:'POST',body:JSON.stringify({
+        resolution_type:document.getElementById('externalResolutionType').value,
+        confirmed_credit:Number(document.getElementById('externalConfirmedCredit').value||0),
+        external_evidence_note:document.getElementById('externalResolutionNote').value
+      })});
+      closeSupModal();ptoast('External Supplier resolution recorded.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('externalResolutionMsg').textContent=err.message}
+  };
+}
+async function recordExternalRecall(partyId){
+  openSupModal(`<h2>Record Supplier recall notice</h2><p class="supModalIntro">Use the exact lot/batch from the supplier or authority notice. Matching lots are quarantined in traceability; aggregate Inventory is not yet fully lot-allocated for every sale.</p><form id="externalRecallForm" class="supForm"><label>Supplier lot / batch<input id="externalRecallLot" required></label><label>Product (optional)<input id="externalRecallProduct"></label><div class="supTwo"><label>Notice<select id="externalRecallLevel"><option value="recall">Recall</option><option value="withdrawal">Withdrawal</option><option value="advisory">Advisory</option></select></label><label>Action<select id="externalRecallAction"><option value="isolate">Isolate</option><option value="return">Return</option><option value="review">Review</option><option value="destroy">Destroy</option></select></label></div><label>Reason<textarea id="externalRecallReason" required rows="2"></textarea></label><label>Source/reference<input id="externalRecallRef"></label><div id="externalRecallMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="externalRecallCancel">Cancel</button><button>Record notice</button></div></form>`);
+  document.getElementById('externalRecallCancel').onclick=closeSupModal;
+  document.getElementById('externalRecallForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const r=await papi('/api/procurement/recalls/external',{method:'POST',body:JSON.stringify({
+        supply_party_id:partyId,
+        supplier_lot_code:document.getElementById('externalRecallLot').value,
+        product_name:document.getElementById('externalRecallProduct').value,
+        notice_level:document.getElementById('externalRecallLevel').value,
+        requested_action:document.getElementById('externalRecallAction').value,
+        reason:document.getElementById('externalRecallReason').value,
+        source_reference:document.getElementById('externalRecallRef').value
+      })});
+      closeSupModal();ptoast(`Recall notice recorded; ${Number(r.matched_lots||0)} lot match(es).`);await renderMerchantProcurement();
+    }catch(err){document.getElementById('externalRecallMsg').textContent=err.message}
+  };
+}
+async function recordPoInvoice(id,side){
+  openSupModal(`<h2>Record Supplier invoice evidence</h2><p class="supModalIntro">This records the supplier document. It does not record payment and does not automatically make the document BIR-validated.</p><form id="poInvoiceForm" class="supForm"><label>Document number<input id="poInvoiceNumber"></label><label>Document type<select id="poInvoiceKind"><option value="invoice">Invoice</option><option value="sales_invoice">Sales Invoice</option><option value="charge_invoice">Charge Invoice</option><option value="billing_invoice">Billing Invoice</option><option value="other_supplier_document">Other supplier document</option></select></label><div class="supTwo"><label>Issue date<input id="poInvoiceIssue" type="date" required></label><label>Due date (optional)<input id="poInvoiceDue" type="date"></label></div><label>Gross amount ₱<input id="poInvoiceGross" type="number" min="0.01" step="0.01" required></label><label>Reference / file note<input id="poInvoiceRef"></label><div id="poInvoiceMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="poInvoiceCancel">Cancel</button><button>Save invoice evidence</button></div></form>`);
+  document.getElementById('poInvoiceIssue').value=new Date().toISOString().slice(0,10);
+  document.getElementById('poInvoiceCancel').onclick=closeSupModal;
+  document.getElementById('poInvoiceForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const path=side==='supplier'? `/api/supplier/orders/${id}/invoices`:`/api/procurement/orders/${id}/invoices`;
+      await papi(path,{method:'POST',body:JSON.stringify({
+        document_number:document.getElementById('poInvoiceNumber').value,
+        document_kind:document.getElementById('poInvoiceKind').value,
+        issue_date:document.getElementById('poInvoiceIssue').value,
+        due_date:document.getElementById('poInvoiceDue').value||null,
+        gross_amount:Number(document.getElementById('poInvoiceGross').value),
+        evidence_reference:document.getElementById('poInvoiceRef').value
+      })});
+      closeSupModal();ptoast('Supplier invoice evidence recorded.');
+      if(side==='merchant')await renderMerchantProcurement();else await renderSupplierWorkspace(supSupplierSection);
+    }catch(err){document.getElementById('poInvoiceMsg').textContent=err.message}
+  };
+}
 function supplierPriceLine(item){
   const tiers=(item.price_tiers||[]).map(x=>`${Number(x.minimum_quantity)}+ @ ${pphp(x.price_per_pack)}`).join(' • ');
   return `${pphp(item.price_per_pack)} / ${ph(item.unit_name)} • ${Number(item.base_units_per_pack)} ${ph(item.base_unit)}${tiers?` • Volume: ${ph(tiers)}`:''}`;
 }
 async function openSupplierCatalog(id){const [data]=await Promise.all([papi(`/api/procurement/suppliers/${id}/catalog`),loadInventory()]);const opts=x=>`<option value="">No inventory link</option>${supInventory.map(i=>`<option value="${i.id}" ${Number(x?.link?.legacy_inventory_id)===Number(i.id)?'selected':''}>${ph(i.item)} (${Number(i.quantity)} ${ph(i.unit)})</option>`).join('')}`;openSupModal(`<h2>${ph(data.supplier.supplier_name||data.supplier.display_name)} catalog</h2><form id="poCreate" class="supForm"><div class="supProductPicker">${data.items.map(i=>`<div class="supPick"><div><strong>${ph(i.product_name)}</strong><small>${supplierPriceLine(i)}</small><label style="margin-top:5px">Inventory mapping<select data-map-item="${i.id}">${opts(i)}</select></label></div><input type="number" min="0" step="1" value="0" data-po-item="${i.id}" aria-label="Packs"></div>`).join('')}</div><div class="supTwo"><label>Fulfilment<select id="poMode"><option value="delivery">Supplier delivery</option><option value="pickup">Pickup</option></select></label><label>Delivery fee ₱<input id="poDeliveryFee" type="number" min="0" step="0.01" value="0"></label></div><label>Requested date<input id="poRequested" type="date"></label><label>Note<textarea id="poNote" rows="2"></textarea></label><div id="poMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="poCancel">Cancel</button><button>Create PO</button></div></form>`);document.getElementById('poCancel').onclick=closeSupModal;document.getElementById('poCreate').onsubmit=async e=>{e.preventDefault();const items=[...e.currentTarget.querySelectorAll('[data-po-item]')].map(x=>({catalog_item_id:Number(x.dataset.poItem),packs:Number(x.value)})).filter(x=>x.packs>0);if(!items.length){document.getElementById('poMsg').textContent='Choose at least one item.';return}try{for(const s of e.currentTarget.querySelectorAll('[data-map-item]')){if(s.value)await papi(`/api/procurement/catalog/${s.dataset.mapItem}/link`,{method:'PUT',body:JSON.stringify({legacy_inventory_id:Number(s.value)})})}await papi('/api/procurement/orders',{method:'POST',body:JSON.stringify({supplier_account_id:id,items,fulfilment_mode:document.getElementById('poMode').value,delivery_fee:Number(document.getElementById('poDeliveryFee').value),requested_date:document.getElementById('poRequested').value||null,merchant_note:document.getElementById('poNote').value})});closeSupModal();ptoast('Purchase order sent.');await renderMerchantProcurement()}catch(err){document.getElementById('poMsg').textContent=err.message}}}
-async function viewPo(id,side){const p=await papi(`/api/procurement/orders/${id}`);openSupModal(`<h2>${ph(p.po_number)} • ${ph(pnice(p.status))}</h2><div class="supList">${p.items.map(i=>`<div class="supRow"><div><strong>${ph(i.name_snapshot)}</strong><small>${Number(i.ordered_packs)} ${ph(i.unit_name_snapshot)} ordered • ${pphp(i.price_per_pack_snapshot)} each</small><div class="supMeta"><span>Confirmed ${Number(i.confirmed_packs??i.ordered_packs)}</span><span>Received ${Number(i.received_packs)}</span>${i.legacy_inventory_name?`<span class="ok">→ ${ph(i.legacy_inventory_name)}</span>`:''}</div></div></div>`).join('')}</div><div class="supMeta" style="margin:12px 0"><span>${pphp(p.expected_total)} total</span><span>${ph(pnice(p.payment_status))}</span></div><button class="supBtn secondary" id="poClose">Close</button>`);document.getElementById('poClose').onclick=closeSupModal}
-async function receivePo(id){const p=await papi(`/api/procurement/orders/${id}`);openSupModal(`<h2>Receive ${ph(p.po_number)}</h2><form id="receiveForm" class="supForm"><div class="supProductPicker">${p.items.map(i=>{const remain=Number(i.confirmed_packs??i.ordered_packs)-Number(i.received_packs);return `<div class="supPick"><div><strong>${ph(i.name_snapshot)}</strong><small>Remaining ${remain} ${ph(i.unit_name_snapshot)}${i.legacy_inventory_name?` → ${ph(i.legacy_inventory_name)}`:' • no inventory mapping'}</small></div><input data-receive-item="${i.id}" type="number" min="0" max="${remain}" step="0.01" value="${remain}"></div>`}).join('')}</div><label>Receiving note<input id="receiveNote"></label><div id="receiveMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="receiveCancel">Cancel</button><button>Confirm receipt</button></div></form>`);document.getElementById('receiveCancel').onclick=closeSupModal;document.getElementById('receiveForm').onsubmit=async e=>{e.preventDefault();const items=[...e.currentTarget.querySelectorAll('[data-receive-item]')].map(x=>({item_id:Number(x.dataset.receiveItem),received_packs:Number(x.value)})).filter(x=>x.received_packs>0);try{await papi(`/api/procurement/orders/${id}/receive`,{method:'POST',body:JSON.stringify({items,note:document.getElementById('receiveNote').value})});closeSupModal();ptoast('Goods received; linked inventory updated once.');await renderMerchantProcurement()}catch(err){document.getElementById('receiveMsg').textContent=err.message}}}
-async function payPo(id){const p=await papi(`/api/procurement/orders/${id}`),due=Math.max(0,Number(p.expected_total)-Number(p.paid_amount));openSupModal(`<h2>Record Supplier payment</h2><form id="payPoForm" class="supForm"><label>Amount ₱<input id="payPoAmount" type="number" min="0.01" step="0.01" value="${due.toFixed(2)}" required></label><label>Paid from<select id="payPoAccount"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label><div id="payPoMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="payPoCancel">Cancel</button><button>Confirm real payment</button></div></form>`);document.getElementById('payPoCancel').onclick=closeSupModal;document.getElementById('payPoForm').onsubmit=async e=>{e.preventDefault();try{await papi(`/api/procurement/orders/${id}/payment`,{method:'POST',body:JSON.stringify({amount:Number(document.getElementById('payPoAmount').value),account:document.getElementById('payPoAccount').value})});closeSupModal();ptoast('Supplier payment recorded.');await renderMerchantProcurement()}catch(err){document.getElementById('payPoMsg').textContent=err.message}}}
+async function viewPo(id,side){
+  const [p,commercial]=await Promise.all([
+    papi(`/api/procurement/orders/${id}`),
+    papi(`/api/procurement/orders/${id}/commercial`).catch(()=>null)
+  ]);
+  const s=commercial?.summary;
+  openSupModal(`<h2>${ph(p.po_number)} • ${ph(pnice(p.status))}</h2><div class="supList">${p.items.map(i=>`<div class="supRow"><div><strong>${ph(i.name_snapshot)}</strong><small>${Number(i.ordered_packs)} ${ph(i.unit_name_snapshot)} ordered • ${pphp(i.price_per_pack_snapshot)} each</small><div class="supMeta"><span>Confirmed ${Number(i.confirmed_packs??i.ordered_packs)}</span><span>Received ${Number(i.received_packs)}</span><span>${ph(pnice(i.handling_mode_snapshot||'sealed_resale'))}</span>${i.legacy_inventory_name?`<span class="ok">→ ${ph(i.legacy_inventory_name)}</span>`:''}</div></div></div>`).join('')}</div>
+  ${s?`<details class="supNestedDetails" open><summary>Commercial position</summary><div class="supMeta" style="margin-top:10px"><span>PO ${pphp(s.expected_total)}</span><span>Received ${pphp(s.received_total)}</span><span>Invoiced ${pphp(s.invoice_total)}</span><span>Paid ${pphp(s.paid_amount)}</span><span>Credits ${pphp(s.confirmed_credits)}</span><span class="${s.outstanding>0?'pending':'ok'}">Outstanding ${pphp(s.outstanding)}</span>${s.overdue?'<span class="pending">Overdue</span>':''}</div>${s.invoice_vs_received_variance!=null&&Math.abs(Number(s.invoice_vs_received_variance))>0.009?`<p class="supCodeHelp">Invoice vs received variance: ${pphp(s.invoice_vs_received_variance)}. Review before paying.</p>`:''}</details>`:''}
+  <div class="supInlineActions" style="margin-top:12px"><button class="supBtn" id="poRecordInvoice">Record invoice</button><button class="supBtn secondary" id="poClose">Close</button></div>`);
+  document.getElementById('poRecordInvoice').onclick=()=>recordPoInvoice(id,side);
+  document.getElementById('poClose').onclick=closeSupModal;
+}
+async function receivePo(id){
+  const p=await papi(`/api/procurement/orders/${id}`);
+  openSupModal(`<h2>Receive ${ph(p.po_number)}</h2><form id="receiveForm" class="supForm"><p class="supModalIntro">Record what physically arrived. Add lot/batch and expiry when available so recall traceability works later.</p><div class="supProductPicker">${p.items.map(i=>{const remain=Number(i.confirmed_packs??i.ordered_packs)-Number(i.received_packs);return `<div class="supPick"><div style="width:100%"><strong>${ph(i.name_snapshot)}</strong><small>Remaining ${remain} ${ph(i.unit_name_snapshot)}${i.legacy_inventory_name?` → ${ph(i.legacy_inventory_name)}`:' • no inventory mapping'}</small><details class="supNestedDetails" style="margin-top:7px"><summary>Lot / expiry</summary><div class="supTwo" style="margin-top:8px"><label>Supplier lot<input data-lot-code="${i.id}"></label><label>Expiry<input data-lot-expiry="${i.id}" type="date"></label></div></details></div><input data-receive-item="${i.id}" type="number" min="0" max="${remain}" step="0.01" value="${remain}"></div>`}).join('')}</div><label>Receiving note<input id="receiveNote"></label><div id="receiveMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="receiveCancel">Cancel</button><button>Confirm receipt</button></div></form>`);
+  document.getElementById('receiveCancel').onclick=closeSupModal;
+  document.getElementById('receiveForm').onsubmit=async e=>{
+    e.preventDefault();
+    const items=[...e.currentTarget.querySelectorAll('[data-receive-item]')].map(x=>{
+      const itemId=Number(x.dataset.receiveItem);
+      const expiry=e.currentTarget.querySelector(`[data-lot-expiry="${itemId}"]`)?.value||'';
+      return{
+        item_id:itemId,
+        received_packs:Number(x.value),
+        supplier_lot_code:e.currentTarget.querySelector(`[data-lot-code="${itemId}"]`)?.value||'',
+        expires_at:expiry?expiry+'T23:59:59+08:00':null
+      };
+    }).filter(x=>x.received_packs>0);
+    try{
+      await papi(`/api/procurement/orders/${id}/receive`,{method:'POST',body:JSON.stringify({items,note:document.getElementById('receiveNote').value})});
+      closeSupModal();ptoast('Goods received; Inventory and traceable lots updated once.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('receiveMsg').textContent=err.message}
+  };
+}
+async function payPo(id){
+  const [p,commercial]=await Promise.all([
+    papi(`/api/procurement/orders/${id}`),
+    papi(`/api/procurement/orders/${id}/commercial`)
+  ]);
+  const due=Math.max(0,Number(commercial?.summary?.outstanding||0));
+  openSupModal(`<h2>Record Supplier payment</h2><p class="supModalIntro">Current commercial outstanding: ${pphp(due)}. This uses invoice evidence when recorded, otherwise received value, otherwise the PO commitment.</p><form id="payPoForm" class="supForm"><label>Amount ₱<input id="payPoAmount" type="number" min="0.01" max="${due}" step="0.01" value="${due.toFixed(2)}" required ${due<=0?'disabled':''}></label><label>Paid from<select id="payPoAccount"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label><div id="payPoMsg" class="fileNote">${due<=0?'Nothing is currently payable on this PO.':''}</div><div class="supTwo"><button type="button" class="supBtn secondary" id="payPoCancel">Cancel</button><button ${due<=0?'disabled':''}>Confirm real payment</button></div></form>`);
+  document.getElementById('payPoCancel').onclick=closeSupModal;
+  document.getElementById('payPoForm').onsubmit=async e=>{
+    e.preventDefault();if(due<=0)return;
+    try{
+      await papi(`/api/procurement/orders/${id}/payment`,{method:'POST',body:JSON.stringify({
+        amount:Number(document.getElementById('payPoAmount').value),
+        account:document.getElementById('payPoAccount').value
+      })});
+      closeSupModal();ptoast('Supplier payment recorded.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('payPoMsg').textContent=err.message}
+  };
+}
 
 const SUPPLIER_SECTION_META={
   Catalog:['My Catalog','Products, pricing, pack sizes and Supplier profile'],
