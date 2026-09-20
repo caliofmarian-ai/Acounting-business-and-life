@@ -140,12 +140,145 @@ async function importLegacyProducts(businessId){const r=await pool.query(`INSERT
 function manilaStamp(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const x=Object.fromEntries(parts.map(p=>[p.type,p.value]));return `${x.year}${x.month}${x.day}`}
 async function trust(client,businessId,customerId){const count=await client.query(`SELECT COUNT(*)::int count FROM orders WHERE business_id=$1 AND customer_account_id=$2 AND order_status='completed'`,[businessId,customerId]);const s=await client.query(`SELECT allow_remote_cash_prep,trust_suspended_at FROM merchant_customer_settings WHERE business_id=$1 AND customer_account_id=$2`,[businessId,customerId]);const c=Number(count.rows[0]?.count||0),row=s.rows[0];return{eligible:c>=5&&!row?.trust_suspended_at,allowed:c>=5&&Boolean(row?.allow_remote_cash_prep)&&!row?.trust_suspended_at}}
 
-async function createMarketplaceOrder(req){const me=await requireCustomer(req);const customerId=Number(me.account.id),businessId=Number(req.body?.business_id),ids=[];const qty=new Map();for(const raw of req.body?.items||[]){const id=Number(raw.product_id),q=Number(raw.quantity);if(!Number.isInteger(id)||!positive(q))throw Object.assign(new Error('Every basket item needs a valid quantity'),{status:400});ids.push(id);qty.set(id,(qty.get(id)||0)+q)}if(!ids.length||ids.length>50)throw Object.assign(new Error('Basket needs 1–50 items'),{status:400});const store=await storefront(businessId,false);if(!store)throw Object.assign(new Error('Storefront is not available'),{status:404});if(store.opening_status==='closed')throw Object.assign(new Error('This merchant is currently closed'),{status:409});const fulfilment=clean(req.body?.fulfilment_method,20);const payment=clean(req.body?.payment_method,20);if(!['pickup','delivery'].includes(fulfilment))throw Object.assign(new Error('Choose pickup or delivery'),{status:400});if(!['cash','online'].includes(payment))throw Object.assign(new Error('Choose cash or online payment'),{status:400});if(fulfilment==='pickup'&&!store.pickup_enabled)throw Object.assign(new Error('Pickup is not enabled for this merchant'),{status:409});if(fulfilment==='delivery'&&!store.delivery_enabled)throw Object.assign(new Error('Delivery is not enabled for this merchant'),{status:409});if(payment==='cash'&&!store.cash_enabled)throw Object.assign(new Error('Cash is not enabled for this merchant'),{status:409});if(payment==='online'&&!store.online_enabled)throw Object.assign(new Error('Online payment is not enabled for this merchant yet'),{status:409});if(fulfilment==='delivery'&&payment==='cash')throw Object.assign(new Error('Cash delivery is not enabled yet'),{status:409});const client=await pool.connect();try{await client.query('BEGIN');const p=await client.query(`SELECT * FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE AND active=TRUE FOR SHARE`,[businessId,[...new Set(ids)]]);if(p.rowCount!==new Set(ids).size)throw Object.assign(new Error('One or more basket items are unavailable'),{status:409});let subtotal=0;const snapshots=[];for(const row of p.rows){const q=qty.get(Number(row.id));if(row.stock_tracked&&row.stock_quantity!=null&&Number(row.stock_quantity)+1e-9<q)throw Object.assign(new Error(`${row.name} does not have enough stock`),{status:409});const line=money(Number(row.selling_price)*q);subtotal+=line;snapshots.push({row,q,line})}subtotal=money(subtotal);const t=await trust(client,businessId,customerId);let status='awaiting_payment';if(payment==='cash'&&fulfilment==='pickup')status=t.allowed?'accepted':'awaiting_customer_presence';const deliveryAddress=fulfilment==='delivery'?clean(req.body?.delivery_address||me.account.address,400):'';if(fulfilment==='delivery'&&!deliveryAddress)throw Object.assign(new Error('Delivery address is required'),{status:400});const publicToken=token();const o=await client.query(`INSERT INTO orders(public_token,business_id,customer_account_id,customer_name_snapshot,customer_contact_snapshot,fulfilment_method,delivery_address,order_status,payment_status,payment_method,currency_code,subtotal,delivery_fee,total,paid_amount,outstanding_amount,preparation_eta_minutes,note,remote_cash_eligible,remote_cash_allowed,accepted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'unpaid',$9,$10,$11,0,$11,0,$11,$12,$13,$14,$15,CASE WHEN $8='accepted' THEN NOW() END) RETURNING *`,[publicToken,businessId,customerId,me.account.display_name,me.account.email||me.account.phone,fulfilment,deliveryAddress,status,payment,store.currency_code||'PHP',subtotal,Math.max(1,Math.min(240,Number(store.preparation_eta_minutes)||15)),clean(req.body?.note,400),t.eligible,t.allowed]);const orderId=Number(o.rows[0].id),number=`BL-${manilaStamp()}-${String(orderId).padStart(5,'0')}`;await client.query(`UPDATE orders SET order_number=$1 WHERE id=$2`,[number,orderId]);for(const s of snapshots)await client.query(`INSERT INTO order_items(order_id,source_kind,source_id,name_snapshot,category_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,line_total,estimated_cogs,estimated_gross_profit) VALUES($1,'marketplace_product',$2,$3,$4,$5,$6,0,$7,0,$7)`,[orderId,s.row.id,s.row.name,s.row.category,s.q,s.row.selling_price,s.line]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Marketplace checkout')`,[orderId,status,customerId]);await client.query('COMMIT');return(await childFetch(`/api/orders/${orderId}`,{headers:{Authorization:authHeader(req)}})).json()}catch(e){try{await client.query('ROLLBACK')}catch{}throw e}finally{client.release()}}
+async function createMarketplaceOrder(req){
+  const me=await requireCustomer(req);
+  const customerId=Number(me.account.id),businessId=Number(req.body?.business_id),ids=[],qty=new Map();
+  for(const raw of req.body?.items||[]){
+    const id=Number(raw.product_id),q=Number(raw.quantity);
+    if(!Number.isInteger(id)||!positive(q))throw Object.assign(new Error('Every basket item needs a valid quantity'),{status:400});
+    ids.push(id);qty.set(id,(qty.get(id)||0)+q);
+  }
+  if(!ids.length||ids.length>50)throw Object.assign(new Error('Basket needs 1–50 items'),{status:400});
+  const store=await storefront(businessId,false);
+  if(!store)throw Object.assign(new Error('Storefront is not available'),{status:404});
+  if(store.opening_status==='closed')throw Object.assign(new Error('This merchant is currently closed'),{status:409});
+  const fulfilment=clean(req.body?.fulfilment_method,20),payment=clean(req.body?.payment_method,20);
+  if(!['pickup','delivery'].includes(fulfilment))throw Object.assign(new Error('Choose pickup or delivery'),{status:400});
+  if(!['cash','online'].includes(payment))throw Object.assign(new Error('Choose cash or online payment'),{status:400});
+  if(fulfilment==='pickup'&&!store.pickup_enabled)throw Object.assign(new Error('Pickup is not enabled for this merchant'),{status:409});
+  if(fulfilment==='delivery'&&!store.delivery_enabled)throw Object.assign(new Error('Delivery is not enabled for this merchant'),{status:409});
+  if(payment==='cash'&&!store.cash_enabled)throw Object.assign(new Error('Cash is not enabled for this merchant'),{status:409});
+  if(payment==='online'&&!store.online_enabled)throw Object.assign(new Error('Online payment is not enabled for this merchant yet'),{status:409});
+  if(fulfilment==='delivery'&&payment==='cash')throw Object.assign(new Error('Cash delivery is not enabled yet'),{status:409});
+
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const p=await client.query(`SELECT * FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE AND active=TRUE FOR SHARE`,[businessId,[...new Set(ids)]]);
+    if(p.rowCount!==new Set(ids).size)throw Object.assign(new Error('One or more basket items are unavailable'),{status:409});
+    let subtotal=0;
+    const snapshots=[];
+    for(const row of p.rows){
+      const q=qty.get(Number(row.id));
+      let unitCost=0;
+      if(row.inventory_id){
+        const inv=await client.query(`SELECT item,quantity,unit,unit_cost FROM inventory WHERE id=$1 AND business_id=$2 FOR SHARE`,[row.inventory_id,businessId]);
+        if(!inv.rowCount)throw Object.assign(new Error(`${row.name} is not linked to valid Merchant stock`),{status:409});
+        const required=Number(row.quantity_per_unit)*q;
+        if(Number(inv.rows[0].quantity)+1e-9<required)throw Object.assign(new Error(`${row.name} does not have enough stock`),{status:409});
+        unitCost=Number(row.quantity_per_unit)*Number(inv.rows[0].unit_cost);
+      }else if(row.legacy_product_id){
+        const cost=await client.query(`SELECT COALESCE(SUM(r.quantity*i.unit_cost),0) cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2`,[row.legacy_product_id,businessId]);
+        unitCost=Number(cost.rows[0]?.cost||0);
+      }else if(row.stock_tracked&&row.stock_quantity!=null){
+        if(Number(row.stock_quantity)+1e-9<q)throw Object.assign(new Error(`${row.name} does not have enough stock`),{status:409});
+      }
+      const line=money(Number(row.selling_price)*q),cogs=money(unitCost*q),gross=money(line-cogs);
+      subtotal+=line;snapshots.push({row,q,line,unitCost,cogs,gross});
+    }
+    subtotal=money(subtotal);
+
+    const t=await trust(client,businessId,customerId);
+    let status='awaiting_payment';
+    if(payment==='cash'&&fulfilment==='pickup')status=t.allowed?'accepted':'awaiting_customer_presence';
+    const deliveryAddress=fulfilment==='delivery'?clean(req.body?.delivery_address||me.account.address,400):'';
+    if(fulfilment==='delivery'&&!deliveryAddress)throw Object.assign(new Error('Delivery address is required'),{status:400});
+    const publicToken=token();
+    const o=await client.query(`INSERT INTO orders(public_token,business_id,customer_account_id,customer_name_snapshot,customer_contact_snapshot,fulfilment_method,delivery_address,order_status,payment_status,payment_method,currency_code,subtotal,delivery_fee,total,paid_amount,outstanding_amount,preparation_eta_minutes,note,remote_cash_eligible,remote_cash_allowed,accepted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'unpaid',$9,$10,$11,0,$11,0,$11,$12,$13,$14,$15,CASE WHEN $8='accepted' THEN NOW() END) RETURNING *`,[publicToken,businessId,customerId,me.account.display_name,me.account.email||me.account.phone,fulfilment,deliveryAddress,status,payment,store.currency_code||'PHP',subtotal,Math.max(1,Math.min(240,Number(store.preparation_eta_minutes)||15)),clean(req.body?.note,400),t.eligible,t.allowed]);
+    const orderId=Number(o.rows[0].id),number=`BL-${manilaStamp()}-${String(orderId).padStart(5,'0')}`;
+    await client.query(`UPDATE orders SET order_number=$1 WHERE id=$2`,[number,orderId]);
+    for(const x of snapshots){
+      await client.query(`INSERT INTO order_items(order_id,source_kind,source_id,name_snapshot,category_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,line_total,estimated_cogs,estimated_gross_profit) VALUES($1,'marketplace_product',$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[orderId,x.row.id,x.row.name,x.row.category,x.q,x.row.selling_price,x.unitCost,x.line,x.cogs,x.gross]);
+    }
+    await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Marketplace checkout')`,[orderId,status,customerId]);
+    await client.query('COMMIT');
+    return(await childFetch(`/api/orders/${orderId}`,{headers:{Authorization:authHeader(req)}})).json();
+  }catch(e){
+    try{await client.query('ROLLBACK')}catch{}
+    throw e;
+  }finally{client.release()}
+}
 
 async function marketplaceOrderKind(orderId){const r=await pool.query(`SELECT EXISTS(SELECT 1 FROM order_items WHERE order_id=$1 AND source_kind='marketplace_product') has_marketplace`,[orderId]);return Boolean(r.rows[0]?.has_marketplace)}
-async function marketplaceStart(req,res,next){const id=Number(req.params.id);if(!(await marketplaceOrderKind(id)))return proxy(req,res);const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});let o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.order_status==='awaiting_payment')throw Object.assign(new Error('Payment must be confirmed before preparation'),{status:409});if(o.order_status==='awaiting_customer_presence'&&!(o.remote_cash_eligible&&o.remote_cash_allowed))throw Object.assign(new Error('Customer presence must be confirmed before preparation'),{status:409});if(!['accepted','awaiting_customer_presence'].includes(o.order_status))throw Object.assign(new Error('Order cannot start from its current status'),{status:409});const items=await client.query(`SELECT oi.source_id,oi.quantity,p.name,p.stock_tracked,p.stock_quantity,p.legacy_product_id FROM order_items oi JOIN marketplace_products p ON p.id=oi.source_id WHERE oi.order_id=$1 AND oi.source_kind='marketplace_product' FOR UPDATE OF p`,[id]);for(const x of items.rows){if(x.stock_tracked&&x.stock_quantity!=null&&Number(x.stock_quantity)+1e-9<Number(x.quantity))throw Object.assign(new Error(`${x.name} does not have enough stock`),{status:409})}
-    for(const x of items.rows){if(x.stock_tracked){await client.query(`UPDATE marketplace_products SET stock_quantity=stock_quantity-$1,updated_at=NOW() WHERE id=$2`,[x.quantity,x.source_id]);await client.query(`INSERT INTO marketplace_stock_events(order_id,marketplace_product_id,quantity,action) VALUES($1,$2,$3,'consume') ON CONFLICT DO NOTHING`,[id,x.source_id,x.quantity])}if(x.legacy_product_id){const recipe=await client.query(`SELECT r.inventory_id,r.quantity recipe_quantity,i.item,i.quantity stock_quantity,i.unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 ORDER BY i.id FOR UPDATE OF i`,[x.legacy_product_id]);for(const ing of recipe.rows){const used=Number(ing.recipe_quantity)*Number(x.quantity);if(Number(ing.stock_quantity)+1e-9<used)throw Object.assign(new Error(`${ing.item} is short for ${x.name}`),{status:409});await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2`,[used,ing.inventory_id]);await client.query(`INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(order_id,inventory_id) DO UPDATE SET quantity_used=order_stock_consumptions.quantity_used+EXCLUDED.quantity_used,cost_snapshot=order_stock_consumptions.cost_snapshot+EXCLUDED.cost_snapshot`,[id,ing.inventory_id,ing.item,used,ing.unit_cost,used*Number(ing.unit_cost)])}}}
-    await client.query(`UPDATE orders SET stock_consumed_at=COALESCE(stock_consumed_at,NOW()),order_status='preparing',preparing_at=COALESCE(preparing_at,NOW()),expected_ready_at=COALESCE(expected_ready_at,NOW()+(preparation_eta_minutes*INTERVAL '1 minute')),updated_at=NOW() WHERE id=$1`,[id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'preparing',$3,'Preparation started')`,[id,o.order_status,me.account.id]);await client.query('COMMIT');const out=await childFetch(`/api/orders/${id}`,{headers:{Authorization:authHeader(req)}});res.status(out.status).json(await out.json())}catch(e){try{await client.query('ROLLBACK')}catch{}next(e)}finally{client.release()}}
+async function marketplaceStart(req,res,next){
+  const id=Number(req.params.id);
+  if(!(await marketplaceOrderKind(id)))return proxy(req,res);
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);
+    if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});
+    const o=r.rows[0],{me}=await requireMerchant(req,o.business_id);
+    if(o.order_status==='awaiting_payment')throw Object.assign(new Error('Payment must be confirmed before preparation'),{status:409});
+    if(o.order_status==='awaiting_customer_presence'&&!(o.remote_cash_eligible&&o.remote_cash_allowed))throw Object.assign(new Error('Customer presence must be confirmed before preparation'),{status:409});
+    if(!['accepted','awaiting_customer_presence'].includes(o.order_status))throw Object.assign(new Error('Order cannot start from its current status'),{status:409});
+
+    const items=await client.query(`
+      SELECT oi.source_id,oi.quantity,p.name,p.stock_tracked,p.stock_quantity,p.legacy_product_id,
+             p.inventory_id,p.quantity_per_unit,p.business_id
+        FROM order_items oi
+        JOIN marketplace_products p ON p.id=oi.source_id
+       WHERE oi.order_id=$1 AND oi.source_kind='marketplace_product'
+       FOR UPDATE OF p
+    `,[id]);
+
+    for(const x of items.rows){
+      if(x.inventory_id){
+        const inv=await client.query(`SELECT id,item,quantity,unit,unit_cost FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,[x.inventory_id,o.business_id]);
+        if(!inv.rowCount)throw Object.assign(new Error(`${x.name} is not linked to valid Merchant stock`),{status:409});
+        const required=Number(x.quantity_per_unit)*Number(x.quantity);
+        if(Number(inv.rows[0].quantity)+1e-9<required)throw Object.assign(new Error(`${inv.rows[0].item} is short for ${x.name}`),{status:409});
+        await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[required,x.inventory_id,o.business_id]);
+        await client.query(`
+          INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot)
+          VALUES($1,$2,$3,$4,$5,$6)
+          ON CONFLICT(order_id,inventory_id) DO UPDATE SET
+            quantity_used=order_stock_consumptions.quantity_used+EXCLUDED.quantity_used,
+            cost_snapshot=order_stock_consumptions.cost_snapshot+EXCLUDED.cost_snapshot
+        `,[id,x.inventory_id,inv.rows[0].item,required,inv.rows[0].unit_cost,required*Number(inv.rows[0].unit_cost)]);
+      }else if(x.stock_tracked&&x.stock_quantity!=null){
+        if(Number(x.stock_quantity)+1e-9<Number(x.quantity))throw Object.assign(new Error(`${x.name} does not have enough stock`),{status:409});
+        await client.query(`UPDATE marketplace_products SET stock_quantity=stock_quantity-$1,updated_at=NOW() WHERE id=$2`,[x.quantity,x.source_id]);
+        await client.query(`INSERT INTO marketplace_stock_events(order_id,marketplace_product_id,quantity,action) VALUES($1,$2,$3,'consume') ON CONFLICT DO NOTHING`,[id,x.source_id,x.quantity]);
+      }
+
+      if(x.legacy_product_id){
+        const recipe=await client.query(`SELECT r.inventory_id,r.quantity recipe_quantity,i.item,i.quantity stock_quantity,i.unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i`,[x.legacy_product_id,o.business_id]);
+        for(const ing of recipe.rows){
+          const used=Number(ing.recipe_quantity)*Number(x.quantity);
+          if(Number(ing.stock_quantity)+1e-9<used)throw Object.assign(new Error(`${ing.item} is short for ${x.name}`),{status:409});
+          await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[used,ing.inventory_id,o.business_id]);
+          await client.query(`
+            INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot)
+            VALUES($1,$2,$3,$4,$5,$6)
+            ON CONFLICT(order_id,inventory_id) DO UPDATE SET
+              quantity_used=order_stock_consumptions.quantity_used+EXCLUDED.quantity_used,
+              cost_snapshot=order_stock_consumptions.cost_snapshot+EXCLUDED.cost_snapshot
+          `,[id,ing.inventory_id,ing.item,used,ing.unit_cost,used*Number(ing.unit_cost)]);
+        }
+      }
+    }
+
+    await client.query(`UPDATE orders SET stock_consumed_at=COALESCE(stock_consumed_at,NOW()),order_status='preparing',preparing_at=COALESCE(preparing_at,NOW()),expected_ready_at=COALESCE(expected_ready_at,NOW()+(preparation_eta_minutes*INTERVAL '1 minute')),updated_at=NOW() WHERE id=$1`,[id]);
+    await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'preparing',$3,'Preparation started')`,[id,o.order_status,me.account.id]);
+    await client.query('COMMIT');
+    const out=await childFetch(`/api/orders/${id}`,{headers:{Authorization:authHeader(req)}});
+    res.status(out.status).json(await out.json());
+  }catch(e){
+    try{await client.query('ROLLBACK')}catch{}
+    next(e);
+  }finally{client.release()}
+}
 async function marketplaceCancel(req,res,next){const id=Number(req.params.id);if(!(await marketplaceOrderKind(id)))return proxy(req,res);const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});if(o.stock_consumed_at&&!o.stock_reversed_at){const mp=await client.query(`SELECT * FROM marketplace_stock_events WHERE order_id=$1 AND action='consume'`,[id]);for(const e of mp.rows){await client.query(`UPDATE marketplace_products SET stock_quantity=stock_quantity+$1,updated_at=NOW() WHERE id=$2`,[e.quantity,e.marketplace_product_id]);await client.query(`INSERT INTO marketplace_stock_events(order_id,marketplace_product_id,quantity,action) VALUES($1,$2,$3,'reverse') ON CONFLICT DO NOTHING`,[id,e.marketplace_product_id,e.quantity])}const inv=await client.query(`SELECT * FROM order_stock_consumptions WHERE order_id=$1 AND reversed_at IS NULL`,[id]);for(const x of inv.rows){await client.query(`UPDATE inventory SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2`,[x.quantity_used,x.inventory_id]);await client.query(`UPDATE order_stock_consumptions SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2`,[id,x.inventory_id])}await client.query(`UPDATE orders SET stock_reversed_at=NOW() WHERE id=$1`,[id])}const reason=clean(req.body?.reason,300);await client.query(`UPDATE orders SET order_status='cancelled',cancelled_at=NOW(),cancellation_reason=$1,updated_at=NOW() WHERE id=$2`,[reason,id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'cancelled',$3,$4)`,[id,o.order_status,me.account.id,reason||'Cancelled']);await client.query('COMMIT');const out=await childFetch(`/api/orders/${id}`,{headers:{Authorization:authHeader(req)}});res.status(out.status).json(await out.json())}catch(e){try{await client.query('ROLLBACK')}catch{}next(e)}finally{client.release()}}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await childFetch('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,orders:r.ok,version:'0.6-marketplace'})}catch{res.status(503).json({ok:false,db:false,orders:false,version:'0.6-marketplace'})}})
