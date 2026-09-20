@@ -144,10 +144,63 @@ const SUPPLIER_SECTION_META={
 const SUPPLIER_PROCUREMENT_STATES=new Set(['sent','supplier_received']);
 const SUPPLIER_ETA_STATES=new Set(['accepted','partially_accepted','preparing']);
 const SUPPLIER_FULFILMENT_STATES=new Set(['ready_for_pickup','out_for_delivery','delivered','partially_received','received']);
+const SUPPLIER_ACTIVITY_LABELS={
+  producer:'Producer / grower',
+  processor:'Processor',
+  manufacturer:'Manufacturer',
+  packer:'Packer',
+  repacker:'Repacker',
+  trader:'Trader / brand owner',
+  importer:'Importer',
+  exporter:'Exporter',
+  distributor:'Distributor',
+  wholesaler:'Wholesaler',
+  retailer:'Retailer',
+  service_provider:'Service supplier'
+};
+function supplierActivitiesPanel(state){
+  const selected=new Set((state?.activities||[]).map(x=>x.activity_code||x));
+  return `<details class="supDetails supCard"><summary><span><strong>What does this business do?</strong><small>Choose only the activities that apply. This does not claim a government licence.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody"><form id="supplierActivities" class="supForm"><div class="supCheckGrid">${Object.entries(SUPPLIER_ACTIVITY_LABELS).map(([code,label])=>`<label class="supCheck"><input type="checkbox" value="${code}" ${selected.has(code)?'checked':''}><span>${ph(label)}</span></label>`).join('')}</div><button>Save business activities</button><div id="supplierActivitiesMsg" class="fileNote"></div></form></div></details>`;
+}
+function parseTierText(value){
+  return String(value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map((line,index)=>{
+    const [minimum,price,...label]=line.split('|').map(x=>x.trim());
+    if(!minimum||price==null||!Number.isFinite(Number(minimum))||Number(minimum)<=0||!Number.isFinite(Number(price))||Number(price)<0)throw new Error(`Price tier line ${index+1} must be: minimum | price | optional label`);
+    return{minimum_quantity:Number(minimum),price_per_pack:Number(price),label:label.join(' | ')};
+  });
+}
+function parsePackageText(value){
+  return String(value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map((line,index)=>{
+    const [name,base,quantity,saleable='yes']=line.split('|').map(x=>x.trim());
+    if(!name||!base||!Number.isFinite(Number(quantity))||Number(quantity)<=0)throw new Error(`Package line ${index+1} must be: package | base unit | base quantity`);
+    return{level_name:name,base_unit:base,base_units_per_level:Number(quantity),saleable:!['no','false','0'].includes(saleable.toLowerCase()),sort_order:index};
+  });
+}
+async function openCatalogV2(id){
+  const data=await papi(`/api/supplier/catalog/${id}/v2`);
+  const tierText=(data.price_tiers||[]).map(x=>`${Number(x.minimum_quantity)} | ${Number(x.price_per_pack)} | ${x.label||''}`).join('\n');
+  const packageText=(data.package_levels||[]).map(x=>`${x.level_name} | ${x.base_unit} | ${Number(x.base_units_per_level)} | ${x.saleable?'yes':'no'}`).join('\n');
+  openSupModal(`<h2>Packaging & B2B pricing</h2><p class="supModalIntro">${ph(data.product_name)}. Keep the normal pack price simple; add advanced handling or volume prices only when needed.</p><form id="catalogV2Form" class="supForm"><label>How is this product handled?<select id="catHandling"><option value="sealed_resale" ${data.handling_mode==='sealed_resale'?'selected':''}>Sealed resale</option><option value="break_pack" ${data.handling_mode==='break_pack'?'selected':''}>Break-pack: open outer case, keep inner units sealed</option><option value="bulk" ${data.handling_mode==='bulk'?'selected':''}>Bulk</option><option value="repacked" ${data.handling_mode==='repacked'?'selected':''}>Repacked</option><option value="produced" ${data.handling_mode==='produced'?'selected':''}>Produced / manufactured</option></select></label><details class="supNestedDetails"><summary>Volume pricing</summary><label>One tier per line: minimum packs | ₱ price / pack | label<textarea id="catTiers" rows="5" placeholder="6 | 28 | 6+ packs\n25 | 26 | 25+ packs">${ph(tierText)}</textarea></label></details><details class="supNestedDetails"><summary>Package hierarchy</summary><label>One level per line: package | base unit | base quantity | saleable<textarea id="catPackages" rows="5" placeholder="case | bottle | 24 | yes\nbox | pack | 12 | yes">${ph(packageText)}</textarea></label><p class="supCodeHelp">Example: one case contains 24 bottles. Opening the case does not become repacking if each bottle stays in its original sealed pack.</p></details><div id="catalogV2Msg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="catalogV2Cancel">Cancel</button><button>Save details</button></div></form>`);
+  document.getElementById('catalogV2Cancel').onclick=closeSupModal;
+  document.getElementById('catalogV2Form').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const price_tiers=parseTierText(document.getElementById('catTiers').value);
+      const package_levels=parsePackageText(document.getElementById('catPackages').value);
+      await papi(`/api/supplier/catalog/${id}/v2`,{method:'PUT',body:JSON.stringify({
+        handling_mode:document.getElementById('catHandling').value,
+        price_tiers,package_levels
+      })});
+      closeSupModal();ptoast('Packaging and B2B pricing saved.');await renderSupplierWorkspace('Catalog');
+    }catch(err){document.getElementById('catalogV2Msg').textContent=err.message}
+  };
+}
 
-function supplierCatalogPanel(me){
+function supplierCatalogPanel(me,activityState){
   const p=me.profile||{};
-  return `<section class="supCard"><h2>Supplier profile</h2><form id="supplierProfile" class="supForm"><label>Supplier/business name<input id="spName" value="${ph(p.supplier_name||supMe.account.display_name)}"></label><label>Description<textarea id="spDesc" rows="3">${ph(p.description||'')}</textarea></label><div class="supTwo"><label>Service area<input id="spArea" value="${ph(p.service_area||'')}"></label><label>Normal lead days<input id="spLead" type="number" min="0" value="${p.normal_lead_days??1}"></label></div><label class="toggleBox"><input id="spDelivery" type="checkbox" ${p.delivery_available?'checked':''}> I deliver to Merchant</label><button>Save profile</button></form></section><section class="supCard"><h2>My catalog</h2><p>Pack size and price are snapshotted into every PO.</p><form id="catalogAdd" class="supForm"><label>Product<input id="catName" required></label><div class="supTwo"><label>Pack name<input id="catPack" value="pack"></label><label>Price / pack ₱<input id="catPrice" type="number" min="0" step="0.01" required></label></div><div class="supTwo"><label>Base unit<input id="catBase" value="unit"></label><label>Units / pack<input id="catUnits" type="number" min="0.0001" step="0.0001" value="1"></label></div><button>Add catalog item</button></form><div class="supList" style="margin-top:10px">${me.catalog.length?me.catalog.map(c=>`<div class="supRow"><div><strong>${ph(c.product_name)}</strong><small>${pphp(c.price_per_pack)} / ${ph(c.unit_name)} • ${Number(c.base_units_per_pack)} ${ph(c.base_unit)}</small><div class="supMeta"><span class="${c.availability_status==='available'?'ok':'pending'}">${ph(pnice(c.availability_status))}</span></div></div></div>`).join(''):'<div class="supEmpty">Catalog is empty.</div>'}</div></section>`;
+  return `<section class="supCard"><h2>Supplier profile</h2><form id="supplierProfile" class="supForm"><label>Supplier/business name<input id="spName" value="${ph(p.supplier_name||supMe.account.display_name)}"></label><label>Description<textarea id="spDesc" rows="3">${ph(p.description||'')}</textarea></label><div class="supTwo"><label>Service area<input id="spArea" value="${ph(p.service_area||'')}"></label><label>Normal lead days<input id="spLead" type="number" min="0" value="${p.normal_lead_days??1}"></label></div><label class="toggleBox"><input id="spDelivery" type="checkbox" ${p.delivery_available?'checked':''}> I deliver to Merchant</label><button>Save profile</button></form></section>`
+    +supplierActivitiesPanel(activityState)
+    +`<section class="supCard"><h2>My catalog</h2><p>Start with product, pack and price. Packaging rules and volume prices stay under Details.</p><form id="catalogAdd" class="supForm"><label>Product<input id="catName" required></label><div class="supTwo"><label>Pack name<input id="catPack" value="pack"></label><label>Price / pack ₱<input id="catPrice" type="number" min="0" step="0.01" required></label></div><div class="supTwo"><label>Base unit<input id="catBase" value="unit"></label><label>Units / pack<input id="catUnits" type="number" min="0.0001" step="0.0001" value="1"></label></div><button>Add catalog item</button></form><div class="supList" style="margin-top:10px">${me.catalog.length?me.catalog.map(item=>`<div class="supRow"><div><strong>${ph(item.product_name)}</strong><small>${pphp(item.price_per_pack)} / ${ph(item.unit_name)} • ${Number(item.base_units_per_pack)} ${ph(item.base_unit)}</small><div class="supMeta"><span class="${item.availability_status==='available'?'ok':'pending'}">${ph(pnice(item.availability_status))}</span><span>${ph(pnice(item.handling_mode||'sealed_resale'))}</span>${(item.price_tiers||[]).length?`<span>${item.price_tiers.length} volume price${item.price_tiers.length===1?'':'s'}</span>`:''}</div></div><div class="supActions"><button type="button" class="supBtn secondary" data-cat-v2="${item.id}">Details</button></div></div>`).join(''):'<div class="supEmpty">Catalog is empty.</div>'}</div></section>`;
 }
 function supplierRelationshipsPanel(rels){
   return `<section class="supCard"><h2>Merchant relationships</h2><p>Only accepted Merchant relationships can exchange procurement orders.</p><div class="supList">${rels.length?rels.map(r=>`<div class="supRow"><div><strong>${ph(r.business_name)}</strong><small>${ph(pnice(r.state))}</small></div><div class="supActions">${['invited','pending'].includes(r.state)?`<button class="supBtn" data-rel-accept="${r.business_id}">Accept</button><button class="supBtn secondary" data-rel-decline="${r.business_id}">Decline</button>`:''}</div></div>`).join(''):'<div class="supEmpty">No Merchant invitations yet.</div>'}</div></section>`;
@@ -170,10 +223,15 @@ async function openSupplierWorkspace(section='Catalog'){
 async function renderSupplierWorkspace(section=supSupplierSection){
   const normalized=SUPPLIER_SECTION_META[section]?section:'Catalog';
   supSupplierSection=normalized;
-  const [me,rels,pos]=await Promise.all([papi('/api/supplier/me'),papi('/api/procurement/relationships'),papi('/api/procurement/orders')]);
+  const [me,rels,pos,activityState]=await Promise.all([
+    papi('/api/supplier/me'),
+    papi('/api/procurement/relationships'),
+    papi('/api/procurement/orders'),
+    normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]})
+  ]);
   const meta=SUPPLIER_SECTION_META[normalized];
   let body='';
-  if(normalized==='Catalog')body=supplierCatalogPanel(me);
+  if(normalized==='Catalog')body=supplierCatalogPanel(me,activityState);
   else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierOrdersPanel(pos,'Procurement');
   else body=supplierOrdersPanel(pos,normalized);
   supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
@@ -195,6 +253,9 @@ function bindSupplierWorkspace(){
   const catalogForm=document.getElementById('catalogAdd');
   if(profileForm)profileForm.onsubmit=async e=>{e.preventDefault();try{await papi('/api/supplier/me',{method:'PUT',body:JSON.stringify({supplier_name:document.getElementById('spName').value,description:document.getElementById('spDesc').value,service_area:document.getElementById('spArea').value,normal_lead_days:Number(document.getElementById('spLead').value),delivery_available:document.getElementById('spDelivery').checked})});ptoast('Supplier profile saved.');await renderSupplierWorkspace('Catalog')}catch(err){ptoast(err.message)}};
   if(catalogForm)catalogForm.onsubmit=async e=>{e.preventDefault();try{await papi('/api/supplier/catalog',{method:'POST',body:JSON.stringify({product_name:document.getElementById('catName').value,unit_name:document.getElementById('catPack').value,price_per_pack:Number(document.getElementById('catPrice').value),base_unit:document.getElementById('catBase').value,base_units_per_pack:Number(document.getElementById('catUnits').value)})});ptoast('Catalog item added.');await renderSupplierWorkspace('Catalog')}catch(err){ptoast(err.message)}};
+  const activitiesForm=document.getElementById('supplierActivities');
+  if(activitiesForm)activitiesForm.onsubmit=async e=>{e.preventDefault();const activities=[...e.currentTarget.querySelectorAll('input[type="checkbox"]:checked')].map(x=>x.value);try{await papi('/api/supplier/v2/activities',{method:'PUT',body:JSON.stringify({activities})});ptoast('Business activities saved.');await renderSupplierWorkspace('Catalog')}catch(err){document.getElementById('supplierActivitiesMsg').textContent=err.message}};
+  supWorkspace.querySelectorAll('[data-cat-v2]').forEach(b=>b.onclick=()=>openCatalogV2(Number(b.dataset.catV2)));
   supWorkspace.querySelectorAll('[data-rel-accept]').forEach(b=>b.onclick=()=>respondRel(Number(b.dataset.relAccept),true));
   supWorkspace.querySelectorAll('[data-rel-decline]').forEach(b=>b.onclick=()=>respondRel(Number(b.dataset.relDecline),false));
   supWorkspace.querySelectorAll('[data-sup-view]').forEach(b=>b.onclick=()=>viewPo(Number(b.dataset.supView),'supplier'));
