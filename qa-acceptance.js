@@ -1230,9 +1230,9 @@ const SUPPLIER_QA_PACKS=2;
 
 async function latestSupplierApplication(pool,accountId){
   const q=await pool.query(
-    \`SELECT * FROM profile_applications
+    `SELECT * FROM profile_applications
       WHERE account_id=$1 AND role='supplier'
-      ORDER BY id DESC LIMIT 1\`,
+      ORDER BY id DESC LIMIT 1`,
     [Number(accountId)]
   );
   return q.rows[0]||null;
@@ -1260,7 +1260,7 @@ async function ensureSupplierApproved({pool,base,supplier,adminToken,territoryId
     invitationId=Number(invited.json?.id);
     if(!invitationId)throw new Error('Supplier invitation did not return an id.');
 
-    const accepted=await requestJson(base,\`/api/governance/invitations/\${invitationId}/accept\`,{
+    const accepted=await requestJson(base,`/api/governance/invitations/${invitationId}/accept`,{
       method:'POST',token:supplier.token,body:{}
     });
     expectStatus(accepted,200,'Supplier invitation acceptance');
@@ -1271,7 +1271,7 @@ async function ensureSupplierApproved({pool,base,supplier,adminToken,territoryId
   if(!application?.invitation_id)throw new Error('Supplier application is not backed by an invitation.');
 
   if(['application_started','requirements_pending','rejected'].includes(application.status)){
-    const edited=await requestJson(base,\`/api/governance/applications/\${Number(application.id)}\`,{
+    const edited=await requestJson(base,`/api/governance/applications/${Number(application.id)}`,{
       method:'PUT',token:supplier.token,
       body:{
         proposed_business_name:'Business & Life QA Supply',
@@ -1286,7 +1286,7 @@ async function ensureSupplierApproved({pool,base,supplier,adminToken,territoryId
     });
     expectStatus(edited,200,'Supplier application edit');
 
-    const submitted=await requestJson(base,\`/api/governance/applications/\${Number(application.id)}/submit\`,{
+    const submitted=await requestJson(base,`/api/governance/applications/${Number(application.id)}/submit`,{
       method:'POST',token:supplier.token,body:{}
     });
     expectStatus(submitted,200,'Supplier application submit');
@@ -1295,7 +1295,7 @@ async function ensureSupplierApproved({pool,base,supplier,adminToken,territoryId
 
   application=await latestSupplierApplication(pool,supplier.accountId);
   if(['submitted','under_review'].includes(application?.status)){
-    const reviewed=await requestJson(base,\`/api/governance/admin/applications/\${Number(application.id)}/review\`,{
+    const reviewed=await requestJson(base,`/api/governance/admin/applications/${Number(application.id)}/review`,{
       method:'POST',token:adminToken,
       body:{decision:'approve',reason:'Controlled internal QA Supplier acceptance fixture'}
     });
@@ -1303,7 +1303,7 @@ async function ensureSupplierApproved({pool,base,supplier,adminToken,territoryId
   }
 
   const profile=await pool.query(
-    \`SELECT enabled,status FROM profiles WHERE account_id=$1 AND role='supplier'\`,
+    `SELECT enabled,status FROM profiles WHERE account_id=$1 AND role='supplier'`,
     [supplier.accountId]
   );
   if(!profile.rows[0]?.enabled||profile.rows[0]?.status!=='active'){
@@ -1353,7 +1353,7 @@ async function ensureQaSupplierCatalogItem({base,token}){
     expectStatus(created,201,'Supplier catalog item create');
     item=created.json;
   }else{
-    const patched=await requestJson(base,\`/api/supplier/catalog/\${Number(item.id)}\`,{
+    const patched=await requestJson(base,`/api/supplier/catalog/${Number(item.id)}`,{
       method:'PATCH',token,
       body:{
         product_name:SUPPLIER_QA_PRODUCT,
@@ -1406,9 +1406,9 @@ async function supplierNotificationsForPo({base,token,poId,businessId,supplierAc
 async function ensureQaSupplierSupportTicket({pool,base,token,accountId,poId}){
   const subject='Controlled QA Supplier support E2E PO '+Number(poId);
   const existing=await pool.query(
-    \`SELECT id FROM support_tickets
+    `SELECT id FROM support_tickets
       WHERE requester_account_id=$1 AND subject=$2
-      ORDER BY id DESC LIMIT 1\`,
+      ORDER BY id DESC LIMIT 1`,
     [Number(accountId),subject]
   );
   let ticketId=Number(existing.rows[0]?.id||0);
@@ -1430,7 +1430,7 @@ async function ensureQaSupplierSupportTicket({pool,base,token,accountId,poId}){
   }
   if(!ticketId)throw new Error('Supplier Support ticket was not created.');
 
-  const detail=await requestJson(base,\`/api/support/tickets/\${ticketId}\`,{token});
+  const detail=await requestJson(base,`/api/support/tickets/${ticketId}`,{token});
   expectStatus(detail,200,'Supplier Support ticket detail');
   if(Number(detail.json?.related_id)!==Number(poId)||detail.json?.related_type!=='purchase_order'){
     throw new Error('Supplier Support ticket lost its purchase-order context.');
@@ -1482,7 +1482,7 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
   }
 
   const relationshipAccept=await requestJson(
-    base,\`/api/supplier/relationships/\${merchantBusinessId}/respond\`,
+    base,`/api/supplier/relationships/${merchantBusinessId}/respond`,
     {method:'POST',token:supplier.token,body:{accept:true}}
   );
   expectStatus(relationshipAccept,200,'Supplier relationship acceptance');
@@ -1490,7 +1490,7 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
 
   const merchantCatalog=await requestJson(
     base,
-    \`/api/procurement/suppliers/\${supplier.accountId}/catalog?business_id=\${merchantBusinessId}\`,
+    `/api/procurement/suppliers/${supplier.accountId}/catalog?business_id=${merchantBusinessId}`,
     {token:merchant.token}
   );
   expectStatus(merchantCatalog,200,'Merchant Supplier catalog');
@@ -1498,14 +1498,14 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
   if(!merchantItem)throw new Error('Merchant cannot see the accepted Supplier catalog item.');
 
   const existing=await pool.query(
-    \`SELECT id FROM purchase_orders
+    `SELECT id FROM purchase_orders
       WHERE business_id=$1 AND supplier_account_id=$2 AND merchant_note=$3
-      ORDER BY id DESC LIMIT 1\`,
+      ORDER BY id DESC LIMIT 1`,
     [merchantBusinessId,supplier.accountId,SUPPLIER_QA_PO_NOTE]
   );
   let po;
   if(existing.rowCount){
-    const detail=await requestJson(base,\`/api/procurement/orders/\${Number(existing.rows[0].id)}\`,{token:merchant.token});
+    const detail=await requestJson(base,`/api/procurement/orders/${Number(existing.rows[0].id)}`,{token:merchant.token});
     expectStatus(detail,200,'Existing Supplier Experience PO');
     po=detail.json;
   }else{
@@ -1536,7 +1536,7 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
       confirmed_packs:Number(item.ordered_packs),
       confirmed_price_per_pack:Number(item.price_per_pack_snapshot)
     }));
-    const responded=await requestJson(base,\`/api/supplier/orders/\${poId}/respond\`,{
+    const responded=await requestJson(base,`/api/supplier/orders/${poId}/respond`,{
       method:'POST',token:supplier.token,
       body:{items,supplier_note:'Controlled QA Supplier accepts the purchase order.'}
     });
@@ -1545,12 +1545,12 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
   }
 
   if(!['received','partially_received','cancelled','rejected'].includes(po.status)){
-    const preparing=await requestJson(base,\`/api/supplier/orders/\${poId}/status\`,{
+    const preparing=await requestJson(base,`/api/supplier/orders/${poId}/status`,{
       method:'POST',token:supplier.token,
       body:{status:'preparing',supplier_note:'Controlled QA preparation state.'}
     });
     expectStatus(preparing,200,'Supplier PO preparing');
-    const delivered=await requestJson(base,\`/api/supplier/orders/\${poId}/status\`,{
+    const delivered=await requestJson(base,`/api/supplier/orders/${poId}/status`,{
       method:'POST',token:supplier.token,
       body:{status:'delivered',supplier_note:'Controlled QA delivery state.'}
     });
@@ -1565,7 +1565,7 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
       actual_price_per_pack:Number(item.confirmed_price_per_pack??item.price_per_pack_snapshot)
     })).filter(item=>item.received_packs>0);
     if(receiveItems.length){
-      const received=await requestJson(base,\`/api/procurement/orders/\${poId}/receive\`,{
+      const received=await requestJson(base,`/api/procurement/orders/${poId}/receive`,{
         method:'POST',token:merchant.token,
         body:{items:receiveItems,note:'Controlled QA Merchant receipt of Supplier PO.'}
       });
@@ -1577,7 +1577,7 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
 
   const outstanding=Math.max(0,Number(po.expected_total)-Number(po.paid_amount||0));
   if(outstanding>0.001){
-    const paid=await requestJson(base,\`/api/procurement/orders/\${poId}/payment\`,{
+    const paid=await requestJson(base,`/api/procurement/orders/${poId}/payment`,{
       method:'POST',token:merchant.token,
       body:{amount:outstanding,account:'cash'}
     });
@@ -1627,7 +1627,7 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
 
   const merchantFinance=await requestJson(base,'/api/accounting/finance-overview',{token:merchant.token});
   expectStatus(merchantFinance,200,'Merchant Finance after Supplier settlement');
-  const finalPo=await requestJson(base,\`/api/procurement/orders/\${poId}\`,{token:merchant.token});
+  const finalPo=await requestJson(base,`/api/procurement/orders/${poId}`,{token:merchant.token});
   expectStatus(finalPo,200,'Merchant final Supplier PO detail');
   if(finalPo.json?.status!=='received'||finalPo.json?.payment_status!=='paid'){
     throw new Error('Merchant and Supplier views do not agree on the settled purchase order.');
