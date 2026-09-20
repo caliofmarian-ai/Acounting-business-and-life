@@ -21,9 +21,20 @@ test('Account Home is the one selector for profiles Admin and account settings',
   assert.match(home,/accountProfileGrid/);
   assert.match(home,/id="accountAdminProfile"/);
   assert.match(home,/id="accountHomeSettings"/);
+  assert.match(home,/id="accountHomeSignOut"/);
   assert.match(home,/Personal ID/);
   assert.match(css,/\.accountHomeAction/);
   assert.match(css,/@media\(max-width:520px\)\{\.accountProfileGrid\{grid-template-columns:1fr\}/);
+});
+
+test('sign out is permanently reachable and ends the current server and browser session',()=>{
+  assert.match(shell,/id="drawerSignOutButton"/);
+  assert.match(shell,/function signOutCurrentAccount\(button\)/);
+  assert.match(shell,/profileApi\('\/api\/auth\/logout',\{method:'POST',body:'\{\}'\}\)/);
+  assert.match(shell,/localStorage\.removeItem\('abl_token'\)/);
+  assert.match(shell,/window\.location\.replace\('\/'\)/);
+  assert.match(css,/\.accountSignOutEntry/);
+  assert.match(css,/\.accountSignOutAction/);
 });
 
 test('Account Settings is a dedicated routed workspace with focused categories',()=>{

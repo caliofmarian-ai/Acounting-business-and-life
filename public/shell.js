@@ -165,10 +165,12 @@ function renderDrawer() {
     <button id="accountHomeButton" class="accountSettingsEntry" type="button"><span>👤</span><span><strong>Account Home</strong><small>Personal identity and profile selection</small></span><b>›</b></button>
     <section class="drawerSection"><h3>Active profiles</h3><div class="profileRoleList">${profileRows||'<p class="drawerEmpty">No active profiles yet.</p>'}</div></section>
     ${adminContext?.is_admin?'<button id="adminWorkspaceButton" class="accountSettingsEntry adminWorkspaceEntry" type="button"><span>🛡️</span><span><strong>Admin Workspace</strong><small>Delegated administrative access</small></span><b>›</b></button>':''}
-    <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>Personal details, security and profile management</small></span><b>›</b></button>`;
+    <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>Personal details, security and profile management</small></span><b>›</b></button>
+    <button id="drawerSignOutButton" class="accountSignOutEntry" type="button"><span>↪</span><span><strong>Sign out</strong><small>End this account session on this device</small></span></button>`;
   panel.querySelector('#drawerClose').onclick = closeDrawer;
   panel.querySelector('#accountHomeButton').onclick = () => { closeDrawer(); renderAccountHome(); };
   panel.querySelector('#accountSettingsButton').onclick = () => openAccountSettings();
+  panel.querySelector('#drawerSignOutButton').onclick = event => signOutCurrentAccount(event.currentTarget);
   panel.querySelector('#adminWorkspaceButton')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
   panel.querySelectorAll('[data-role-action]').forEach(btn => btn.onclick = () => enableOrSwitch(btn.dataset.roleAction));
   bindCopyIds(panel);
@@ -402,6 +404,7 @@ window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
   openAccountHome,
   openAccountSettings,
+  signOutCurrentAccount,
   refreshProfile,
   getProfileState:()=>window.BusinessLifeProfileState||null
 });
@@ -449,13 +452,24 @@ function renderAccountHome(){
   const profiles=ROLE_ORDER.filter(isEnabled).map(role=>{const meta=ROLE_META[role];return `<button class="hubTile accountHomeAction" type="button" data-account-role="${role}"><span class="hubTileIcon">${meta.icon}</span><span class="accountHomeActionCopy"><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.desc)}</small></span><span class="accountHomeOpen">Open profile ›</span></button>`}).join('');
   const admin=adminContext?.is_admin?`<section class="accountHomeSection accountAdminAccess"><div class="hubSectionTitle"><h2>Admin access</h2><span>Assigned separately</span></div><button class="hubTile accountHomeAction" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><span class="accountHomeActionCopy"><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin Workspace')}</strong><small>Delegated administration — separate from your personal and commercial profiles</small></span><span class="accountHomeOpen">Open workspace ›</span></button></section>`:'';
   const country=countryMeta(account.country_code);
-  hub.innerHTML=`<div class="hubHero accountHomeHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><div class="accountHomeIdentity"><span>${country.flag} ${escapeHtml(country.label)} account</span>${identityLine(account.personal_id,'Personal ID')}</div><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid accountProfileGrid">${profiles||'<p class="hubEmpty">No active profiles yet. Open Account Settings to start onboarding.</p>'}</div>${admin}<section class="accountHomeSection accountSettingsAccess"><div class="hubSectionTitle"><h2>Account</h2><span>Shared settings</span></div><button class="hubTile accountHomeAction profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><span class="accountHomeActionCopy"><strong>Account Settings</strong><small>Personal details, security, Money &amp; Banking and profile onboarding</small></span><span class="accountHomeOpen">Open settings ›</span></button></section>`;
+  hub.innerHTML=`<div class="hubHero accountHomeHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><div class="accountHomeIdentity"><span>${country.flag} ${escapeHtml(country.label)} account</span>${identityLine(account.personal_id,'Personal ID')}</div><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid accountProfileGrid">${profiles||'<p class="hubEmpty">No active profiles yet. Open Account Settings to start onboarding.</p>'}</div>${admin}<section class="accountHomeSection accountSettingsAccess"><div class="hubSectionTitle"><h2>Account</h2><span>Shared settings</span></div><button class="hubTile accountHomeAction profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><span class="accountHomeActionCopy"><strong>Account Settings</strong><small>Personal details, security, Money &amp; Banking and profile onboarding</small></span><span class="accountHomeOpen">Open settings ›</span></button><button class="hubTile accountHomeAction accountSignOutAction" id="accountHomeSignOut" type="button"><span class="hubTileIcon">↪</span><span class="accountHomeActionCopy"><strong>Sign out</strong><small>End the current session and return to the sign-in screen</small></span><span class="accountHomeOpen">Sign out ›</span></button></section>`;
   hub.querySelectorAll('[data-account-role]').forEach(button=>button.onclick=()=>enableOrSwitch(button.dataset.accountRole));
   hub.querySelector('#accountAdminProfile')?.addEventListener('click',()=>window.location.assign('/admin'));
   hub.querySelector('#accountHomeSettings')?.addEventListener('click',()=>openAccountSettings());
+  hub.querySelector('#accountHomeSignOut')?.addEventListener('click',event=>signOutCurrentAccount(event.currentTarget));
   bindCopyIds(hub);
   hub.classList.remove('hidden');
   renderTopAccount();
+}
+
+async function signOutCurrentAccount(button){
+  if(button){button.disabled=true;button.setAttribute('aria-busy','true')}
+  showToast('Signing out…');
+  try{await profileApi('/api/auth/logout',{method:'POST',body:'{}'})}catch(_error){}
+  localStorage.removeItem('abl_token');
+  sessionStorage.removeItem('abl_flash');
+  snapshot=null;profileFetchedAt=0;adminContext=null;adminContextFetchedAt=0;activeRole=null;activeSurface='account';
+  window.location.replace('/');
 }
 
 function applyActiveRole() {
