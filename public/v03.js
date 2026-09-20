@@ -6,6 +6,21 @@ let products = [];
 let recipeDraft = [];
 const money = (v) => new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP',maximumFractionDigits:2}).format(Number(v||0));
 const num = (v,d=3) => Number(v||0).toLocaleString('en-PH',{maximumFractionDigits:d});
+const UNIT_META={
+  g:{family:'mass',base:'g',factor:1},kg:{family:'mass',base:'g',factor:1000},
+  ml:{family:'volume',base:'ml',factor:1},L:{family:'volume',base:'ml',factor:1000},
+  unit:{family:'count',base:'unit',factor:1}
+};
+function unitMeta(unit){return UNIT_META[unit]||UNIT_META[String(unit||'').toLowerCase()]||null}
+function toBase(qty,unit){const m=unitMeta(unit),q=Number(qty);return m&&Number.isFinite(q)&&q>0?{family:m.family,base:m.base,qty:q*m.factor}:null}
+function syncUnitSelect(selectId,unit){const el=$(selectId);if(!el)return;const candidate=String(unit||'');if([...el.options].some(o=>o.value===candidate))el.value=candidate}
+function stockPurchasePreview(){
+  const out=$('stockPurchasePreview');if(!out)return;
+  const x=toBase($('stockPurchaseQty')?.value,$('stockPurchaseUnit')?.value),cost=Number($('stockTotalCost')?.value||0);
+  if(!x||!Number.isFinite(cost)||cost<0){out.textContent='Enter a purchase quantity and total cost.';return}
+  const unitCost=x.qty>0?cost/x.qty:0;
+  out.innerHTML=`Stored as <strong>${num(x.qty,4)} ${esc(x.base)}</strong> • calculated cost <strong>${money(unitCost)} / ${esc(x.base)}</strong>`;
+}
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cacheKey = (key) => `abl_cache_${key}`;
 
@@ -45,34 +60,61 @@ async function loadSummary(){
   const box=$('warningBox'),warnings=s.warnings||[];box.classList.toggle('hidden',!warnings.length);box.innerHTML=warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join('');
 }
 async function loadTransactions(){const tx=await cachedJson('/api/transactions','transactions');transactions=tx;$('recentList').replaceChildren(...(tx.length?tx.slice(0,8).map(t=>txRow(t,false)):[emptyRow('No transactions yet.')]));$('historyList').replaceChildren(...(tx.length?tx.map(t=>txRow(t,true)):[emptyRow('No transactions yet.')]))}
-async function loadStock(){inventory=await cachedJson('/api/inventory','inventory');const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${num(i.quantity)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • reorder at ${num(i.reorder_level)}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});$('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));fillIngredientSelect()}
+async function loadStock(){inventory=await cachedJson('/api/inventory','inventory');const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${num(i.quantity,4)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • reorder at ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});$('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));fillIngredientSelect()}
 async function loadRemittances(){const rows=await cachedJson('/api/remittances','remittances');$('remittanceList').replaceChildren(...(rows.length?rows.map(remitRow):[emptyRow('No remittances recorded yet.')]))}
 async function loadDay(){const d=await cachedJson('/api/day-status','day_status');$('dayStatusDate').textContent=d.business_date;$('openingCashShown').textContent=money(d.opening_cash);$('expectedCashShown').textContent=money(d.expected_cash);$('openResult').textContent=d.has_opening?'Opening cash is recorded for today.':'Set opening cash before closing the day.';if(d.closing)$('closeResult').innerHTML=`Closed: actual ${money(d.closing.actual_cash)} • <strong class="${Number(d.closing.variance)<0?'negative':Number(d.closing.variance)>0?'positive':''}">difference ${money(d.closing.variance)}</strong>`}
 async function loadBudget(){const b=await cachedJson('/api/budget','budget');$('budgetPersonalDaily').value=Number(b.personal_daily_limit||0);$('budgetPersonalWeekly').value=Number(b.personal_weekly_limit||0);$('budgetBusinessDaily').value=Number(b.business_daily_limit||0);$('budgetMinimum').value=Number(b.min_available_warning||0)}
 async function loadAnalysis(days){const a=await cachedJson(`/api/analysis?days=${days}`,`analysis_${days}`);$(`analysis${days}Totals`).textContent=`Business ${money(a.totals.business)} • Personal ${money(a.totals.personal)} • Sales ${money(a.totals.sales)} • Support ${money(a.totals.received)}`;$(`analysis${days}`).replaceChildren(...analysisRows(a))}
 
 function productCard(p){
-  const d=document.createElement('div');d.className='productCard';const recipe=p.recipe||[];const shortage=recipe.filter(r=>Number(r.stock_quantity)<Number(r.quantity));
-  d.innerHTML=`<div class="productTop"><div><strong>${esc(p.name)}</strong><small>${esc(p.category)} • ${p.active?'Active':'Inactive'}</small></div><strong>${money(p.selling_price)}</strong></div><div class="productNumbers"><span>Recipe cost <b>${money(p.estimated_unit_cost)}</b></span><span>Gross <b class="${Number(p.estimated_gross_profit)>=0?'positive':'negative'}">${money(p.estimated_gross_profit)}</b></span><span>Margin <b>${Number(p.estimated_margin_pct||0).toFixed(1)}%</b></span></div><div class="recipeMini">${recipe.length?recipe.map(r=>`${esc(r.item)} ${num(r.quantity,4)} ${esc(r.unit)}`).join(' • '):'No recipe / ingredient cost set'}</div>${shortage.length?`<div class="shortageText">Low for one portion: ${shortage.map(x=>esc(x.item)).join(', ')}</div>`:''}<div class="productActions"><button class="miniBtn editProduct" type="button">Edit</button><button class="miniBtn editRecipe" type="button">Recipe</button><button class="miniBtn toggleProduct" type="button">${p.active?'Deactivate':'Activate'}</button></div>`;
+  const d=document.createElement('div');d.className='productCard';const recipe=p.recipe||[];const shortage=recipe.filter(r=>Number(r.stock_quantity)<Number(r.quantity));const batch=p.recipe_batch;const raw=p.recipe_batch_components||[];
+  const batchCopy=batch?`${num(batch.yield_quantity,4)} ${esc(batch.yield_unit)} batch → ${num(batch.sale_units_per_batch,2)} × ${num(batch.selling_quantity,4)} ${esc(batch.selling_unit)} sale units`:'Legacy per-portion recipe';
+  const recipeCopy=raw.length?raw.map(r=>`${esc(r.item)} ${num(r.batch_quantity,4)} ${esc(r.batch_unit)}${r.percentage!=null?' · '+num(r.percentage,1)+'%':''}`).join(' • '):(recipe.length?recipe.map(r=>`${esc(r.item)} ${num(r.quantity,4)} ${esc(r.unit)} / sale unit`).join(' • '):'No recipe / ingredient cost set');
+  d.innerHTML=`<div class="productTop"><div><strong>${esc(p.name)}</strong><small>${esc(p.category)} • Prepared recipe • ${p.active?'Active':'Inactive'}</small></div><strong>${money(p.selling_price)}</strong></div><div class="batchSummary">${batchCopy}</div><div class="productNumbers"><span>Cost / sale unit <b>${money(p.estimated_unit_cost)}</b></span><span>Gross <b class="${Number(p.estimated_gross_profit)>=0?'positive':'negative'}">${money(p.estimated_gross_profit)}</b></span><span>Margin <b>${Number(p.estimated_margin_pct||0).toFixed(1)}%</b></span></div><div class="recipeMini">${recipeCopy}</div>${shortage.length?`<div class="shortageText">Low for one sale unit: ${shortage.map(x=>esc(x.item)).join(', ')}</div>`:''}<div class="productActions"><button class="miniBtn editProduct" type="button">Edit</button><button class="miniBtn editRecipe" type="button">Recipe</button><button class="miniBtn toggleProduct" type="button">${p.active?'Deactivate':'Activate'}</button></div>`;
   d.querySelector('.editProduct').onclick=()=>editProduct(p);d.querySelector('.editRecipe').onclick=()=>selectRecipeProduct(p.id);d.querySelector('.toggleProduct').onclick=()=>toggleProduct(p);return d;
 }
 function fillProductSelects(){
-  const active=products.filter(p=>p.active);$('sellProduct').innerHTML=active.length?active.map(p=>`<option value="${p.id}">${esc(p.name)} — ${money(p.selling_price)}</option>`).join(''):'<option value="">No active products</option>';
-  $('recipeProduct').innerHTML=products.length?products.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join(''):'<option value="">Create a product first</option>';
-  updateSellPreview();if(products.length&&!$('recipeProduct').value)$('recipeProduct').value=String(products[0].id);
+  const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');
+  const active=prepared.filter(p=>p.active);$('sellProduct').innerHTML=active.length?active.map(p=>`<option value="${p.id}">${esc(p.name)} — ${money(p.selling_price)}</option>`).join(''):'<option value="">No active prepared products</option>';
+  $('recipeProduct').innerHTML=prepared.length?prepared.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join(''):'<option value="">Create a prepared product first</option>';
+  updateSellPreview();if(prepared.length&&!$('recipeProduct').value)$('recipeProduct').value=String(prepared[0].id);
 }
 function fillIngredientSelect(){$('recipeIngredient').innerHTML=inventory.length?inventory.map(i=>`<option value="${i.id}">${esc(i.item)} — ${num(i.quantity)} ${esc(i.unit)}</option>`).join(''):'<option value="">Add stock items first</option>'}
-async function loadProducts(){products=await cachedJson('/api/products','products');$('productList').replaceChildren(...(products.length?products.map(productCard):[emptyRow('Create the first menu product.') ]));fillProductSelects();syncRecipeDraftFromSelected()}
+async function loadProducts(){products=await cachedJson('/api/products','products');const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');$('productList').replaceChildren(...(prepared.length?prepared.map(productCard):[emptyRow('Create the first prepared product.') ]));fillProductSelects();syncRecipeDraftFromSelected()}
 function updateSellPreview(){const p=products.find(x=>x.id===Number($('sellProduct').value));const q=Math.max(0,Number($('sellQty').value||1));if(!p){$('sellPreview').textContent='Create a menu product first.';return}const rev=p.selling_price*q,cost=p.estimated_unit_cost*q,gross=rev-cost;$('sellPreview').innerHTML=`Revenue <strong>${money(rev)}</strong> • ingredient cost <strong>${money(cost)}</strong> • estimated gross <strong class="${gross>=0?'positive':'negative'}">${money(gross)}</strong>`}
-function renderRecipeDraft(){
-  if(!recipeDraft.length){$('recipeDraftList').replaceChildren(emptyRow('No ingredients in this recipe.'));return}
-  const nodes=recipeDraft.map((c,idx)=>{const inv=inventory.find(i=>Number(i.id)===Number(c.inventory_id));const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(inv?.item||'Ingredient')}</strong><small>${num(c.quantity,4)} ${esc(inv?.unit||'units')} × ${money(inv?.unit_cost||0)} = ${money(Number(c.quantity)*Number(inv?.unit_cost||0))}</small></div><button class="miniBtn" type="button">Remove</button>`;d.querySelector('button').onclick=()=>{recipeDraft.splice(idx,1);renderRecipeDraft();updateRecipeCost()};return d});$('recipeDraftList').replaceChildren(...nodes)
+function recipeState(){
+  const yieldBase=toBase($('recipeYieldQty')?.value,$('recipeYieldUnit')?.value);
+  const sellBase=toBase($('recipeSellQty')?.value,$('recipeSellUnit')?.value);
+  if(!yieldBase||!sellBase||yieldBase.family!==sellBase.family||sellBase.qty>yieldBase.qty)return null;
+  return{yieldBase,sellBase,saleUnits:yieldBase.qty/sellBase.qty};
 }
-function updateRecipeCost(){const cost=recipeDraft.reduce((s,c)=>{const inv=inventory.find(i=>Number(i.id)===Number(c.inventory_id));return s+Number(c.quantity)*Number(inv?.unit_cost||0)},0);$('recipeCostPreview').textContent=`Estimated ingredient cost per portion: ${money(cost)}`}
-function syncRecipeDraftFromSelected(){const p=products.find(x=>x.id===Number($('recipeProduct').value));recipeDraft=(p?.recipe||[]).map(r=>({inventory_id:Number(r.inventory_id),quantity:Number(r.quantity)}));renderRecipeDraft();updateRecipeCost()}
+function renderRecipeDraft(){
+  if(!recipeDraft.length){$('recipeDraftList').replaceChildren(emptyRow('Add the ingredients used in one finished batch.'));return}
+  const state=recipeState();
+  const nodes=recipeDraft.map((c,idx)=>{const inv=inventory.find(i=>Number(i.id)===Number(c.inventory_id)),base=toBase(c.quantity,c.unit),cost=base?base.qty*Number(inv?.unit_cost||0):0,pct=state&&base?.family===state.yieldBase.family?base.qty/state.yieldBase.qty*100:null;const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(inv?.item||'Ingredient')}</strong><small>${num(c.quantity,4)} ${esc(c.unit)}${pct!=null?' · '+num(pct,1)+'% of compatible batch measure':''} • batch cost ${money(cost)}</small></div><button class="miniBtn" type="button">Remove</button>`;d.querySelector('button').onclick=()=>{recipeDraft.splice(idx,1);renderRecipeDraft();updateRecipeCost()};return d});$('recipeDraftList').replaceChildren(...nodes)
+}
+function updateRecipeCost(){
+  const state=recipeState();
+  if(!state){$('recipeCostPreview').textContent='Finished batch and selling quantity must use compatible units, and the selling quantity cannot exceed the batch.';renderRecipeDraft();return}
+  const batchCost=recipeDraft.reduce((sum,c)=>{const inv=inventory.find(i=>Number(i.id)===Number(c.inventory_id)),base=toBase(c.quantity,c.unit);return sum+(base?base.qty*Number(inv?.unit_cost||0):0)},0);
+  const perSale=state.saleUnits>0?batchCost/state.saleUnits:0;
+  $('recipeCostPreview').innerHTML=`Batch makes <strong>${num(state.saleUnits,2)}</strong> sale unit(s) • batch ingredient cost <strong>${money(batchCost)}</strong> • cost per sale unit <strong>${money(perSale)}</strong>`;renderRecipeDraft()
+}
+function syncRecipeDraftFromSelected(){
+  const p=products.find(x=>x.id===Number($('recipeProduct').value));if(!p){recipeDraft=[];renderRecipeDraft();updateRecipeCost();return}
+  if(p.recipe_batch){
+    $('recipeYieldQty').value=Number(p.recipe_batch.yield_quantity);syncUnitSelect('recipeYieldUnit',p.recipe_batch.yield_unit);
+    $('recipeSellQty').value=Number(p.recipe_batch.selling_quantity);syncUnitSelect('recipeSellUnit',p.recipe_batch.selling_unit);
+    recipeDraft=(p.recipe_batch_components||[]).map(r=>({inventory_id:Number(r.inventory_id),quantity:Number(r.batch_quantity),unit:r.batch_unit}));
+  }else{
+    $('recipeYieldQty').value=1;$('recipeYieldUnit').value='unit';$('recipeSellQty').value=1;$('recipeSellUnit').value='unit';
+    recipeDraft=(p.recipe||[]).map(r=>({inventory_id:Number(r.inventory_id),quantity:Number(r.quantity),unit:r.unit||'unit'}));
+  }
+  renderRecipeDraft();updateRecipeCost()
+}
 function selectRecipeProduct(id){setView('Menu');$('recipeProduct').value=String(id);syncRecipeDraftFromSelected();$('recipeEditor').scrollIntoView({behavior:'smooth',block:'start'})}
-function editProduct(p){setView('Menu');$('productId').value=p.id;$('productName').value=p.name;$('productCategory').value=p.category;$('productPrice').value=Number(p.selling_price);$('productActive').checked=Boolean(p.active);$('productFormTitle').textContent='Edit menu product';$('productSave').textContent='Save changes';$('productCancel').classList.remove('hidden');$('productForm').scrollIntoView({behavior:'smooth',block:'start'})}
-function resetProductForm(){$('productForm').reset();$('productId').value='';$('productCategory').value='Food';$('productActive').checked=true;$('productFormTitle').textContent='Add menu product';$('productSave').textContent='Create product';$('productCancel').classList.add('hidden');$('productMessage').textContent=''}
+function editProduct(p){setView('Menu');$('productId').value=p.id;$('productKind').value=p.product_kind||'prepared_recipe';$('productName').value=p.name;$('productCategory').value=p.category;$('productPrice').value=Number(p.selling_price);$('productActive').checked=Boolean(p.active);$('productFormTitle').textContent='Edit prepared product';$('productSave').textContent='Save changes';$('productCancel').classList.remove('hidden');$('productForm').scrollIntoView({behavior:'smooth',block:'start'})}
+function resetProductForm(){$('productForm').reset();$('productId').value='';$('productKind').value='prepared_recipe';$('productCategory').value='Food';$('productActive').checked=true;$('productFormTitle').textContent='Create prepared product';$('productSave').textContent='Create prepared product';$('productCancel').classList.add('hidden');$('productMessage').textContent=''}
 async function toggleProduct(p){try{await api(`/api/products/${p.id}`,{method:'PATCH',body:JSON.stringify({active:!p.active})});await loadProducts()}catch(e){alert(e.message)}}
 async function loadProductSales(){const rows=await cachedJson('/api/product-sales','product_sales');const nodes=rows.slice(0,20).map(s=>{const d=document.createElement('div');d.className='listRow';const margin=Number(s.revenue)>0?Number(s.gross_profit)/Number(s.revenue)*100:0;d.innerHTML=`<div class="rowMain"><strong>${num(s.quantity)} × ${esc(s.product_name_snapshot)}</strong><small>${esc(accountLabel(s.account))} • cost ${money(s.estimated_cogs)} • margin ${margin.toFixed(1)}%</small></div><div class="rowRight"><span>${money(s.revenue)}</span><small class="positive">gross ${money(s.gross_profit)}</small></div>`;return d});$('productSaleList').replaceChildren(...(nodes.length?nodes:[emptyRow('No menu sales yet.')]))}
 function profitRows(report){if(!report.products?.length)return[emptyRow('No menu sales in this period.')];return report.products.map(p=>{const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(p.name)}</strong><small>${num(p.quantity)} portions • revenue ${money(p.revenue)} • cost ${money(p.cogs)}</small></div><div class="rowRight"><span class="${Number(p.gross_profit)>=0?'positive':'negative'}">${money(p.gross_profit)}</span><small>${Number(p.margin_pct).toFixed(1)}%</small></div>`;return d})}
