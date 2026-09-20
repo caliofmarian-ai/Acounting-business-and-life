@@ -91,6 +91,81 @@ function validEntity(entityType,entityId){
   return ENTITY_TYPES.has(entityType)&&Number.isInteger(Number(entityId))&&Number(entityId)>0;
 }
 
+function decodeCatalogImageDataUrl(dataUrl){
+  const raw=String(dataUrl||'');
+  const match=raw.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/i);
+  if(!match)throw Object.assign(new Error('Use a PNG, JPEG or WebP product image.'),{status:400,code:'CATALOG_IMAGE_FORMAT'});
+  let bytes;
+  try{bytes=Buffer.from(match[2],'base64')}catch{bytes=null}
+  if(!bytes?.length)throw Object.assign(new Error('Product image could not be decoded.'),{status:400,code:'CATALOG_IMAGE_DECODE'});
+  if(bytes.length>2_000_000)throw Object.assign(new Error('Product image must be 2 MB or smaller after compression.'),{status:413,code:'CATALOG_IMAGE_TOO_LARGE'});
+  return{mimeType:'image/'+match[1].toLowerCase().replace('jpg','jpeg'),bytes,dataUrl:raw};
+}
+
+async function assertGalleryCapacity(pool,{entityType,entityId}){
+  const existing=await pool.query(
+    `SELECT COUNT(*)::int count FROM catalog_product_media
+      WHERE entity_type=$1 AND entity_id=$2 AND approval_status<>'archived'`,
+    [entityType,Number(entityId)]
+  );
+  if(Number(existing.rows[0]?.count||0)>=PRODUCT_IMAGE_STANDARD.max_gallery_images){
+    throw Object.assign(new Error('This product gallery is full. Archive an image before adding another.'),{status:409,code:'CATALOG_GALLERY_LIMIT'});
+  }
+}
+
+export async function createCatalogUpload(pool,{
+  accountId,entityType,entityId,sourceType,dataUrl,altText=''
+}){
+  if(!validEntity(entityType,entityId))throw Object.assign(new Error('Invalid catalog media target.'),{status:400});
+  if(!['merchant_upload','supplier_upload'].includes(sourceType))throw Object.assign(new Error('Invalid catalog upload source.'),{status:400});
+  const decoded=decodeCatalogImageDataUrl(dataUrl);
+  await assertGalleryCapacity(pool,{entityType,entityId});
+  const {rows}=await pool.query(
+    `INSERT INTO catalog_product_media(
+       entity_type,entity_id,source_type,data_url,mime_type,alt_text,sort_order,is_primary,
+       approval_status,public_visible,created_by_account_id
+     )
+     VALUES($1,$2,$3,$4,$5,$6,
+       COALESCE((SELECT MAX(sort_order)+1 FROM catalog_product_media WHERE entity_type=$1 AND entity_id=$2),0),
+       FALSE,'draft',FALSE,$7)
+     RETURNING id,entity_type,entity_id,source_type,data_url,mime_type,alt_text,sort_order,is_primary,
+               approval_status,public_visible,ai_provider,ai_model,created_at,approved_at`,
+    [entityType,Number(entityId),sourceType,decoded.dataUrl,decoded.mimeType,clean(altText,300),Number(accountId)]
+  );
+  return rows[0];
+}
+
+export async function reorderCatalogMedia(pool,{entityType,entityId,mediaIds=[]}){
+  if(!validEntity(entityType,entityId))throw Object.assign(new Error('Invalid catalog media target.'),{status:400});
+  const ids=[...new Set((Array.isArray(mediaIds)?mediaIds:[]).map(Number).filter(Number.isInteger))];
+  const current=await pool.query(
+    `SELECT id FROM catalog_product_media
+      WHERE entity_type=$1 AND entity_id=$2 AND approval_status<>'archived'
+      ORDER BY sort_order,id`,
+    [entityType,Number(entityId)]
+  );
+  const currentIds=current.rows.map(x=>Number(x.id));
+  if(ids.length!==currentIds.length||ids.some(id=>!currentIds.includes(id))){
+    throw Object.assign(new Error('Gallery order must include every current product image exactly once.'),{status:409,code:'CATALOG_GALLERY_ORDER'});
+  }
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    for(let index=0;index<ids.length;index++){
+      await client.query(
+        `UPDATE catalog_product_media SET sort_order=$1,updated_at=NOW()
+          WHERE id=$2 AND entity_type=$3 AND entity_id=$4 AND approval_status<>'archived'`,
+        [index,ids[index],entityType,Number(entityId)]
+      );
+    }
+    await client.query('COMMIT');
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw error;
+  }finally{client.release()}
+  return listCatalogMedia(pool,{entityType,entityId});
+}
+
 export async function listCatalogMedia(pool,{entityType,entityId,publicOnly=false}){
   if(!validEntity(entityType,entityId))return[];
   const {rows}=await pool.query(
@@ -226,14 +301,11 @@ export async function generateCatalogImage(pool,{
       throw Object.assign(new Error('Generated product image exceeded the pilot storage limit.'),{status:502,code:'CATALOG_AI_IMAGE_TOO_LARGE'});
     }
 
-    const existing=await pool.query(
-      `SELECT COUNT(*)::int count FROM catalog_product_media
-        WHERE entity_type=$1 AND entity_id=$2 AND approval_status<>'archived'`,
-      [entityType,Number(entityId)]
-    );
-    if(Number(existing.rows[0]?.count||0)>=PRODUCT_IMAGE_STANDARD.max_gallery_images){
-      await pool.query(`UPDATE catalog_ai_generation_events SET status='failed',error_code='gallery_limit',updated_at=NOW() WHERE id=$1`,[eventId]).catch(()=>{});
-      throw Object.assign(new Error('This product gallery is full. Archive an image before adding another.'),{status:409,code:'CATALOG_GALLERY_LIMIT'});
+    try{
+      await assertGalleryCapacity(pool,{entityType,entityId});
+    }catch(error){
+      if(error?.code==='CATALOG_GALLERY_LIMIT')await pool.query(`UPDATE catalog_ai_generation_events SET status='failed',error_code='gallery_limit',updated_at=NOW() WHERE id=$1`,[eventId]).catch(()=>{});
+      throw error;
     }
 
     const media=await pool.query(
@@ -272,6 +344,16 @@ export async function approveCatalogMedia(pool,{
     if(!found.rowCount)throw Object.assign(new Error('Product image not found.'),{status:404});
     if(found.rows[0].approval_status==='archived')throw Object.assign(new Error('Archived product images cannot be approved.'),{status:409});
     if(makePrimary){
+      if(found.rows[0].source_type!=='ai_generated'){
+        await client.query(
+          `UPDATE catalog_product_media
+              SET approval_status='archived',public_visible=FALSE,is_primary=FALSE,updated_at=NOW()
+            WHERE entity_type=$1 AND entity_id=$2 AND id<>$3
+              AND source_type='ai_generated' AND is_primary=TRUE
+              AND approval_status='approved' AND public_visible=TRUE`,
+          [entityType,Number(entityId),Number(mediaId)]
+        );
+      }
       await client.query(
         `UPDATE catalog_product_media
             SET is_primary=FALSE,updated_at=NOW()
@@ -309,4 +391,4 @@ export async function archiveCatalogMedia(pool,{entityType,entityId,mediaId}){
   return{ok:true,id:Number(rows[0].id)};
 }
 
-export { ENTITY_TYPES, SOURCE_TYPES, APPROVAL_STATES };
+export { ENTITY_TYPES, SOURCE_TYPES, APPROVAL_STATES, decodeCatalogImageDataUrl };
