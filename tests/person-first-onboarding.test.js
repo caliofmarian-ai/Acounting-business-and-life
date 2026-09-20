@@ -62,3 +62,14 @@ test('a person with no active role sees a truthful first-profile checklist',()=>
   assert.match(block,/Account Settings/);
   assert.doesNotMatch(block,/enableOrSwitch\(/);
 });
+
+
+test('invite-only launch roles cannot self-start while Local Services remains self-application',()=>{
+  const server=read('server-profile-governance.js'),ui=read('public/profile-governance-ui.js');
+  assert.match(server,/\['merchant','supplier','courier'\]\.includes\(role\)&&!me\.account\.is_test_account/);
+  assert.match(server,/requires an invitation before onboarding can start/);
+  assert.match(ui,/GOV_META\[role\]\?\.invite/);
+  assert.match(ui,/Invitation required/);
+  assert.match(ui,/invitation-only in this launch area/);
+  assert.match(server,/api\/governance\/service-provider\/start/);
+});
