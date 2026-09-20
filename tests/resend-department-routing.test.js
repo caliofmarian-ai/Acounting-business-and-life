@@ -28,7 +28,7 @@ test('billing and finance event families route to Billing',()=>{
 
 test('Resend outbound messages are tagged with department and event',()=>{
   assert.match(core,/tags:\[\{name:'department',value:cfg\.department\}/);
-  assert.match(core,/\{name:'event',value:clean\(eventCode\|\|'generic',80\)\}/);
+  assert.ok(core.includes("{name:'event',value:clean(eventCode||'generic',80).replace(/[^A-Za-z0-9_-]/g,'_')||'generic'}"));
 });
 
 test('queued email delivery carries notification category into sender routing',()=>{
