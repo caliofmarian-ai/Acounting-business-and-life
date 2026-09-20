@@ -102,12 +102,47 @@ Philippine statutory evidence.
 - No hidden periodic polling outside a visible real-time operational screen.
 - No duplicate ownership of the same business fact across services.
 - Every release is traceable: issue -> implementation -> test -> deployment -> production evidence.
-- The Product Owner performs the final Android acceptance, after internal automated and browser
-  verification has passed.
+- The project assistant/orchestrator owns routine acceptance: automated checks, browser journeys,
+  Android-focused UX review, authorization negatives, database invariants, email routing, logs and
+  production evidence. The Product Owner may add experiential feedback but is not the primary tester.
 
 "Bug-free" is treated as a release discipline: zero known release-blocking defects, prevention by
 invariants and tests, and fast detection/recovery for defects that appear in real use. It is not a
 claim that software can never fail.
+
+### 3.4 Verification ownership
+
+The project assistant/orchestrator is responsible for discovering, reproducing, explaining,
+prioritizing and verifying defects. The Product Owner is not expected to translate an impression
+such as “this feels confusing” into a technical specification. The assistant converts that feedback
+into a reproducible issue, an acceptance criterion and the smallest coherent shared-core fix.
+
+Every completed slice must be checked through the applicable evidence layers:
+
+1. code review, static checks and automated regression tests;
+2. direct browser journeys and Android-focused layout/navigation inspection;
+3. positive and negative authorization checks for the affected role;
+4. database invariants and audit evidence;
+5. Gmail/provider delivery evidence when communication is involved;
+6. exact deployed revision, production health, logs and latency sample;
+7. a simplicity review: necessary fields only, one clear next action and advanced detail disclosed
+   only when requested.
+
+The Owner retains authority over subjective product direction, pricing, legal identity, live-money
+activation and other material business decisions. That authority must not be converted into a duty
+to perform routine QA or diagnose technical defects. Owner feedback can reopen any accepted slice.
+
+### 3.5 Tool and incremental-cost boundary
+
+- All plugins, connectors and paid subscriptions already connected to the project — including Figma
+  and Canva — are available and should be used whenever they materially improve the result.
+- Choose the existing tool that produces the strongest evidence or design quality with the least
+  duplication; existing paid tools must not be avoided merely because they are paid.
+- Do not install, connect, subscribe to or activate a new plugin, service, API or infrastructure
+  resource unless it is strictly necessary, adds clear value and the Owner explicitly approves any
+  additional cost.
+- Existing design tools support the GitHub-canonical product; they do not become separate application
+  authorities or parallel applications.
 
 ## 4. Verified baseline — 2026-09-20
 
@@ -245,9 +280,9 @@ After individual onboarding passes, run the connected economic journeys:
 | Performance | low-end Android trace, request count, p95 and retry/offline behavior |
 | Audit | actor, scope, reason, before/after state, result and correlation ID |
 
-A role is not complete because a screen exists. It is complete only when the end-to-end evidence is
-captured, blocking defects are fixed, automated coverage protects the result and Android acceptance
-passes.
+A role is not complete because a screen exists. It is complete only when the assistant has captured
+the end-to-end evidence, fixed the blocking defects, protected the result with automated coverage
+and passed the Android-focused acceptance matrix. Owner feedback remains able to reopen the result.
 
 ## 7. Open-issue reconciliation
 
@@ -320,7 +355,8 @@ Each wave uses the same controlled loop:
 4. **Implement:** one coherent branch and pull request, with migration/rollback notes where relevant.
 5. **Verify:** automated tests, preview E2E, authorization negatives, database invariants and logs.
 6. **Deploy:** merge canonical GitHub code, deploy the exact revision and run production smoke checks.
-7. **Accept:** Product Owner verifies the completed Android flow, not unfinished implementation steps.
+7. **Accept:** the assistant verifies the completed live and Android-focused flow; the Owner receives
+   the result for optional experiential feedback and material product decisions.
 8. **Close:** update documentation and the linked issues with exact evidence.
 
 Work-in-progress limits:
@@ -341,4 +377,3 @@ Work-in-progress limits:
 7. Continue Merchant -> Supplier -> Courier -> Service Provider -> delegated Admin roles.
 8. Run the cross-role journeys, then reconcile and close only issues with complete evidence.
 9. Extract the validated `PH` country manifest as the template for the second country edition.
-

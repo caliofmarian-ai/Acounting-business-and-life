@@ -41,9 +41,11 @@ test('Guest includes Pricing & benefits and reads canonical public pricing',()=>
   const guest=read('public/guest-explore.js');
   assert.match(guest,/Pricing & benefits/);
   assert.match(guest,/\/api\/public\/pricing/);
-  assert.match(guest,/PayMongo benchmark rates/);
-  assert.match(guest,/Monthly subscription after promo/);
-  assert.match(guest,/Business & Life does not relabel PayMongo fees as its own fee/);
+  assert.match(guest,/<details class="guestFeeBreakdown">/);
+  assert.match(guest,/View PayMongo fees/);
+  assert.match(guest,/After the promotion:/);
+  assert.match(guest,/These are PayMongo fees, not Business & Life fees/);
+  assert.doesNotMatch(guest,/Monthly subscription after promo: ₱0/);
 });
 
 test('shared disclosure renderer is present on economic decision surfaces',()=>{
