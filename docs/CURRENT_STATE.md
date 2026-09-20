@@ -1,8 +1,8 @@
 # Business & Life — Current State
 
-> Target architecture: [Reconciled Application Architecture](architecture/RECONCILED_APP_ARCHITECTURE.md). Its product direction is approved, but implementation is pending and must follow the [Reconciliation Implementation Plan](implementation/RECONCILIATION_IMPLEMENTATION_PLAN.md). This file continues to describe deployed/current behavior until each target phase is verified and merged.
+> Target architecture: [Reconciled Application Architecture](architecture/RECONCILED_APP_ARCHITECTURE.md). Significant reconciliation slices are now implemented; remaining behavior must be verified through the [Philippines Reference Edition Quality and Onboarding Plan](implementation/PH_REFERENCE_EDITION_QUALITY_AND_ONBOARDING_PLAN.md). This file describes deployed/current behavior, while that plan is the evidence-led execution and issue-reconciliation authority.
 
-GitHub `main` is the source of truth. This file is the compact fresh-agent handoff for the Philippines Edition.
+GitHub `main` is the source of truth. This file is the compact fresh-agent handoff for the Philippines Reference Edition. The Philippines edition is the benchmark for future country editions: one shared core, with versioned country configuration and jurisdiction adapters for law, tax, payments, language, documents and territory rules.
 
 ## Current executable target
 

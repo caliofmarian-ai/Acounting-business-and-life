@@ -246,6 +246,23 @@ async function initDb() {
       applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    WITH first_run AS (
+      INSERT INTO app_migrations(migration_key) VALUES('2026-09-20-normalize-disabled-profile-status')
+      ON CONFLICT(migration_key) DO NOTHING RETURNING migration_key
+    )
+    UPDATE profiles SET status='disabled',updated_at=NOW()
+      WHERE enabled=FALSE AND status='active' AND EXISTS(SELECT 1 FROM first_run);
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+          WHERE conname='profiles_active_requires_enabled' AND conrelid='profiles'::regclass
+      ) THEN
+        ALTER TABLE profiles ADD CONSTRAINT profiles_active_requires_enabled
+          CHECK (status <> 'active' OR enabled=TRUE);
+      END IF;
+    END $$;
+
     INSERT INTO accounts(id,display_name,active_role) VALUES(1,'Business owner',NULL) ON CONFLICT(id) DO NOTHING;
     INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES(1,'merchant',FALSE,'private','disabled')
       ON CONFLICT(account_id,role) DO NOTHING;
