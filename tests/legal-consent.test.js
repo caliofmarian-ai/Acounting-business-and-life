@@ -73,6 +73,7 @@ test('no reviewed active document means review pending instead of fabricated acc
 test('protected commerce location profile and Admin actions use the dedicated legal gate',()=>{
   assert.match(server,/LEGAL_ACCEPTANCE_REQUIRED/);
   assert.ok(server.includes("app.post('/api/orders'"));
+  assert.ok(server.includes("app.post('/api/marketplace/checkout'"));
   assert.ok(server.includes("app.post('/api/governance/applications/:id/submit'"));
   assert.ok(server.includes("app.post('/api/delivery/quote'"));
   assert.ok(server.includes("app.post('/api/courier/deliveries/:id/location'"));

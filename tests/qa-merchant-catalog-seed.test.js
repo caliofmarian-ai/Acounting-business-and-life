@@ -59,6 +59,7 @@ test('Merchant Experience QA wave reconciles business finance notifications sett
   assert.equal(cfg.wave,MERCHANT_EXPERIENCE_WAVE);
   const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
   for(const marker of [
+    'MERCHANT_EXPERIENCE_ORDER_NOTE',
     '/api/accounting/finance-overview',
     'completed_merchandise_value',
     'confirmed_merchandise_received',
