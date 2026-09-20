@@ -13,10 +13,11 @@ const CUSTOMER_WAVE='customer_onboarding_v1';
 const MERCHANT_CATALOG_WAVE='merchant_catalog_seed_v1';
 const MERCHANT_EXPERIENCE_WAVE='merchant_experience_v1';
 const SUPPLIER_EXPERIENCE_WAVE='supplier_experience_v1';
+const SUPPLIER_DOMAIN_V2_WAVE='supplier_domain_v2';
 const COURIER_EXPERIENCE_WAVE='courier_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -1230,6 +1231,11 @@ const SUPPLIER_QA_PRODUCT='QA Supplier Rice Pack';
 const SUPPLIER_QA_PO_NOTE='Controlled QA Supplier Experience PO v1';
 const SUPPLIER_QA_PRICE=120;
 const SUPPLIER_QA_PACKS=2;
+const SUPPLIER_V2_EXTERNAL_NAME='QA Public Market Rice Vendor';
+const SUPPLIER_V2_SOURCE_ITEM='QA Bulk Rice V2';
+const SUPPLIER_V2_OUTPUT_ITEM='QA Rice 1kg Bag V2';
+const SUPPLIER_V2_TIER_PRODUCT='QA Bottled Drink Case V2';
+const SUPPLIER_V2_TIER_PO_NOTE='Controlled QA Supplier Domain V2 tier PO';
 
 async function latestSupplierApplication(pool,accountId){
   const q=await pool.query(
@@ -1676,6 +1682,268 @@ async function runSupplierExperienceAcceptance({pool,base,secret}){
   };
 }
 
+
+async function runSupplierDomainV2Acceptance({pool,base,secret}){
+  const baseline=await runSupplierExperienceAcceptance({pool,base,secret});
+  if(baseline.status!=='PASS')throw new Error('Supplier V1 prerequisite did not pass.');
+
+  const [supplier,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPPLIER_ALIAS,role:'supplier',label:'Supplier Domain V2 QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Supplier Domain V2 Merchant QA'})
+  ]);
+  await ensureActiveRole({base,token:supplier.token,role:'supplier',label:'Supplier Domain V2 QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Supplier Domain V2 Merchant QA'});
+
+  const supplierBusinessId=Number(baseline.supplier_business_id);
+  const merchantBusinessId=Number(baseline.merchant_business_id);
+  if(!supplierBusinessId||!merchantBusinessId)throw new Error('Supplier V2 prerequisite business context is missing.');
+
+  const activities=await requestJson(base,'/api/supplier/v2/activities',{
+    method:'PUT',token:supplier.token,
+    body:{business_id:supplierBusinessId,activities:['wholesaler','repacker','retailer']}
+  });
+  expectStatus(activities,200,'Supplier V2 business activities');
+  if(!['wholesaler','repacker','retailer'].every(code=>(activities.json?.activities||[]).includes(code))){
+    throw new Error('Supplier V2 business activities did not persist.');
+  }
+
+  const supplierProfile=await requestJson(base,'/api/supplier/me',{token:supplier.token});
+  expectStatus(supplierProfile,200,'Supplier V2 catalog discovery');
+  let tierItem=(supplierProfile.json?.catalog||[]).find(x=>x.product_name===SUPPLIER_V2_TIER_PRODUCT);
+  if(!tierItem){
+    const created=await requestJson(base,'/api/supplier/catalog',{
+      method:'POST',token:supplier.token,
+      body:{
+        product_name:SUPPLIER_V2_TIER_PRODUCT,
+        sku:'QA-SUP-V2-CASE-001',
+        unit_name:'case',
+        base_unit:'bottle',
+        base_units_per_pack:24,
+        price_per_pack:720,
+        minimum_packs:1,
+        availability_status:'available',
+        lead_time_days:1
+      }
+    });
+    expectStatus(created,201,'Supplier V2 tier catalog create');
+    tierItem=created.json;
+  }
+  if(!tierItem?.id)throw new Error('Supplier V2 tier catalog item is unavailable.');
+
+  const v2catalog=await requestJson(base,`/api/supplier/catalog/${Number(tierItem.id)}/v2`,{
+    method:'PUT',token:supplier.token,
+    body:{
+      handling_mode:'break_pack',
+      price_tiers:[{minimum_quantity:2,price_per_pack:680,label:'2+ cases'}],
+      package_levels:[{level_name:'case',base_unit:'bottle',base_units_per_level:24,saleable:true,sort_order:0}]
+    }
+  });
+  expectStatus(v2catalog,200,'Supplier V2 catalog packaging');
+  if(v2catalog.json?.handling_mode!=='break_pack'
+    ||Number(v2catalog.json?.price_tiers?.[0]?.price_per_pack)!==680
+    ||Number(v2catalog.json?.package_levels?.[0]?.base_units_per_level)!==24){
+    throw new Error('Supplier V2 catalog packaging or tier pricing did not persist.');
+  }
+
+  const merchantCatalog=await requestJson(
+    base,
+    `/api/procurement/suppliers/${supplier.accountId}/catalog?business_id=${merchantBusinessId}`,
+    {token:merchant.token}
+  );
+  expectStatus(merchantCatalog,200,'Merchant Supplier V2 tier catalog');
+  const tierVisible=(merchantCatalog.json?.items||[]).find(x=>Number(x.id)===Number(tierItem.id));
+  if(!tierVisible||(tierVisible.price_tiers||[]).length!==1){
+    throw new Error('Merchant cannot see Supplier V2 volume pricing.');
+  }
+
+  const priorTierPo=await pool.query(
+    `SELECT id FROM purchase_orders
+      WHERE business_id=$1 AND supplier_account_id=$2 AND merchant_note=$3
+      ORDER BY id DESC LIMIT 1`,
+    [merchantBusinessId,supplier.accountId,SUPPLIER_V2_TIER_PO_NOTE]
+  );
+  let tierPo;
+  if(priorTierPo.rowCount){
+    const existing=await requestJson(base,`/api/procurement/orders/${Number(priorTierPo.rows[0].id)}`,{token:merchant.token});
+    expectStatus(existing,200,'Existing Supplier V2 tier PO');
+    tierPo=existing.json;
+  }else{
+    const created=await requestJson(base,'/api/procurement/orders',{
+      method:'POST',token:merchant.token,
+      body:{
+        business_id:merchantBusinessId,
+        supplier_account_id:supplier.accountId,
+        fulfilment_mode:'pickup',
+        delivery_fee:0,
+        merchant_note:SUPPLIER_V2_TIER_PO_NOTE,
+        items:[{catalog_item_id:Number(tierItem.id),packs:2}]
+      }
+    });
+    expectStatus(created,201,'Supplier V2 tier PO create');
+    tierPo=created.json;
+  }
+  if(!closeEnough(tierPo?.expected_total,1360)
+    ||!closeEnough(tierPo?.items?.[0]?.price_per_pack_snapshot,680)){
+    throw new Error('Supplier V2 qualifying tier was not snapshotted into the purchase order.');
+  }
+
+  await pool.query(
+    `DELETE FROM supply_repack_operations
+      WHERE business_id=$1 AND (
+        source_lot_id IN (SELECT id FROM supply_lots WHERE business_id=$1 AND item_name=ANY($2::text[]))
+        OR output_lot_id IN (SELECT id FROM supply_lots WHERE business_id=$1 AND item_name=ANY($2::text[]))
+      )`,
+    [merchantBusinessId,[SUPPLIER_V2_SOURCE_ITEM,SUPPLIER_V2_OUTPUT_ITEM]]
+  );
+  await pool.query(
+    `DELETE FROM supply_lots WHERE business_id=$1 AND item_name=$2`,
+    [merchantBusinessId,SUPPLIER_V2_OUTPUT_ITEM]
+  );
+  await pool.query(
+    `DELETE FROM supply_lots WHERE business_id=$1 AND item_name=$2`,
+    [merchantBusinessId,SUPPLIER_V2_SOURCE_ITEM]
+  );
+  await pool.query(
+    `DELETE FROM merchant_supply_parties WHERE business_id=$1 AND display_name=$2`,
+    [merchantBusinessId,SUPPLIER_V2_EXTERNAL_NAME]
+  );
+
+  const sourceInv=await pool.query(
+    `INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,measurement_family,base_unit)
+     VALUES($1,$2,'g',0,0,0,'mass','g')
+     ON CONFLICT(business_id,item) DO UPDATE
+       SET unit='g',quantity=0,reorder_level=0,unit_cost=0,measurement_family='mass',base_unit='g',updated_at=NOW()
+     RETURNING id`,
+    [merchantBusinessId,SUPPLIER_V2_SOURCE_ITEM]
+  );
+  const outputInv=await pool.query(
+    `INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,measurement_family,base_unit)
+     VALUES($1,$2,'g',0,0,0,'mass','g')
+     ON CONFLICT(business_id,item) DO UPDATE
+       SET unit='g',quantity=0,reorder_level=0,unit_cost=0,measurement_family='mass',base_unit='g',updated_at=NOW()
+     RETURNING id`,
+    [merchantBusinessId,SUPPLIER_V2_OUTPUT_ITEM]
+  );
+
+  const party=await requestJson(base,'/api/procurement/supply-parties',{
+    method:'POST',token:merchant.token,
+    body:{
+      business_id:merchantBusinessId,
+      display_name:SUPPLIER_V2_EXTERNAL_NAME,
+      contact_name:'Controlled QA Vendor',
+      phone:'+630000000000',
+      location_note:'Controlled QA public market fixture',
+      notes:'No real vendor. Supplier Domain V2 acceptance fixture.'
+    }
+  });
+  expectStatus(party,201,'Supplier V2 external party create');
+  if(party.json?.source_type!=='external'||party.json?.supplier_account_id!=null){
+    throw new Error('Supplier V2 external party was incorrectly treated as a connected account.');
+  }
+
+  const sourceLot=await requestJson(base,'/api/procurement/supply-lots',{
+    method:'POST',token:merchant.token,
+    body:{
+      business_id:merchantBusinessId,
+      supply_party_id:Number(party.json.id),
+      inventory_id:Number(sourceInv.rows[0].id),
+      item_name:SUPPLIER_V2_SOURCE_ITEM,
+      quantity_base:50000,
+      base_unit:'g',
+      total_cost:2300,
+      handling_mode:'bulk',
+      supplier_lot_code:'QA-RICE-BULK-001',
+      expires_at:'2027-06-30T23:59:59+08:00',
+      note:'Controlled QA Supplier V2 bulk receipt'
+    }
+  });
+  expectStatus(sourceLot,201,'Supplier V2 external lot receive');
+
+  const sourceAfterReceipt=await pool.query(
+    `SELECT quantity,unit_cost FROM inventory WHERE id=$1 AND business_id=$2`,
+    [sourceInv.rows[0].id,merchantBusinessId]
+  );
+  if(!closeEnough(sourceAfterReceipt.rows[0]?.quantity,50000)
+    ||!closeEnough(sourceAfterReceipt.rows[0]?.unit_cost,0.046,0.000001)){
+    throw new Error('Supplier V2 external receipt did not update source Inventory correctly.');
+  }
+
+  const repacked=await requestJson(base,`/api/procurement/supply-lots/${Number(sourceLot.json.id)}/repack`,{
+    method:'POST',token:merchant.token,
+    body:{
+      business_id:merchantBusinessId,
+      output_item_name:SUPPLIER_V2_OUTPUT_ITEM,
+      input_quantity_base:50000,
+      waste_quantity_base:1000,
+      package_size_base:1000,
+      output_packages:49,
+      package_unit_name:'bag',
+      packaging_cost_per_output:2,
+      output_inventory_id:Number(outputInv.rows[0].id),
+      note:'Controlled QA Supplier V2 repack'
+    }
+  });
+  expectStatus(repacked,201,'Supplier V2 repack');
+  if(!closeEnough(repacked.json?.operation?.packed_quantity,49000)
+    ||!closeEnough(repacked.json?.operation?.waste_quantity,1000)
+    ||!closeEnough(repacked.json?.operation?.total_output_cost,2398)){
+    throw new Error('Supplier V2 repack quantity/cost conservation failed.');
+  }
+
+  const inventoryCheck=await pool.query(
+    `SELECT item,quantity,unit_cost FROM inventory
+      WHERE business_id=$1 AND item=ANY($2::text[])`,
+    [merchantBusinessId,[SUPPLIER_V2_SOURCE_ITEM,SUPPLIER_V2_OUTPUT_ITEM]]
+  );
+  const invByName=new Map(inventoryCheck.rows.map(x=>[x.item,x]));
+  if(!closeEnough(invByName.get(SUPPLIER_V2_SOURCE_ITEM)?.quantity,0)
+    ||!closeEnough(invByName.get(SUPPLIER_V2_OUTPUT_ITEM)?.quantity,49000)){
+    throw new Error('Supplier V2 repack did not conserve Inventory quantities.');
+  }
+
+  const lots=await requestJson(base,`/api/procurement/supply-lots?business_id=${merchantBusinessId}`,{token:merchant.token});
+  expectStatus(lots,200,'Supplier V2 lot list');
+  const source=(lots.json||[]).find(x=>Number(x.id)===Number(sourceLot.json.id));
+  const output=(lots.json||[]).find(x=>Number(x.id)===Number(repacked.json?.output_lot?.id));
+  if(!source||!output||!closeEnough(source.quantity_remaining_base,0)
+    ||!closeEnough(output.quantity_remaining_base,49000)
+    ||Number(output.parent_lot_id)!==Number(source.id)
+    ||output.handling_mode!=='repacked'){
+    throw new Error('Supplier V2 lot lineage is incomplete.');
+  }
+  if(new Date(output.expires_at).getTime()!==new Date(source.expires_at).getTime()){
+    throw new Error('Supplier V2 child lot did not inherit the source expiry.');
+  }
+
+  const supplierLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:supplier.token,body:{}});
+  expectStatus(supplierLogout,200,'Supplier V2 logout');
+  const merchantLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+  expectStatus(merchantLogout,200,'Supplier V2 Merchant logout');
+
+  return{
+    status:'PASS',
+    wave:SUPPLIER_DOMAIN_V2_WAVE,
+    supplier_v1_baseline:true,
+    supplier_business_id:supplierBusinessId,
+    merchant_business_id:merchantBusinessId,
+    activities:true,
+    external_supplier:true,
+    connected_supplier:true,
+    break_pack_catalog:true,
+    tier_price_snapshot:true,
+    tier_purchase_order_id:Number(tierPo.id),
+    source_lot_id:Number(source.id),
+    output_lot_id:Number(output.id),
+    lot_lineage:true,
+    expiry_lineage:true,
+    quantity_conservation:true,
+    source_inventory_remaining:0,
+    output_inventory_quantity:49000,
+    waste_quantity:1000,
+    total_repack_cost:2398
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -1688,6 +1956,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
         ?await runMerchantExperienceAcceptance({pool,base,secret:config.secret})
         :config.wave===SUPPLIER_EXPERIENCE_WAVE
           ?await runSupplierExperienceAcceptance({pool,base,secret:config.secret})
+        :config.wave===SUPPLIER_DOMAIN_V2_WAVE
+          ?await runSupplierDomainV2Acceptance({pool,base,secret:config.secret})
         :config.wave===COURIER_EXPERIENCE_WAVE
           ?await runCourierExperienceAcceptance({
             pool,base,secret:config.secret,
@@ -1710,5 +1980,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
