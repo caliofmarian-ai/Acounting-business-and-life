@@ -188,3 +188,9 @@ test('compact notification summaries update after voice and channel changes',()=
   assert.match(ui,/row\.querySelector\('summary>b'\)/);
   assert.match(ui,/active\.join\(' • '\)/);
 });
+
+
+test('permission-scoped Admin notification routing uses a PostgreSQL parameter placeholder',()=>{
+  assert.ok(core.includes("g.permission_code=$" + "${params.length}"));
+  assert.ok(!core.includes("g.permission_code=" + "${params.length}"));
+});
