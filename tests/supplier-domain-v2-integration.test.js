@@ -21,3 +21,12 @@ test('existing Supplier V1 receiving and payment routes remain present',()=>{
   assert.match(server,/\/api\/supplier\/orders\/:id\/respond/);
   assert.match(server,/recordMonetizableCompletion/);
 });
+
+
+test('new purchase orders snapshot the qualifying Supplier quantity-tier price',()=>{
+  assert.match(server,/priceForQuantity/);
+  assert.match(server,/FROM supplier_catalog_price_tiers/);
+  assert.match(server,/tiersByItem/);
+  assert.match(server,/selectedPrice/);
+  assert.match(server,/l\.selectedPrice,l\.line/);
+});
