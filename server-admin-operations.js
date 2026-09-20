@@ -585,6 +585,7 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
   res.json(await adminOverview(me.account.id,ctx));
 }catch(e){next(e)}});
 
+app.patch('/api/admin/service-credentials/:id',body,(req,res,next)=>forwardAdmin(req,res,'credential.verify',null,'service_credential',req.params.id).catch(next));
 app.get('/api/admin/delivery/pricing',(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
 app.put('/api/admin/delivery/pricing',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
 app.get('/api/admin/couriers',(req,res,next)=>forwardAdmin(req,res,'courier.verify',null,'courier').catch(next));
