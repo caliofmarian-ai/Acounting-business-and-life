@@ -86,7 +86,7 @@ test('Customer Experience QA wave covers recovery Money notifications Support pr
     '/api/support/tickets/mine',
     "category:'privacy_access'",
     "requested_destination:'territory_admin'",
-    "related_type:'privacy_rights'",
+    "detail.json?.related_type!=='privacy_rights'",
     'Cross-account privacy ticket denial',
     "fulfilment_method:'delivery'",
     'Delivery-disabled checkout guard',
