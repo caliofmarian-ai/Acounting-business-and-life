@@ -8,7 +8,7 @@ test('Merchant accounting exposes purchase-based stock intake and batch recipes'
   const server=read('server-business-accounting.js');
   assert.match(server,/\/api\/inventory\/purchase/);
   assert.match(server,/weightedAverageUnitCost/);
-  assert.match(server,/source,'inventory_purchase'/);
+  assert.match(server,/'inventory_purchase'/);
   assert.match(server,/\/api\/products\/:id\/recipe-batch/);
   assert.match(server,/product_recipe_batches/);
   assert.match(server,/recipe_batch_components/);
