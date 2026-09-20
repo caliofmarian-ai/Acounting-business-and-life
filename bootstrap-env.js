@@ -4,6 +4,8 @@
 // pg/pg-connection-string dependency warns that the meaning of that mode will
 // change in its next major release. Preserve the current certificate-verifying
 // behavior explicitly before any gateway creates a Pool or spawns a child.
+import { enforceRuntimeSafety } from './runtime-safety.js';
+
 const rawDatabaseUrl = process.env.DATABASE_URL;
 
 if (rawDatabaseUrl) {
@@ -19,3 +21,5 @@ if (rawDatabaseUrl) {
     // produces the authoritative connection error instead of masking it here.
   }
 }
+
+enforceRuntimeSafety(process.env);

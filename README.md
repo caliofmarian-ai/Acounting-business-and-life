@@ -97,10 +97,12 @@ This repository and `main` are the single source of application code. The two do
 
 | Domain | Intended environment | Owner testing rule |
 | --- | --- | --- |
-| `https://caliof.com` | Public deployment from `main` | Use for post-merge acceptance only after `/health` identifies the expected deployment revision. |
-| `https://review.caliof.com` | Isolated review/staging deployment | Use before merge only when `/health` is healthy and identifies the expected review revision. It must not be used for Owner acceptance while its health check is failing. |
+| `https://caliof.com` | Public deployment from `main` | This is the single Owner/customer-facing application URL. Use only after `/health` identifies the expected deployment revision. |
+| `https://preview.caliof.com` | Internal QA only | The assistant uses this surface for controlled testing. It has an isolated database and sign-in secret, and must never be presented as a second application or routine Owner test URL. |
 
-Every testing request must name the environment as **PUBLIC** or **REVIEW**, give exactly one URL, and verify `/health` first. A merged change is not proof that either domain has deployed it. The public health response exposes only a normalized environment label and a shortened Git revision so deployments can be matched without exposing configuration secrets.
+Every verification report must name the surface as **PUBLIC** or **QA**, give exactly one URL when the Owner needs one, and verify `/health` first. The Owner is not asked to repeat routine QA. A merged change is not proof that either domain has deployed it. The health response exposes only a normalized environment label and a shortened Git revision so deployments can be matched without exposing configuration secrets.
+
+The QA service must use `APP_ENV=qa`, a dedicated `*_qa` or `*_test` database, a different token-signing secret, PayMongo TEST mode and disabled live payments. Startup fails closed if those boundaries drift. This uses the existing Neon project and compute; it is data separation inside the same application, not a parallel product.
 
 ## Current country edition
 

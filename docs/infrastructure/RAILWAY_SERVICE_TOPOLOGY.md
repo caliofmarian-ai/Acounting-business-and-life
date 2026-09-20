@@ -17,8 +17,12 @@ The normal topology is:
 2. `accounting-preview`
    - one reusable preview service;
    - source branch changes to the currently reviewed PR/branch;
-   - preview/test configuration;
+   - internal QA configuration, never a second Owner/customer application;
+   - `APP_ENV=qa`;
+   - service-specific `DATABASE_URL` targeting a dedicated `*_qa` or `*_test` database;
+   - service-specific `TOKEN_SECRET` so public sessions cannot cross into QA;
    - PayMongo must default to TEST mode;
+   - PayMongo LIVE must remain disabled;
    - preview verification links may be enabled.
 
 3. Temporary infrastructure-only service is allowed only when there is a real separate runtime responsibility or secret-migration constraint.
@@ -32,7 +36,7 @@ Current temporary exception:
 
 For each feature:
 
-`feature branch → accounting-preview → tests/Owner acceptance → merge to main → accounting-business-life redeploy`
+`feature branch → accounting-preview → assistant QA → merge to main → accounting-business-life redeploy → assistant production verification`
 
 The next feature reuses `accounting-preview`.
 
@@ -63,12 +67,14 @@ Protected:
 
 ## Secrets and shared configuration
 
-Prefer shared Railway variables for:
-- DATABASE_URL
-- TOKEN_SECRET
-- APP_PIN
+Shared Railway variables may be used only for values that do not break environment isolation.
+`accounting-preview` must never reference the production `DATABASE_URL` or production
+`TOKEN_SECRET`. Its database and token-signing secret are service-specific. Provider secrets remain
+service-specific unless their provider contract explicitly supports safe environment sharing.
 
-The preview should reference shared canonical variables, not another historical preview.
+The runtime checks this boundary before any gateway starts. A QA service pointing at the production
+database, using live PayMongo mode or enabling live payments must fail closed. The public service
+must likewise reject a QA database or preview-only verification links.
 
 Provider secrets:
 - PayMongo
@@ -81,6 +87,9 @@ must never be committed to GitHub.
 ## PayMongo preview safety
 
 `accounting-preview`:
+- `APP_ENV=qa`
+- `DATABASE_URL=<service-specific isolated QA database>`
+- `TOKEN_SECRET=<service-specific QA secret>`
 - `PAYMENT_PROVIDER_DEFAULT=paymongo`
 - `PAYMONGO_MODE=test`
 - `PAYMONGO_LIVE_ENABLED=false`
