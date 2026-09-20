@@ -52,13 +52,26 @@ function prefFor(category){return notificationPanel?.prefs?.preferences?.find(x=
 function renderSettings(p){
   const box=document.getElementById('notificationSettings');if(!box)return;
   const labels={operational:'Orders, delivery & business',security:'Security & account',legal:'Legal notices',support:'Support & incidents',compliance:'Compliance',marketing:'Offers & marketing'};
+  const attention=p.attention_preferences||{sound_enabled:true,vibration_enabled:true,important_alerts_enabled:true};
   box.innerHTML=`
     <div class="notificationSettingCard"><label>Notification language<select id="notificationLocale"><option value="en-PH" ${p.preferred_locale==='en-PH'?'selected':''}>English (Philippines)</option><option value="fil-PH" ${p.preferred_locale==='fil-PH'?'selected':''}>Filipino / Tagalog</option></select></label></div>
+    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Attention</strong><small>Control how Business & Life gets your attention. Background push sound is controlled by your phone/browser; the Sounds switch applies to branded in-app sounds.</small></span></div><div class="preferenceGrid"><div class="preferenceRow"><div><strong>Sounds</strong><small>Branded sounds while the app is open.</small></div><label><input id="notificationSounds" type="checkbox" ${attention.sound_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Vibration</strong><small>Use supported vibration patterns for push alerts.</small></div><label><input id="notificationVibration" type="checkbox" ${attention.vibration_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Important alerts</strong><small>Keep urgent alerts more prominent when the browser supports it.</small></div><label><input id="notificationImportantAlerts" type="checkbox" ${attention.important_alerts_enabled?'checked':''}> On</label></div></div></div>
     <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Web Push</strong><small>Receive important updates even when the app is not open.</small></span><button id="enablePush" type="button">${p.push_configured?'Enable push':'Push not configured'}</button></div></div>
     <div class="preferenceGrid">${(p.categories||[]).map(cat=>{const x=prefFor(cat),marketing=cat==='marketing',security=cat==='security';const inapp=x?x.in_app_enabled:!marketing,email=x?x.email_enabled:false,push=x?x.push_enabled:!marketing;return`<div class="preferenceRow" data-category="${cat}"><div><strong>${labels[cat]||cat}</strong><small>${security?'Required security notices cannot be fully disabled.':''}</small></div><label><input type="checkbox" data-channel="in_app" ${inapp?'checked':''} ${security?'disabled':''}> In-app</label><label><input type="checkbox" data-channel="email" ${email?'checked':''}> Email</label><label><input type="checkbox" data-channel="push" ${push?'checked':''}> Push</label></div>`}).join('')}</div>`;
   document.getElementById('notificationLocale').onchange=async e=>{await api('/api/notifications/locale',{method:'PUT',body:JSON.stringify({locale:e.target.value})});toast('Notification language updated.')};
   document.getElementById('enablePush').onclick=enablePush;
-  box.querySelectorAll('.preferenceRow input').forEach(input=>input.onchange=savePreferenceRow);
+  for(const id of ['notificationSounds','notificationVibration','notificationImportantAlerts'])document.getElementById(id).onchange=saveAttentionPreferences;
+  box.querySelectorAll('.preferenceRow[data-category] input').forEach(input=>input.onchange=savePreferenceRow);
+}
+async function saveAttentionPreferences(){
+  try{
+    await api('/api/notifications/attention-preferences',{method:'PUT',body:JSON.stringify({
+      sound_enabled:Boolean(document.getElementById('notificationSounds')?.checked),
+      vibration_enabled:Boolean(document.getElementById('notificationVibration')?.checked),
+      important_alerts_enabled:Boolean(document.getElementById('notificationImportantAlerts')?.checked)
+    })});
+    toast('Attention settings saved.');
+  }catch(err){toast(err.message);await renderNotificationCenter()}
 }
 async function savePreferenceRow(e){
   const row=e.target.closest('.preferenceRow'),cat=row.dataset.category;
