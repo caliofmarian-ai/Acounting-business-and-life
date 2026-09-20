@@ -164,7 +164,8 @@ async function renderStore(businessId){
       '<div class="guestProductGrid">'+
         (store.products?.length?store.products.map(product=>
           '<article class="guestProductCard">'+
-            '<div class="guestProductImage">'+(product.image_data_url?'<img src="'+gh(product.image_data_url)+'" alt="">':(product.product_domain==='food'?'🍽️':'📦'))+'</div>'+
+            '<div class="guestProductImage">'+(product.image_data_url?'<img src="'+gh(product.image_data_url)+'" alt="'+gh(product.name||'Product')+'">':(product.product_domain==='food'?'🍽️':'📦'))+'</div>'+
+            (product.image_source_type==='ai_generated'?'<span class="guestAiReference">AI-generated reference image</span>':'')+
             '<small>'+gh(product.category||'General')+'</small>'+
             '<strong>'+gh(product.name)+'</strong>'+
             '<p>'+gh(product.description||'')+'</p>'+
