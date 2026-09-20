@@ -102,9 +102,9 @@ function ensureShellChrome() {
   if (!document.getElementById('accountAvatarButton')) {
     const controls = document.createElement('div');
     controls.className = 'shellProfileControls';
-    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open account and profiles"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
+    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open Account Home"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
     topActions.appendChild(controls);
-    controls.querySelector('#accountAvatarButton').addEventListener('click', openDrawer);
+    controls.querySelector('#accountAvatarButton').addEventListener('click', openAccountHome);
   }
   if (!document.getElementById('roleHub')) {
     const hub = document.createElement('section');
@@ -243,6 +243,14 @@ function closeAccountSettings(){
   window.scrollTo({top:0,behavior:'auto'});
 }
 
+function openAccountHome(){
+  closeDrawer();
+  renderAccountHome();
+  publishProfileState();
+  window.scrollTo({top:0,behavior:'auto'});
+  if(!profileFetchedAt||Date.now()-profileFetchedAt>=PROFILE_CACHE_MS)refreshProfile().catch(error=>console.warn('Account refresh:',error.message));
+}
+
 async function reactivateProfile(role){try{snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:true,visibility:'private'})});activeRole=snapshot.account.active_role||role;profileFetchedAt=Date.now();renderAccountSettings('profiles');publishProfileState();showToast('Profile reactivated.')}catch(err){showToast(err.message)}}
 
 async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();if(enabled){activeSurface='profile';applyActiveRole()}else renderAccountHome();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
@@ -372,6 +380,7 @@ function showActiveWorkspace() {
 }
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
+  openAccountHome,
   openAccountSettings,
   refreshProfile,
   getProfileState:()=>window.BusinessLifeProfileState||null
@@ -417,12 +426,14 @@ function renderAccountHome(){
   const account=snapshot.account,hub=document.getElementById('roleHub');
   if(!hub)return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
-  const profiles=ROLE_ORDER.filter(isEnabled).map(role=>{const meta=ROLE_META[role];return `<button class="hubTile" type="button" data-account-role="${role}"><span class="hubTileIcon">${meta.icon}</span><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.desc)}</small><span class="hubStatus">Open profile</span></button>`}).join('');
-  const admin=adminContext?.is_admin?`<section class="accountAdminAccess"><h2>Admin access</h2><button class="hubTile" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin Workspace')}</strong><small>Delegated administrative access — not a personal or commercial profile</small><span class="hubStatus">Open workspace</span></button></section>`:'';
-  hub.innerHTML=`<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><p>${countryMeta(account.country_code).flag} Account registration edition: ${escapeHtml(countryMeta(account.country_code).label)} · ${escapeHtml(account.personal_id||'')}</p><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid">${profiles||'<p class="hubEmpty">No active profiles yet. Open Account Settings to start onboarding.</p>'}</div>${admin}<section class="accountSettingsAccess"><h2>Account</h2><button class="hubTile profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>Personal details, security and profile onboarding</small></button></section>`;
+  const profiles=ROLE_ORDER.filter(isEnabled).map(role=>{const meta=ROLE_META[role];return `<button class="hubTile accountHomeAction" type="button" data-account-role="${role}"><span class="hubTileIcon">${meta.icon}</span><span class="accountHomeActionCopy"><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.desc)}</small></span><span class="accountHomeOpen">Open profile ›</span></button>`}).join('');
+  const admin=adminContext?.is_admin?`<section class="accountHomeSection accountAdminAccess"><div class="hubSectionTitle"><h2>Admin access</h2><span>Assigned separately</span></div><button class="hubTile accountHomeAction" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><span class="accountHomeActionCopy"><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin Workspace')}</strong><small>Delegated administration — separate from your personal and commercial profiles</small></span><span class="accountHomeOpen">Open workspace ›</span></button></section>`:'';
+  const country=countryMeta(account.country_code);
+  hub.innerHTML=`<div class="hubHero accountHomeHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><div class="accountHomeIdentity"><span>${country.flag} ${escapeHtml(country.label)} account</span>${identityLine(account.personal_id,'Personal ID')}</div><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid accountProfileGrid">${profiles||'<p class="hubEmpty">No active profiles yet. Open Account Settings to start onboarding.</p>'}</div>${admin}<section class="accountHomeSection accountSettingsAccess"><div class="hubSectionTitle"><h2>Account</h2><span>Shared settings</span></div><button class="hubTile accountHomeAction profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><span class="accountHomeActionCopy"><strong>Account Settings</strong><small>Personal details, security, Money &amp; Banking and profile onboarding</small></span><span class="accountHomeOpen">Open settings ›</span></button></section>`;
   hub.querySelectorAll('[data-account-role]').forEach(button=>button.onclick=()=>enableOrSwitch(button.dataset.accountRole));
   hub.querySelector('#accountAdminProfile')?.addEventListener('click',()=>window.location.assign('/admin'));
   hub.querySelector('#accountHomeSettings')?.addEventListener('click',()=>openAccountSettings());
+  bindCopyIds(hub);
   hub.classList.remove('hidden');
   renderTopAccount();
 }
