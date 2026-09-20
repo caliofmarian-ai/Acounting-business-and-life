@@ -61,3 +61,12 @@ test('current-state document identifies the pilot roadmap and PayMongo webhook-b
   assert.match(state, /payment|reconciliation|settlement/i);
   assert.match(state, /PayMongo|paymongo/i);
 });
+
+test('canonical quality plan assigns verification to the assistant and protects the existing tool budget',()=>{
+  const plan=read('docs/implementation/PH_REFERENCE_EDITION_QUALITY_AND_ONBOARDING_PLAN.md');
+  assert.match(plan,/project assistant\/orchestrator owns routine acceptance/i);
+  assert.match(plan,/Product Owner is not expected to translate an impression/i);
+  assert.match(plan,/Figma[\s\S]*Canva/);
+  assert.match(plan,/Do not install, connect, subscribe to or activate a new plugin/i);
+  assert.match(plan,/strictly necessary, adds clear value/i);
+});

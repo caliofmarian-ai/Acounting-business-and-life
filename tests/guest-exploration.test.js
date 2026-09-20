@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const server = readFileSync(new URL('../server-marketplace.js', import.meta.url), 'utf8');
 const guest = readFileSync(new URL('../public/guest-explore.js', import.meta.url), 'utf8');
+const help = readFileSync(new URL('../public/help-linking.js', import.meta.url), 'utf8');
 const architecture = readFileSync(new URL('../docs/architecture/GUEST_EXPLORATION_AND_ONBOARDING.md', import.meta.url), 'utf8');
 
 test('guest marketplace uses separate public read-only routes', () => {
@@ -44,6 +45,15 @@ test('mobile guest entry is independent from hidden legacy auth choices', () => 
   assert.match(guest, /guestExploreEntrySlot/);
   assert.doesNotMatch(guest, /const choices = document\.getElementById\('accountAuthChoices'\)/);
   assert.match(guest, /modernAuthRoot/);
+});
+
+test('guest mode clears stale sign-in errors and isolates the underlying entry screen',()=>{
+  assert.match(guest,/abl:clear-context-help/);
+  assert.match(help,/addEventListener\('abl:clear-context-help'/);
+  assert.match(guest,/login\.setAttribute\('inert',''\)/);
+  assert.match(guest,/login\.setAttribute\('aria-hidden','true'\)/);
+  assert.match(guest,/login\.removeAttribute\('inert'\)/);
+  assert.match(guest,/guestRoot\.querySelector\('#guestClose'\)\?\.focus\(\)/);
 });
 
 test('modern authentication renders before hardening status network request completes', () => {

@@ -120,6 +120,11 @@
 
   function boot(){
     ensureDock();
+    document.addEventListener('abl:clear-context-help',()=>{
+      const notice=ensureDock().querySelector('.contextHelpNotice');
+      notice.classList.add('hidden');
+      notice.querySelector('span').textContent='';
+    });
     document.addEventListener('abl:help',event=>{
       const detail=event.detail||{};
       suggest({path:String(detail.path||'/api/'),message:String(detail.message||'Help is available for this task.'),status:Number(detail.status||400)});

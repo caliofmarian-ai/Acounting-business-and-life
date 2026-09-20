@@ -32,7 +32,10 @@ function ensureGuestRoot(){
   guestRoot = document.createElement('section');
   guestRoot.id = 'guestExploreRoot';
   guestRoot.className = 'guestExplore hidden';
+  guestRoot.setAttribute('role','dialog');
+  guestRoot.setAttribute('aria-modal','true');
   guestRoot.setAttribute('aria-label','Guest exploration');
+  guestRoot.setAttribute('aria-hidden','true');
   guestRoot.innerHTML =
     '<header class="guestTopbar">'+
       '<button id="guestClose" class="guestIconBtn" type="button" aria-label="Close guest mode">←</button>'+
@@ -63,16 +66,36 @@ function ensureGuestRoot(){
   return guestRoot;
 }
 
+function clearEntryErrors(){
+  const message=document.getElementById('modernAuthMessage');
+  if(message){message.textContent='';message.className='modernAuthMessage'}
+  document.dispatchEvent(new CustomEvent('abl:clear-context-help'));
+}
+
+function isolateEntryScreen(isolated){
+  const login=document.getElementById('login');
+  if(!login)return;
+  if(isolated){login.setAttribute('inert','');login.setAttribute('aria-hidden','true')}
+  else{login.removeAttribute('inert');login.removeAttribute('aria-hidden')}
+}
+
 function openGuest(){
   ensureGuestRoot();
+  clearEntryErrors();
+  isolateEntryScreen(true);
   guestRoot.classList.remove('hidden');
+  guestRoot.setAttribute('aria-hidden','false');
   document.body.classList.add('guestModeOpen');
   renderDiscover();
+  guestRoot.querySelector('#guestClose')?.focus();
 }
 
 function closeGuest(){
   guestRoot?.classList.add('hidden');
+  guestRoot?.setAttribute('aria-hidden','true');
+  isolateEntryScreen(false);
   document.body.classList.remove('guestModeOpen');
+  document.getElementById('guestExploreBtn')?.focus();
 }
 
 function openRegistration(){
@@ -156,7 +179,7 @@ async function renderStore(businessId){
 
 function renderGuide(){
   guestBody.innerHTML =
-    '<section class="guestHero"><span class="guestEyebrow">Guided introduction</span><h1>Explore first. Activate only what you need.</h1><p>The onboarding layer explains the ecosystem; it does not grant permissions or change business data.</p></section>'+
+    '<section class="guestHero"><span class="guestEyebrow">Guided introduction</span><h1>Explore first. Activate only what you need.</h1><p>This guide only explains your options. Nothing is activated until you choose it and complete the required steps.</p></section>'+
     '<div class="guestJourney">'+
       '<article><span>1</span><div><strong>Guest</strong><p>Browse public businesses, products, public services and Help without creating an account.</p></div></article>'+
       '<article><span>2</span><div><strong>Registered user</strong><p>Create one human account when you want to order, save private information or activate a profile.</p></div></article>'+
@@ -184,22 +207,23 @@ async function renderPricing(){
       const p=data.profiles[key];
       const rate=key==='courier'?pct(p.post_promo_delivery_production_rate_pct):pct(p.post_promo_transaction_rate_pct);
       const promo=Number(p.promo_days||0);
-      const subscription=p.monthly_subscription_amount==null?'':(' Monthly subscription after promo: ₱'+Number(p.monthly_subscription_amount).toFixed(0)+'/month.');
-      return '<article class="guestPricingCard"><small>'+gh(title)+'</small><strong>'+gh(key==='courier'?'0% for '+promo+' days → '+rate+' after promo':promo+' days at 0% Business & Life fee → '+rate+' after promo')+'</strong><p>'+gh(copy+subscription)+'</p></article>';
+      if(key==='courier')return '<article class="guestPricingCard"><small>'+gh(title)+'</small><strong>Free for the first '+promo+' days</strong><p>After the promotion: '+gh(rate)+' of the verified delivery price. No monthly subscription. '+gh(copy)+'</p></article>';
+      const subscription=Number(p.monthly_subscription_amount||0);
+      return '<article class="guestPricingCard"><small>'+gh(title)+'</small><strong>Free for the first '+promo+' days</strong><p>After the promotion: ₱'+subscription.toFixed(0)+'/month + '+gh(rate)+' on eligible transactions. '+gh(copy)+'</p></article>';
     };
     const rails=(data.payment_processor?.rails||[]).map(r=>'<div class="guestFeeRow"><span>'+gh(r.label)+'</span><strong>'+gh(pct(r.variable_rate_pct)+(Number(r.fixed_fee_php||0)>0?' + ₱'+Number(r.fixed_fee_php).toFixed(2):''))+'</strong></div>').join('');
     guestBody.innerHTML=
       '<section class="guestHero"><span class="guestEyebrow">Transparent pricing</span><h1>'+gh(data.principle.headline)+'</h1><p>'+gh(data.principle.message)+' Every fee has an owner, a reason and a separate line.</p></section>'+
-      '<section class="guestPricingPromise"><strong>What the promotion really means</strong><p>'+gh(data.promotion_disclosure)+'</p></section>'+
+      '<section class="guestPricingPromise"><strong>What “free during promotion” means</strong><p>Business & Life fees are waived during the promotion. An online payment provider may still charge its own processing fee.</p></section>'+
       '<div class="guestPricingGrid">'+
-        '<article class="guestPricingCard"><small>CUSTOMER</small><strong>Free Business & Life profile</strong><p>0% Business & Life Customer platform fee.</p></article>'+
+        '<article class="guestPricingCard"><small>CUSTOMER</small><strong>Always free</strong><p>No Business & Life Customer platform fee.</p></article>'+
         roleCard('MERCHANT','merchant','Marketplace, business tools and accounting.')+
-        roleCard('SUPPLIER','supplier','B2B procurement and Supplier financial workspace. Processor charges remain separate from the Business & Life fee.')+
-        roleCard('LOCAL SERVICES','local_services','Professional profile, quotes, jobs and financial tools. The 0.50% policy applies only after the promotional entitlement.')+
-        roleCard('DELIVERY','courier','No monthly subscription. The post-promo production fee is based only on verified delivery price.')+
+        roleCard('SUPPLIER','supplier','B2B procurement and Supplier financial tools.')+
+        roleCard('LOCAL SERVICES','local_services','Professional profile, quotes, jobs and financial tools.')+
+        roleCard('DELIVERY','courier','The fee applies only to completed, verified delivery work.')+
       '</div>'+
-      '<section class="guestFeeBreakdown"><div class="guestSectionHead"><div><small>THIRD-PARTY PROCESSING</small><h2>PayMongo benchmark rates</h2></div><span>as of '+gh(data.payment_processor.benchmark_as_of)+'</span></div>'+rails+
-        '<p>Published PayMongo rates shown here exclude VAT. Actual provider transaction evidence overrides the benchmark. Business & Life does not relabel PayMongo fees as its own fee.</p></section>'+
+      '<details class="guestFeeBreakdown"><summary><span>Online payment processing</span><strong>View PayMongo fees</strong></summary><div class="guestFeeDetails"><div class="guestSectionHead"><div><small>PAYMENT PROVIDER</small><h2>PayMongo reference rates</h2></div><span>as of '+gh(data.payment_processor.benchmark_as_of)+'</span></div>'+rails+
+        '<p>These are PayMongo fees, not Business & Life fees, and may exclude VAT. The exact provider charge shown for a real payment is authoritative.</p></div></details>'+
       '<section class="guestBenefits"><h2>What you get around the fee</h2><div class="guestBenefitGrid">'+
         '<article><strong>Understand your money</strong><span>Cash, Bank, GCash, expenses, income, receivables and budgets stay understandable.</span></article>'+
         '<article><strong>Separate business and personal activity</strong><span>Profiles and business workspaces keep money and permissions from mixing.</span></article>'+
