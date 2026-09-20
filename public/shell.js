@@ -177,7 +177,21 @@ function renderDrawer() {
 
 function profileManagementMarkup(){
   const account=snapshot.account;
-  return ROLE_ORDER.map(role=>{const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled&&profile?.status==='active'),state=profile?.status||'not_started',reactivable=state==='disabled',inProgress=['application_started','requirements_pending','submitted','under_review','rejected'].includes(state),action=enabled?`data-profile-toggle="${role}" data-enabled="1"`:reactivable?`data-profile-reactivate="${role}"`:`data-role-action="${role}"`,status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':inProgress?state.replaceAll('_',' '):'Not active',label=enabled?'Disable':reactivable?'Reactivate':inProgress?'Continue onboarding':'Start onboarding';return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`}).join('');
+  const emailReady=Boolean(account.email_verified_at);
+  const detailsReady=Boolean(String(account.display_name||'').trim()&&String(account.email||'').trim()&&String(account.address||'').trim());
+  return ROLE_ORDER.map(role=>{
+    const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled&&profile?.status==='active');
+    const state=profile?.status||'not_started',reactivable=state==='disabled';
+    const inProgress=['application_started','requirements_pending','submitted','under_review','rejected'].includes(state);
+    let action,label;
+    if(enabled){action=`data-profile-toggle="${role}" data-enabled="1"`;label='Disable'}
+    else if(!emailReady){action=`data-verify-email="${role}"`;label='Verify email first'}
+    else if(!detailsReady){action=`data-complete-personal="${role}"`;label='Complete details'}
+    else if(reactivable){action=`data-profile-reactivate="${role}"`;label='Reactivate'}
+    else{action=`data-role-action="${role}"`;label=inProgress?'Continue onboarding':'Start onboarding'}
+    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':'Not active';
+    return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`
+  }).join('');
 }
 
 function accountSettingsHeader(title,subtitle){return `<div class="accountSettingsHeader"><button id="accountSettingsBack" type="button" aria-label="Back">‹</button><div><span>ACCOUNT SETTINGS</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div></div>`}
@@ -204,7 +218,9 @@ function renderAccountSettings(view=accountSettingsView){
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
     </form></section>`;
   }else if(view==='profiles'){
-    workspace.innerHTML=accountSettingsHeader('Manage profiles','Profiles derive from your Personal ID and keep their IDs after deactivation.')+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
+    const detailsReady=Boolean(String(account.display_name||'').trim()&&String(account.email||'').trim()&&String(account.address||'').trim());
+    const activationGate=!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your Personal ID. After verification, you can start or continue each profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and primary address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:'';
+    workspace.innerHTML=accountSettingsHeader('Manage profiles','Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+'<div id="accountSecurityMount"></div>';
   }
@@ -217,6 +233,10 @@ function renderAccountSettings(view=accountSettingsView){
   workspace.querySelectorAll('[data-profile-toggle]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.profileToggle,btn.dataset.enabled!=='1'));
   workspace.querySelectorAll('[data-profile-reactivate]').forEach(btn=>btn.onclick=()=>reactivateProfile(btn.dataset.profileReactivate));
   workspace.querySelectorAll('[data-role-action]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.roleAction,true));
+  workspace.querySelectorAll('[data-verify-email]').forEach(btn=>btn.onclick=()=>openAccountSettings('security'));
+  workspace.querySelectorAll('[data-complete-personal]').forEach(btn=>btn.onclick=()=>openAccountSettings('personal'));
+  workspace.querySelector('#verifyProfilesEmail')?.addEventListener('click',()=>openAccountSettings('security'));
+  workspace.querySelector('#completeProfilesIdentity')?.addEventListener('click',()=>openAccountSettings('personal'));
   bindCopyIds(workspace);
   document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{view,activeRole,accountId:Number(account.id)||null}}));
 }
@@ -473,6 +493,12 @@ async function refreshProfile(force=false) {
     activeRole = snapshot.account?.active_role || null;
     ensureShellChrome();
     renderAccountHome();
+    const params=new URLSearchParams(location.search),requested=params.get('account_settings');
+    if(['home','personal','security','profiles'].includes(requested)){
+      params.delete('account_settings');
+      history.replaceState({},'',location.pathname+(params.toString()?'?'+params.toString():'')+location.hash);
+      openAccountSettings(requested);
+    }
     publishProfileState();
     return snapshot;
   })();

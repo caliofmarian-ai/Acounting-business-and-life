@@ -9,7 +9,7 @@ async function api(path,options={}){
   return data;
 }
 const root=document.getElementById('adminRoot');
-let state={me:null,catalog:null,overview:null,active:'overview',assignments:null};
+let state={me:null,catalog:null,overview:null,active:'overview',assignments:null,renderRequest:0};
 
 const modules=[
   {id:'overview',label:'Overview',any:['admin.console']},
@@ -34,7 +34,13 @@ function shell(){
   if(!visible.some(x=>x.id===state.active))state.active=visible[0]?.id||'overview';
   root.className='workspace';
   root.innerHTML='<nav class="adminNav">'+visible.map(m=>'<button type="button" data-module="'+m.id+'" class="'+(m.id===state.active?'active':'')+'">'+esc(m.label)+'</button>').join('')+'</nav><section class="adminMain"><div id="adminPanel"></div></section>';
-  root.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>{state.active=b.dataset.module;shell();renderActive().catch(showError)});
+  root.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>activateModule(b.dataset.module));
+}
+function activateModule(id){
+  const module=modules.find(m=>m.id===id&&hasAny(m.any));if(!module)return;
+  state.active=id;
+  root.querySelectorAll('[data-module]').forEach(button=>button.classList.toggle('active',button.dataset.module===id));
+  renderActive().catch(showError);
 }
 function showError(e){const p=document.getElementById('adminPanel')||root;p.innerHTML='<div class="error">'+esc(e.message||e)+'</div>'}
 function financeMoney(v,currency='PHP'){
@@ -81,7 +87,7 @@ function profilesPanel(){
   return hero()+'<p class="moduleIntro">Profile onboarding and authorization queues inside your permitted scope.</p><div class="sectionTitle"><h3>Applications</h3></div>'+rows(apps,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.role)+' · '+esc(x.territory_name||'Scoped territory')+'</span></div>')+'<div class="sectionTitle"><h3>Authorizations</h3></div>'+rows(auths,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.role)+' · '+esc(x.territory_name||'Country scope')+'</span></div>');
 }
 function deliveryRuleFields(prefix,label,weighted){return '<fieldset><legend>'+esc(label)+'</legend><div class="supportControls"><label>Base fee<input id="'+prefix+'Base" type="number" min="0" step="0.01" required></label><label>Per km<input id="'+prefix+'Km" type="number" min="0" step="0.01" required></label></div>'+(weighted?'<div class="supportControls"><label>Per kg<input id="'+prefix+'Kg" type="number" min="0" step="0.01" required></label><label>Per litre<input id="'+prefix+'Liter" type="number" min="0" step="0.01" required></label></div>':'')+'<div class="supportControls"><label>Minimum fee<input id="'+prefix+'Min" type="number" min="0" step="0.01" required></label><label>Max distance km<input id="'+prefix+'Distance" type="number" min="0" step="0.1"></label></div><div class="supportControls"><label>Max weight kg<input id="'+prefix+'Weight" type="number" min="0" step="0.1"></label><label>Max volume L<input id="'+prefix+'Volume" type="number" min="0" step="0.1"></label></div></fieldset>'}
-function deliveryPricingPanel(rules){const active=(rules||[]).find(x=>x.active);return '<section class="card"><div class="sectionTitle"><div><small class="muted">COUNTRY-LEVEL CONTROL</small><h3>Delivery pricing</h3></div><span class="status">'+esc(active?'Active v'+active.version:'HOLD')+'</span></div><p class="muted">Create a new immutable vehicle-pricing version. No PHP tariff is hardcoded.</p><form id="adminDeliveryPricingForm" class="adminForm">'+deliveryRuleFields('bike','Bicycle · small parcel',false)+deliveryRuleFields('car','Car',true)+deliveryRuleFields('van','Van',true)+'<label>Route factor<input id="deliveryRouteFactor" type="number" min="1" step="0.01" value="1" required></label><button class="primary" type="submit">Save and activate version</button><div id="deliveryPricingResult"></div></form></section>'}
+function deliveryPricingPanel(rules){const active=(rules||[]).find(x=>x.active);return '<details class="adminDisclosure deliveryPricingDisclosure"><summary><span class="adminDisclosureCopy"><small>COUNTRY-LEVEL CONTROL</small><strong>Delivery pricing</strong><span>Vehicle fees, distance rules and delivery capacity</span></span><span class="status">'+esc(active?'Active v'+active.version:'HOLD')+'</span></summary><div class="adminDisclosureBody"><p class="muted">Create a new immutable vehicle-pricing version. No PHP tariff is hardcoded.</p><form id="adminDeliveryPricingForm" class="adminForm">'+deliveryRuleFields('bike','Bicycle · small parcel',false)+deliveryRuleFields('car','Car',true)+deliveryRuleFields('van','Van',true)+'<label>Route factor<input id="deliveryRouteFactor" type="number" min="1" step="0.01" value="1" required></label><button class="primary" type="submit">Save and activate version</button><div id="deliveryPricingResult"></div></form></div></details>'}
 function deliveryCourierPanel(couriers){return '<section><div class="sectionTitle"><h3>Courier verification</h3></div>'+rows(couriers,c=>'<div class="row"><div class="rowHeader"><strong>'+esc(c.courier_name||c.display_name)+'</strong><span class="status">'+esc(c.eligibility_status)+'</span></div><span class="muted">'+esc(c.email||'')+' · '+esc(c.approved_vehicle_class||c.vehicle_type||'No vehicle')+' · '+Number(c.submitted_documents||0)+' submitted documents</span><div class="supportControls"><button class="secondary" type="button" data-courier-decision="approved" data-courier-id="'+Number(c.account_id)+'">Approve</button><button class="secondary" type="button" data-courier-decision="suspended" data-courier-id="'+Number(c.account_id)+'">Suspend</button></div></div>')+'</section>'}
 function deliveryDispatchPanel(deliveries,couriers){return '<section><div class="sectionTitle"><h3>Dispatch queue</h3></div>'+rows(deliveries,d=>'<div class="row"><div class="rowHeader"><strong>'+esc(d.order_number||('Delivery #'+d.id))+'</strong><span class="status">'+esc(String(d.status||'').replaceAll('_',' '))+'</span></div><span class="muted">'+esc(d.business_name||'')+' · '+esc(d.required_vehicle_class||'vehicle not specified')+'</span>'+(['awaiting_courier','requested'].includes(d.status)?'<form class="supportControls" data-delivery-assign="'+Number(d.id)+'"><select name="courier_account_id" required><option value="">Choose approved courier</option>'+couriers.map(c=>'<option value="'+Number(c.account_id)+'">'+esc(c.courier_name||('Courier '+c.account_id))+' · '+esc(c.approved_vehicle_class||c.vehicle_type||'vehicle')+'</option>').join('')+'</select><button class="secondary" type="submit">Assign</button></form>':'')+'</div>')+'</section>'}
 async function deliveryPanel(){const canPricing=hasAny(['delivery.pricing.manage']),canVerify=hasAny(['courier.verify']),canDispatch=hasAny(['delivery.dispatch.manage']);const [rules,couriers,deliveries,eligible]=await Promise.all([canPricing?api('/api/admin/delivery/pricing'):[],canVerify?api('/api/admin/couriers'):[],canDispatch?api('/api/admin/deliveries'):[],canDispatch?api('/api/admin/delivery/eligible-couriers'):[]]);return hero()+'<p class="moduleIntro">Privileged Delivery controls are isolated from Merchant, Customer and Courier profiles.</p>'+(canPricing?deliveryPricingPanel(rules):'')+(canVerify?deliveryCourierPanel(couriers):'')+(canDispatch?deliveryDispatchPanel(deliveries,eligible):'')}
@@ -450,7 +456,11 @@ async function financePanel(){
       +'<div id="pricingScenarioResult"></div>'
     +'</form>';
   const costForm=canManage?'<div class="sectionTitle"><h3>Record platform cost</h3></div><form id="financeCostForm" class="adminForm"><div class="financeFormGrid"><label>Cost code<input name="cost_code" required placeholder="railway-2026-09"></label><label>Amount (PHP)<input name="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select name="cost_category"><option value="infrastructure">Infrastructure</option><option value="database">Database</option><option value="storage">Storage</option><option value="bandwidth">Bandwidth</option><option value="monitoring_security">Monitoring / security</option><option value="support">Support</option><option value="maps_api">Maps / routing API</option><option value="ai_api">AI / API</option><option value="notification">Notifications</option><option value="marketing">Marketing</option><option value="referral_reward">Referral reward</option><option value="promo_subsidy">Promo subsidy</option><option value="delivery_subsidy">Delivery subsidy</option><option value="refund_loss">Refund loss</option><option value="chargeback_dispute">Chargeback / dispute</option><option value="fraud_bad_debt">Fraud / bad debt</option><option value="operator_share">Operator share</option><option value="legal_compliance">Legal / compliance</option><option value="accounting">Accounting</option><option value="payroll_contractor">Payroll / contractor</option><option value="insurance_licence">Insurance / licence</option><option value="payment_provider_other">Payment provider other</option><option value="other">Other</option></select></label><label>Nature<select name="cost_nature"><option value="fixed">Fixed</option><option value="semi_fixed">Semi-fixed</option><option value="variable">Variable</option></select></label><label>Evidence class<select name="evidence_class"><option value="actual">Actual</option><option value="accrued">Accrued</option><option value="estimated">Estimated</option><option value="budget">Budget</option></select></label><label>Service<select name="service_scope"><option value="shared">Shared platform</option><option value="marketplace">Marketplace</option><option value="delivery">Delivery</option><option value="supplier">Supplier B2B</option><option value="local_services">Local Services</option><option value="accounting_pro">Accounting Pro</option><option value="enterprise">Enterprise / operator</option></select></label>'+territoryField+'<label>Evidence / source reference<input name="evidence_reference" required placeholder="Invoice ID, provider statement, estimate method or budget source"></label></div><label>Description<textarea name="description" placeholder="What this cost covers and why it belongs to this scope"></textarea></label><button class="primary" type="submit">Record cost</button><div id="financeCostResult"></div></form>':'';
-  return hero()+operatingHtml+monetizationV2Card(monetizationV2)+subscriptionBillingCard(subscriptionBilling)+digitalPaymentIncentiveCard(digitalBenchmarks)+commissionPlannerForm(k,promo)+'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
+  return hero()+operatingHtml
+    +'<section class="financeDeliveryBoundary"><div><strong>Delivery tariffs are operational settings</strong><span>Configure vehicle fees and route rules in Delivery. Finance measures their revenue, costs and margin.</span></div><button class="adminButton" type="button" data-open-admin-module="delivery">Open Delivery pricing</button></section>'
+    +'<details class="adminDisclosure financeDisclosure"><summary><span class="adminDisclosureCopy"><small>POLICY</small><strong>Monetization & subscriptions</strong><span>Platform rules, shared costs and billing readiness</span></span></summary><div class="adminDisclosureBody">'+monetizationV2Card(monetizationV2)+subscriptionBillingCard(subscriptionBilling)+'</div></details>'
+    +'<details class="adminDisclosure financeDisclosure"><summary><span class="adminDisclosureCopy"><small>SIMULATIONS</small><strong>Payments & commission planning</strong><span>Compare incentives and scenarios without changing live tariffs</span></span></summary><div class="adminDisclosureBody">'+digitalPaymentIncentiveCard(digitalBenchmarks)+commissionPlannerForm(k,promo)+'</div></details>'
+    +'<details class="adminFinanceAdvanced adminEconomicsAdvanced"><summary>Advanced unit economics & monetization</summary><div class="adminFinanceAdvancedBody">'
     +'<p class="moduleIntro">Unit economics for '+esc(p.from?new Date(p.from).toLocaleDateString():'current period')+' → '+esc(p.to?new Date(p.to).toLocaleDateString():'now')+'. Actual + accrued costs drive operating result; estimates and budgets stay visible separately.</p>'
     +'<div class="financeSummary">'
       +'<div class="metric"><strong>'+financeMoney(k.gross_payment_volume)+'</strong><span>Gross payment volume · context, not revenue</span></div>'
@@ -597,6 +607,7 @@ async function wireOperatingFinance(){
   if(owner)owner.onsubmit=async e=>{e.preventDefault();const fd=new FormData(owner),out=document.getElementById('adminOwnerDistributionResult'),key='owner-dist-'+Date.now()+'-'+Math.random().toString(16).slice(2);try{await api('/api/admin/finance/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({entry_type:'owner_distribution',category:'owner_distribution',amount:Number(fd.get('amount')),evidence_reference:fd.get('evidence_reference'),description:fd.get('description'),function_code:'',territory_id:null})});out.innerHTML='<div class="notice">Owner distribution recorded separately from company expenses.</div>';await refresh()}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
 }
 async function wireFinance(){
+  document.querySelector('[data-open-admin-module="delivery"]')?.addEventListener('click',()=>activateModule('delivery'));
   await wireOperatingFinance();
   await wireMonetizationV2();
   await wireSubscriptionBilling();
@@ -641,20 +652,34 @@ async function wireFinance(){
     }catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
   };
 }
+const ADMIN_EVENT_LABELS=Object.freeze({
+  support_user_reply:'Support reply sent',support_internal_note:'Internal support note added',
+  incident_status_changed:'Incident status changed',metrics_snapshot_created:'Metrics snapshot created',
+  admin_assignment_created:'Admin responsibility delegated',admin_assignment_updated:'Admin responsibility updated',
+  admin_finance_entry_created:'Company finance entry recorded',admin_finance_budget_created:'Operating budget created'
+});
+function readableCode(value){return String(value||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}
+function adminEventLabel(code){return ADMIN_EVENT_LABELS[code]||readableCode(code)||'Admin activity'}
+function adminEventTime(value){try{return new Intl.DateTimeFormat('en-PH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Manila'}).format(new Date(value))}catch{return String(value||'Time unavailable')}}
+function auditMetricCards(metric){
+  const m=metric?.metrics||{},items=[['Orders',m.orders],['Deliveries',m.deliveries],['Service jobs',m.service_jobs],['Open support',m.support?.open],['Open incidents',m.incidents?.open]].filter(([,value])=>value!=null);
+  return items.length?'<div class="grid adminAuditMetrics">'+items.map(([label,value])=>'<div class="metric"><strong>'+esc(value)+'</strong><span>'+esc(label)+'</span></div>').join('')+'</div>':'<div class="empty">No operational metrics are available in this scope.</div>';
+}
 async function auditPanel(){
   const [audit,metric]=await Promise.all([
     hasAny(['audit.view'])?api('/api/admin/audit').catch(e=>({error:e.message})):Promise.resolve([]),
     hasAny(['metrics.view'])?api('/api/admin/metrics').catch(e=>({error:e.message})):Promise.resolve({})
   ]);
   const events=Array.isArray(audit)?audit:(audit.events||[]);
-  return hero()+'<p class="moduleIntro">Immutable privileged activity and scoped operational metrics.</p>'+(audit.error?'<div class="notice">'+esc(audit.error)+'</div>':rows(events,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.event_code||'Admin event')+'</strong><span class="status">'+esc(x.created_at||'')+'</span></div><span class="muted">'+esc(x.permission_code||'')+' '+esc(x.reason||'')+'</span></div>'))+(metric.error?'<div class="notice">'+esc(metric.error)+'</div>':'');
+  const activity=audit.error?'<div class="notice">'+esc(audit.error)+'</div>':rows(events,x=>'<div class="row adminAuditEvent"><div class="rowHeader"><strong>'+esc(adminEventLabel(x.event_code))+'</strong><time class="adminEventTime">'+esc(adminEventTime(x.created_at))+'</time></div><span class="muted">'+esc(readableCode(x.permission_code||'Admin scope'))+(x.reason?' · '+esc(x.reason):'')+'</span><details class="adminAuditTechnical"><summary>Audit reference</summary><code>'+esc(x.event_code||'admin_event')+'</code></details></div>');
+  return hero()+'<p class="moduleIntro">A readable overview of operational activity. Technical audit references remain available inside each event.</p><div class="sectionTitle"><h3>Operational snapshot</h3></div>'+(metric.error?'<div class="notice">'+esc(metric.error)+'</div>':auditMetricCards(metric))+'<div class="sectionTitle"><h3>Recent Admin activity</h3></div>'+activity;
 }
 function delegationForm(){
   const allowedRanks=(state.catalog?.ranks||[]).filter(r=>(state.catalog?.delegable_roles||[]).includes(r.code));
   const defaultRank=allowedRanks.some(r=>r.code==='specialist')?'specialist':(allowedRanks.at(-1)?.code||'');
   const functions=(state.catalog?.functions||[]).filter(f=>f.can_delegate);
   const territories=state.overview?.territories||[];
-  return '<form id="delegateForm" class="adminForm"><h3>Delegate responsibility</h3><label>Account email<input name="target_email" type="email" required autocomplete="off"></label><label>Rank<select name="admin_role" id="delegateRole">'+allowedRanks.map(r=>'<option value="'+esc(r.code)+'" '+(r.code===defaultRank?'selected':'')+'>'+esc(r.label)+'</option>').join('')+'</select></label><label>Territory / scope<select name="territory_id" id="delegateTerritory"><option value="">Country scope / not applicable</option>'+territories.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join('')+'</select></label><div><strong>Functions</strong><div id="functionGrid" class="functionGrid"></div></div><label>Reason<textarea name="reason" required placeholder="Why this responsibility is being delegated"></textarea></label><button class="primary" type="submit">Delegate functions</button><div id="delegateResult"></div></form>';
+  return '<details class="adminDisclosure delegationDisclosure"><summary><span class="adminDisclosureCopy"><small>TEAM ACTION</small><strong>Delegate responsibility</strong><span>Appoint a person and choose only the functions they need</span></span></summary><div class="adminDisclosureBody"><form id="delegateForm" class="adminForm"><label>Account email<input name="target_email" type="email" required autocomplete="off"></label><label>Rank<select name="admin_role" id="delegateRole">'+allowedRanks.map(r=>'<option value="'+esc(r.code)+'" '+(r.code===defaultRank?'selected':'')+'>'+esc(r.label)+'</option>').join('')+'</select></label><label>Territory / scope<select name="territory_id" id="delegateTerritory"><option value="">Country scope / not applicable</option>'+territories.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.name)+'</option>').join('')+'</select></label><div><strong>Functions</strong><div id="functionGrid" class="functionGrid"></div></div><label>Reason<textarea name="reason" required placeholder="Why this responsibility is being delegated"></textarea></label><button class="primary" type="submit">Delegate functions</button><div id="delegateResult"></div></form></div></details>';
 }
 function drawFunctionChoices(){
   const role=document.getElementById('delegateRole')?.value||'specialist';
@@ -673,7 +698,10 @@ async function teamPanel(){
 }
 function adminSettingsPanel(){
   const account=state.me?.account||{},a=highestAssignment(),country=account.country_code||a?.country_code||'PH',flag=country==='PH'?'🇵🇭':country==='RO'?'🇷🇴':'🌐';
-  return hero()+'<p class="moduleIntro">Settings and identity for this delegated Admin profile.</p><section class="card adminSettingsIdentity"><div class="sectionTitle"><h3>Admin identity</h3></div><div class="row"><div><strong>'+flag+' '+esc(country==='PH'?'Philippines':country==='RO'?'Romania':country)+'</strong><span class="muted">Issuing country · stable identity attribute</span></div></div><div class="row"><div><strong>'+esc(account.admin_profile_id||'Admin ID preparing…')+'</strong><span class="muted">Admin Profile ID · derived from '+esc(account.personal_id||'Personal ID')+'</span></div></div><div class="row"><div><strong>'+esc(a?rankLabel(a.effective_rank||a.authority_rank||a.admin_role):'Admin')+'</strong><span class="muted">Authority is delegated and cannot be increased from Settings.</span></div></div></section><section class="card"><h3>Admin preferences</h3><p class="muted">Support language, AI assistance and notification preferences will live here. Operational permissions remain controlled by Team & Delegation and the audit trail.</p><a class="adminButton" href="/">Open personal Account Settings</a></section>';
+  return hero()+'<p class="moduleIntro">Only settings belonging to your delegated Admin access appear here.</p>'
+    +'<details class="adminDisclosure adminSettingsIdentity"><summary><span class="adminDisclosureCopy"><small>IDENTITY</small><strong>Admin profile identity</strong><span>'+flag+' '+esc(country==='PH'?'Philippines':country==='RO'?'Romania':country)+' · '+esc(a?rankLabel(a.effective_rank||a.authority_rank||a.admin_role):'Admin')+'</span></span></summary><div class="adminDisclosureBody"><div class="row"><div><strong>'+esc(account.admin_profile_id||'Admin ID preparing…')+'</strong><span class="muted">Admin Profile ID · derived from '+esc(account.personal_id||'Personal ID')+'</span></div></div><div class="row"><div><strong>'+esc(a?rankLabel(a.effective_rank||a.authority_rank||a.admin_role):'Admin')+'</strong><span class="muted">Authority is delegated and cannot be increased from Settings.</span></div></div></div></details>'
+    +'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>PREFERENCES</small><strong>Admin preferences</strong><span>Support language, AI assistance and Admin notifications</span></span></summary><div class="adminDisclosureBody"><p class="muted">Operational permissions remain controlled by Team & Delegation and are recorded in the audit trail.</p></div></details>'
+    +'<section class="card adminSettingsBoundary"><h3>Personal account settings</h3><p class="muted">Your name, photo, password, email verification, Money & Banking and profile onboarding belong to your personal account—not to Admin.</p><a class="adminButton" href="/?account_settings=home">Open personal Account Settings</a></section>';
 }
 async function wireTeam(){
   drawFunctionChoices();
@@ -688,17 +716,26 @@ async function wireTeam(){
 }
 async function renderActive(){
   const p=document.getElementById('adminPanel');if(!p)return;
-  p.innerHTML='<div class="adminLoading">Loading scoped Admin data…</div>';
-  if(state.active==='overview')p.innerHTML=overviewPanel();
-  else if(state.active==='profiles')p.innerHTML=profilesPanel();
-  else if(state.active==='delivery'){p.innerHTML=await deliveryPanel();wireDelivery()}
-  else if(state.active==='support'){p.innerHTML=await queuePanel('support');bindSupportQueue()}
-  else if(state.active==='safety')p.innerHTML=await queuePanel('safety');
-  else if(state.active==='territories')p.innerHTML=territoriesPanel();
-  else if(state.active==='finance'){p.innerHTML=await financePanel();await wireFinance()}
-  else if(state.active==='audit')p.innerHTML=await auditPanel();
-  else if(state.active==='team'){p.innerHTML=await teamPanel();await wireTeam()}
-  else if(state.active==='settings')p.innerHTML=adminSettingsPanel();
+  const active=state.active,request=++state.renderRequest;
+  p.setAttribute('aria-busy','true');
+  const loading=setTimeout(()=>{if(request===state.renderRequest)p.innerHTML='<div class="adminLoading">Loading '+esc(modules.find(m=>m.id===active)?.label||'Admin data')+'…</div>'},180);
+  try{
+    let html='',wire=null;
+    if(active==='overview')html=overviewPanel();
+    else if(active==='profiles')html=profilesPanel();
+    else if(active==='delivery'){html=await deliveryPanel();wire=wireDelivery}
+    else if(active==='support'){html=await queuePanel('support');wire=bindSupportQueue}
+    else if(active==='safety')html=await queuePanel('safety');
+    else if(active==='territories')html=territoriesPanel();
+    else if(active==='finance'){html=await financePanel();wire=wireFinance}
+    else if(active==='audit')html=await auditPanel();
+    else if(active==='team'){html=await teamPanel();wire=wireTeam}
+    else if(active==='settings')html=adminSettingsPanel();
+    if(request!==state.renderRequest)return;
+    clearTimeout(loading);p.innerHTML=html;p.dataset.module=active;
+    if(wire)await wire();
+  }catch(error){if(request!==state.renderRequest)return;throw error}
+  finally{clearTimeout(loading);if(request===state.renderRequest)p.removeAttribute('aria-busy')}
 }
 async function loadBase(){
   const bootstrap=await api('/api/admin/bootstrap');

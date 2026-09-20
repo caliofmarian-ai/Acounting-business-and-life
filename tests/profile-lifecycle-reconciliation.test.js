@@ -35,5 +35,7 @@ test('profile cards expose one lifecycle action for each state',()=>{
   assert.match(shell,/Disabled · ID and history preserved/);
   assert.match(shell,/Continue onboarding/);
   assert.match(shell,/Start onboarding/);
-  assert.match(shell,/label=enabled\?'Disable':reactivable\?'Reactivate'/);
+  assert.match(shell,/if\(enabled\)\{action=.*label='Disable'/);
+  assert.match(shell,/else if\(!emailReady\).*label='Verify email first'/);
+  assert.match(shell,/else if\(reactivable\).*label='Reactivate'/);
 });
