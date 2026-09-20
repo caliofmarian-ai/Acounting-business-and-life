@@ -46,6 +46,17 @@ test('email verification reports real external delivery state',()=>{
   assert.match(authUi,/preview_verify_url/);
 });
 
+test('email verification never silently switches or disguises an existing account session',()=>{
+  assert.match(authServer,/verification_session: verificationSession/);
+  assert.match(authServer,/'different_account'/);
+  assert.match(authServer,/'same_account'/);
+  assert.match(authServer,/'signed_out'/);
+  assert.match(authUi,/Business & Life did not switch accounts automatically/);
+  assert.match(authUi,/Sign out and sign in to verified account/);
+  assert.match(authUi,/renderVerificationResult\(r\.verification_session\)/);
+  assert.doesNotMatch(authUi,/Email verified successfully\.['\"]\);location\.reload\(\)/);
+});
+
 test('Support message composer contains voice and translation controls in one writing surface',()=>{
   assert.match(supportUi,/supportComposer/);
   assert.match(supportUi,/supportDescription/);
