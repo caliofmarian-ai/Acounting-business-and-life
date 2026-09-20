@@ -54,9 +54,10 @@ test('mobile launcher preserves Help and More while Admin stays in the profile s
   assert.match(loader,/Could not load this feature/);
 });
 
-test('governance can decorate a drawer that was already open before lazy import',()=>{
+test('governance loads from account bootstrap without requiring the retired avatar menu',()=>{
   assert.match(governanceUi,/await refreshGov\(\);decorateDrawer\(\)/);
-  assert.match(loader,/abl:drawer-rendered/);
+  assert.match(loader,/mountMerchantMobileTools\(initialRole,initialState\.surface\|\|'account'\);\n\s*loadDrawerFeatures\(\)/);
+  assert.doesNotMatch(loader,/addEventListener\('abl:drawer-rendered'/);
 });
 
 test('business accounting is loaded only for relevant active profiles',()=>{

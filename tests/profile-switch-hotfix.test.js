@@ -26,7 +26,7 @@ test('Admin authority is exposed separately from public profiles',()=>{
   assert.match(shell,/super_admin:'Super Admin'/);
   assert.match(shell,/profileApi\('\/api\/admin\/me'\)/);
   assert.match(shell,/id="adminWorkspaceButton"/);
-  assert.match(shell,/Delegated administrative access — not a personal or commercial profile/);
+  assert.match(shell,/Delegated administration — separate from your personal and commercial profiles/);
   assert.match(shell,/window\.location\.assign\('\/admin'\)/);
   assert.doesNotMatch(shell,/data-admin-profile/);
   assert.doesNotMatch(shell,/ROLE_ORDER = \[[^\]]*super_admin/);

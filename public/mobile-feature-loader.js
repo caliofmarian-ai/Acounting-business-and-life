@@ -227,6 +227,7 @@ function boot(){
   const initialState=window.BusinessLifeProfileState||{};
   const initialRole=initialState.activeRole||'';
   mountMerchantMobileTools(initialRole,initialState.surface||'account');
+  loadDrawerFeatures();
   if(initialState.surface==='profile')loadAccountingForRole(initialRole,initialState.surface);
   document.addEventListener('abl:profile-state',event=>{
     const role=event.detail?.activeRole||'';
@@ -236,7 +237,6 @@ function boot(){
     if(surface==='profile')loadAccountingForRole(role,surface);
   });
   document.addEventListener('abl:business-workspace-changed',()=>{const state=window.BusinessLifeProfileState||{};mountMerchantMobileTools(state.activeRole||'',state.surface||'account')});
-  document.addEventListener('abl:drawer-rendered',()=>loadDrawerFeatures(),{passive:true});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden){const state=window.BusinessLifeProfileState||{};mountLaunchers();mountMerchantMobileTools(state.activeRole||'',state.surface||'account')}});
 }
 
