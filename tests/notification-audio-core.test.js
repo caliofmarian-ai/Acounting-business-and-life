@@ -22,12 +22,21 @@ test('notification audio maps special and general slots to durable object keys',
   assert.equal(notificationAudioDescriptor({soundSlot:'general.warning',variant:3}).key,'notifications/en-PH/set3/warning.mp3');
 });
 
-test('Filipino notification locale falls back explicitly to the currently available English audio assets',()=>{
-  const x=notificationAudioDescriptor({soundSlot:'general.info',variant:2,locale:'fil-PH'});
-  assert.equal(x.requested_locale,'fil-PH');
-  assert.equal(x.audio_locale,'en-PH');
-  assert.equal(x.locale_fallback,true);
-  assert.equal(x.key,'notifications/en-PH/set2/info.mp3');
+test('Filipino notification locale uses localized Set 2 and falls back to English for Sets 1 and 3',()=>{
+  const localized=notificationAudioDescriptor({soundSlot:'general.info',variant:2,locale:'fil-PH'});
+  assert.equal(localized.requested_locale,'fil-PH');
+  assert.equal(localized.audio_locale,'fil-PH');
+  assert.equal(localized.locale_fallback,false);
+  assert.equal(localized.key,'notifications/fil-PH/set2/info.mp3');
+
+  const alias=notificationAudioDescriptor({soundSlot:'merchant.new_order',variant:2,locale:'tl-PH'});
+  assert.equal(alias.audio_locale,'fil-PH');
+  assert.equal(alias.key,'notifications/fil-PH/set2/merchant.mp3');
+
+  const fallback=notificationAudioDescriptor({soundSlot:'general.info',variant:1,locale:'fil-PH'});
+  assert.equal(fallback.audio_locale,'en-PH');
+  assert.equal(fallback.locale_fallback,true);
+  assert.equal(fallback.key,'notifications/en-PH/set1/info.mp3');
 });
 
 test('unknown slots are rejected instead of becoming arbitrary bucket keys',()=>{

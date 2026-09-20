@@ -40,8 +40,8 @@ export function notificationAudioDescriptor({soundSlot,variant,locale='en-PH'}={
   const normalizedVariant=normalizeNotificationSoundVariant(variant);
   const leaf=AUDIO_LEAF_BY_SLOT.get(slot);
   if(!leaf)throw Object.assign(new Error('Notification sound slot has no audio asset'),{status:404});
-  const requestedLocale=/^fil(-|$)/i.test(String(locale||''))?'fil-PH':'en-PH';
-  const audioLocale='en-PH';
+  const requestedLocale=/^(fil|tl)(-|$)/i.test(String(locale||''))?'fil-PH':'en-PH';
+  const audioLocale=requestedLocale==='fil-PH'&&normalizedVariant===2?'fil-PH':'en-PH';
   return{
     sound_slot:slot,
     variant:normalizedVariant,

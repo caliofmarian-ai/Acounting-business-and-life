@@ -66,7 +66,7 @@ const COPY={
       urgent:'Heads up! Hindi na ito puwedeng maghintay.',
       finance:'Good news. Dumating na ang bayad mo.',
       warning:'Oops. May kailangan lang ayusin.',
-      merchant:'Bagong order! Oras nang pasayahin ang isang customer.',
+      merchant:'Bagong order! Oras nang pasayahin ang customer.',
       courier:'Bagong delivery! Handa na ang susunod mong biyahe.'
     },
     3:{
