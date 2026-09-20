@@ -138,12 +138,12 @@ export async function recordMonetizableCompletion(db,input={}){
     INSERT INTO service_monetization_entitlements(
       country_code,service_scope,subject_type,subject_id,territory_id,promo_duration_days,
       promo_started_at,promo_ends_at,first_event_type,first_event_id
-    ) VALUES('PH',$1,$2,$3,$4,$5,$6::timestamptz,$6::timestamptz+($5::text||' days')::interval,$7,$8)
+    ) VALUES('PH',$1,$2,$3,$4,$5::integer,$6::timestamptz,$6::timestamptz+make_interval(days => $5::integer),$7,$8)
     ON CONFLICT(country_code,service_scope,subject_type,subject_id) DO UPDATE SET
       territory_id=COALESCE(service_monetization_entitlements.territory_id,EXCLUDED.territory_id),
-      promo_duration_days=$5,
+      promo_duration_days=$5::integer,
       promo_started_at=LEAST(service_monetization_entitlements.promo_started_at,EXCLUDED.promo_started_at),
-      promo_ends_at=LEAST(service_monetization_entitlements.promo_started_at,EXCLUDED.promo_started_at)+($5::text||' days')::interval,
+      promo_ends_at=LEAST(service_monetization_entitlements.promo_started_at,EXCLUDED.promo_started_at)+make_interval(days => $5::integer),
       first_event_type=CASE WHEN EXCLUDED.promo_started_at<service_monetization_entitlements.promo_started_at THEN EXCLUDED.first_event_type ELSE service_monetization_entitlements.first_event_type END,
       first_event_id=CASE WHEN EXCLUDED.promo_started_at<service_monetization_entitlements.promo_started_at THEN EXCLUDED.first_event_id ELSE service_monetization_entitlements.first_event_id END,
       updated_at=NOW()
