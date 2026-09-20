@@ -8,9 +8,10 @@ const MERCHANT_ALIAS='dropi.deliveries+testmerchant@gmail.com';
 const SUPER_ADMIN_ALIAS='dropi.deliveries+testsuperadmin@gmail.com';
 const CUSTOMER_WAVE='customer_onboarding_v1';
 const MERCHANT_CATALOG_WAVE='merchant_catalog_seed_v1';
+const MERCHANT_EXPERIENCE_WAVE='merchant_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -1075,6 +1076,149 @@ async function runCustomerExperienceAcceptance({pool,base,secret}){
   };
 }
 
+const MERCHANT_SUPPORT_SUBJECT='Controlled QA Merchant support E2E';
+
+async function ensureQaMerchantSupportTicket({pool,base,token,accountId,orderId}){
+  const existing=await pool.query(
+    `SELECT id FROM support_tickets
+      WHERE requester_account_id=$1 AND subject=$2
+      ORDER BY id DESC LIMIT 1`,
+    [Number(accountId),MERCHANT_SUPPORT_SUBJECT]
+  );
+  let ticketId=Number(existing.rows[0]?.id||0);
+  if(!ticketId){
+    const created=await requestJson(base,'/api/support/tickets',{
+      method:'POST',token,
+      body:{
+        category:'marketplace_order',
+        subject:MERCHANT_SUPPORT_SUBJECT,
+        description:'Controlled internal QA Merchant support request linked to the completed Marketplace order. No real merchant issue.',
+        requested_destination:'support',
+        related_type:'order',
+        related_id:Number(orderId),
+        source_language:'en-PH'
+      }
+    });
+    expectStatus(created,201,'Merchant Support ticket create');
+    ticketId=Number(created.json?.id);
+  }
+  if(!ticketId)throw new Error('Merchant Support ticket was not created.');
+
+  const detail=await requestJson(base,`/api/support/tickets/${ticketId}`,{token});
+  expectStatus(detail,200,'Merchant Support ticket detail');
+  if(detail.json?.category!=='marketplace_order'||Number(detail.json?.related_id)!==Number(orderId)){
+    throw new Error('Merchant Support ticket lost its Marketplace order context.');
+  }
+
+  const mine=await requestJson(base,'/api/support/tickets/mine',{token});
+  expectStatus(mine,200,'Merchant Support My tickets');
+  if(!(Array.isArray(mine.json)?mine.json:[]).some(x=>Number(x.id)===ticketId)){
+    throw new Error('Merchant Support ticket is missing from My Support.');
+  }
+  return ticketId;
+}
+
+async function verifyMerchantNotifications({base,token,orderId}){
+  const inbox=await requestJson(base,'/api/notifications?limit=100',{token});
+  expectStatus(inbox,200,'Merchant notification inbox');
+  const rows=(Array.isArray(inbox.json)?inbox.json:[]).filter(
+    x=>x.entity_type==='order'&&Number(x.entity_id)===Number(orderId)
+  );
+  for(const code of ['order.created','order.customer_checked_in','order.payment_confirmed']){
+    if(!rows.some(x=>x.event_code===code))throw new Error('Merchant notification lifecycle is missing '+code+'.');
+  }
+  return rows.length;
+}
+
+async function runMerchantExperienceAcceptance({pool,base,secret}){
+  const marketplace=await runCustomerMarketplaceE2E({pool,base,secret});
+  if(marketplace.status!=='PASS')throw new Error('Customer Marketplace prerequisite did not pass.');
+  const orderId=Number(marketplace.order_id);
+  if(!orderId)throw new Error('Merchant Experience acceptance requires a completed QA order.');
+
+  const merchant=await qaAccountSession({
+    pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Merchant Experience QA'
+  });
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Merchant Experience QA'});
+
+  const me=await requestJson(base,'/api/me',{token:merchant.token});
+  expectStatus(me,200,'Merchant Account Home');
+  const merchantProfile=(me.json?.profiles||[]).find(x=>x.role==='merchant');
+  const business=(me.json?.businesses||[]).find(x=>x.name==='Business & Life QA Fish Kitchen')
+    ||(me.json?.businesses||[])[0];
+  if(me.json?.account?.active_role!=='merchant'||!merchantProfile?.enabled||merchantProfile?.status!=='active'){
+    throw new Error('Merchant Account Home does not resolve the active Merchant profile.');
+  }
+  if(!business?.id)throw new Error('Merchant Experience business workspace is unavailable.');
+  const businessId=Number(business.id);
+
+  const finance=await requestJson(base,'/api/accounting/finance-overview',{token:merchant.token});
+  expectStatus(finance,200,'Merchant Finance overview');
+  if(finance.json?.role!=='merchant'||Number(finance.json?.business?.id)!==businessId){
+    throw new Error('Merchant Finance resolved the wrong economic workspace.');
+  }
+  if(Number(finance.json?.commercial?.completed_merchandise_value||0)<185
+    ||Number(finance.json?.cash_evidence?.confirmed_merchandise_received||0)<185){
+    throw new Error('Merchant Finance does not reconcile the controlled completed order and confirmed payment.');
+  }
+  if(Number(finance.json?.profitability?.completed_order_revenue||0)<185
+    ||Number(finance.json?.profitability?.line_count||0)<4){
+    throw new Error('Merchant profitability evidence does not include the controlled Marketplace order.');
+  }
+
+  const settings=await requestJson(base,'/api/settings/finance',{token:merchant.token});
+  expectStatus(settings,200,'Merchant Profile Settings finance state');
+  const settingsProfile=(settings.json?.profiles||[]).find(x=>x.role==='merchant');
+  if(settings.json?.active_role!=='merchant'||!settingsProfile?.enabled
+    ||!(settings.json?.businesses||[]).some(x=>Number(x.id)===businessId)
+    ||!settings.json?.account_money){
+    throw new Error('Merchant Settings does not preserve profile, business and shared account Money & Banking context.');
+  }
+
+  const notificationCount=await verifyMerchantNotifications({
+    base,token:merchant.token,orderId
+  });
+  const supportTicketId=await ensureQaMerchantSupportTicket({
+    pool,base,token:merchant.token,accountId:merchant.accountId,orderId
+  });
+
+  const storefront=await requestJson(base,`/api/merchant/storefront?business_id=${businessId}`,{token:merchant.token});
+  expectStatus(storefront,200,'Merchant private storefront persistence');
+  if(!(storefront.json?.products||[]).some(x=>x.name==='QA Fish Soup')){
+    throw new Error('Merchant catalog did not persist after the Customer order flow.');
+  }
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+  expectStatus(logout,200,'Merchant Experience logout');
+  const relogin=await loginWithCredential({
+    base,email:MERCHANT_ALIAS,password:merchant.password,label:'Merchant Experience final re-login'
+  });
+  const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
+  expectStatus(finalLogout,200,'Merchant Experience final logout');
+
+  return{
+    status:'PASS',
+    wave:MERCHANT_EXPERIENCE_WAVE,
+    account_role:'merchant',
+    business_id:businessId,
+    order_id:orderId,
+    account_home:true,
+    catalog_persisted:true,
+    finance_reconciled:true,
+    confirmed_merchandise_received_minimum:185,
+    settings_context:true,
+    shared_account_money_context:true,
+    notification_lifecycle:true,
+    notification_events:notificationCount,
+    support_ticket_id:supportTicketId,
+    support:true,
+    logout_relogin:true,
+    supplier_procurement_e2e:'HOLD_FOR_SUPPLIER_WAVE',
+    delivery_e2e:'HOLD_FOR_COURIER_WAVE',
+    live_online_payment:'HOLD_FOR_PAYMONGO_LIVE_GATE'
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -1083,7 +1227,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   try{
     const result=config.wave===MERCHANT_CATALOG_WAVE
       ?await runMerchantCatalogSeed({pool,base,secret:config.secret})
-      :config.wave===CUSTOMER_MARKETPLACE_WAVE
+      :config.wave===MERCHANT_EXPERIENCE_WAVE
+        ?await runMerchantExperienceAcceptance({pool,base,secret:config.secret})
+        :config.wave===CUSTOMER_MARKETPLACE_WAVE
         ?await runCustomerMarketplaceE2E({pool,base,secret:config.secret})
         :config.wave===CUSTOMER_EXPERIENCE_WAVE
           ?await runCustomerExperienceAcceptance({pool,base,secret:config.secret})
@@ -1099,5 +1245,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
