@@ -24,9 +24,9 @@ test('Admin authority is profile-first and never injected into the topbar',()=>{
   assert.doesNotMatch(adminUi,/refreshAdminButton/);
 });
 
-test('governance remains reachable without duplicate topbar Admin',()=>{
-  assert.match(governanceUi,/govDrawerAdmin/);
-  assert.match(governanceUi,/Governance & approvals/);
+test('legacy governance does not inject a second Admin entry into the avatar drawer',()=>{
+  assert.doesNotMatch(governanceUi,/govDrawerAdmin/);
+  assert.doesNotMatch(governanceUi,/govAdminOpen/);
   assert.match(governanceUi,/openAdminConsole/);
 });
 
