@@ -361,6 +361,9 @@ export async function ensureSupplierCommercialV3Schema(pool){
     CREATE UNIQUE INDEX IF NOT EXISTS purchase_invoice_document_unique
       ON purchase_invoice_evidence(business_id,supplier_account_id,document_number)
       WHERE supplier_account_id IS NOT NULL AND document_number<>'';
+    CREATE UNIQUE INDEX IF NOT EXISTS purchase_invoice_external_document_unique
+      ON purchase_invoice_evidence(business_id,supply_party_id,document_number)
+      WHERE supply_party_id IS NOT NULL AND document_number<>'';
     CREATE INDEX IF NOT EXISTS purchase_invoice_po_idx
       ON purchase_invoice_evidence(purchase_order_id,evidence_status,due_date);
 
