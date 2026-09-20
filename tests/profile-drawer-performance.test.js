@@ -27,8 +27,16 @@ test('drawer never shows an incomplete profile list while Admin authority is loa
   assert.match(shell,/Loading account and Admin access/);
   assert.match(shell,/Preparing the complete profile list/);
   const open=shell.slice(shell.indexOf('async function openDrawer'),shell.indexOf('function closeDrawer'));
-  assert.match(open,/if\(snapshot\?\.account&&!profileStale&&!adminStale\)renderDrawer\(\)/);
+  assert.match(open,/const hasCompleteSnapshot=Boolean\(snapshot\?\.account&&adminContextFetchedAt\)/);
+  assert.match(open,/if\(hasCompleteSnapshot\)renderDrawer\(\)/);
   assert.match(open,/if\(adminStale\)tasks\.push\(refreshAdminContext\(\)\)/);
+});
+
+test('a stale complete snapshot stays visible while the drawer refreshes in background',()=>{
+  const open=shell.slice(shell.indexOf('async function openDrawer'),shell.indexOf('function closeDrawer'));
+  assert.match(open,/if\(hasCompleteSnapshot\)renderDrawer\(\)/);
+  assert.match(open,/if\(tasks\.length\)await Promise\.all\(tasks\)/);
+  assert.match(open,/renderDrawer\(\)/);
 });
 
 test('account security extensions mount only in their dedicated settings route',()=>{
