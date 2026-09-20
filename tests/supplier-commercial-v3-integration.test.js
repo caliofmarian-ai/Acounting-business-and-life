@@ -8,6 +8,7 @@ const supplierUrl=new URL('../server-suppliers.js',import.meta.url);
 const v3Url=new URL('../server-supplier-commercial-v3.js',import.meta.url);
 const supplier=readFileSync(supplierUrl,'utf8');
 const v3=readFileSync(v3Url,'utf8');
+const accounting=readFileSync(new URL('../server-business-accounting.js',import.meta.url),'utf8');
 
 for(const [label,url] of [['Supplier server',supplierUrl],['Supplier Commercial V3 server',v3Url]]){
   test(label+' has valid JavaScript syntax',()=>{
@@ -39,4 +40,24 @@ test('Supplier payment uses current commercial outstanding rather than blindly P
 test('V3 does not claim lot quarantine fully blocks aggregate inventory sales',()=>{
   assert.match(v3,/aggregate_inventory_sale_blocking:false/);
   assert.match(v3,/not yet fully lot-allocated for every sale/);
+});
+
+
+test('both active Supplier receipt routes create canonical traceable lots',()=>{
+  assert.match(supplier,/recordPoReceiptLot\(client/);
+  assert.match(accounting,/recordPoReceiptLot\(client/);
+  assert.match(accounting,/lotBaseUnits:receivedInventoryUnits/);
+  assert.match(accounting,/lotBaseUnit/);
+});
+
+test('both Supplier payment routes use current commercial outstanding including confirmed credits',()=>{
+  assert.match(supplier,/commercialOutstandingForPo\(pool,id\)/);
+  assert.match(accounting,/commercialOutstandingForPo\(pool,id\)/);
+  assert.match(accounting,/Payment exceeds current Supplier commercial outstanding amount/);
+  assert.doesNotMatch(accounting,/Payment exceeds PO outstanding amount/);
+});
+
+test('active multi-business receipt keeps Inventory conversion and lot base unit aligned',()=>{
+  assert.match(accounting,/target\.base_unit\|\|target\.unit\|\|x\.base_unit_snapshot/);
+  assert.match(accounting,/receivedInventoryUnits/);
 });
