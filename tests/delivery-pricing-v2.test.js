@@ -130,6 +130,19 @@ test('Admin assignment server enforces quote vehicle capacity and radius outside
   assert.doesNotMatch(ui,/Vehicle override \(optional\)/);
 });
 
+test('Delivery checkout rejects disabled storefronts and invalid quote ids before PostgreSQL bigint queries',()=>{
+  const start=server.indexOf("app.post('/api/marketplace/checkout'");
+  const end=server.indexOf("app.put('/api/delivery/store-location'",start);
+  assert.ok(start>=0&&end>start);
+  const checkout=server.slice(start,end);
+  assert.match(checkout,/Number\.isInteger\(businessId\)/);
+  assert.match(checkout,/SELECT delivery_enabled FROM merchant_storefronts/);
+  assert.match(checkout,/Delivery is not enabled for this Merchant/);
+  assert.match(checkout,/Number\.isInteger\(quoteId\)/);
+  assert.match(checkout,/Delivery quote is missing or expired/);
+  assert.doesNotMatch(checkout,/\[quoteId,me\.account\.id,Number\(req\.body\.business_id\)\]/);
+});
+
 test('completed Delivery monetization event uses delivery_fee as gross fee base',()=>{
   assert.match(server,/serviceScope:'delivery'[\s\S]*grossValue:x\.delivery_fee/);
 });
