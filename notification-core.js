@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { notificationAttention } from './notification-attention-policy.js';
 
 const CATEGORIES=new Set(['operational','security','legal','support','compliance','marketing']);
 const PRIORITIES=new Set(['low','normal','high','urgent']);
@@ -387,8 +388,9 @@ async function sendQueuedPush(pool,row){
   const webpush=(await import('web-push')).default;
   webpush.setVapidDetails(subject,pub,priv);
   const template=await loadTemplate(pool,row.event_code,row.locale,'push',row.data_json);
+  const attention=notificationAttention({eventCode:row.event_code,roleHint:row.role_hint,priority:row.priority,category:row.category,data:row.data_json});
   const targetUrl=row.entity_type==='support_ticket'&&row.entity_id?`/?support_ticket=${encodeURIComponent(row.entity_id)}`:'/';
-  const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id});
+  const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id,attention});
   let successes=0,lastError='';
   for(const sub of subs){
     try{
@@ -404,7 +406,7 @@ async function sendQueuedPush(pool,row){
 
 export async function processNotificationDeliveries(pool,{limit=20}={}){
   const {rows}=await pool.query(`
-    SELECT d.id,d.channel,d.attempt_count,r.account_id,r.locale,e.event_code,e.category,e.entity_type,e.entity_id,e.data_json
+    SELECT d.id,d.channel,d.attempt_count,r.account_id,r.locale,r.role_hint,e.event_code,e.category,e.priority,e.entity_type,e.entity_id,e.data_json
     FROM notification_deliveries d
     JOIN notification_recipients r ON r.id=d.recipient_id
     JOIN notification_events e ON e.id=r.event_id
@@ -436,5 +438,6 @@ export async function processNotificationDeliveries(pool,{limit=20}={}){
 
 export async function renderNotification(pool,row,channel='in_app'){
   const data=row.data_json&&typeof row.data_json==='object'?row.data_json:{};
-  return loadTemplate(pool,row.event_code,row.locale||'en-PH',channel,data);
+  const message=await loadTemplate(pool,row.event_code,row.locale||'en-PH',channel,data);
+  return {...message,attention:notificationAttention({eventCode:row.event_code,roleHint:row.role_hint,priority:row.priority,category:row.category,data})};
 }

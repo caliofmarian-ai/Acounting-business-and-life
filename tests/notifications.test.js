@@ -73,3 +73,19 @@ test('marketing notifications default to opt-in while mandatory events override 
   assert.match(core,/mandatory&&emailDefault/);
   assert.match(core,/mandatory&&pushDefault/);
 });
+
+
+test('notification attention metadata is attached centrally to inbox and Web Push payloads',()=>{
+  assert.match(core,/notificationAttention/);
+  assert.match(core,/role_hint,e\.event_code,e\.category,e\.priority/);
+  assert.match(core,/entity_id:row\.entity_id,attention/);
+  assert.match(core,/\.\.\.message,attention:notificationAttention/);
+  assert.match(server,/r\.role_hint,e\.id event_id/);
+  assert.match(server,/attention:msg\.attention/);
+});
+
+test('attention metadata plumbing does not yet enable client-side sound playback',()=>{
+  assert.doesNotMatch(ui,/new Audio\(/);
+  assert.doesNotMatch(sw,/new Audio\(/);
+  assert.doesNotMatch(sw,/attention\.vibrate/);
+});
