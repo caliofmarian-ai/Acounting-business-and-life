@@ -14,10 +14,11 @@ const MERCHANT_CATALOG_WAVE='merchant_catalog_seed_v1';
 const MERCHANT_EXPERIENCE_WAVE='merchant_experience_v1';
 const SUPPLIER_EXPERIENCE_WAVE='supplier_experience_v1';
 const SUPPLIER_DOMAIN_V2_WAVE='supplier_domain_v2';
+const SUPPLIER_COMMERCIAL_V3_WAVE='supplier_commercial_v3';
 const COURIER_EXPERIENCE_WAVE='courier_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -1944,6 +1945,286 @@ async function runSupplierDomainV2Acceptance({pool,base,secret}){
   };
 }
 
+
+async function runSupplierCommercialV3Acceptance({pool,base,secret}){
+  const baseline=await runSupplierDomainV2Acceptance({pool,base,secret});
+  if(baseline.status!=='PASS')throw new Error('Supplier Domain V2 prerequisite did not pass.');
+
+  const [supplier,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPPLIER_ALIAS,role:'supplier',label:'Supplier Commercial V3 QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Supplier Commercial V3 Merchant QA'})
+  ]);
+  await ensureActiveRole({base,token:supplier.token,role:'supplier',label:'Supplier Commercial V3 QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Supplier Commercial V3 Merchant QA'});
+
+  const merchantBusinessId=Number(baseline.merchant_business_id);
+  if(!merchantBusinessId)throw new Error('Supplier Commercial V3 merchant business context is missing.');
+
+  const terms=await requestJson(base,`/api/supplier/relationships/${merchantBusinessId}/terms`,{
+    method:'PUT',token:supplier.token,
+    body:{paymentTermCode:'net_30',creditLimit:10000,currencyCode:'PHP',note:'Controlled QA Net 30 terms'}
+  });
+  expectStatus(terms,200,'Supplier Commercial V3 terms');
+  if(terms.json?.payment_term_code!=='net_30'||Number(terms.json?.credit_limit)!==10000){
+    throw new Error('Supplier Commercial V3 terms did not persist.');
+  }
+
+  const supplierProfile=await requestJson(base,'/api/supplier/me',{token:supplier.token});
+  expectStatus(supplierProfile,200,'Supplier Commercial V3 catalog discovery');
+  const productName='QA Commercial V3 Pack';
+  let item=(supplierProfile.json?.catalog||[]).find(x=>x.product_name===productName);
+  if(!item){
+    const created=await requestJson(base,'/api/supplier/catalog',{
+      method:'POST',token:supplier.token,
+      body:{
+        product_name:productName,sku:'QA-SUP-V3-PACK-001',unit_name:'pack',base_unit:'unit',
+        base_units_per_pack:1,price_per_pack:250,minimum_packs:1,availability_status:'available',lead_time_days:1
+      }
+    });
+    expectStatus(created,201,'Supplier Commercial V3 catalog create');
+    item=created.json;
+  }
+  if(!item?.id)throw new Error('Supplier Commercial V3 catalog item is unavailable.');
+
+  const itemV2=await requestJson(base,`/api/supplier/catalog/${Number(item.id)}/v2`,{
+    method:'PUT',token:supplier.token,
+    body:{handling_mode:'sealed_resale',price_tiers:[],package_levels:[]}
+  });
+  expectStatus(itemV2,200,'Supplier Commercial V3 handling mode');
+
+  const inventory=await pool.query(
+    `INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,measurement_family,base_unit)
+     VALUES($1,$2,'unit',0,0,0,'count','unit')
+     ON CONFLICT(business_id,item) DO UPDATE
+       SET unit='unit',quantity=0,reorder_level=0,unit_cost=0,measurement_family='count',base_unit='unit',updated_at=NOW()
+     RETURNING id`,
+    [merchantBusinessId,'QA Commercial V3 Inventory']
+  );
+  const inventoryId=Number(inventory.rows[0].id);
+
+  const linked=await requestJson(base,`/api/procurement/catalog/${Number(item.id)}/link`,{
+    method:'PUT',token:merchant.token,
+    body:{business_id:merchantBusinessId,legacy_inventory_id:inventoryId,merchant_item_name:'QA Commercial V3 Inventory'}
+  });
+  expectStatus(linked,200,'Supplier Commercial V3 Inventory link');
+
+  const poCreated=await requestJson(base,'/api/procurement/orders',{
+    method:'POST',token:merchant.token,
+    body:{
+      business_id:merchantBusinessId,
+      supplier_account_id:supplier.accountId,
+      fulfilment_mode:'delivery',
+      delivery_fee:0,
+      merchant_note:'Controlled QA Supplier Commercial V3 PO',
+      items:[{catalog_item_id:Number(item.id),packs:4}]
+    }
+  });
+  expectStatus(poCreated,201,'Supplier Commercial V3 PO create');
+  const poId=Number(poCreated.json?.id);
+  const poItem=poCreated.json?.items?.[0];
+  if(!poId||!poItem?.id||!closeEnough(poCreated.json?.expected_total,1000)){
+    throw new Error('Supplier Commercial V3 PO was not created with expected value.');
+  }
+  if(poItem.handling_mode_snapshot!=='sealed_resale'){
+    throw new Error('Supplier Commercial V3 handling mode was not snapshotted into the PO item.');
+  }
+
+  const accepted=await requestJson(base,`/api/supplier/orders/${poId}/respond`,{
+    method:'POST',token:supplier.token,
+    body:{
+      items:[{
+        item_id:Number(poItem.id),
+        confirmed_packs:4,
+        confirmed_price_per_pack:250,
+        supplier_note:'Confirmed for V3 QA'
+      }],
+      supplier_note:'Supplier Commercial V3 accepted'
+    }
+  });
+  expectStatus(accepted,200,'Supplier Commercial V3 PO accept');
+
+  const delivered=await requestJson(base,`/api/supplier/orders/${poId}/status`,{
+    method:'POST',token:supplier.token,body:{status:'delivered',supplier_note:'Delivered for V3 QA'}
+  });
+  expectStatus(delivered,200,'Supplier Commercial V3 PO delivered');
+
+  const supplierLotCode='QA-V3-LOT-'+poId;
+  const received=await requestJson(base,`/api/procurement/orders/${poId}/receive`,{
+    method:'POST',token:merchant.token,
+    body:{
+      note:'Controlled QA V3 receipt',
+      items:[{
+        item_id:Number(poItem.id),
+        received_packs:4,
+        actual_price_per_pack:250,
+        supplier_lot_code:supplierLotCode,
+        expires_at:'2027-12-31T23:59:59+08:00'
+      }]
+    }
+  });
+  expectStatus(received,200,'Supplier Commercial V3 PO receive');
+
+  const lotQ=await pool.query(
+    `SELECT * FROM supply_lots
+      WHERE business_id=$1 AND purchase_order_id=$2 AND purchase_order_item_id=$3
+      ORDER BY id DESC LIMIT 1`,
+    [merchantBusinessId,poId,Number(poItem.id)]
+  );
+  const lot=lotQ.rows[0];
+  if(!lot||lot.supplier_lot_code!==supplierLotCode||!closeEnough(lot.quantity_remaining_base,4)
+    ||Number(lot.inventory_id)!==inventoryId||lot.lot_state!=='available'){
+    throw new Error('Supplier Commercial V3 PO receiving did not create the expected traceable lot.');
+  }
+  const invAfterReceive=await pool.query(`SELECT quantity,unit_cost FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,merchantBusinessId]);
+  if(!closeEnough(invAfterReceive.rows[0]?.quantity,4)||!closeEnough(invAfterReceive.rows[0]?.unit_cost,250)){
+    throw new Error('Supplier Commercial V3 Inventory did not update from PO receiving.');
+  }
+
+  const issueDate=new Date().toISOString().slice(0,10);
+  const invoice=await requestJson(base,`/api/supplier/orders/${poId}/invoices`,{
+    method:'POST',token:supplier.token,
+    body:{
+      document_number:'QA-V3-INV-'+poId,
+      document_kind:'charge_invoice',
+      issue_date:issueDate,
+      gross_amount:1000,
+      evidence_reference:'Controlled QA invoice evidence'
+    }
+  });
+  expectStatus(invoice,201,'Supplier Commercial V3 invoice evidence');
+  const expectedDue=new Date(issueDate+'T00:00:00Z');
+  expectedDue.setUTCDate(expectedDue.getUTCDate()+30);
+  if(invoice.json?.fiscal_status!=='internal_evidence'
+    ||String(invoice.json?.due_date).slice(0,10)!==expectedDue.toISOString().slice(0,10)){
+    throw new Error('Supplier Commercial V3 invoice evidence or Net 30 due date is incorrect.');
+  }
+
+  const beforeReturn=await requestJson(base,`/api/procurement/orders/${poId}/commercial`,{token:merchant.token});
+  expectStatus(beforeReturn,200,'Supplier Commercial V3 commercial summary before return');
+  if(!closeEnough(beforeReturn.json?.summary?.invoice_total,1000)
+    ||!closeEnough(beforeReturn.json?.summary?.outstanding,1000)
+    ||!closeEnough(beforeReturn.json?.summary?.paid_amount,0)){
+    throw new Error('Supplier Commercial V3 invoice/payment separation is incorrect.');
+  }
+
+  const ret=await requestJson(base,'/api/procurement/returns',{
+    method:'POST',token:merchant.token,
+    body:{supply_lot_id:Number(lot.id),quantity_base:1,reason_code:'quality',note:'Controlled QA return'}
+  });
+  expectStatus(ret,201,'Supplier Commercial V3 return request');
+  const returnId=Number(ret.json?.id);
+  if(!returnId||ret.json?.status!=='requested'||!closeEnough(ret.json?.expected_credit,250)){
+    throw new Error('Supplier Commercial V3 return request is incorrect.');
+  }
+  const invBeforeDispatch=await pool.query(`SELECT quantity FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,merchantBusinessId]);
+  if(!closeEnough(invBeforeDispatch.rows[0]?.quantity,4)){
+    throw new Error('Supplier Commercial V3 return request changed Inventory before physical return.');
+  }
+
+  const authorized=await requestJson(base,`/api/supplier/returns/${returnId}/respond`,{
+    method:'POST',token:supplier.token,body:{decision:'authorize',supplier_note:'QA return authorized'}
+  });
+  expectStatus(authorized,200,'Supplier Commercial V3 return authorize');
+
+  const dispatched=await requestJson(base,`/api/procurement/returns/${returnId}/dispatch`,{
+    method:'POST',token:merchant.token,body:{}
+  });
+  expectStatus(dispatched,200,'Supplier Commercial V3 physical return');
+  if(dispatched.json?.status!=='returned')throw new Error('Supplier Commercial V3 return was not marked physically returned.');
+
+  const [invAfterReturn,lotAfterReturn]=await Promise.all([
+    pool.query(`SELECT quantity FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,merchantBusinessId]),
+    pool.query(`SELECT quantity_remaining_base,lot_state FROM supply_lots WHERE id=$1`,[lot.id])
+  ]);
+  if(!closeEnough(invAfterReturn.rows[0]?.quantity,3)||!closeEnough(lotAfterReturn.rows[0]?.quantity_remaining_base,3)){
+    throw new Error('Supplier Commercial V3 physical return did not reduce lot and Inventory exactly once.');
+  }
+
+  const resolved=await requestJson(base,`/api/supplier/returns/${returnId}/resolve`,{
+    method:'POST',token:supplier.token,
+    body:{resolution_type:'credit',confirmed_credit:250,supplier_note:'QA credit confirmed'}
+  });
+  expectStatus(resolved,200,'Supplier Commercial V3 return credit');
+  if(resolved.json?.status!=='resolved'||!closeEnough(resolved.json?.confirmed_credit,250)){
+    throw new Error('Supplier Commercial V3 confirmed credit did not persist.');
+  }
+
+  const afterCredit=await requestJson(base,`/api/procurement/orders/${poId}/commercial`,{token:merchant.token});
+  expectStatus(afterCredit,200,'Supplier Commercial V3 commercial summary after credit');
+  if(!closeEnough(afterCredit.json?.summary?.confirmed_credits,250)
+    ||!closeEnough(afterCredit.json?.summary?.outstanding,750)
+    ||!closeEnough(afterCredit.json?.summary?.paid_amount,0)){
+    throw new Error('Supplier Commercial V3 credit did not reduce payable correctly.');
+  }
+
+  const excessivePayment=await requestJson(base,`/api/procurement/orders/${poId}/payment`,{
+    method:'POST',token:merchant.token,body:{amount:751,account:'cash'}
+  });
+  expectStatus(excessivePayment,409,'Supplier Commercial V3 excessive payment guard');
+
+  const payment=await requestJson(base,`/api/procurement/orders/${poId}/payment`,{
+    method:'POST',token:merchant.token,body:{amount:750,account:'cash'}
+  });
+  expectStatus(payment,200,'Supplier Commercial V3 payment');
+
+  const afterPayment=await requestJson(base,`/api/procurement/orders/${poId}/commercial`,{token:merchant.token});
+  expectStatus(afterPayment,200,'Supplier Commercial V3 final commercial summary');
+  if(!closeEnough(afterPayment.json?.summary?.paid_amount,750)
+    ||!closeEnough(afterPayment.json?.summary?.outstanding,0)){
+    throw new Error('Supplier Commercial V3 final payable was not settled correctly.');
+  }
+
+  const recall=await requestJson(base,'/api/supplier/recalls',{
+    method:'POST',token:supplier.token,
+    body:{
+      supplier_lot_code:supplierLotCode,
+      product_name:productName,
+      notice_level:'recall',
+      requested_action:'isolate',
+      reason:'Controlled QA exact lot recall',
+      source_reference:'QA-V3-RECALL-'+poId
+    }
+  });
+  expectStatus(recall,201,'Supplier Commercial V3 recall');
+  if(Number(recall.json?.matched_lots)<1||recall.json?.aggregate_inventory_sale_blocking!==false){
+    throw new Error('Supplier Commercial V3 recall did not match the exact lot or overclaimed sale blocking.');
+  }
+  const recallLot=await pool.query(`SELECT lot_state FROM supply_lots WHERE id=$1`,[lot.id]);
+  if(recallLot.rows[0]?.lot_state!=='quarantined'){
+    throw new Error('Supplier Commercial V3 recalled lot was not quarantined.');
+  }
+
+  const merchantRecalls=await requestJson(base,`/api/procurement/recalls?business_id=${merchantBusinessId}`,{token:merchant.token});
+  expectStatus(merchantRecalls,200,'Supplier Commercial V3 Merchant recall visibility');
+  if(!(merchantRecalls.json?.matches||[]).some(x=>Number(x.lot_id)===Number(lot.id))){
+    throw new Error('Supplier Commercial V3 Merchant cannot see the matched recall lot.');
+  }
+
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:supplier.token,body:{}});
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+
+  return{
+    status:'PASS',
+    wave:SUPPLIER_COMMERCIAL_V3_WAVE,
+    supplier_v1_v2_baseline:true,
+    merchant_business_id:merchantBusinessId,
+    purchase_order_id:poId,
+    inventory_id:inventoryId,
+    lot_id:Number(lot.id),
+    terms_net_30:true,
+    po_receipt_lot:true,
+    invoice_evidence_separate:true,
+    return_request_stock_unchanged:true,
+    return_inventory_reduction:true,
+    confirmed_credit:true,
+    excessive_payment_blocked:true,
+    payable_settled:true,
+    recall_exact_lot:true,
+    recall_quarantine:true,
+    aggregate_inventory_sale_blocking:false
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -1958,6 +2239,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
           ?await runSupplierExperienceAcceptance({pool,base,secret:config.secret})
         :config.wave===SUPPLIER_DOMAIN_V2_WAVE
           ?await runSupplierDomainV2Acceptance({pool,base,secret:config.secret})
+        :config.wave===SUPPLIER_COMMERCIAL_V3_WAVE
+          ?await runSupplierCommercialV3Acceptance({pool,base,secret:config.secret})
         :config.wave===COURIER_EXPERIENCE_WAVE
           ?await runCourierExperienceAcceptance({
             pool,base,secret:config.secret,
@@ -1980,5 +2263,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };

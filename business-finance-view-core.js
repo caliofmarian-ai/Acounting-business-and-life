@@ -281,18 +281,37 @@ async function merchantOverview(pool,ctx){
 async function merchantPayables(pool,businessId){
   const q=await optionalQuery(pool,`
     SELECT
-      COALESCE(SUM(GREATEST(COALESCE(actual_received_total,0)-paid_amount,0))
-        FILTER(WHERE status NOT IN ('cancelled','rejected')),0) supplier_payables,
-      COALESCE(SUM(expected_total)
-        FILTER(WHERE status NOT IN ('received','cancelled','rejected')),0) procurement_commitments,
-      COUNT(*) FILTER(WHERE status NOT IN ('received','cancelled','rejected'))::int open_purchase_orders
-    FROM purchase_orders WHERE business_id=$1
+      COALESCE(SUM(
+        GREATEST(
+          CASE
+            WHEN COALESCE(inv.invoice_total,0)>0 THEN inv.invoice_total
+            ELSE COALESCE(p.actual_received_total,0)
+          END
+          -COALESCE(cr.confirmed_credits,0)-p.paid_amount,
+          0
+        )
+      ) FILTER(WHERE p.status NOT IN ('cancelled','rejected')),0) supplier_payables,
+      COALESCE(SUM(p.expected_total)
+        FILTER(WHERE p.status NOT IN ('received','cancelled','rejected')),0) procurement_commitments,
+      COUNT(*) FILTER(WHERE p.status NOT IN ('received','cancelled','rejected'))::int open_purchase_orders
+    FROM purchase_orders p
+    LEFT JOIN (
+      SELECT purchase_order_id,COALESCE(SUM(gross_amount) FILTER(WHERE evidence_status='active'),0) invoice_total
+      FROM purchase_invoice_evidence GROUP BY purchase_order_id
+    ) inv ON inv.purchase_order_id=p.id
+    LEFT JOIN (
+      SELECT purchase_order_id,COALESCE(SUM(confirmed_credit) FILTER(
+        WHERE status='resolved' AND resolution_type IN ('credit','refund_expected')
+      ),0) confirmed_credits
+      FROM purchase_returns GROUP BY purchase_order_id
+    ) cr ON cr.purchase_order_id=p.id
+    WHERE p.business_id=$1
   `,[businessId],[{}]);
   return{
     supplier_payables:money(q.rows[0]?.supplier_payables),
     procurement_commitments:money(q.rows[0]?.procurement_commitments),
     open_purchase_orders:n(q.rows[0]?.open_purchase_orders),
-    authority:'purchase_orders.actual_received_total / paid_amount / expected_total'
+    authority:'invoice evidence when present, otherwise received value; minus confirmed credits and recorded payments'
   };
 }
 async function supplierOverview(pool,ctx){
@@ -300,15 +319,34 @@ async function supplierOverview(pool,ctx){
   const [po,ledger,financeContext,supplierNet,fees,upstream,receiptLedger]=await Promise.all([
     optionalQuery(pool,`
       SELECT
-        COUNT(*) FILTER(WHERE status NOT IN ('cancelled','rejected'))::int po_count,
-        COUNT(*) FILTER(WHERE status='received')::int received_po_count,
-        COALESCE(SUM(actual_received_total) FILTER(WHERE status NOT IN ('cancelled','rejected')),0) fulfilled_value,
-        COALESCE(SUM(paid_amount) FILTER(WHERE status NOT IN ('cancelled','rejected')),0) money_received_recorded,
-        COALESCE(SUM(GREATEST(actual_received_total-paid_amount,0))
-          FILTER(WHERE status NOT IN ('cancelled','rejected')),0) merchant_receivables,
-        COALESCE(SUM(expected_total)
-          FILTER(WHERE status IN ('supplier_received','accepted','partially_accepted','preparing','ready_for_pickup','out_for_delivery','delivered','partially_received')),0) open_commercial_value
-      FROM purchase_orders WHERE supplier_account_id=$1
+        COUNT(*) FILTER(WHERE p.status NOT IN ('cancelled','rejected'))::int po_count,
+        COUNT(*) FILTER(WHERE p.status='received')::int received_po_count,
+        COALESCE(SUM(p.actual_received_total) FILTER(WHERE p.status NOT IN ('cancelled','rejected')),0) fulfilled_value,
+        COALESCE(SUM(p.paid_amount) FILTER(WHERE p.status NOT IN ('cancelled','rejected')),0) money_received_recorded,
+        COALESCE(SUM(
+          GREATEST(
+            CASE
+              WHEN COALESCE(inv.invoice_total,0)>0 THEN inv.invoice_total
+              ELSE COALESCE(p.actual_received_total,0)
+            END
+            -COALESCE(cr.confirmed_credits,0)-p.paid_amount,
+            0
+          )
+        ) FILTER(WHERE p.status NOT IN ('cancelled','rejected')),0) merchant_receivables,
+        COALESCE(SUM(p.expected_total)
+          FILTER(WHERE p.status IN ('supplier_received','accepted','partially_accepted','preparing','ready_for_pickup','out_for_delivery','delivered','partially_received')),0) open_commercial_value
+      FROM purchase_orders p
+      LEFT JOIN (
+        SELECT purchase_order_id,COALESCE(SUM(gross_amount) FILTER(WHERE evidence_status='active'),0) invoice_total
+        FROM purchase_invoice_evidence GROUP BY purchase_order_id
+      ) inv ON inv.purchase_order_id=p.id
+      LEFT JOIN (
+        SELECT purchase_order_id,COALESCE(SUM(confirmed_credit) FILTER(
+          WHERE status='resolved' AND resolution_type IN ('credit','refund_expected')
+        ),0) confirmed_credits
+        FROM purchase_returns GROUP BY purchase_order_id
+      ) cr ON cr.purchase_order_id=p.id
+      WHERE p.supplier_account_id=$1
     `,[accountId],[{}]),
     ledgerMetrics(pool,bid),
     profileFinanceContext(pool,{accountId,role:'supplier',businessId:bid}),
@@ -342,7 +380,7 @@ async function supplierOverview(pool,ctx){
         open_commercial_value:money(p.open_commercial_value),
         po_count:n(p.po_count)
       },
-      authority:'purchase_orders by supplier_account_id',
+      authority:'purchase_orders by supplier_account_id; receivables use invoice evidence when present, otherwise received value, minus confirmed credits and payments',
       note:attribution==='ACCOUNT_LEVEL_UNATTRIBUTED'
         ?'POs are linked to Supplier account, not supplier_business_id. Account-wide figures are not assigned to this business.'
         :'Single Supplier business binding allows account-level PO activity to be shown for this workspace.'

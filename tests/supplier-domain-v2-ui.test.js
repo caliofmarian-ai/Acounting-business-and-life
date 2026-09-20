@@ -15,7 +15,7 @@ test('Supplier V2 browser UI is valid JavaScript syntax',()=>{
 });
 
 test('Merchant mobile procurement supports external suppliers lots and repacking progressively',()=>{
-  assert.match(ui,/Local suppliers, lots & repacking/);
+  assert.match(ui,/Local suppliers, lots(?:, returns)? & repacking/);
   assert.match(ui,/Add local supplier/);
   assert.match(ui,/Receive stock from supplier/);
   assert.match(ui,/repackSupplyLot/);
