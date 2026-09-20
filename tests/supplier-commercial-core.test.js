@@ -58,3 +58,18 @@ test('return expected credit defaults to traceable cost evidence',()=>{
   assert.equal(returnCreditAmount({quantityBase:1000,unitCostBase:0.046}),46);
   assert.equal(returnCreditAmount({quantityBase:1000,unitCostBase:0.046,explicitExpectedCredit:50}),50);
 });
+
+
+test('due-date calculation accepts PostgreSQL Date objects and ISO timestamps',()=>{
+  const pgDate=new Date('2026-09-22T18:45:00.000Z');
+  assert.equal(dueDateForTerms({
+    issueDate:'2026-09-20',
+    receivedDate:pgDate,
+    paymentTermCode:'due_on_receipt'
+  }),'2026-09-22');
+  assert.equal(dueDateForTerms({
+    issueDate:'2026-09-20',
+    receivedDate:'2026-09-22T18:45:00.000Z',
+    paymentTermCode:'due_on_receipt'
+  }),'2026-09-22');
+});
