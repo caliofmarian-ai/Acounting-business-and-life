@@ -13,6 +13,7 @@ import { requireAdminPermission,appendAdminAudit } from './admin-authorization.j
 import { emitNotificationEvent,businessNotificationRecipients } from './notification-core.js';
 import { payMongoPilotReadiness,payMongoCheckoutPolicy } from './pilot-payment-readiness.js';
 import { publicDeploymentEvidence } from './deployment-evidence.js';
+import { runQaAcceptanceIfRequested } from './qa-acceptance.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -239,4 +240,7 @@ async function shutdown(sig){
 process.on('SIGTERM',()=>shutdown('SIGTERM'));
 process.on('SIGINT',()=>shutdown('SIGINT'));
 start();
-wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log('Business & Life PayMongo webhook-bootstrap gateway listening on '+port))).catch(e=>{console.error(e);process.exit(1)});
+wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>{
+  console.log('Business & Life PayMongo webhook-bootstrap gateway listening on '+port);
+  runQaAcceptanceIfRequested({pool,port}).catch(e=>console.error('QA acceptance runner failed safely:',clean(e?.message||'unknown',240)));
+})).catch(e=>{console.error(e);process.exit(1)});
