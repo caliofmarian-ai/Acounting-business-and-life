@@ -5,13 +5,15 @@ import { validateRuntimeSafety } from './runtime-safety.js';
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
 const MERCHANT_ALIAS='dropi.deliveries+testmerchant@gmail.com';
+const SUPPLIER_ALIAS='dropi.deliveries+testsupplier@gmail.com';
 const SUPER_ADMIN_ALIAS='dropi.deliveries+testsuperadmin@gmail.com';
 const CUSTOMER_WAVE='customer_onboarding_v1';
 const MERCHANT_CATALOG_WAVE='merchant_catalog_seed_v1';
 const MERCHANT_EXPERIENCE_WAVE='merchant_experience_v1';
+const SUPPLIER_EXPERIENCE_WAVE='supplier_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -1220,6 +1222,457 @@ async function runMerchantExperienceAcceptance({pool,base,secret}){
   };
 }
 
+
+const SUPPLIER_QA_PRODUCT='QA Supplier Rice Pack';
+const SUPPLIER_QA_PO_NOTE='Controlled QA Supplier Experience PO v1';
+const SUPPLIER_QA_PRICE=120;
+const SUPPLIER_QA_PACKS=2;
+
+async function latestSupplierApplication(pool,accountId){
+  const q=await pool.query(
+    `SELECT * FROM profile_applications
+      WHERE account_id=$1 AND role='supplier'
+      ORDER BY id DESC LIMIT 1`,
+    [Number(accountId)]
+  );
+  return q.rows[0]||null;
+}
+
+async function ensureSupplierApproved({pool,base,supplier,adminToken,territoryId}){
+  let application=await latestSupplierApplication(pool,supplier.accountId);
+  let invitationId=Number(application?.invitation_id||0);
+
+  if(!invitationId){
+    if(application?.status==='approved'){
+      throw new Error('Supplier approval is missing the required invitation evidence.');
+    }
+    const invited=await requestJson(base,'/api/governance/admin/invitations',{
+      method:'POST',token:adminToken,
+      body:{
+        role:'supplier',
+        target_email:SUPPLIER_ALIAS,
+        territory_id:territoryId,
+        expires_days:7,
+        note:'Controlled internal QA Supplier invitation. Not a real Supplier.'
+      }
+    });
+    expectStatus(invited,201,'Supplier Admin invitation');
+    invitationId=Number(invited.json?.id);
+    if(!invitationId)throw new Error('Supplier invitation did not return an id.');
+
+    const accepted=await requestJson(base,`/api/governance/invitations/${invitationId}/accept`,{
+      method:'POST',token:supplier.token,body:{}
+    });
+    expectStatus(accepted,200,'Supplier invitation acceptance');
+    application=accepted.json;
+  }
+
+  application=await latestSupplierApplication(pool,supplier.accountId);
+  if(!application?.invitation_id)throw new Error('Supplier application is not backed by an invitation.');
+
+  if(['application_started','requirements_pending','rejected'].includes(application.status)){
+    const edited=await requestJson(base,`/api/governance/applications/${Number(application.id)}`,{
+      method:'PUT',token:supplier.token,
+      body:{
+        proposed_business_name:'Business & Life QA Supply',
+        applicant_note:'Controlled internal QA Supplier fixture. Not a real Supplier.',
+        responsibility_acknowledged:true,
+        application_data:{
+          test_fixture:true,
+          supplier_type:'food_wholesale',
+          onboarding_version:'supplier-experience-v1'
+        }
+      }
+    });
+    expectStatus(edited,200,'Supplier application edit');
+
+    const submitted=await requestJson(base,`/api/governance/applications/${Number(application.id)}/submit`,{
+      method:'POST',token:supplier.token,body:{}
+    });
+    expectStatus(submitted,200,'Supplier application submit');
+    application=submitted.json;
+  }
+
+  application=await latestSupplierApplication(pool,supplier.accountId);
+  if(['submitted','under_review'].includes(application?.status)){
+    const reviewed=await requestJson(base,`/api/governance/admin/applications/${Number(application.id)}/review`,{
+      method:'POST',token:adminToken,
+      body:{decision:'approve',reason:'Controlled internal QA Supplier acceptance fixture'}
+    });
+    expectStatus(reviewed,200,'Supplier Admin approval');
+  }
+
+  const profile=await pool.query(
+    `SELECT enabled,status FROM profiles WHERE account_id=$1 AND role='supplier'`,
+    [supplier.accountId]
+  );
+  if(!profile.rows[0]?.enabled||profile.rows[0]?.status!=='active'){
+    throw new Error('Supplier profile did not become active.');
+  }
+
+  await ensureActiveRole({base,token:supplier.token,role:'supplier',label:'Supplier Experience QA'});
+  return{applicationId:Number(application?.id||0),invitationId};
+}
+
+async function ensureQaSupplierCatalogItem({base,token}){
+  const profile=await requestJson(base,'/api/supplier/me',{token});
+  expectStatus(profile,200,'Supplier private profile');
+
+  const saved=await requestJson(base,'/api/supplier/me',{
+    method:'PUT',token,
+    body:{
+      supplier_name:'Business & Life QA Supply',
+      description:'Controlled internal QA Supplier. Not a real supplier.',
+      delivery_available:true,
+      service_area:'QA Pilot City, Philippines',
+      normal_lead_days:1,
+      minimum_order_value:0,
+      notes:'Internal Supplier E2E fixture only.'
+    }
+  });
+  expectStatus(saved,200,'Supplier profile update');
+
+  let item=(Array.isArray(saved.json?.catalog)?saved.json.catalog:[]).find(
+    x=>x.product_name===SUPPLIER_QA_PRODUCT
+  );
+  if(!item){
+    const created=await requestJson(base,'/api/supplier/catalog',{
+      method:'POST',token,
+      body:{
+        product_name:SUPPLIER_QA_PRODUCT,
+        sku:'QA-SUP-RICE-001',
+        unit_name:'pack',
+        base_unit:'unit',
+        base_units_per_pack:1,
+        price_per_pack:SUPPLIER_QA_PRICE,
+        minimum_packs:1,
+        availability_status:'available',
+        lead_time_days:1
+      }
+    });
+    expectStatus(created,201,'Supplier catalog item create');
+    item=created.json;
+  }else{
+    const patched=await requestJson(base,`/api/supplier/catalog/${Number(item.id)}`,{
+      method:'PATCH',token,
+      body:{
+        product_name:SUPPLIER_QA_PRODUCT,
+        sku:'QA-SUP-RICE-001',
+        unit_name:'pack',
+        base_unit:'unit',
+        base_units_per_pack:1,
+        price_per_pack:SUPPLIER_QA_PRICE,
+        minimum_packs:1,
+        availability_status:'available',
+        lead_time_days:1,
+        active:true
+      }
+    });
+    expectStatus(patched,200,'Supplier catalog item normalize');
+    item=patched.json;
+  }
+  if(!item?.id||Number(item.price_per_pack)!==SUPPLIER_QA_PRICE){
+    throw new Error('Supplier catalog fixture is not stable.');
+  }
+  return item;
+}
+
+async function supplierNotificationsForPo({base,token,poId,businessId,supplierAccountId}){
+  const requiredPo=new Set(['procurement.po_created','procurement.po_updated','procurement.payment_received']);
+  let rows=[];
+  for(let attempt=0;attempt<20;attempt++){
+    const inbox=await requestJson(base,'/api/notifications?limit=150',{token});
+    expectStatus(inbox,200,'Supplier notification inbox');
+    const all=Array.isArray(inbox.json)?inbox.json:[];
+    rows=all.filter(x=>x.entity_type==='purchase_order'&&Number(x.entity_id)===Number(poId));
+    const relationship=all.some(
+      x=>x.entity_type==='supplier_relationship'
+        &&String(x.entity_id)===String(businessId)+':'+String(supplierAccountId)
+        &&x.event_code==='supplier.relationship_invited'
+    );
+    const poCodes=new Set(rows.map(x=>x.event_code));
+    if(relationship&&[...requiredPo].every(code=>poCodes.has(code))){
+      return{poEvents:rows.length,relationshipInvite:true};
+    }
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  const codes=new Set(rows.map(x=>x.event_code));
+  for(const code of requiredPo){
+    if(!codes.has(code))throw new Error('Supplier notification lifecycle is missing '+code+'.');
+  }
+  throw new Error('Supplier relationship invitation notification is missing.');
+}
+
+async function ensureQaSupplierSupportTicket({pool,base,token,accountId,poId}){
+  const subject='Controlled QA Supplier support E2E PO '+Number(poId);
+  const existing=await pool.query(
+    `SELECT id FROM support_tickets
+      WHERE requester_account_id=$1 AND subject=$2
+      ORDER BY id DESC LIMIT 1`,
+    [Number(accountId),subject]
+  );
+  let ticketId=Number(existing.rows[0]?.id||0);
+  if(!ticketId){
+    const created=await requestJson(base,'/api/support/tickets',{
+      method:'POST',token,
+      body:{
+        category:'other',
+        subject,
+        description:'Controlled internal QA Supplier support request linked to a purchase order. No real supplier issue.',
+        requested_destination:'support',
+        related_type:'purchase_order',
+        related_id:Number(poId),
+        source_language:'en-PH'
+      }
+    });
+    expectStatus(created,201,'Supplier Support ticket create');
+    ticketId=Number(created.json?.id);
+  }
+  if(!ticketId)throw new Error('Supplier Support ticket was not created.');
+
+  const detail=await requestJson(base,`/api/support/tickets/${ticketId}`,{token});
+  expectStatus(detail,200,'Supplier Support ticket detail');
+  if(Number(detail.json?.related_id)!==Number(poId)||detail.json?.related_type!=='purchase_order'){
+    throw new Error('Supplier Support ticket lost its purchase-order context.');
+  }
+  const mine=await requestJson(base,'/api/support/tickets/mine',{token});
+  expectStatus(mine,200,'Supplier Support My tickets');
+  if(!(Array.isArray(mine.json)?mine.json:[]).some(x=>Number(x.id)===ticketId)){
+    throw new Error('Supplier Support ticket is missing from My Support.');
+  }
+  return ticketId;
+}
+
+async function runSupplierExperienceAcceptance({pool,base,secret}){
+  const merchantSeed=await runMerchantCatalogSeed({pool,base,secret});
+  if(merchantSeed.status!=='PASS')throw new Error('Merchant catalog prerequisite did not pass.');
+
+  const [admin,supplier,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Supplier Experience Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:SUPPLIER_ALIAS,role:'supplier',label:'Supplier Experience QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Supplier Experience Merchant QA'})
+  ]);
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  const onboarding=await ensureSupplierApproved({
+    pool,base,supplier,adminToken:admin.token,territoryId
+  });
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Supplier Experience Merchant QA'});
+
+  const supplierItem=await ensureQaSupplierCatalogItem({base,token:supplier.token});
+
+  const merchantMe=await requestJson(base,'/api/me',{token:merchant.token});
+  expectStatus(merchantMe,200,'Supplier Experience Merchant account snapshot');
+  const merchantBusiness=(merchantMe.json?.businesses||[]).find(
+    x=>Number(x.id)===Number(merchantSeed.business_id)
+  )||(merchantMe.json?.businesses||[])[0];
+  if(!merchantBusiness?.id)throw new Error('Supplier Experience Merchant business workspace is unavailable.');
+  const merchantBusinessId=Number(merchantBusiness.id);
+
+  const relationshipInvite=await requestJson(base,'/api/procurement/relationships/invite',{
+    method:'POST',token:merchant.token,
+    body:{
+      business_id:merchantBusinessId,
+      supplier_email:SUPPLIER_ALIAS,
+      note:'Controlled QA Merchant → Supplier relationship'
+    }
+  });
+  expectStatus(relationshipInvite,201,'Merchant Supplier relationship invite');
+  if(Number(relationshipInvite.json?.supplier_account_id)!==Number(supplier.accountId)){
+    throw new Error('Supplier relationship resolved the wrong account.');
+  }
+
+  const relationshipAccept=await requestJson(
+    base,`/api/supplier/relationships/${merchantBusinessId}/respond`,
+    {method:'POST',token:supplier.token,body:{accept:true}}
+  );
+  expectStatus(relationshipAccept,200,'Supplier relationship acceptance');
+  if(relationshipAccept.json?.state!=='accepted')throw new Error('Supplier relationship did not become accepted.');
+
+  const merchantCatalog=await requestJson(
+    base,
+    `/api/procurement/suppliers/${supplier.accountId}/catalog?business_id=${merchantBusinessId}`,
+    {token:merchant.token}
+  );
+  expectStatus(merchantCatalog,200,'Merchant Supplier catalog');
+  const merchantItem=(merchantCatalog.json?.items||[]).find(x=>Number(x.id)===Number(supplierItem.id));
+  if(!merchantItem)throw new Error('Merchant cannot see the accepted Supplier catalog item.');
+
+  const existing=await pool.query(
+    `SELECT id FROM purchase_orders
+      WHERE business_id=$1 AND supplier_account_id=$2 AND merchant_note=$3
+      ORDER BY id DESC LIMIT 1`,
+    [merchantBusinessId,supplier.accountId,SUPPLIER_QA_PO_NOTE]
+  );
+  let po;
+  if(existing.rowCount){
+    const detail=await requestJson(base,`/api/procurement/orders/${Number(existing.rows[0].id)}`,{token:merchant.token});
+    expectStatus(detail,200,'Existing Supplier Experience PO');
+    po=detail.json;
+  }else{
+    const created=await requestJson(base,'/api/procurement/orders',{
+      method:'POST',token:merchant.token,
+      body:{
+        business_id:merchantBusinessId,
+        supplier_account_id:supplier.accountId,
+        fulfilment_mode:'delivery',
+        delivery_fee:0,
+        merchant_note:SUPPLIER_QA_PO_NOTE,
+        items:[{catalog_item_id:Number(supplierItem.id),packs:SUPPLIER_QA_PACKS}]
+      }
+    });
+    expectStatus(created,201,'Merchant purchase order create');
+    po=created.json;
+  }
+
+  const poId=Number(po?.id);
+  if(!poId)throw new Error('Supplier Experience purchase order is missing.');
+  if(!closeEnough(po.expected_total,SUPPLIER_QA_PRICE*SUPPLIER_QA_PACKS)){
+    throw new Error('Supplier Experience purchase order total is not deterministic.');
+  }
+
+  if(['sent','supplier_received','accepted','partially_accepted'].includes(po.status)){
+    const items=(po.items||[]).map(item=>({
+      item_id:Number(item.id),
+      confirmed_packs:Number(item.ordered_packs),
+      confirmed_price_per_pack:Number(item.price_per_pack_snapshot)
+    }));
+    const responded=await requestJson(base,`/api/supplier/orders/${poId}/respond`,{
+      method:'POST',token:supplier.token,
+      body:{items,supplier_note:'Controlled QA Supplier accepts the purchase order.'}
+    });
+    expectStatus(responded,200,'Supplier purchase order acceptance');
+    po=responded.json;
+  }
+
+  if(!['received','partially_received','cancelled','rejected'].includes(po.status)){
+    const preparing=await requestJson(base,`/api/supplier/orders/${poId}/status`,{
+      method:'POST',token:supplier.token,
+      body:{status:'preparing',supplier_note:'Controlled QA preparation state.'}
+    });
+    expectStatus(preparing,200,'Supplier PO preparing');
+    const delivered=await requestJson(base,`/api/supplier/orders/${poId}/status`,{
+      method:'POST',token:supplier.token,
+      body:{status:'delivered',supplier_note:'Controlled QA delivery state.'}
+    });
+    expectStatus(delivered,200,'Supplier PO delivered');
+    po=delivered.json;
+  }
+
+  if(po.status!=='received'){
+    const receiveItems=(po.items||[]).map(item=>({
+      item_id:Number(item.id),
+      received_packs:Math.max(0,Number(item.confirmed_packs??item.ordered_packs)-Number(item.received_packs||0)),
+      actual_price_per_pack:Number(item.confirmed_price_per_pack??item.price_per_pack_snapshot)
+    })).filter(item=>item.received_packs>0);
+    if(receiveItems.length){
+      const received=await requestJson(base,`/api/procurement/orders/${poId}/receive`,{
+        method:'POST',token:merchant.token,
+        body:{items:receiveItems,note:'Controlled QA Merchant receipt of Supplier PO.'}
+      });
+      expectStatus(received,200,'Merchant purchase order receipt');
+      po=received.json;
+    }
+  }
+  if(po.status!=='received')throw new Error('Supplier Experience purchase order was not fully received.');
+
+  const outstanding=Math.max(0,Number(po.expected_total)-Number(po.paid_amount||0));
+  if(outstanding>0.001){
+    const paid=await requestJson(base,`/api/procurement/orders/${poId}/payment`,{
+      method:'POST',token:merchant.token,
+      body:{amount:outstanding,account:'cash'}
+    });
+    expectStatus(paid,200,'Merchant Supplier payment');
+    po=paid.json;
+  }
+  if(po.payment_status!=='paid'||Number(po.paid_amount)+0.001<Number(po.expected_total)){
+    throw new Error('Supplier Experience PO payment did not reconcile.');
+  }
+
+  const supplierFinance=await requestJson(base,'/api/accounting/finance-overview',{token:supplier.token});
+  expectStatus(supplierFinance,200,'Supplier Finance overview');
+  if(supplierFinance.json?.role!=='supplier'||!supplierFinance.json?.business?.id){
+    throw new Error('Supplier Finance did not resolve a Supplier business workspace.');
+  }
+  const supplierBusinessId=Number(supplierFinance.json.business.id);
+  const expectedTotal=SUPPLIER_QA_PRICE*SUPPLIER_QA_PACKS;
+  if(Number(supplierFinance.json?.commercial?.received_po_count||0)<1
+    ||Number(supplierFinance.json?.cash_evidence?.account_level_po_paid_amount||0)<expectedTotal
+    ||Number(supplierFinance.json?.cash_evidence?.business_ledger_recorded_receipts||0)<expectedTotal){
+    throw new Error('Supplier Finance is missing fulfilled-PO or recorded-payment evidence.');
+  }
+
+  const supplierMe=await requestJson(base,'/api/me',{token:supplier.token});
+  expectStatus(supplierMe,200,'Supplier Account Home');
+  const supplierProfile=(supplierMe.json?.profiles||[]).find(x=>x.role==='supplier');
+  if(supplierMe.json?.account?.active_role!=='supplier'||!supplierProfile?.enabled||supplierProfile?.status!=='active'
+    ||!(supplierMe.json?.businesses||[]).some(x=>Number(x.id)===supplierBusinessId)){
+    throw new Error('Supplier Account Home does not preserve the active Supplier business workspace.');
+  }
+
+  const settings=await requestJson(base,'/api/settings/finance',{token:supplier.token});
+  expectStatus(settings,200,'Supplier Profile Settings finance state');
+  const settingsProfile=(settings.json?.profiles||[]).find(x=>x.role==='supplier');
+  if(settings.json?.active_role!=='supplier'||!settingsProfile?.enabled
+    ||!(settings.json?.businesses||[]).some(x=>Number(x.id)===supplierBusinessId)
+    ||!settings.json?.account_money){
+    throw new Error('Supplier Settings does not preserve profile, business and shared Money & Banking context.');
+  }
+
+  const notificationEvidence=await supplierNotificationsForPo({
+    base,token:supplier.token,poId,businessId:merchantBusinessId,supplierAccountId:supplier.accountId
+  });
+  const supportTicketId=await ensureQaSupplierSupportTicket({
+    pool,base,token:supplier.token,accountId:supplier.accountId,poId
+  });
+
+  const merchantFinance=await requestJson(base,'/api/accounting/finance-overview',{token:merchant.token});
+  expectStatus(merchantFinance,200,'Merchant Finance after Supplier settlement');
+  const finalPo=await requestJson(base,`/api/procurement/orders/${poId}`,{token:merchant.token});
+  expectStatus(finalPo,200,'Merchant final Supplier PO detail');
+  if(finalPo.json?.status!=='received'||finalPo.json?.payment_status!=='paid'){
+    throw new Error('Merchant and Supplier views do not agree on the settled purchase order.');
+  }
+
+  const supplierLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:supplier.token,body:{}});
+  expectStatus(supplierLogout,200,'Supplier Experience logout');
+  const relogin=await loginWithCredential({
+    base,email:SUPPLIER_ALIAS,password:supplier.password,label:'Supplier Experience final re-login'
+  });
+  const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
+  expectStatus(finalLogout,200,'Supplier Experience final logout');
+  const merchantLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+  expectStatus(merchantLogout,200,'Supplier Experience Merchant logout');
+  const adminLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
+  expectStatus(adminLogout,200,'Supplier Experience Admin logout');
+
+  return{
+    status:'PASS',
+    wave:SUPPLIER_EXPERIENCE_WAVE,
+    account_role:'supplier',
+    invitation_id:onboarding.invitationId,
+    application_id:onboarding.applicationId,
+    supplier_business_id:supplierBusinessId,
+    merchant_business_id:merchantBusinessId,
+    catalog_item_id:Number(supplierItem.id),
+    purchase_order_id:poId,
+    purchase_order_total:expectedTotal,
+    purchase_order_received:true,
+    purchase_order_paid:true,
+    finance_recorded_payment:true,
+    settings_context:true,
+    shared_account_money_context:true,
+    notification_lifecycle:true,
+    notification_events:notificationEvidence.poEvents,
+    relationship_invite_notification:notificationEvidence.relationshipInvite,
+    support_ticket_id:supportTicketId,
+    support:true,
+    merchant_reconciliation:true,
+    logout_relogin:true,
+    provider_payout_settlement:supplierFinance.json?.settlement?.status||'NOT_CONFIGURED',
+    live_online_payment:'HOLD_FOR_PAYMONGO_LIVE_GATE'
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -1230,6 +1683,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
       ?await runMerchantCatalogSeed({pool,base,secret:config.secret})
       :config.wave===MERCHANT_EXPERIENCE_WAVE
         ?await runMerchantExperienceAcceptance({pool,base,secret:config.secret})
+        :config.wave===SUPPLIER_EXPERIENCE_WAVE
+          ?await runSupplierExperienceAcceptance({pool,base,secret:config.secret})
         :config.wave===CUSTOMER_MARKETPLACE_WAVE
         ?await runCustomerMarketplaceE2E({pool,base,secret:config.secret})
         :config.wave===CUSTOMER_EXPERIENCE_WAVE
@@ -1245,6 +1700,6 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 }
 
 export {
-  CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,SUPER_ADMIN_ALIAS,
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
