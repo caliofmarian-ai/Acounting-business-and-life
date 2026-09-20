@@ -244,6 +244,8 @@ export async function recordPoReceiptLot(client,{
   itemRow,
   packs,
   baseUnits,
+  lotBaseUnits=null,
+  lotBaseUnit=null,
   price,
   receiptInput={},
   actorAccountId
@@ -252,8 +254,11 @@ export async function recordPoReceiptLot(client,{
   const expires=safeDate(receiptInput?.expires_at,'Expiry date');
   const manufactured=safeDate(receiptInput?.manufactured_at,'Manufactured date');
   const packed=safeDate(receiptInput?.packed_at,'Packed date');
-  const basePerPack=Number(itemRow.base_units_per_pack_snapshot);
-  const unitCost=baseUnits>0?Number(price)/basePerPack:0;
+  const supplierBasePerPack=Number(itemRow.base_units_per_pack_snapshot);
+  const quantity=lotBaseUnits==null?Number(baseUnits):Number(lotBaseUnits);
+  const effectiveBasePerPack=Number(packs)>0?quantity/Number(packs):supplierBasePerPack;
+  const unitCost=quantity>0?(Number(packs)*Number(price))/quantity:0;
+  const effectiveBaseUnit=clean(lotBaseUnit||itemRow.base_unit_snapshot,50);
   const handling=clean(itemRow.handling_mode_snapshot||'sealed_resale',30);
   const internal=clean(receiptInput?.internal_lot_code,90)||lotCode();
 
@@ -273,8 +278,8 @@ export async function recordPoReceiptLot(client,{
       itemRow.legacy_inventory_id?Number(itemRow.legacy_inventory_id):null,
       itemRow.catalog_item_id?Number(itemRow.catalog_item_id):null,
       clean(itemRow.name_snapshot,180),internal,supplierLot,handling,
-      clean(itemRow.base_unit_snapshot,50),Number(baseUnits),Number(unitCost),
-      clean(itemRow.unit_name_snapshot,50),basePerPack,Number(packs),
+      effectiveBaseUnit,quantity,Number(unitCost),
+      clean(itemRow.unit_name_snapshot,50),effectiveBasePerPack,Number(packs),
       manufactured,packed,expires,clean(receiptInput?.lot_note,1000),Number(actorAccountId)
     ]
   );
