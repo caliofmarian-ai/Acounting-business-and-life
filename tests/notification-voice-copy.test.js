@@ -20,7 +20,7 @@ test('Tagalog copy is prepared for every accepted set without changing current a
   assert.deepEqual(notificationVoiceLocales(),['en-PH','fil-PH']);
   assert.equal(normalizeNotificationVoiceLocale('fil'),'fil-PH');
   assert.equal(normalizeNotificationVoiceLocale('tl-PH'),'fil-PH');
-  assert.equal(notificationVoiceCopy({soundSlot:'merchant.new_order',variant:2,locale:'fil-PH'}).text,'Bagong order! Oras nang pasayahin ang isang customer.');
+  assert.equal(notificationVoiceCopy({soundSlot:'merchant.new_order',variant:2,locale:'fil-PH'}).text,'Bagong order! Oras nang pasayahin ang customer.');
   assert.equal(notificationVoiceCopy({soundSlot:'finance.payment_received',variant:3,locale:'fil-PH'}).text,'Natanggap ang bayad. Na-update na ang financial record.');
 });
 
