@@ -102,7 +102,33 @@ async function emitServiceEvent(req,id,eventCode,{toCustomer=false,toProvider=fa
 }
 
 // Orders
-app.post('/api/orders',body,(req,res)=>forwardJson(req,res,async data=>{const id=data.id||data.order?.id;if(!id)return;const o=await orderInfo(id);if(!o)return;const merchants=await businessNotificationRecipients(pool,o.business_id,'merchant');await safeEmit({eventKey:`order:${o.id}:created`,eventCode:'order.created',sourceService:'orders',entityType:'order',entityId:String(o.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:false,pushDefault:true,data:{order_number:o.order_number||o.id,customer_name:o.customer_name||'Customer',business_name:o.business_name||''},recipients:merchants})}));
+async function emitOrderCreated(req,data){
+  const id=data.id||data.order?.id;
+  if(!id)return;
+  const o=await orderInfo(id);
+  if(!o)return;
+  const merchants=await businessNotificationRecipients(pool,o.business_id,'merchant');
+  await safeEmit({
+    eventKey:`order:${o.id}:created`,
+    eventCode:'order.created',
+    sourceService:'orders',
+    entityType:'order',
+    entityId:String(o.id),
+    correlationId:correlation(req),
+    category:'operational',
+    priority:'high',
+    emailDefault:false,
+    pushDefault:true,
+    data:{
+      order_number:o.order_number||o.id,
+      customer_name:o.customer_name||'Customer',
+      business_name:o.business_name||''
+    },
+    recipients:merchants
+  });
+}
+app.post('/api/orders',body,(req,res)=>forwardJson(req,res,data=>emitOrderCreated(req,data)));
+app.post('/api/marketplace/checkout',body,(req,res)=>forwardJson(req,res,data=>emitOrderCreated(req,data)));
 app.post('/api/orders/:id/check-in',body,(req,res)=>forwardJson(req,res,()=>emitOrderEvent(req,req.params.id,'order.customer_checked_in',{merchant:true,customer:false,priority:'high'})));
 app.post('/api/orders/merchant/:id/confirm-presence',body,(req,res)=>forwardJson(req,res,()=>emitOrderEvent(req,req.params.id,'order.customer_checked_in',{merchant:false,customer:true})));
 app.post('/api/orders/merchant/:id/start',body,(req,res)=>forwardJson(req,res,()=>emitOrderEvent(req,req.params.id,'order.preparing',{customer:true})));
