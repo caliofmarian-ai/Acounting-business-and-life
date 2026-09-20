@@ -441,7 +441,7 @@ async function sendQueuedPush(pool,row){
 
 export async function processNotificationDeliveries(pool,{limit=20}={}){
   const {rows}=await pool.query(`
-    SELECT d.id,d.channel,d.attempt_count,r.account_id,r.locale,r.role_hint,e.event_code,e.category,e.priority,e.entity_type,e.entity_id,e.data_json
+    SELECT d.id,d.channel,d.attempt_count,r.account_id,r.locale,r.role_hint,e.event_code,e.category,e.entity_type,e.entity_id,e.data_json,e.priority
     FROM notification_deliveries d
     JOIN notification_recipients r ON r.id=d.recipient_id
     JOIN notification_events e ON e.id=r.event_id
