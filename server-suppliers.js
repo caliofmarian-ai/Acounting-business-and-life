@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureCatalogMediaSchema,mediaForEntities } from './catalog-media-core.js';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
+import { ensureSupplierDomainV2Schema,registerSupplierDomainV2Routes } from './server-supplier-domain-v2.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -150,7 +151,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     PRIMARY KEY(receipt_id,purchase_order_item_id)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS supplier_payment_tx_unique ON transactions(source,source_id) WHERE source='supplier_payment';
-`);await ensureCatalogMediaSchema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureSupplierDomainV2Schema(pool)}
 
 async function relationship(businessId,supplierId){const r=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value FROM supplier_relationships r JOIN accounts a ON a.id=r.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=r.supplier_account_id WHERE r.business_id=$1 AND r.supplier_account_id=$2`,[businessId,supplierId]);return r.rows[0]||null}
 async function catalog(supplierId){const{rows}=await pool.query(`SELECT * FROM supplier_catalog_items WHERE supplier_account_id=$1 AND active=TRUE ORDER BY availability_status='available' DESC,product_name`,[supplierId]);const media=await mediaForEntities(pool,{entityType:'supplier_catalog_item',entityIds:rows.map(x=>x.id),publicOnly:false});return rows.map(row=>{const images=media.get(Number(row.id))||[];const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible)||null;return{...row,images,image_data_url:primary?.data_url||'',image_source_type:primary?.source_type||''}})}
@@ -185,6 +186,8 @@ app.post('/api/procurement/orders/:id/payment',body,async(req,res,next)=>{try{co
 app.get('/api/procurement/reorder-suggestions',async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.query.business_id||undefined));if(Number(b.id)!==1)return res.json([]);const{rows}=await pool.query(`SELECT i.id inventory_id,i.item,i.quantity,i.reorder_level,i.unit,i.unit_cost,l.catalog_item_id,c.product_name,c.unit_name,c.base_unit,c.base_units_per_pack,c.price_per_pack,c.minimum_packs,c.lead_time_days,c.supplier_account_id,COALESCE(s.supplier_name,a.display_name) supplier_name FROM inventory i LEFT JOIN merchant_supplier_item_links l ON l.business_id=1 AND l.legacy_inventory_id=i.id LEFT JOIN supplier_catalog_items c ON c.id=l.catalog_item_id AND c.active=TRUE LEFT JOIN accounts a ON a.id=c.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=c.supplier_account_id WHERE i.quantity<=i.reorder_level ORDER BY (i.reorder_level-i.quantity) DESC`);res.json(rows.map(x=>({...x,suggested_packs:x.catalog_item_id?Math.max(Number(x.minimum_packs||1),Math.ceil(Math.max(0,Number(x.reorder_level)-Number(x.quantity))/Number(x.base_units_per_pack||1))):null})))}catch(e){next(e)}})
 
 app.get('/api/procurement/respond/:token',async(req,res,next)=>{try{const po=await pool.query(`SELECT p.id,p.po_number,p.status,p.fulfilment_mode,p.subtotal,p.delivery_fee,p.expected_total,p.requested_date,p.merchant_note,b.name business_name FROM purchase_orders p JOIN businesses b ON b.id=p.business_id WHERE p.public_token=$1`,[clean(req.params.token,100)]);if(!po.rowCount)return res.status(404).json({error:'Purchase order not found'});const items=await pool.query(`SELECT id,name_snapshot,sku_snapshot,unit_name_snapshot,ordered_packs,price_per_pack_snapshot,line_total FROM purchase_order_items WHERE purchase_order_id=$1 ORDER BY id`,[po.rows[0].id]);res.json({...po.rows[0],items:items.rows})}catch(e){next(e)}})
+
+registerSupplierDomainV2Routes({app,pool,body,identity});
 
 function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Supplier upstream unavailable'})});req.pipe(up)}
 app.use(proxy)
