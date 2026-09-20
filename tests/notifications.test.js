@@ -77,7 +77,7 @@ test('marketing notifications default to opt-in while mandatory events override 
 
 test('notification attention metadata is attached centrally to inbox and Web Push payloads',()=>{
   assert.match(core,/notificationAttention/);
-  assert.match(core,/role_hint,e\.event_code,e\.category,e\.priority/);
+  assert.match(core,/role_hint,e\.event_code,e\.category,e\.entity_type/);
   assert.match(core,/entity_id:row\.entity_id,attention/);
   assert.match(core,/\.\.\.message,attention:notificationAttention/);
   assert.match(server,/r\.role_hint,e\.id event_id/);
