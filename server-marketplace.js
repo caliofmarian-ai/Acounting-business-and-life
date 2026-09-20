@@ -61,6 +61,7 @@ async function initDb(){await pool.query(`
     id BIGSERIAL PRIMARY KEY,
     business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
     legacy_product_id BIGINT REFERENCES products(id) ON DELETE SET NULL,
+    inventory_id BIGINT REFERENCES inventory(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL DEFAULT 'General',
@@ -80,6 +81,8 @@ async function initDb(){await pool.query(`
     CHECK (product_domain IN ('food','non_food')),
     UNIQUE(business_id,name)
   );
+  ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS inventory_id BIGINT REFERENCES inventory(id) ON DELETE SET NULL;
+  CREATE INDEX IF NOT EXISTS marketplace_products_inventory_idx ON marketplace_products(business_id,inventory_id) WHERE inventory_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS marketplace_products_public_idx ON marketplace_products(business_id,product_domain,published,active);
   CREATE UNIQUE INDEX IF NOT EXISTS marketplace_products_legacy_unique ON marketplace_products(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL;
 
@@ -109,7 +112,12 @@ async function attachProductMedia(rows,publicOnly=false){
     return{...row,images,image_data_url:primary?.data_url||row.image_data_url||'',image_source_type:primary?.source_type||(row.image_data_url?'legacy_upload':'')};
   });
 }
-async function products(businessId,includePrivate=false){const{rows}=await pool.query(`SELECT * FROM marketplace_products WHERE business_id=$1 ${includePrivate?'':"AND published=TRUE AND active=TRUE"} ORDER BY category,name`,[businessId]);return attachProductMedia(rows,!includePrivate)}
+async function products(businessId,includePrivate=false){
+  const query=includePrivate
+    ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 ORDER BY p.category,p.name`
+    :`SELECT p.* FROM marketplace_products p WHERE p.business_id=$1 AND p.published=TRUE AND p.active=TRUE ORDER BY p.category,p.name`;
+  const{rows}=await pool.query(query,[businessId]);return attachProductMedia(rows,!includePrivate)
+}
 
 // Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
 async function guestPublicStorefronts(domain=''){
@@ -127,7 +135,7 @@ async function guestPublicProducts(businessId){
   return attachProductMedia(rows,true);
 }
 
-async function importLegacyProducts(businessId){if(Number(businessId)!==1)return 0;const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT 1,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`);return r.rowCount}
+async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
 
 function manilaStamp(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const x=Object.fromEntries(parts.map(p=>[p.type,p.value]));return `${x.year}${x.month}${x.day}`}
 async function trust(client,businessId,customerId){const count=await client.query(`SELECT COUNT(*)::int count FROM orders WHERE business_id=$1 AND customer_account_id=$2 AND order_status='completed'`,[businessId,customerId]);const s=await client.query(`SELECT allow_remote_cash_prep,trust_suspended_at FROM merchant_customer_settings WHERE business_id=$1 AND customer_account_id=$2`,[businessId,customerId]);const c=Number(count.rows[0]?.count||0),row=s.rows[0];return{eligible:c>=5&&!row?.trust_suspended_at,allowed:c>=5&&Boolean(row?.allow_remote_cash_prep)&&!row?.trust_suspended_at}}
@@ -158,8 +166,58 @@ app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{res.status(2
 app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}res.json({...s,products:await products(business.id,true)})}catch(e){next(e)}})
 app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));const domain=['food','non_food','mixed'].includes(req.body?.merchant_domain)?req.body.merchant_domain:'food';const status=['draft','published','paused'].includes(req.body?.publication_status)?req.body.publication_status:'draft';const open=['open','busy','closed'].includes(req.body?.opening_status)?req.body.opening_status:'open';const logo=clean(req.body?.logo_data_url,320000);if(logo&&!/^data:image\/(png|jpeg|webp);base64,/.test(logo))return res.status(400).json({error:'Logo must be PNG, JPEG or WebP'});const{rows}=await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name,description,merchant_domain,publication_status,pickup_address,opening_status,preparation_eta_minutes,pickup_enabled,delivery_enabled,cash_enabled,online_enabled,public_reputation_enabled,price_comparison_enabled,logo_data_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(business_id) DO UPDATE SET store_name=EXCLUDED.store_name,description=EXCLUDED.description,merchant_domain=EXCLUDED.merchant_domain,publication_status=EXCLUDED.publication_status,pickup_address=EXCLUDED.pickup_address,opening_status=EXCLUDED.opening_status,preparation_eta_minutes=EXCLUDED.preparation_eta_minutes,pickup_enabled=EXCLUDED.pickup_enabled,delivery_enabled=EXCLUDED.delivery_enabled,cash_enabled=EXCLUDED.cash_enabled,online_enabled=EXCLUDED.online_enabled,public_reputation_enabled=EXCLUDED.public_reputation_enabled,price_comparison_enabled=EXCLUDED.price_comparison_enabled,logo_data_url=EXCLUDED.logo_data_url,updated_at=NOW() RETURNING *`,[business.id,clean(req.body?.store_name,120)||business.name,clean(req.body?.description,1000),domain,status,clean(req.body?.pickup_address,400),open,Math.max(1,Math.min(240,Number(req.body?.preparation_eta_minutes)||15)),req.body?.pickup_enabled!==false,Boolean(req.body?.delivery_enabled),req.body?.cash_enabled!==false,Boolean(req.body?.online_enabled),Boolean(req.body?.public_reputation_enabled),Boolean(req.body?.price_comparison_enabled),logo]);res.json(rows[0])}catch(e){next(e)}})
 app.post('/api/merchant/storefront/import-legacy',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||1));res.json({imported_or_updated:await importLegacyProducts(business.id),products:await products(business.id,true)})}catch(e){next(e)}})
-app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));const domain=['food','non_food'].includes(req.body?.product_domain)?req.body.product_domain:'food';const price=Number(req.body?.selling_price);if(!clean(req.body?.name,120)||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Name and valid selling price are required'});const{rows}=await pool.query(`INSERT INTO marketplace_products(business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,price_comparison_override) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE,$12,$13) RETURNING *`,[business.id,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',domain,clean(req.body?.product_kind,40)||'prepared_food',clean(req.body?.unit_code,20)||'item',positive(req.body?.quantity_per_unit)?Number(req.body.quantity_per_unit):1,price,Boolean(req.body?.stock_tracked),req.body?.stock_quantity==null?null:Number(req.body.stock_quantity),Boolean(req.body?.published),req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override)]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this store'});next(e)}})
-app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{try{const id=Number(req.params.id);const own=await pool.query(`SELECT * FROM marketplace_products WHERE id=$1`,[id]);if(!own.rowCount)return res.status(404).json({error:'Product not found'});const old=own.rows[0];await requireMerchant(req,old.business_id);const{rows}=await pool.query(`UPDATE marketplace_products SET name=$1,description=$2,category=$3,product_domain=$4,product_kind=$5,unit_code=$6,quantity_per_unit=$7,selling_price=$8,stock_tracked=$9,stock_quantity=$10,active=$11,published=$12,price_comparison_override=$13,updated_at=NOW() WHERE id=$14 RETURNING *`,[clean(req.body?.name??old.name,120),clean(req.body?.description??old.description,800),clean(req.body?.category??old.category,100),['food','non_food'].includes(req.body?.product_domain)?req.body.product_domain:old.product_domain,clean(req.body?.product_kind??old.product_kind,40),clean(req.body?.unit_code??old.unit_code,20),Number(req.body?.quantity_per_unit??old.quantity_per_unit),Number(req.body?.selling_price??old.selling_price),req.body?.stock_tracked??old.stock_tracked,req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity,req.body?.active??old.active,req.body?.published??old.published,req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,id]);res.json(rows[0])}catch(e){next(e)}})
+app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind,40))?clean(req.body.product_kind,40):'prepared_food';
+    const domain=kind==='non_food_resale'?'non_food':'food';
+    const price=Number(req.body?.selling_price);
+    const quantityPerUnit=positive(req.body?.quantity_per_unit)?Number(req.body.quantity_per_unit):1;
+    if(!clean(req.body?.name,120)||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Name and valid selling price are required'});
+    let inventoryId=req.body?.inventory_id?Number(req.body.inventory_id):null;
+    const direct=kind!=='prepared_food';
+    if(direct){
+      if(!Number.isInteger(inventoryId))return res.status(400).json({error:'Choose the stock item this product sells from.'});
+      const inv=await pool.query(`SELECT id,item,unit FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,business.id]);
+      if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found in this business'});
+    }else inventoryId=null;
+    const unitCode=clean(req.body?.unit_code,40)||(direct?`${quantityPerUnit} stock units`:'item');
+    const{rows}=await pool.query(`
+      INSERT INTO marketplace_products(
+        business_id,inventory_id,name,description,category,product_domain,product_kind,unit_code,
+        quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,price_comparison_override
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,TRUE,$12,$13)
+      RETURNING *
+    `,[business.id,inventoryId,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',domain,kind,unitCode,quantityPerUnit,price,direct,Boolean(req.body?.published),req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override)]);
+    res.status(201).json(rows[0]);
+  }catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this store'});next(e)}
+})
+app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
+  try{
+    const id=Number(req.params.id);const own=await pool.query(`SELECT * FROM marketplace_products WHERE id=$1`,[id]);
+    if(!own.rowCount)return res.status(404).json({error:'Product not found'});
+    const old=own.rows[0],{business}=await requireMerchant(req,old.business_id);
+    const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind??old.product_kind,40))?clean(req.body?.product_kind??old.product_kind,40):old.product_kind;
+    const domain=kind==='non_food_resale'?'non_food':'food';
+    const direct=kind!=='prepared_food';
+    let inventoryId=req.body?.inventory_id===undefined?old.inventory_id:(req.body.inventory_id?Number(req.body.inventory_id):null);
+    if(direct){
+      if(!Number.isInteger(Number(inventoryId)))return res.status(400).json({error:'Choose the stock item this product sells from.'});
+      const inv=await pool.query(`SELECT id FROM inventory WHERE id=$1 AND business_id=$2`,[Number(inventoryId),business.id]);
+      if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found in this business'});
+    }else inventoryId=null;
+    const quantityPerUnit=Number(req.body?.quantity_per_unit??old.quantity_per_unit);
+    if(!positive(quantityPerUnit))return res.status(400).json({error:'Stock quantity per sold unit must be greater than zero'});
+    const{rows}=await pool.query(`
+      UPDATE marketplace_products SET
+        inventory_id=$1,name=$2,description=$3,category=$4,product_domain=$5,product_kind=$6,
+        unit_code=$7,quantity_per_unit=$8,selling_price=$9,stock_tracked=$10,stock_quantity=$11,
+        active=$12,published=$13,price_comparison_override=$14,updated_at=NOW()
+      WHERE id=$15 RETURNING *
+    `,[inventoryId,clean(req.body?.name??old.name,120),clean(req.body?.description??old.description,800),clean(req.body?.category??old.category,100),domain,kind,clean(req.body?.unit_code??old.unit_code,40),quantityPerUnit,Number(req.body?.selling_price??old.selling_price),direct?true:(req.body?.stock_tracked??old.stock_tracked),direct?null:(req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity),req.body?.active??old.active,req.body?.published??old.published,req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,id]);
+    res.json(rows[0]);
+  }catch(e){next(e)}
+})
 
 async function merchantOwnedMarketplaceProduct(req){
   const id=Number(req.params.id);
