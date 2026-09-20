@@ -49,7 +49,9 @@ function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,c=>({'&':
 
 function financeMoney(v){return new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0)}
 function financeMetric(label,value,detail=''){return '<div class="businessFinanceMetric"><span>'+escapeHtml(label)+'</span><strong>'+(typeof value==='number'?financeMoney(value):escapeHtml(value))+'</strong>'+(detail?'<small>'+escapeHtml(detail)+'</small>':'')+'</div>'}
-function financeStatusMetric(label,summary){if(!summary?.tracked)return financeMetric(label,'Not configured','No payout/net allocation evidence');return financeMetric(label,financeMoney(summary.paid),'Paid · '+financeMoney(summary.eligible)+' eligible · '+financeMoney(summary.pending)+' pending')}
+function financeStatusMetric(label,summary){if(!summary?.tracked)return financeMetric(label,'Setup needed','Choose where this profile should receive its money');return financeMetric(label,financeMoney(summary.paid),'Paid · '+financeMoney(summary.eligible)+' ready · '+financeMoney(summary.pending)+' pending')}
+function financeStatusCopy(status){return ({COST_EVIDENCE_COMPLETE:'Costs recorded',NON_FOOD_COST_BASIS_NOT_CONFIGURED:'Product costs are missing',NO_REVENUE:'No completed sales yet',NOT_AVAILABLE_WITHOUT_PROVIDER_EVIDENCE:'Waiting for confirmed payment information'})[status]||''}
+function financeWarningCopy(code){return ({MERCHANT_STOREFRONT_DOMAIN_NOT_CONFIGURED:{title:'Choose what this business sells',body:'Set whether the storefront offers food, non-food products, or both.'},NON_FOOD_COST_BASIS_NOT_CONFIGURED:{title:'Add product costs to see estimated profit',body:'Selling prices alone are not enough to calculate profit.'},MERCHANT_PAYOUT_ALLOCATION_NOT_CONFIGURED:{title:'Choose where you want to receive payments',body:'Add a payout method before accepting live customer payments.',action:true},MULTI_BUSINESS_SUPPLIER_PO_ATTRIBUTION_PENDING:{title:'Some supplier orders need a business',body:'Choose which business owns each order before using these totals.'}})[code]||{title:'Some financial information needs attention',body:'Open profile settings to review the missing information.'}}
 function applyFinancePresentation(overview){
   const role=overview?.role||accountingState.role,domain=overview?.presentation?.merchant_domain||'unknown';
   document.body.dataset.businessFinanceRole=role||'';document.body.dataset.merchantDomain=domain;
@@ -70,17 +72,17 @@ function merchantFinanceHtml(o){
   const primary='<div class="businessFinancePrimary">'
     +financeCompactMetric('Money received',Number(o.cash_evidence?.confirmed_merchandise_received||0),'Confirmed customer payments')
     +financeCompactMetric('Sales',Number(o.commercial?.completed_merchandise_value||0),'Completed merchandise')
-    +financeCompactMetric('Still to collect',Number(o.receivables?.completed_customer_receivables||0),'Customer receivables')
+    +financeCompactMetric('Awaiting payment',Number(o.receivables?.completed_customer_receivables||0),'Completed sales not paid yet')
     +financeCompactMetric('Expenses',Number(o.ledger?.business_expenses||0),'Business expenses')
     +'</div>';
-  const details='<details class="businessFinanceDetails"><summary>More business details</summary><div class="businessFinanceMetrics">'
-    +financeMetric('Supplier payables',Number(o.payables?.supplier_payables||0),'Received purchases still due')
-    +financeMetric('Inventory value',Number(o.inventory?.valuation||0),o.inventory?.valuation_status||'')
-    +financeMetric('Owner drawings',Number(o.ledger?.owner_drawings||0),'Personal withdrawal — not business expense')
-    +financeMetric('Recorded ledger balance',Number(reconciliation.recorded_available_balance||0),'Internal ledger · not provider/bank balance')
-    +financeMetric('Estimated margin',margin,p.status||'')
-    +financeStatusMetric('Payout / settlement',sett)
-    +'</div><div class="ledgerReconciliation '+(reconciliation.status==='MATCHED'?'matched':'separate')+'"><strong>'+(reconciliation.status==='MATCHED'?'Ledger and confirmed payments match':'Ledger and confirmed payments are different evidence')+'</strong><span>'+escapeHtml(reconciliation.note||'Recorded ledger entries are kept separate from confirmed customer payment evidence.')+'</span></div></details>';
+  const details='<details class="businessFinanceDetails"><summary>Financial details</summary><div class="businessFinanceMetrics">'
+    +financeMetric('Owed to suppliers',Number(o.payables?.supplier_payables||0),'Products received but not fully paid')
+    +financeMetric('Products in stock',Number(o.inventory?.valuation||0),'Estimated cost value · not available cash')
+    +financeMetric('Money taken by owner',Number(o.ledger?.owner_drawings||0),'Personal withdrawals · not business expenses')
+    +financeMetric('Manual records total',Number(reconciliation.recorded_available_balance||0),'Unverified entries · not bank balance or available cash')
+    +financeMetric('Estimated profit margin',margin,financeStatusCopy(p.status))
+    +financeStatusMetric('Payment destination',sett)
+    +'</div><div class="ledgerReconciliation '+(reconciliation.status==='MATCHED'?'matched':'separate')+'"><strong>'+(reconciliation.status==='MATCHED'?'Records agree with confirmed payments':'Manual records are not confirmed payments')+'</strong><span>'+(reconciliation.status==='MATCHED'?'The current totals agree, but only provider-confirmed payments count as money received.':'Manual sales, adjustments and test entries can change this total without moving real money. Check your payment provider or bank for received funds.')+'</span></div></details>';
   return primary+details;
 }
 function supplierFinanceHtml(o){
@@ -99,11 +101,11 @@ function supplierFinanceHtml(o){
     +'</div></details>';
   return primary+details;
 }
-function financeWarnings(o){const rows=o.warnings||[];return rows.length?'<div class="businessFinanceWarnings">'+rows.map(x=>'<div>⚠ '+escapeHtml(String(x).replaceAll('_',' '))+'</div>').join('')+'</div>':''}
-function financeAccounts(o){const a=o.profile_finance?.financial_accounts||[];return '<div class="businessFinanceAccounts"><div><strong>Payout setup</strong><span>'+(a.length?escapeHtml(String(a.length))+' profile payout reference'+(a.length===1?'':'s'):'No profile payout reference')+'. External bank accounts stay under Account · Money & Banking.</span></div><button id="openBusinessFinanceSettings" type="button">Open Profile Settings</button></div>'}
+function financeWarnings(o){const rows=o.warnings||[];return rows.length?'<div class="businessFinanceWarnings">'+rows.map(x=>{const copy=financeWarningCopy(x);return '<div class="businessFinanceWarning"><span aria-hidden="true">!</span><div><strong>'+escapeHtml(copy.title)+'</strong><small>'+escapeHtml(copy.body)+'</small></div>'+(copy.action?'<button class="financeWarningAction" type="button" data-open-finance-settings>Set up</button>':'')+'</div>'}).join('')+'</div>':''}
+function financeAccounts(o){const a=o.profile_finance?.financial_accounts||[];return '<div class="businessFinanceAccounts"><div><strong>Payment and banking settings</strong><span>'+(a.length?escapeHtml(String(a.length))+' payout method'+(a.length===1?'':'s')+' added for this profile.':'No payout method has been added for this profile.')+' Personal bank details stay securely under Account · Money & Banking.</span></div><button id="openBusinessFinanceSettings" type="button">Manage settings</button></div>'}
 function roleFinanceHtml(o){
   const domain=o.role==='merchant'?' · '+escapeHtml(String(o.presentation?.merchant_domain||'unknown').replace('_',' ')):'';
-  return '<div class="businessFinanceHead"><div><span class="workspaceEyebrow">'+escapeHtml(o.role==='supplier'?'Supplier Finance':'Merchant Finance')+domain+'</span><h2>'+escapeHtml(o.business?.name||'Business')+'</h2><p>'+escapeHtml(o.role==='supplier'?'Money received, fulfilled orders, receivables and expenses.':'Money received, sales, receivables and expenses. The rest stays under More details.')+'</p></div><span class="workspaceIsolated">'+escapeHtml(o.role==='supplier'?'Supplier books':'Business books')+'</span></div>'+(o.role==='supplier'?supplierFinanceHtml(o):merchantFinanceHtml(o))+financeWarnings(o)+financeAccounts(o);
+  return '<div class="businessFinanceHead"><div><span class="workspaceEyebrow">'+escapeHtml(o.role==='supplier'?'Supplier finances':'Business finances')+domain+'</span><h2>'+escapeHtml(o.business?.name||'Business')+'</h2><p>'+escapeHtml(o.role==='supplier'?'See confirmed income, fulfilled orders, unpaid amounts and expenses.':'See confirmed payments, completed sales, unpaid amounts and expenses.')+'</p></div><span class="workspaceIsolated">'+escapeHtml(o.role==='supplier'?'This supplier only':'This business only')+'</span></div>'+(o.role==='supplier'?supplierFinanceHtml(o):merchantFinanceHtml(o))+financeWarnings(o)+financeAccounts(o);
 }
 function mountWorkspaceBar() {
   const topbar=document.querySelector('.topbar');
@@ -111,7 +113,7 @@ function mountWorkspaceBar() {
   let bar=document.getElementById('businessWorkspaceBar');
   if(!bar){bar=document.createElement('div');bar.id='businessWorkspaceBar';bar.className='businessWorkspaceBar';topbar.insertAdjacentElement('afterend',bar);}
   const options=accountingState.businesses.map(b=>`<option value="${b.id}" ${Number(b.id)===Number(accountingState.activeBusinessId)?'selected':''}>${escapeHtml(b.name)}</option>`).join('');
-  bar.innerHTML=`<div><span class="workspaceEyebrow">${accountingState.role==='supplier'?'Supplier accounting':'Business workspace'}</span><strong>${escapeHtml(accountingState.businesses.find(b=>Number(b.id)===Number(accountingState.activeBusinessId))?.name||'Business')}</strong></div>${accountingState.businesses.length>1?`<label>Workspace<select id="businessWorkspaceSelect">${options}</select></label>`:'<span class="workspaceIsolated">Isolated ledger</span>'}`;
+  bar.innerHTML=`<div><span class="workspaceEyebrow">${accountingState.role==='supplier'?'Supplier finances':'Current business'}</span><strong>${escapeHtml(accountingState.businesses.find(b=>Number(b.id)===Number(accountingState.activeBusinessId))?.name||'Business')}</strong></div>${accountingState.businesses.length>1?`<label>Business<select id="businessWorkspaceSelect">${options}</select></label>`:'<span class="workspaceIsolated">This business only</span>'}`;
   const select=bar.querySelector('#businessWorkspaceSelect');
   if(select) select.onchange=async()=>{
     const previous=accountingState.activeBusinessId;
@@ -163,8 +165,7 @@ async function mountEconomicSummary() {
     panel.className='economicWorkspaceSummary businessFinanceOverview';
     panel.innerHTML=roleFinanceHtml(overview);
     applyFinancePresentation(overview);
-    const settings=panel.querySelector('#openBusinessFinanceSettings');
-    if(settings)settings.onclick=()=>window.BusinessLifeProfileSettings?.open?.(overview.role);
+    panel.querySelectorAll('#openBusinessFinanceSettings,[data-open-finance-settings]').forEach(settings=>settings.onclick=()=>window.BusinessLifeProfileSettings?.open?.(overview.role));
   }catch(err){console.warn('Business Finance overview:',err.message)}
 }
 async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
