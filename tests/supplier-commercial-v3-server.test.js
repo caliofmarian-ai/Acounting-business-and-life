@@ -12,6 +12,12 @@ test('V3 keeps PO, receiving, invoice evidence and payment as separate authoriti
   assert.match(source,/fiscal_validation_automatic:false/);
 });
 
+test('invoice evidence prevents duplicate document numbers for connected and external Suppliers',()=>{
+  assert.match(source,/purchase_invoice_document_unique/);
+  assert.match(source,/purchase_invoice_external_document_unique/);
+  assert.match(source,/ON purchase_invoice_evidence\(business_id,supply_party_id,document_number\)/);
+});
+
 test('trade terms support connected and external Suppliers without duplicating relationship identity',()=>{
   assert.match(source,/CREATE TABLE IF NOT EXISTS supplier_trade_terms/);
   assert.match(source,/supplier_account_id BIGINT REFERENCES accounts/);
