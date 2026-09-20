@@ -668,6 +668,48 @@ app.post('/api/profiles/customer/activate', jsonBody, auth, async (req,res,next)
   }catch(err){next(err)}
 });
 
+app.patch('/api/courier', jsonBody, auth, async (req, res, next) => {
+  try {
+    const enabled=await pool.query(
+      `SELECT 1 FROM profiles WHERE account_id=$1 AND role='courier' AND enabled=TRUE AND status='active'`,
+      [req.accountId]
+    );
+    if(!enabled.rowCount)return res.status(403).json({error:'Active Courier profile required'});
+
+    const vehicle=clean(req.body?.vehicle_type,80);
+    const numberOrNull=value=>value==null||value===''?null:Number(value);
+    const maxWeight=numberOrNull(req.body?.max_weight_kg);
+    const maxVolume=numberOrNull(req.body?.max_volume_l);
+    const serviceRadius=numberOrNull(req.body?.service_radius_km);
+    for(const value of [maxWeight,maxVolume,serviceRadius]){
+      if(value!=null&&(!Number.isFinite(value)||value<0)){
+        return res.status(400).json({error:'Courier capacity values must be zero or greater'});
+      }
+    }
+
+    await pool.query(
+      `UPDATE courier_profiles
+          SET display_name=COALESCE(NULLIF($1,''),display_name),
+              vehicle_type=$2,
+              available=FALSE,
+              max_weight_kg=$3,
+              max_volume_l=$4,
+              service_radius_km=$5,
+              updated_at=NOW()
+        WHERE account_id=$6`,
+      [
+        clean(req.body?.display_name,120),
+        vehicle,
+        maxWeight,
+        maxVolume,
+        serviceRadius,
+        req.accountId
+      ]
+    );
+    res.json(await profileSnapshot(req.accountId));
+  } catch (err) { next(err); }
+});
+
 app.get('/api/context/:role', auth, async (req, res, next) => {
   const role = req.params.role;
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
