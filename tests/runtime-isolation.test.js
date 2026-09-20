@@ -15,6 +15,13 @@ test('QA runtime accepts an isolated database and test-only payments',()=>{
   assert.equal(validateRuntimeSafety(preview).databaseName,'accounting_qa');
 });
 
+test('one-time owner preparation can run only in isolated QA with a temporary credential',()=>{
+  const enabled={...preview,OWNER_MIGRATION_ENABLED:'true',APP_PIN:'temporary-qa-only-secret'};
+  assert.equal(validateRuntimeSafety(enabled).ownerMigrationEnabled,true);
+  assert.throws(()=>validateRuntimeSafety({...enabled,RAILWAY_SERVICE_NAME:'accounting-business-life',APP_ENV:'production',DATABASE_URL:'postgresql://user:secret@example.test/accounting',AUTH_PREVIEW_SHOW_LINK:'false'}),/only in the isolated QA service/);
+  assert.throws(()=>validateRuntimeSafety({...enabled,APP_PIN:''}),/temporary QA bootstrap credential/);
+});
+
 test('QA runtime refuses the production database, production environment, and live payments',()=>{
   assert.throws(()=>validateRuntimeSafety({...preview,DATABASE_URL:'postgresql://user:secret@example.test/accounting'}),/isolated/);
   assert.throws(()=>validateRuntimeSafety({...preview,APP_ENV:'production'}),/APP_ENV=qa/);
@@ -34,4 +41,5 @@ test('production refuses QA data and preview-only verification links',()=>{
   assert.equal(validateRuntimeSafety(production).databaseName,'accounting');
   assert.throws(()=>validateRuntimeSafety({...production,DATABASE_URL:'postgresql://user:secret@example.test/accounting_qa'}),/production cannot use/);
   assert.throws(()=>validateRuntimeSafety({...production,AUTH_PREVIEW_SHOW_LINK:'true'}),/preview verification links/);
+  assert.throws(()=>validateRuntimeSafety({...production,OWNER_MIGRATION_ENABLED:'true',APP_PIN:'must-not-work-here'}),/only in the isolated QA service/);
 });

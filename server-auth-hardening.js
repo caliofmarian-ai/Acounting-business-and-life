@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
+import { companyTestAccountForEmail } from './company-test-accounts.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -317,9 +318,22 @@ app.post('/api/auth/owner-migrate', jsonBody, async (req, res, next) => {
     const q = await pool.query(`SELECT legacy_pin_retired_at FROM accounts WHERE id=1`); if (q.rows[0]?.legacy_pin_retired_at) return res.status(410).json({ error: 'Owner PIN migration is already retired. Use email/password recovery.' });
     if (!APP_PIN || !safeTextEqual(pin, APP_PIN)) { await audit(1, 'owner_migration_failed', req); return res.status(401).json({ error: 'Owner migration credential is incorrect' }); }
     if (!validEmail(email) || !passwordOkay(password)) return res.status(400).json({ error: 'Valid email and password of at least 8 characters are required' });
+    const companyTest = companyTestAccountForEmail(email);
+    if (companyTest && companyTest.role !== 'super_admin') return res.status(400).json({ error: 'The protected owner account can only use the company Super Admin test alias' });
     const dup = await pool.query(`SELECT id FROM accounts WHERE LOWER(email)=$1 AND id<>1`, [email]); if (dup.rowCount) return res.status(409).json({ error: 'That email already belongs to another account' });
     const { salt, hash } = await hashPassword(password);
-    await pool.query(`UPDATE accounts SET email=$1,password_salt=$2,password_hash=$3,display_name=COALESCE(NULLIF($4,''),display_name),email_verified_at=NULL,updated_at=NOW() WHERE id=1`, [email, salt, hash, displayName]);
+    await pool.query(`UPDATE accounts
+      SET email=$1,
+          password_salt=$2,
+          password_hash=$3,
+          display_name=COALESCE(NULLIF($4,''),display_name),
+          email_verified_at=NULL,
+          account_mode=$5,
+          test_role=$6,
+          phone=CASE WHEN $5='company_test' THEN '' ELSE phone END,
+          address=CASE WHEN $5='company_test' THEN '' ELSE address END,
+          updated_at=NOW()
+      WHERE id=1`, [email, salt, hash, displayName, companyTest ? 'company_test' : 'personal', companyTest?.role || null]);
     const verifyToken = await issueActionToken(1, 'verify_email', `INTERVAL '${VERIFY_TTL_HOURS} hours'`); const verifyLink = `${publicBase(req)}/?verify_token=${encodeURIComponent(verifyToken)}`;
     await sendEmail({ accountId: 1, to: email, template: 'verify_email', subject: 'Verify your Business & Life owner email', html: `<p>Complete the owner security migration by verifying your email.</p><p><a href="${verifyLink}">Verify owner email</a></p>` });
     await audit(1, 'owner_migration_password_set', req);
