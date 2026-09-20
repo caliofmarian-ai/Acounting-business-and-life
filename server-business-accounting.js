@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyAdminAssertion } from './admin-authorization.js';
 import { businessFinanceOverview } from './business-finance-view-core.js';
+import { deriveStockPurchase,weightedAverageUnitCost,computeRecipeBatch,normalizedProductKind } from './merchant-catalog-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +54,32 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ALTER COLUMN business_id SET NOT NULL;
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_item_key;
     CREATE UNIQUE INDEX IF NOT EXISTS inventory_business_item_unique ON inventory(business_id,item);
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS measurement_family TEXT;
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS base_unit TEXT;
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS last_purchase_quantity NUMERIC(14,4);
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS last_purchase_unit TEXT NOT NULL DEFAULT '';
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS last_purchase_total_cost NUMERIC(12,2);
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS last_purchase_at TIMESTAMPTZ;
+    UPDATE inventory
+       SET quantity=quantity*1000,
+           reorder_level=reorder_level*1000,
+           unit_cost=unit_cost/1000,
+           unit='g',measurement_family='mass',base_unit='g'
+     WHERE measurement_family IS NULL AND LOWER(unit) IN ('kg','kilogram','kilograms');
+    UPDATE inventory SET measurement_family='mass',base_unit='g',unit='g'
+     WHERE measurement_family IS NULL AND LOWER(unit) IN ('g','gram','grams');
+    UPDATE inventory
+       SET quantity=quantity*1000,
+           reorder_level=reorder_level*1000,
+           unit_cost=unit_cost/1000,
+           unit='ml',measurement_family='volume',base_unit='ml'
+     WHERE measurement_family IS NULL AND LOWER(unit) IN ('l','liter','liters','litre','litres');
+    UPDATE inventory SET measurement_family='volume',base_unit='ml',unit='ml'
+     WHERE measurement_family IS NULL AND LOWER(unit) IN ('ml','milliliter','milliliters','millilitre','millilitres');
+    UPDATE inventory SET measurement_family='count',base_unit='unit',unit='unit'
+     WHERE measurement_family IS NULL AND LOWER(unit) IN ('unit','units','pc','pcs','piece','pieces','each');
+    UPDATE inventory SET measurement_family='custom',base_unit=unit
+     WHERE measurement_family IS NULL;
 
     ALTER TABLE daily_openings ADD COLUMN IF NOT EXISTS business_id BIGINT;
     UPDATE daily_openings SET business_id=1 WHERE business_id IS NULL;
@@ -89,8 +116,51 @@ async function initAccountingTenancyDb() {
     UPDATE products SET business_id=1 WHERE business_id IS NULL;
     ALTER TABLE products ALTER COLUMN business_id SET DEFAULT 1;
     ALTER TABLE products ALTER COLUMN business_id SET NOT NULL;
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS product_kind TEXT NOT NULL DEFAULT 'prepared_recipe';
+    ALTER TABLE products DROP CONSTRAINT IF EXISTS products_product_kind_check;
+    ALTER TABLE products ADD CONSTRAINT products_product_kind_check CHECK(product_kind IN ('prepared_recipe','fresh_direct','packaged_resale','non_food_resale'));
     ALTER TABLE products DROP CONSTRAINT IF EXISTS products_name_key;
     CREATE UNIQUE INDEX IF NOT EXISTS products_business_name_unique ON products(business_id,name);
+
+    CREATE TABLE IF NOT EXISTS product_recipe_batches (
+      product_id BIGINT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+      yield_quantity NUMERIC(14,4) NOT NULL CHECK(yield_quantity>0),
+      yield_unit TEXT NOT NULL,
+      yield_base_quantity NUMERIC(14,4) NOT NULL CHECK(yield_base_quantity>0),
+      yield_base_unit TEXT NOT NULL,
+      selling_quantity NUMERIC(14,4) NOT NULL CHECK(selling_quantity>0),
+      selling_unit TEXT NOT NULL,
+      selling_base_quantity NUMERIC(14,4) NOT NULL CHECK(selling_base_quantity>0),
+      sale_units_per_batch NUMERIC(14,6) NOT NULL CHECK(sale_units_per_batch>0),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS recipe_batch_components (
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id),
+      batch_quantity NUMERIC(14,4) NOT NULL CHECK(batch_quantity>0),
+      batch_unit TEXT NOT NULL,
+      base_quantity NUMERIC(14,6) NOT NULL CHECK(base_quantity>0),
+      base_unit TEXT NOT NULL,
+      per_sale_quantity NUMERIC(14,6) NOT NULL CHECK(per_sale_quantity>0),
+      percentage NUMERIC(12,4),
+      PRIMARY KEY(product_id,inventory_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_purchases (
+      id BIGSERIAL PRIMARY KEY,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      purchase_quantity NUMERIC(14,4) NOT NULL CHECK(purchase_quantity>0),
+      purchase_unit TEXT NOT NULL,
+      base_quantity NUMERIC(14,6) NOT NULL CHECK(base_quantity>0),
+      base_unit TEXT NOT NULL,
+      total_cost NUMERIC(12,2) NOT NULL CHECK(total_cost>=0),
+      account TEXT NOT NULL,
+      transaction_id BIGINT REFERENCES transactions(id) ON DELETE SET NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS inventory_purchases_business_idx ON inventory_purchases(business_id,created_at DESC);
 
     ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS business_id BIGINT;
     UPDATE product_sales SET business_id=1 WHERE business_id IS NULL;
@@ -245,10 +315,54 @@ async function dayStatus(businessId){
   return{business_date:new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'}),has_opening:opening.rowCount>0,opening_cash:openingCash,cash_movement:cashMovement,expected_cash:openingCash+cashMovement,closing:closing.rows[0]||null};
 }
 async function productsWithRecipes(businessId){
-  const products=await pool.query(`SELECT * FROM products WHERE business_id=$1 ORDER BY active DESC,name`,[businessId]);
-  const recipe=await pool.query(`SELECT r.product_id,r.inventory_id,r.quantity,i.item,i.unit,i.quantity stock_quantity,i.unit_cost,(r.quantity*i.unit_cost) component_cost FROM recipes r JOIN products p ON p.id=r.product_id JOIN inventory i ON i.id=r.inventory_id WHERE p.business_id=$1 AND i.business_id=$1 ORDER BY r.product_id,i.item`,[businessId]);
-  const map=new Map();for(const row of recipe.rows){if(!map.has(String(row.product_id)))map.set(String(row.product_id),[]);map.get(String(row.product_id)).push({inventory_id:Number(row.inventory_id),item:row.item,unit:row.unit,quantity:Number(row.quantity),stock_quantity:Number(row.stock_quantity),unit_cost:Number(row.unit_cost),component_cost:Number(row.component_cost)})}
-  return products.rows.map(p=>{const components=map.get(String(p.id))||[],unitCost=components.reduce((s,x)=>s+x.quantity*x.unit_cost,0),price=Number(p.selling_price),gp=price-unitCost;return{...p,id:Number(p.id),selling_price:price,recipe:components,estimated_unit_cost:money(unitCost),estimated_gross_profit:money(gp),estimated_margin_pct:price>0?Math.round((gp/price)*1000)/10:0}});
+  const [products,recipe,batches,batchComponents]=await Promise.all([
+    pool.query(`SELECT * FROM products WHERE business_id=$1 ORDER BY active DESC,name`,[businessId]),
+    pool.query(`SELECT r.product_id,r.inventory_id,r.quantity,i.item,i.unit,i.measurement_family,i.base_unit,i.quantity stock_quantity,i.unit_cost,(r.quantity*i.unit_cost) component_cost FROM recipes r JOIN products p ON p.id=r.product_id JOIN inventory i ON i.id=r.inventory_id WHERE p.business_id=$1 AND i.business_id=$1 ORDER BY r.product_id,i.item`,[businessId]),
+    pool.query(`SELECT b.* FROM product_recipe_batches b JOIN products p ON p.id=b.product_id WHERE p.business_id=$1`,[businessId]),
+    pool.query(`SELECT c.*,i.item,i.unit,i.unit_cost FROM recipe_batch_components c JOIN products p ON p.id=c.product_id JOIN inventory i ON i.id=c.inventory_id WHERE p.business_id=$1 AND i.business_id=$1 ORDER BY c.product_id,i.item`,[businessId])
+  ]);
+  const recipeMap=new Map();
+  for(const row of recipe.rows){
+    if(!recipeMap.has(String(row.product_id)))recipeMap.set(String(row.product_id),[]);
+    recipeMap.get(String(row.product_id)).push({
+      inventory_id:Number(row.inventory_id),item:row.item,unit:row.unit,
+      measurement_family:row.measurement_family,base_unit:row.base_unit,
+      quantity:Number(row.quantity),stock_quantity:Number(row.stock_quantity),
+      unit_cost:Number(row.unit_cost),component_cost:Number(row.component_cost)
+    });
+  }
+  const batchMap=new Map(batches.rows.map(row=>[String(row.product_id),{
+    yield_quantity:Number(row.yield_quantity),yield_unit:row.yield_unit,
+    yield_base_quantity:Number(row.yield_base_quantity),yield_base_unit:row.yield_base_unit,
+    selling_quantity:Number(row.selling_quantity),selling_unit:row.selling_unit,
+    selling_base_quantity:Number(row.selling_base_quantity),
+    sale_units_per_batch:Number(row.sale_units_per_batch)
+  }]));
+  const batchComponentMap=new Map();
+  for(const row of batchComponents.rows){
+    if(!batchComponentMap.has(String(row.product_id)))batchComponentMap.set(String(row.product_id),[]);
+    batchComponentMap.get(String(row.product_id)).push({
+      inventory_id:Number(row.inventory_id),item:row.item,
+      batch_quantity:Number(row.batch_quantity),batch_unit:row.batch_unit,
+      base_quantity:Number(row.base_quantity),base_unit:row.base_unit,
+      per_sale_quantity:Number(row.per_sale_quantity),
+      percentage:row.percentage==null?null:Number(row.percentage),
+      unit_cost:Number(row.unit_cost),
+      batch_cost:Number(row.base_quantity)*Number(row.unit_cost)
+    });
+  }
+  return products.rows.map(p=>{
+    const components=recipeMap.get(String(p.id))||[];
+    const unitCost=components.reduce((sum,x)=>sum+x.quantity*x.unit_cost,0);
+    const price=Number(p.selling_price),gp=price-unitCost;
+    return{
+      ...p,id:Number(p.id),selling_price:price,recipe:components,
+      recipe_batch:batchMap.get(String(p.id))||null,
+      recipe_batch_components:batchComponentMap.get(String(p.id))||[],
+      estimated_unit_cost:money(unitCost),estimated_gross_profit:money(gp),
+      estimated_margin_pct:price>0?Math.round((gp/price)*1000)/10:0
+    };
+  });
 }
 async function commercialMetrics(ctx){
   const businessId=Number(ctx.business.id);
