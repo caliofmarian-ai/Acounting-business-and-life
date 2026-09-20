@@ -56,6 +56,10 @@ function avatarMarkup(account, extraClass = '') {
 }
 function roleProfile(role) { return snapshot?.profiles?.find(p => p.role === role); }
 function isEnabled(role) { const profile=roleProfile(role);return Boolean(profile?.enabled&&profile?.status==='active'); }
+function isCompanyTestAccount(account=snapshot?.account){return Boolean(account?.is_test_account&&account?.account_mode==='company_test')}
+function accountDetailsReady(account=snapshot?.account){return Boolean(String(account?.display_name||'').trim()&&String(account?.email||'').trim()&&(isCompanyTestAccount(account)||String(account?.address||'').trim()))}
+function accountIdentityLabel(account=snapshot?.account){return isCompanyTestAccount(account)?'Test Account ID':'Personal ID'}
+function testAccountRoleLabel(account=snapshot?.account){return account?.test_role_label||ROLE_META[account?.test_role]?.label||String(account?.test_role||'Test').replaceAll('_',' ')}
 function adminRank(assignment){ return assignment?.effective_rank || assignment?.authority_rank || assignment?.admin_role || 'admin'; }
 function highestAdminAssignment(){
   const levels={super_admin:100,country_admin:80,territory_admin:60,specialist:40};
@@ -66,7 +70,7 @@ function identityLine(id,label='ID'){
   return `<span class="publicIdentity"><span>${escapeHtml(label)}</span><code>${escapeHtml(id||'Preparing ID…')}</code>${id?`<button type="button" data-copy-id="${escapeHtml(id)}" aria-label="Copy ${escapeHtml(label)}">Copy</button>`:''}</span>`;
 }
 function bindCopyIds(panel){panel.querySelectorAll('[data-copy-id]').forEach(button=>button.onclick=async()=>{try{await navigator.clipboard.writeText(button.dataset.copyId);showToast('ID copied.')}catch{showToast('Select and copy the ID manually.')}})}
-function drawerHeader(account,back=false){const country=countryMeta(account.country_code);return `<div class="drawerHandle"></div><div class="drawerHeader">${back?'<button id="drawerBack" class="drawerBack" type="button" aria-label="Back">‹</button>':avatarMarkup(account)}<div class="drawerIdentity"><h2>${escapeHtml(back?'Account Settings':account.display_name||'Business owner')}</h2><p>${country.flag} ${escapeHtml(country.label)} · ${escapeHtml(account.country_code||'')}</p>${identityLine(account.personal_id,'Personal ID')}</div><button id="drawerClose" class="drawerClose" type="button" aria-label="Close">×</button></div>`}
+function drawerHeader(account,back=false){const country=countryMeta(account.country_code),test=isCompanyTestAccount(account);return `<div class="drawerHandle"></div><div class="drawerHeader">${back?'<button id="drawerBack" class="drawerBack" type="button" aria-label="Back">‹</button>':avatarMarkup(account)}<div class="drawerIdentity"><h2>${escapeHtml(back?'Account Settings':account.display_name||'Business owner')}</h2><p>${test?'🧪 '+escapeHtml(testAccountRoleLabel(account))+' · managed by '+escapeHtml(account.managed_by||'Business & Life'):country.flag+' '+escapeHtml(country.label)+' · '+escapeHtml(account.country_code||'')}</p>${identityLine(account.personal_id,accountIdentityLabel(account))}</div><button id="drawerClose" class="drawerClose" type="button" aria-label="Close">×</button></div>`}
 async function refreshAdminContext(force=false){
   if(!token()){adminContext=null;adminContextFetchedAt=0;return null}
   if(!force&&adminContextFetchedAt&&Date.now()-adminContextFetchedAt<ADMIN_CONTEXT_CACHE_MS)return adminContext;
@@ -162,10 +166,10 @@ function renderDrawer() {
   }).join('');
   panel.innerHTML = `
     ${drawerHeader(account)}
-    <button id="accountHomeButton" class="accountSettingsEntry" type="button"><span>👤</span><span><strong>Account Home</strong><small>Personal identity and profile selection</small></span><b>›</b></button>
+    <button id="accountHomeButton" class="accountSettingsEntry" type="button"><span>${isCompanyTestAccount(account)?'🧪':'👤'}</span><span><strong>Account Home</strong><small>${isCompanyTestAccount(account)?'Company test identity and assigned role':'Personal identity and profile selection'}</small></span><b>›</b></button>
     <section class="drawerSection"><h3>Active profiles</h3><div class="profileRoleList">${profileRows||'<p class="drawerEmpty">No active profiles yet.</p>'}</div></section>
     ${adminContext?.is_admin?'<button id="adminWorkspaceButton" class="accountSettingsEntry adminWorkspaceEntry" type="button"><span>🛡️</span><span><strong>Admin Workspace</strong><small>Delegated administrative access</small></span><b>›</b></button>':''}
-    <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>Personal details, security and profile management</small></span><b>›</b></button>
+    <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>${isCompanyTestAccount(account)?'Test identity, security and assigned role':'Personal details, security and profile management'}</small></span><b>›</b></button>
     <button id="drawerSignOutButton" class="accountSignOutEntry" type="button"><span>↪</span><span><strong>Sign out</strong><small>End this account session on this device</small></span></button>`;
   panel.querySelector('#drawerClose').onclick = closeDrawer;
   panel.querySelector('#accountHomeButton').onclick = () => { closeDrawer(); renderAccountHome(); };
@@ -180,8 +184,10 @@ function renderDrawer() {
 function profileManagementMarkup(){
   const account=snapshot.account;
   const emailReady=Boolean(account.email_verified_at);
-  const detailsReady=Boolean(String(account.display_name||'').trim()&&String(account.email||'').trim()&&String(account.address||'').trim());
-  return ROLE_ORDER.map(role=>{
+  const detailsReady=accountDetailsReady(account);
+  const roles=isCompanyTestAccount(account)?ROLE_ORDER.filter(role=>role===account.test_role):ROLE_ORDER;
+  if(!roles.length)return `<div class="companyTestRoleBoundary"><strong>${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>This company-managed account is reserved for Admin testing and does not require a personal operational profile.</p></div>`;
+  return roles.map(role=>{
     const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled&&profile?.status==='active');
     const state=profile?.status||'not_started',reactivable=state==='disabled';
     const inProgress=['application_started','requirements_pending','submitted','under_review','rejected'].includes(state);
@@ -199,30 +205,29 @@ function profileManagementMarkup(){
 function accountSettingsHeader(title,subtitle){return `<div class="accountSettingsHeader"><button id="accountSettingsBack" type="button" aria-label="Back">‹</button><div><span>ACCOUNT SETTINGS</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div></div>`}
 function renderAccountSettings(view=accountSettingsView){
   if(!snapshot?.account)return;
-  const account=snapshot.account,workspace=document.getElementById('accountSettingsWorkspace');if(!workspace)return;
+  const account=snapshot.account,test=isCompanyTestAccount(account),workspace=document.getElementById('accountSettingsWorkspace');if(!workspace)return;
   workspace.classList.remove('hidden');
   accountSettingsView=view;
   if(view==='home'){
-    workspace.innerHTML=accountSettingsHeader('Your account','Settings shared by your personal account, separate from every work profile.')+`<div class="accountSettingsGrid">
-      <button type="button" data-account-settings-view="personal"><span>👤</span><strong>Personal details</strong><small>Photo, name, email, phone and primary address</small><b>›</b></button>
+    workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
+      <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and primary address'}</small><b>›</b></button>
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
       <button type="button" id="accountMoneyBanking"><span>🏦</span><strong>Money & Banking</strong><small>Shared payment methods, payout destination and financial identity</small><b>›</b></button>
     </div><div class="accountSettingsBoundary"><strong>Profile settings stay inside each profile</strong><p>Open Customer, Merchant, Supplier, Delivery or Local Services and use its dedicated Profile Settings card.</p></div>`;
   }else if(view==='personal'){
-    workspace.innerHTML=accountSettingsHeader('Personal details','Identity and contact information shared by your account.')+`<section class="accountSettingsCard"><form id="accountIdentityForm" class="profileForm">
+    workspace.innerHTML=accountSettingsHeader(test?'Test account details':'Personal details',test?'Company-managed test identity. It must not contain invented personal contact data.':'Identity and contact information shared by your account.')+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Not a personal account</strong><p>Managed by ${escapeHtml(account.managed_by||'Business & Life')} for ${escapeHtml(testAccountRoleLabel(account))} testing. Personal phone and home address are not applicable. ${account.contact_requirements?.company_address_configured?'The configured company address is available to supported test flows.':'No company address is configured yet; flows that genuinely need a location must request one for that test scenario.'}</p></div></section>`:''}<section class="accountSettingsCard"><form id="accountIdentityForm" class="profileForm">
       <div class="avatarEdit"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"><button id="removeAvatar" class="miniBtn" type="button">Remove photo</button></div>
       <div class="avatarHint">Photo is compressed on your phone before it is saved.</div>
-      <label>Name<input id="shellDisplayName" value="${escapeHtml(account.display_name || '')}" required></label>
-      <label>Email<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}"></label>
-      <label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label>
-      <label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>
+      <label>${test?'Test account name':'Name'}<input id="shellDisplayName" value="${escapeHtml(account.display_name || '')}" required></label>
+      <label>Email${test?' · protected company alias':''}<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}" ${test?'readonly aria-readonly="true"':''}></label>
+      ${test?'<div class="companyContactPolicy"><div><span>Personal phone</span><strong>Not required</strong></div><div><span>Personal address</span><strong>Not required</strong></div><div><span>Contact source</span><strong>Company / test scenario</strong></div></div>':`<label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label><label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>`}
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
     </form></section>`;
   }else if(view==='profiles'){
-    const detailsReady=Boolean(String(account.display_name||'').trim()&&String(account.email||'').trim()&&String(account.address||'').trim());
-    const activationGate=!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your Personal ID. After verification, you can start or continue each profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and primary address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:'';
-    workspace.innerHTML=accountSettingsHeader('Manage profiles','Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
+    const detailsReady=accountDetailsReady(account);
+    const activationGate=!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and primary address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:'';
+    workspace.innerHTML=accountSettingsHeader(test?'Assigned test role':'Manage profiles',test?`This account is reserved for ${testAccountRoleLabel(account)} testing and does not require personal contact details.`:'Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+'<div id="accountSecurityMount"></div>';
   }
@@ -308,8 +313,8 @@ async function saveIdentity(event) {
     snapshot = await profileApi('/api/me', { method: 'PATCH', body: JSON.stringify({
       display_name: document.getElementById('shellDisplayName').value,
       email: document.getElementById('shellEmail').value,
-      phone: document.getElementById('shellPhone').value,
-      address: document.getElementById('shellAddress').value
+      phone: document.getElementById('shellPhone')?.value || '',
+      address: document.getElementById('shellAddress')?.value || ''
     }) });
     profileFetchedAt=Date.now(); renderTopAccount(); renderAccountSettings(); showToast('Account saved.');
   } catch (err) { showToast(err.message); }
@@ -452,7 +457,8 @@ function renderAccountHome(){
   const profiles=ROLE_ORDER.filter(isEnabled).map(role=>{const meta=ROLE_META[role];return `<button class="hubTile accountHomeAction" type="button" data-account-role="${role}"><span class="hubTileIcon">${meta.icon}</span><span class="accountHomeActionCopy"><strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(meta.desc)}</small></span><span class="accountHomeOpen">Open profile ›</span></button>`}).join('');
   const admin=adminContext?.is_admin?`<section class="accountHomeSection accountAdminAccess"><div class="hubSectionTitle"><h2>Admin access</h2><span>Assigned separately</span></div><button class="hubTile accountHomeAction" id="accountAdminProfile" type="button"><span class="hubTileIcon">🛡️</span><span class="accountHomeActionCopy"><strong>${escapeHtml(ADMIN_RANK_LABELS[adminRank(highestAdminAssignment())]||'Admin Workspace')}</strong><small>Delegated administration — separate from your personal and commercial profiles</small></span><span class="accountHomeOpen">Open workspace ›</span></button></section>`:'';
   const country=countryMeta(account.country_code);
-  hub.innerHTML=`<div class="hubHero accountHomeHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><div class="accountHomeIdentity"><span>${country.flag} ${escapeHtml(country.label)} account</span>${identityLine(account.personal_id,'Personal ID')}</div><span class="hubStatus">Choose where you want to continue</span></div><div class="hubSectionTitle"><h2>Your active profiles</h2><span>You choose every time</span></div><div class="hubGrid accountProfileGrid">${profiles||'<p class="hubEmpty">No active profiles yet. Open Account Settings to start onboarding.</p>'}</div>${admin}<section class="accountHomeSection accountSettingsAccess"><div class="hubSectionTitle"><h2>Account</h2><span>Shared settings</span></div><button class="hubTile accountHomeAction profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><span class="accountHomeActionCopy"><strong>Account Settings</strong><small>Personal details, security, Money &amp; Banking and profile onboarding</small></span><span class="accountHomeOpen">Open settings ›</span></button><button class="hubTile accountHomeAction accountSignOutAction" id="accountHomeSignOut" type="button"><span class="hubTileIcon">↪</span><span class="accountHomeActionCopy"><strong>Sign out</strong><small>End the current session and return to the sign-in screen</small></span><span class="accountHomeOpen">Sign out ›</span></button></section>`;
+  const test=isCompanyTestAccount(account);
+  hub.innerHTML=`<div class="hubHero accountHomeHero ${test?'companyTestHero':''}"><div class="hubEyebrow">${test?'COMPANY TEST ACCOUNT':'PERSON ACCOUNT'}</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><div class="accountHomeIdentity"><span>${test?'🧪 '+escapeHtml(testAccountRoleLabel(account))+' · managed by '+escapeHtml(account.managed_by||'Business & Life'):country.flag+' '+escapeHtml(country.label)+' account'}</span>${identityLine(account.personal_id,accountIdentityLabel(account))}</div><span class="hubStatus">${test?'Controlled testing only':'Choose where you want to continue'}</span></div><div class="hubSectionTitle"><h2>${test?'Assigned active profile':'Your active profiles'}</h2><span>${test?escapeHtml(testAccountRoleLabel(account)):'You choose every time'}</span></div><div class="hubGrid accountProfileGrid">${profiles||`<p class="hubEmpty">No active ${test?'test ':''}profile yet. Open Account Settings to start onboarding.</p>`}</div>${admin}<section class="accountHomeSection accountSettingsAccess"><div class="hubSectionTitle"><h2>Account</h2><span>${test?'Company-managed':'Shared settings'}</span></div><button class="hubTile accountHomeAction profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><span class="accountHomeActionCopy"><strong>Account Settings</strong><small>${test?'Test identity, security and assigned-role onboarding':'Personal details, security, Money &amp; Banking and profile onboarding'}</small></span><span class="accountHomeOpen">Open settings ›</span></button><button class="hubTile accountHomeAction accountSignOutAction" id="accountHomeSignOut" type="button"><span class="hubTileIcon">↪</span><span class="accountHomeActionCopy"><strong>Sign out</strong><small>End the current session and return to the sign-in screen</small></span><span class="accountHomeOpen">Sign out ›</span></button></section>`;
   hub.querySelectorAll('[data-account-role]').forEach(button=>button.onclick=()=>enableOrSwitch(button.dataset.accountRole));
   hub.querySelector('#accountAdminProfile')?.addEventListener('click',()=>window.location.assign('/admin'));
   hub.querySelector('#accountHomeSettings')?.addEventListener('click',()=>openAccountSettings());
@@ -479,9 +485,10 @@ function applyActiveRole() {
   if (!activeRole){hideMerchantWorkspace();
     const hub=document.getElementById('roleHub'),account=snapshot?.account;
     if(hub&&account){
-      const detailsReady=Boolean(String(account.display_name||'').trim()&&String(account.address||'').trim());
+      const detailsReady=accountDetailsReady(account);
       const emailReady=Boolean(account.email_verified_at);
-      hub.innerHTML=`<div class="hubHero"><div class="hubEyebrow">PERSON ACCOUNT</div><h1>Choose your first profile when ready.</h1><p>Set up your account first. No Customer, Merchant, Supplier, Delivery or Local Services profile is active. You decide which onboarding to start.</p><span class="hubStatus">${countryMeta(account.country_code).flag} ${escapeHtml(account.personal_id||'Personal ID preparing')}</span></div><div class="hubSectionTitle"><h2>Before your first profile</h2><span>${detailsReady&&emailReady?'Ready to choose':'Setup required'}</span></div><div class="hubGrid"><div class="hubTile"><span class="hubTileIcon">${detailsReady?'✓':'1'}</span><strong>Personal details</strong><small>${detailsReady?'Name and primary address completed':'Add your name and primary address'}</small></div><div class="hubTile"><span class="hubTileIcon">${emailReady?'✓':'2'}</span><strong>Email verification</strong><small>${emailReady?'Email verified':'Open the verification message or request a new one'}</small></div><button class="hubTile profileSettingsTile" id="openFirstAccountSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>Complete setup and choose a profile to onboard</small></button></div>`;
+      const test=isCompanyTestAccount(account);
+      hub.innerHTML=`<div class="hubHero ${test?'companyTestHero':''}"><div class="hubEyebrow">${test?'COMPANY TEST ACCOUNT':'PERSON ACCOUNT'}</div><h1>${test?`${escapeHtml(testAccountRoleLabel(account))} test account`:'Choose your first profile when ready.'}</h1><p>${test?'This identity is managed by Business & Life for controlled testing. It does not represent a person and does not need a personal phone or home address.':'Set up your account first. No Customer, Merchant, Supplier, Delivery or Local Services profile is active. You decide which onboarding to start.'}</p><span class="hubStatus">${test?'🧪':countryMeta(account.country_code).flag} ${escapeHtml(account.personal_id||'Account ID preparing')}</span></div><div class="hubSectionTitle"><h2>Before your first profile</h2><span>${detailsReady&&emailReady?'Ready to choose':'Setup required'}</span></div><div class="hubGrid"><div class="hubTile"><span class="hubTileIcon">${detailsReady?'✓':'1'}</span><strong>${test?'Test identity':'Personal details'}</strong><small>${test?'Company-managed; personal phone and address not required':detailsReady?'Name and primary address completed':'Add your name and primary address'}</small></div><div class="hubTile"><span class="hubTileIcon">${emailReady?'✓':'2'}</span><strong>Email verification</strong><small>${emailReady?'Email verified':'Open the verification message or request a new one'}</small></div><button class="hubTile profileSettingsTile" id="openFirstAccountSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>${test?'Open the assigned test role':'Complete setup and choose a profile to onboard'}</small></button></div>`;
       hub.classList.remove('hidden');hub.querySelector('#openFirstAccountSettings').onclick=()=>openAccountSettings();
     }return
   }

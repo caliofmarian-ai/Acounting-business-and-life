@@ -14,6 +14,7 @@ import { deliverReferralAnalyticsEvent, sanitizeReferralAnalyticsEvent } from '.
 import { persistUnconvertedReferralEvent } from './growth/referral-unconverted-attribution.js';
 import { bindReferralSignupConversion } from './growth/referral-conversion-binding.js';
 import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
+import { companyTestAccountForEmail, companyTestContact, companyTestProfileRole } from './company-test-accounts.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -266,7 +267,7 @@ async function initDb() {
 
 async function profileSnapshot(accountId) {
   const [account, profiles, businesses, customer, supplier, courier, serviceProvider] = await Promise.all([
-    pool.query(`SELECT id,display_name,phone,email,address,avatar_data_url,active_role,identity_country_code,personal_public_id,email_verified_at,phone_verified_at,auth_status,(password_hash IS NOT NULL) has_password,created_at,updated_at FROM accounts WHERE id=$1`, [accountId]),
+    pool.query(`SELECT id,display_name,phone,email,address,avatar_data_url,active_role,identity_country_code,personal_public_id,email_verified_at,phone_verified_at,auth_status,account_mode,test_role,(password_hash IS NOT NULL) has_password,created_at,updated_at FROM accounts WHERE id=$1`, [accountId]),
     pool.query(`SELECT role,enabled,visibility,status,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role`, [accountId]),
     pool.query(`SELECT b.id,b.name,b.country_code,b.currency_code,bm.membership_role,bm.active FROM businesses b JOIN business_memberships bm ON bm.business_id=b.id WHERE bm.account_id=$1 AND bm.active=TRUE ORDER BY b.id`, [accountId]),
     pool.query(`SELECT * FROM customer_profiles WHERE account_id=$1`, [accountId]),
@@ -368,8 +369,9 @@ app.post('/api/auth/register', jsonBody, async (req, res, next) => {
   const email = normalizeEmail(req.body?.email);
   const name = clean(req.body?.display_name, 120);
   const password = String(req.body?.password || '');
-  const phone = clean(req.body?.phone, 40);
-  const address = clean(req.body?.address, 300);
+  const companyTest = companyTestAccountForEmail(email);
+  const phone = companyTest ? '' : clean(req.body?.phone, 40);
+  const address = companyTest ? '' : clean(req.body?.address, 300);
   if (!name) return res.status(400).json({ error: 'Name is required' });
   if (!validEmail(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!passwordOkay(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
@@ -380,7 +382,7 @@ app.post('/api/auth/register', jsonBody, async (req, res, next) => {
     if (exists.rowCount) return res.status(409).json({ error: 'An account with this email already exists' });
     const { salt, hash } = await hashPassword(password);
     await client.query('BEGIN');
-    const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status) VALUES($1,$2,$3,$4,NULL,$5,$6,'active') RETURNING id`, [name, phone, email, address, salt, hash]);
+    const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,'active',$7,$8) RETURNING id`, [name, phone, email, address, salt, hash, companyTest?'company_test':'personal', companyTest?.role||null]);
     const accountId = Number(account.rows[0].id);
     await client.query('COMMIT');
     clearThrottle(req, email);
@@ -580,11 +582,17 @@ app.patch('/api/me', jsonBody, auth, async (req, res, next) => {
     if (avatar.length > 300_000) return res.status(413).json({ error: 'Avatar is too large' });
   }
   try {
-    if (email) {
-      const duplicate = await pool.query(`SELECT id FROM accounts WHERE LOWER(email)=$1 AND id<>$2`, [email, req.accountId]);
+    const currentResult=await pool.query(`SELECT email,account_mode FROM accounts WHERE id=$1`,[req.accountId]);
+    const current=currentResult.rows[0];
+    if(!current)return res.status(404).json({error:'Account not found'});
+    const companyTest=current.account_mode==='company_test';
+    if(companyTest&&email!==normalizeEmail(current.email))return res.status(409).json({error:'The email alias of a company test account cannot be changed.'});
+    const savedEmail=companyTest?normalizeEmail(current.email):email;
+    if (savedEmail) {
+      const duplicate = await pool.query(`SELECT id FROM accounts WHERE LOWER(email)=$1 AND id<>$2`, [savedEmail, req.accountId]);
       if (duplicate.rowCount) return res.status(409).json({ error: 'That email is already used by another account' });
     }
-    await pool.query(`UPDATE accounts SET display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),updated_at=NOW() WHERE id=$6`, [name, phone, email, address, avatar === undefined ? null : avatar, req.accountId]);
+    await pool.query(`UPDATE accounts SET display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, companyTest?'':address, avatar === undefined ? null : avatar, req.accountId]);
     res.json(await profileSnapshot(req.accountId));
   } catch (err) { next(err); }
 });
@@ -593,6 +601,9 @@ app.patch('/api/me/active-role', jsonBody, auth, async (req, res, next) => {
   const role = clean(req.body?.role, 40);
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
   try {
+    const classification=await pool.query(`SELECT account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
+    const classified=classification.rows[0];
+    if(classified?.account_mode==='company_test'&&companyTestProfileRole(classified.test_role)!==role)return res.status(403).json({error:`This company test account is reserved for ${classified.test_role.replaceAll('_',' ')}.`});
     const enabled = await pool.query(`SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 AND enabled=TRUE AND status='active'`, [req.accountId, role]);
     if (!enabled.rowCount) return res.status(403).json({ error: 'Enable this profile first' });
     await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2`, [role, req.accountId]);
@@ -607,6 +618,9 @@ app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
   const visibility = ['public', 'relationship_only', 'private'].includes(req.body?.visibility) ? req.body.visibility : 'private';
   try {
     if(enabled){
+      const classification=await pool.query(`SELECT account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
+      const classified=classification.rows[0];
+      if(classified?.account_mode==='company_test'&&companyTestProfileRole(classified.test_role)!==role)return res.status(403).json({error:`This company test account is reserved for ${classified.test_role.replaceAll('_',' ')}.`});
       if(role==='customer')return res.status(409).json({error:'Use Customer activation from Account Settings.'});
       const authorization=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role=$2 AND status='active' AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`,[req.accountId,role]);
       if(!authorization.rowCount)return res.status(403).json({error:'Complete onboarding and obtain approval before reactivating this profile.'});
@@ -623,12 +637,16 @@ app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
 
 app.post('/api/profiles/customer/activate', jsonBody, auth, async (req,res,next)=>{
   try{
-    const account=await pool.query(`SELECT display_name,email,address,email_verified_at FROM accounts WHERE id=$1`,[req.accountId]);
+    const account=await pool.query(`SELECT display_name,email,address,email_verified_at,account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
     const a=account.rows[0];
-    if(!a||!clean(a.display_name,120)||!validEmail(a.email)||!clean(a.address,300))return res.status(409).json({error:'Complete your name, email and primary address in Account Settings first.'});
+    const companyTest=a?.account_mode==='company_test';
+    if(companyTest&&a.test_role!=='customer')return res.status(403).json({error:`This company test account is reserved for ${String(a.test_role||'another role').replaceAll('_',' ')}.`});
+    if(!a||!clean(a.display_name,120)||!validEmail(a.email))return res.status(409).json({error:companyTest?'Complete the test account name and email in Account Settings first.':'Complete your name, email and primary address in Account Settings first.'});
+    if(!companyTest&&!clean(a.address,300))return res.status(409).json({error:'Complete your name, email and primary address in Account Settings first.'});
     if(!a.email_verified_at)return res.status(409).json({error:'Verify your email before activating Customer.'});
+    const preferredAddress=companyTest?companyTestContact().address:a.address;
     const client=await pool.connect();
-    try{await client.query('BEGIN');await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,'customer',TRUE,'private','active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',updated_at=NOW()`,[req.accountId]);await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET preferred_address=CASE WHEN customer_profiles.preferred_address='' THEN EXCLUDED.preferred_address ELSE customer_profiles.preferred_address END,updated_at=NOW()`,[req.accountId,a.address]);await client.query(`UPDATE accounts SET active_role=COALESCE(active_role,'customer'),updated_at=NOW() WHERE id=$1`,[req.accountId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+    try{await client.query('BEGIN');await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,'customer',TRUE,'private','active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',updated_at=NOW()`,[req.accountId]);await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET preferred_address=CASE WHEN customer_profiles.preferred_address='' THEN EXCLUDED.preferred_address ELSE customer_profiles.preferred_address END,updated_at=NOW()`,[req.accountId,preferredAddress]);await client.query(`UPDATE accounts SET active_role=COALESCE(active_role,'customer'),updated_at=NOW() WHERE id=$1`,[req.accountId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
     res.status(201).json(await profileSnapshot(req.accountId));
   }catch(err){next(err)}
 });
