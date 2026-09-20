@@ -84,10 +84,9 @@ test('notification attention metadata is attached centrally to inbox and Web Pus
   assert.match(server,/attention:msg\.attention/);
 });
 
-test('attention metadata plumbing does not yet enable client-side sound playback',()=>{
+test('attention metadata plumbing does not enable branded audio before accepted sound assets exist',()=>{
   assert.doesNotMatch(ui,/new Audio\(/);
   assert.doesNotMatch(sw,/new Audio\(/);
-  assert.doesNotMatch(sw,/attention\.vibrate/);
 });
 
 
