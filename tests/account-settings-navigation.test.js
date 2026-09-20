@@ -9,15 +9,21 @@ const hardening=read('public/auth-hardening-ui.js');
 const profileSettings=read('public/profile-settings-ui.js');
 const css=read('public/shell.css');
 
-test('avatar drawer separates Account Home profiles Admin access and Account Settings',()=>{
-  const drawer=shell.slice(shell.indexOf('function renderDrawer()'),shell.indexOf('function profileManagementMarkup()'));
-  assert.match(drawer,/Active profiles/);
-  assert.match(drawer,/id="accountHomeButton"/);
-  assert.match(drawer,/id="adminWorkspaceButton"/);
-  assert.match(drawer,/id="accountSettingsButton"/);
-  assert.doesNotMatch(drawer,/data-admin-profile/);
-  assert.doesNotMatch(drawer,/id="accountIdentityForm"/);
-  assert.doesNotMatch(drawer,/Security & session/);
+test('avatar routes directly to the canonical Account Home instead of opening a duplicate menu',()=>{
+  assert.match(shell,/accountAvatarButton'\)\.addEventListener\('click', openAccountHome\)/);
+  assert.match(shell,/aria-label="Open Account Home"/);
+  assert.match(shell,/function openAccountHome\(\)/);
+  assert.doesNotMatch(shell,/accountAvatarButton'\)\.addEventListener\('click', openDrawer\)/);
+});
+
+test('Account Home is the one selector for profiles Admin and account settings',()=>{
+  const home=shell.slice(shell.indexOf('function renderAccountHome()'),shell.indexOf('function applyActiveRole()'));
+  assert.match(home,/accountProfileGrid/);
+  assert.match(home,/id="accountAdminProfile"/);
+  assert.match(home,/id="accountHomeSettings"/);
+  assert.match(home,/Personal ID/);
+  assert.match(css,/\.accountHomeAction/);
+  assert.match(css,/@media\(max-width:520px\)\{\.accountProfileGrid\{grid-template-columns:1fr\}/);
 });
 
 test('Account Settings is a dedicated routed workspace with focused categories',()=>{
