@@ -15,11 +15,19 @@ const nonNegative=(value,label)=>{
   return n;
 };
 const dateOnly=value=>{
+  if(value instanceof Date){
+    if(Number.isNaN(value.getTime()))throw new RangeError(`Invalid date: ${value}`);
+    return new Date(value.toISOString().slice(0,10)+'T00:00:00Z');
+  }
   const s=String(value??'').trim();
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(s))throw new RangeError(`Invalid date: ${value}`);
-  const d=new Date(s+'T00:00:00Z');
-  if(Number.isNaN(d.getTime()))throw new RangeError(`Invalid date: ${value}`);
-  return d;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)){
+    const d=new Date(s+'T00:00:00Z');
+    if(Number.isNaN(d.getTime()))throw new RangeError(`Invalid date: ${value}`);
+    return d;
+  }
+  const parsed=new Date(s);
+  if(Number.isNaN(parsed.getTime()))throw new RangeError(`Invalid date: ${value}`);
+  return new Date(parsed.toISOString().slice(0,10)+'T00:00:00Z');
 };
 const addDays=(date,days)=>{
   const d=new Date(date.getTime());
