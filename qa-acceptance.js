@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { validateRuntimeSafety } from './runtime-safety.js';
-import { payMongoRuntimeConfig } from './paymongo-adapter.js';
+import { runCourierExperienceAcceptance } from './qa-courier-acceptance.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
@@ -1688,6 +1688,12 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
         ?await runMerchantExperienceAcceptance({pool,base,secret:config.secret})
         :config.wave===SUPPLIER_EXPERIENCE_WAVE
           ?await runSupplierExperienceAcceptance({pool,base,secret:config.secret})
+        :config.wave===COURIER_EXPERIENCE_WAVE
+          ?await runCourierExperienceAcceptance({
+            pool,base,secret:config.secret,
+            aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,courier:COURIER_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
+            helpers:{requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,runMerchantCatalogSeed,ensureQaTerritory,ensureActiveRole,loginWithCredential}
+          })
         :config.wave===CUSTOMER_MARKETPLACE_WAVE
         ?await runCustomerMarketplaceE2E({pool,base,secret:config.secret})
         :config.wave===CUSTOMER_EXPERIENCE_WAVE
@@ -1703,6 +1709,6 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 }
 
 export {
-  CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SUPER_ADMIN_ALIAS,
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
