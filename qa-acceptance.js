@@ -543,6 +543,7 @@ async function runMerchantCatalogSeed({pool,base,secret}){
 
 
 const CUSTOMER_MARKETPLACE_NOTE='Controlled QA customer marketplace E2E v1';
+const MERCHANT_EXPERIENCE_ORDER_NOTE='Controlled QA Merchant Experience Marketplace order';
 const CUSTOMER_MARKETPLACE_ITEMS=['QA Fish Soup','QA Fresh Carrots','QA Bottled Juice','QA Dish Soap'];
 const CUSTOMER_MARKETPLACE_CONSUMPTION=new Map([
   ['Water',200],
@@ -605,7 +606,7 @@ async function ensureActiveRole({base,token,role,label}){
   expectStatus(active,200,label+' active role');
 }
 
-async function runCustomerMarketplaceE2E({pool,base,secret}){
+async function runCustomerMarketplaceE2E({pool,base,secret,orderNote=orderNote}){
   const customerPrerequisite=await runCustomerOnboarding({pool,base,secret});
   if(customerPrerequisite.status!=='PASS')throw new Error('Customer onboarding prerequisite did not pass.');
   const merchantPrerequisite=await runMerchantCatalogSeed({pool,base,secret});
@@ -643,7 +644,7 @@ async function runCustomerMarketplaceE2E({pool,base,secret}){
     `SELECT id,order_status FROM orders
       WHERE business_id=$1 AND customer_account_id=$2 AND note=$3
       ORDER BY id DESC LIMIT 1`,
-    [businessId,customer.accountId,CUSTOMER_MARKETPLACE_NOTE]
+    [businessId,customer.accountId,orderNote]
   );
   let order;
   if(existing.rowCount&&existing.rows[0].order_status!=='cancelled'){
@@ -659,7 +660,7 @@ async function runCustomerMarketplaceE2E({pool,base,secret}){
         items:basket,
         fulfilment_method:'pickup',
         payment_method:'cash',
-        note:CUSTOMER_MARKETPLACE_NOTE
+        note:orderNote
       }
     });
     expectStatus(checkout,201,'Customer Marketplace checkout');
@@ -1131,7 +1132,7 @@ async function verifyMerchantNotifications({base,token,orderId}){
 }
 
 async function runMerchantExperienceAcceptance({pool,base,secret}){
-  const marketplace=await runCustomerMarketplaceE2E({pool,base,secret});
+  const marketplace=await runCustomerMarketplaceE2E({pool,base,secret,orderNote:MERCHANT_EXPERIENCE_ORDER_NOTE});
   if(marketplace.status!=='PASS')throw new Error('Customer Marketplace prerequisite did not pass.');
   const orderId=Number(marketplace.order_id);
   if(!orderId)throw new Error('Merchant Experience acceptance requires a completed QA order.');
