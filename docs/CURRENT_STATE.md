@@ -18,6 +18,19 @@ The public runtime chain after V0.15 is:
 
 Public entry: `server-paymongo.js`.
 
+## QA isolation and controlled test identities — 2026-09-20
+
+- `caliof.com` / `accounting-business-life` is the public Owner/customer-facing runtime.
+- `preview.caliof.com` / `accounting-preview` is internal assistant-operated QA only.
+- QA uses database `accounting_qa`; public production uses `accounting`.
+- QA has an independent token-signing secret, `APP_ENV=qa`, PayMongo TEST mode and live payments disabled.
+- Public production refuses QA data and preview-only verification behavior.
+- The nine exact Business & Life test aliases are company-managed identities; they never require invented personal phone/home-address data.
+- Controlled fixture provisioning is available only as a deliberate QA operation. It creates identities unverified, grants no profile authorization and grants no Admin assignment. Verification, onboarding, approval and scoped authority still use the normal product lifecycle.
+- The protected account-id-1 fixture is reserved for the company Super Admin test alias; production owner migration remains closed.
+
+Relevant merged safety slices: PR #289 (QA/public isolation), PR #290 (protected QA owner bootstrap) and PR #291 (controlled QA identity fixtures).
+
 ## Public operational profiles
 
 One human account may have:
