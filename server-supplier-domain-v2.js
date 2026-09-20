@@ -153,7 +153,8 @@ export async function ensureSupplierDomainV2Schema(pool){
       business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
       supply_party_id BIGINT REFERENCES merchant_supply_parties(id) ON DELETE SET NULL,
       purchase_order_id BIGINT REFERENCES purchase_orders(id) ON DELETE SET NULL,
-      purchase_receipt_item_id BIGINT REFERENCES purchase_receipt_items(receipt_id,purchase_order_item_id) DEFERRABLE INITIALLY DEFERRED,
+      purchase_receipt_id BIGINT,
+      purchase_order_item_id BIGINT,
       inventory_id BIGINT REFERENCES inventory(id) ON DELETE SET NULL,
       parent_lot_id BIGINT REFERENCES supply_lots(id) ON DELETE RESTRICT,
       item_name TEXT NOT NULL,
@@ -177,7 +178,10 @@ export async function ensureSupplierDomainV2Schema(pool){
       CHECK(handling_mode IN ('sealed_resale','break_pack','bulk','repacked','produced')),
       CHECK(package_size_base IS NULL OR package_size_base>0),
       CHECK(package_count_received IS NULL OR package_count_received>0),
-      UNIQUE(business_id,internal_lot_code)
+      UNIQUE(business_id,internal_lot_code),
+      FOREIGN KEY(purchase_receipt_id,purchase_order_item_id)
+        REFERENCES purchase_receipt_items(receipt_id,purchase_order_item_id)
+        DEFERRABLE INITIALLY DEFERRED
     );
     CREATE INDEX IF NOT EXISTS supply_lots_business_item_idx
       ON supply_lots(business_id,item_name,expires_at,created_at);
