@@ -91,6 +91,17 @@ Accounting
 
 The public process is `server-paymongo.js` and the Railway health check is `/health`.
 
+### One application, two deployment environments
+
+This repository and `main` are the single source of application code. The two domains must never be treated as separate products:
+
+| Domain | Intended environment | Owner testing rule |
+| --- | --- | --- |
+| `https://caliof.com` | Public deployment from `main` | Use for post-merge acceptance only after `/health` identifies the expected deployment revision. |
+| `https://review.caliof.com` | Isolated review/staging deployment | Use before merge only when `/health` is healthy and identifies the expected review revision. It must not be used for Owner acceptance while its health check is failing. |
+
+Every testing request must name the environment as **PUBLIC** or **REVIEW**, give exactly one URL, and verify `/health` first. A merged change is not proof that either domain has deployed it. The public health response exposes only a normalized environment label and a shortened Git revision so deployments can be matched without exposing configuration secrets.
+
 ## Current country edition
 
 This repository currently represents **Business & Life — Philippines**:

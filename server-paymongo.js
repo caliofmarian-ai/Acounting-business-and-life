@@ -12,6 +12,7 @@ import {
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { emitNotificationEvent,businessNotificationRecipients } from './notification-core.js';
 import { payMongoPilotReadiness,payMongoCheckoutPolicy } from './pilot-payment-readiness.js';
+import { publicDeploymentEvidence } from './deployment-evidence.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -88,9 +89,9 @@ app.get('/health',async(_req,res)=>{
     res.status(childAlive?200:503).json({
       ok:childAlive,db:true,payment_core:childAlive,paymongo:true,
       paymongo_mode:cfg.mode,paymongo_secret_ready:cfg.secretReady,paymongo_webhook_ready:cfg.webhookReady,
-      version:'0.15-paymongo-webhook-bootstrap'
+      version:'0.15-paymongo-webhook-bootstrap',deployment:publicDeploymentEvidence()
     });
-  }catch{res.status(503).json({ok:false,db:false,payment_core:false,paymongo:false,version:'0.15-paymongo-webhook-bootstrap'})}
+  }catch{res.status(503).json({ok:false,db:false,payment_core:false,paymongo:false,version:'0.15-paymongo-webhook-bootstrap',deployment:publicDeploymentEvidence()})}
 });
 
 app.get('/api/payments/paymongo/status',async(req,res,next)=>{
