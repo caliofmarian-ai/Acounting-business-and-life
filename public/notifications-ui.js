@@ -1,7 +1,8 @@
 const token=()=>localStorage.getItem('abl_token')||'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token())headers.Authorization=`Bearer ${token()}`;const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}
-let notificationPanel=null,pollTimer=null;
+let notificationPanel=null,pollTimer=null,voicePollTimer=null,currentNotificationAudio=null;
+let foregroundVoiceReady=false,foregroundVoiceToken='',lastForegroundEventId=null,foregroundSoundEnabled=true,audioUserInteracted=false;
 
 function toast(msg){let n=document.getElementById('notificationToast');if(!n){n=document.createElement('div');n.id='notificationToast';n.className='notificationToast';document.body.appendChild(n)}n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),2600)}
 function ensureNotificationUi(){
@@ -59,24 +60,55 @@ function renderSettings(p){
   box.innerHTML=`
     <div class="notificationSettingCard"><label>Notification language<select id="notificationLocale"><option value="en-PH" ${p.preferred_locale==='en-PH'?'selected':''}>English (Philippines)</option><option value="fil-PH" ${p.preferred_locale==='fil-PH'?'selected':''}>Filipino / Tagalog</option></select></label></div>
     <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Attention</strong><small>Control how Business & Life gets your attention. Background push sound is controlled by your phone/browser; the Sounds switch applies to branded in-app sounds.</small></span></div><div class="preferenceGrid"><div class="preferenceRow"><div><strong>Sounds</strong><small>Branded sounds while the app is open.</small></div><label><input id="notificationSounds" type="checkbox" ${attention.sound_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Vibration</strong><small>Use supported vibration patterns for push alerts.</small></div><label><input id="notificationVibration" type="checkbox" ${attention.vibration_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Important alerts</strong><small>Keep urgent alerts more prominent when the browser supports it.</small></div><label><input id="notificationImportantAlerts" type="checkbox" ${attention.important_alerts_enabled?'checked':''}> On</label></div></div></div>
-    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Notification voice</strong><small>Set 2 is the Business & Life default. Choose Set 1 or Set 3 separately for any notification type.</small></span></div><div class="preferenceGrid">${soundSlots.map(slot=>`<div class="preferenceRow"><div><strong>${esc(slot.label)}</strong><small>${esc(slot.description||'')}</small></div><label><select data-sound-slot="${esc(slot.id)}">${soundVariants.map(v=>`<option value="${v.id}" ${Number(soundPreferences[slot.id]||p.default_sound_variant||2)===Number(v.id)?'selected':''}>${esc(v.label)}${v.isDefault?' (default)':''}</option>`).join('')}</select></label></div>`).join('')}</div></div>
+    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Notification voice</strong><small>Set 2 is the Business & Life default. Choose Set 1 or Set 3 separately for any notification type.</small></span></div><div class="preferenceGrid">${soundSlots.map(slot=>`<div class="preferenceRow soundPreferenceRow"><div><strong>${esc(slot.label)}</strong><small>${esc(slot.description||'')}</small></div><div class="soundChoiceControls"><select data-sound-slot="${esc(slot.id)}" aria-label="${esc(slot.label)} voice">${soundVariants.map(v=>`<option value="${v.id}" ${Number(soundPreferences[slot.id]||p.default_sound_variant||2)===Number(v.id)?'selected':''}>${esc(v.label)}${v.isDefault?' (default)':''}</option>`).join('')}</select><button type="button" class="soundPreviewButton" data-preview-sound="${esc(slot.id)}" ${p.audio_configured?'':'disabled'}>▶ Listen</button></div></div>`).join('')}</div></div>
     <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Web Push</strong><small>Receive important updates even when the app is not open.</small></span><button id="enablePush" type="button">${p.push_configured?'Enable push':'Push not configured'}</button></div></div>
     <div class="preferenceGrid">${(p.categories||[]).map(cat=>{const x=prefFor(cat),marketing=cat==='marketing',security=cat==='security';const inapp=x?x.in_app_enabled:!marketing,email=x?x.email_enabled:false,push=x?x.push_enabled:!marketing;return`<div class="preferenceRow" data-category="${cat}"><div><strong>${labels[cat]||cat}</strong><small>${security?'Required security notices cannot be fully disabled.':''}</small></div><label><input type="checkbox" data-channel="in_app" ${inapp?'checked':''} ${security?'disabled':''}> In-app</label><label><input type="checkbox" data-channel="email" ${email?'checked':''}> Email</label><label><input type="checkbox" data-channel="push" ${push?'checked':''}> Push</label></div>`}).join('')}</div>`;
   document.getElementById('notificationLocale').onchange=async e=>{await api('/api/notifications/locale',{method:'PUT',body:JSON.stringify({locale:e.target.value})});toast('Notification language updated.')};
   document.getElementById('enablePush').onclick=enablePush;
   for(const id of ['notificationSounds','notificationVibration','notificationImportantAlerts'])document.getElementById(id).onchange=saveAttentionPreferences;
   box.querySelectorAll('[data-sound-slot]').forEach(select=>select.onchange=saveSoundPreference);
+  box.querySelectorAll('[data-preview-sound]').forEach(button=>button.onclick=previewNotificationVoice);
   box.querySelectorAll('.preferenceRow[data-category] input').forEach(input=>input.onchange=savePreferenceRow);
 }
 async function saveAttentionPreferences(){
   try{
+    const soundEnabled=Boolean(document.getElementById('notificationSounds')?.checked);
     await api('/api/notifications/attention-preferences',{method:'PUT',body:JSON.stringify({
-      sound_enabled:Boolean(document.getElementById('notificationSounds')?.checked),
+      sound_enabled:soundEnabled,
       vibration_enabled:Boolean(document.getElementById('notificationVibration')?.checked),
       important_alerts_enabled:Boolean(document.getElementById('notificationImportantAlerts')?.checked)
     })});
+    foregroundSoundEnabled=soundEnabled;
     toast('Attention settings saved.');
   }catch(err){toast(err.message);await renderNotificationCenter()}
+}
+async function notificationAudioUrl(soundSlot,variant){
+  const params=new URLSearchParams({sound_slot:String(soundSlot||''),variant:String(Number(variant)||2)});
+  return api(`/api/notifications/audio-url?${params.toString()}`);
+}
+async function playNotificationVoice(soundSlot,variant,{quiet=false}={}){
+  if(!soundSlot)return false;
+  try{
+    const data=await notificationAudioUrl(soundSlot,variant);
+    currentNotificationAudio?.pause?.();
+    const audio=new Audio(data.url);
+    audio.preload='auto';
+    currentNotificationAudio=audio;
+    await audio.play();
+    return true;
+  }catch(err){
+    if(!quiet)toast(err.message||'Could not play this notification voice.');
+    return false;
+  }
+}
+async function previewNotificationVoice(e){
+  audioUserInteracted=true;
+  const button=e.currentTarget,soundSlot=button.dataset.previewSound;
+  const select=document.querySelector(`[data-sound-slot="${soundSlot}"]`);
+  if(!select)return;
+  const old=button.textContent;button.disabled=true;button.textContent='Playing…';
+  try{await playNotificationVoice(soundSlot,Number(select.value));}
+  finally{button.disabled=false;button.textContent=old}
 }
 async function saveSoundPreference(e){
   try{
@@ -101,5 +133,46 @@ async function enablePush(){
     toast('Web Push enabled on this device.');
   }catch(e){toast(e.message)}
 }
-function boot(){ensureNotificationUi();addBell();refreshUnread();pollTimer=setInterval(()=>{if(!document.hidden)refreshUnread()},60000);document.addEventListener('abl:profile-state',()=>addBell());document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshUnread()})}
+async function primeForegroundVoice(){
+  const activeToken=token();
+  if(!activeToken){foregroundVoiceReady=false;foregroundVoiceToken='';lastForegroundEventId=null;return}
+  try{
+    const [rows,prefs]=await Promise.all([api('/api/notifications?limit=1'),api('/api/notifications/preferences')]);
+    foregroundVoiceToken=activeToken;
+    lastForegroundEventId=rows[0]?.event_id??null;
+    foregroundSoundEnabled=prefs.attention_preferences?.sound_enabled!==false;
+    foregroundVoiceReady=true;
+  }catch{}
+}
+async function pollForegroundVoice(){
+  const activeToken=token();
+  if(!activeToken||document.hidden)return;
+  if(!foregroundVoiceReady||foregroundVoiceToken!==activeToken){await primeForegroundVoice();return}
+  try{
+    const rows=await api('/api/notifications?limit=5');
+    const latest=rows[0];
+    if(!latest)return;
+    const previous=lastForegroundEventId==null?'':String(lastForegroundEventId);
+    const latestId=String(latest.event_id??'');
+    if(latestId===previous)return;
+    const fresh=[];
+    for(const row of rows){if(previous&&String(row.event_id??'')===previous)break;fresh.push(row)}
+    lastForegroundEventId=latest.event_id;
+    await refreshUnread();
+    if(!foregroundSoundEnabled||!audioUserInteracted)return;
+    const candidate=fresh.find(row=>!row.read_at&&row.attention?.soundSlot&&!row.attention?.silent);
+    if(!candidate)return;
+    await playNotificationVoice(candidate.attention.soundSlot,Number(candidate.attention.soundVariant)||2,{quiet:true});
+  }catch{}
+}
+function noteAudioInteraction(){audioUserInteracted=true}
+function boot(){
+  ensureNotificationUi();addBell();refreshUnread();primeForegroundVoice();
+  pollTimer=setInterval(()=>{if(!document.hidden)refreshUnread()},60000);
+  voicePollTimer=setInterval(pollForegroundVoice,10000);
+  document.addEventListener('pointerdown',noteAudioInteraction,{passive:true});
+  document.addEventListener('keydown',noteAudioInteraction);
+  document.addEventListener('abl:profile-state',()=>{addBell();if(foregroundVoiceToken!==token()){foregroundVoiceReady=false;primeForegroundVoice()}});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshUnread();pollForegroundVoice()}});
+}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
