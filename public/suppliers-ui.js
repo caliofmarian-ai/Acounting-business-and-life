@@ -464,6 +464,75 @@ async function openCatalogV2(id){
   };
 }
 
+const SUPPLIER_SOURCING_CATEGORY_LABELS={
+  fresh_produce:'Fresh produce',meat_poultry:'Meat & poultry',fish_seafood:'Fish & seafood',
+  rice_grains:'Rice & grains',beverages:'Beverages',packaged_foods:'Packaged foods',
+  frozen_foods:'Frozen foods',bakery:'Bakery',household_fmcg:'Household / FMCG',
+  personal_care:'Personal care',packaging:'Packaging',cleaning_supplies:'Cleaning supplies',
+  lpg_fuel:'LPG / fuel',equipment:'Equipment',services:'Services',other:'Other'
+};
+function supplierSourcingPanel(state,rfqs=[],catalog=[]){
+  const visibility=state?.visibility||'private';
+  return `<details class="supDetails supCard" ${rfqs.length?'open':''}><summary><span><strong>Sourcing visibility & quote requests</strong><small>${visibility==='private'?'Private — existing relationships only':visibility==='directory'?'Discoverable to approved Merchants':'Discoverable for RFQs only'} • ${state?.accepts_rfqs?'RFQs on':'RFQs off'}</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody"><div class="supInlineActions"><button type="button" class="supBtn secondary" id="supEditSourcing">Sourcing settings</button></div>${rfqs.length?`<h3>Incoming requests for quote</h3><div class="supList">${rfqs.slice(0,10).map(r=>`<div class="supRow"><div><strong>RFQ #${r.id} • ${ph(r.item_specification)}</strong><small>${ph(r.merchant_business_name)} • ${Number(r.requested_quantity)} ${ph(r.requested_unit)} • ${ph(pnice(r.target_state))}</small><div class="supMeta"><span>${ph(pnice(r.fulfilment_mode))}</span>${r.needed_by?`<span>Needed ${new Date(r.needed_by).toLocaleDateString()}</span>`:''}${r.target_budget!=null?`<span>Target ${pphp(r.target_budget)}</span>`:''}</div></div><div class="supActions">${['invited','viewed','quoted'].includes(r.target_state)&&['open','quoted'].includes(r.status)?`<button class="supBtn" data-rfq-quote="${r.id}">Quote</button><button class="supBtn secondary" data-rfq-decline="${r.id}">Decline</button>`:''}</div></div>`).join('')}</div>`:'<div class="supEmpty" style="margin-top:10px">No RFQ needs attention.</div>'}<p class="supCodeHelp">Discovery is optional. Business & Life does not expose your private email, phone, documents or financial data in the sourcing directory.</p></div></details>`;
+}
+async function editSupplierSourcingSettings(state,catalog=[]){
+  const selectedCats=new Set(state?.categories||[]);
+  const published=new Set((state?.published_catalog_item_ids||[]).map(Number));
+  openSupModal(`<h2>Sourcing visibility</h2><p class="supModalIntro">Private is the default. Directory and RFQ-only visibility are shown only to authenticated approved Merchants.</p><form id="supplierSourcingSettingsForm" class="supForm"><label>Visibility<select id="sourceVisibility"><option value="private" ${state?.visibility==='private'?'selected':''}>Private</option><option value="directory" ${state?.visibility==='directory'?'selected':''}>Directory — show business summary</option><option value="rfq_only" ${state?.visibility==='rfq_only'?'selected':''}>RFQ only — no public catalog summary</option></select></label><label class="toggleBox"><input id="sourceAcceptRfqs" type="checkbox" ${state?.accepts_rfqs?'checked':''}> Accept sourcing RFQs</label><details class="supNestedDetails"><summary>What do you supply?</summary><div class="supCheckGrid" style="margin-top:8px">${Object.entries(SUPPLIER_SOURCING_CATEGORY_LABELS).map(([code,label])=>`<label class="supCheck"><input type="checkbox" data-source-category="${code}" ${selectedCats.has(code)?'checked':''}><span>${ph(label)}</span></label>`).join('')}</div></details><details class="supNestedDetails"><summary>Published catalog summary</summary><p class="supCodeHelp">Only checked items may appear in Directory mode. RFQ-only mode keeps this catalog private.</p><div class="supCheckGrid">${catalog.length?catalog.map(i=>`<label class="supCheck"><input type="checkbox" data-source-published="${i.id}" ${published.has(Number(i.id))?'checked':''}><span>${ph(i.product_name)} • ${pphp(i.price_per_pack)}/${ph(i.unit_name)}</span></label>`).join(''):'<span class="supEmpty">Add catalog items first.</span>'}</div></details><div id="supplierSourcingSettingsMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="sourceSettingsCancel">Cancel</button><button>Save sourcing settings</button></div></form>`);
+  document.getElementById('sourceSettingsCancel').onclick=closeSupModal;
+  document.getElementById('supplierSourcingSettingsForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const categories=[...e.currentTarget.querySelectorAll('[data-source-category]:checked')].map(x=>x.dataset.sourceCategory);
+      const published_catalog_item_ids=[...e.currentTarget.querySelectorAll('[data-source-published]:checked')].map(x=>Number(x.dataset.sourcePublished));
+      await papi('/api/supplier/v4/sourcing-settings',{method:'PUT',body:JSON.stringify({
+        visibility:document.getElementById('sourceVisibility').value,
+        accepts_rfqs:document.getElementById('sourceAcceptRfqs').checked,
+        categories,published_catalog_item_ids
+      })});
+      closeSupModal();ptoast('Supplier sourcing settings saved.');await renderSupplierWorkspace('Procurement');
+    }catch(err){document.getElementById('supplierSourcingSettingsMsg').textContent=err.message}
+  };
+}
+async function quoteSupplierRfq(id,catalog=[]){
+  const defaultValid=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+  openSupModal(`<h2>Quote RFQ #${id}</h2><p class="supModalIntro">A quote is an offer, not an invoice or purchase order. The Merchant decides whether to create a PO.</p><form id="supplierRfqQuoteForm" class="supForm"><label>Catalog item (optional)<select id="rfqQuoteCatalog"><option value="">Manual offer</option>${catalog.map(i=>`<option value="${i.id}">${ph(i.product_name)} • ${pphp(i.price_per_pack)}/${ph(i.unit_name)}</option>`).join('')}</select></label><label>Offered item<input id="rfqQuoteName" required></label><div class="supTwo"><label>Quoted packs<input id="rfqQuotePacks" type="number" min="0.000001" step="0.000001" required></label><label>MOQ packs<input id="rfqQuoteMin" type="number" min="0.000001" step="0.000001" value="1"></label></div><div class="supTwo"><label>Pack name<input id="rfqQuotePack" required placeholder="case, sack, pack"></label><label>Price / pack ₱<input id="rfqQuotePrice" type="number" min="0" step="0.01" required></label></div><div class="supTwo"><label>Base unit<input id="rfqQuoteBase" required placeholder="kg, g, L, unit"></label><label>Base units / pack<input id="rfqQuoteBaseQty" type="number" min="0.000001" step="0.000001" required></label></div><div class="supTwo"><label>Delivery fee ₱<input id="rfqQuoteDelivery" type="number" min="0" step="0.01" value="0"></label><label>Lead days<input id="rfqQuoteLead" type="number" min="0" max="365" value="1"></label></div><div class="supTwo"><label>Earliest fulfilment<input id="rfqQuoteEarliest" type="date"></label><label>Valid until<input id="rfqQuoteValid" type="date" value="${defaultValid}" required></label></div><label>Availability<select id="rfqQuoteAvailability"><option value="available">Available</option><option value="limited">Limited</option><option value="unavailable">Unavailable</option></select></label><label>Substitution / brand note<input id="rfqQuoteSubstitution"></label><label>Payment terms note<input id="rfqQuoteTerms"></label><label>Supplier note<textarea id="rfqQuoteNote" rows="2"></textarea></label><div id="rfqQuoteMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="rfqQuoteCancel">Cancel</button><button>Send quote</button></div></form>`);
+  const select=document.getElementById('rfqQuoteCatalog');
+  select.onchange=()=>{
+    const item=catalog.find(x=>Number(x.id)===Number(select.value));
+    if(!item)return;
+    document.getElementById('rfqQuoteName').value=item.product_name||'';
+    document.getElementById('rfqQuotePack').value=item.unit_name||'pack';
+    document.getElementById('rfqQuotePrice').value=Number(item.price_per_pack||0);
+    document.getElementById('rfqQuoteBase').value=item.base_unit||'unit';
+    document.getElementById('rfqQuoteBaseQty').value=Number(item.base_units_per_pack||1);
+    document.getElementById('rfqQuoteMin').value=Number(item.minimum_packs||1);
+    document.getElementById('rfqQuoteLead').value=Number(item.lead_time_days||1);
+    document.getElementById('rfqQuoteAvailability').value=item.availability_status||'available';
+  };
+  document.getElementById('rfqQuoteCancel').onclick=closeSupModal;
+  document.getElementById('supplierRfqQuoteForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi(`/api/supplier/v4/rfqs/${id}/quote`,{method:'PUT',body:JSON.stringify({
+        catalog_item_id:select.value?Number(select.value):null,offered_name:document.getElementById('rfqQuoteName').value,
+        quoted_packs:Number(document.getElementById('rfqQuotePacks').value),minimum_packs:Number(document.getElementById('rfqQuoteMin').value),
+        package_unit:document.getElementById('rfqQuotePack').value,price_per_pack:Number(document.getElementById('rfqQuotePrice').value),
+        base_unit:document.getElementById('rfqQuoteBase').value,base_units_per_pack:Number(document.getElementById('rfqQuoteBaseQty').value),
+        delivery_fee:Number(document.getElementById('rfqQuoteDelivery').value||0),lead_days:Number(document.getElementById('rfqQuoteLead').value||0),
+        earliest_fulfilment_date:document.getElementById('rfqQuoteEarliest').value||null,valid_until:document.getElementById('rfqQuoteValid').value,
+        availability_status:document.getElementById('rfqQuoteAvailability').value,
+        substitution_note:document.getElementById('rfqQuoteSubstitution').value,payment_term_note:document.getElementById('rfqQuoteTerms').value,
+        supplier_note:document.getElementById('rfqQuoteNote').value
+      })});
+      closeSupModal();ptoast('Quote sent. No PO was created.');await renderSupplierWorkspace('Procurement');
+    }catch(err){document.getElementById('rfqQuoteMsg').textContent=err.message}
+  };
+}
+async function declineSupplierRfq(id){
+  try{await papi(`/api/supplier/v4/rfqs/${id}/decline`,{method:'POST',body:JSON.stringify({})});ptoast('RFQ declined.');await renderSupplierWorkspace('Procurement')}catch(e){ptoast(e.message)}
+}
+
 function supplierCatalogPanel(me,activityState){
   const p=me.profile||{};
   return `<section class="supCard"><h2>Supplier profile</h2><form id="supplierProfile" class="supForm"><label>Supplier/business name<input id="spName" value="${ph(p.supplier_name||supMe.account.display_name)}"></label><label>Description<textarea id="spDesc" rows="3">${ph(p.description||'')}</textarea></label><div class="supTwo"><label>Service area<input id="spArea" value="${ph(p.service_area||'')}"></label><label>Normal lead days<input id="spLead" type="number" min="0" value="${p.normal_lead_days??1}"></label></div><label class="toggleBox"><input id="spDelivery" type="checkbox" ${p.delivery_available?'checked':''}> I deliver to Merchant</label><button>Save profile</button></form></section>`
@@ -494,17 +563,19 @@ async function openSupplierWorkspace(section='Catalog'){
 async function renderSupplierWorkspace(section=supSupplierSection){
   const normalized=SUPPLIER_SECTION_META[section]?section:'Catalog';
   supSupplierSection=normalized;
-  const [me,rels,pos,activityState,supplierReturns]=await Promise.all([
+  const [me,rels,pos,activityState,supplierReturns,sourcingState,incomingRfqs]=await Promise.all([
     papi('/api/supplier/me'),
     papi('/api/procurement/relationships'),
     papi('/api/procurement/orders'),
     normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]}),
-    normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([])
+    normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([]),
+    normalized==='Procurement'?papi('/api/supplier/v4/sourcing-settings').catch(()=>({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]})):Promise.resolve({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]}),
+    normalized==='Procurement'?papi('/api/supplier/v4/rfqs').catch(()=>[]):Promise.resolve([])
   ]);
   const meta=SUPPLIER_SECTION_META[normalized];
   let body='';
   if(normalized==='Catalog')body=supplierCatalogPanel(me,activityState);
-  else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierCommercialPanel(supplierReturns)+supplierOrdersPanel(pos,'Procurement');
+  else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierSourcingPanel(sourcingState,incomingRfqs,me.catalog)+supplierCommercialPanel(supplierReturns)+supplierOrdersPanel(pos,'Procurement');
   else body=supplierOrdersPanel(pos,normalized);
   supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
   bindSupBack();bindSupplierWorkspace();
@@ -528,6 +599,12 @@ function bindSupplierWorkspace(){
   const activitiesForm=document.getElementById('supplierActivities');
   if(activitiesForm)activitiesForm.onsubmit=async e=>{e.preventDefault();const activities=[...e.currentTarget.querySelectorAll('input[type="checkbox"]:checked')].map(x=>x.value);try{await papi('/api/supplier/v2/activities',{method:'PUT',body:JSON.stringify({activities})});ptoast('Business activities saved.');await renderSupplierWorkspace('Catalog')}catch(err){document.getElementById('supplierActivitiesMsg').textContent=err.message}};
   supWorkspace.querySelectorAll('[data-cat-v2]').forEach(b=>b.onclick=()=>openCatalogV2(Number(b.dataset.catV2)));
+  document.getElementById('supEditSourcing')?.addEventListener('click',async()=>{
+    const [state,me]=await Promise.all([papi('/api/supplier/v4/sourcing-settings'),papi('/api/supplier/me')]);
+    editSupplierSourcingSettings(state,me.catalog||[]);
+  });
+  supWorkspace.querySelectorAll('[data-rfq-quote]').forEach(b=>b.onclick=async()=>{const me=await papi('/api/supplier/me');quoteSupplierRfq(Number(b.dataset.rfqQuote),me.catalog||[])});
+  supWorkspace.querySelectorAll('[data-rfq-decline]').forEach(b=>b.onclick=()=>declineSupplierRfq(Number(b.dataset.rfqDecline)));
   supWorkspace.querySelectorAll('[data-sup-terms]').forEach(b=>b.onclick=()=>editConnectedSupplierTerms(Number(b.dataset.supTerms)));
   document.getElementById('supIssueRecall')?.addEventListener('click',()=>issueSupplierRecall());
   supWorkspace.querySelectorAll('[data-return-auth]').forEach(b=>b.onclick=()=>respondSupplierReturn(Number(b.dataset.returnAuth),true));
