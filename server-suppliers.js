@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureCatalogMediaSchema,mediaForEntities } from './catalog-media-core.js';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 
 const { Pool } = pg;
@@ -149,10 +150,10 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     PRIMARY KEY(receipt_id,purchase_order_item_id)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS supplier_payment_tx_unique ON transactions(source,source_id) WHERE source='supplier_payment';
-`)}
+`);await ensureCatalogMediaSchema(pool)}
 
 async function relationship(businessId,supplierId){const r=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value FROM supplier_relationships r JOIN accounts a ON a.id=r.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=r.supplier_account_id WHERE r.business_id=$1 AND r.supplier_account_id=$2`,[businessId,supplierId]);return r.rows[0]||null}
-async function catalog(supplierId){const{rows}=await pool.query(`SELECT * FROM supplier_catalog_items WHERE supplier_account_id=$1 AND active=TRUE ORDER BY availability_status='available' DESC,product_name`,[supplierId]);return rows}
+async function catalog(supplierId){const{rows}=await pool.query(`SELECT * FROM supplier_catalog_items WHERE supplier_account_id=$1 AND active=TRUE ORDER BY availability_status='available' DESC,product_name`,[supplierId]);const media=await mediaForEntities(pool,{entityType:'supplier_catalog_item',entityIds:rows.map(x=>x.id),publicOnly:false});return rows.map(row=>{const images=media.get(Number(row.id))||[];const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible)||null;return{...row,images,image_data_url:primary?.data_url||'',image_source_type:primary?.source_type||''}})}
 async function poDetail(id){const q=await pool.query(`SELECT p.*,b.name business_name,a.display_name supplier_account_name,s.supplier_name FROM purchase_orders p JOIN businesses b ON b.id=p.business_id JOIN accounts a ON a.id=p.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=a.id WHERE p.id=$1`,[id]);if(!q.rowCount)return null;const items=await pool.query(`SELECT i.*,l.legacy_inventory_id,inv.item legacy_inventory_name FROM purchase_order_items i LEFT JOIN merchant_supplier_item_links l ON l.business_id=$1 AND l.catalog_item_id=i.catalog_item_id LEFT JOIN inventory inv ON inv.id=l.legacy_inventory_id WHERE i.purchase_order_id=$2 ORDER BY i.id`,[q.rows[0].business_id,id]);return{...q.rows[0],items:items.rows}}
 
 app.get('/health',async(_q,r)=>{try{await pool.query('SELECT 1');const c=await upstream('/health');r.status(c.ok?200:503).json({ok:c.ok,db:true,services:c.ok,version:'0.5-supplier-procurement'})}catch{r.status(503).json({ok:false,db:false,services:false,version:'0.5-supplier-procurement'})}})
