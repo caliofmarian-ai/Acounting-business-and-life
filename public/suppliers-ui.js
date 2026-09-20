@@ -378,7 +378,10 @@ function supplierCatalogPanel(me,activityState){
     +`<section class="supCard"><h2>My catalog</h2><p>Start with product, pack and price. Packaging rules and volume prices stay under Details.</p><form id="catalogAdd" class="supForm"><label>Product<input id="catName" required></label><div class="supTwo"><label>Pack name<input id="catPack" value="pack"></label><label>Price / pack ₱<input id="catPrice" type="number" min="0" step="0.01" required></label></div><div class="supTwo"><label>Base unit<input id="catBase" value="unit"></label><label>Units / pack<input id="catUnits" type="number" min="0.0001" step="0.0001" value="1"></label></div><button>Add catalog item</button></form><div class="supList" style="margin-top:10px">${me.catalog.length?me.catalog.map(item=>`<div class="supRow"><div><strong>${ph(item.product_name)}</strong><small>${pphp(item.price_per_pack)} / ${ph(item.unit_name)} • ${Number(item.base_units_per_pack)} ${ph(item.base_unit)}</small><div class="supMeta"><span class="${item.availability_status==='available'?'ok':'pending'}">${ph(pnice(item.availability_status))}</span><span>${ph(pnice(item.handling_mode||'sealed_resale'))}</span>${(item.price_tiers||[]).length?`<span>${item.price_tiers.length} volume price${item.price_tiers.length===1?'':'s'}</span>`:''}</div></div><div class="supActions"><button type="button" class="supBtn secondary" data-cat-v2="${item.id}">Details</button></div></div>`).join(''):'<div class="supEmpty">Catalog is empty.</div>'}</div></section>`;
 }
 function supplierRelationshipsPanel(rels){
-  return `<section class="supCard"><h2>Merchant relationships</h2><p>Only accepted Merchant relationships can exchange procurement orders.</p><div class="supList">${rels.length?rels.map(r=>`<div class="supRow"><div><strong>${ph(r.business_name)}</strong><small>${ph(pnice(r.state))}</small></div><div class="supActions">${['invited','pending'].includes(r.state)?`<button class="supBtn" data-rel-accept="${r.business_id}">Accept</button><button class="supBtn secondary" data-rel-decline="${r.business_id}">Decline</button>`:''}</div></div>`).join(''):'<div class="supEmpty">No Merchant invitations yet.</div>'}</div></section>`;
+  return `<section class="supCard"><h2>Merchant relationships</h2><p>Only accepted Merchant relationships can exchange procurement orders. Payment terms stay attached to each relationship.</p><div class="supList">${rels.length?rels.map(r=>`<div class="supRow"><div><strong>${ph(r.business_name)}</strong><small>${ph(pnice(r.state))}</small></div><div class="supActions">${['invited','pending'].includes(r.state)?`<button class="supBtn" data-rel-accept="${r.business_id}">Accept</button><button class="supBtn secondary" data-rel-decline="${r.business_id}">Decline</button>`:r.state==='accepted'?`<button class="supBtn secondary" data-sup-terms="${r.business_id}">Terms</button>`:''}</div></div>`).join(''):'<div class="supEmpty">No Merchant invitations yet.</div>'}</div></section>`;
+}
+function supplierCommercialPanel(returns=[]){
+  return `<details class="supDetails supCard"><summary><span><strong>Commercial terms, returns & recall</strong><small>Advanced controls for credit sales, return resolutions and lot/batch recall.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody"><div class="supInlineActions"><button type="button" class="supBtn secondary" id="supIssueRecall">Issue lot recall</button></div>${returns.length?`<h3>Merchant returns</h3><div class="supList">${returns.slice(0,10).map(r=>`<div class="supRow"><div><strong>Return #${r.id} • ${ph(r.business_name)}</strong><small>${ph(pnice(r.status))} • expected credit ${pphp(r.expected_credit)}</small><div class="supMeta">${r.resolution_type&&r.resolution_type!=='pending'?`<span>${ph(pnice(r.resolution_type))}</span>`:''}${Number(r.confirmed_credit)>0?`<span>Credit ${pphp(r.confirmed_credit)}</span>`:''}</div></div><div class="supActions">${r.status==='requested'?`<button class="supBtn" data-return-auth="${r.id}">Authorize</button><button class="supBtn secondary" data-return-reject="${r.id}">Reject</button>`:''}${r.status==='returned'?`<button class="supBtn" data-return-resolve="${r.id}">Resolve</button>`:''}</div></div>`).join('')}</div>`:'<div class="supEmpty" style="margin-top:10px">No Merchant returns need attention.</div>'}<p class="supCodeHelp">A confirmed credit changes the commercial balance. It is not cash paid back unless a separate refund-money event is recorded.</p></div></details>`;
 }
 function supplierOrdersPanel(pos,section){
   const source=section==='Procurement'?SUPPLIER_PROCUREMENT_STATES:section==='ETA'?SUPPLIER_ETA_STATES:SUPPLIER_FULFILMENT_STATES;
@@ -398,16 +401,17 @@ async function openSupplierWorkspace(section='Catalog'){
 async function renderSupplierWorkspace(section=supSupplierSection){
   const normalized=SUPPLIER_SECTION_META[section]?section:'Catalog';
   supSupplierSection=normalized;
-  const [me,rels,pos,activityState]=await Promise.all([
+  const [me,rels,pos,activityState,supplierReturns]=await Promise.all([
     papi('/api/supplier/me'),
     papi('/api/procurement/relationships'),
     papi('/api/procurement/orders'),
-    normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]})
+    normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]}),
+    normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([])
   ]);
   const meta=SUPPLIER_SECTION_META[normalized];
   let body='';
   if(normalized==='Catalog')body=supplierCatalogPanel(me,activityState);
-  else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierOrdersPanel(pos,'Procurement');
+  else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierCommercialPanel(supplierReturns)+supplierOrdersPanel(pos,'Procurement');
   else body=supplierOrdersPanel(pos,normalized);
   supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
   bindSupBack();bindSupplierWorkspace();
@@ -431,6 +435,11 @@ function bindSupplierWorkspace(){
   const activitiesForm=document.getElementById('supplierActivities');
   if(activitiesForm)activitiesForm.onsubmit=async e=>{e.preventDefault();const activities=[...e.currentTarget.querySelectorAll('input[type="checkbox"]:checked')].map(x=>x.value);try{await papi('/api/supplier/v2/activities',{method:'PUT',body:JSON.stringify({activities})});ptoast('Business activities saved.');await renderSupplierWorkspace('Catalog')}catch(err){document.getElementById('supplierActivitiesMsg').textContent=err.message}};
   supWorkspace.querySelectorAll('[data-cat-v2]').forEach(b=>b.onclick=()=>openCatalogV2(Number(b.dataset.catV2)));
+  supWorkspace.querySelectorAll('[data-sup-terms]').forEach(b=>b.onclick=()=>editConnectedSupplierTerms(Number(b.dataset.supTerms)));
+  document.getElementById('supIssueRecall')?.addEventListener('click',()=>issueSupplierRecall());
+  supWorkspace.querySelectorAll('[data-return-auth]').forEach(b=>b.onclick=()=>respondSupplierReturn(Number(b.dataset.returnAuth),true));
+  supWorkspace.querySelectorAll('[data-return-reject]').forEach(b=>b.onclick=()=>respondSupplierReturn(Number(b.dataset.returnReject),false));
+  supWorkspace.querySelectorAll('[data-return-resolve]').forEach(b=>b.onclick=()=>resolveSupplierReturn(Number(b.dataset.returnResolve)));
   supWorkspace.querySelectorAll('[data-rel-accept]').forEach(b=>b.onclick=()=>respondRel(Number(b.dataset.relAccept),true));
   supWorkspace.querySelectorAll('[data-rel-decline]').forEach(b=>b.onclick=()=>respondRel(Number(b.dataset.relDecline),false));
   supWorkspace.querySelectorAll('[data-sup-view]').forEach(b=>b.onclick=()=>viewPo(Number(b.dataset.supView),'supplier'));
@@ -438,6 +447,65 @@ function bindSupplierWorkspace(){
   supWorkspace.querySelectorAll('[data-sup-status]').forEach(b=>b.onclick=()=>setSupplierStatus(Number(b.dataset.supStatus),b.dataset.status));
 }
 async function respondRel(id,accept){try{await papi(`/api/supplier/relationships/${id}/respond`,{method:'POST',body:JSON.stringify({accept})});ptoast(accept?'Merchant relationship accepted.':'Invitation declined.');await renderSupplierWorkspace('Procurement')}catch(e){ptoast(e.message)}}
+async function editConnectedSupplierTerms(businessId){
+  const current=await papi(`/api/supplier/relationships/${businessId}/terms`).catch(()=>null);
+  openSupModal(`<h2>Merchant payment terms</h2><p class="supModalIntro">These are commercial terms for this connected Merchant. Saving them records Supplier-confirmed terms only.</p><form id="supplierTermsForm" class="supForm"><label>Terms<select id="supplierTermCode">${termOptions(current?.payment_term_code||'cod')}</select></label><div class="supTwo"><label>Custom days<input id="supplierCustomDays" type="number" min="0" max="365" value="${current?.custom_days??''}"></label><label>Credit limit ₱<input id="supplierCreditLimit" type="number" min="0" step="0.01" value="${current?.credit_limit??''}"></label></div><label>Note<input id="supplierTermNote" value="${ph(current?.note||'')}"></label><div id="supplierTermsMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="supplierTermsCancel">Cancel</button><button>Save terms</button></div></form>`);
+  document.getElementById('supplierTermsCancel').onclick=closeSupModal;
+  document.getElementById('supplierTermsForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi(`/api/supplier/relationships/${businessId}/terms`,{method:'PUT',body:JSON.stringify({
+        paymentTermCode:document.getElementById('supplierTermCode').value,
+        customDays:document.getElementById('supplierCustomDays').value===''?null:Number(document.getElementById('supplierCustomDays').value),
+        creditLimit:document.getElementById('supplierCreditLimit').value===''?null:Number(document.getElementById('supplierCreditLimit').value),
+        note:document.getElementById('supplierTermNote').value
+      })});
+      closeSupModal();ptoast('Merchant payment terms confirmed.');await renderSupplierWorkspace('Procurement');
+    }catch(err){document.getElementById('supplierTermsMsg').textContent=err.message}
+  };
+}
+async function respondSupplierReturn(id,authorize){
+  try{
+    await papi(`/api/supplier/returns/${id}/respond`,{method:'POST',body:JSON.stringify({
+      decision:authorize?'authorize':'reject',
+      supplier_note:authorize?'Authorized by Supplier':'Rejected by Supplier'
+    })});
+    ptoast(authorize?'Return authorized.':'Return rejected.');await renderSupplierWorkspace('Procurement');
+  }catch(e){ptoast(e.message)}
+}
+async function resolveSupplierReturn(id){
+  openSupModal(`<h2>Resolve Merchant return</h2><p class="supModalIntro">Choose what was actually agreed after the physical return.</p><form id="supplierReturnResolve" class="supForm"><label>Resolution<select id="supplierResolutionType"><option value="credit">Credit</option><option value="refund_expected">Refund expected</option><option value="replacement">Replacement</option><option value="no_credit">No credit</option></select></label><label>Confirmed credit ₱<input id="supplierConfirmedCredit" type="number" min="0" step="0.01" value="0"></label><label>Supplier note<textarea id="supplierResolutionNote" rows="2"></textarea></label><div id="supplierResolutionMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="supplierResolutionCancel">Cancel</button><button>Save resolution</button></div></form>`);
+  document.getElementById('supplierResolutionCancel').onclick=closeSupModal;
+  document.getElementById('supplierReturnResolve').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi(`/api/supplier/returns/${id}/resolve`,{method:'POST',body:JSON.stringify({
+        resolution_type:document.getElementById('supplierResolutionType').value,
+        confirmed_credit:Number(document.getElementById('supplierConfirmedCredit').value||0),
+        supplier_note:document.getElementById('supplierResolutionNote').value
+      })});
+      closeSupModal();ptoast('Return resolution recorded.');await renderSupplierWorkspace('Procurement');
+    }catch(err){document.getElementById('supplierResolutionMsg').textContent=err.message}
+  };
+}
+async function issueSupplierRecall(){
+  openSupModal(`<h2>Issue lot/batch recall</h2><p class="supModalIntro">Use the exact supplier lot/batch. Matching Merchant lots are quarantined in traceability. This does not itself prove or perform an FDA filing.</p><form id="supplierRecallForm" class="supForm"><label>Supplier lot / batch<input id="supplierRecallLot" required></label><label>Product name<input id="supplierRecallProduct"></label><div class="supTwo"><label>Notice<select id="supplierRecallLevel"><option value="recall">Recall</option><option value="withdrawal">Withdrawal</option><option value="advisory">Advisory</option></select></label><label>Requested action<select id="supplierRecallAction"><option value="isolate">Isolate</option><option value="return">Return</option><option value="review">Review</option><option value="destroy">Destroy</option></select></label></div><label>Reason<textarea id="supplierRecallReason" required rows="2"></textarea></label><label>Source/reference<input id="supplierRecallRef"></label><div id="supplierRecallMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="supplierRecallCancel">Cancel</button><button>Issue notice</button></div></form>`);
+  document.getElementById('supplierRecallCancel').onclick=closeSupModal;
+  document.getElementById('supplierRecallForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const r=await papi('/api/supplier/recalls',{method:'POST',body:JSON.stringify({
+        supplier_lot_code:document.getElementById('supplierRecallLot').value,
+        product_name:document.getElementById('supplierRecallProduct').value,
+        notice_level:document.getElementById('supplierRecallLevel').value,
+        requested_action:document.getElementById('supplierRecallAction').value,
+        reason:document.getElementById('supplierRecallReason').value,
+        source_reference:document.getElementById('supplierRecallRef').value
+      })});
+      closeSupModal();ptoast(`Recall issued; ${Number(r.matched_lots||0)} lot match(es) quarantined.`);await renderSupplierWorkspace('Procurement');
+    }catch(err){document.getElementById('supplierRecallMsg').textContent=err.message}
+  };
+}
 async function supplierRespondPo(id){const p=await papi(`/api/procurement/orders/${id}`);openSupModal(`<h2>Respond to ${ph(p.po_number)}</h2><form id="supRespondPo" class="supForm"><div class="supProductPicker">${p.items.map(i=>`<div class="supPick"><div><strong>${ph(i.name_snapshot)}</strong><small>Ordered ${Number(i.ordered_packs)} ${ph(i.unit_name_snapshot)}</small></div><div><input data-confirm-item="${i.id}" type="number" min="0" max="${i.ordered_packs}" step="0.01" value="${i.confirmed_packs??i.ordered_packs}"><input data-price-item="${i.id}" type="number" min="0" step="0.01" value="${i.confirmed_price_per_pack??i.price_per_pack_snapshot}"></div></div>`).join('')}</div><div class="supTwo"><label>Ready date/time<input id="supReady" type="datetime-local" value="${ph(pmanilaInput(p.supplier_ready_at))}"></label><label>Delivery ETA<input id="supDeliveryEta" type="datetime-local" value="${ph(pmanilaInput(p.supplier_delivery_eta))}"></label></div><label>Supplier note<textarea id="supPoNote" rows="2">${ph(p.supplier_note||'')}</textarea></label><div id="supPoMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="supPoReject">Reject</button><button>Accept / confirm</button></div></form>`);document.getElementById('supPoReject').onclick=async()=>{try{await papi(`/api/supplier/orders/${id}/respond`,{method:'POST',body:JSON.stringify({reject:true,supplier_note:document.getElementById('supPoNote').value})});closeSupModal();await renderSupplierWorkspace('Procurement')}catch(e){document.getElementById('supPoMsg').textContent=e.message}};document.getElementById('supRespondPo').onsubmit=async e=>{e.preventDefault();const items=p.items.map(i=>({item_id:i.id,confirmed_packs:Number(e.currentTarget.querySelector(`[data-confirm-item="${i.id}"]`).value),confirmed_price_per_pack:Number(e.currentTarget.querySelector(`[data-price-item="${i.id}"]`).value)}));try{await papi(`/api/supplier/orders/${id}/respond`,{method:'POST',body:JSON.stringify({items,supplier_ready_at:pmanilaIso(document.getElementById('supReady').value),supplier_delivery_eta:pmanilaIso(document.getElementById('supDeliveryEta').value),supplier_note:document.getElementById('supPoNote').value})});closeSupModal();ptoast('Purchase order confirmed.');await renderSupplierWorkspace('ETA')}catch(err){document.getElementById('supPoMsg').textContent=err.message}}}
 async function setSupplierStatus(id,status){try{await papi(`/api/supplier/orders/${id}/status`,{method:'POST',body:JSON.stringify({status})});ptoast(`PO marked ${pnice(status)}.`);await renderSupplierWorkspace(['ready_for_pickup','out_for_delivery','delivered'].includes(status)?'Fulfilment':'ETA')}catch(e){ptoast(e.message)}}
 
