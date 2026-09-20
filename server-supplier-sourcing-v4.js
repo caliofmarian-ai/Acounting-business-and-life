@@ -640,7 +640,11 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
       if(!quoteQ.rowCount)return res.status(404).json({error:'Quote not found'});
       const quote=quoteQ.rows[0],merchant=await exactProfileBusiness(pool,me,'merchant',quote.merchant_business_id);
       if(quote.source_type!=='connected_supplier')return res.status(409).json({error:'External Supplier quote cannot create an in-app PO'});
-      if(quote.status!=='active'||new Date(String(quote.valid_until)+'T23:59:59Z').getTime()<Date.now()){
+      const quoteValidDate=quote.valid_until instanceof Date
+        ?quote.valid_until.toISOString().slice(0,10)
+        :String(quote.valid_until||'').slice(0,10);
+      if(quote.status!=='active'||!/^\d{4}-\d{2}-\d{2}$/.test(quoteValidDate)
+        ||new Date(quoteValidDate+'T23:59:59Z').getTime()<Date.now()){
         return res.status(409).json({error:'Quote is no longer active'});
       }
       if(!await acceptedRelationship(pool,merchant.id,quote.supplier_account_id)){
