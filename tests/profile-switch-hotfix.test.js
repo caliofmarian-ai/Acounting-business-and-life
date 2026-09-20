@@ -30,5 +30,6 @@ test('Admin authority is exposed separately from public profiles',()=>{
   assert.match(shell,/window\.location\.assign\('\/admin'\)/);
   assert.doesNotMatch(shell,/data-admin-profile/);
   assert.doesNotMatch(shell,/ROLE_ORDER = \[[^\]]*super_admin/);
-  assert.match(governance,/!panel\.querySelector\('#adminProfileRole'\)/);
+  assert.doesNotMatch(governance,/govDrawerAdmin/);
+  assert.doesNotMatch(governance,/govAdminOpen/);
 });
