@@ -2,13 +2,13 @@
 document_id: BL-00-ARCH-002
 title: Reconciled Application Architecture — Person, Profiles and Delegated Administration
 document_type: canonical_architecture
-status: OWNER_DIRECTION_APPROVED_IMPLEMENTATION_PENDING
+status: OWNER_DIRECTION_APPROVED_IMPLEMENTATION_IN_PROGRESS
 access_class: INTERNAL
 country_code: GLOBAL_CORE_PH_PILOT
 owner_role: Product Owner
 approver_role: Product Owner
-version: 1.0
-last_updated: 2026-09-19
+version: 1.1
+last_updated: 2026-09-20
 ---
 
 # Reconciled Application Architecture
@@ -17,11 +17,17 @@ last_updated: 2026-09-19
 
 This document is the target architecture for reconciling the current legacy Merchant application with the person-first Business & Life ecosystem.
 
-The product direction is approved. The architecture is **not a statement that the target behavior is already implemented**. Runtime behavior remains governed by the current implementation until the reconciliation phases in the companion plan are merged and verified.
+The product direction is approved and implementation is in progress. The architecture is **not a statement that every target behavior is already accepted**. Runtime behavior remains governed by the current implementation until each reconciliation phase is merged and verified through the [Philippines Reference Edition Quality and Onboarding Plan](../implementation/PH_REFERENCE_EDITION_QUALITY_AND_ONBOARDING_PLAN.md).
 
 The central rule is:
 
 > One person owns one private account. Public or operational profiles derive from that person. Administration is delegated authority, never a profile that a user may self-activate.
+
+The Philippines edition is the first complete reference edition, not a permanent country-specific
+fork. Future country editions reuse the same domain and interaction core. Country law, tax,
+currency, language, payment providers, statutory documents, territory hierarchy and evidence rules
+are isolated in versioned edition configuration and jurisdiction adapters. A country difference must
+never be represented by cloning the application or silently changing shared domain semantics.
 
 ## 2. Product model
 

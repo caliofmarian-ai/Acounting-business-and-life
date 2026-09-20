@@ -20,6 +20,16 @@ test('database bootstrap never creates or restores an active Merchant profile',(
   assert.match(auth,/UPDATE profiles SET enabled=FALSE,visibility='private',status='disabled'/);
 });
 
+test('a disabled profile cannot retain active status',()=>{
+  for(const source of [auth,read('server-unified.js')]){
+    assert.match(source,/UPDATE profiles SET status='disabled',updated_at=NOW\(\)[\s\S]*WHERE enabled=FALSE AND status='active'/);
+    assert.match(source,/CONSTRAINT profiles_active_requires_enabled[\s\S]*CHECK \(status <> 'active' OR enabled=TRUE\)/);
+    assert.match(source,/ALTER COLUMN enabled SET DEFAULT FALSE/);
+    assert.match(source,/ALTER COLUMN status SET DEFAULT 'not_started'/);
+  }
+  assert.match(auth,/2026-09-20-normalize-disabled-profile-status/);
+});
+
 test('stale active role is cleared and cannot open a disabled workspace',()=>{
   assert.match(auth,/profile\.enabled===true&&profile\.status==='active'/);
   assert.match(auth,/UPDATE accounts SET active_role=NULL/);

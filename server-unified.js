@@ -57,7 +57,7 @@ async function initProfileDb() {
     CREATE TABLE IF NOT EXISTS profiles (
       account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
-      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY(account_id, role)
@@ -65,7 +65,21 @@ async function initProfileDb() {
     ALTER TABLE profiles DROP CONSTRAINT IF EXISTS profiles_role_check;
     ALTER TABLE profiles ADD CONSTRAINT profiles_role_check CHECK (role IN ('merchant','customer','supplier','courier','service_provider'));
     ALTER TABLE profiles ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
-    ALTER TABLE profiles ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+    ALTER TABLE profiles ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'not_started';
+    ALTER TABLE profiles ALTER COLUMN enabled SET DEFAULT FALSE;
+    ALTER TABLE profiles ALTER COLUMN status SET DEFAULT 'not_started';
+    UPDATE profiles SET status='disabled',updated_at=NOW()
+      WHERE enabled=FALSE AND status='active';
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+          WHERE conname='profiles_active_requires_enabled' AND conrelid='profiles'::regclass
+      ) THEN
+        ALTER TABLE profiles ADD CONSTRAINT profiles_active_requires_enabled
+          CHECK (status <> 'active' OR enabled=TRUE);
+      END IF;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS businesses (
       id BIGSERIAL PRIMARY KEY,
