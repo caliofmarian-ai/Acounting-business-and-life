@@ -97,16 +97,25 @@ test('Supplier and non-food Merchant do not receive food-first legacy navigation
 });
 
 test('Finance UI is materially role-specific',()=>{
-  assert.match(ui,/Merchant Finance/);
-  assert.match(ui,/Supplier Finance/);
+  assert.match(ui,/Business finances/);
+  assert.match(ui,/Supplier finances/);
   assert.match(ui,/Completed merchandise sales/);
-  assert.match(ui,/Supplier payables/);
+  assert.match(ui,/Owed to suppliers/);
   assert.match(ui,/Fulfilled PO value/);
   assert.match(ui,/Recorded money received/);
   assert.match(ui,/Upstream payables/);
   assert.match(ui,/Planned Supplier budget/);
-  assert.match(ui,/Recorded ledger balance/);
-  assert.match(ui,/Ledger and confirmed payments are different evidence/);
+  assert.match(ui,/Manual records total/);
+  assert.match(ui,/Manual records are not confirmed payments/);
+});
+
+test('Merchant Finance translates internal states into plain user language',()=>{
+  assert.match(ui,/Choose where you want to receive payments/);
+  assert.match(ui,/Products in stock/);
+  assert.match(ui,/Estimated cost value · not available cash/);
+  assert.match(ui,/Unverified entries · not bank balance or available cash/);
+  assert.match(ui,/financeWarningCopy/);
+  assert.doesNotMatch(ui,/replaceAll\('_',' '\)/);
 });
 
 test('Merchant dashboard has one primary financial summary and labels ledger activity',()=>{
