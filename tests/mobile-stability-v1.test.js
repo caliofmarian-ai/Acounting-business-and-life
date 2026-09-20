@@ -23,7 +23,7 @@ test('profile drawer lifecycle is event-driven and cannot self-trigger a Mutatio
   assert.doesNotMatch(governance,/setInterval\(/);
   assert.match(governance,/abl:drawer-rendered/);
   assert.match(shell,/abl:drawer-rendered/);
-  assert.match(shell,/if\(snapshot\?\.account&&!profileStale&&!adminStale\)renderDrawer\(\)/);
+  assert.match(shell,/if\(hasCompleteSnapshot\)renderDrawer\(\)/);
   assert.match(shell,/Loading account and Admin access/);
 });
 
