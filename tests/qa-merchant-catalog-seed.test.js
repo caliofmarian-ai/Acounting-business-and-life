@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { qaAcceptanceConfig, MERCHANT_CATALOG_WAVE } from '../qa-acceptance.js';
+import { qaAcceptanceConfig, MERCHANT_CATALOG_WAVE, MERCHANT_EXPERIENCE_WAVE } from '../qa-acceptance.js';
 
 const safe={
   RAILWAY_SERVICE_NAME:'accounting-preview',
@@ -50,4 +50,29 @@ test('Merchant seed keeps financial fixture stock from pretending to be real pai
   assert.match(source,/record_expense:false/);
   assert.match(source,/Controlled QA catalog fixture — no real purchase/);
   assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|verifyToken|previewUrl|secret)/i);
+});
+
+
+test('Merchant Experience QA wave reconciles business finance notifications settings support and session recovery',()=>{
+  const cfg=qaAcceptanceConfig({...safe,QA_ACCEPTANCE_WAVE:MERCHANT_EXPERIENCE_WAVE});
+  assert.equal(cfg.enabled,true);
+  assert.equal(cfg.wave,MERCHANT_EXPERIENCE_WAVE);
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  for(const marker of [
+    '/api/accounting/finance-overview',
+    'completed_merchandise_value',
+    'confirmed_merchandise_received',
+    '/api/settings/finance',
+    'shared account Money & Banking context',
+    '/api/notifications?limit=100',
+    "'order.created','order.customer_checked_in','order.payment_confirmed'",
+    'Merchant Support ticket create',
+    '/api/support/tickets/mine',
+    '/api/merchant/storefront?business_id=',
+    "supplier_procurement_e2e:'HOLD_FOR_SUPPLIER_WAVE'",
+    "delivery_e2e:'HOLD_FOR_COURIER_WAVE'",
+    "live_online_payment:'HOLD_FOR_PAYMONGO_LIVE_GATE'",
+    'Merchant Experience final re-login'
+  ])assert.ok(source.includes(marker),`missing Merchant Experience QA marker: ${marker}`);
+  assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|resetToken|previewUrl|secret)/i);
 });
