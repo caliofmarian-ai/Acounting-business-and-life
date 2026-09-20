@@ -25,6 +25,9 @@ test('Merchant Finance excludes delivery charge from merchandise sales and track
   assert.match(core,/merchandise_amount/);
   assert.match(core,/completed_customer_receivables/);
   assert.match(core,/subtotal-merchandise_received/);
+  assert.match(core,/ledger_reconciliation/);
+  assert.match(core,/SEPARATE_EVIDENCE/);
+  assert.match(core,/Manual entries, remittances, adjustments, expenses, drawings or profile transfers/);
 });
 
 test('Merchant presentation reuses canonical food non-food mixed storefront domain',()=>{
@@ -102,6 +105,24 @@ test('Finance UI is materially role-specific',()=>{
   assert.match(ui,/Recorded money received/);
   assert.match(ui,/Upstream payables/);
   assert.match(ui,/Planned Supplier budget/);
+  assert.match(ui,/Recorded ledger balance/);
+  assert.match(ui,/Ledger and confirmed payments are different evidence/);
+});
+
+test('Merchant dashboard has one primary financial summary and labels ledger activity',()=>{
+  const index=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const legacyUi=readFileSync(new URL('../public/v03.js',import.meta.url),'utf8');
+  assert.match(index,/legacyFinanceSnapshot/);
+  assert.match(index,/Recorded ledger activity/);
+  assert.match(index,/not automatically confirmed customer payments/);
+  assert.match(ui,/\.legacyFinanceSnapshot/);
+  assert.match(ui,/classList\.add\('roleFinanceHidden'\)/);
+  assert.match(css,/\.ledgerReconciliation\.separate/);
+  assert.match(legacyUi,/Manual ledger entry/);
+  assert.match(legacyUi,/not confirmed payment evidence/);
+  assert.match(legacyUi,/Void test entry/);
+  assert.match(legacyUi,/amount:0/);
+  assert.match(legacyUi,/original value preserved in audit history/);
 });
 
 test('Money Settings remains the single financial-account and budget configuration surface',()=>{

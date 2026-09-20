@@ -17,5 +17,7 @@
 .businessFinanceDetails{margin-top:10px;border:1px solid #e2e8f0;border-radius:13px;background:#fff;overflow:hidden}
 .businessFinanceDetails>summary{cursor:pointer;list-style:none;padding:10px 11px;font-size:.78rem;font-weight:850;color:#475569}.businessFinanceDetails>summary::-webkit-details-marker{display:none}.businessFinanceDetails>summary:after{content:"›";float:right;transform:rotate(90deg)}.businessFinanceDetails[open]>summary:after{transform:rotate(-90deg)}
 .businessFinanceDetails .businessFinanceMetrics{padding:0 10px 10px}
+.ledgerReconciliation{display:grid;gap:4px;margin:0 10px 10px;padding:10px 11px;border-radius:11px;font-size:.74rem;line-height:1.4}.ledgerReconciliation span{color:#475569}.ledgerReconciliation.matched{background:#ecfdf5;border:1px solid #a7f3d0;color:#047857}.ledgerReconciliation.separate{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412}.ledgerActivityCard .sectionHead>div:first-child{display:grid;gap:3px}.ledgerActivityCard .sectionHead>div:last-child{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.ledgerRowActions{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}.voidLedgerEntry{color:#9a3412!important;border-color:#fed7aa!important;background:#fff7ed!important}
 @media(min-width:760px){.businessFinancePrimary{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:640px){.businessFinancePrimary{grid-template-columns:repeat(2,minmax(0,1fr))}}
