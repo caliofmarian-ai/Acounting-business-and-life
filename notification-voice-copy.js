@@ -83,7 +83,7 @@ const COPY={
 };
 
 export function normalizeNotificationVoiceLocale(value='en-PH'){
-  return /^fil(-|$)/i.test(String(value||''))?'fil-PH':'en-PH';
+  return /^(fil|tl)(-|$)/i.test(String(value||''))?'fil-PH':'en-PH';
 }
 
 export function notificationVoiceLeaf(soundSlot){
