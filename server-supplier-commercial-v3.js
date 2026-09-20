@@ -128,7 +128,7 @@ async function invoiceDueDate(pool,{po,businessId,supplierAccountId,supplyPartyI
   if(!terms)return null;
   return dueDateForTerms({
     issueDate:String(issueDate).slice(0,10),
-    receivedDate:po?.received_at?String(po.received_at).slice(0,10):null,
+    receivedDate:po?.received_at||null,
     paymentTermCode:terms.payment_term_code,
     customDays:terms.custom_days
   });
