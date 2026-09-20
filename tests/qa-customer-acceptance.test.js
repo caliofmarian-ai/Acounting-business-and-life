@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { qaAcceptanceConfig, CUSTOMER_WAVE } from '../qa-acceptance.js';
+import { qaAcceptanceConfig, CUSTOMER_WAVE, CUSTOMER_MARKETPLACE_WAVE } from '../qa-acceptance.js';
 
 const safe={
   RAILWAY_SERVICE_NAME:'accounting-preview',
@@ -36,5 +36,35 @@ test('customer acceptance uses normal auth and profile endpoints without logging
   assert.match(source,/\/api\/profiles\/merchant/);
   assert.match(source,/\/api\/auth\/logout/);
   assert.match(source,/QA_ACCEPTANCE_RESULT/);
+  assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|verifyToken|previewUrl|secret)/i);
+});
+
+
+test('Customer Marketplace E2E wave is isolated and exercises the complete controlled commerce loop',()=>{
+  const cfg=qaAcceptanceConfig({...safe,QA_ACCEPTANCE_WAVE:CUSTOMER_MARKETPLACE_WAVE});
+  assert.equal(cfg.enabled,true);
+  assert.equal(cfg.wave,CUSTOMER_MARKETPLACE_WAVE);
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  for(const marker of [
+    '/api/marketplace/storefronts/',
+    '/api/marketplace/checkout',
+    '/check-in',
+    '/confirm-presence',
+    '/start',
+    '/ready',
+    '/payment',
+    '/complete',
+    '/api/orders/mine',
+    '/api/orders/track/',
+    'order_stock_consumptions',
+    "fulfilment_method:'pickup'",
+    "payment_method:'cash'",
+    "['Water',200]",
+    "['Fish',62.5]",
+    "['Carrot',525]",
+    "['Parsley',2.5]",
+    "['Bottled Juice',1]",
+    "['Dish Soap',1]"
+  ])assert.ok(source.includes(marker),`missing Customer Marketplace QA marker: ${marker}`);
   assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|verifyToken|previewUrl|secret)/i);
 });
