@@ -162,3 +162,21 @@ test('notification settings expose exact spoken transcripts and localized Filipi
   assert.match(ui,/updateVoiceTranscript/);
   assert.doesNotMatch(ui,/Until that audio pack is generated/);
 });
+
+
+test('notification settings are compact accordions instead of one long always-visible form',()=>{
+  assert.match(ui,/class="notificationSettingsGroup"/);
+  assert.match(ui,/class="notificationSettingsGroup notificationVoiceGroup"/);
+  assert.match(ui,/class="voiceSettingAccordion"/);
+  assert.match(ui,/class="preferenceRow preferenceAccordion"/);
+  assert.match(ui,/Open only the section you want to change/);
+  assert.match(ui,/Notification channels/);
+  assert.match(ui,/Sound, vibration & important alerts/);
+  assert.doesNotMatch(ui,/<details class="notificationSettingsGroup" open/);
+});
+
+test('compact notification summaries update after voice and channel changes',()=>{
+  assert.match(ui,/closest\('\.voiceSettingAccordion'\)\?\.querySelector\('summary>b'\)/);
+  assert.match(ui,/row\.querySelector\('summary>b'\)/);
+  assert.match(ui,/active\.join\(' • '\)/);
+});

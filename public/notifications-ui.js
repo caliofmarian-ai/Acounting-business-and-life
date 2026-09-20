@@ -66,13 +66,82 @@ function renderSettings(p){
     if(p.preferred_locale==='fil-PH'&&localizedVariants.has(id))return localizedVoiceTranscripts?.[slotId]?.[id]||'';
     return voiceTranscripts?.[slotId]?.[id]||'';
   };
+  const voiceLabel=variant=>soundVariants.find(v=>Number(v.id)===Number(variant))?.label||`Set ${variant}`;
   const hasPartialLocalization=p.preferred_locale==='fil-PH'&&localizedVariants.size>0;
+  const channelState=(x,marketing)=>{
+    const inapp=x?x.in_app_enabled:!marketing,email=x?x.email_enabled:false,push=x?x.push_enabled:!marketing;
+    const active=[inapp?'In-app':'',email?'Email':'',push?'Push':''].filter(Boolean);
+    return active.length?active.join(' • '):'Off';
+  };
   box.innerHTML=`
-    <div class="notificationSettingCard"><label>Notification language<select id="notificationLocale"><option value="en-PH" ${p.preferred_locale==='en-PH'?'selected':''}>English (Philippines)</option><option value="fil-PH" ${p.preferred_locale==='fil-PH'?'selected':''}>Filipino / Tagalog</option></select></label></div>
-    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Attention</strong><small>Control how Business & Life gets your attention. Background push sound is controlled by your phone/browser; the Sounds switch applies to branded in-app sounds.</small></span></div><div class="preferenceGrid"><div class="preferenceRow"><div><strong>Sounds</strong><small>Branded sounds while the app is open.</small></div><label><input id="notificationSounds" type="checkbox" ${attention.sound_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Vibration</strong><small>Use supported vibration patterns for push alerts.</small></div><label><input id="notificationVibration" type="checkbox" ${attention.vibration_enabled?'checked':''}> On</label></div><div class="preferenceRow"><div><strong>Important alerts</strong><small>Keep urgent alerts more prominent when the browser supports it.</small></div><label><input id="notificationImportantAlerts" type="checkbox" ${attention.important_alerts_enabled?'checked':''}> On</label></div></div></div>
-    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Notification voice</strong><small>Set 2 is the Business & Life default. Choose Set 1 or Set 3 separately for any notification type.</small>${hasPartialLocalization?'<small class="voiceLocaleNotice">Set 2 speaks Filipino / Tagalog. Set 1 and Set 3 remain in English.</small>':''}</span></div><div class="preferenceGrid">${soundSlots.map(slot=>{const selected=selectedVoiceVariant(slot.id);return`<div class="preferenceRow soundPreferenceRow"><div><strong>${esc(slot.label)}</strong><small>${esc(slot.description||'')}</small><small class="voiceTranscript" data-voice-transcript="${esc(slot.id)}">“${esc(voiceTranscript(slot.id,selected))}”</small></div><div class="soundChoiceControls"><select data-sound-slot="${esc(slot.id)}" aria-label="${esc(slot.label)} voice">${soundVariants.map(v=>`<option value="${v.id}" ${selected===Number(v.id)?'selected':''}>${esc(v.label)}${v.isDefault?' (default)':''}</option>`).join('')}</select><button type="button" class="soundPreviewButton" data-preview-sound="${esc(slot.id)}" ${p.audio_configured?'':'disabled'}>▶ Listen</button></div></div>`}).join('')}</div></div>
-    <div class="notificationSettingCard"><div class="pushHeader"><span><strong>Web Push</strong><small>Receive important updates even when the app is not open.</small></span><button id="enablePush" type="button">${p.push_configured?'Enable push':'Push not configured'}</button></div></div>
-    <div class="preferenceGrid">${(p.categories||[]).map(cat=>{const x=prefFor(cat),marketing=cat==='marketing',security=cat==='security';const inapp=x?x.in_app_enabled:!marketing,email=x?x.email_enabled:false,push=x?x.push_enabled:!marketing;return`<div class="preferenceRow" data-category="${cat}"><div><strong>${labels[cat]||cat}</strong><small>${security?'Required security notices cannot be fully disabled.':''}</small></div><label><input type="checkbox" data-channel="in_app" ${inapp?'checked':''} ${security?'disabled':''}> In-app</label><label><input type="checkbox" data-channel="email" ${email?'checked':''}> Email</label><label><input type="checkbox" data-channel="push" ${push?'checked':''}> Push</label></div>`}).join('')}</div>`;
+    <div class="settingsIntro">
+      <strong>Notification settings</strong>
+      <small>Open only the section you want to change.</small>
+    </div>
+
+    <details class="notificationSettingsGroup">
+      <summary><span><strong>Language</strong><small>Language used for notification text and supported voices.</small></span><b>${p.preferred_locale==='fil-PH'?'Filipino / Tagalog':'English'}</b></summary>
+      <div class="notificationSettingsGroupBody">
+        <label class="compactSettingLabel">Notification language<select id="notificationLocale"><option value="en-PH" ${p.preferred_locale==='en-PH'?'selected':''}>English (Philippines)</option><option value="fil-PH" ${p.preferred_locale==='fil-PH'?'selected':''}>Filipino / Tagalog</option></select></label>
+      </div>
+    </details>
+
+    <details class="notificationSettingsGroup">
+      <summary><span><strong>Sound, vibration & important alerts</strong><small>Choose how strongly Business & Life gets your attention.</small></span><b>${attention.sound_enabled?'Sound on':'Sound off'}</b></summary>
+      <div class="notificationSettingsGroupBody">
+        <div class="preferenceGrid">
+          <div class="preferenceRow"><div><strong>Sounds</strong><small>Branded sounds while the app is open.</small></div><label><input id="notificationSounds" type="checkbox" ${attention.sound_enabled?'checked':''}> On</label></div>
+          <div class="preferenceRow"><div><strong>Vibration</strong><small>Use supported vibration patterns for push alerts.</small></div><label><input id="notificationVibration" type="checkbox" ${attention.vibration_enabled?'checked':''}> On</label></div>
+          <div class="preferenceRow"><div><strong>Important alerts</strong><small>Keep urgent alerts more prominent when the browser supports it.</small></div><label><input id="notificationImportantAlerts" type="checkbox" ${attention.important_alerts_enabled?'checked':''}> On</label></div>
+        </div>
+        <small class="settingsFootnote">Background push sound is still controlled by your phone/browser.</small>
+      </div>
+    </details>
+
+    <details class="notificationSettingsGroup notificationVoiceGroup">
+      <summary><span><strong>Notification voice</strong><small>Set 2 is the Business & Life default. Open a notification type only if you want to change it.</small></span><b>${soundSlots.length} types</b></summary>
+      <div class="notificationSettingsGroupBody">
+        ${hasPartialLocalization?'<div class="voiceLocaleNotice">Set 2 speaks Filipino / Tagalog. Set 1 and Set 3 remain in English.</div>':''}
+        <div class="voiceAccordionList">
+          ${soundSlots.map(slot=>{const selected=selectedVoiceVariant(slot.id);return`
+            <details class="voiceSettingAccordion">
+              <summary>
+                <span><strong>${esc(slot.label)}</strong><small>${esc(slot.description||'')}</small></span>
+                <b>${esc(voiceLabel(selected))}</b>
+              </summary>
+              <div class="voiceSettingBody">
+                <small class="voiceTranscript" data-voice-transcript="${esc(slot.id)}">“${esc(voiceTranscript(slot.id,selected))}”</small>
+                <div class="soundChoiceControls">
+                  <select data-sound-slot="${esc(slot.id)}" aria-label="${esc(slot.label)} voice">${soundVariants.map(v=>`<option value="${v.id}" ${selected===Number(v.id)?'selected':''}>${esc(v.label)}${v.isDefault?' (default)':''}</option>`).join('')}</select>
+                  <button type="button" class="soundPreviewButton" data-preview-sound="${esc(slot.id)}" ${p.audio_configured?'':'disabled'}>▶ Listen</button>
+                </div>
+              </div>
+            </details>`}).join('')}
+        </div>
+      </div>
+    </details>
+
+    <details class="notificationSettingsGroup">
+      <summary><span><strong>Notification channels</strong><small>Control in-app, email and push by category.</small></span><b>${(p.categories||[]).length} categories</b></summary>
+      <div class="notificationSettingsGroupBody">
+        <div class="webPushCompact">
+          <span><strong>Web Push</strong><small>Receive important updates even when the app is not open.</small></span>
+          <button id="enablePush" type="button">${p.push_configured?'Enable push':'Push not configured'}</button>
+        </div>
+        <div class="preferenceGrid compactChannelList">
+          ${(p.categories||[]).map(cat=>{const x=prefFor(cat),marketing=cat==='marketing',security=cat==='security';const inapp=x?x.in_app_enabled:!marketing,email=x?x.email_enabled:false,push=x?x.push_enabled:!marketing;return`
+            <details class="preferenceRow preferenceAccordion" data-category="${cat}">
+              <summary><span><strong>${labels[cat]||cat}</strong><small>${security?'Required security notices remain available in-app.':'Open to choose channels.'}</small></span><b>${channelState(x,marketing)}</b></summary>
+              <div class="preferenceAccordionBody">
+                <label><input type="checkbox" data-channel="in_app" ${inapp?'checked':''} ${security?'disabled':''}> In-app</label>
+                <label><input type="checkbox" data-channel="email" ${email?'checked':''}> Email</label>
+                <label><input type="checkbox" data-channel="push" ${push?'checked':''}> Push</label>
+              </div>
+            </details>`}).join('')}
+        </div>
+      </div>
+    </details>`;
+
   document.getElementById('notificationLocale').onchange=async e=>{try{await api('/api/notifications/locale',{method:'PUT',body:JSON.stringify({locale:e.target.value})});const refreshed=await api('/api/notifications/preferences');notificationPanel.prefs=refreshed;renderSettings(refreshed);toast('Notification language updated.')}catch(err){toast(err.message);}};
   document.getElementById('enablePush').onclick=enablePush;
   for(const id of ['notificationSounds','notificationVibration','notificationImportantAlerts'])document.getElementById(id).onchange=saveAttentionPreferences;
@@ -136,13 +205,21 @@ async function saveSoundPreference(e){
   try{
     await api('/api/notifications/sound-preference',{method:'PUT',body:JSON.stringify({sound_slot:soundSlot,variant})});
     if(notificationPanel?.prefs?.sound_preferences)notificationPanel.prefs.sound_preferences[soundSlot]=variant;
+    const label=notificationPanel?.prefs?.sound_variants?.find(v=>Number(v.id)===variant)?.label||`Set ${variant}`;
+    const badge=e.target.closest('.voiceSettingAccordion')?.querySelector('summary>b');
+    if(badge)badge.textContent=label;
     toast('Notification voice saved.');
   }catch(err){toast(err.message);await renderNotificationCenter()}
 }
 async function savePreferenceRow(e){
   const row=e.target.closest('.preferenceRow'),cat=row.dataset.category;
   const value=ch=>Boolean(row.querySelector(`[data-channel="${ch}"]`)?.checked);
-  try{await api('/api/notifications/preferences',{method:'PUT',body:JSON.stringify({category:cat,profile_role:'',in_app_enabled:value('in_app'),email_enabled:value('email'),push_enabled:value('push')})});toast('Preference saved.')}catch(err){toast(err.message);await renderNotificationCenter()}
+  try{
+    await api('/api/notifications/preferences',{method:'PUT',body:JSON.stringify({category:cat,profile_role:'',in_app_enabled:value('in_app'),email_enabled:value('email'),push_enabled:value('push')})});
+    const active=[value('in_app')?'In-app':'',value('email')?'Email':'',value('push')?'Push':''].filter(Boolean);
+    const badge=row.querySelector('summary>b');if(badge)badge.textContent=active.length?active.join(' • '):'Off';
+    toast('Preference saved.');
+  }catch(err){toast(err.message);await renderNotificationCenter()}
 }
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4),base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/'),raw=atob(base64);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)))}
 async function enablePush(){
