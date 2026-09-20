@@ -89,3 +89,25 @@ test('attention metadata plumbing does not yet enable client-side sound playback
   assert.doesNotMatch(sw,/new Audio\(/);
   assert.doesNotMatch(sw,/attention\.vibrate/);
 });
+
+
+test('notification attention preferences persist sound vibration and important-alert controls',()=>{
+  assert.match(core,/notification_attention_preferences/);
+  assert.match(core,/sound_enabled BOOLEAN NOT NULL DEFAULT TRUE/);
+  assert.match(core,/vibration_enabled BOOLEAN NOT NULL DEFAULT TRUE/);
+  assert.match(core,/important_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE/);
+  assert.match(server,/\/api\/notifications\/attention-preferences/);
+  assert.match(server,/attention_preferences:attentionPreferences/);
+  assert.match(ui,/notificationSounds/);
+  assert.match(ui,/notificationVibration/);
+  assert.match(ui,/notificationImportantAlerts/);
+});
+
+test('Web Push consumes attention metadata without combining silent and vibration',()=>{
+  assert.match(sw,/attention\.silent===true/);
+  assert.match(sw,/else if\(Array\.isArray\(attention\.vibrate\)/);
+  assert.match(sw,/renotify:Boolean\(attention\.renotify\)/);
+  assert.match(sw,/requireInteraction:Boolean\(attention\.requireInteraction\)/);
+  assert.match(core,/attentionPref\.vibration_enabled\?baseAttention\.vibrate:\[\]/);
+  assert.match(core,/attentionPref\.important_alerts_enabled\?baseAttention\.requireInteraction:false/);
+});
