@@ -81,7 +81,7 @@ test('notification attention metadata is attached centrally to inbox and Web Pus
   assert.match(core,/entity_id:row\.entity_id,attention/);
   assert.match(core,/\.\.\.message,attention:notificationAttention/);
   assert.match(server,/r\.role_hint,e\.id event_id/);
-  assert.match(server,/attention:msg\.attention/);
+  assert.match(server,/soundVariant:soundPreferences\[msg\.attention\.soundSlot\]/);
 });
 
 test('attention metadata plumbing does not enable branded audio before accepted sound assets exist',()=>{
