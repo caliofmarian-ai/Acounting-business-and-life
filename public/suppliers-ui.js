@@ -17,22 +17,24 @@ function openSupModal(html){document.getElementById('supModal').innerHTML=html;d
 
 async function openMerchantProcurement(){ensureSup();hideSupBase();supWorkspace.classList.remove('hidden');await renderMerchantProcurement()}
 async function renderMerchantProcurement(){
-  const [rels,pos,suggestions,parties,lots,returns,recalls]=await Promise.all([
+  const [rels,pos,suggestions,parties,lots,returns,recalls,rfqs]=await Promise.all([
     papi('/api/procurement/relationships'),
     papi('/api/procurement/orders'),
     papi('/api/procurement/reorder-suggestions').catch(()=>[]),
     papi('/api/procurement/supply-parties').catch(()=>[]),
     papi('/api/procurement/supply-lots').catch(()=>[]),
     papi('/api/procurement/returns').catch(()=>[]),
-    papi('/api/procurement/recalls').catch(()=>({matches:[]}))
+    papi('/api/procurement/recalls').catch(()=>({matches:[]})),
+    papi('/api/procurement/sourcing/rfqs').catch(()=>[])
   ]);
-  supWorkspace.innerHTML=supHeader('Suppliers & Restock','Relationships, purchase orders and inventory receiving')
-    +`<section class="supHero"><h2>Order what you need, when you need it.</h2><p>A purchase order is a commitment, receiving is physical stock, an invoice is supplier evidence, and payment is real money movement.</p></section>`
-    +suggestionsCard(suggestions)
+  supWorkspace.innerHTML=supHeader('Suppliers & Restock','Relationships, sourcing, purchase orders and receiving')
+    +`<section class="supHero"><h2>Find, compare, then choose.</h2><p>Request quotes from eligible Suppliers, compare factual cost and lead time, and create a purchase order only when you decide.</p></section>`
+    +supplierSourcingCard(rfqs)
+    +suggestionsCard(suggestions,rels)
     +supplyNetworkCard(parties,lots,returns,recalls)
     +`<section class="supCard"><h2>Connect a Supplier</h2><p>Invite a Supplier already using Business & Life. If your local supplier is not registered, add them above instead.</p><form id="supplierInvite" class="supForm"><label>Supplier email<input id="supplierEmail" type="email" required></label><label>Note<input id="supplierInviteNote" placeholder="Optional relationship note"></label><button>Send invitation</button><div id="supplierInviteMsg" class="fileNote"></div></form></section><div class="supGrid"><section class="supCard"><h2>Supplier relationships</h2><p>Only accepted Business & Life Suppliers can receive purchase orders in-app.</p><div class="supList">${rels.length?rels.map(relCard).join(''):'<div class="supEmpty">No Supplier relationships yet.</div>'}</div></section><section class="supCard"><h2>Purchase orders</h2><p>Accepted, preparing, delivery and receiving status.</p><div class="supList">${pos.length?pos.map(poCardMerchant).join(''):'<div class="supEmpty">No purchase orders yet.</div>'}</div></section></div>`;
   bindSupBack();
-  bindMerchantProcurement(parties,lots,returns);
+  bindMerchantProcurement(parties,lots,returns,rfqs,rels);
 }
 function supplyNetworkCard(parties,lots,returns=[],recalls={matches:[]}){
   const active=parties.filter(x=>x.status==='active');
@@ -115,10 +117,98 @@ async function repackSupplyLot(id){
   };
 }
 
-function suggestionsCard(rows){if(!rows.length)return `<section class="supCard"><h2>Reorder suggestions</h2><p>No current inventory item is below its reorder level.</p></section>`;return `<section class="supCard"><h2>Reorder suggestions</h2><p>Based on current stock/reorder levels. Nothing is sent automatically.</p><div class="supList">${rows.map(x=>`<div class="supRow"><div><strong>${ph(x.item)}</strong><small>${Number(x.quantity)} ${ph(x.unit)} on hand • reorder at ${Number(x.reorder_level)}</small>${x.catalog_item_id?`<div class="supMeta"><span class="ok">${ph(x.supplier_name)}</span><span>${ph(x.product_name)}</span><span>${x.suggested_packs} ${ph(x.unit_name)}</span><span>${pphp(Number(x.price_per_pack)*Number(x.suggested_packs||0))}</span></div>`:'<div class="supMeta"><span class="pending">No Supplier item linked</span></div>'}</div></div>`).join('')}</div></section>`}
+function supplierSourcingCard(rfqs=[]){
+  return `<details class="supDetails supCard" open><summary><span><strong>Find suppliers & request quotes</strong><small>Controlled sourcing — Suppliers opt in; nothing is ordered automatically.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody"><div class="supInlineActions"><button type="button" class="supBtn" id="supFindSuppliers">Find suppliers</button></div>${rfqs.length?`<h3>Recent requests for quote</h3><div class="supList">${rfqs.slice(0,6).map(r=>`<div class="supRow"><div><strong>RFQ #${r.id} • ${ph(r.item_specification)}</strong><small>${Number(r.requested_quantity)} ${ph(r.requested_unit)} • ${Number(r.quote_count||0)} quote${Number(r.quote_count||0)===1?'':'s'} • ${ph(pnice(r.status))}</small></div><div class="supActions"><button type="button" class="supBtn secondary" data-rfq-compare="${r.id}">Compare</button></div></div>`).join('')}</div>`:'<div class="supEmpty" style="margin-top:10px">No sourcing request yet. Find eligible Suppliers and ask for quotes.</div>'}<p class="supCodeHelp">Business & Life does not rank a “best Supplier” or place an order for you. Comparison only shows factual quote differences.</p></div></details>`;
+}
+function suggestionsCard(rows,rels=[]){
+  if(!rows.length)return `<section class="supCard"><h2>Reorder suggestions</h2><p>No current inventory item is below its reorder level.</p></section>`;
+  return `<section class="supCard"><h2>Reorder suggestions</h2><p>Based on current stock. Preferred sources are chosen by you; nothing is sent automatically.</p><div class="supList">${rows.map(x=>`<div class="supRow"><div><strong>${ph(x.item)}</strong><small>${Number(x.quantity)} ${ph(x.unit)} on hand • reorder at ${Number(x.reorder_level)}</small>${x.catalog_item_id?`<div class="supMeta"><span class="ok">Preferred #${Number(x.preference_rank||1)} • ${ph(x.supplier_name)}</span><span>${ph(x.product_name)}</span><span>${x.suggested_packs} ${ph(x.unit_name)}</span><span>${pphp(Number(x.price_per_pack)*Number(x.suggested_packs||0))}</span></div>`:'<div class="supMeta"><span class="pending">No preferred Supplier source configured</span></div>'}</div><div class="supActions"><button type="button" class="supBtn secondary" data-source-config="${x.inventory_id}">Sources</button></div></div>`).join('')}</div></section>`;
+}
+async function openSupplierDirectory(){
+  const data=await papi('/api/procurement/sourcing/directory');
+  openSupModal(`<h2>Find eligible Suppliers</h2><p class="supModalIntro">Only approved Suppliers who opted into controlled discovery appear here. Private contact information is not exposed.</p><form id="supplierDirectoryForm" class="supForm"><div class="supList">${data.length?data.map(s=>`<label class="supPick"><div><strong>${ph(s.supplier_name)}</strong><small>${ph(s.service_area||'Service area not published')} • ~${Number(s.normal_lead_days||1)}d lead${s.minimum_order_value!=null?` • MOQ value ${pphp(s.minimum_order_value)}`:''}</small><div class="supMeta">${(s.categories||[]).map(x=>`<span>${ph(pnice(x))}</span>`).join('')}${s.relationship_accepted?'<span class="ok">Connected</span>':''}</div>${(s.published_catalog||[]).length?`<small>${s.published_catalog.slice(0,3).map(i=>ph(i.product_name)+' '+pphp(i.price_per_pack)+'/'+ph(i.unit_name)).join(' • ')}</small>`:''}</div><input type="checkbox" data-supplier-target="${s.supplier_business_id}" style="width:auto"></label>`).join(''):'<div class="supEmpty">No Supplier has opted into this sourcing directory yet.</div>'}</div><div id="supplierDirectoryMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="supplierDirectoryClose">Close</button><button ${data.length?'':'disabled'}>Request quotes</button></div></form>`);
+  document.getElementById('supplierDirectoryClose').onclick=closeSupModal;
+  document.getElementById('supplierDirectoryForm').onsubmit=e=>{
+    e.preventDefault();
+    const ids=[...e.currentTarget.querySelectorAll('[data-supplier-target]:checked')].map(x=>Number(x.dataset.supplierTarget));
+    if(!ids.length){document.getElementById('supplierDirectoryMsg').textContent='Choose at least one Supplier.';return}
+    if(ids.length>5){document.getElementById('supplierDirectoryMsg').textContent='Choose up to 5 Suppliers per request.';return}
+    createSupplierRfq(ids);
+  };
+}
+function createSupplierRfq(targetIds){
+  openSupModal(`<h2>Request quotes</h2><p class="supModalIntro">Tell Suppliers what you need. This request does not reserve stock or create a purchase order.</p><form id="supplierRfqForm" class="supForm"><label>Item / specification<input id="rfqItem" required placeholder="e.g. Jasmine rice, food grade, 50 kg"></label><div class="supTwo"><label>Quantity<input id="rfqQty" type="number" min="0.000001" step="0.000001" required></label><label>Unit<input id="rfqUnit" required placeholder="kg, g, L, unit..."></label></div><div class="supTwo"><label>Needed by<input id="rfqNeeded" type="date"></label><label>Fulfilment<select id="rfqMode"><option value="either">Pickup or delivery</option><option value="delivery">Delivery</option><option value="pickup">Pickup</option></select></label></div><label>Service area / delivery note<input id="rfqArea"></label><label>Quality / brand requirements<input id="rfqQuality"></label><div class="supTwo"><label>Substitution<select id="rfqSubstitution"><option value="approval_required">Ask before substitution</option><option value="allowed">Allowed</option><option value="no_substitution">No substitution</option></select></label><label>Target budget ₱ (optional)<input id="rfqBudget" type="number" min="0" step="0.01"></label></div><label>Note<textarea id="rfqNote" rows="2"></textarea></label><div id="rfqMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="rfqCancel">Cancel</button><button>Send RFQ to ${targetIds.length} Supplier${targetIds.length===1?'':'s'}</button></div></form>`);
+  document.getElementById('rfqCancel').onclick=closeSupModal;
+  document.getElementById('supplierRfqForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi('/api/procurement/sourcing/rfqs',{method:'POST',body:JSON.stringify({
+        supplier_business_ids:targetIds,item_specification:document.getElementById('rfqItem').value,
+        requested_quantity:Number(document.getElementById('rfqQty').value),requested_unit:document.getElementById('rfqUnit').value,
+        needed_by:document.getElementById('rfqNeeded').value||null,fulfilment_mode:document.getElementById('rfqMode').value,
+        service_area:document.getElementById('rfqArea').value,quality_requirements:document.getElementById('rfqQuality').value,
+        substitution_policy:document.getElementById('rfqSubstitution').value,
+        target_budget:document.getElementById('rfqBudget').value===''?null:Number(document.getElementById('rfqBudget').value),
+        note:document.getElementById('rfqNote').value
+      })});
+      closeSupModal();ptoast('RFQ sent. No order was created.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('rfqMsg').textContent=err.message}
+  };
+}
+async function openRfqComparison(id,parties=[]){
+  const r=await papi(`/api/procurement/sourcing/rfqs/${id}`);
+  const low=Number(r.factual_highlights?.lowest_normalized_landed_cost_quote_id||0);
+  const fast=Number(r.factual_highlights?.earliest_fulfilment_quote_id||0);
+  openSupModal(`<h2>Compare RFQ #${r.id}</h2><p class="supModalIntro">${ph(r.item_specification)} • ${Number(r.requested_quantity)} ${ph(r.requested_unit)}. Factual highlights are not recommendations.</p><div class="supList">${r.quotes.length?r.quotes.map(q=>`<div class="supRow"><div><strong>${ph(q.supplier_name)} • ${ph(q.offered_name)}</strong><small>${Number(q.quoted_packs)} ${ph(q.package_unit)} × ${pphp(q.price_per_pack)} • landed ${pphp(q.landed_total)}</small><div class="supMeta">${q.comparable?`<span>${Number(q.normalized_landed_cost)} / ${ph(q.normalized_base_unit)}</span>`:'<span class="pending">NOT_COMPARABLE</span>'}<span>MOQ ${Number(q.minimum_packs)}</span><span>${Number(q.lead_days)}d lead</span>${Number(q.id)===low?'<span class="ok">Lowest normalized landed cost</span>':''}${Number(q.id)===fast?'<span class="ok">Earliest quoted fulfilment</span>':''}</div></div><div class="supActions">${q.source_type==='connected_supplier'&&q.status==='active'?`<button type="button" class="supBtn" data-quote-po="${q.id}">Create PO</button>`:''}</div></div>`).join(''):'<div class="supEmpty">No quotes yet.</div>'}</div><div class="supInlineActions" style="margin-top:12px">${parties.filter(x=>x.status==='active'&&x.source_type==='external').length?'<button type="button" class="supBtn secondary" id="recordExternalQuote">Record local quote</button>':''}<button type="button" class="supBtn secondary" id="rfqCompareClose">Close</button></div><p class="supCodeHelp">Business & Life never auto-selects a quote and never creates a PO until you press Create PO.</p>`);
+  document.getElementById('rfqCompareClose').onclick=closeSupModal;
+  document.getElementById('recordExternalQuote')?.addEventListener('click',()=>recordExternalSupplierQuote(id,parties));
+  document.querySelectorAll('[data-quote-po]').forEach(b=>b.onclick=()=>createPoFromQuote(Number(b.dataset.quotePo)));
+}
+async function createPoFromQuote(quoteId){
+  try{
+    const po=await papi(`/api/procurement/sourcing/quotes/${quoteId}/create-po`,{method:'POST',body:JSON.stringify({})});
+    closeSupModal();ptoast(`Purchase order ${po.po_number} created from your selected quote.`);await renderMerchantProcurement();
+  }catch(e){ptoast(e.message)}
+}
+function recordExternalSupplierQuote(rfqId,parties){
+  const external=parties.filter(x=>x.status==='active'&&x.source_type==='external');
+  openSupModal(`<h2>Record local Supplier quote</h2><p class="supModalIntro">Use this for a market vendor or local Supplier outside Business & Life. It is quote evidence only.</p><form id="externalQuoteForm" class="supForm"><label>Supplier<select id="extQuoteParty">${external.map(x=>`<option value="${x.id}">${ph(x.display_name)}</option>`).join('')}</select></label><label>Offered item<input id="extQuoteName" required></label><div class="supTwo"><label>Quoted packs<input id="extQuotePacks" type="number" min="0.000001" step="0.000001" required></label><label>MOQ packs<input id="extQuoteMin" type="number" min="0.000001" step="0.000001" value="1"></label></div><div class="supTwo"><label>Pack name<input id="extQuotePack" required placeholder="sack, case, pack"></label><label>Price / pack ₱<input id="extQuotePrice" type="number" min="0" step="0.01" required></label></div><div class="supTwo"><label>Base unit<input id="extQuoteBase" required placeholder="kg, g, unit"></label><label>Base units / pack<input id="extQuoteBaseQty" type="number" min="0.000001" step="0.000001" required></label></div><div class="supTwo"><label>Delivery fee ₱<input id="extQuoteDelivery" type="number" min="0" step="0.01" value="0"></label><label>Lead days<input id="extQuoteLead" type="number" min="0" max="365" value="0"></label></div><label>Valid until<input id="extQuoteValid" type="date" required></label><div id="extQuoteMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="extQuoteCancel">Cancel</button><button>Save quote evidence</button></div></form>`);
+  document.getElementById('extQuoteCancel').onclick=closeSupModal;
+  document.getElementById('externalQuoteForm').onsubmit=async e=>{
+    e.preventDefault();try{
+      await papi(`/api/procurement/sourcing/rfqs/${rfqId}/external-quotes`,{method:'POST',body:JSON.stringify({
+        supply_party_id:Number(document.getElementById('extQuoteParty').value),offered_name:document.getElementById('extQuoteName').value,
+        quoted_packs:Number(document.getElementById('extQuotePacks').value),minimum_packs:Number(document.getElementById('extQuoteMin').value),
+        package_unit:document.getElementById('extQuotePack').value,price_per_pack:Number(document.getElementById('extQuotePrice').value),
+        base_unit:document.getElementById('extQuoteBase').value,base_units_per_pack:Number(document.getElementById('extQuoteBaseQty').value),
+        delivery_fee:Number(document.getElementById('extQuoteDelivery').value||0),lead_days:Number(document.getElementById('extQuoteLead').value||0),
+        valid_until:document.getElementById('extQuoteValid').value
+      })});
+      await openRfqComparison(rfqId,parties);
+    }catch(err){document.getElementById('extQuoteMsg').textContent=err.message}
+  };
+}
+async function configurePreferredSources(inventoryId,rels=[]){
+  const accepted=rels.filter(r=>r.state==='accepted');
+  const catalogs=(await Promise.all(accepted.map(async r=>{
+    const d=await papi(`/api/procurement/suppliers/${r.supplier_account_id}/catalog`).catch(()=>({items:[]}));
+    return (d.items||[]).filter(i=>Number(i.link?.legacy_inventory_id)===Number(inventoryId)).map(i=>({
+      ...i,supplier_name:r.supplier_name||r.display_name
+    }));
+  }))).flat();
+  const current=await papi(`/api/procurement/inventory/${inventoryId}/supplier-sources`).catch(()=>[]);
+  const rank=new Map(current.map(x=>[Number(x.catalog_item_id),Number(x.preference_rank)]));
+  openSupModal(`<h2>Preferred Supplier sources</h2><p class="supModalIntro">Rank only catalog items already linked to this Inventory item. Rank 1 is used first when available; fallback ranks are explicit.</p><form id="sourcePrefForm" class="supForm"><div class="supList">${catalogs.length?catalogs.map(i=>`<div class="supRow"><div><strong>${ph(i.supplier_name)} • ${ph(i.product_name)}</strong><small>${pphp(i.price_per_pack)} / ${ph(i.unit_name)} • ${ph(pnice(i.availability_status))}</small></div><label style="max-width:90px">Rank<input data-source-rank="${i.id}" type="number" min="1" step="1" value="${rank.get(Number(i.id))||''}"></label></div>`).join(''):'<div class="supEmpty">No Supplier catalog item is linked to this Inventory item yet. Open a connected Supplier catalog and map an item first.</div>'}</div><div id="sourcePrefMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="sourcePrefCancel">Cancel</button><button ${catalogs.length?'':'disabled'}>Save source order</button></div></form>`);
+  document.getElementById('sourcePrefCancel').onclick=closeSupModal;
+  document.getElementById('sourcePrefForm').onsubmit=async e=>{
+    e.preventDefault();const sources=[...e.currentTarget.querySelectorAll('[data-source-rank]')].filter(x=>x.value!=='').map(x=>({catalog_item_id:Number(x.dataset.sourceRank),preference_rank:Number(x.value)}));
+    try{await papi(`/api/procurement/inventory/${inventoryId}/supplier-sources`,{method:'PUT',body:JSON.stringify({sources})});closeSupModal();ptoast('Preferred Supplier sources saved.');await renderMerchantProcurement()}catch(err){document.getElementById('sourcePrefMsg').textContent=err.message}
+  };
+}
+
 function relCard(r){return `<div class="supRow"><div><strong>${ph(r.supplier_name||r.display_name)}</strong><small>${ph(r.description||'Local Supplier')}</small><div class="supMeta"><span class="${r.state==='accepted'?'ok':'pending'}">${ph(pnice(r.state))}</span>${r.normal_lead_days!=null?`<span>~${r.normal_lead_days}d lead</span>`:''}${r.delivery_available?'<span>Delivery</span>':'<span>Pickup</span>'}</div></div><div class="supActions">${r.state==='accepted'?`<button class="supBtn secondary" data-connected-terms="${r.supplier_account_id}">Terms</button><button class="supBtn" data-open-catalog="${r.supplier_account_id}">Catalog</button>`:''}</div></div>`}
 function poCardMerchant(p){const open=!['received','cancelled','rejected'].includes(p.status);return `<div class="supRow"><div><strong>${ph(p.po_number||`PO ${p.id}`)} • ${ph(p.supplier_name)}</strong><small>${ph(pnice(p.status))} • ${pphp(p.expected_total)}</small><div class="supMeta"><span>${ph(pnice(p.fulfilment_mode))}</span><span class="${p.payment_status==='paid'?'ok':'pending'}">${ph(pnice(p.payment_status))}</span>${p.supplier_ready_at?`<span>Ready ${new Date(p.supplier_ready_at).toLocaleString()}</span>`:''}</div></div><div class="supActions">${open?`<button class="supBtn secondary" data-po-view="${p.id}">View</button>`:''}${['delivered','partially_received','accepted','ready_for_pickup'].includes(p.status)?`<button class="supBtn" data-po-receive="${p.id}">Receive</button>`:''}${Number(p.paid_amount)<Number(p.expected_total)&&!['cancelled','rejected'].includes(p.status)?`<button class="supBtn warm" data-po-pay="${p.id}">Pay</button>`:''}</div></div>`}
-function bindMerchantProcurement(parties=[],lots=[],returns=[]){
+function bindMerchantProcurement(parties=[],lots=[],returns=[],rfqs=[],rels=[]){
   document.getElementById('supplierInvite').onsubmit=async e=>{
     e.preventDefault();const msg=document.getElementById('supplierInviteMsg');
     try{
@@ -129,6 +219,9 @@ function bindMerchantProcurement(parties=[],lots=[],returns=[]){
       ptoast('Supplier invitation sent.');await renderMerchantProcurement();
     }catch(err){msg.textContent=err.message}
   };
+  document.getElementById('supFindSuppliers')?.addEventListener('click',()=>openSupplierDirectory());
+  supWorkspace.querySelectorAll('[data-rfq-compare]').forEach(b=>b.onclick=()=>openRfqComparison(Number(b.dataset.rfqCompare),parties));
+  supWorkspace.querySelectorAll('[data-source-config]').forEach(b=>b.onclick=()=>configurePreferredSources(Number(b.dataset.sourceConfig),rels));
   document.getElementById('supAddExternal')?.addEventListener('click',()=>addExternalSupplier());
   document.getElementById('supReceiveLot')?.addEventListener('click',()=>receiveSupplyLot(parties));
   supWorkspace.querySelectorAll('[data-repack-lot]').forEach(b=>b.onclick=()=>repackSupplyLot(Number(b.dataset.repackLot)));
