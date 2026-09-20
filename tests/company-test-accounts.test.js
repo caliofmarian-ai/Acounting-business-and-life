@@ -48,7 +48,7 @@ test('operational test accounts are restricted to their assigned profile role',(
 });
 
 test('registration, activation, governance and Account Settings enforce the test-account policy',()=>{
-  const server=read('server-auth.js'),governance=read('server-profile-governance.js'),schema=read('company-test-accounts.js'),shell=read('public/shell.js'),css=read('public/shell.css');
+  const server=read('server-auth.js'),authHardening=read('server-auth-hardening.js'),governance=read('server-profile-governance.js'),schema=read('company-test-accounts.js'),shell=read('public/shell.js'),css=read('public/shell.css');
   assert.match(schema,/account_mode='company_test'/);
   assert.match(schema,/SET phone='', address=''/);
   assert.match(schema,/p\.role<>a\.test_role/);
@@ -59,6 +59,10 @@ test('registration, activation, governance and Account Settings enforce the test
   assert.match(server,/if\(!companyTest&&!clean\(a\.address,300\)\)/);
   assert.match(server,/companyTest\?companyTestContact\(\)\.address:a\.address/);
   assert.match(server,/reserved for \$\{classified\.test_role/);
+  assert.match(authHardening,/companyTestAccountForEmail\(email\)/);
+  assert.match(authHardening,/companyTest\.role !== 'super_admin'/);
+  assert.match(authHardening,/phone=CASE WHEN \$5='company_test' THEN '' ELSE phone END/);
+  assert.match(authHardening,/address=CASE WHEN \$5='company_test' THEN '' ELSE address END/);
   assert.match(governance,/requireAssignedTestRole/);
   assert.match(governance,/That company test alias is reserved for/);
   assert.match(shell,/COMPANY TEST ACCOUNT/);

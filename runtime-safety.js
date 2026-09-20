@@ -15,6 +15,7 @@ export function validateRuntimeSafety(env={}){
   const previewLink=clean(env.AUTH_PREVIEW_SHOW_LINK,10).toLowerCase()==='true';
   const paymentMode=clean(env.PAYMONGO_MODE,20).toLowerCase();
   const livePayments=['1','true','yes','on'].includes(clean(env.PAYMONGO_LIVE_ENABLED,10).toLowerCase());
+  const ownerMigrationEnabled=clean(env.OWNER_MIGRATION_ENABLED,10).toLowerCase()==='true';
 
   if(previewService){
     if(appEnvironment!=='qa')throw new Error('accounting-preview requires APP_ENV=qa');
@@ -28,7 +29,12 @@ export function validateRuntimeSafety(env={}){
     if(previewLink)throw new Error('production cannot expose preview verification links');
   }
 
-  return{service,appEnvironment,databaseName,previewService,productionService};
+  if(ownerMigrationEnabled){
+    if(!previewService||appEnvironment!=='qa'||!qaDatabase)throw new Error('owner migration may run only in the isolated QA service');
+    if(!clean(env.APP_PIN,500))throw new Error('owner migration requires a temporary QA bootstrap credential');
+  }
+
+  return{service,appEnvironment,databaseName,previewService,productionService,ownerMigrationEnabled};
 }
 
 export function enforceRuntimeSafety(env=process.env){return validateRuntimeSafety(env)}
