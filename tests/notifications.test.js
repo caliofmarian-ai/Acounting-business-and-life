@@ -84,8 +84,9 @@ test('notification attention metadata is attached centrally to inbox and Web Pus
   assert.match(server,/soundVariant:soundPreferences\[msg\.attention\.soundSlot\]/);
 });
 
-test('attention metadata plumbing does not enable branded audio before accepted sound assets exist',()=>{
-  assert.doesNotMatch(ui,/new Audio\(/);
+test('branded foreground audio uses accepted fixed assets while the service worker remains OS-controlled',()=>{
+  assert.match(ui,/new Audio\(data\.url\)/);
+  assert.match(ui,/\/api\/notifications\/audio-url/);
   assert.doesNotMatch(sw,/new Audio\(/);
 });
 
@@ -122,4 +123,30 @@ test('users can choose Set 1 2 or 3 independently for each notification sound sl
   assert.match(server,/default_sound_variant:DEFAULT_NOTIFICATION_SOUND_VARIANT/);
   assert.match(ui,/data-sound-slot/);
   assert.match(ui,/Set 2 is the Business & Life default/);
+});
+
+
+test('notification audio preview is authenticated, short-lived and never exposes bucket credentials',()=>{
+  assert.match(server,/\/api\/notifications\/audio-url/);
+  assert.match(server,/const me=await identity\(req\)/);
+  assert.match(server,/presignNotificationAudioUrl/);
+  assert.match(server,/expiresIn=900/);
+  assert.match(server,/Cache-Control','no-store/);
+  assert.doesNotMatch(server,/NOTIFICATION_AUDIO_SECRET_ACCESS_KEY.*res\.json/s);
+});
+
+test('notification settings provide an explicit listen button for every sound slot',()=>{
+  assert.match(ui,/data-preview-sound/);
+  assert.match(ui,/▶ Listen/);
+  assert.match(ui,/previewNotificationVoice/);
+  assert.match(ui,/notificationAudioUrl/);
+});
+
+test('foreground voice polling establishes a baseline and only plays fresh unread audible events',()=>{
+  assert.match(ui,/primeForegroundVoice/);
+  assert.match(ui,/lastForegroundEventId=rows\[0\]\?\.event_id/);
+  assert.match(ui,/fresh\.find\(row=>!row\.read_at&&row\.attention\?\.soundSlot&&!row\.attention\?\.silent\)/);
+  assert.match(ui,/voicePollTimer=setInterval\(pollForegroundVoice,10000\)/);
+  assert.match(ui,/foregroundSoundEnabled/);
+  assert.match(ui,/audioUserInteracted/);
 });
