@@ -9,7 +9,8 @@ const SUPER_ADMIN_ALIAS='dropi.deliveries+testsuperadmin@gmail.com';
 const CUSTOMER_WAVE='customer_onboarding_v1';
 const MERCHANT_CATALOG_WAVE='merchant_catalog_seed_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE]);
+const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -792,6 +793,288 @@ async function runCustomerMarketplaceE2E({pool,base,secret}){
   };
 }
 
+
+const CUSTOMER_SUPPORT_SUBJECT='Controlled QA Customer support E2E';
+const CUSTOMER_PRIVACY_SUBJECT='Controlled QA privacy rights E2E';
+const CUSTOMER_SUPPORT_FOLLOWUP='Controlled QA follow-up confirmed.';
+
+async function ensureCustomerPasswordRecovery({pool,base,secret}){
+  const account=await pool.query(
+    `SELECT id FROM accounts WHERE LOWER(email)=$1 AND account_mode='company_test' AND test_role='customer'`,
+    [CUSTOMER_ALIAS]
+  );
+  if(account.rowCount!==1)throw new Error('Controlled Customer identity is unavailable for recovery acceptance.');
+  const accountId=Number(account.rows[0].id);
+
+  const prior=await pool.query(
+    `SELECT id FROM auth_security_events
+      WHERE account_id=$1 AND event_code='password_reset_completed'
+      ORDER BY id DESC LIMIT 1`,
+    [accountId]
+  );
+  if(prior.rowCount)return{completed:true,emailSentEvidence:true,reusedEvidence:true};
+
+  const forgot=await requestJson(base,'/api/auth/forgot-password',{
+    method:'POST',body:{email:CUSTOMER_ALIAS}
+  });
+  expectStatus(forgot,200,'Customer password recovery request');
+
+  const previewUrl=clean(forgot.json?.preview_reset_url,1200);
+  if(!previewUrl)throw new Error('Customer QA recovery did not return the isolated preview reset link.');
+
+  const delivery=await pool.query(
+    `SELECT status FROM auth_email_deliveries
+      WHERE account_id=$1 AND template_code='password_reset'
+      ORDER BY id DESC LIMIT 1`,
+    [accountId]
+  );
+  if(delivery.rows[0]?.status!=='sent')throw new Error('Customer password recovery email was not delivered.');
+
+  let resetToken='';
+  try{resetToken=new URL(previewUrl).searchParams.get('reset_token')||''}catch{}
+  if(!resetToken)throw new Error('Customer QA recovery token was not available.');
+
+  const recoveryPassword=derivePassword(secret,CUSTOMER_ALIAS)+'-recovery';
+  const reset=await requestJson(base,'/api/auth/reset-password',{
+    method:'POST',body:{token:resetToken,new_password:recoveryPassword}
+  });
+  expectStatus(reset,200,'Customer password reset');
+
+  const token=await loginWithCredential({
+    base,email:CUSTOMER_ALIAS,password:recoveryPassword,label:'Customer recovery re-login'
+  });
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token,body:{}});
+  expectStatus(logout,200,'Customer recovery logout');
+
+  return{completed:true,emailSentEvidence:true,reusedEvidence:false};
+}
+
+async function ensureQaSupportTicket({pool,base,token,accountId,orderId}){
+  const existing=await pool.query(
+    `SELECT id FROM support_tickets
+      WHERE requester_account_id=$1 AND subject=$2
+      ORDER BY id DESC LIMIT 1`,
+    [Number(accountId),CUSTOMER_SUPPORT_SUBJECT]
+  );
+  let ticketId=Number(existing.rows[0]?.id||0);
+  if(!ticketId){
+    const created=await requestJson(base,'/api/support/tickets',{
+      method:'POST',token,
+      body:{
+        category:'marketplace_order',
+        subject:CUSTOMER_SUPPORT_SUBJECT,
+        description:'Controlled internal QA Support request linked to the completed Marketplace order. No real customer issue.',
+        requested_destination:'support',
+        related_type:'order',
+        related_id:Number(orderId),
+        source_language:'en-PH'
+      }
+    });
+    expectStatus(created,201,'Customer Support ticket create');
+    ticketId=Number(created.json?.id);
+  }
+  if(!ticketId)throw new Error('Customer Support ticket was not created.');
+
+  const detail=await requestJson(base,`/api/support/tickets/${ticketId}`,{token});
+  expectStatus(detail,200,'Customer Support ticket detail');
+  if(detail.json?.category!=='marketplace_order'||Number(detail.json?.related_id)!==Number(orderId)){
+    throw new Error('Customer Support ticket lost its Marketplace order context.');
+  }
+
+  const followup=await pool.query(
+    `SELECT id FROM support_messages WHERE ticket_id=$1 AND message=$2 LIMIT 1`,
+    [ticketId,CUSTOMER_SUPPORT_FOLLOWUP]
+  );
+  if(!followup.rowCount){
+    const reply=await requestJson(base,`/api/support/tickets/${ticketId}/reply`,{
+      method:'POST',token,body:{message:CUSTOMER_SUPPORT_FOLLOWUP}
+    });
+    expectStatus(reply,200,'Customer Support follow-up');
+  }
+
+  const mine=await requestJson(base,'/api/support/tickets/mine',{token});
+  expectStatus(mine,200,'Customer Support My tickets');
+  if(!(Array.isArray(mine.json)?mine.json:[]).some(x=>Number(x.id)===ticketId)){
+    throw new Error('Customer Support ticket is missing from My Support.');
+  }
+  return ticketId;
+}
+
+async function ensureQaPrivacyRequest({pool,base,customerToken,merchantToken,accountId}){
+  const existing=await pool.query(
+    `SELECT id FROM support_tickets
+      WHERE requester_account_id=$1 AND subject=$2
+      ORDER BY id DESC LIMIT 1`,
+    [Number(accountId),CUSTOMER_PRIVACY_SUBJECT]
+  );
+  let ticketId=Number(existing.rows[0]?.id||0);
+  if(!ticketId){
+    const created=await requestJson(base,'/api/support/tickets',{
+      method:'POST',token:customerToken,
+      body:{
+        category:'privacy_access',
+        subject:CUSTOMER_PRIVACY_SUBJECT,
+        description:'Controlled internal QA privacy-access request. This is acceptance evidence only and does not request a real legal outcome.',
+        requested_destination:'territory_admin',
+        related_type:'order',
+        related_id:999999,
+        source_language:'en-PH'
+      }
+    });
+    expectStatus(created,201,'Customer privacy request create');
+    ticketId=Number(created.json?.id);
+  }
+  if(!ticketId)throw new Error('Customer privacy request was not created.');
+
+  const detail=await requestJson(base,`/api/support/tickets/${ticketId}`,{token:customerToken});
+  expectStatus(detail,200,'Customer privacy request detail');
+  const tags=Array.isArray(detail.json?.tags)?detail.json.tags:[];
+  if(detail.json?.category!=='privacy_access'
+    ||detail.json?.requested_destination!=='country_admin'
+    ||detail.json?.related_type!=='privacy_rights'
+    ||detail.json?.related_id!=null
+    ||!tags.includes('privacy_rights')
+    ||!tags.includes('privacy_access')){
+    throw new Error('Customer privacy request routing or canonical tags are incorrect.');
+  }
+
+  const denied=await requestJson(base,`/api/support/tickets/${ticketId}`,{token:merchantToken});
+  expectStatus(denied,403,'Cross-account privacy ticket denial');
+  return ticketId;
+}
+
+async function verifyCustomerNotifications({base,token,orderId}){
+  const inbox=await requestJson(base,'/api/notifications?limit=100',{token});
+  expectStatus(inbox,200,'Customer notification inbox');
+  const rows=(Array.isArray(inbox.json)?inbox.json:[]).filter(
+    x=>x.entity_type==='order'&&Number(x.entity_id)===Number(orderId)
+  );
+  for(const code of ['order.customer_checked_in','order.preparing','order.ready','order.payment_confirmed','order.completed']){
+    if(!rows.some(x=>x.event_code===code))throw new Error('Customer notification lifecycle is missing '+code+'.');
+  }
+
+  const completed=rows.find(x=>x.event_code==='order.completed');
+  if(!completed?.recipient_id)throw new Error('Customer completed-order notification is missing a recipient id.');
+  const marked=await requestJson(base,`/api/notifications/${Number(completed.recipient_id)}/read`,{
+    method:'PATCH',token,body:{}
+  });
+  expectStatus(marked,200,'Customer notification mark read');
+  if(!marked.json?.read_at)throw new Error('Customer notification read state did not persist.');
+  return rows.length;
+}
+
+async function runCustomerExperienceAcceptance({pool,base,secret}){
+  const marketplace=await runCustomerMarketplaceE2E({pool,base,secret});
+  if(marketplace.status!=='PASS')throw new Error('Customer Marketplace prerequisite did not pass.');
+  const orderId=Number(marketplace.order_id);
+  if(!orderId)throw new Error('Customer Experience acceptance requires a completed QA order.');
+
+  const recovery=await ensureCustomerPasswordRecovery({pool,base,secret});
+
+  const [customer,merchant]=await Promise.all([
+    qaAccountSession({
+      pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Customer Experience QA'
+    }),
+    qaAccountSession({
+      pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Merchant Privacy Isolation QA'
+    })
+  ]);
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Customer Experience QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Merchant Privacy Isolation QA'});
+
+  const me=await requestJson(base,'/api/me',{token:customer.token});
+  expectStatus(me,200,'Customer Account Home');
+  const customerProfile=(me.json?.profiles||[]).find(x=>x.role==='customer');
+  if(me.json?.account?.active_role!=='customer'||!customerProfile?.enabled||customerProfile?.status!=='active'){
+    throw new Error('Customer Account Home does not resolve the active Customer profile.');
+  }
+
+  const moneyView=await requestJson(base,'/api/profile-money/customer',{token:customer.token});
+  expectStatus(moneyView,200,'Customer Money');
+  const recentOrder=(moneyView.json?.recent_orders||[]).find(x=>Number(x.id)===orderId);
+  const recentPayment=(moneyView.json?.recent_payments||[]).find(
+    x=>x.source_type==='order'&&Number(x.source_id)===orderId
+  );
+  if(!recentOrder||recentOrder.order_status!=='completed'||recentOrder.payment_status!=='paid'
+    ||!closeEnough(recentOrder.total,185)||!closeEnough(recentOrder.outstanding_amount,0)){
+    throw new Error('Customer Money recent order does not reconcile to the completed QA order.');
+  }
+  if(!recentPayment||recentPayment.status!=='succeeded'||!closeEnough(recentPayment.amount,185)){
+    throw new Error('Customer Money confirmed payment does not reconcile to PHP 185.');
+  }
+  if(Number(moneyView.json?.summary?.confirmed_payments||0)<185){
+    throw new Error('Customer Money confirmed-payments summary does not include the QA payment.');
+  }
+
+  const notificationCount=await verifyCustomerNotifications({
+    base,token:customer.token,orderId
+  });
+
+  const supportTicketId=await ensureQaSupportTicket({
+    pool,base,token:customer.token,accountId:customer.accountId,orderId
+  });
+  const privacyTicketId=await ensureQaPrivacyRequest({
+    pool,base,customerToken:customer.token,merchantToken:merchant.token,accountId:customer.accountId
+  });
+
+  const merchantMe=await requestJson(base,'/api/me',{token:merchant.token});
+  expectStatus(merchantMe,200,'Merchant workspace for delivery boundary');
+  const business=(merchantMe.json?.businesses||[]).find(x=>x.name==='Business & Life QA Fish Kitchen')
+    ||(merchantMe.json?.businesses||[])[0];
+  if(!business?.id)throw new Error('QA Merchant workspace is unavailable for delivery-boundary acceptance.');
+  const businessId=Number(business.id);
+
+  const storefront=await requestJson(base,`/api/marketplace/storefronts/${businessId}`,{token:customer.token});
+  expectStatus(storefront,200,'Customer delivery-choice discovery');
+  if(storefront.json?.delivery_enabled!==false)throw new Error('QA delivery boundary expected delivery to remain disabled.');
+
+  const soup=(storefront.json?.products||[]).find(x=>x.name==='QA Fish Soup');
+  if(!soup?.id)throw new Error('QA Fish Soup is unavailable for delivery-boundary validation.');
+  const blockedDelivery=await requestJson(base,'/api/marketplace/checkout',{
+    method:'POST',
+    token:customer.token,
+    body:{
+      business_id:businessId,
+      items:[{product_id:Number(soup.id),quantity:1}],
+      fulfilment_method:'delivery',
+      payment_method:'cash',
+      delivery_address:'Controlled QA delivery address — not a real customer address'
+    }
+  });
+  expectStatus(blockedDelivery,409,'Delivery-disabled checkout guard');
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Customer Experience logout');
+  const relogin=await loginWithCredential({
+    base,email:CUSTOMER_ALIAS,password:customer.password,label:'Customer Experience final re-login'
+  });
+  const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
+  expectStatus(finalLogout,200,'Customer Experience final logout');
+  const merchantLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+  expectStatus(merchantLogout,200,'Merchant Privacy Isolation logout');
+
+  return{
+    status:'PASS',
+    wave:CUSTOMER_EXPERIENCE_WAVE,
+    order_id:orderId,
+    password_recovery:true,
+    recovery_email_sent:recovery.emailSentEvidence,
+    account_home:true,
+    customer_money:true,
+    confirmed_payment:185,
+    notification_lifecycle:true,
+    notification_events:notificationCount,
+    support_ticket_id:supportTicketId,
+    support:true,
+    privacy_ticket_id:privacyTicketId,
+    privacy_country_routing:true,
+    privacy_cross_account_denial:true,
+    delivery_disabled_guard:true,
+    full_delivery_e2e:'HOLD_FOR_COURIER_WAVE',
+    logout_relogin:true
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -802,7 +1085,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
       ?await runMerchantCatalogSeed({pool,base,secret:config.secret})
       :config.wave===CUSTOMER_MARKETPLACE_WAVE
         ?await runCustomerMarketplaceE2E({pool,base,secret:config.secret})
-        :await runCustomerOnboarding({pool,base,secret:config.secret});
+        :config.wave===CUSTOMER_EXPERIENCE_WAVE
+          ?await runCustomerExperienceAcceptance({pool,base,secret:config.secret})
+          :await runCustomerOnboarding({pool,base,secret:config.secret});
     console.log('QA_ACCEPTANCE_RESULT '+JSON.stringify(result));
     return result;
   }catch(error){
@@ -814,5 +1099,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
