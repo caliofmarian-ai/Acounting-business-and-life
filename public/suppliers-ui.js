@@ -16,11 +16,119 @@ function closeSupModal(){document.getElementById('supModalBg')?.classList.add('h
 function openSupModal(html){document.getElementById('supModal').innerHTML=html;document.getElementById('supModalBg').classList.remove('hidden')}
 
 async function openMerchantProcurement(){ensureSup();hideSupBase();supWorkspace.classList.remove('hidden');await renderMerchantProcurement()}
-async function renderMerchantProcurement(){const [rels,pos,suggestions]=await Promise.all([papi('/api/procurement/relationships'),papi('/api/procurement/orders'),papi('/api/procurement/reorder-suggestions').catch(()=>[])]);supWorkspace.innerHTML=supHeader('Suppliers & Restock','Relationships, purchase orders and inventory receiving')+`<section class="supHero"><h2>Order what you need, when you need it.</h2><p>A purchase order is only a commitment. Stock changes when you receive goods; cash changes only when you record real payment.</p></section>${suggestionsCard(suggestions)}<section class="supCard"><h2>Connect a Supplier</h2><p>Invite a known local Supplier account by email.</p><form id="supplierInvite" class="supForm"><label>Supplier email<input id="supplierEmail" type="email" required></label><label>Note<input id="supplierInviteNote" placeholder="Optional relationship note"></label><button>Send invitation</button><div id="supplierInviteMsg" class="fileNote"></div></form></section><div class="supGrid"><section class="supCard"><h2>Supplier relationships</h2><p>Only accepted Suppliers can receive procurement orders.</p><div class="supList">${rels.length?rels.map(relCard).join(''):'<div class="supEmpty">No Supplier relationships yet.</div>'}</div></section><section class="supCard"><h2>Purchase orders</h2><p>Accepted, preparing, delivery and receiving status.</p><div class="supList">${pos.length?pos.map(poCardMerchant).join(''):'<div class="supEmpty">No purchase orders yet.</div>'}</div></section></div>`;bindSupBack();bindMerchantProcurement(rels,pos)}
+async function renderMerchantProcurement(){
+  const [rels,pos,suggestions,parties,lots]=await Promise.all([
+    papi('/api/procurement/relationships'),
+    papi('/api/procurement/orders'),
+    papi('/api/procurement/reorder-suggestions').catch(()=>[]),
+    papi('/api/procurement/supply-parties').catch(()=>[]),
+    papi('/api/procurement/supply-lots').catch(()=>[])
+  ]);
+  supWorkspace.innerHTML=supHeader('Suppliers & Restock','Relationships, purchase orders and inventory receiving')
+    +`<section class="supHero"><h2>Order what you need, when you need it.</h2><p>A purchase order is only a commitment. Stock changes when you receive goods; cash changes only when you record real payment.</p></section>`
+    +suggestionsCard(suggestions)
+    +supplyNetworkCard(parties,lots)
+    +`<section class="supCard"><h2>Connect a Supplier</h2><p>Invite a Supplier already using Business & Life. If your local supplier is not registered, add them above instead.</p><form id="supplierInvite" class="supForm"><label>Supplier email<input id="supplierEmail" type="email" required></label><label>Note<input id="supplierInviteNote" placeholder="Optional relationship note"></label><button>Send invitation</button><div id="supplierInviteMsg" class="fileNote"></div></form></section><div class="supGrid"><section class="supCard"><h2>Supplier relationships</h2><p>Only accepted Business & Life Suppliers can receive purchase orders in-app.</p><div class="supList">${rels.length?rels.map(relCard).join(''):'<div class="supEmpty">No Supplier relationships yet.</div>'}</div></section><section class="supCard"><h2>Purchase orders</h2><p>Accepted, preparing, delivery and receiving status.</p><div class="supList">${pos.length?pos.map(poCardMerchant).join(''):'<div class="supEmpty">No purchase orders yet.</div>'}</div></section></div>`;
+  bindSupBack();
+  bindMerchantProcurement(parties,lots);
+}
+function supplyNetworkCard(parties,lots){
+  const active=parties.filter(x=>x.status==='active');
+  const recent=lots.slice(0,8);
+  return `<details class="supDetails supCard"><summary><span><strong>Local suppliers, lots & repacking</strong><small>For market vendors, groceries, bulk goods and products you repackage.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody"><div class="supInlineActions"><button type="button" class="supBtn secondary" id="supAddExternal">Add local supplier</button><button type="button" class="supBtn" id="supReceiveLot" ${active.length?'':'disabled'}>Receive stock</button></div><div class="supGrid"><div><h3>Supplier records</h3><div class="supList">${active.length?active.map(x=>`<div class="supRow"><div><strong>${ph(x.display_name)}</strong><small>${x.source_type==='connected'?'Connected Business & Life Supplier':'External/local supplier'}</small><div class="supMeta">${x.phone?`<span>${ph(x.phone)}</span>`:''}${x.location_note?`<span>${ph(x.location_note)}</span>`:''}</div></div></div>`).join(''):'<div class="supEmpty">Add the person or business you already buy from. They do not need an account.</div>'}</div></div><div><h3>Recent stock lots</h3><div class="supList">${recent.length?recent.map(x=>`<div class="supRow"><div><strong>${ph(x.item_name)}</strong><small>${Number(x.quantity_remaining_base)} ${ph(x.base_unit)} remaining • ${ph(x.supplier_name||'Supplier')}</small><div class="supMeta"><span>${ph(pnice(x.handling_mode))}</span>${x.expires_at?`<span>Expiry ${new Date(x.expires_at).toLocaleDateString()}</span>`:''}</div></div><div class="supActions">${Number(x.quantity_remaining_base)>0?`<button type="button" class="supBtn secondary" data-repack-lot="${x.id}">Repack</button>`:''}</div></div>`).join(''):'<div class="supEmpty">No tracked lots yet. Receive a bulk or packaged item to start traceability.</div>'}</div></div></div><p class="supCodeHelp">Opening a case and selling the original sealed units is <strong>break-pack</strong>, not repacking. Repacking is used when you move goods into new smaller packs or labels.</p></div></details>`;
+}
+async function addExternalSupplier(){
+  openSupModal(`<h2>Add local supplier</h2><p class="supModalIntro">Use this for a market vendor, farmer, wholesaler or any supplier who is not yet on Business & Life.</p><form id="externalSupplierForm" class="supForm"><label>Supplier name<input id="extSupName" required placeholder="e.g. Maria Vegetable Stall"></label><div class="supTwo"><label>Contact person<input id="extSupContact"></label><label>Phone<input id="extSupPhone"></label></div><label>Email (optional)<input id="extSupEmail" type="email"></label><label>Location / market stall<input id="extSupLocation" placeholder="Public market, barangay, stall..."></label><label>Notes<textarea id="extSupNotes" rows="2"></textarea></label><div id="extSupMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="extSupCancel">Cancel</button><button>Save supplier</button></div></form>`);
+  document.getElementById('extSupCancel').onclick=closeSupModal;
+  document.getElementById('externalSupplierForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi('/api/procurement/supply-parties',{method:'POST',body:JSON.stringify({
+        display_name:document.getElementById('extSupName').value,
+        contact_name:document.getElementById('extSupContact').value,
+        phone:document.getElementById('extSupPhone').value,
+        email:document.getElementById('extSupEmail').value,
+        location_note:document.getElementById('extSupLocation').value,
+        notes:document.getElementById('extSupNotes').value
+      })});
+      closeSupModal();ptoast('Local supplier saved.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('extSupMsg').textContent=err.message}
+  };
+}
+async function receiveSupplyLot(parties){
+  await loadInventory();
+  const active=parties.filter(x=>x.status==='active');
+  if(!active.length){ptoast('Add a local supplier first.');return}
+  openSupModal(`<h2>Receive stock from supplier</h2><p class="supModalIntro">Record what physically arrived. Link to Inventory only when the unit matches the Inventory base unit.</p><form id="receiveLotForm" class="supForm"><label>Supplier<select id="lotParty">${active.map(x=>`<option value="${x.id}">${ph(x.display_name)}</option>`).join('')}</select></label><label>Item<input id="lotItem" required placeholder="Rice, cooking oil, canned drink..."></label><div class="supTwo"><label>Quantity<input id="lotQty" type="number" min="0.000001" step="0.000001" required></label><label>Stock unit<input id="lotUnit" required placeholder="kg, g, L, ml, unit"></label></div><div class="supTwo"><label>Total purchase cost ₱<input id="lotCost" type="number" min="0" step="0.01" value="0"></label><label>Handling<select id="lotHandling"><option value="bulk">Bulk</option><option value="sealed_resale">Sealed resale</option><option value="break_pack">Break-pack</option></select></label></div><label>Inventory link<select id="lotInventory"><option value="">Track as lot only</option>${supInventory.map(i=>`<option value="${i.id}">${ph(i.item)} — ${Number(i.quantity)} ${ph(i.base_unit||i.unit)}</option>`).join('')}</select></label><div class="supTwo"><label>Supplier lot / batch<input id="lotSupplierCode"></label><label>Expiry / best before<input id="lotExpiry" type="date"></label></div><label>Note<input id="lotNote"></label><div id="lotMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="lotCancel">Cancel</button><button>Receive stock</button></div></form>`);
+  document.getElementById('lotCancel').onclick=closeSupModal;
+  document.getElementById('receiveLotForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      const expiry=document.getElementById('lotExpiry').value;
+      await papi('/api/procurement/supply-lots',{method:'POST',body:JSON.stringify({
+        supply_party_id:Number(document.getElementById('lotParty').value),
+        item_name:document.getElementById('lotItem').value,
+        quantity_base:Number(document.getElementById('lotQty').value),
+        base_unit:document.getElementById('lotUnit').value,
+        total_cost:Number(document.getElementById('lotCost').value||0),
+        handling_mode:document.getElementById('lotHandling').value,
+        inventory_id:document.getElementById('lotInventory').value?Number(document.getElementById('lotInventory').value):null,
+        supplier_lot_code:document.getElementById('lotSupplierCode').value,
+        expires_at:expiry?expiry+'T23:59:59+08:00':null,
+        note:document.getElementById('lotNote').value
+      })});
+      closeSupModal();ptoast('Supplier stock received and lot recorded.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('lotMsg').textContent=err.message}
+  };
+}
+async function repackSupplyLot(id){
+  const [lots]=await Promise.all([papi('/api/procurement/supply-lots'),loadInventory()]);
+  const lot=lots.find(x=>Number(x.id)===Number(id));
+  if(!lot){ptoast('Lot is no longer available.');return}
+  const outputOptions=supInventory.filter(i=>Number(i.id)!==Number(lot.inventory_id));
+  openSupModal(`<h2>Repack ${ph(lot.item_name)}</h2><p class="supModalIntro">Source available: ${Number(lot.quantity_remaining_base)} ${ph(lot.base_unit)}. The output keeps the same base unit; packaging cost is added to its cost.</p><form id="repackForm" class="supForm"><label>Output item<input id="repackName" required placeholder="Rice 1 kg bag"></label><div class="supTwo"><label>Input used (${ph(lot.base_unit)})<input id="repackInput" type="number" min="0.000001" max="${Number(lot.quantity_remaining_base)}" step="0.000001" required></label><label>Waste (${ph(lot.base_unit)})<input id="repackWaste" type="number" min="0" step="0.000001" value="0"></label></div><div class="supTwo"><label>Size per pack (${ph(lot.base_unit)})<input id="repackSize" type="number" min="0.000001" step="0.000001" required></label><label>Number of packs<input id="repackCount" type="number" min="0.000001" step="0.000001" required></label></div><div class="supTwo"><label>Pack name<input id="repackUnit" value="bag"></label><label>Packaging cost / pack ₱<input id="repackPackaging" type="number" min="0" step="0.01" value="0"></label></div><label>Output Inventory<select id="repackInventory"><option value="">Lot only</option>${outputOptions.map(i=>`<option value="${i.id}">${ph(i.item)} — ${ph(i.base_unit||i.unit)}</option>`).join('')}</select></label><p class="supCodeHelp">For this first V2 version, a repacked output uses a different Inventory item from its bulk source. Ordinary case opening should use break-pack instead.</p><label>Note<input id="repackNote"></label><div id="repackMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="repackCancel">Cancel</button><button>Create repacked lot</button></div></form>`);
+  document.getElementById('repackCancel').onclick=closeSupModal;
+  document.getElementById('repackForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{
+      await papi(`/api/procurement/supply-lots/${id}/repack`,{method:'POST',body:JSON.stringify({
+        output_item_name:document.getElementById('repackName').value,
+        input_quantity_base:Number(document.getElementById('repackInput').value),
+        waste_quantity_base:Number(document.getElementById('repackWaste').value||0),
+        package_size_base:Number(document.getElementById('repackSize').value),
+        output_packages:Number(document.getElementById('repackCount').value),
+        package_unit_name:document.getElementById('repackUnit').value,
+        packaging_cost_per_output:Number(document.getElementById('repackPackaging').value||0),
+        output_inventory_id:document.getElementById('repackInventory').value?Number(document.getElementById('repackInventory').value):null,
+        note:document.getElementById('repackNote').value
+      })});
+      closeSupModal();ptoast('Repacked lot created with source traceability.');await renderMerchantProcurement();
+    }catch(err){document.getElementById('repackMsg').textContent=err.message}
+  };
+}
+
 function suggestionsCard(rows){if(!rows.length)return `<section class="supCard"><h2>Reorder suggestions</h2><p>No current inventory item is below its reorder level.</p></section>`;return `<section class="supCard"><h2>Reorder suggestions</h2><p>Based on current stock/reorder levels. Nothing is sent automatically.</p><div class="supList">${rows.map(x=>`<div class="supRow"><div><strong>${ph(x.item)}</strong><small>${Number(x.quantity)} ${ph(x.unit)} on hand • reorder at ${Number(x.reorder_level)}</small>${x.catalog_item_id?`<div class="supMeta"><span class="ok">${ph(x.supplier_name)}</span><span>${ph(x.product_name)}</span><span>${x.suggested_packs} ${ph(x.unit_name)}</span><span>${pphp(Number(x.price_per_pack)*Number(x.suggested_packs||0))}</span></div>`:'<div class="supMeta"><span class="pending">No Supplier item linked</span></div>'}</div></div>`).join('')}</div></section>`}
 function relCard(r){return `<div class="supRow"><div><strong>${ph(r.supplier_name||r.display_name)}</strong><small>${ph(r.description||'Local Supplier')}</small><div class="supMeta"><span class="${r.state==='accepted'?'ok':'pending'}">${ph(pnice(r.state))}</span>${r.normal_lead_days!=null?`<span>~${r.normal_lead_days}d lead</span>`:''}${r.delivery_available?'<span>Delivery</span>':'<span>Pickup</span>'}</div></div><div class="supActions">${r.state==='accepted'?`<button class="supBtn" data-open-catalog="${r.supplier_account_id}">Catalog</button>`:''}</div></div>`}
 function poCardMerchant(p){const open=!['received','cancelled','rejected'].includes(p.status);return `<div class="supRow"><div><strong>${ph(p.po_number||`PO ${p.id}`)} • ${ph(p.supplier_name)}</strong><small>${ph(pnice(p.status))} • ${pphp(p.expected_total)}</small><div class="supMeta"><span>${ph(pnice(p.fulfilment_mode))}</span><span class="${p.payment_status==='paid'?'ok':'pending'}">${ph(pnice(p.payment_status))}</span>${p.supplier_ready_at?`<span>Ready ${new Date(p.supplier_ready_at).toLocaleString()}</span>`:''}</div></div><div class="supActions">${open?`<button class="supBtn secondary" data-po-view="${p.id}">View</button>`:''}${['delivered','partially_received','accepted','ready_for_pickup'].includes(p.status)?`<button class="supBtn" data-po-receive="${p.id}">Receive</button>`:''}${Number(p.paid_amount)<Number(p.expected_total)&&!['cancelled','rejected'].includes(p.status)?`<button class="supBtn warm" data-po-pay="${p.id}">Pay</button>`:''}</div></div>`}
-function bindMerchantProcurement(){document.getElementById('supplierInvite').onsubmit=async e=>{e.preventDefault();const msg=document.getElementById('supplierInviteMsg');try{await papi('/api/procurement/relationships/invite',{method:'POST',body:JSON.stringify({supplier_email:document.getElementById('supplierEmail').value,note:document.getElementById('supplierInviteNote').value})});ptoast('Supplier invitation sent.');await renderMerchantProcurement()}catch(err){msg.textContent=err.message}};supWorkspace.querySelectorAll('[data-open-catalog]').forEach(b=>b.onclick=()=>openSupplierCatalog(Number(b.dataset.openCatalog)));supWorkspace.querySelectorAll('[data-po-view]').forEach(b=>b.onclick=()=>viewPo(Number(b.dataset.poView),'merchant'));supWorkspace.querySelectorAll('[data-po-receive]').forEach(b=>b.onclick=()=>receivePo(Number(b.dataset.poReceive)));supWorkspace.querySelectorAll('[data-po-pay]').forEach(b=>b.onclick=()=>payPo(Number(b.dataset.poPay)))}
+function bindMerchantProcurement(parties=[]){
+  document.getElementById('supplierInvite').onsubmit=async e=>{
+    e.preventDefault();const msg=document.getElementById('supplierInviteMsg');
+    try{
+      await papi('/api/procurement/relationships/invite',{method:'POST',body:JSON.stringify({
+        supplier_email:document.getElementById('supplierEmail').value,
+        note:document.getElementById('supplierInviteNote').value
+      })});
+      ptoast('Supplier invitation sent.');await renderMerchantProcurement();
+    }catch(err){msg.textContent=err.message}
+  };
+  document.getElementById('supAddExternal')?.addEventListener('click',()=>addExternalSupplier());
+  document.getElementById('supReceiveLot')?.addEventListener('click',()=>receiveSupplyLot(parties));
+  supWorkspace.querySelectorAll('[data-repack-lot]').forEach(b=>b.onclick=()=>repackSupplyLot(Number(b.dataset.repackLot)));
+  supWorkspace.querySelectorAll('[data-open-catalog]').forEach(b=>b.onclick=()=>openSupplierCatalog(Number(b.dataset.openCatalog)));
+  supWorkspace.querySelectorAll('[data-po-view]').forEach(b=>b.onclick=()=>viewPo(Number(b.dataset.poView),'merchant'));
+  supWorkspace.querySelectorAll('[data-po-receive]').forEach(b=>b.onclick=()=>receivePo(Number(b.dataset.poReceive)));
+  supWorkspace.querySelectorAll('[data-po-pay]').forEach(b=>b.onclick=()=>payPo(Number(b.dataset.poPay)));
+}
 async function loadInventory(){try{const r=await papi('/api/inventory');supInventory=Array.isArray(r)?r:(r.inventory||[])}catch{supInventory=[]}}
 async function openSupplierCatalog(id){const [data]=await Promise.all([papi(`/api/procurement/suppliers/${id}/catalog`),loadInventory()]);const opts=x=>`<option value="">No inventory link</option>${supInventory.map(i=>`<option value="${i.id}" ${Number(x?.link?.legacy_inventory_id)===Number(i.id)?'selected':''}>${ph(i.item)} (${Number(i.quantity)} ${ph(i.unit)})</option>`).join('')}`;openSupModal(`<h2>${ph(data.supplier.supplier_name||data.supplier.display_name)} catalog</h2><form id="poCreate" class="supForm"><div class="supProductPicker">${data.items.map(i=>`<div class="supPick"><div><strong>${ph(i.product_name)}</strong><small>${pphp(i.price_per_pack)} / ${ph(i.unit_name)} • ${Number(i.base_units_per_pack)} ${ph(i.base_unit)}</small><label style="margin-top:5px">Inventory mapping<select data-map-item="${i.id}">${opts(i)}</select></label></div><input type="number" min="0" step="1" value="0" data-po-item="${i.id}" aria-label="Packs"></div>`).join('')}</div><div class="supTwo"><label>Fulfilment<select id="poMode"><option value="delivery">Supplier delivery</option><option value="pickup">Pickup</option></select></label><label>Delivery fee ₱<input id="poDeliveryFee" type="number" min="0" step="0.01" value="0"></label></div><label>Requested date<input id="poRequested" type="date"></label><label>Note<textarea id="poNote" rows="2"></textarea></label><div id="poMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="poCancel">Cancel</button><button>Create PO</button></div></form>`);document.getElementById('poCancel').onclick=closeSupModal;document.getElementById('poCreate').onsubmit=async e=>{e.preventDefault();const items=[...e.currentTarget.querySelectorAll('[data-po-item]')].map(x=>({catalog_item_id:Number(x.dataset.poItem),packs:Number(x.value)})).filter(x=>x.packs>0);if(!items.length){document.getElementById('poMsg').textContent='Choose at least one item.';return}try{for(const s of e.currentTarget.querySelectorAll('[data-map-item]')){if(s.value)await papi(`/api/procurement/catalog/${s.dataset.mapItem}/link`,{method:'PUT',body:JSON.stringify({legacy_inventory_id:Number(s.value)})})}await papi('/api/procurement/orders',{method:'POST',body:JSON.stringify({supplier_account_id:id,items,fulfilment_mode:document.getElementById('poMode').value,delivery_fee:Number(document.getElementById('poDeliveryFee').value),requested_date:document.getElementById('poRequested').value||null,merchant_note:document.getElementById('poNote').value})});closeSupModal();ptoast('Purchase order sent.');await renderMerchantProcurement()}catch(err){document.getElementById('poMsg').textContent=err.message}}}
 async function viewPo(id,side){const p=await papi(`/api/procurement/orders/${id}`);openSupModal(`<h2>${ph(p.po_number)} • ${ph(pnice(p.status))}</h2><div class="supList">${p.items.map(i=>`<div class="supRow"><div><strong>${ph(i.name_snapshot)}</strong><small>${Number(i.ordered_packs)} ${ph(i.unit_name_snapshot)} ordered • ${pphp(i.price_per_pack_snapshot)} each</small><div class="supMeta"><span>Confirmed ${Number(i.confirmed_packs??i.ordered_packs)}</span><span>Received ${Number(i.received_packs)}</span>${i.legacy_inventory_name?`<span class="ok">→ ${ph(i.legacy_inventory_name)}</span>`:''}</div></div></div>`).join('')}</div><div class="supMeta" style="margin:12px 0"><span>${pphp(p.expected_total)} total</span><span>${ph(pnice(p.payment_status))}</span></div><button class="supBtn secondary" id="poClose">Close</button>`);document.getElementById('poClose').onclick=closeSupModal}
