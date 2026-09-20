@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
+import { verifyAdminAssertion } from './admin-authorization.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +18,7 @@ const internalAuthPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const body = express.json({ limit: '2500kb' });
+const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 let child;
 let shuttingDown = false;
 
@@ -174,7 +176,40 @@ app.post('/api/service-provider/jobs/:id/status',body,async(req,res,next)=>{try{
 app.post('/api/services/jobs/:id/confirm-completion',body,async(req,res,next)=>{try{const me=await requireCustomer(req),id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`UPDATE service_jobs SET customer_confirmed_at=COALESCE(customer_confirmed_at,NOW()),updated_at=NOW() WHERE id=$1 AND customer_account_id=$2 AND status='completed' RETURNING *`,[id,me.account.id]);if(!r.rowCount)throw Object.assign(new Error('Completed job not available for confirmation'),{status:409});const j=r.rows[0];await recordMonetizableCompletion(client,{serviceScope:'local_services',subjectType:'account',subjectId:j.provider_account_id,sourceType:'service_job',sourceId:j.id,completedAt:j.customer_confirmed_at,grossValue:j.final_price??j.quote_amount??0,currencyCode:j.currency_code||'PHP'});await client.query('COMMIT');res.json(j)}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 app.post('/api/services/jobs/:id/review',body,async(req,res,next)=>{try{const me=await requireCustomer(req),jobId=Number(req.params.id);const j=await pool.query(`SELECT * FROM service_jobs WHERE id=$1 AND customer_account_id=$2 AND status='completed' AND customer_confirmed_at IS NOT NULL`,[jobId,me.account.id]);if(!j.rowCount)return res.status(409).json({error:'Review is available only after a completed, confirmed service job'});const vals=['workmanship','reliability','communication','professionalism','property_care','price_transparency','overall'].map(k=>Number(req.body?.[k]));if(vals.some(x=>!Number.isInteger(x)||x<1||x>5))return res.status(400).json({error:'Every rating must be from 1 to 5'});const{rows}=await pool.query(`INSERT INTO service_reviews(job_id,reviewer_account_id,provider_account_id,workmanship,reliability,communication,professionalism,property_care,price_transparency,overall,review_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(job_id) DO NOTHING RETURNING *`,[jobId,me.account.id,j.rows[0].provider_account_id,...vals,clean(req.body?.review_text,1200)]);if(!rows.length)return res.status(409).json({error:'This job has already been reviewed'});res.status(201).json(rows[0])}catch(e){next(e)}})
 
-app.patch('/api/admin/service-credentials/:id',body,async(req,res,next)=>{try{const me=await identity(req);if(Number(me.account.id)!==1)return res.status(403).json({error:'Admin verification is currently restricted to the bootstrap platform owner'});const status=clean(req.body?.verification_status,30);if(!['verified','rejected','expired'].includes(status))return res.status(400).json({error:'Choose verified, rejected or expired'});const{rows}=await pool.query(`UPDATE profile_credentials SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 RETURNING id,account_id,credential_type,title,verification_status,rejection_reason,verified_at`,[status,me.account.id,clean(req.body?.rejection_reason,500),Number(req.params.id)]);if(!rows.length)return res.status(404).json({error:'Credential not found'});res.json(rows[0])}catch(e){next(e)}})
+app.patch('/api/admin/service-credentials/:id',body,async(req,res,next)=>{try{
+  const me=await identity(req);
+  const assertion=verifyAdminAssertion(TOKEN_SECRET,req.headers['x-bl-admin-assertion'],me.account.id);
+  if(!assertion||assertion.permission!=='credential.verify'){
+    return res.status(403).json({error:'Credential verification permission required'});
+  }
+  const id=Number(req.params.id);
+  const target=await pool.query(`SELECT account_id FROM profile_credentials WHERE id=$1`,[id]);
+  if(!target.rowCount)return res.status(404).json({error:'Credential not found'});
+  if(assertion.territoryId!=null){
+    const scoped=await pool.query(
+      `SELECT 1 FROM profile_authorizations
+        WHERE account_id=$1 AND role='service_provider' AND territory_id=$2 AND status='active'`,
+      [target.rows[0].account_id,assertion.territoryId]
+    );
+    if(!scoped.rowCount)return res.status(403).json({error:'Credential is outside your delegated territory'});
+  }
+  const status=clean(req.body?.verification_status,30);
+  if(!['verified','rejected','expired'].includes(status)){
+    return res.status(400).json({error:'Choose verified, rejected or expired'});
+  }
+  const{rows}=await pool.query(
+    `UPDATE profile_credentials
+        SET verification_status=$1,
+            verified_by_account_id=$2,
+            verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,
+            rejection_reason=$3,
+            updated_at=NOW()
+      WHERE id=$4
+      RETURNING id,account_id,credential_type,title,verification_status,rejection_reason,verified_at`,
+    [status,me.account.id,clean(req.body?.rejection_reason,500),id]
+  );
+  res.json(rows[0]);
+}catch(e){next(e)}})
 
 function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${internalMarketplacePort}`};const up=http.request({hostname:'127.0.0.1',port:internalMarketplacePort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Services upstream unavailable'})});req.pipe(up)}
 app.use(proxy)
