@@ -52,3 +52,10 @@ test('Storefront can create fresh, packaged and non-food resale products from Me
   assert.match(ui,/Each sale consumes/);
   assert.match(ui,/Create private product/);
 });
+
+test('Supplier pack receiving normalizes into the linked Merchant base unit',()=>{
+  const server=read('server-business-accounting.js');
+  assert.match(server,/toBaseQuantity\(Number\(x\.base_units_per_pack_snapshot\),x\.base_unit_snapshot\)/);
+  assert.match(server,/receivedInventoryUnits/);
+  assert.match(server,/Confirm the pack conversion first/);
+});
