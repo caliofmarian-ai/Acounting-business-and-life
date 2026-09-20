@@ -117,32 +117,68 @@
       </section>
 
       <section id="viewMenu" class="view hidden">
-        <div class="sectionHead"><div><h1>Menu & profitability</h1><p class="muted">Selling price, recipe cost and margin per portion.</p></div><button data-view-link="Sell" class="secondary">Quick sale</button></div>
+        <div class="sectionHead"><div><h1>Products & recipes</h1><p class="muted">Create what you prepare, calculate recipe cost automatically, then publish it to your Storefront.</p></div><button data-view-link="Sell" class="secondary">Quick sale</button></div>
+
+        <div class="card stack productTypeGuide">
+          <div><h2>What are you selling?</h2><p class="muted">Recipes are only for products you actually prepare. Fresh, packaged and non-food resale products use direct stock in the Storefront.</p></div>
+          <div class="productTypeGrid">
+            <div><strong>Prepared recipe</strong><small>Made from ingredients · recipe consumes stock</small></div>
+            <div><strong>Fresh / direct food</strong><small>Fruit, vegetables, meat, fish · no recipe</small></div>
+            <div><strong>Packaged food</strong><small>Ready-made branded goods · track packs / barcode</small></div>
+            <div><strong>Non-food resale</strong><small>Track units, variants and SKU</small></div>
+          </div>
+        </div>
+
         <form id="productForm" class="card stack">
           <input id="productId" type="hidden" />
-          <div class="sectionHead"><h2 id="productFormTitle">Add menu product</h2><button id="productCancel" class="ghost hidden" type="button">Cancel edit</button></div>
-          <label>Product name<input id="productName" required placeholder="Chicken rice meal" /></label>
-          <div class="grid2"><label>Category<input id="productCategory" value="Food" /></label><label>Selling price ₱<input id="productPrice" type="number" min="0" step="0.01" required /></label></div>
+          <input id="productKind" type="hidden" value="prepared_recipe" />
+          <div class="sectionHead"><div><h2 id="productFormTitle">Create prepared product</h2><small class="muted">For food you make from ingredients</small></div><button id="productCancel" class="ghost hidden" type="button">Cancel edit</button></div>
+          <label>Product name<input id="productName" required placeholder="Fish soup" /></label>
+          <div class="grid2"><label>Category<input id="productCategory" value="Food" /></label><label>Selling price / portion ₱<input id="productPrice" type="number" min="0" step="0.01" required /></label></div>
           <label class="checkLabel"><input id="productActive" type="checkbox" checked /> Active and available for sale</label>
-          <button id="productSave" class="primary">Create product</button><div id="productMessage"></div>
+          <button id="productSave" class="primary">Create prepared product</button><div id="productMessage"></div>
         </form>
-        <div class="card stack"><h2>Menu products</h2><div id="productList" class="productList"></div></div>
+        <div class="card stack"><div class="sectionHead"><h2>Prepared products</h2><small class="muted">Recipe cost and Marketplace-ready product source</small></div><div id="productList" class="productList"></div></div>
 
         <div id="recipeEditor" class="card stack">
-          <div><h2>Recipe / ingredient usage</h2><p class="muted">Quantity below means ingredient used for one portion. The current inventory unit cost calculates the estimated portion cost.</p></div>
-          <label>Product<select id="recipeProduct"></select></label>
-          <div class="recipeAdder"><label>Ingredient<select id="recipeIngredient"></select></label><label>Qty per portion<input id="recipeQty" type="number" min="0.0001" step="0.0001" placeholder="0.100" /></label><button id="recipeAdd" type="button" class="secondary">Add</button></div>
+          <div><h2>Recipe builder</h2><p class="muted">Build one finished batch. Enter ingredients in the units you actually use; Business & Life calculates the amount and cost for each selling portion.</p></div>
+          <label>Prepared product<select id="recipeProduct"></select></label>
+          <div class="recipeYieldGrid">
+            <label>Finished batch<input id="recipeYieldQty" type="number" min="0.0001" step="0.0001" value="1" /></label>
+            <label>Batch unit<select id="recipeYieldUnit"><option value="L">L</option><option value="ml">ml</option><option value="kg">kg</option><option value="g">g</option><option value="unit">unit</option></select></label>
+            <label>Sell as<input id="recipeSellQty" type="number" min="0.0001" step="0.0001" value="250" /></label>
+            <label>Sell unit<select id="recipeSellUnit"><option value="ml">ml</option><option value="L">L</option><option value="g">g</option><option value="kg">kg</option><option value="unit">unit</option></select></label>
+          </div>
+          <div class="recipeAdder recipeAdderV2"><label>Ingredient<select id="recipeIngredient"></select></label><label>Amount<input id="recipeQty" type="number" min="0.0001" step="0.0001" placeholder="100" /></label><label>Unit<select id="recipeUnit"><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="L">L</option><option value="unit">unit</option></select></label><button id="recipeAdd" type="button" class="secondary">Add</button></div>
           <div id="recipeCostPreview" class="salePreview"></div><div id="recipeDraftList" class="list"></div>
-          <button id="recipeSave" type="button" class="primary">Save recipe</button><div id="recipeMessage"></div>
+          <button id="recipeSave" type="button" class="primary">Save batch recipe</button><div id="recipeMessage"></div>
         </div>
 
         <div class="card stack"><div class="sectionHead"><h2>Product profitability</h2><span class="muted">Ingredient-cost estimate</span></div><div class="analysisBlock"><strong>Last 7 days</strong><div id="profit7Totals" class="muted"></div><div id="profit7List" class="list"></div></div><div class="analysisBlock"><strong>Last 30 days</strong><div id="profit30Totals" class="muted"></div><div id="profit30List" class="list"></div></div></div>
       </section>
 
       <section id="viewStock" class="view hidden">
-        <div class="sectionHead"><div><h1>Stock</h1><p class="muted"><span id="lowStock">0</span> low-stock items</p></div></div>
-        <form id="stockForm" class="card stack"><h2>Add or update ingredient</h2><label>Item<input id="stockItem" required placeholder="Cooking oil" /></label><div class="grid2"><label>Quantity<input id="stockQty" type="number" step="0.001" value="0" /></label><label>Reorder at<input id="stockReorder" type="number" step="0.001" value="0" /></label></div><div class="grid2"><label>Unit<input id="stockUnit" value="pcs" placeholder="pcs, kg, L" /></label><label>Unit cost ₱<input id="stockCost" type="number" step="0.0001" value="0" /></label></div><button class="secondary">Save item</button></form>
-        <div class="card stack"><h2>Inventory</h2><div id="stockList" class="list"></div></div>
+        <div class="sectionHead"><div><h1>Stock & purchases</h1><p class="muted"><span id="lowStock">0</span> low-stock items · enter what you actually bought</p></div></div>
+        <form id="stockForm" class="card stack">
+          <div><h2>Add stock from a purchase</h2><p class="muted">Example: 1 kg carrots for ₱80 becomes 1000 g at ₱0.08/g automatically.</p></div>
+          <label>Item / ingredient<input id="stockItem" required placeholder="Carrot" /></label>
+          <div class="grid2">
+            <label>Bought quantity<input id="stockPurchaseQty" type="number" min="0.0001" step="0.0001" value="1" required /></label>
+            <label>Purchase unit<select id="stockPurchaseUnit"><option value="kg">kg</option><option value="g">g</option><option value="L">L</option><option value="ml">ml</option><option value="unit">unit / piece</option></select></label>
+          </div>
+          <div class="grid2">
+            <label>Total purchase cost ₱<input id="stockTotalCost" type="number" min="0" step="0.01" value="0" required /></label>
+            <label>Paid from<select id="stockAccount"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label>
+          </div>
+          <div class="grid2">
+            <label>Reorder when below<input id="stockReorderQty" type="number" min="0" step="0.0001" value="0" /></label>
+            <label>Reorder unit<select id="stockReorderUnit"><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="L">L</option><option value="unit">unit / piece</option></select></label>
+          </div>
+          <label>Note<input id="stockNote" placeholder="Optional supplier / receipt note" /></label>
+          <div id="stockPurchasePreview" class="salePreview"></div>
+          <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
+        </form>
+        <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
       </section>
 
       <section id="viewHistory" class="view hidden"><div class="sectionHead"><div><h1>History</h1><p class="muted">Corrections are logged; linked remittance/menu sales are protected from separate edits.</p></div><a id="exportLink" class="linkBtn" href="#">Export CSV</a></div><div class="card"><div id="historyList" class="list"></div></div><button data-view-link="Dashboard" class="secondary">Back home</button></section>

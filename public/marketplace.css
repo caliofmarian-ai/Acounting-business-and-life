@@ -22,3 +22,8 @@
   .merchantProductMediaRow{display:grid;grid-template-columns:78px 1fr;position:relative;padding-bottom:44px}
   .merchantProductMediaRow>.publishButton{position:absolute;right:0;bottom:0}
 }
+
+.directProductCard{border-color:#d8eee8}
+.directProductCard .sectionHead{align-items:flex-start}
+.directProductCard .sectionHead p{margin:4px 0 0;color:#64748b;font-size:12px;line-height:1.45}
+.directProductCard input[readonly]{background:#f8fafc;color:#64748b}
