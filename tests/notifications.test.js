@@ -81,7 +81,7 @@ test('notification attention metadata is attached centrally to inbox and Web Pus
   assert.match(core,/entity_id:row\.entity_id,attention/);
   assert.match(core,/\.\.\.message,attention:notificationAttention/);
   assert.match(server,/r\.role_hint,e\.id event_id/);
-  assert.match(server,/attention:msg\.attention/);
+  assert.match(server,/soundVariant:soundPreferences\[msg\.attention\.soundSlot\]/);
 });
 
 test('attention metadata plumbing does not enable branded audio before accepted sound assets exist',()=>{
@@ -109,4 +109,17 @@ test('Web Push consumes attention metadata without combining silent and vibratio
   assert.match(sw,/requireInteraction:Boolean\(attention\.requireInteraction\)/);
   assert.match(core,/attentionPref\.vibration_enabled\?baseAttention\.vibrate:\[\]/);
   assert.match(core,/attentionPref\.important_alerts_enabled\?baseAttention\.requireInteraction:false/);
+});
+
+
+test('users can choose Set 1 2 or 3 independently for each notification sound slot',()=>{
+  assert.match(core,/notification_sound_preferences/);
+  assert.match(core,/PRIMARY KEY\(account_id,sound_slot\)/);
+  assert.match(core,/DEFAULT_NOTIFICATION_SOUND_VARIANT/);
+  assert.match(server,/\/api\/notifications\/sound-preference/);
+  assert.match(server,/sound_variants:notificationSoundVariants\(\)/);
+  assert.match(server,/sound_slots:notificationSoundSlots\(\)/);
+  assert.match(server,/default_sound_variant:DEFAULT_NOTIFICATION_SOUND_VARIANT/);
+  assert.match(ui,/data-sound-slot/);
+  assert.match(ui,/Set 2 is the Business & Life default/);
 });

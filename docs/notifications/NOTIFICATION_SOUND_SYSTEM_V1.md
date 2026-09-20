@@ -13,6 +13,24 @@ A subtle role accent may answer **in which profile it happened**.
 
 Do not create unrelated sounds per screen, feature or team.
 
+### Owner-fixed sound-set decision
+
+The accepted product model uses three spoken notification sets:
+
+1. **Set 2 — Friendly** is the fixed/default Business & Life choice.
+2. **Set 1 — Professional** remains available as an alternative.
+3. **Set 3 — Business** remains available as an alternative.
+
+The user is not forced to select one pack globally. The user may choose a different set for each notification sound slot. For example:
+- Merchant new order → Set 2;
+- Courier new delivery request → Set 3;
+- Payment / finance → Set 1;
+- all remaining slots → inherited default Set 2.
+
+Selecting Set 2 removes the override and returns that slot to the product default.
+
+Spoken alerts must not read sensitive private values such as names, addresses, balances, payment amounts, security codes or private incident details aloud.
+
 Sound is never the only carrier of meaning. Every audible event must also have visible notification content and, where supported and enabled, haptic feedback.
 
 ## 2. Base attention families
@@ -32,7 +50,6 @@ Do not use:
 - sirens;
 - alarm-clock loops;
 - horns;
-- spoken voices;
 - exaggerated cash-register sounds;
 - casino/game reward sounds;
 - long melodies;
@@ -182,6 +199,14 @@ Target settings under **Profile → Settings → Notifications**:
 - Vibration: On / Off
 - Important alerts: On / Off
 - Preview sound / vibration
+
+### Per-notification voice choice
+Each supported notification sound slot exposes the same three choices, ordered with the default first:
+- Set 2 — Friendly (default);
+- Set 1 — Professional;
+- Set 3 — Business.
+
+Current configurable slots include Merchant new order, Merchant action, Courier new delivery, Courier action, Supplier action, Service Provider action, payment/finance, general update, success, general action, urgent and warning.
 
 ### Topics
 - Messages

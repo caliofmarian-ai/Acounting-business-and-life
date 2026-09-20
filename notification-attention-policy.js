@@ -1,3 +1,5 @@
+import { notificationSoundSlot } from './notification-sound-options.js';
+
 const ROLE_ALIASES=new Map([
   ['delivery','courier'],
   ['driver','courier'],
@@ -151,6 +153,7 @@ export function notificationAttention({
     silent:marketing,
     renotify:!marketing&&family==='urgent',
     requireInteraction:!marketing&&family==='urgent',
+    soundSlot:marketing?'':notificationSoundSlot({eventCode:code,role,family}),
     foregroundSoundKey:marketing?'':soundKey(family,role)
   };
 }

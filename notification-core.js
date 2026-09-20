@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { notificationAttention } from './notification-attention-policy.js';
+import { DEFAULT_NOTIFICATION_SOUND_VARIANT,notificationSoundSlots,normalizeNotificationSoundVariant,isNotificationSoundSlot } from './notification-sound-options.js';
 
 const CATEGORIES=new Set(['operational','security','legal','support','compliance','marketing']);
 const PRIORITIES=new Set(['low','normal','high','urgent']);
@@ -152,6 +153,15 @@ export async function ensureNotificationSchema(pool){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS notification_sound_preferences (
+      account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      sound_slot TEXT NOT NULL,
+      variant SMALLINT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(account_id,sound_slot),
+      CHECK(variant IN (1,2,3))
+    );
+
     CREATE TABLE IF NOT EXISTS notification_templates (
       id BIGSERIAL PRIMARY KEY,
       event_code TEXT NOT NULL,
@@ -221,6 +231,32 @@ export async function saveNotificationAttentionPreference(pool,accountId,{sound_
     RETURNING sound_enabled,vibration_enabled,important_alerts_enabled,updated_at
   `,[Number(accountId),Boolean(sound_enabled),Boolean(vibration_enabled),Boolean(important_alerts_enabled)]);
   return rows[0];
+}
+
+export async function notificationSoundPreferences(pool,accountId){
+  const defaults=Object.fromEntries(notificationSoundSlots().map(slot=>[slot.id,DEFAULT_NOTIFICATION_SOUND_VARIANT]));
+  const q=await pool.query(`SELECT sound_slot,variant FROM notification_sound_preferences WHERE account_id=$1`,[Number(accountId)]);
+  for(const row of q.rows){
+    if(isNotificationSoundSlot(row.sound_slot))defaults[row.sound_slot]=normalizeNotificationSoundVariant(row.variant);
+  }
+  return defaults;
+}
+
+export async function saveNotificationSoundPreference(pool,accountId,soundSlot,variant){
+  const slot=clean(soundSlot,80);
+  if(!isNotificationSoundSlot(slot))throw Object.assign(new Error('Unknown notification sound slot'),{status:400});
+  const normalized=normalizeNotificationSoundVariant(variant);
+  if(normalized===DEFAULT_NOTIFICATION_SOUND_VARIANT){
+    await pool.query(`DELETE FROM notification_sound_preferences WHERE account_id=$1 AND sound_slot=$2`,[Number(accountId),slot]);
+    return{sound_slot:slot,variant:DEFAULT_NOTIFICATION_SOUND_VARIANT,inherited:true};
+  }
+  const {rows}=await pool.query(`
+    INSERT INTO notification_sound_preferences(account_id,sound_slot,variant)
+    VALUES($1,$2,$3)
+    ON CONFLICT(account_id,sound_slot) DO UPDATE SET variant=EXCLUDED.variant,updated_at=NOW()
+    RETURNING sound_slot,variant,updated_at
+  `,[Number(accountId),slot,normalized]);
+  return{...rows[0],inherited:false};
 }
 
 async function preferenceFor(client,accountId,role,category){
@@ -417,8 +453,11 @@ async function sendQueuedPush(pool,row){
   const template=await loadTemplate(pool,row.event_code,row.locale,'push',row.data_json);
   const baseAttention=notificationAttention({eventCode:row.event_code,roleHint:row.role_hint,priority:row.priority,category:row.category,data:row.data_json});
   const attentionPref=await notificationAttentionPreference(pool,row.account_id);
+  const soundPreferences=await notificationSoundPreferences(pool,row.account_id);
+  const soundVariant=soundPreferences[baseAttention.soundSlot]??DEFAULT_NOTIFICATION_SOUND_VARIANT;
   const attention={
     ...baseAttention,
+    soundVariant,
     foregroundSoundKey:attentionPref.sound_enabled?baseAttention.foregroundSoundKey:'',
     vibrate:attentionPref.vibration_enabled?baseAttention.vibrate:[],
     renotify:attentionPref.important_alerts_enabled?baseAttention.renotify:false,
