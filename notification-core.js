@@ -144,6 +144,14 @@ export async function ensureNotificationSchema(pool){
       CHECK(category IN ('operational','security','legal','support','compliance','marketing'))
     );
 
+    CREATE TABLE IF NOT EXISTS notification_attention_preferences (
+      account_id BIGINT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+      sound_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      vibration_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      important_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS notification_templates (
       id BIGSERIAL PRIMARY KEY,
       event_code TEXT NOT NULL,
@@ -194,6 +202,25 @@ function safeData(data){
     else out[clean(k,80)]=clean(v,500);
   }
   return out;
+}
+
+export async function notificationAttentionPreference(pool,accountId){
+  const q=await pool.query(`SELECT sound_enabled,vibration_enabled,important_alerts_enabled FROM notification_attention_preferences WHERE account_id=$1`,[Number(accountId)]);
+  return q.rows[0]||{sound_enabled:true,vibration_enabled:true,important_alerts_enabled:true};
+}
+
+export async function saveNotificationAttentionPreference(pool,accountId,{sound_enabled=true,vibration_enabled=true,important_alerts_enabled=true}={}){
+  const {rows}=await pool.query(`
+    INSERT INTO notification_attention_preferences(account_id,sound_enabled,vibration_enabled,important_alerts_enabled)
+    VALUES($1,$2,$3,$4)
+    ON CONFLICT(account_id) DO UPDATE SET
+      sound_enabled=EXCLUDED.sound_enabled,
+      vibration_enabled=EXCLUDED.vibration_enabled,
+      important_alerts_enabled=EXCLUDED.important_alerts_enabled,
+      updated_at=NOW()
+    RETURNING sound_enabled,vibration_enabled,important_alerts_enabled,updated_at
+  `,[Number(accountId),Boolean(sound_enabled),Boolean(vibration_enabled),Boolean(important_alerts_enabled)]);
+  return rows[0];
 }
 
 async function preferenceFor(client,accountId,role,category){
@@ -388,7 +415,15 @@ async function sendQueuedPush(pool,row){
   const webpush=(await import('web-push')).default;
   webpush.setVapidDetails(subject,pub,priv);
   const template=await loadTemplate(pool,row.event_code,row.locale,'push',row.data_json);
-  const attention=notificationAttention({eventCode:row.event_code,roleHint:row.role_hint,priority:row.priority,category:row.category,data:row.data_json});
+  const baseAttention=notificationAttention({eventCode:row.event_code,roleHint:row.role_hint,priority:row.priority,category:row.category,data:row.data_json});
+  const attentionPref=await notificationAttentionPreference(pool,row.account_id);
+  const attention={
+    ...baseAttention,
+    foregroundSoundKey:attentionPref.sound_enabled?baseAttention.foregroundSoundKey:'',
+    vibrate:attentionPref.vibration_enabled?baseAttention.vibrate:[],
+    renotify:attentionPref.important_alerts_enabled?baseAttention.renotify:false,
+    requireInteraction:attentionPref.important_alerts_enabled?baseAttention.requireInteraction:false
+  };
   const targetUrl=row.entity_type==='support_ticket'&&row.entity_id?`/?support_ticket=${encodeURIComponent(row.entity_id)}`:'/';
   const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id,attention});
   let successes=0,lastError='';
