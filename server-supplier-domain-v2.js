@@ -544,6 +544,22 @@ export function registerSupplierDomainV2Routes({app,pool,body,identity}){
         if(inputQuantity>Number(lot.quantity_remaining_base)+1e-9){
           throw httpError(409,'Repack input exceeds source lot quantity remaining');
         }
+        const outputInventoryId=req.body?.output_inventory_id?Number(req.body.output_inventory_id):null;
+        let sourceInventory=null;
+        if(lot.inventory_id){
+          const sourceInv=await client.query(
+            `SELECT * FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,
+            [Number(lot.inventory_id),b.id]
+          );
+          if(!sourceInv.rowCount)throw httpError(409,'Source lot Inventory item is unavailable');
+          sourceInventory=sourceInv.rows[0];
+          if(Number(sourceInventory.quantity)+1e-9<inputQuantity){
+            throw httpError(409,'Source Inventory quantity is lower than the lot repack input');
+          }
+          if(outputInventoryId&&Number(outputInventoryId)===Number(sourceInventory.id)){
+            throw httpError(409,'Repacked output must use a different Inventory item from the bulk source in V2');
+          }
+        }
         const plan=computeRepackPlan({
           inputQuantity,
           packageSize,
@@ -567,7 +583,7 @@ export function registerSupplierDomainV2Routes({app,pool,body,identity}){
           ) VALUES($1,$2,$3,$4,$5,$6,'repacked',$7,$8,$8,$9,$10,$11,$12,NOW(),$13,$14,$15)
           RETURNING *`,
           [
-            b.id,lot.supply_party_id,req.body?.output_inventory_id?Number(req.body.output_inventory_id):null,
+            b.id,lot.supply_party_id,outputInventoryId,
             lot.id,outputName,outputInternal,outputBaseUnit,plan.packed_quantity,outputUnitCost,
             packageUnit,plan.package_size,plan.output_packages,outputExpiry,
             clean(req.body?.note,1000),me.account.id
@@ -577,6 +593,12 @@ export function registerSupplierDomainV2Routes({app,pool,body,identity}){
           `UPDATE supply_lots SET quantity_remaining_base=quantity_remaining_base-$1 WHERE id=$2`,
           [plan.input_quantity,lot.id]
         );
+        if(sourceInventory){
+          await client.query(
+            `UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,
+            [plan.input_quantity,sourceInventory.id,b.id]
+          );
+        }
         await client.query(
           `INSERT INTO supply_repack_operations(
             business_id,source_lot_id,output_lot_id,input_quantity_base,package_size_base,
@@ -590,10 +612,10 @@ export function registerSupplierDomainV2Routes({app,pool,body,identity}){
             me.account.id,clean(req.body?.note,1000)
           ]
         );
-        if(req.body?.output_inventory_id){
+        if(outputInventoryId){
           const inv=await client.query(
             `SELECT * FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,
-            [Number(req.body.output_inventory_id),b.id]
+            [outputInventoryId,b.id]
           );
           if(!inv.rowCount)throw httpError(404,'Output Inventory item not found');
           const inventoryBase=clean(inv.rows[0].base_unit||inv.rows[0].unit,50);
