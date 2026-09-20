@@ -2,21 +2,24 @@ import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { validateRuntimeSafety } from './runtime-safety.js';
 import { runCourierExperienceAcceptance } from './qa-courier-acceptance.js';
+import { runServiceProviderExperienceAcceptance } from './qa-service-provider-acceptance.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
 const MERCHANT_ALIAS='dropi.deliveries+testmerchant@gmail.com';
 const SUPPLIER_ALIAS='dropi.deliveries+testsupplier@gmail.com';
 const COURIER_ALIAS='dropi.deliveries+testcourier@gmail.com';
+const SERVICE_PROVIDER_ALIAS='dropi.deliveries+testservice@gmail.com';
 const SUPER_ADMIN_ALIAS='dropi.deliveries+testsuperadmin@gmail.com';
 const CUSTOMER_WAVE='customer_onboarding_v1';
 const MERCHANT_CATALOG_WAVE='merchant_catalog_seed_v1';
 const MERCHANT_EXPERIENCE_WAVE='merchant_experience_v1';
 const SUPPLIER_EXPERIENCE_WAVE='supplier_experience_v1';
 const COURIER_EXPERIENCE_WAVE='courier_experience_v1';
+const SERVICE_PROVIDER_EXPERIENCE_WAVE='service_provider_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -1694,6 +1697,12 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
             aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,courier:COURIER_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
             helpers:{requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,runMerchantCatalogSeed,ensureQaTerritory,ensureActiveRole,loginWithCredential}
           })
+        :config.wave===SERVICE_PROVIDER_EXPERIENCE_WAVE
+          ?await runServiceProviderExperienceAcceptance({
+            pool,base,secret:config.secret,
+            aliases:{customer:CUSTOMER_ALIAS,serviceProvider:SERVICE_PROVIDER_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
+            helpers:{requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,ensureQaTerritory,ensureActiveRole,loginWithCredential}
+          })
         :config.wave===CUSTOMER_MARKETPLACE_WAVE
         ?await runCustomerMarketplaceE2E({pool,base,secret:config.secret})
         :config.wave===CUSTOMER_EXPERIENCE_WAVE
@@ -1709,6 +1718,6 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 }
 
 export {
-  CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,SUPER_ADMIN_ALIAS,
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
