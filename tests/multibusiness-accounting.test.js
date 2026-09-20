@@ -47,9 +47,9 @@ test('inventory linkage and Marketplace menu import are business scoped', () => 
   assert.match(server, /reorder-suggestions/);
 });
 
-test('workspace UI exposes Supplier Accounting and an explicit workspace selector', () => {
-  assert.match(ui, /Supplier accounting/);
+test('workspace UI exposes Supplier finances and an explicit workspace selector', () => {
+  assert.match(ui, /Supplier finances/);
   assert.match(ui, /businessWorkspaceSelect/);
   assert.match(ui, /\/api\/accounting\/active-workspace/);
-  assert.match(ui, /Accounting<\/strong>/);
+  assert.match(ui, /Finance & Accounting<\/strong>/);
 });
