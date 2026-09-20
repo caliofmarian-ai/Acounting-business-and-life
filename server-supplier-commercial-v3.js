@@ -461,6 +461,20 @@ export function registerSupplierCommercialV3Routes({app,pool,body,identity}){
     }catch(e){next(e)}
   });
 
+  app.get('/api/supplier/relationships/:businessId/terms',async(req,res,next)=>{
+    try{
+      const me=await identity(req);
+      if(!enabledSupplier(me))return res.status(403).json({error:'Supplier profile required'});
+      const businessId=Number(req.params.businessId);
+      const rel=await pool.query(
+        `SELECT 1 FROM supplier_relationships WHERE business_id=$1 AND supplier_account_id=$2 AND state='accepted'`,
+        [businessId,me.account.id]
+      );
+      if(!rel.rowCount)return res.status(404).json({error:'Accepted Merchant relationship not found'});
+      res.json(await connectedTerms(pool,businessId,me.account.id));
+    }catch(e){next(e)}
+  });
+
   app.put('/api/supplier/relationships/:businessId/terms',body,async(req,res,next)=>{
     try{
       const me=await identity(req);
