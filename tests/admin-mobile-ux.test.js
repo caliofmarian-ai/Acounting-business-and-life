@@ -8,6 +8,7 @@ const ui=read('public/admin-console.js');
 const loader=read('public/mobile-feature-loader.js');
 const legacy=read('public/admin-operations-ui.js');
 const shell=read('public/shell.js');
+const governance=read('public/profile-governance-ui.js');
 
 test('Admin mobile navigation stays compact instead of stretching to viewport height',()=>{
   assert.match(css,/\.workspace\{[^}]*grid-template-rows:auto minmax\(0,1fr\);[^}]*align-content:start/);
@@ -25,6 +26,8 @@ test('Super Admin has one separate Admin Workspace entry and no topbar duplicate
   assert.doesNotMatch(loader,/fetchAdminAccess/);
   assert.doesNotMatch(legacy,/adminOpsBtn/);
   assert.doesNotMatch(legacy,/refreshAdminButton/);
+  assert.doesNotMatch(governance,/govDrawerAdmin/);
+  assert.doesNotMatch(governance,/govAdminOpen/);
 });
 
 test('delegation defaults to least privilege Specialist when available',()=>{
