@@ -67,7 +67,7 @@ export function dueDateForTerms({
 }={}){
   const terms=normalizePaymentTerms({paymentTermCode,customDays});
   const issue=dateOnly(issueDate);
-  const received=receivedDate?dateOnly(String(receivedDate).slice(0,10)):null;
+  const received=receivedDate?dateOnly(receivedDate):null;
   const code=terms.payment_term_code;
   if(code==='prepaid')return issue.toISOString().slice(0,10);
   if(code==='cod'||code==='due_on_receipt')return (received||issue).toISOString().slice(0,10);
