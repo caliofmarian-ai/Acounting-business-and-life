@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyAdminAssertion } from './admin-authorization.js';
+import { companyTestAccountForEmail, companyTestProfileRole } from './company-test-accounts.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,7 @@ const randomToken=()=>crypto.randomBytes(30).toString('base64url');
 const hash=v=>crypto.createHash('sha256').update(String(v)).digest('hex');
 async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
+function requireAssignedTestRole(me,role){if(!me?.account?.is_test_account)return;const assigned=companyTestProfileRole(me.account.test_role);if(assigned!==role)throw Object.assign(new Error(`This company test account is reserved for ${clean(me.account.test_role||'another role',80).replaceAll('_',' ')}.`),{status:403})}
 async function requireAdmin(req){const me=await identity(req);if(Number(me.account.id)===1)return me;const assertion=verifyAdminAssertion(TOKEN_SECRET,req.headers['x-bl-admin-assertion'],me.account.id);if(!assertion)throw Object.assign(new Error('Scoped Admin assertion required'),{status:403});me.admin_assertion=assertion;return me}
 function validTerritoryType(v){return ['country','region','province','city','municipality','district','barangay','custom_cell'].includes(v)}
 function validTerritoryStatus(v){return ['planned','onboarding','active','paused','suspended','closed'].includes(v)}
@@ -171,6 +173,15 @@ app.get('/profile-governance.css',(_q,res)=>res.type('text/css').send(readFileSy
 app.get('/profile-governance-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','profile-governance-ui.js'),'utf8')))
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});const html=await r.text();res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root)
+
+async function enforceAssignedTestOnboarding(roleFromRequest,req,res,next){
+  try{const me=await identity(req);requireAssignedTestRole(me,roleFromRequest(req));next()}catch(error){next(error)}
+}
+app.use('/api/governance/service-provider/start',(req,res,next)=>enforceAssignedTestOnboarding(()=> 'service_provider',req,res,next));
+app.use('/api/governance/profiles/:role/start',(req,res,next)=>enforceAssignedTestOnboarding(request=>clean(request.params.role,40),req,res,next));
+app.use('/api/governance/invitations/:id/accept',async(req,res,next)=>{try{const me=await identity(req),inv=await pool.query(`SELECT role FROM profile_invitations WHERE id=$1`,[Number(req.params.id)]);if(inv.rowCount)requireAssignedTestRole(me,inv.rows[0].role);next()}catch(error){next(error)}});
+app.use('/api/governance/invite/:token/accept',async(req,res,next)=>{try{const me=await identity(req),inv=await pool.query(`SELECT role FROM profile_invitations WHERE token_hash=$1`,[hash(clean(req.params.token,300))]);if(inv.rowCount)requireAssignedTestRole(me,inv.rows[0].role);next()}catch(error){next(error)}});
+app.use('/api/governance/admin/invitations',body,(req,res,next)=>{const mapped=companyTestAccountForEmail(req.body?.target_email);const role=clean(req.body?.role,40);if(mapped&&companyTestProfileRole(mapped.role)!==role)return res.status(409).json({error:`That company test alias is reserved for ${mapped.label}.`});next()});
 
 app.get('/api/governance/state',async(req,res,next)=>{try{const me=await identity(req);res.json(await profileState(me))}catch(e){next(e)}})
 app.get('/api/governance/territories',async(req,res,next)=>{try{await identity(req);const{rows}=await pool.query(`SELECT id,country_code,parent_id,territory_type,name,code,status FROM territories WHERE country_code='PH' AND status IN ('onboarding','active') ORDER BY name`);res.json(rows)}catch(e){next(e)}})

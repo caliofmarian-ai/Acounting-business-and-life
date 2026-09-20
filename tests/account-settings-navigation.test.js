@@ -22,7 +22,8 @@ test('Account Home is the one selector for profiles Admin and account settings',
   assert.match(home,/id="accountAdminProfile"/);
   assert.match(home,/id="accountHomeSettings"/);
   assert.match(home,/id="accountHomeSignOut"/);
-  assert.match(home,/Personal ID/);
+  assert.match(home,/accountIdentityLabel\(account\)/);
+  assert.match(shell,/function accountIdentityLabel\(account=snapshot\?\.account\).*'Test Account ID':'Personal ID'/);
   assert.match(css,/\.accountHomeAction/);
   assert.match(css,/@media\(max-width:520px\)\{\.accountProfileGrid\{grid-template-columns:1fr\}/);
 });

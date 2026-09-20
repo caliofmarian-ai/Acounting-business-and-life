@@ -57,7 +57,8 @@ test('a person with no active role sees a truthful first-profile checklist',()=>
   const block=shell.slice(start,shell.indexOf('function publishProfileState',start));
   assert.match(block,/No Customer, Merchant, Supplier, Delivery or Local Services profile is active/);
   assert.match(block,/account\.email_verified_at/);
-  assert.match(block,/account\.address/);
+  assert.match(block,/accountDetailsReady\(account\)/);
+  assert.match(shell,/function accountDetailsReady\(account=snapshot\?\.account\).*account\?\.address/);
   assert.match(block,/Account Settings/);
   assert.doesNotMatch(block,/enableOrSwitch\(/);
 });

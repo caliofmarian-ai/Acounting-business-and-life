@@ -95,7 +95,7 @@ async function initDb(){
 
 async function profileSnapshot(accountId=1){
   const [account,profiles,business,cust,supp,cour]=await Promise.all([
-    pool.query(`SELECT id,display_name,phone,email,address,identity_country_code,personal_public_id,created_at,updated_at FROM accounts WHERE id=$1`,[accountId]),
+    pool.query(`SELECT id,display_name,phone,email,address,identity_country_code,personal_public_id,account_mode,test_role,created_at,updated_at FROM accounts WHERE id=$1`,[accountId]),
     pool.query(`SELECT role,enabled,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role`,[accountId]),
     pool.query(`SELECT b.id,b.name,bm.membership_role,bm.active FROM businesses b JOIN business_memberships bm ON bm.business_id=b.id WHERE bm.account_id=$1 AND bm.active=TRUE ORDER BY b.id`,[accountId]),
     pool.query(`SELECT * FROM customer_profiles WHERE account_id=$1`,[accountId]),

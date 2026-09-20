@@ -1,3 +1,5 @@
+import { ensureCompanyTestAccountSchema, withCompanyTestAccountPolicy } from './company-test-accounts.js';
+
 const PROFILE_CODES = Object.freeze({ customer:'CU', merchant:'ME', supplier:'SU', courier:'DE', service_provider:'LS', admin:'AD' });
 
 export async function ensurePersonIdentitySchema(pool) {
@@ -14,6 +16,7 @@ export async function ensurePersonIdentitySchema(pool) {
     ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_identity_country_code_check;
     ALTER TABLE accounts ADD CONSTRAINT accounts_identity_country_code_check CHECK (identity_country_code ~ '^[A-Z]{2}$');
   `);
+  await ensureCompanyTestAccountSchema(pool);
 }
 
 export function profilePublicId(personalId, role) {
@@ -24,10 +27,10 @@ export function profilePublicId(personalId, role) {
 export function withPublicProfileIds(snapshot) {
   if(!snapshot?.account)return snapshot;
   const personalId=snapshot.account.personal_public_id;
-  return {...snapshot,
+  return withCompanyTestAccountPolicy({...snapshot,
     account:{...snapshot.account,personal_id:personalId,country_code:snapshot.account.identity_country_code,admin_profile_id:profilePublicId(personalId,'admin')},
     profiles:(snapshot.profiles||[]).map(profile=>({...profile,profile_id:profilePublicId(personalId,profile.role)}))
-  };
+  });
 }
 
 export { PROFILE_CODES };
