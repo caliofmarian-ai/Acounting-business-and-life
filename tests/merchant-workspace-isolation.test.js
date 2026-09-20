@@ -23,8 +23,8 @@ test('Merchant Delivery contains no Admin controls or personal-ID privilege chec
 });
 
 test('Merchant finance routes payout preferences to Profile Settings',()=>{
-  assert.match(finance,/Payout setup/);
-  assert.match(finance,/External bank accounts stay under Account · Money & Banking/);
-  assert.match(finance,/Open Profile Settings/);
+  assert.match(finance,/Payment and banking settings/);
+  assert.match(finance,/Personal bank details stay securely under Account · Money & Banking/);
+  assert.match(finance,/Manage settings/);
   assert.doesNotMatch(finance,/>Banking settings</);
 });

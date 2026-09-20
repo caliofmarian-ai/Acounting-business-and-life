@@ -67,12 +67,12 @@ test('Merchant finance gives four human-readable primary numbers before advanced
   const merchant=between(accounting,'function merchantFinanceHtml(o){','function supplierFinanceHtml(o){');
   assert.match(merchant,/Money received/);
   assert.match(merchant,/Sales/);
-  assert.match(merchant,/Still to collect/);
+  assert.match(merchant,/Awaiting payment/);
   assert.match(merchant,/Expenses/);
-  assert.match(merchant,/More business details/);
-  assert.match(merchant,/Supplier payables/);
-  assert.match(merchant,/Inventory value/);
-  assert.match(merchant,/Owner drawings/);
+  assert.match(merchant,/Financial details/);
+  assert.match(merchant,/Owed to suppliers/);
+  assert.match(merchant,/Products in stock/);
+  assert.match(merchant,/Money taken by owner/);
 });
 
 test('Supplier finance uses the same simple hierarchy without Merchant food language',()=>{
@@ -91,7 +91,7 @@ test('banking copy explains one external setup without pretending it is a provid
   assert.match(settings,/This does not mix their accounting/);
   assert.match(settings,/Provider balance/);
   assert.match(settings,/Shown only when provider evidence exists/);
-  assert.match(accounting,/Payout setup/);
-  assert.match(accounting,/External bank accounts stay under Account · Money & Banking/);
+  assert.match(accounting,/Payment and banking settings/);
+  assert.match(accounting,/Personal bank details stay securely under Account · Money & Banking/);
   assert.doesNotMatch(accounting,/provider balance UNKNOWN/);
 });
