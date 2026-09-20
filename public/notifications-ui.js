@@ -205,13 +205,21 @@ async function saveSoundPreference(e){
   try{
     await api('/api/notifications/sound-preference',{method:'PUT',body:JSON.stringify({sound_slot:soundSlot,variant})});
     if(notificationPanel?.prefs?.sound_preferences)notificationPanel.prefs.sound_preferences[soundSlot]=variant;
+    const label=notificationPanel?.prefs?.sound_variants?.find(v=>Number(v.id)===variant)?.label||`Set ${variant}`;
+    const badge=e.target.closest('.voiceSettingAccordion')?.querySelector('summary>b');
+    if(badge)badge.textContent=label;
     toast('Notification voice saved.');
   }catch(err){toast(err.message);await renderNotificationCenter()}
 }
 async function savePreferenceRow(e){
   const row=e.target.closest('.preferenceRow'),cat=row.dataset.category;
   const value=ch=>Boolean(row.querySelector(`[data-channel="${ch}"]`)?.checked);
-  try{await api('/api/notifications/preferences',{method:'PUT',body:JSON.stringify({category:cat,profile_role:'',in_app_enabled:value('in_app'),email_enabled:value('email'),push_enabled:value('push')})});toast('Preference saved.')}catch(err){toast(err.message);await renderNotificationCenter()}
+  try{
+    await api('/api/notifications/preferences',{method:'PUT',body:JSON.stringify({category:cat,profile_role:'',in_app_enabled:value('in_app'),email_enabled:value('email'),push_enabled:value('push')})});
+    const active=[value('in_app')?'In-app':'',value('email')?'Email':'',value('push')?'Push':''].filter(Boolean);
+    const badge=row.querySelector('summary>b');if(badge)badge.textContent=active.length?active.join(' • '):'Off';
+    toast('Preference saved.');
+  }catch(err){toast(err.message);await renderNotificationCenter()}
 }
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4),base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/'),raw=atob(base64);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)))}
 async function enablePush(){
