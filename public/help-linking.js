@@ -88,6 +88,7 @@
 
   function suggest({path,message,status}){
     if(!message || status<400 || !shouldSurface(path)) return;
+    if(path==='/api/profiles/customer/activate'&&status===409&&/verify your email|complete.*address|complete.*name/i.test(message))return;
     const target=resolve(path,message,status),dock=ensureDock(),notice=dock.querySelector('.contextHelpNotice');
     notice.querySelector('span').textContent=safeMessage(message,status);
     const link=notice.querySelector('a');
