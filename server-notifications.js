@@ -154,14 +154,14 @@ app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/notifications',async(req,res,next)=>{try{const me=await identity(req),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50));const{rows}=await pool.query(`
   WITH inbox AS (
-    SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
+    SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,r.role_hint,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
       ROW_NUMBER() OVER(PARTITION BY CASE WHEN e.entity_type='support_ticket' THEN 'support_ticket:'||e.entity_id ELSE 'recipient:'||r.id::text END ORDER BY e.created_at DESC,e.id DESC) thread_rank
     FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
     JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
     WHERE r.account_id=$1 AND r.dismissed_at IS NULL
-  ) SELECT recipient_id,read_at,dismissed_at,locale,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at
+  ) SELECT recipient_id,read_at,dismissed_at,locale,role_hint,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at
     FROM inbox WHERE thread_rank=1 ORDER BY created_at DESC LIMIT $2
-`,[me.account.id,limit]);const out=[];for(const row of rows){const msg=await renderNotification(pool,row,'in_app');out.push({...row,title:msg.title,body:msg.body})}res.json(out)}catch(e){next(e)}});
+`,[me.account.id,limit]);const out=[];for(const row of rows){const msg=await renderNotification(pool,row,'in_app');out.push({...row,title:msg.title,body:msg.body,attention:msg.attention})}res.json(out)}catch(e){next(e)}});
 app.get('/api/notifications/unread-count',async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`
   WITH inbox AS (
     SELECT r.read_at,ROW_NUMBER() OVER(PARTITION BY CASE WHEN e.entity_type='support_ticket' THEN 'support_ticket:'||e.entity_id ELSE 'recipient:'||r.id::text END ORDER BY e.created_at DESC,e.id DESC) thread_rank
