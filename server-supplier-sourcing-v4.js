@@ -697,6 +697,52 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
   });
 }
 
+export async function supplierReorderSuggestions(pool,businessId){
+  const {rows}=await pool.query(
+    `SELECT
+       i.id inventory_id,i.item,i.quantity,i.reorder_level,i.unit,i.unit_cost,i.base_unit inventory_base_unit,
+       src.catalog_item_id,src.preference_rank,
+       c.product_name,c.unit_name,c.base_unit,c.base_units_per_pack,c.price_per_pack,c.minimum_packs,
+       c.lead_time_days,c.supplier_account_id,c.availability_status,
+       COALESCE(sp.supplier_name,a.display_name) supplier_name
+     FROM inventory i
+     LEFT JOIN LATERAL (
+       SELECT ms.catalog_item_id,ms.preference_rank,ms.supplier_account_id
+       FROM merchant_inventory_supplier_sources ms
+       JOIN supplier_catalog_items sc
+         ON sc.id=ms.catalog_item_id
+        AND sc.active=TRUE
+        AND sc.availability_status<>'unavailable'
+       JOIN supplier_relationships rel
+         ON rel.business_id=ms.business_id
+        AND rel.supplier_account_id=ms.supplier_account_id
+        AND rel.state='accepted'
+       WHERE ms.business_id=i.business_id
+         AND ms.inventory_id=i.id
+         AND ms.active=TRUE
+       ORDER BY ms.preference_rank,ms.catalog_item_id
+       LIMIT 1
+     ) src ON TRUE
+     LEFT JOIN supplier_catalog_items c ON c.id=src.catalog_item_id
+     LEFT JOIN accounts a ON a.id=c.supplier_account_id
+     LEFT JOIN supplier_profiles sp ON sp.account_id=c.supplier_account_id
+     WHERE i.business_id=$1
+       AND i.quantity<=i.reorder_level
+     ORDER BY (i.reorder_level-i.quantity) DESC,i.item,i.id`,
+    [Number(businessId)]
+  );
+  return rows.map(x=>({
+    ...x,
+    source_status:x.catalog_item_id?'PREFERRED_SOURCE':'NO_CONFIGURED_SOURCE',
+    suggested_packs:x.catalog_item_id
+      ?Math.max(
+        Number(x.minimum_packs||1),
+        Math.ceil(Math.max(0,Number(x.reorder_level)-Number(x.quantity))/Number(x.base_units_per_pack||1))
+      )
+      :null
+  }));
+}
+
 export const supplierSourcingV4Internals={
   sourcingSettings,rfqOwnedByMerchant,rfqTargetForSupplier,quoteRows,comparison,acceptedRelationship
 };
