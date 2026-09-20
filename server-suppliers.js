@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureCatalogMediaSchema,mediaForEntities } from './catalog-media-core.js';
+import { ensureCatalogMediaSchema,mediaForEntities,listCatalogMedia,createCatalogUpload,reorderCatalogMedia,approveCatalogMedia,archiveCatalogMedia } from './catalog-media-core.js';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 
 const { Pool } = pg;
@@ -19,7 +19,7 @@ const ordersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
 const authPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const accountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
-const body = express.json({ limit: '600kb' });
+const body = express.json({ limit: '3mb' });
 let child;
 let shuttingDown = false;
 
@@ -35,6 +35,13 @@ function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)
 function business(me,id=null){const list=me?.businesses||[];return id==null?(list[0]||null):(list.find(b=>Number(b.id)===Number(id))||null)}
 async function requireMerchant(req,businessId=null){const me=await identity(req);if(!enabled(me,'merchant'))throw Object.assign(new Error('Merchant profile required'),{status:403});const b=business(me,businessId);if(!b)throw Object.assign(new Error('Business workspace unavailable'),{status:403});return{me,business:b}}
 async function requireSupplier(req){const me=await identity(req);if(!enabled(me,'supplier'))throw Object.assign(new Error('Supplier profile required'),{status:403});return me}
+async function supplierOwnedCatalogItem(req){
+  const me=await requireSupplier(req),id=Number(req.params.id);
+  if(!Number.isInteger(id)||id<1)throw Object.assign(new Error('Invalid catalog item'),{status:400});
+  const q=await pool.query(`SELECT * FROM supplier_catalog_items WHERE id=$1 AND supplier_account_id=$2`,[id,me.account.id]);
+  if(!q.rowCount)throw Object.assign(new Error('Catalog item not found'),{status:404});
+  return{me,item:q.rows[0]};
+}
 function orderNumber(id){return `PO-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${String(id).padStart(5,'0')}`}
 
 async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
@@ -166,6 +173,54 @@ app.get('/api/supplier/me',async(req,res,next)=>{try{const me=await requireSuppl
 app.put('/api/supplier/me',body,async(req,res,next)=>{try{const me=await requireSupplier(req);await pool.query(`INSERT INTO supplier_profiles(account_id,supplier_name,description,delivery_available,service_area,normal_lead_days,minimum_order_value,notes,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT(account_id) DO UPDATE SET supplier_name=EXCLUDED.supplier_name,description=EXCLUDED.description,delivery_available=EXCLUDED.delivery_available,service_area=EXCLUDED.service_area,normal_lead_days=EXCLUDED.normal_lead_days,minimum_order_value=EXCLUDED.minimum_order_value,notes=EXCLUDED.notes,updated_at=NOW()`,[me.account.id,clean(req.body?.supplier_name,150)||me.account.display_name,clean(req.body?.description,1200),Boolean(req.body?.delivery_available),clean(req.body?.service_area,300),Math.max(0,Math.min(365,Number(req.body?.normal_lead_days)||1)),req.body?.minimum_order_value===''||req.body?.minimum_order_value==null?null:Number(req.body.minimum_order_value),clean(req.body?.notes,1000)]);res.json({profile:(await identity(req)).supplier,catalog:await catalog(me.account.id)})}catch(e){next(e)}})
 app.post('/api/supplier/catalog',body,async(req,res,next)=>{try{const me=await requireSupplier(req);if(!clean(req.body?.product_name,160)||!finite(req.body?.price_per_pack)||Number(req.body.price_per_pack)<0||!positive(req.body?.base_units_per_pack))return res.status(400).json({error:'Product name, pack conversion and price are required'});const{rows}=await pool.query(`INSERT INTO supplier_catalog_items(supplier_account_id,product_name,sku,unit_name,base_unit,base_units_per_pack,price_per_pack,minimum_packs,availability_status,lead_time_days,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE) RETURNING *`,[me.account.id,clean(req.body.product_name,160),clean(req.body?.sku,80),clean(req.body?.unit_name,50)||'pack',clean(req.body?.base_unit,50)||'unit',Number(req.body.base_units_per_pack),Number(req.body.price_per_pack),positive(req.body?.minimum_packs)?Number(req.body.minimum_packs):1,['available','limited','unavailable'].includes(req.body?.availability_status)?req.body.availability_status:'available',Math.max(0,Math.min(365,Number(req.body?.lead_time_days)||1))]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'This catalog item already exists'});next(e)}})
 app.patch('/api/supplier/catalog/:id',body,async(req,res,next)=>{try{const me=await requireSupplier(req);const old=await pool.query(`SELECT * FROM supplier_catalog_items WHERE id=$1 AND supplier_account_id=$2`,[Number(req.params.id),me.account.id]);if(!old.rowCount)return res.status(404).json({error:'Catalog item not found'});const x=old.rows[0];const{rows}=await pool.query(`UPDATE supplier_catalog_items SET product_name=$1,sku=$2,unit_name=$3,base_unit=$4,base_units_per_pack=$5,price_per_pack=$6,minimum_packs=$7,availability_status=$8,lead_time_days=$9,active=$10,updated_at=NOW() WHERE id=$11 RETURNING *`,[clean(req.body?.product_name??x.product_name,160),clean(req.body?.sku??x.sku,80),clean(req.body?.unit_name??x.unit_name,50),clean(req.body?.base_unit??x.base_unit,50),Number(req.body?.base_units_per_pack??x.base_units_per_pack),Number(req.body?.price_per_pack??x.price_per_pack),Number(req.body?.minimum_packs??x.minimum_packs),['available','limited','unavailable'].includes(req.body?.availability_status)?req.body.availability_status:x.availability_status,Number(req.body?.lead_time_days??x.lead_time_days),req.body?.active??x.active,x.id]);res.json(rows[0])}catch(e){next(e)}})
+
+
+app.post('/api/supplier/catalog/:id/images/upload',body,async(req,res,next)=>{
+  try{
+    const{me,item}=await supplierOwnedCatalogItem(req);
+    const media=await createCatalogUpload(pool,{
+      accountId:Number(me.account.id),
+      entityType:'supplier_catalog_item',
+      entityId:Number(item.id),
+      sourceType:'supplier_upload',
+      dataUrl:req.body?.data_url,
+      altText:clean(req.body?.alt_text,300)||`${item.product_name} supplier product photo`
+    });
+    res.status(201).json({
+      media,
+      images:await listCatalogMedia(pool,{entityType:'supplier_catalog_item',entityId:Number(item.id)}),
+      approval_required:true,
+      image_standard:{aspect_ratio:'1:1',background:'#FFFFFF'}
+    });
+  }catch(e){next(e)}
+});
+
+app.post('/api/supplier/catalog/:id/images/reorder',body,async(req,res,next)=>{
+  try{
+    const{item}=await supplierOwnedCatalogItem(req);
+    res.json({images:await reorderCatalogMedia(pool,{
+      entityType:'supplier_catalog_item',entityId:Number(item.id),mediaIds:req.body?.media_ids
+    })});
+  }catch(e){next(e)}
+});
+
+app.post('/api/supplier/catalog/:id/images/:mediaId/approve',body,async(req,res,next)=>{
+  try{
+    const{me,item}=await supplierOwnedCatalogItem(req);
+    const media=await approveCatalogMedia(pool,{
+      accountId:Number(me.account.id),entityType:'supplier_catalog_item',entityId:Number(item.id),
+      mediaId:Number(req.params.mediaId),makePrimary:req.body?.primary!==false
+    });
+    res.json({media,images:await listCatalogMedia(pool,{entityType:'supplier_catalog_item',entityId:Number(item.id)})});
+  }catch(e){next(e)}
+});
+
+app.post('/api/supplier/catalog/:id/images/:mediaId/archive',body,async(req,res,next)=>{
+  try{
+    const{item}=await supplierOwnedCatalogItem(req);
+    res.json(await archiveCatalogMedia(pool,{entityType:'supplier_catalog_item',entityId:Number(item.id),mediaId:Number(req.params.mediaId)}));
+  }catch(e){next(e)}
+});
 
 app.post('/api/procurement/relationships/invite',body,async(req,res,next)=>{try{const{me,business:b}=await requireMerchant(req,Number(req.body?.business_id||undefined));const email=clean(req.body?.supplier_email,160).toLowerCase();const a=await pool.query(`SELECT a.id,a.display_name FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='supplier' AND p.enabled=TRUE WHERE LOWER(a.email)=$1`,[email]);if(!a.rowCount)return res.status(404).json({error:'No active Supplier profile uses that email yet'});if(Number(a.rows[0].id)===Number(me.account.id))return res.status(409).json({error:'Use a different Supplier account for this relationship'});await pool.query(`INSERT INTO supplier_relationships(business_id,supplier_account_id,state,invited_by_account_id,note) VALUES($1,$2,'invited',$3,$4) ON CONFLICT(business_id,supplier_account_id) DO UPDATE SET state='invited',invited_by_account_id=EXCLUDED.invited_by_account_id,invited_at=NOW(),revoked_at=NULL,note=EXCLUDED.note`,[b.id,a.rows[0].id,me.account.id,clean(req.body?.note,500)]);res.status(201).json(await relationship(b.id,a.rows[0].id))}catch(e){next(e)}})
 app.get('/api/procurement/relationships',async(req,res,next)=>{try{const me=await identity(req);if(enabled(me,'merchant')){const b=business(me,Number(req.query.business_id||undefined));if(!b)return res.status(403).json({error:'Business unavailable'});const{rows}=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value FROM supplier_relationships r JOIN accounts a ON a.id=r.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=a.id WHERE r.business_id=$1 ORDER BY r.state='accepted' DESC,COALESCE(s.supplier_name,a.display_name)`,[b.id]);return res.json(rows)}if(enabled(me,'supplier')){const{rows}=await pool.query(`SELECT r.*,b.name business_name FROM supplier_relationships r JOIN businesses b ON b.id=r.business_id WHERE r.supplier_account_id=$1 ORDER BY r.invited_at DESC`,[me.account.id]);return res.json(rows)}res.status(403).json({error:'Merchant or Supplier profile required'})}catch(e){next(e)}})
