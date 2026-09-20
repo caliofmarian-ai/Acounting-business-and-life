@@ -150,7 +150,7 @@ to perform routine QA or diagnose technical defects. Owner feedback can reopen a
 
 - GitHub `main` is canonical; production is deployed from the merged repository revision.
 - Production health and database connectivity are healthy at the audited revision.
-- The complete local automated suite passes: 627 tests.
+- The complete local automated suite passes: 633 tests.
 - There are 74 open issues and no open pull request at the start of this reconciliation.
 - The open issues have no workflow labels, and several describe behavior already substantially
   implemented. Issue state is therefore not a reliable implementation inventory yet.
@@ -185,7 +185,26 @@ The missing accounts must be provisioned through a controlled QA path that exerc
 registration/invitation and authorization rules. Production authentication must not gain a hidden
 back door. Secrets must not be stored in GitHub, logs or chat.
 
-### 4.4 Current high-priority findings
+### 4.4 QA data boundary
+
+The infrastructure audit on 2026-09-20 proved that `accounting-preview` and
+`accounting-business-life` referenced the same shared `DATABASE_URL` and `TOKEN_SECRET`. Therefore
+the old preview was not an isolated test environment and was blocked from role onboarding.
+
+The approved no-new-cost correction uses the existing Neon Free project and existing Railway preview
+service:
+
+- public data remains in database `accounting`;
+- internal QA data uses the separate database `accounting_qa` on the same existing Neon compute;
+- QA has its own token-signing secret;
+- QA is explicitly identified with `APP_ENV=qa`;
+- PayMongo remains in TEST mode and LIVE activation is disabled;
+- startup rejects any future configuration that reconnects QA to public data or enables live QA payments.
+
+This is one application with two controlled data surfaces, not two product implementations. The
+Owner uses `caliof.com`; `preview.caliof.com` is an internal assistant-operated QA surface.
+
+### 4.5 Current high-priority findings
 
 | Priority | Finding | Consequence | Required action |
 | --- | --- | --- | --- |
@@ -208,7 +227,7 @@ a formal load test; the release gate requires repeatable production-like measure
 
 1. Correct state invariants and add regression coverage.
 2. Refresh canonical current-state documentation and issue classification.
-3. Restore a safe preview/review surface and a controlled test-account provisioning method.
+3. Maintain the isolated internal QA surface and add a controlled test-account provisioning method.
 4. Create all missing company-managed test accounts through real lifecycle paths.
 5. Establish low-end Android performance traces and budgets.
 6. Ensure test records, notifications, payments and documents are unmistakably synthetic.
