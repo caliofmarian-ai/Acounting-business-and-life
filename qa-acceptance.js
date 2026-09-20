@@ -8,7 +8,8 @@ const MERCHANT_ALIAS='dropi.deliveries+testmerchant@gmail.com';
 const SUPER_ADMIN_ALIAS='dropi.deliveries+testsuperadmin@gmail.com';
 const CUSTOMER_WAVE='customer_onboarding_v1';
 const MERCHANT_CATALOG_WAVE='merchant_catalog_seed_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE]);
+const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -538,6 +539,259 @@ async function runMerchantCatalogSeed({pool,base,secret}){
   };
 }
 
+
+const CUSTOMER_MARKETPLACE_NOTE='Controlled QA customer marketplace E2E v1';
+const CUSTOMER_MARKETPLACE_ITEMS=['QA Fish Soup','QA Fresh Carrots','QA Bottled Juice','QA Dish Soap'];
+const CUSTOMER_MARKETPLACE_CONSUMPTION=new Map([
+  ['Water',200],
+  ['Fish',62.5],
+  ['Carrot',525],
+  ['Parsley',2.5],
+  ['Bottled Juice',1],
+  ['Dish Soap',1]
+]);
+
+const closeEnough=(actual,expected,epsilon=0.0001)=>Math.abs(Number(actual)-Number(expected))<=epsilon;
+
+async function orderDetailFor({base,token,orderId,label='QA order detail'}){
+  const detail=await requestJson(base,`/api/orders/${Number(orderId)}`,{token});
+  expectStatus(detail,200,label);
+  return detail.json;
+}
+
+async function assertCustomerMarketplaceConsumption({pool,orderId}){
+  const rows=await pool.query(
+    `SELECT i.item,c.quantity_used,c.reversed_at
+       FROM order_stock_consumptions c
+       JOIN inventory i ON i.id=c.inventory_id
+      WHERE c.order_id=$1
+      ORDER BY i.item`,
+    [Number(orderId)]
+  );
+  const actual=new Map(rows.rows.map(row=>[row.item,Number(row.quantity_used)]));
+  for(const [item,expected] of CUSTOMER_MARKETPLACE_CONSUMPTION){
+    if(!actual.has(item)||!closeEnough(actual.get(item),expected)){
+      throw new Error(`QA Marketplace stock consumption mismatch for ${item}.`);
+    }
+  }
+  if(rows.rows.some(row=>row.reversed_at))throw new Error('QA Marketplace stock consumption was unexpectedly reversed.');
+  return actual;
+}
+
+async function inventoryQuantitySnapshot(pool,businessId){
+  const rows=await pool.query(
+    `SELECT item,quantity FROM inventory
+      WHERE business_id=$1
+        AND item=ANY($2::text[])`,
+    [Number(businessId),[...CUSTOMER_MARKETPLACE_CONSUMPTION.keys()]]
+  );
+  return new Map(rows.rows.map(row=>[row.item,Number(row.quantity)]));
+}
+
+function assertInventoryDelta(before,after){
+  for(const [item,expected] of CUSTOMER_MARKETPLACE_CONSUMPTION){
+    if(!before.has(item)||!after.has(item))throw new Error(`QA Marketplace inventory item missing for ${item}.`);
+    const delta=before.get(item)-after.get(item);
+    if(!closeEnough(delta,expected))throw new Error(`QA Marketplace inventory delta mismatch for ${item}.`);
+  }
+}
+
+async function ensureActiveRole({base,token,role,label}){
+  const active=await requestJson(base,'/api/me/active-role',{
+    method:'PATCH',token,body:{role}
+  });
+  expectStatus(active,200,label+' active role');
+}
+
+async function runCustomerMarketplaceE2E({pool,base,secret}){
+  const customerPrerequisite=await runCustomerOnboarding({pool,base,secret});
+  if(customerPrerequisite.status!=='PASS')throw new Error('Customer onboarding prerequisite did not pass.');
+  const merchantPrerequisite=await runMerchantCatalogSeed({pool,base,secret});
+  if(merchantPrerequisite.status!=='PASS')throw new Error('Merchant catalog prerequisite did not pass.');
+
+  const [customer,merchant]=await Promise.all([
+    qaAccountSession({
+      pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Customer Marketplace QA'
+    }),
+    qaAccountSession({
+      pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Merchant Marketplace QA'
+    })
+  ]);
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Customer Marketplace QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Merchant Marketplace QA'});
+
+  const merchantMe=await requestJson(base,'/api/me',{token:merchant.token});
+  expectStatus(merchantMe,200,'Merchant Marketplace account snapshot');
+  const business=(merchantMe.json?.businesses||[]).find(x=>x.name==='Business & Life QA Fish Kitchen')
+    ||(merchantMe.json?.businesses||[])[0];
+  if(!business?.id)throw new Error('QA Merchant business workspace is unavailable.');
+  const businessId=Number(business.id);
+
+  const discovered=await requestJson(base,`/api/marketplace/storefronts/${businessId}`,{token:customer.token});
+  expectStatus(discovered,200,'Customer Marketplace storefront discovery');
+  const publicProducts=Array.isArray(discovered.json?.products)?discovered.json.products:[];
+  const basket=[];
+  for(const name of CUSTOMER_MARKETPLACE_ITEMS){
+    const product=publicProducts.find(x=>x.name===name);
+    if(!product?.id)throw new Error('QA Marketplace product missing from Customer discovery: '+name);
+    basket.push({product_id:Number(product.id),quantity:1});
+  }
+
+  const existing=await pool.query(
+    `SELECT id,order_status FROM orders
+      WHERE business_id=$1 AND customer_account_id=$2 AND note=$3
+      ORDER BY id DESC LIMIT 1`,
+    [businessId,customer.accountId,CUSTOMER_MARKETPLACE_NOTE]
+  );
+  let order;
+  if(existing.rowCount&&existing.rows[0].order_status!=='cancelled'){
+    order=await orderDetailFor({
+      base,token:customer.token,orderId:existing.rows[0].id,label:'Existing Customer Marketplace QA order'
+    });
+  }else{
+    const checkout=await requestJson(base,'/api/marketplace/checkout',{
+      method:'POST',
+      token:customer.token,
+      body:{
+        business_id:businessId,
+        items:basket,
+        fulfilment_method:'pickup',
+        payment_method:'cash',
+        note:CUSTOMER_MARKETPLACE_NOTE
+      }
+    });
+    expectStatus(checkout,201,'Customer Marketplace checkout');
+    order=checkout.json;
+  }
+
+  const orderId=Number(order?.id);
+  if(!orderId)throw new Error('Customer Marketplace checkout did not create a valid order.');
+  if(!closeEnough(order.subtotal,185))throw new Error('QA Marketplace order subtotal is not the expected PHP 185.');
+
+  let presenceGate=false;
+  let stockDeltaVerified=false;
+
+  if(order.order_status==='awaiting_customer_presence'){
+    presenceGate=true;
+    const checkIn=await requestJson(base,`/api/orders/${orderId}/check-in`,{
+      method:'POST',token:customer.token,body:{}
+    });
+    expectStatus(checkIn,200,'Customer Marketplace check-in');
+
+    const confirm=await requestJson(base,`/api/orders/merchant/${orderId}/confirm-presence`,{
+      method:'POST',token:merchant.token,body:{}
+    });
+    expectStatus(confirm,200,'Merchant Marketplace presence confirmation');
+    order=confirm.json;
+  }else if(!['accepted','preparing','ready','completed'].includes(order.order_status)){
+    throw new Error('QA Marketplace order entered an unexpected state before preparation.');
+  }
+
+  if(order.order_status==='accepted'){
+    const before=await inventoryQuantitySnapshot(pool,businessId);
+    const start=await requestJson(base,`/api/orders/merchant/${orderId}/start`,{
+      method:'POST',token:merchant.token,body:{}
+    });
+    expectStatus(start,200,'Merchant Marketplace preparation start');
+    order=start.json;
+    const after=await inventoryQuantitySnapshot(pool,businessId);
+    assertInventoryDelta(before,after);
+    stockDeltaVerified=true;
+  }
+
+  if(['preparing','ready','completed'].includes(order.order_status)){
+    await assertCustomerMarketplaceConsumption({pool,orderId});
+  }else{
+    throw new Error('QA Marketplace order did not reach a stock-consuming state.');
+  }
+
+  if(order.order_status==='preparing'){
+    const ready=await requestJson(base,`/api/orders/merchant/${orderId}/ready`,{
+      method:'POST',token:merchant.token,body:{}
+    });
+    expectStatus(ready,200,'Merchant Marketplace ready');
+    order=ready.json;
+  }
+
+  if(order.order_status==='ready'&&order.payment_status!=='paid'){
+    const outstanding=Number(order.outstanding_amount);
+    if(!(outstanding>0))throw new Error('QA Marketplace ready order has no valid outstanding amount.');
+    const paid=await requestJson(base,`/api/orders/merchant/${orderId}/payment`,{
+      method:'POST',
+      token:merchant.token,
+      body:{amount:outstanding,account:'cash',method_code:'cash'}
+    });
+    expectStatus(paid,200,'Merchant Marketplace cash payment');
+    order=paid.json;
+  }
+
+  if(order.order_status==='ready'){
+    if(order.payment_status!=='paid'||Number(order.outstanding_amount)>0.001){
+      throw new Error('QA Marketplace order is not fully paid before completion.');
+    }
+    const completed=await requestJson(base,`/api/orders/merchant/${orderId}/complete`,{
+      method:'POST',token:merchant.token,body:{allow_credit:false}
+    });
+    expectStatus(completed,200,'Merchant Marketplace completion');
+    order=completed.json;
+  }
+
+  if(order.order_status!=='completed'||order.payment_status!=='paid'){
+    throw new Error('QA Marketplace order did not complete as paid.');
+  }
+
+  await assertCustomerMarketplaceConsumption({pool,orderId});
+  const payment=await pool.query(
+    `SELECT COUNT(*)::int count,COALESCE(SUM(amount),0)::numeric total
+       FROM order_payments
+      WHERE order_id=$1 AND status='confirmed'`,
+    [orderId]
+  );
+  if(Number(payment.rows[0]?.count||0)<1||!closeEnough(payment.rows[0]?.total,185)){
+    throw new Error('QA Marketplace confirmed cash payment evidence is incomplete.');
+  }
+
+  const history=await requestJson(base,'/api/orders/mine',{token:customer.token});
+  expectStatus(history,200,'Customer Marketplace order history');
+  const historyOrder=(Array.isArray(history.json)?history.json:[]).find(x=>Number(x.id)===orderId);
+  if(historyOrder?.order_status!=='completed'||historyOrder?.payment_status!=='paid'){
+    throw new Error('Completed QA Marketplace order is missing from Customer history.');
+  }
+
+  const publicToken=clean(order.public_token,200);
+  if(!publicToken)throw new Error('QA Marketplace order is missing its public tracker token.');
+  const tracker=await requestJson(base,`/api/orders/track/${publicToken}`);
+  expectStatus(tracker,200,'Customer Marketplace public tracker');
+  if(Number(tracker.json?.id)!==orderId||tracker.json?.order_status!=='completed'||tracker.json?.payment_status!=='paid'){
+    throw new Error('Public tracker does not match the completed QA Marketplace order.');
+  }
+
+  const customerLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(customerLogout,200,'Customer Marketplace QA logout');
+  const merchantLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+  expectStatus(merchantLogout,200,'Merchant Marketplace QA logout');
+
+  return{
+    status:'PASS',
+    wave:CUSTOMER_MARKETPLACE_WAVE,
+    customer_verified:true,
+    merchant_verified:true,
+    business_id:businessId,
+    storefront_discovered:true,
+    basket_products:basket.length,
+    order_id:orderId,
+    cash_pickup:true,
+    presence_gate:presenceGate||Boolean(order.presence_confirmed_at),
+    stock_consumption_verified:true,
+    stock_delta_verified:stockDeltaVerified,
+    payment_confirmed:true,
+    payment_status:'paid',
+    order_completed:true,
+    customer_history:true,
+    public_tracker:true
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -546,7 +800,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   try{
     const result=config.wave===MERCHANT_CATALOG_WAVE
       ?await runMerchantCatalogSeed({pool,base,secret:config.secret})
-      :await runCustomerOnboarding({pool,base,secret:config.secret});
+      :config.wave===CUSTOMER_MARKETPLACE_WAVE
+        ?await runCustomerMarketplaceE2E({pool,base,secret:config.secret})
+        :await runCustomerOnboarding({pool,base,secret:config.secret});
     console.log('QA_ACCEPTANCE_RESULT '+JSON.stringify(result));
     return result;
   }catch(error){
@@ -558,5 +814,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,CUSTOMER_MARKETPLACE_WAVE
 };
