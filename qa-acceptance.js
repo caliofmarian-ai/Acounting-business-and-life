@@ -606,7 +606,7 @@ async function ensureActiveRole({base,token,role,label}){
   expectStatus(active,200,label+' active role');
 }
 
-async function runCustomerMarketplaceE2E({pool,base,secret,orderNote=orderNote}){
+async function runCustomerMarketplaceE2E({pool,base,secret,orderNote=CUSTOMER_MARKETPLACE_NOTE}){
   const customerPrerequisite=await runCustomerOnboarding({pool,base,secret});
   if(customerPrerequisite.status!=='PASS')throw new Error('Customer onboarding prerequisite did not pass.');
   const merchantPrerequisite=await runMerchantCatalogSeed({pool,base,secret});
