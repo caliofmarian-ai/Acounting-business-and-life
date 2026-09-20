@@ -40,6 +40,14 @@ test('priority commerce and operations events are wired into one notification ga
   ]) assert.match(server,new RegExp(marker.replace('.','\\.')));
 });
 
+test('Marketplace checkout emits the same Merchant new-order notification as legacy order creation',()=>{
+  assert.match(server,/async function emitOrderCreated/);
+  assert.ok(server.includes("app.post('/api/orders'"));
+  assert.ok(server.includes("app.post('/api/marketplace/checkout'"));
+  assert.match(server,/eventCode:'order\.created'/);
+  assert.match(server,/businessNotificationRecipients\(pool,o\.business_id,'merchant'\)/);
+});
+
 test('support and governance routing respect scoped delegated Admin permissions',()=>{
   assert.match(core,/admin_permission_grants/);
   assert.match(core,/permission_code/);
