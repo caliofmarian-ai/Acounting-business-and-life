@@ -54,6 +54,149 @@ function analysisRows(data){if(!data.categories?.length)return[emptyRow('No spen
 
 $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';try{const r=await api('/api/login',{method:'POST',body:JSON.stringify({pin:$('pin').value})});token=r.token;localStorage.setItem('abl_token',token);showShell()}catch(err){$('loginError').textContent=err.message}});
 
+let merchantTodayCache=null;
+let merchantTodayPromise=null;
+let merchantTodayBusinessId=null;
+
+function currentMerchantBusinessId(){
+  const id=Number(window.BusinessLifeAccounting?.getState?.()?.activeBusinessId);
+  return Number.isInteger(id)&&id>0?id:null;
+}
+function invalidateMerchantToday(){
+  merchantTodayCache=null;
+  merchantTodayPromise=null;
+  merchantTodayBusinessId=null;
+}
+function todayChip(label,value,{muted=false}={}){
+  const n=Number(value||0);
+  return '<span class="todayChip '+(n>0&&!muted?'attention':'')+'"><strong>'+n+'</strong>'+esc(label)+'</span>';
+}
+function renderMerchantToday(data){
+  if(!data)return;
+  merchantTodayCache=data;
+  merchantTodayBusinessId=Number(data.business?.id)||currentMerchantBusinessId();
+  $('todayBusinessName').textContent=data.business?.name||'Current business';
+  $('todayOrdersTotal').textContent=String(Number(data.orders?.attention_total||0));
+  $('todayOrdersHeadline').textContent=Number(data.orders?.attention_total||0)>0?'Orders need attention':'No active order work';
+  $('todayOrderChips').innerHTML=[
+    todayChip('Waiting',data.orders?.waiting_customer),
+    todayChip('Payment',data.orders?.awaiting_payment),
+    todayChip('Accepted',data.orders?.accepted),
+    todayChip('Preparing',data.orders?.preparing),
+    todayChip('Ready',Number(data.orders?.ready||0)+Number(data.orders?.delivery_handoff||0))
+  ].join('');
+  $('todayOrdersCopy').textContent=Number(data.orders?.attention_total||0)>0
+    ?'Open Orders to handle the next customer action.'
+    :'New customer work will appear here.';
+
+  $('todayInventoryTotal').textContent=String(Number(data.inventory?.attention_total||0));
+  $('todayInventoryHeadline').textContent=Number(data.inventory?.out_of_stock||0)>0
+    ?'Out-of-stock items need action'
+    :Number(data.inventory?.low_stock||0)>0?'Low stock needs attention':'Stock looks clear';
+  const inv=Array.isArray(data.inventory?.items)?data.inventory.items:[];
+  $('todayInventoryItems').innerHTML=inv.length
+    ?inv.map(x=>'<div><strong>'+esc(x.item)+'</strong><span>'+num(x.quantity,4)+' '+esc(x.unit)+' · reorder '+num(x.reorder_level,4)+'</span></div>').join('')
+    :'<div class="todayEmpty">No low-stock inventory evidence.</div>';
+  $('todayInventoryCopy').textContent=Number(data.inventory?.source_attention||0)>0
+    ?String(Number(data.inventory.source_attention))+' low-stock item(s) already have supplier-source evidence.'
+    :'Only recorded Inventory is shown; catalog items never create fake stock.';
+
+  $('todaySupplierTotal').textContent=String(Number(data.supplier?.attention_total||0));
+  $('todaySupplierHeadline').textContent=Number(data.supplier?.decisions_required||0)>0
+    ?'Supplier changes need a decision'
+    :Number(data.supplier?.rfqs_to_compare||0)>0?'Quotes are ready to compare'
+    :Number(data.supplier?.received_unpaid||0)>0?'Received stock is still unpaid':'No supplier decisions';
+  $('todaySupplierChips').innerHTML=[
+    todayChip('Decisions',data.supplier?.decisions_required),
+    todayChip('Quotes',data.supplier?.rfqs_to_compare),
+    todayChip('Waiting RFQ',data.supplier?.rfqs_waiting_supplier,{muted:true}),
+    todayChip('Received unpaid',data.supplier?.received_unpaid)
+  ].join('');
+
+  $('todayCatalogTotal').textContent=String(Number(data.catalog?.attention_total||0));
+  $('todayCatalogHeadline').textContent=Number(data.catalog?.attention_total||0)>0?'Catalog needs review':'Catalog is ready';
+  const catalogChips=[
+    todayChip('Unpublished',data.catalog?.unpublished),
+    todayChip('Unavailable',data.catalog?.unavailable),
+    todayChip('Missing media',data.catalog?.missing_media),
+    todayChip('AI review',data.catalog?.ai_drafts_to_review)
+  ];
+  if(data.presentation?.food_modules_enabled)catalogChips.push(todayChip('Recipe',data.catalog?.recipe_attention));
+  $('todayCatalogChips').innerHTML=catalogChips.join('');
+  $('todayCatalogCopy').textContent=data.presentation?.merchant_domain==='non_food'
+    ?'Non-food catalog checks use stock, publication and media evidence — never recipe requirements.'
+    :'Publishing, media, availability and food-recipe evidence for this business.';
+
+  $('todayMoneyReceived').textContent=money(data.money?.confirmed_received);
+  $('todayCompletedSales').textContent=money(data.money?.completed_sales);
+  $('todayAwaitingPayment').textContent=money(data.money?.awaiting_payment);
+  $('todayBusinessExpenses').textContent=money(data.money?.business_expenses);
+  $('todayFoodActions').classList.toggle('hidden',!data.presentation?.food_modules_enabled);
+  const stamp=data.generated_at?new Date(data.generated_at):new Date();
+  $('todayUpdatedAt').textContent='Updated '+stamp.toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'});
+  $('todayLoading').classList.add('hidden');
+  $('todayError').classList.add('hidden');
+  $('todayContent').classList.remove('hidden');
+  document.dispatchEvent(new CustomEvent('abl:merchant-today-data',{detail:{business:data.business,presentation:data.presentation}}));
+}
+function merchantTodayLoading(){
+  $('todayError')?.classList.add('hidden');
+  $('todayContent')?.classList.add('hidden');
+  $('todayLoading')?.classList.remove('hidden');
+}
+function merchantTodayError(error){
+  $('todayLoading')?.classList.add('hidden');
+  $('todayContent')?.classList.add('hidden');
+  $('todayError')?.classList.remove('hidden');
+  if($('todayErrorMessage'))$('todayErrorMessage').textContent=error?.message||'Check your connection and try again.';
+}
+async function loadMerchantToday({force=false}={}){
+  if(!isMerchantBaseActive()||!$('viewDashboard'))return null;
+  const activeId=currentMerchantBusinessId();
+  if(!force&&merchantTodayCache&&(!activeId||Number(merchantTodayBusinessId)===activeId)){
+    renderMerchantToday(merchantTodayCache);
+    return merchantTodayCache;
+  }
+  if(!force&&merchantTodayPromise)return merchantTodayPromise;
+  merchantTodayLoading();
+  merchantTodayPromise=api('/api/merchant/today')
+    .then(data=>{renderMerchantToday(data);return data})
+    .catch(error=>{merchantTodayError(error);throw error})
+    .finally(()=>{merchantTodayPromise=null});
+  return merchantTodayPromise;
+}
+async function openMerchantAction(action){
+  document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.merchantAction===action));
+  if(action==='orders'){
+    if(window.BusinessLifeOrders?.openMerchantOrders)return window.BusinessLifeOrders.openMerchantOrders();
+    return document.getElementById('ordersQuickButton')?.click();
+  }
+  if(action==='catalog'){
+    if(window.BusinessLifeMarketplace?.openMerchantStore)return window.BusinessLifeMarketplace.openMerchantStore();
+    return document.getElementById('marketQuickButton')?.click();
+  }
+  if(action==='suppliers'){
+    if(window.BusinessLifeSuppliers?.openMerchantProcurement)return window.BusinessLifeSuppliers.openMerchantProcurement();
+    return document.getElementById('supQuickButton')?.click();
+  }
+  if(action==='inventory')return setView('Stock');
+  if(action==='money')return setView('Money');
+  if(action==='quick-sale')return setView('Sell');
+  if(action==='recipes')return setView('Menu');
+}
+async function loadMerchantView(name){
+  if(!isMerchantBaseActive())return;
+  if(name==='Dashboard')return loadMerchantToday();
+  if(name==='Money'){
+    document.dispatchEvent(new CustomEvent('abl:merchant-money-opened'));
+    return Promise.all([loadDay(),loadRemittances(),loadAnalysis(7),loadAnalysis(30)]);
+  }
+  if(name==='Stock')return loadStock();
+  if(name==='Sell')return Promise.all([loadStock(),loadProducts()]);
+  if(name==='Menu')return Promise.all([loadStock(),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)]);
+  if(name==='History')return loadTransactions();
+}
+
 async function loadSummary(){
   const s=await cachedJson('/api/summary','summary');$('availableTotal').textContent=money(s.available_total);$('todaySales').textContent=money(s.today_sales);$('todayProfit').textContent=money(s.today_profit);$('bizExpenses').textContent=money(s.business_expenses);$('personalWithdrawals').textContent=money(s.personal_withdrawals);$('moneyReceived').textContent=money(s.money_received);$('remittanceReceived').textContent=`Remittances: ${money(s.remittance_received)}`;$('acctCash').textContent=money(s.accounts?.cash);$('acctGcash').textContent=money(s.accounts?.gcash);$('acctBank').textContent=money(s.accounts?.bank);$('acctOther').textContent=money(s.accounts?.other);$('lowStock').textContent=s.low_stock;
   $('menuRevenueToday').textContent=money(s.product_today_revenue);$('menuCogsToday').textContent=money(s.product_today_cogs);$('menuGrossToday').textContent=money(s.product_today_gross_profit);$('menuMarginToday').textContent=`${Number(s.product_today_margin_pct||0).toFixed(1)}% • ${num(s.product_today_portions)} portions`;
@@ -120,15 +263,23 @@ async function loadProductSales(){const rows=await cachedJson('/api/product-sale
 function profitRows(report){if(!report.products?.length)return[emptyRow('No menu sales in this period.')];return report.products.map(p=>{const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(p.name)}</strong><small>${num(p.quantity)} portions • revenue ${money(p.revenue)} • cost ${money(p.cogs)}</small></div><div class="rowRight"><span class="${Number(p.gross_profit)>=0?'positive':'negative'}">${money(p.gross_profit)}</span><small>${Number(p.margin_pct).toFixed(1)}%</small></div>`;return d})}
 async function loadProfitability(days){const r=await cachedJson(`/api/product-profitability?days=${days}`,`profit_${days}`);$(`profit${days}Totals`).textContent=`${num(r.totals.portions)} portions • revenue ${money(r.totals.revenue)} • ingredient cost ${money(r.totals.cogs)} • gross ${money(r.totals.gross_profit)} • margin ${Number(r.totals.margin_pct).toFixed(1)}%`;$(`profit${days}List`).replaceChildren(...profitRows(r))}
 
-async function refreshAll(){if(!isMerchantBaseActive())return;try{await Promise.all([loadSummary(),loadTransactions(),loadStock(),loadRemittances(),loadDay(),loadBudget(),loadAnalysis(7),loadAnalysis(30),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)])}catch(e){console.error(e)}}
-$('refreshBtn').onclick=refreshAll;
+async function refreshCurrentMerchantView(){
+  if(!isMerchantBaseActive())return;
+  const visible=[...document.querySelectorAll('.view')].find(v=>!v.classList.contains('hidden'));
+  const name=visible?.id?.replace(/^view/,'')||'Dashboard';
+  try{
+    if(name==='Dashboard'){invalidateMerchantToday();await loadMerchantToday({force:true});return}
+    await loadMerchantView(name);
+  }catch(error){console.error(error)}
+}
+if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
 
-$('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';await refreshAll();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';stockPurchasePreview();await Promise.all([loadStock(),loadProducts(),loadSummary(),loadTransactions()])}catch(err){$('stockMessage').textContent=err.message}});
-$('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await refreshAll()}catch(err){$('remitMessage').textContent=err.message}});
-$('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await Promise.all([loadDay(),loadSummary()])}catch(err){$('openResult').textContent=err.message}});
+$('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';invalidateMerchantToday();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
+$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
+$('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});
-$('budgetForm').addEventListener('submit',async e=>{e.preventDefault();$('budgetMessage').textContent='Saving…';try{await api('/api/budget',{method:'POST',body:JSON.stringify({personal_daily_limit:Number($('budgetPersonalDaily').value||0),personal_weekly_limit:Number($('budgetPersonalWeekly').value||0),business_daily_limit:Number($('budgetBusinessDaily').value||0),min_available_warning:Number($('budgetMinimum').value||0)})});$('budgetMessage').textContent='Limits saved.';await loadSummary()}catch(err){$('budgetMessage').textContent=err.message}});
+$('budgetForm').addEventListener('submit',async e=>{e.preventDefault();$('budgetMessage').textContent='Saving…';try{await api('/api/budget',{method:'POST',body:JSON.stringify({personal_daily_limit:Number($('budgetPersonalDaily').value||0),personal_weekly_limit:Number($('budgetPersonalWeekly').value||0),business_daily_limit:Number($('budgetBusinessDaily').value||0),min_available_warning:Number($('budgetMinimum').value||0)})});$('budgetMessage').textContent='Limits saved.'}catch(err){$('budgetMessage').textContent=err.message}});
 
 $('productForm').addEventListener('submit',async e=>{e.preventDefault();$('productMessage').textContent='Saving…';const id=$('productId').value;const body={name:$('productName').value,category:$('productCategory').value||'Food',selling_price:Number($('productPrice').value),active:$('productActive').checked,product_kind:'prepared_recipe'};try{if(id)await api(`/api/products/${id}`,{method:'PATCH',body:JSON.stringify(body)});else await api('/api/products',{method:'POST',body:JSON.stringify(body)});resetProductForm();await loadProducts();$('productMessage').textContent='Saved. Add or update the batch recipe below.'}catch(err){$('productMessage').textContent=err.message}});
 $('productCancel').onclick=resetProductForm;
@@ -141,16 +292,52 @@ for(const id of ['stockPurchaseQty','stockPurchaseUnit','stockTotalCost'])$(id).
 $('stockPurchaseUnit').addEventListener('change',()=>{const u=$('stockPurchaseUnit').value,m=unitMeta(u);if(m)syncUnitSelect('stockReorderUnit',m.base);stockPurchasePreview()});
 stockPurchasePreview();
 $('sellProduct').onchange=updateSellPreview;$('sellQty').oninput=updateSellPreview;
-$('sellForm').addEventListener('submit',async e=>{e.preventDefault();$('sellMessage').textContent='Saving sale…';try{const r=await api('/api/product-sales',{method:'POST',body:JSON.stringify({product_id:Number($('sellProduct').value),quantity:Number($('sellQty').value),account:$('sellAccount').value,note:$('sellNote').value})});$('sellMessage').innerHTML=`Saved ${num(r.quantity)} portion(s). Revenue <strong>${money(r.revenue)}</strong>, estimated gross <strong>${money(r.gross_profit)}</strong>.`;e.target.reset();$('sellQty').value=1;$('sellAccount').value='cash';await Promise.all([loadSummary(),loadTransactions(),loadStock(),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)]);updateSellPreview()}catch(err){if(err.data?.shortages?.length){$('sellMessage').innerHTML=`<span class="negative">Not enough stock:</span> ${err.data.shortages.map(s=>`${esc(s.item)} needs ${num(s.required)} ${esc(s.unit)}, available ${num(s.available)}`).join(' • ')}`}else $('sellMessage').textContent=err.message}});
+$('sellForm').addEventListener('submit',async e=>{e.preventDefault();$('sellMessage').textContent='Saving sale…';try{const r=await api('/api/product-sales',{method:'POST',body:JSON.stringify({product_id:Number($('sellProduct').value),quantity:Number($('sellQty').value),account:$('sellAccount').value,note:$('sellNote').value})});$('sellMessage').innerHTML=`Saved ${num(r.quantity)} portion(s). Revenue <strong>${money(r.revenue)}</strong>, estimated gross <strong>${money(r.gross_profit)}</strong>.`;e.target.reset();$('sellQty').value=1;$('sellAccount').value='cash';await Promise.all([loadTransactions(),loadStock(),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)]);invalidateMerchantToday();updateSellPreview()}catch(err){if(err.data?.shortages?.length){$('sellMessage').innerHTML=`<span class="negative">Not enough stock:</span> ${err.data.shortages.map(s=>`${esc(s.item)} needs ${num(s.required)} ${esc(s.unit)}, available ${num(s.available)}`).join(' • ')}`}else $('sellMessage').textContent=err.message}});
 
 function openEdit(tx){$('editId').value=tx.id;$('editType').value=tx.type;$('editAmount').value=Number(tx.amount);$('editAccount').value=tx.account||'cash';$('editCategory').value=tx.category||'';$('editNote').value=tx.note||'';$('editReason').value='';$('editMessage').textContent='';$('editDialog').showModal()}
 async function voidManualEntry(tx){
   if(!confirm(`Void this manual/test entry of ${money(tx.amount)}? Its audit history will be preserved.`))return;
-  try{await api(`/api/transactions/${tx.id}`,{method:'PATCH',body:JSON.stringify({amount:0,note:[tx.note,'VOIDED TEST/MANUAL ENTRY'].filter(Boolean).join(' • '),reason:'Voided test or manual entry; original value preserved in audit history'})});await refreshAll()}catch(err){alert(err.message)}
+  try{await api(`/api/transactions/${tx.id}`,{method:'PATCH',body:JSON.stringify({amount:0,note:[tx.note,'VOIDED TEST/MANUAL ENTRY'].filter(Boolean).join(' • '),reason:'Voided test or manual entry; original value preserved in audit history'})});await loadTransactions();invalidateMerchantToday()}catch(err){alert(err.message)}
 }
-$('editCancel').onclick=()=>$('editDialog').close();$('editForm').addEventListener('submit',async e=>{e.preventDefault();$('editMessage').textContent='Saving correction…';try{await api(`/api/transactions/${$('editId').value}`,{method:'PATCH',body:JSON.stringify({type:$('editType').value,amount:Number($('editAmount').value),account:$('editAccount').value,category:$('editCategory').value,note:$('editNote').value,reason:$('editReason').value})});$('editDialog').close();await refreshAll()}catch(err){$('editMessage').textContent=err.message}});
+$('editCancel').onclick=()=>$('editDialog').close();$('editForm').addEventListener('submit',async e=>{e.preventDefault();$('editMessage').textContent='Saving correction…';try{await api(`/api/transactions/${$('editId').value}`,{method:'PATCH',body:JSON.stringify({type:$('editType').value,amount:Number($('editAmount').value),account:$('editAccount').value,category:$('editCategory').value,note:$('editNote').value,reason:$('editReason').value})});$('editDialog').close();await loadTransactions();invalidateMerchantToday()}catch(err){$('editMessage').textContent=err.message}});
 
-function setView(name){document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));$(`view${name}`).classList.remove('hidden');document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.view===name));window.scrollTo({top:0,behavior:'smooth'});if(name==='Sell')updateSellPreview()}
-document.querySelectorAll('.bottomNav button').forEach(b=>b.onclick=()=>setView(b.dataset.view));document.querySelectorAll('[data-view-link]').forEach(b=>b.onclick=()=>setView(b.dataset.viewLink));
+function setView(name){
+  const view=$(`view${name}`);if(!view)return;
+  document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));
+  view.classList.remove('hidden');
+  document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
+  window.scrollTo({top:0,behavior:'smooth'});
+  if(name==='Sell')updateSellPreview();
+  loadMerchantView(name).catch(error=>console.error(error));
+}
+document.querySelectorAll('.bottomNav [data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
+document.querySelectorAll('.bottomNav [data-merchant-action]').forEach(b=>b.onclick=()=>openMerchantAction(b.dataset.merchantAction));
+document.querySelectorAll('[data-view-link]').forEach(b=>b.onclick=()=>setView(b.dataset.viewLink));
+document.querySelectorAll('[data-today-action]').forEach(b=>b.onclick=()=>openMerchantAction(b.dataset.todayAction));
+if($('todayRefresh'))$('todayRefresh').onclick=()=>{invalidateMerchantToday();loadMerchantToday({force:true}).catch(()=>{})};
+if($('todayRetry'))$('todayRetry').onclick=()=>{invalidateMerchantToday();loadMerchantToday({force:true}).catch(()=>{})};
 $('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv',{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}catch(err){alert(err.message)}};
-document.addEventListener('abl:profile-state',event=>{baseActiveRole=event.detail?.activeRole||null;if(isMerchantBaseActive())refreshAll()});document.addEventListener('abl:business-workspace-changed',()=>{if(isMerchantBaseActive())refreshAll()});window.addEventListener('online',()=>{setOnline(true);if(isMerchantBaseActive())refreshAll()});window.addEventListener('offline',()=>setOnline(false));setOnline(navigator.onLine);if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});if(token){showShell();if(window.BusinessLifeProfileState){baseActiveRole=window.BusinessLifeProfileState.activeRole||null;if(isMerchantBaseActive())refreshAll()}}
+document.addEventListener('abl:profile-state',event=>{
+  baseActiveRole=event.detail?.activeRole||null;
+  if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+});
+document.addEventListener('abl:business-workspace-changed',()=>{
+  invalidateMerchantToday();
+  if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday({force:true}).catch(()=>{});
+});
+window.addEventListener('online',()=>{
+  setOnline(true);
+  if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden')){
+    invalidateMerchantToday();loadMerchantToday({force:true}).catch(()=>{});
+  }
+});
+window.addEventListener('offline',()=>setOnline(false));
+setOnline(navigator.onLine);
+if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+if(token){
+  showShell();
+  if(window.BusinessLifeProfileState){
+    baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
+    if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+  }
+}
