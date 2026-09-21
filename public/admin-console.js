@@ -81,10 +81,82 @@ function rows(items,formatter){
 function overviewPanel(){
   return hero()+metrics()+'<div class="sectionTitle"><h3>My delegated functions</h3></div><div class="permissionPills">'+(state.me.permissions||[]).map(p=>'<span>'+esc(p)+'</span>').join('')+'</div>';
 }
+function profileRoleLabel(role){
+  return ({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services',customer:'Customer'})[role]||readableCode(role);
+}
+function profileApplicationRow(x){
+  const waiting=['submitted','under_review'].includes(x.status);
+  return '<button type="button" class="row queueRow adminReviewRow" data-admin-application="'+Number(x.id)+'"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(profileRoleLabel(x.role))+' · '+esc(x.territory_name||'Scoped territory')+' · '+Number(x.document_count||0)+' document'+(Number(x.document_count||0)===1?'':'s')+'</span><span class="adminRowAction">'+(waiting?'Review application':'Open details')+' ›</span></button>';
+}
+function profileAuthorizationRow(x){
+  const canManage=hasAny(['profile.suspend']);
+  return '<div class="row adminReviewRow"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(profileRoleLabel(x.role))+' · '+esc(x.territory_name||'Country scope')+'</span>'+(x.reason?'<span class="muted">'+esc(x.reason)+'</span>':'')+(canManage?'<button class="secondary adminInlineAction" type="button" data-admin-authorization="'+Number(x.id)+'">Manage access</button>':'')+'</div>';
+}
 function profilesPanel(){
   const apps=state.overview?.applications||[];
   const auths=state.overview?.authorizations||[];
-  return hero()+'<p class="moduleIntro">Profile onboarding and authorization queues inside your permitted scope.</p><div class="sectionTitle"><h3>Applications</h3></div>'+rows(apps,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.role)+' · '+esc(x.territory_name||'Scoped territory')+'</span></div>')+'<div class="sectionTitle"><h3>Authorizations</h3></div>'+rows(auths,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.role)+' · '+esc(x.territory_name||'Country scope')+'</span></div>');
+  return hero()+'<p class="moduleIntro">Review onboarding evidence and manage profile authorization inside your delegated scope.</p><div class="sectionTitle"><h3>Applications</h3></div>'+rows(apps,profileApplicationRow)+'<div class="sectionTitle"><h3>Authorizations</h3></div>'+rows(auths,profileAuthorizationRow);
+}
+function applicationCategoryChoices(a){
+  if(a.role!=='service_provider')return '';
+  const cats=Array.isArray(a.requested_categories)?a.requested_categories:[];
+  if(!cats.length)return '<div class="notice"><strong>No service category approval requested.</strong><br>Approving the profile will not invent or auto-authorize a service category.</div>';
+  return '<fieldset class="adminEvidenceGroup"><legend>Requested Local Services categories</legend><p class="muted">Choose the categories you are approving. Credential-gated categories remain protected by server verification even if selected here.</p>'+cats.map(c=>'<label class="inlineChoice"><input type="checkbox" name="approved_category_ids" value="'+Number(c.id)+'" '+(!c.credential_gate?'checked':'')+'><span><strong>'+esc(c.name)+'</strong><small class="muted">'+(c.credential_gate?'Credential evidence required':'No credential gate')+'</small></span></label>').join('')+'</fieldset>';
+}
+function applicationEvidenceHtml(a){
+  const docs=Array.isArray(a.documents)?a.documents:[],credentials=Array.isArray(a.credentials)?a.credentials:[],services=Array.isArray(a.existing_services)?a.existing_services:[];
+  return '<div class="adminEvidenceGrid"><section class="card"><h3>Documents</h3>'+(docs.length?docs.map(d=>'<button class="secondary adminEvidenceButton" type="button" data-application-document="'+Number(d.id)+'">'+esc(d.label||d.document_type||('Document '+d.id))+'</button>').join(''):'<p class="muted">No uploaded application documents.</p>')+'</section><section class="card"><h3>Credentials</h3>'+(credentials.length?credentials.map(c=>'<div class="adminEvidenceLine"><strong>'+esc(c.title||c.credential_type)+'</strong><span class="muted">'+esc(c.issuing_body||'')+' · '+esc(c.verification_status||'unknown')+(c.expiry_date?' · '+esc(String(c.expiry_date).slice(0,10)):'')+'</span></div>').join(''):'<p class="muted">No credential records.</p>')+'</section></div>'+(services.length?'<section class="card"><h3>Existing services</h3>'+services.map(s=>'<div class="adminEvidenceLine"><strong>'+esc(s.name||s.service_label||s.code)+'</strong><span class="muted">'+esc(s.service_label||s.code||'')+'</span></div>').join('')+'</section>':'');
+}
+async function viewAdminApplicationDocument(id){
+  const popup=window.open('about:blank','_blank');
+  try{
+    const d=await api('/api/governance/admin/application-documents/'+Number(id));
+    if(!d.evidence_data_url)throw new Error('This evidence file is unavailable.');
+    if(popup)popup.location.href=d.evidence_data_url;
+    else throw new Error('Allow a new tab to view this evidence file.');
+  }catch(error){if(popup)popup.close();showError(error)}
+}
+async function openAdminApplication(id){
+  const p=document.getElementById('adminPanel');if(!p)return;
+  p.innerHTML='<div class="adminLoading">Loading application…</div>';
+  try{
+    const a=await api('/api/governance/admin/applications/'+Number(id));
+    const reviewable=['submitted','under_review'].includes(a.status);
+    const data=a.application_data&&typeof a.application_data==='object'?a.application_data:{};
+    p.innerHTML='<button type="button" class="secondary supportBack" id="profileReviewBack">← Back to Profiles</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">APPLICATION #'+Number(a.id)+'</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Scoped territory')+'</span><span>'+esc(a.email||'')+'</span></div>'+(a.proposed_business_name?'<section class="card"><h3>Proposed business</h3><p>'+esc(a.proposed_business_name)+'</p></section>':'')+(a.applicant_note?'<section class="card"><h3>Applicant note</h3><p>'+esc(a.applicant_note)+'</p></section>':'')+(data.professional_headline||data.about||data.service_area?'<section class="card"><h3>Application details</h3>'+(data.professional_headline?'<p><strong>'+esc(data.professional_headline)+'</strong></p>':'')+(data.about?'<p>'+esc(data.about)+'</p>':'')+(data.service_area?'<p class="muted">Service area: '+esc(data.service_area)+'</p>':'')+'</section>':'')+applicationEvidenceHtml(a)+(reviewable?'<form id="adminApplicationReview" class="adminForm">'+applicationCategoryChoices(a)+'<label>Review reason / note<textarea name="reason" maxlength="1000" placeholder="What was reviewed and why"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I reviewed the available evidence and understand this changes profile access.</span></label><div class="adminDecisionGrid"><button class="secondary" type="button" data-review-decision="under_review">Keep under review</button><button class="secondary adminDanger" type="button" data-review-decision="reject">Reject</button><button class="primary" type="button" data-review-decision="approve">Approve profile</button></div><div id="applicationReviewResult"></div></form>':'<div class="notice">This application is not awaiting a review decision.</div>')+'</section>';
+    document.getElementById('profileReviewBack').onclick=async()=>{state.active='profiles';shell();await renderActive()};
+    p.querySelectorAll('[data-application-document]').forEach(b=>b.onclick=()=>viewAdminApplicationDocument(b.dataset.applicationDocument));
+    const form=document.getElementById('adminApplicationReview');
+    if(form)form.querySelectorAll('[data-review-decision]').forEach(button=>button.onclick=async()=>{
+      const out=document.getElementById('applicationReviewResult'),decision=button.dataset.reviewDecision,reason=form.reason.value.trim();
+      if(!form.confirmed.checked){out.innerHTML='<div class="error">Confirm that you reviewed the available evidence first.</div>';return}
+      if(decision==='reject'&&!reason){out.innerHTML='<div class="error">Add a reason before rejecting an application.</div>';return}
+      const approvedCategoryIds=[...form.querySelectorAll('[name="approved_category_ids"]:checked')].map(x=>Number(x.value));
+      button.disabled=true;
+      try{
+        await api('/api/governance/admin/applications/'+Number(a.id)+'/review',{method:'POST',body:JSON.stringify({decision,reason,approved_category_ids:approvedCategoryIds})});
+        await loadBase();state.active='profiles';shell();await renderActive();
+      }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+    });
+  }catch(error){showError(error)}
+}
+async function openAdminAuthorization(id){
+  const a=(state.overview?.authorizations||[]).find(x=>Number(x.id)===Number(id));
+  if(!a)return showError(new Error('Authorization is no longer available in this scope.'));
+  const p=document.getElementById('adminPanel');if(!p)return;
+  p.innerHTML='<button type="button" class="secondary supportBack" id="authorizationBack">← Back to Profiles</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">PROFILE AUTHORIZATION</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Country scope')+'</span></div><form id="authorizationStatusForm" class="adminForm"><label>Access status<select name="status">'+['active','suspended','revoked'].map(x=>'<option value="'+x+'" '+(x===a.status?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" maxlength="1000" required placeholder="Why this authorization is changing">'+esc(a.reason||'')+'</textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I understand this can enable or block operational profile access.</span></label><button class="primary" type="submit">Save access status</button><div id="authorizationStatusResult"></div></form></section>';
+  document.getElementById('authorizationBack').onclick=async()=>{state.active='profiles';shell();await renderActive()};
+  document.getElementById('authorizationStatusForm').onsubmit=async e=>{
+    e.preventDefault();const form=e.currentTarget,out=document.getElementById('authorizationStatusResult'),button=form.querySelector('button[type="submit"]');
+    if(!form.confirmed.checked)return out.innerHTML='<div class="error">Confirm the access change first.</div>';
+    button.disabled=true;
+    try{await api('/api/governance/admin/authorizations/'+Number(a.id)+'/status',{method:'POST',body:JSON.stringify({status:form.status.value,reason:form.reason.value})});await loadBase();state.active='profiles';shell();await renderActive()}
+    catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+  };
+}
+function wireProfiles(){
+  document.querySelectorAll('[data-admin-application]').forEach(button=>button.onclick=()=>openAdminApplication(Number(button.dataset.adminApplication)));
+  document.querySelectorAll('[data-admin-authorization]').forEach(button=>button.onclick=()=>openAdminAuthorization(Number(button.dataset.adminAuthorization)));
 }
 function deliveryRuleFields(prefix,label,weighted){return '<fieldset><legend>'+esc(label)+'</legend><div class="supportControls"><label>Base fee<input id="'+prefix+'Base" type="number" min="0" step="0.01" required></label><label>Per km<input id="'+prefix+'Km" type="number" min="0" step="0.01" required></label></div>'+(weighted?'<div class="supportControls"><label>Per kg<input id="'+prefix+'Kg" type="number" min="0" step="0.01" required></label><label>Per litre<input id="'+prefix+'Liter" type="number" min="0" step="0.01" required></label></div>':'')+'<div class="supportControls"><label>Minimum fee<input id="'+prefix+'Min" type="number" min="0" step="0.01" required></label><label>Max distance km<input id="'+prefix+'Distance" type="number" min="0" step="0.1"></label></div><div class="supportControls"><label>Max weight kg<input id="'+prefix+'Weight" type="number" min="0" step="0.1"></label><label>Max volume L<input id="'+prefix+'Volume" type="number" min="0" step="0.1"></label></div></fieldset>'}
 function deliveryPricingPanel(rules){const active=(rules||[]).find(x=>x.active);return '<details class="adminDisclosure deliveryPricingDisclosure"><summary><span class="adminDisclosureCopy"><small>COUNTRY-LEVEL CONTROL</small><strong>Delivery pricing</strong><span>Vehicle fees, distance rules and delivery capacity</span></span><span class="status">'+esc(active?'Active v'+active.version:'HOLD')+'</span></summary><div class="adminDisclosureBody"><p class="muted">Create a new immutable vehicle-pricing version. No PHP tariff is hardcoded.</p><form id="adminDeliveryPricingForm" class="adminForm">'+deliveryRuleFields('bike','Bicycle · small parcel',false)+deliveryRuleFields('car','Car',true)+deliveryRuleFields('van','Van',true)+'<label>Route factor<input id="deliveryRouteFactor" type="number" min="1" step="0.01" value="1" required></label><button class="primary" type="submit">Save and activate version</button><div id="deliveryPricingResult"></div></form></div></details>'}
@@ -97,10 +169,34 @@ async function queuePanel(kind){
   const isSupport=kind==='support';
   const data=await api(isSupport?'/api/admin/support':'/api/admin/incidents');
   const list=Array.isArray(data)?data:(data.items||data.tickets||data.incidents||[]);
-  return hero()+'<p class="moduleIntro">'+(isSupport?'Support tickets assigned or visible in your scope. Tap a ticket to read it and reply.':'Incident queue visible under your delegated Trust & Safety authority.')+'</p>'+rows(list,x=>isSupport
+  return hero()+'<p class="moduleIntro">'+(isSupport?'Support tickets assigned or visible in your scope. Tap a ticket to read it and reply.':'Incident queue visible under your delegated Trust & Safety authority. Open a case to review evidence and record the next action.')+'</p>'+rows(list,x=>isSupport
     ?'<button type="button" class="row queueRow" data-support-ticket="'+Number(x.id)+'"><div class="rowHeader"><strong>'+esc(x.subject||('Ticket #'+x.id))+'</strong><span class="status">'+esc(x.status||'open')+'</span></div><span class="muted">'+esc(x.category+' • '+(x.requester_name||x.requester_email||x.priority||''))+'</span></button>'
-    :'<div class="row"><div class="rowHeader"><strong>'+esc(x.subject||x.category||('Case #'+x.id))+'</strong><span class="status">'+esc(x.status||'open')+'</span></div><span class="muted">'+esc(x.reporter_name||x.priority||'')+'</span></div>');
+    :'<button type="button" class="row queueRow" data-admin-incident="'+Number(x.id)+'"><div class="rowHeader"><strong>'+esc(x.category||('Case #'+x.id))+'</strong><span class="status">'+esc(x.status||'submitted')+'</span></div><span class="muted">'+esc((x.reporter_name||x.reporter_email||'Reporter')+' · '+(x.attachment_count||0)+' evidence file'+(Number(x.attachment_count||0)===1?'':'s'))+'</span><span class="adminRowAction">Open case ›</span></button>');
 }
+async function viewIncidentAttachment(incidentId,attachmentId){
+  const popup=window.open('about:blank','_blank');
+  try{const d=await api('/api/admin/incidents/'+Number(incidentId)+'/attachments/'+Number(attachmentId));if(!d.data_url)throw new Error('Evidence file is unavailable.');if(popup)popup.location.href=d.data_url;else throw new Error('Allow a new tab to view this evidence file.')}
+  catch(error){if(popup)popup.close();showError(error)}
+}
+async function openAdminIncident(id){
+  const p=document.getElementById('adminPanel');if(!p)return;
+  p.innerHTML='<div class="adminLoading">Loading incident…</div>';
+  try{
+    const x=await api('/api/admin/incidents/'+Number(id)),attachments=Array.isArray(x.attachments)?x.attachments:[],actions=Array.isArray(x.actions)?x.actions:[];
+    const statuses=['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated'];
+    p.innerHTML='<button type="button" class="secondary supportBack" id="incidentBack">← Back to Trust & Safety</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">INCIDENT #'+Number(x.id)+'</small><h2>'+esc(x.category||'Incident')+'</h2></div><span class="status">'+esc(x.status)+'</span></div><div class="supportMeta"><span>'+esc(x.reporter_name||x.reporter_email||'Reporter')+'</span><span>'+esc(x.related_type||'general')+'</span></div><section class="card"><h3>Report</h3><p>'+esc(x.description||'No description supplied.')+'</p></section><section class="card"><h3>Evidence</h3>'+(attachments.length?attachments.map(a=>'<button class="secondary adminEvidenceButton" type="button" data-incident-attachment="'+Number(a.id)+'">'+esc(a.file_name||('Evidence '+a.id))+' · '+esc(a.kind||'file')+'</button>').join(''):'<p class="muted">No evidence files attached.</p>')+'</section><section class="card"><h3>Action history</h3>'+(actions.length?actions.map(a=>'<div class="adminEvidenceLine"><strong>'+esc(readableCode(a.action_type||'admin action'))+'</strong><span class="muted">'+esc(a.actor_name||'Admin')+' · '+esc(a.from_status||'')+' → '+esc(a.to_status||'')+(a.note?' · '+esc(a.note):'')+'</span></div>').join(''):'<p class="muted">No Admin actions recorded yet.</p>')+'</section><form id="incidentUpdateForm" class="adminForm"><label>Status<select name="status">'+statuses.map(s=>'<option value="'+s+'" '+(s===x.status?'selected':'')+'>'+readableCode(s)+'</option>').join('')+'</select></label><label>Action note<textarea name="note" maxlength="3000" required placeholder="What you reviewed or changed"></textarea></label><label>Resolution summary<textarea name="resolution_summary" maxlength="4000" placeholder="Required context when resolving or dismissing">'+esc(x.resolution_summary||'')+'</textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I reviewed this case and want to record this Trust & Safety action.</span></label><button class="primary" type="submit">Save incident action</button><div id="incidentUpdateResult"></div></form></section>';
+    document.getElementById('incidentBack').onclick=async()=>{state.active='safety';shell();await renderActive()};
+    p.querySelectorAll('[data-incident-attachment]').forEach(b=>b.onclick=()=>viewIncidentAttachment(x.id,b.dataset.incidentAttachment));
+    document.getElementById('incidentUpdateForm').onsubmit=async e=>{
+      e.preventDefault();const form=e.currentTarget,out=document.getElementById('incidentUpdateResult'),button=form.querySelector('button[type="submit"]');
+      if(!form.confirmed.checked)return out.innerHTML='<div class="error">Confirm the incident action first.</div>';
+      button.disabled=true;
+      try{await api('/api/admin/incidents/'+Number(x.id),{method:'PATCH',body:JSON.stringify({status:form.status.value,note:form.note.value,resolution_summary:form.resolution_summary.value})});await openAdminIncident(x.id)}
+      catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+    };
+  }catch(error){showError(error)}
+}
+function bindSafetyQueue(){document.querySelectorAll('[data-admin-incident]').forEach(button=>button.onclick=()=>openAdminIncident(Number(button.dataset.adminIncident)))}
 function supportMessage(m){
   const context=m.actor_context==='admin'?'admin':'user',label=context==='admin'?'Business & Life Support':(m.actor_name||'User');
   return '<div class="supportMessage '+context+' '+(m.visibility==='internal'?'internal':'')+'"><div class="rowHeader"><strong>'+esc(label)+'</strong><span class="muted">'+esc(m.visibility==='internal'?'Internal note':context==='admin'?'Support reply':'User message')+'</span></div><p>'+esc(m.message)+'</p></div>';
@@ -126,7 +222,7 @@ async function openAdminSupportTicket(id){
       +'<div class="card"><h3>Issue</h3><p>'+esc(t.description)+'</p>'+(t.english_translation?'<div class="translationBox"><strong>English translation</strong><p>'+esc(t.english_translation)+'</p></div>':'')+'</div>'
       +'<div class="sectionTitle"><h3>Conversation</h3></div><div class="supportConversation">'+(t.messages||[]).map(supportMessage).join('')+'</div>'
       +'<form id="adminSupportReply" class="adminForm"><label>Reply<textarea name="message" maxlength="3000" required placeholder="Write a reply to the user"></textarea></label><div class="supportAssistTools"><button id="adminVoiceStart" class="secondary" type="button">🎙 Speak</button><button id="adminVoiceStop" class="secondary" type="button" disabled>■ Stop</button><button id="adminAiDraft" class="secondary" type="button">✨ Draft with AI</button></div><div class="supportTranslateTools"><label>Translate reply<select id="adminTranslateLanguage"><option value="English">English</option><option value="Tagalog">Tagalog</option><option value="Filipino">Filipino</option><option value="Romanian">Romanian</option><option value="Cebuano">Cebuano</option></select></label><label>Optional AI instruction<input id="adminTranslateInstruction" maxlength="300" placeholder="Example: Keep it polite and simple"></label><button id="adminAiTranslate" class="secondary" type="button">🌐 Translate with AI</button></div><small id="adminVoiceStatus" class="muted">Voice, drafting and translation create editable text only. Nothing is sent automatically.</small><label class="inlineChoice"><input name="internal" type="checkbox"> Save as internal note (not visible to user)</label><button class="primary" type="submit">Send reply</button><div id="supportReplyResult"></div></form>'
-      +'<form id="adminSupportUpdate" class="adminForm"><div class="supportControls"><label>Status<select name="status">'+['new','triaged','in_progress','waiting_user','waiting_internal','resolved','closed','reopened'].map(x=>'<option value="'+x+'" '+(x===t.status?'selected':'')+'>'+x.replaceAll('_',' ')+'</option>').join('')+'</select></label><label>Priority<select name="priority">'+['low','normal','high','urgent'].map(x=>'<option value="'+x+'" '+(x===t.priority?'selected':'')+'>'+x+'</option>').join('')+'</select></label></div><label class="inlineChoice"><input name="assign_to_self" type="checkbox"> Assign this ticket to me</label><button class="secondary" type="submit">Save ticket</button><div id="supportUpdateResult"></div></form></section>';
+      +'<form id="adminSupportUpdate" class="adminForm"><div class="supportControls"><label>Status<select name="status">'+['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened'].map(x=>'<option value="'+x+'" '+(x===t.status?'selected':'')+'>'+x.replaceAll('_',' ')+'</option>').join('')+'</select></label><label>Priority<select name="priority">'+['low','normal','high','urgent'].map(x=>'<option value="'+x+'" '+(x===t.priority?'selected':'')+'>'+x+'</option>').join('')+'</select></label></div><label class="inlineChoice"><input name="assign_to_self" type="checkbox"> Assign this ticket to me</label><button class="secondary" type="submit">Save ticket</button><div id="supportUpdateResult"></div></form></section>';
     document.getElementById('supportBack').onclick=async()=>{state.active='support';shell();await renderActive()};
     document.getElementById('adminVoiceStart').onclick=startAdminVoice;
     document.getElementById('adminVoiceStop').onclick=stopAdminVoice;
@@ -144,7 +240,21 @@ async function openAdminSupportTicket(id){
 }
 function bindSupportQueue(){document.querySelectorAll('[data-support-ticket]').forEach(button=>button.onclick=()=>openAdminSupportTicket(Number(button.dataset.supportTicket)))}
 function territoriesPanel(){
-  return hero()+'<p class="moduleIntro">Operating cells visible to your assignment.</p>'+rows(state.overview?.territories||[],x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(x.territory_type)+' · '+esc(x.code||'')+'</span></div>');
+  const territories=state.overview?.territories||[];
+  return hero()+'<p class="moduleIntro">Operating cells visible to your assignment. Create a territory only when the real operating scope is known.</p><details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>TERRITORY ACTION</small><strong>Create operating territory</strong><span>Country, region, province, city, municipality, district, barangay or controlled custom cell</span></span></summary><div class="adminDisclosureBody"><form id="territoryCreateForm" class="adminForm"><div class="financeFormGrid"><label>Name<input name="name" required maxlength="180" placeholder="Actual territory name"></label><label>Type<select name="territory_type" required><option value="">Choose type</option>'+['country','region','province','city','municipality','district','barangay','custom_cell'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label><label>Parent territory<select name="parent_id"><option value="">No parent / top level</option>'+territories.map(t=>'<option value="'+Number(t.id)+'">'+esc(t.name)+' · '+esc(readableCode(t.territory_type))+'</option>').join('')+'</select></label><label>Status<select name="status">'+['planned','onboarding','active','paused','suspended','closed'].map(x=>'<option value="'+x+'" '+(x==='onboarding'?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Code (optional)<input name="code" maxlength="80" placeholder="Internal territory code"></label></div><div class="notice">Do not invent a pilot location. Create only a real operating territory confirmed for Business & Life.</div><button class="primary" type="submit">Create territory</button><div id="territoryCreateResult"></div></form></div></details><div class="sectionTitle"><h3>Territories</h3></div>'+rows(territories,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(readableCode(x.territory_type))+' · '+esc(x.code||'No internal code')+'</span></div>');
+}
+function wireTerritories(){
+  const form=document.getElementById('territoryCreateForm');if(!form)return;
+  const type=form.elements.territory_type,parent=form.elements.parent_id;
+  type.onchange=()=>{if(type.value==='country'){parent.value='';parent.disabled=true}else parent.disabled=false};
+  form.onsubmit=async e=>{
+    e.preventDefault();const out=document.getElementById('territoryCreateResult'),button=form.querySelector('button[type="submit"]'),fd=new FormData(form);
+    button.disabled=true;
+    try{
+      await api('/api/governance/admin/territories',{method:'POST',body:JSON.stringify({name:fd.get('name'),territory_type:fd.get('territory_type'),parent_id:fd.get('parent_id')||null,status:fd.get('status'),code:fd.get('code')||null})});
+      await loadBase();state.active='territories';shell();await renderActive();
+    }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+  };
 }
 function renderPricingScenario(s){
   const p=s?.portfolio||{},services=s?.services||[],g=s?.guardrails||{};
@@ -694,25 +804,40 @@ function drawFunctionChoices(){
 }
 async function teamPanel(){
   state.assignments=await api('/api/admin/assignments');
-  return hero()+'<p class="moduleIntro">Ranks define scope and hierarchy. Functions define the actual work delegated to each person.</p>'+delegationForm()+'<div class="sectionTitle"><h3>Delegated team</h3></div>'+rows(state.assignments,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email)+'</strong><span class="status">'+esc(rankLabel(x.effective_rank||x.authority_rank||x.admin_role))+'</span></div><span class="muted">'+esc(x.territory_name||x.country_code||'PH')+'</span><div class="permissionPills">'+(x.functions||[]).map(f=>'<span>'+esc(f)+'</span>').join('')+'</div></div>');
+  return hero()+'<p class="moduleIntro">Ranks define scope and hierarchy. Functions define the actual work delegated to each person.</p>'+delegationForm()+'<div class="sectionTitle"><h3>Delegated team</h3></div>'+rows(state.assignments,x=>{const rank=x.effective_rank||x.authority_rank||x.admin_role,isOwner=rank==='super_admin';return '<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email)+'</strong><span class="status">'+esc(rankLabel(rank))+' · '+esc(x.status||'active')+'</span></div><span class="muted">'+esc(x.territory_name||x.country_code||'PH')+'</span><div class="permissionPills">'+(x.functions||[]).map(f=>'<span>'+esc(f)+'</span>').join('')+'</div>'+(!isOwner?'<button class="secondary adminInlineAction" type="button" data-admin-assignment="'+Number(x.id)+'">Manage responsibility</button>':'<span class="muted">Protected Platform Owner assignment</span>')+'</div>'});
+}
+async function openAdminAssignment(id){
+  const a=(state.assignments||[]).find(x=>Number(x.id)===Number(id));if(!a)return showError(new Error('Admin assignment is no longer available.'));
+  const p=document.getElementById('adminPanel');if(!p)return;const rank=a.effective_rank||a.authority_rank||a.admin_role;
+  p.innerHTML='<button type="button" class="secondary supportBack" id="assignmentBack">← Back to Team & Delegation</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">ADMIN RESPONSIBILITY</small><h2>'+esc(a.display_name||a.email)+'</h2></div><span class="status">'+esc(rankLabel(rank))+'</span></div><div class="supportMeta"><span>'+esc(a.territory_name||a.country_code||'PH')+'</span><span>'+esc(a.status||'active')+'</span></div><div class="permissionPills">'+(a.functions||[]).map(f=>'<span>'+esc(f)+'</span>').join('')+'</div><form id="assignmentStatusForm" class="adminForm"><label>Status<select name="status">'+['active','suspended','revoked'].map(x=>'<option value="'+x+'" '+(x===a.status?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" maxlength="1000" required placeholder="Why this responsibility is changing">'+esc(a.reason||'')+'</textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I understand this changes this person’s delegated Admin access.</span></label><button class="primary" type="submit">Save Admin status</button><div id="assignmentStatusResult"></div></form></section>';
+  document.getElementById('assignmentBack').onclick=async()=>{state.active='team';shell();await renderActive()};
+  document.getElementById('assignmentStatusForm').onsubmit=async e=>{
+    e.preventDefault();const form=e.currentTarget,out=document.getElementById('assignmentStatusResult'),button=form.querySelector('button[type="submit"]');
+    if(!form.confirmed.checked)return out.innerHTML='<div class="error">Confirm the Admin access change first.</div>';
+    button.disabled=true;
+    try{await api('/api/admin/assignments/'+Number(a.id)+'/status',{method:'POST',body:JSON.stringify({status:form.status.value,reason:form.reason.value})});await loadBase();state.active='team';shell();await renderActive()}
+    catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+  };
 }
 function adminSettingsPanel(){
-  const account=state.me?.account||{},a=highestAssignment(),country=account.country_code||a?.country_code||'PH',flag=country==='PH'?'🇵🇭':country==='RO'?'🇷🇴':'🌐';
-  return hero()+'<p class="moduleIntro">Only settings belonging to your delegated Admin access appear here.</p>'
+  const account=state.me?.account||{},a=highestAssignment(),country=account.country_code||a?.country_code||'PH',flag=country==='PH'?'🇵🇭':country==='RO'?'🇷🇴':'🌐',canDelegate=hasAny(['admin.assign_limited','admin.delegate']);
+  return hero()+'<p class="moduleIntro">Admin Settings shows only real privileged identity and access boundaries. Operational tools stay in their own Admin modules.</p>'
     +'<details class="adminDisclosure adminSettingsIdentity"><summary><span class="adminDisclosureCopy"><small>IDENTITY</small><strong>Admin profile identity</strong><span>'+flag+' '+esc(country==='PH'?'Philippines':country==='RO'?'Romania':country)+' · '+esc(a?rankLabel(a.effective_rank||a.authority_rank||a.admin_role):'Admin')+'</span></span></summary><div class="adminDisclosureBody"><div class="row"><div><strong>'+esc(account.admin_profile_id||'Admin ID preparing…')+'</strong><span class="muted">Admin Profile ID · derived from '+esc(account.personal_id||'Personal ID')+'</span></div></div><div class="row"><div><strong>'+esc(a?rankLabel(a.effective_rank||a.authority_rank||a.admin_role):'Admin')+'</strong><span class="muted">Authority is delegated and cannot be increased from Settings.</span></div></div></div></details>'
-    +'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>PREFERENCES</small><strong>Admin preferences</strong><span>Support language, AI assistance and Admin notifications</span></span></summary><div class="adminDisclosureBody"><p class="muted">Operational permissions remain controlled by Team & Delegation and are recorded in the audit trail.</p></div></details>'
-    +'<section class="card adminSettingsBoundary"><h3>Personal account settings</h3><p class="muted">Your name, photo, password, email verification, Money & Banking and profile onboarding belong to your personal account—not to Admin.</p><a class="adminButton" href="/?account_settings=home">Open personal Account Settings</a></section>';
+    +(canDelegate?'<section class="card adminSettingsBoundary"><h3>Admin access & responsibilities</h3><p class="muted">Ranks, functions, scope and suspension belong in Team & Delegation so every change remains explicit and audited.</p><button class="adminButton" type="button" data-settings-open-team>Open Team & Delegation</button></section>':'')
+    +'<section class="card adminSettingsBoundary"><h3>Personal account settings</h3><p class="muted">Your name, photo, password, email verification, Money & Banking, notifications and profile onboarding belong to your personal account—not to Admin.</p><a class="adminButton" href="/?account_settings=home">Open personal Account Settings</a></section>';
 }
+function wireSettings(){document.querySelector('[data-settings-open-team]')?.addEventListener('click',()=>activateModule('team'));}
 async function wireTeam(){
   drawFunctionChoices();
   const role=document.getElementById('delegateRole');if(role)role.onchange=drawFunctionChoices;
-  const form=document.getElementById('delegateForm');if(!form)return;
-  form.onsubmit=async e=>{
+  const form=document.getElementById('delegateForm');
+  if(form)form.onsubmit=async e=>{
     e.preventDefault();const fd=new FormData(form);
     const payload={target_email:fd.get('target_email'),admin_role:fd.get('admin_role'),territory_id:fd.get('territory_id')||null,function_codes:fd.getAll('function_codes'),reason:fd.get('reason')};
     const out=document.getElementById('delegateResult');
     try{await api('/api/admin/assignments',{method:'POST',body:JSON.stringify(payload)});out.innerHTML='<div class="notice">Delegation saved and audited.</div>';await loadBase();state.active='team';shell();await renderActive()}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
   };
+  document.querySelectorAll('[data-admin-assignment]').forEach(button=>button.onclick=()=>openAdminAssignment(Number(button.dataset.adminAssignment)));
 }
 async function renderActive(){
   const p=document.getElementById('adminPanel');if(!p)return;
@@ -722,15 +847,15 @@ async function renderActive(){
   try{
     let html='',wire=null;
     if(active==='overview')html=overviewPanel();
-    else if(active==='profiles')html=profilesPanel();
+    else if(active==='profiles'){html=profilesPanel();wire=wireProfiles}
     else if(active==='delivery'){html=await deliveryPanel();wire=wireDelivery}
     else if(active==='support'){html=await queuePanel('support');wire=bindSupportQueue}
-    else if(active==='safety')html=await queuePanel('safety');
-    else if(active==='territories')html=territoriesPanel();
+    else if(active==='safety'){html=await queuePanel('safety');wire=bindSafetyQueue}
+    else if(active==='territories'){html=territoriesPanel();wire=wireTerritories}
     else if(active==='finance'){html=await financePanel();wire=wireFinance}
     else if(active==='audit')html=await auditPanel();
     else if(active==='team'){html=await teamPanel();wire=wireTeam}
-    else if(active==='settings')html=adminSettingsPanel();
+    else if(active==='settings'){html=adminSettingsPanel();wire=wireSettings}
     if(request!==state.renderRequest)return;
     clearTimeout(loading);p.innerHTML=html;p.dataset.module=active;
     if(wire)await wire();
