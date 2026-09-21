@@ -442,9 +442,6 @@ const HUBS = {
     ['📦','Catalog','Products, pricing and availability','Catalog'],
     ['📥','Orders','New, preparing and fulfilment orders','Orders'],
     ['💰','Money','Receivables and recorded payments','Money']
-  ],
-  service_provider: [
-    ['👤','Public Profile','Headline, experience and service area','Profile'],['🧰','Services Offered','Choose the tasks you provide','Services'],['🎓','Qualifications & CV','Credentials, experience and portfolio','Qualifications'],['💬','Requests & Quotes','Review requests and send quotes','Quotes'],['🗓️','Jobs','Scheduled and active work','Jobs'],['⭐','Reviews','Verified feedback from completed work','Reviews'],['💰','Money','Job value, receivables and payout status','Money']
   ]
 };
 
@@ -907,9 +904,73 @@ function renderCourierHub(){
   hub.classList.remove('hidden');
   loadCourierHome(hub).catch(()=>{});
 }
+
+function openServiceProviderSection(section){
+  if(window.BusinessLifeServices?.openProviderWorkspace)return window.BusinessLifeServices.openProviderWorkspace(section);
+  showToast('Local Services is still loading. Try again in a moment.');
+}
+function setServiceProviderHubPanel(hub,panel){
+  const target=['home','services','jobs'].includes(panel)?panel:'home';
+  hub.querySelectorAll('[data-service-provider-panel]').forEach(node=>node.classList.toggle('hidden',node.dataset.serviceProviderPanel!==target));
+  hub.querySelectorAll('[data-service-provider-nav]').forEach(button=>button.classList.toggle('active',button.dataset.serviceProviderNav===target));
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function openServiceProviderHubDestination(hub,destination){
+  if(destination==='money'){
+    if(window.BusinessLifeProfileMoney?.openProfileMoney)return window.BusinessLifeProfileMoney.openProfileMoney('service_provider');
+    return showToast('Money is still loading. Try again in a moment.');
+  }
+  setServiceProviderHubPanel(hub,destination);
+}
+function renderServiceProviderHub(){
+  const hub=document.getElementById('roleHub');
+  if(!hub)return;
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  hub.innerHTML=
+    '<div class="hubHero serviceProviderHero"><div class="hubEyebrow">Local Services profile</div><h1>Your work, without the platform jargon.</h1><p>Set up what you offer, handle customer work, and keep Money evidence separate from job value.</p><span class="hubStatus">Service Provider workspace</span></div>'+
+    '<section class="serviceProviderPanel" data-service-provider-panel="home">'+
+      '<div class="hubSectionTitle"><h2>Home</h2><span>Choose what needs attention</span></div>'+
+      '<div class="serviceProviderActionGrid">'+
+        '<button class="serviceProviderActionCard" type="button" data-service-provider-open="services"><span>🧰</span><strong>Set up your services</strong><small>Public profile, services offered, pricing, service area and trust evidence.</small></button>'+
+        '<button class="serviceProviderActionCard" type="button" data-service-provider-open="jobs"><span>🗓️</span><strong>Handle customer work</strong><small>Requests, quotes, scheduled work, completion and verified review context.</small></button>'+
+        '<button class="serviceProviderActionCard" type="button" data-service-provider-open="money"><span>💰</span><strong>Check Money</strong><small>Commercial job value and only the income or settlement evidence actually recorded.</small></button>'+
+      '</div>'+
+      '<div class="serviceProviderBoundary"><strong>Job value is not automatically income.</strong><span>Business & Life keeps payment and settlement evidence separate so this screen never invents earnings.</span></div>'+
+    '</section>'+
+    '<section class="serviceProviderPanel hidden" data-service-provider-panel="services">'+
+      '<div class="hubSectionTitle"><h2>Services</h2><span>What customers can understand and hire</span></div>'+
+      '<div class="serviceProviderContextList">'+
+        '<button type="button" data-service-provider-section="Profile"><span>👤</span><span><strong>Public profile</strong><small>Name, headline, experience, service area, pricing and public visibility</small></span><b>›</b></button>'+
+        '<button type="button" data-service-provider-section="Services"><span>🧰</span><span><strong>Services offered</strong><small>Choose the approved work customers can request</small></span><b>›</b></button>'+
+        '<button type="button" data-service-provider-section="Qualifications"><span>🎓</span><span><strong>Qualifications &amp; work evidence</strong><small>CV summary, credentials and portfolio with privacy boundaries preserved</small></span><b>›</b></button>'+
+      '</div>'+
+    '</section>'+
+    '<section class="serviceProviderPanel hidden" data-service-provider-panel="jobs">'+
+      '<div class="hubSectionTitle"><h2>Jobs</h2><span>One lifecycle from request to confirmed completion</span></div>'+
+      '<div class="serviceProviderContextList">'+
+        '<button type="button" data-service-provider-section="Quotes"><span>💬</span><span><strong>Requests &amp; quotes</strong><small>Review new requests and send quotations</small></span><b>›</b></button>'+
+        '<button type="button" data-service-provider-section="Jobs"><span>🗓️</span><span><strong>Current &amp; completed jobs</strong><small>Accepted, scheduled, active and completed customer work</small></span><b>›</b></button>'+
+        '<button type="button" data-service-provider-section="Reviews"><span>⭐</span><span><strong>Verified reviews</strong><small>Feedback only where the canonical Customer-confirmed completion rule allows it</small></span><b>›</b></button>'+
+      '</div>'+
+    '</section>'+
+    '<button class="serviceProviderSettingsLink" type="button" data-hub-feature="Profile Settings"><span>⚙️</span><span><strong>Local Services settings</strong><small>Profile preferences, payout destination and account-linked settings</small></span><b>›</b></button>'+
+    '<nav class="serviceProviderPrimaryNav" aria-label="Local Services navigation">'+
+      '<button type="button" class="active" data-service-provider-nav="home"><span>⌂</span><strong>Home</strong></button>'+
+      '<button type="button" data-service-provider-nav="services"><span>🧰</span><strong>Services</strong></button>'+
+      '<button type="button" data-service-provider-nav="jobs"><span>🗓️</span><strong>Jobs</strong></button>'+
+      '<button type="button" data-service-provider-nav="money"><span>💰</span><strong>Money</strong></button>'+
+    '</nav>';
+  hub.querySelectorAll('[data-service-provider-open]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,button.dataset.serviceProviderOpen));
+  hub.querySelectorAll('[data-service-provider-nav]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,button.dataset.serviceProviderNav));
+  hub.querySelectorAll('[data-service-provider-section]').forEach(button=>button.onclick=()=>openServiceProviderSection(button.dataset.serviceProviderSection));
+  hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>window.BusinessLifeProfileSettings?.open?.('service_provider');
+  hub.classList.remove('hidden');
+}
+
 function renderRoleHub(role) {
   if(role==='customer')return renderCustomerHub();
   if(role==='courier')return renderCourierHub();
+  if(role==='service_provider')return renderServiceProviderHub();
   const meta = ROLE_META[role];
   const hub = document.getElementById('roleHub');
   if (!hub || !meta) return;
