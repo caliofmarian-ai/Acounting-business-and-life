@@ -35,3 +35,14 @@ test('queued email delivery carries notification category into sender routing',(
   assert.match(core,/e\.event_code,e\.category,e\.entity_type/);
   assert.match(core,/category:row\.category\|\|'operational'/);
 });
+
+test('Resend sender identity is branded and Reply-To stays opt-in',()=>{
+  assert.match(core,/brandedSender\(from,dept\)/);
+  assert.match(core,/configuredReplyTo\(process\.env,dept\)/);
+  assert.match(core,/payload\.reply_to=cfg\.replyTo/);
+});
+
+test('queued email uses the reusable professional presentation and safe target helper',()=>{
+  assert.match(core,/emailTargetUrl\(\{baseUrl:process\.env\.AUTH_PUBLIC_BASE_URL/);
+  assert.match(core,/renderTransactionalEmail\(\{subject:template\.title,body:template\.body/);
+});
