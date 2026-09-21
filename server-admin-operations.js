@@ -1,9 +1,10 @@
+import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ADMIN_PERMISSIONS, ensureAdminSchema, getAdminAssignments, hasAdminPermission,
@@ -860,7 +861,34 @@ app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected admin operations error'})});
 
 function start(){child=spawn(process.execPath,['server-business-accounting.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Business accounting child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<260;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Business accounting child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life scoped Admin + Support gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+async function wait(){for(let i=0;i<startupWaitAttempts(260);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Business accounting child failed health check')}
+
+let embeddedStartPromise=null;
+export async function startEmbeddedAdminOperations(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      await initDb();
+      console.log('Business & Life scoped Admin + Support mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopAdminOperations(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedAdminOperations(){await stopAdminOperations()}
+
+async function shutdown(sig){console.log(`Received ${sig}`);await stopAdminOperations();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedAdminOperations().then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life scoped Admin + Support gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+}
