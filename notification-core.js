@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { notificationAttention } from './notification-attention-policy.js';
 import { DEFAULT_NOTIFICATION_SOUND_VARIANT,notificationSoundSlots,normalizeNotificationSoundVariant,isNotificationSoundSlot } from './notification-sound-options.js';
 import { brandedSender,configuredReplyTo,emailTargetUrl,renderTransactionalEmail } from './email-presentation.js';
+import { ensureResendObservabilitySchema,reconcileResendDeliveryFromEvents } from './resend-delivery-observability.js';
 
 const CATEGORIES=new Set(['operational','security','legal','support','compliance','marketing']);
 const PRIORITIES=new Set(['low','normal','high','urgent']);
@@ -191,6 +192,7 @@ export async function ensureNotificationSchema(pool){
     );
     CREATE INDEX IF NOT EXISTS push_subscriptions_account_idx ON push_subscriptions(account_id,revoked_at,last_seen_at DESC);
   `);
+  await ensureResendObservabilitySchema(pool);
   for(const [eventCode,locale,title,body] of templates){
     for(const channel of CHANNELS){
       await pool.query(`
@@ -435,7 +437,10 @@ export async function sendTransientEmailNotification(pool,{
   const department=emailDepartment(eventCode,category);
   const presentation=renderTransactionalEmail({subject,bodyHtml:html,department});
   const sent=await resendEmail({to,subject:presentation.subject,html:presentation.html,text:presentation.text,eventCode,category});
-  if(sent.ok)await pool.query(`UPDATE notification_deliveries SET status='delivered',provider='resend',provider_reference=$1,error_code='',delivered_at=NOW(),updated_at=NOW() WHERE id=$2`,[sent.reference||'',deliveryId]);
+  if(sent.ok){
+    await pool.query(`UPDATE notification_deliveries SET status='delivered',provider='resend',provider_reference=$1,provider_status='accepted',error_code='',delivered_at=NOW(),updated_at=NOW() WHERE id=$2`,[sent.reference||'',deliveryId]);
+    await reconcileResendDeliveryFromEvents(pool,deliveryId,sent.reference||'').catch(()=>{});
+  }
   else await pool.query(`UPDATE notification_deliveries SET status=$1,error_code=$2,updated_at=NOW() WHERE id=$3`,[sent.notConfigured?'not_configured':'failed',sent.error||'',deliveryId]);
   return{sent:Boolean(sent.ok),reference:sent.reference||'',not_configured:Boolean(sent.notConfigured)};
 }
@@ -506,7 +511,13 @@ export async function processNotificationDeliveries(pool,{limit=20}={}){
     let result;
     try{result=row.channel==='email'?await sendQueuedEmail(pool,row):await sendQueuedPush(pool,row)}catch(e){result={ok:false,error:clean(e.message,300)}}
     if(result.ok){
-      await pool.query(`UPDATE notification_deliveries SET status='delivered',provider_reference=$1,error_code='',delivered_at=NOW(),updated_at=NOW() WHERE id=$2`,[clean(result.reference,300),row.id]);
+      if(row.channel==='email'){
+        const reference=clean(result.reference,300);
+        await pool.query(`UPDATE notification_deliveries SET status='delivered',provider='resend',provider_reference=$1,provider_status='accepted',error_code='',delivered_at=NOW(),updated_at=NOW() WHERE id=$2`,[reference,row.id]);
+        await reconcileResendDeliveryFromEvents(pool,row.id,reference).catch(()=>{});
+      }else{
+        await pool.query(`UPDATE notification_deliveries SET status='delivered',provider_reference=$1,error_code='',delivered_at=NOW(),updated_at=NOW() WHERE id=$2`,[clean(result.reference,300),row.id]);
+      }
     }else if(result.notConfigured){
       await pool.query(`UPDATE notification_deliveries SET status='not_configured',error_code=$1,updated_at=NOW() WHERE id=$2`,[clean(result.error,300),row.id]);
     }else if(result.skip){
