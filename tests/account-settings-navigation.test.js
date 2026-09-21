@@ -44,7 +44,13 @@ test('Account Settings is a dedicated routed workspace with focused categories',
   assert.match(shell,/data-account-settings-view="security"/);
   assert.match(shell,/data-account-settings-view="profiles"/);
   assert.match(shell,/id="accountMoneyBanking"/);
+  assert.match(shell,/id="accountNotifications"/);
+  assert.match(shell,/id="accountLegalPrivacy"/);
+  assert.match(shell,/id="accountHelpSupport"/);
+  assert.match(shell,/href="\/help"/);
   assert.match(shell,/openAccountMoney/);
+  assert.match(shell,/BusinessLifeNotifications/);
+  assert.match(shell,/BusinessLifeFeatureLoader/);
   assert.match(shell,/Profile settings stay inside each profile/);
   assert.match(css,/\.accountSettingsWorkspace/);
 });
@@ -61,4 +67,11 @@ test('every operational profile retains its own Profile Settings card',()=>{
   assert.match(shell,/\['⚙️','Profile Settings'/);
   assert.doesNotMatch(shell,/merchantProfileSettingsCard/);
   assert.match(profileSettings,/openProfileSettings\(role=['"]{2}\)/);
+});
+
+test('shared Account Settings utilities are compact progressive rows on Android',()=>{
+  assert.match(css,/\.accountUtilityList\{[^}]*display:grid/);
+  assert.match(css,/\.accountUtilityList>button,.accountUtilityList>a\{[^}]*min-height:58px/);
+  assert.match(shell,/Language here controls supported account communications and document routing/);
+  assert.match(shell,/It does not yet translate every application screen/);
 });
