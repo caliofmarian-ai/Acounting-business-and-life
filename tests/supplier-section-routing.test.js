@@ -8,7 +8,7 @@ const ui=read('public/suppliers-ui.js');
 
 test('Supplier shell exposes simplified daily destinations while retaining legacy operational routes',()=>{
   for(const feature of ['Today','Catalog','Orders','Money']){
-    assert.match(shell,new RegExp("['\\"]"+feature+"['\\"]"));
+    assert.match(shell,new RegExp("'"+feature+"'"));
     assert.match(ui,new RegExp(feature));
   }
   for(const legacy of ['Procurement','ETA','Fulfilment']){
