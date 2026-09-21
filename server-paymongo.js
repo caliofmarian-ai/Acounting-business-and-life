@@ -15,7 +15,7 @@ import { startEmbeddedPaymentCore,stopEmbeddedPaymentCore } from './server-payme
 const {Pool}=pg;
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_LEGAL_PORT||4507);
+const upstreamPort=Number(process.env.INTERNAL_NOTIFICATIONS_PORT||4407);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb',verify:(req,_res,buf)=>{req.rawBody=Buffer.from(buf)}});
 let paymentCoreReady=false;let shuttingDown=false;
