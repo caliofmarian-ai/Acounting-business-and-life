@@ -380,13 +380,17 @@ function unionScopeFromContext(ctx,permissions,column='territory_id'){
 }
 function permissionFromContext(ctx,permission,territoryId=null){
   for(const a of ctx.assignments){
-    if(a.admin_role==='super_admin')return{allowed:true,assignment:a};
+    const rank=assignmentRank(a);
+    if(rank==='super_admin'||a.admin_role==='super_admin')return{allowed:true,assignment:a};
     const perms=new Set(Array.isArray(a.permissions)?a.permissions:[]);
     if(!perms.has(permission))continue;
-    if(a.admin_role==='country_admin'&&a.country_code==='PH')return{allowed:true,assignment:a};
-    if(a.admin_role==='territory_admin'&&territoryId!=null&&ctx.descendants(a.territory_id).includes(Number(territoryId))){
-      return{allowed:true,assignment:a};
+    if(a.territory_id!=null){
+      if(territoryId==null||ctx.descendants(a.territory_id).includes(Number(territoryId))){
+        return{allowed:true,assignment:a};
+      }
+      continue;
     }
+    if(a.country_code==='PH')return{allowed:true,assignment:a};
   }
   return{allowed:false,assignment:null};
 }
