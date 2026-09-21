@@ -213,14 +213,15 @@ async function trustInfo(businessId, customerId) {
 }
 
 async function productSnapshots(items, businessId, client=pool) {
-  if (Number(businessId)!==1) throw Object.assign(new Error('This Merchant has not published an orderable catalog yet.'),{status:409});
+  const scopedBusinessId=Number(businessId);
+  if (!Number.isInteger(scopedBusinessId)||scopedBusinessId<1) throw Object.assign(new Error('A valid Merchant business is required'),{status:400});
   if (!Array.isArray(items)||items.length===0||items.length>50) throw Object.assign(new Error('Order needs 1–50 items'),{status:400});
   const normalized=[]; const quantities=new Map();
   for(const raw of items){const id=Number(raw?.product_id),q=Number(raw?.quantity);if(!Number.isInteger(id)||id<1||!positive(q)) throw Object.assign(new Error('Every item needs a valid product and quantity'),{status:400});quantities.set(id,(quantities.get(id)||0)+q)}
   const ids=[...quantities.keys()];
-  const p=await client.query(`SELECT id,name,category,selling_price,active FROM products WHERE id=ANY($1::bigint[])`,[ids]);
-  if(p.rowCount!==ids.length) throw Object.assign(new Error('One or more products no longer exist'),{status:409});
-  for(const product of p.rows){if(!product.active) throw Object.assign(new Error(`${product.name} is currently unavailable`),{status:409});const cost=await client.query(`SELECT COALESCE(SUM(r.quantity*i.unit_cost),0) unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1`,[product.id]);const quantity=quantities.get(Number(product.id));const unitPrice=Number(product.selling_price),unitCost=Number(cost.rows[0]?.unit_cost||0),line=money(unitPrice*quantity),cogs=money(unitCost*quantity);normalized.push({source_id:Number(product.id),name_snapshot:product.name,category_snapshot:product.category,quantity,unit_price_snapshot:unitPrice,unit_cost_snapshot:unitCost,line_total:line,estimated_cogs:cogs,estimated_gross_profit:money(line-cogs)})}
+  const p=await client.query(`SELECT id,name,category,selling_price,active FROM products WHERE business_id=$1 AND id=ANY($2::bigint[])`,[scopedBusinessId,ids]);
+  if(p.rowCount!==ids.length) throw Object.assign(new Error('One or more products are unavailable for this business'),{status:409});
+  for(const product of p.rows){if(!product.active) throw Object.assign(new Error(`${product.name} is currently unavailable`),{status:409});const cost=await client.query(`SELECT COALESCE(SUM(r.quantity*i.unit_cost),0) unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2`,[product.id,scopedBusinessId]);const quantity=quantities.get(Number(product.id));const unitPrice=Number(product.selling_price),unitCost=Number(cost.rows[0]?.unit_cost||0),line=money(unitPrice*quantity),cogs=money(unitCost*quantity);normalized.push({source_id:Number(product.id),name_snapshot:product.name,category_snapshot:product.category,quantity,unit_price_snapshot:unitPrice,unit_cost_snapshot:unitCost,line_total:line,estimated_cogs:cogs,estimated_gross_profit:money(line-cogs)})}
   return normalized.sort((a,b)=>a.source_id-b.source_id);
 }
 
@@ -250,7 +251,7 @@ async function createOrder({ businessId, customerAccountId=null, customerName=''
 
 async function consumeStock(client, order) {
   if(order.stock_consumed_at) return;
-  const rows=await client.query(`SELECT oi.source_id product_id,oi.quantity order_quantity,r.inventory_id,r.quantity recipe_quantity,i.item,i.quantity stock_quantity,i.unit_cost FROM order_items oi JOIN recipes r ON r.product_id=oi.source_id JOIN inventory i ON i.id=r.inventory_id WHERE oi.order_id=$1 AND oi.source_kind='product' ORDER BY i.id FOR UPDATE OF i`,[order.id]);
+  const rows=await client.query(`SELECT oi.source_id product_id,oi.quantity order_quantity,r.inventory_id,r.quantity recipe_quantity,i.item,i.quantity stock_quantity,i.unit_cost FROM order_items oi JOIN recipes r ON r.product_id=oi.source_id JOIN inventory i ON i.id=r.inventory_id WHERE oi.order_id=$1 AND oi.source_kind='product' AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i`,[order.id,order.business_id]);
   const needs=new Map();
   for(const r of rows.rows){const id=Number(r.inventory_id),used=Number(r.order_quantity)*Number(r.recipe_quantity),existing=needs.get(id)||{inventory_id:id,item:r.item,stock:Number(r.stock_quantity),unit_cost:Number(r.unit_cost),used:0};existing.used+=used;needs.set(id,existing)}
   const shortages=[...needs.values()].filter(n=>n.stock+1e-9<n.used).map(n=>({item:n.item,required:n.used,available:n.stock,short:n.used-n.stock}));
@@ -283,7 +284,7 @@ app.get('/orders.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__
 async function proxyHtml(req,res){const r=await internalFetch(req.path,{headers:{...req.headers,host:`127.0.0.1:${internalAuthPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/orders.css" />\n</head>').replace('</body>','  <script type="module" src="/orders-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 
-app.get('/api/orders/products',async(req,res,next)=>{try{const me=await identity(req);if(!enabledProfile(me,'customer')&&!enabledProfile(me,'merchant')) return res.status(403).json({error:'Customer or Merchant profile required'});const businessId=Number(req.query.business_id||1);if(businessId!==1) return res.json([]);const{rows}=await pool.query(`SELECT p.id,p.name,p.category,p.selling_price,p.active,COALESCE(SUM(r.quantity*i.unit_cost),0) unit_cost FROM products p LEFT JOIN recipes r ON r.product_id=p.id LEFT JOIN inventory i ON i.id=r.inventory_id WHERE p.active=TRUE GROUP BY p.id ORDER BY p.category,p.name`);res.json(rows)}catch(e){next(e)}});
+app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);const{rows}=await pool.query(`SELECT p.id,p.name,p.category,p.selling_price,p.active,COALESCE(SUM(r.quantity*i.unit_cost),0) unit_cost FROM products p LEFT JOIN recipes r ON r.product_id=p.id LEFT JOIN inventory i ON i.id=r.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 AND p.active=TRUE GROUP BY p.id ORDER BY p.category,p.name`,[business.id]);res.json(rows)}catch(e){next(e)}});
 
 app.post('/api/orders',jsonBody,async(req,res,next)=>{try{const me=await requireCustomer(req);const a=me.account;const result=await createOrder({businessId:Number(req.body?.business_id),customerAccountId:Number(a.id),customerName:a.display_name,customerContact:a.email||a.phone,items:req.body?.items,fulfilmentMethod:req.body?.fulfilment_method,paymentMethod:req.body?.payment_method,deliveryAddress:req.body?.delivery_address||a.address,note:req.body?.note,preparationEtaMinutes:req.body?.preparation_eta_minutes});res.status(201).json(result)}catch(e){next(e)}});
 app.get('/api/orders/mine',async(req,res,next)=>{try{const me=await requireCustomer(req);const{rows}=await pool.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.customer_account_id=$1 ORDER BY o.created_at DESC LIMIT 100`,[me.account.id]);res.json(rows)}catch(e){next(e)}});

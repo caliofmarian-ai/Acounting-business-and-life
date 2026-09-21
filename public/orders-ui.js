@@ -1,5 +1,5 @@
 const ORDER_PROGRESS=['accepted','preparing','ready','completed'];
-let orderMe=null,orderWorkspace=null,orderPoll=null,productsCache=[];
+let orderMe=null,orderWorkspace=null,productsCache=[],productsLoadError='',merchantBusinessId=null,ordersMode=null;
 const orderToken=()=>localStorage.getItem('abl_token')||'';
 const h=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const php=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -13,14 +13,14 @@ function ensureWorkspace(){
   return true;
 }
 function hideBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('roleHub')?.classList.add('hidden')}
-function closeOrders(){clearInterval(orderPoll);orderPoll=null;orderWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closeOrders(){ordersMode=null;orderWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function header(title,subtitle){return `<div class="ordersHeader"><button class="ordersBack" type="button" data-orders-back>‹</button><div class="ordersHeaderCopy"><h1>${h(title)}</h1><p>${h(subtitle)}</p></div><button class="ordersRefresh" type="button" data-orders-refresh>Refresh</button></div>`}
 function bindHeader(refresh){orderWorkspace.querySelector('[data-orders-back]').onclick=closeOrders;orderWorkspace.querySelector('[data-orders-refresh]').onclick=refresh}
 function statusBadge(status){return `<span class="orderStatus ${h(status)}">${h(nice(status))}</span>`}
 function progress(status){let idx=ORDER_PROGRESS.indexOf(status);if(status==='awaiting_payment'||status==='awaiting_customer_presence')idx=-1;return `<div class="customerOrderProgress">${ORDER_PROGRESS.map((_,i)=>`<span class="progressDot ${i<=idx?'done':''}"></span>`).join('')}</div>`}
 
 async function openCustomerOrders(){
-  ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderCustomerOrders();clearInterval(orderPoll);orderPoll=setInterval(()=>{if(!orderWorkspace.classList.contains('hidden'))renderCustomerOrders(false).catch(()=>{})},10000)
+  ordersMode='customer';ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderCustomerOrders()
 }
 async function renderCustomerOrders(showLoading=true){
   if(showLoading)orderWorkspace.innerHTML=header('My Orders','Preparation, payment and pickup status in one place')+'<div class="ordersEmpty">Loading orders…</div>';
@@ -34,20 +34,52 @@ async function renderCustomerOrders(showLoading=true){
 function customerCard(o){const waiting=o.order_status==='awaiting_customer_presence';return `<article class="customerOrderCard"><div class="orderCardTop"><div class="orderCardMain"><strong>${h(o.business_name)} • ${h(o.order_number)}</strong><p>${h(nice(o.fulfilment_method))} • ${new Date(o.created_at).toLocaleString()}</p></div>${statusBadge(o.order_status)}</div>${progress(o.order_status)}<div class="orderMoney"><div><small>${h(nice(o.payment_status))} • ${h(nice(o.payment_method))}</small><strong>${php(o.total)}</strong></div>${Number(o.outstanding_amount)>0?`<small>Due ${php(o.outstanding_amount)}</small>`:'<small>Paid</small>'}</div><div class="customerOrderFooter">${waiting?`<button class="checkInButton" data-checkin="${o.id}" type="button">I'm here</button>`:''}<button class="trackButton" data-track="${h(o.public_token)}" type="button">Track order</button></div></article>`}
 async function customerCheckIn(id){try{await oapi(`/api/orders/${id}/check-in`,{method:'POST',body:'{}'});toast('Check-in sent to the Merchant.');await renderCustomerOrders(false)}catch(e){toast(e.message)}}
 
+async function resolveMerchantBusiness(){
+  if(Number.isInteger(merchantBusinessId)&&merchantBusinessId>0)return merchantBusinessId;
+  const cached=window.BusinessLifeAccounting?.getState?.();
+  const cachedId=Number(cached?.role==='merchant'?cached.activeBusinessId:null);
+  if(Number.isInteger(cachedId)&&cachedId>0){merchantBusinessId=cachedId;return cachedId}
+  const state=await oapi('/api/accounting/workspaces');
+  const id=Number(state?.active_business_id);
+  if(!Number.isInteger(id)||id<1)throw new Error('Choose a Merchant business before opening Orders.');
+  merchantBusinessId=id;
+  return id;
+}
+function merchantOrdersError(error){
+  const message=error?.message||'Orders could not be loaded.';
+  orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+`<section class="ordersEmpty ordersLoadError" role="alert"><strong>We couldn’t load Orders</strong><p>${h(message)}</p><button type="button" class="primaryAction" data-orders-retry>Try again</button></section>`;
+  bindHeader(()=>renderMerchantOrders());
+  orderWorkspace.querySelector('[data-orders-retry]')?.addEventListener('click',()=>renderMerchantOrders());
+}
 async function openMerchantOrders(){
-  ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderMerchantOrders();clearInterval(orderPoll);orderPoll=setInterval(()=>{if(!orderWorkspace.classList.contains('hidden'))renderMerchantOrders(false).catch(()=>{})},8000)
+  ordersMode='merchant';merchantBusinessId=null;ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderMerchantOrders()
 }
-async function loadProducts(){try{productsCache=await oapi('/api/orders/products?business_id=1')}catch{productsCache=[]}return productsCache}
+async function loadProducts(businessId){
+  try{
+    productsCache=await oapi(`/api/orders/products?business_id=${encodeURIComponent(businessId)}`);
+    productsLoadError='';
+  }catch(error){
+    productsCache=[];
+    productsLoadError=error?.message||'Counter catalog could not be loaded.';
+  }
+  return productsCache
+}
 async function renderMerchantOrders(showLoading=true){
-  if(showLoading)orderWorkspace.innerHTML=header('Orders','Active kitchen and pickup workflow')+'<div class="ordersEmpty">Loading order board…</div>';
-  const [orders]=await Promise.all([oapi('/api/orders/merchant/list?business_id=1'),loadProducts()]);
-  const active=orders.filter(o=>!['completed','cancelled'].includes(o.order_status));const due=orders.reduce((s,o)=>s+Number(o.outstanding_amount||0),0);
-  const lanes=[['Waiting',['awaiting_customer_presence','awaiting_payment']],['Accepted',['accepted']],['Preparing',['preparing']],['Ready',['ready','handoff_to_delivery']]];
-  orderWorkspace.innerHTML=header('Orders','Active kitchen and pickup workflow')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active.length}</strong></div><div class="orderSummaryMetric"><small>Ready</small><strong>${orders.filter(o=>o.order_status==='ready').length}</strong></div><div class="orderSummaryMetric"><small>Receivable</small><strong>${php(due)}</strong></div></div>${counterForm()}<div class="ordersBoard">${lanes.map(([name,statuses])=>lane(name,orders.filter(o=>statuses.includes(o.order_status)))).join('')}</div>`;
-  bindHeader(()=>renderMerchantOrders());bindCounterForm();bindMerchantActions();
+  if(showLoading)orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+'<div class="ordersEmpty" role="status">Loading order board…</div>';
+  try{
+    const businessId=await resolveMerchantBusiness();
+    const [orders]=await Promise.all([
+      oapi(`/api/orders/merchant/list?business_id=${encodeURIComponent(businessId)}`),
+      loadProducts(businessId)
+    ]);
+    const active=orders.filter(o=>!['completed','cancelled'].includes(o.order_status));const due=orders.reduce((s,o)=>s+Number(o.outstanding_amount||0),0);
+    const lanes=[['Waiting',['awaiting_customer_presence','awaiting_payment']],['Accepted',['accepted']],['Preparing',['preparing']],['Ready',['ready','handoff_to_delivery']]];
+    orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active.length}</strong></div><div class="orderSummaryMetric"><small>Ready</small><strong>${orders.filter(o=>o.order_status==='ready').length}</strong></div><div class="orderSummaryMetric"><small>Receivable</small><strong>${php(due)}</strong></div></div>${counterForm()}<div class="ordersBoard">${lanes.map(([name,statuses])=>lane(name,orders.filter(o=>statuses.includes(o.order_status)))).join('')}</div>`;
+    bindHeader(()=>renderMerchantOrders());bindCounterForm();bindMerchantActions();
+  }catch(error){merchantOrdersError(error)}
 }
-function counterForm(){return `<section class="orderCreateCard"><h2>+ New counter order</h2><p>Create a present/walk-in order without leaving the Merchant workspace.</p><form id="counterOrderForm" class="orderCreateGrid"><div class="orderCreateGrid two"><label>Customer name<input id="counterCustomer" placeholder="Walk-in customer"></label><label>Payment<select id="counterPayment"><option value="cash">Cash</option><option value="online">Online / digital</option></select></label></div><div class="counterProducts">${productsCache.length?productsCache.map(p=>`<div class="counterProduct"><div><strong>${h(p.name)}</strong><small>${h(p.category)} • ${php(p.selling_price)}</small></div><input type="number" min="0" step="1" value="0" data-counter-product="${p.id}" aria-label="Quantity for ${h(p.name)}"></div>`).join(''):'<div class="ordersEmpty">Create active products in Menu first.</div>'}</div><label>Order note<textarea id="counterNote" rows="2" placeholder="No onions, extra sauce…"></textarea></label><div class="orderCreateActions"><button class="createOrderPrimary" type="submit">Create order</button></div><div id="counterMessage" class="avatarHint"></div></form></section>`}
-function bindCounterForm(){const f=document.getElementById('counterOrderForm');if(!f)return;f.onsubmit=async e=>{e.preventDefault();const items=[...f.querySelectorAll('[data-counter-product]')].map(i=>({product_id:Number(i.dataset.counterProduct),quantity:Number(i.value)})).filter(i=>i.quantity>0);const msg=document.getElementById('counterMessage');msg.textContent='';if(!items.length){msg.textContent='Choose at least one product.';return}try{await oapi('/api/orders/merchant/create',{method:'POST',body:JSON.stringify({business_id:1,customer_name:document.getElementById('counterCustomer').value||'Walk-in customer',items,fulfilment_method:'pickup',payment_method:document.getElementById('counterPayment').value,counter_presence:true,note:document.getElementById('counterNote').value})});toast('Order created.');await renderMerchantOrders(false)}catch(err){msg.textContent=err.message}}}
+function counterForm(){return `<section class="orderCreateCard"><h2>+ New counter order</h2><p>Create a present/walk-in order without leaving the Merchant workspace.</p><form id="counterOrderForm" class="orderCreateGrid"><div class="orderCreateGrid two"><label>Customer name<input id="counterCustomer" placeholder="Walk-in customer"></label><label>Payment<select id="counterPayment"><option value="cash">Cash</option><option value="online">Online / digital</option></select></label></div><div class="counterProducts">${productsCache.length?productsCache.map(p=>`<div class="counterProduct"><div><strong>${h(p.name)}</strong><small>${h(p.category)} • ${php(p.selling_price)}</small></div><input type="number" min="0" step="1" value="0" data-counter-product="${p.id}" aria-label="Quantity for ${h(p.name)}"></div>`).join(''):productsLoadError?`<div class="ordersEmpty ordersInlineError" role="alert">Counter catalog could not be loaded. Use Refresh to try again.<small>${h(productsLoadError)}</small></div>`:'<div class="ordersEmpty">Create active products in Catalog first.</div>'}</div><label>Order note<textarea id="counterNote" rows="2" placeholder="No onions, extra sauce…"></textarea></label><div class="orderCreateActions"><button class="createOrderPrimary" type="submit">Create order</button></div><div id="counterMessage" class="avatarHint"></div></form></section>`}
+function bindCounterForm(){const f=document.getElementById('counterOrderForm');if(!f)return;f.onsubmit=async e=>{e.preventDefault();const items=[...f.querySelectorAll('[data-counter-product]')].map(i=>({product_id:Number(i.dataset.counterProduct),quantity:Number(i.value)})).filter(i=>i.quantity>0);const msg=document.getElementById('counterMessage');msg.textContent='';if(!items.length){msg.textContent='Choose at least one product.';return}try{await oapi('/api/orders/merchant/create',{method:'POST',body:JSON.stringify({business_id:merchantBusinessId,customer_name:document.getElementById('counterCustomer').value||'Walk-in customer',items,fulfilment_method:'pickup',payment_method:document.getElementById('counterPayment').value,counter_presence:true,note:document.getElementById('counterNote').value})});toast('Order created.');await renderMerchantOrders(false)}catch(err){msg.textContent=err.message}}}
 function lane(name,orders){return `<section class="orderLane"><div class="orderLaneHeader"><h2>${h(name)}</h2><span>${orders.length}</span></div><div class="orderCards">${orders.length?orders.map(merchantCard).join(''):'<div class="ordersEmpty">Nothing here</div>'}</div></section>`}
 function merchantCard(o){const due=Number(o.outstanding_amount)>0.001;let actions='';if(o.order_status==='awaiting_customer_presence')actions+=`<button class="warmAction" data-action="presence" data-id="${o.id}">Presence verified</button>`;if(o.order_status==='awaiting_payment')actions+=`<button class="primaryAction" data-action="payment" data-id="${o.id}">Record payment</button>`;if(o.order_status==='accepted')actions+=`<button class="primaryAction" data-action="start" data-id="${o.id}">Start preparing</button>`;if(o.order_status==='preparing')actions+=`<button class="primaryAction" data-action="ready" data-id="${o.id}">Mark ready</button>`;if(o.order_status==='ready'){if(due)actions+=`<button class="warmAction" data-action="payment" data-id="${o.id}">Record payment</button>`;if(o.fulfilment_method==='pickup')actions+=`<button class="primaryAction" data-action="complete" data-id="${o.id}" data-due="${due?'1':'0'}">Complete</button>`;else actions+=`<button class="primaryAction" data-action="handoff" data-id="${o.id}">Delivery handoff</button>`}if(!['completed','cancelled'].includes(o.order_status))actions+=`<button class="dangerAction" data-action="cancel" data-id="${o.id}">Cancel</button>`;return `<article class="orderCard"><div class="orderCardTop"><div class="orderCardMain"><strong>${h(o.order_number||`Order ${o.id}`)}</strong><p>${h(o.customer_name_snapshot||o.customer_account_name||'Customer')} • ${h(nice(o.fulfilment_method))}</p></div>${statusBadge(o.order_status)}</div><div class="orderMoney"><div><small>${h(nice(o.payment_status))}</small><strong>${php(o.total)}</strong></div>${due?`<small>Due ${php(o.outstanding_amount)}</small>`:'<small>Paid</small>'}</div>${o.customer_checked_in_at&&!o.presence_confirmed_at?'<div class="miniBadge" style="margin-top:8px">Customer checked in</div>':''}<div class="orderActions">${actions}</div></article>`}
 function bindMerchantActions(){orderWorkspace.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>merchantAction(b.dataset.action,Number(b.dataset.id),b.dataset.due==='1'))}
@@ -58,6 +90,21 @@ function openCancelModal(id){const back=document.getElementById('orderModalBackd
 
 function applyOrderState(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState;if(state?.snapshot)orderMe=state.snapshot}
 async function decorate(detail){if(!ensureWorkspace()||!orderToken())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applyOrderState(state);if(!orderMe)return;const role=state?.surface==='profile'?state.activeRole:null;if(role==='merchant'){const top=document.querySelector('.shellProfileControls');if(top&&!document.getElementById('ordersQuickButton')){const b=document.createElement('button');b.id='ordersQuickButton';b.className='ordersQuickButton';b.type='button';b.textContent='Orders';b.onclick=openMerchantOrders;top.insertAdjacentElement('beforebegin',b)}}else document.getElementById('ordersQuickButton')?.remove();const hub=document.getElementById('roleHub');if(hub&&role==='customer'){const orderTile=hub.querySelector('[data-hub-feature="Orders"]');if(orderTile)orderTile.onclick=openCustomerOrders}}
-function observe(){document.addEventListener('abl:profile-state',e=>decorate(e.detail).catch(()=>{}),{passive:true})}
+function ordersVisible(){return Boolean(orderWorkspace&&!orderWorkspace.classList.contains('hidden'))}
+function refreshVisibleOrders(){
+  if(document.hidden||!ordersVisible())return;
+  if(ordersMode==='merchant')renderMerchantOrders(false).catch(()=>{});
+  else if(ordersMode==='customer')renderCustomerOrders(false).catch(()=>{});
+}
+function observe(){
+  document.addEventListener('abl:profile-state',e=>decorate(e.detail).catch(()=>{}),{passive:true});
+  document.addEventListener('abl:business-workspace-changed',e=>{
+    const id=Number(e.detail?.activeBusinessId);
+    if(Number.isInteger(id)&&id>0){merchantBusinessId=id;productsCache=[];productsLoadError=''}
+    if(ordersMode==='merchant'&&ordersVisible())renderMerchantOrders().catch(()=>{});
+  },{passive:true});
+  document.addEventListener('visibilitychange',refreshVisibleOrders,{passive:true});
+}
 async function boot(){ensureWorkspace();observe();await decorate(window.BusinessLifeProfileState)}
+window.BusinessLifeOrders=Object.freeze({openMerchantOrders,openCustomerOrders,closeOrders});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
