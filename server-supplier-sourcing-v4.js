@@ -564,7 +564,7 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
             rfq_id,source_type,supply_party_id,offered_name,package_unit,base_unit,base_units_per_pack,
             quoted_packs,minimum_packs,price_per_pack,delivery_fee,lead_days,earliest_fulfilment_date,
             valid_until,availability_status,substitution_note,payment_term_note,supplier_note,status,created_by_account_id
-          ) VALUES($1,'external',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,'active',$19)
+          ) VALUES($1,'external',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'active',$18)
           RETURNING *`,
           [rfq.id,partyId,...params,me.account.id]
         ));
