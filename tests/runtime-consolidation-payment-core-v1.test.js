@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const publicServer=read('server-paymongo.js');
 const paymentServer=read('server-payments.js');
+const legalServer=read('server-legal.js');
 
 test('public runtime mounts Payment Core in-process instead of spawning port 4607',()=>{
   assert.match(publicServer,/startEmbeddedPaymentCore/);
@@ -20,14 +21,15 @@ test('Payment Core remains standalone-capable for rollback while exposing embedd
   assert.match(paymentServer,/export async function stopEmbeddedPaymentCore/);
   assert.match(paymentServer,/directExecution/);
   assert.match(paymentServer,/Business & Life payment core gateway listening on/);
-  assert.match(paymentServer,/startupWaitAttempts\(380\)/);
+  assert.match(paymentServer,/startEmbeddedLegal/);
+  assert.doesNotMatch(paymentServer,/\|\|4507/);
 });
 
-test('embedded forwarding preserves original JSON bytes when public parser already consumed the stream',()=>{
+test('embedded forwarding preserves original JSON bytes through the remaining Legal proxy boundary',()=>{
   assert.match(publicServer,/verify:\(req,_res,buf\)=>\{req\.rawBody=Buffer\.from\(buf\)\}/);
-  assert.match(paymentServer,/Buffer\.isBuffer\(req\.rawBody\)/);
-  assert.match(paymentServer,/const payload=rawPayload\|\|/);
-  assert.match(paymentServer,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(legalServer,/Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.match(legalServer,/const payload=rawPayload\|\|/);
+  assert.match(legalServer,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('public health reflects embedded Payment Core readiness without a child process handle',()=>{
