@@ -19,7 +19,8 @@ test('department-specific credentials fall back to legacy shared Resend configur
 test('auth mail is routed through Security department',()=>{
   assert.match(core,/cat==='security'/);
   assert.match(core,/sendTransientEmailNotification/);
-  assert.match(core,/resendEmail\(\{to,subject,html,eventCode,category\}\)/);
+  assert.match(core,/renderTransactionalEmail\(\{subject,bodyHtml:html,department\}\)/);
+  assert.match(core,/text:presentation\.text/);
 });
 
 test('billing and finance event families route to Billing',()=>{
