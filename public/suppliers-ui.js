@@ -593,7 +593,7 @@ function supplierMoneyPanel(today){
     <div class="supKpi static"><strong>${pphp(m.overdue_receivable_total||0)}</strong><span>Overdue</span></div>
     <div class="supKpi static"><strong>${Number(c.merchant_balances||0)}</strong><span>Merchant balances</span></div>
     <div class="supKpi static"><strong>${pphp(m.money_received_recorded||0)}</strong><span>Recorded received</span></div>
-  </div><p class="supCodeHelp">Receivables use invoice evidence when present, otherwise received value, otherwise the PO; confirmed credits and recorded payments are subtracted.</p></section>
+  </div><p class="supCodeHelp">Receivables use invoice evidence when present, otherwise received value; confirmed credits and recorded payments are subtracted. An unreceived PO is not money due.</p></section>
   <section class="supCard"><h2>Money due by order</h2><div class="supList">${due.length?due.map(p=>`<div class="supRow"><div><strong>${ph(p.po_number)} • ${ph(p.business_name)}</strong><small>${pphp(p.commercial_outstanding)} outstanding${p.earliest_due_date?` • due ${new Date(p.earliest_due_date).toLocaleDateString()}`:''}</small><div class="supMeta">${(p.attention_signals||[]).includes('RECEIVABLE_OVERDUE')?'<span class="pending">Overdue</span>':''}</div></div><div class="supActions"><button class="supBtn secondary" data-sup-view="${p.id}">View</button></div></div>`).join(''):'<div class="supEmpty">No Supplier receivable is currently outstanding.</div>'}</div></section>`;
 }
 async function editSupplierAvailability(id){
