@@ -1,5 +1,5 @@
 const ORDER_PROGRESS=['accepted','preparing','ready','completed'];
-let orderMe=null,orderWorkspace=null,productsCache=[],merchantBusinessId=null,ordersMode=null;
+let orderMe=null,orderWorkspace=null,productsCache=[],productsLoadError='',merchantBusinessId=null,ordersMode=null;
 const orderToken=()=>localStorage.getItem('abl_token')||'';
 const h=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const php=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -55,8 +55,13 @@ async function openMerchantOrders(){
   ordersMode='merchant';merchantBusinessId=null;ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderMerchantOrders()
 }
 async function loadProducts(businessId){
-  try{productsCache=await oapi(`/api/orders/products?business_id=${encodeURIComponent(businessId)}`)}
-  catch{productsCache=[]}
+  try{
+    productsCache=await oapi(`/api/orders/products?business_id=${encodeURIComponent(businessId)}`);
+    productsLoadError='';
+  }catch(error){
+    productsCache=[];
+    productsLoadError=error?.message||'Counter catalog could not be loaded.';
+  }
   return productsCache
 }
 async function renderMerchantOrders(showLoading=true){
@@ -73,7 +78,7 @@ async function renderMerchantOrders(showLoading=true){
     bindHeader(()=>renderMerchantOrders());bindCounterForm();bindMerchantActions();
   }catch(error){merchantOrdersError(error)}
 }
-function counterForm(){return `<section class="orderCreateCard"><h2>+ New counter order</h2><p>Create a present/walk-in order without leaving the Merchant workspace.</p><form id="counterOrderForm" class="orderCreateGrid"><div class="orderCreateGrid two"><label>Customer name<input id="counterCustomer" placeholder="Walk-in customer"></label><label>Payment<select id="counterPayment"><option value="cash">Cash</option><option value="online">Online / digital</option></select></label></div><div class="counterProducts">${productsCache.length?productsCache.map(p=>`<div class="counterProduct"><div><strong>${h(p.name)}</strong><small>${h(p.category)} • ${php(p.selling_price)}</small></div><input type="number" min="0" step="1" value="0" data-counter-product="${p.id}" aria-label="Quantity for ${h(p.name)}"></div>`).join(''):'<div class="ordersEmpty">Create active products in Catalog first.</div>'}</div><label>Order note<textarea id="counterNote" rows="2" placeholder="No onions, extra sauce…"></textarea></label><div class="orderCreateActions"><button class="createOrderPrimary" type="submit">Create order</button></div><div id="counterMessage" class="avatarHint"></div></form></section>`}
+function counterForm(){return `<section class="orderCreateCard"><h2>+ New counter order</h2><p>Create a present/walk-in order without leaving the Merchant workspace.</p><form id="counterOrderForm" class="orderCreateGrid"><div class="orderCreateGrid two"><label>Customer name<input id="counterCustomer" placeholder="Walk-in customer"></label><label>Payment<select id="counterPayment"><option value="cash">Cash</option><option value="online">Online / digital</option></select></label></div><div class="counterProducts">${productsCache.length?productsCache.map(p=>`<div class="counterProduct"><div><strong>${h(p.name)}</strong><small>${h(p.category)} • ${php(p.selling_price)}</small></div><input type="number" min="0" step="1" value="0" data-counter-product="${p.id}" aria-label="Quantity for ${h(p.name)}"></div>`).join(''):productsLoadError?`<div class="ordersEmpty ordersInlineError" role="alert">Counter catalog could not be loaded. Use Refresh to try again.<small>${h(productsLoadError)}</small></div>`:'<div class="ordersEmpty">Create active products in Catalog first.</div>'}</div><label>Order note<textarea id="counterNote" rows="2" placeholder="No onions, extra sauce…"></textarea></label><div class="orderCreateActions"><button class="createOrderPrimary" type="submit">Create order</button></div><div id="counterMessage" class="avatarHint"></div></form></section>`}
 function bindCounterForm(){const f=document.getElementById('counterOrderForm');if(!f)return;f.onsubmit=async e=>{e.preventDefault();const items=[...f.querySelectorAll('[data-counter-product]')].map(i=>({product_id:Number(i.dataset.counterProduct),quantity:Number(i.value)})).filter(i=>i.quantity>0);const msg=document.getElementById('counterMessage');msg.textContent='';if(!items.length){msg.textContent='Choose at least one product.';return}try{await oapi('/api/orders/merchant/create',{method:'POST',body:JSON.stringify({business_id:merchantBusinessId,customer_name:document.getElementById('counterCustomer').value||'Walk-in customer',items,fulfilment_method:'pickup',payment_method:document.getElementById('counterPayment').value,counter_presence:true,note:document.getElementById('counterNote').value})});toast('Order created.');await renderMerchantOrders(false)}catch(err){msg.textContent=err.message}}}
 function lane(name,orders){return `<section class="orderLane"><div class="orderLaneHeader"><h2>${h(name)}</h2><span>${orders.length}</span></div><div class="orderCards">${orders.length?orders.map(merchantCard).join(''):'<div class="ordersEmpty">Nothing here</div>'}</div></section>`}
 function merchantCard(o){const due=Number(o.outstanding_amount)>0.001;let actions='';if(o.order_status==='awaiting_customer_presence')actions+=`<button class="warmAction" data-action="presence" data-id="${o.id}">Presence verified</button>`;if(o.order_status==='awaiting_payment')actions+=`<button class="primaryAction" data-action="payment" data-id="${o.id}">Record payment</button>`;if(o.order_status==='accepted')actions+=`<button class="primaryAction" data-action="start" data-id="${o.id}">Start preparing</button>`;if(o.order_status==='preparing')actions+=`<button class="primaryAction" data-action="ready" data-id="${o.id}">Mark ready</button>`;if(o.order_status==='ready'){if(due)actions+=`<button class="warmAction" data-action="payment" data-id="${o.id}">Record payment</button>`;if(o.fulfilment_method==='pickup')actions+=`<button class="primaryAction" data-action="complete" data-id="${o.id}" data-due="${due?'1':'0'}">Complete</button>`;else actions+=`<button class="primaryAction" data-action="handoff" data-id="${o.id}">Delivery handoff</button>`}if(!['completed','cancelled'].includes(o.order_status))actions+=`<button class="dangerAction" data-action="cancel" data-id="${o.id}">Cancel</button>`;return `<article class="orderCard"><div class="orderCardTop"><div class="orderCardMain"><strong>${h(o.order_number||`Order ${o.id}`)}</strong><p>${h(o.customer_name_snapshot||o.customer_account_name||'Customer')} • ${h(nice(o.fulfilment_method))}</p></div>${statusBadge(o.order_status)}</div><div class="orderMoney"><div><small>${h(nice(o.payment_status))}</small><strong>${php(o.total)}</strong></div>${due?`<small>Due ${php(o.outstanding_amount)}</small>`:'<small>Paid</small>'}</div>${o.customer_checked_in_at&&!o.presence_confirmed_at?'<div class="miniBadge" style="margin-top:8px">Customer checked in</div>':''}<div class="orderActions">${actions}</div></article>`}
@@ -95,7 +100,7 @@ function observe(){
   document.addEventListener('abl:profile-state',e=>decorate(e.detail).catch(()=>{}),{passive:true});
   document.addEventListener('abl:business-workspace-changed',e=>{
     const id=Number(e.detail?.activeBusinessId);
-    if(Number.isInteger(id)&&id>0){merchantBusinessId=id;productsCache=[]}
+    if(Number.isInteger(id)&&id>0){merchantBusinessId=id;productsCache=[];productsLoadError=''}
     if(ordersMode==='merchant'&&ordersVisible())renderMerchantOrders().catch(()=>{});
   },{passive:true});
   document.addEventListener('visibilitychange',refreshVisibleOrders,{passive:true});
