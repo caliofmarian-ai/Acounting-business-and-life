@@ -94,3 +94,11 @@ test('Merchant Orders reuses the cached accounting business before requesting wo
   assert.ok(resolverStart>=0&&resolverEnd>resolverStart);
   assert.ok(resolver.indexOf('BusinessLifeAccounting?.getState')<resolver.indexOf("oapi('/api/accounting/workspaces')"));
 });
+
+
+test('Counter catalog load failure is not presented as an empty catalog',()=>{
+  assert.match(ui,/productsLoadError=error\?\.message\|\|'Counter catalog could not be loaded\.'/);
+  assert.match(ui,/Counter catalog could not be loaded\. Use Refresh to try again\./);
+  assert.match(ui,/ordersInlineError/);
+  assert.match(css,/\.ordersInlineError\{/);
+});
