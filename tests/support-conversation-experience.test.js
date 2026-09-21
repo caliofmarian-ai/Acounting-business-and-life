@@ -31,10 +31,11 @@ test('support reply notification opens its exact ticket',()=>{
   assert.match(notifications,/BusinessLifeFeatureLoader\?\.openSupportTicket/);
 });
 
-test('one inbox notification thread is shown per support ticket',()=>{
-  assert.match(notificationServer,/ROW_NUMBER\(\) OVER\(PARTITION BY CASE WHEN e\.entity_type='support_ticket'/);
+test('support remains a notification thread even when extended entity threading is not requested',()=>{
+  assert.match(notificationServer,/e\.entity_type='support_ticket' OR \(\$3::boolean AND e\.entity_type IN/);
+  assert.match(notificationServer,/thread_key/);
   assert.match(notificationServer,/WHERE thread_rank=1/);
-  assert.match(notificationServer,/e\.entity_type='support_ticket' AND e\.entity_id=\$2/);
+  assert.match(notificationServer,/x\.entity_type==='support_ticket'/);
 });
 
 test('Admin Support has editable voice transcription and AI drafting',()=>{
