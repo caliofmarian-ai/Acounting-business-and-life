@@ -1,8 +1,5 @@
-import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +7,7 @@ import {
   ADMIN_PERMISSIONS, ensureAdminSchema, getAdminAssignments, hasAdminPermission,
   requireAdminPermission, visibleTerritoryIds, signAdminAssertion, appendAdminAudit
 } from './admin-authorization.js';
+import {startEmbeddedBusinessAccounting,stopEmbeddedBusinessAccounting} from './server-business-accounting.js';
 import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
 import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
 import {buildSessionBootstrap} from './session-bootstrap-core.js';
@@ -18,7 +16,7 @@ const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_BUSINESS_ACCOUNTING_PORT||4207);
+const upstreamPort=Number(process.env.INTERNAL_PROFILE_GOVERNANCE_PORT||4107);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const body=express.json({limit:'28mb'});
@@ -151,7 +149,7 @@ async function transcribeSupportAudio(dataUrl,fileName='voice-recording.webm',so
 }
 
 const INCIDENT_STATUSES=new Set(['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated']);
-let child;let shuttingDown=false;
+let businessAccountingApp=null;let businessAccountingReady=false;let shuttingDown=false;
 
 const clean=(v,max=1600)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
@@ -541,24 +539,65 @@ async function adminOverview(accountId,seedContext=null){
   };
 }
 
+function dispatchBusinessAccounting(req,res,{headers={},afterSuccess=null}={}){
+  if(!businessAccountingApp)return Promise.reject(Object.assign(new Error('Multi-business Accounting runtime is not ready'),{status:503}));
+  const previousHeaders=new Map();
+  for(const[key,value]of Object.entries(headers)){
+    const normalized=key.toLowerCase();
+    previousHeaders.set(normalized,req.headers[normalized]);
+    if(value===undefined||value===null)delete req.headers[normalized];else req.headers[normalized]=String(value);
+  }
+  const chunks=[];let ended=false;
+  const originalWrite=res.write.bind(res),originalEnd=res.end.bind(res);
+  const restore=()=>{
+    res.write=originalWrite;res.end=originalEnd;
+    for(const[key,value]of previousHeaders.entries()){
+      if(value===undefined)delete req.headers[key];else req.headers[key]=value;
+    }
+  };
+  const capture=(chunk,encoding)=>{
+    if(chunk==null)return;
+    chunks.push(Buffer.isBuffer(chunk)?chunk:Buffer.from(String(chunk),typeof encoding==='string'?encoding:undefined));
+  };
+  return new Promise((resolve,reject)=>{
+    res.write=function(chunk,encoding,cb){capture(chunk,encoding);if(typeof cb==='function')queueMicrotask(cb);return true};
+    res.end=function(chunk,encoding,cb){
+      if(ended)return res;ended=true;capture(chunk,encoding);
+      const status=res.statusCode,payload=Buffer.concat(chunks);
+      restore();
+      Promise.resolve(status>=200&&status<400&&afterSuccess?afterSuccess(status):undefined).then(()=>{
+        originalEnd(payload,typeof encoding==='string'?encoding:undefined,typeof cb==='function'?cb:undefined);
+        resolve();
+      }).catch(reject);
+      return res;
+    };
+    businessAccountingApp.handle(req,res,err=>{
+      if(ended)return;
+      restore();
+      if(err)return reject(err);
+      reject(Object.assign(new Error('Multi-business Accounting runtime did not handle request'),{status:502}));
+    });
+  });
+}
+
 async function forwardAdmin(req,res,permission,territoryId,targetType='',targetId=''){
   const{me,assignment}=await adminFor(req,permission,territoryId);
   const scopedTerritoryId=territoryId??assignment.territory_id??null;
-  const headers={Authorization:authHeader(req),'Content-Type':'application/json','x-bl-admin-assertion':signAdminAssertion(TOKEN_SECRET,{accountId:me.account.id,permission,territoryId:scopedTerritoryId,assignmentId:assignment.id})};
-  const r=await upstream(req.originalUrl,{method:req.method,headers,body:['GET','HEAD'].includes(req.method)?undefined:JSON.stringify(req.body||{})});
-  const text=await r.text();
-  if(r.ok&&!['GET','HEAD'].includes(req.method))await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission,territoryId:scopedTerritoryId,targetType,targetId,eventCode:'admin_forwarded_action',after:{path:req.path,method:req.method},reason:clean(req.body?.reason||req.body?.note,800),correlationId:correlation(req)});
-  res.status(r.status);const ct=r.headers.get('content-type');if(ct)res.type(ct);res.send(text);
+  const assertion=signAdminAssertion(TOKEN_SECRET,{accountId:me.account.id,permission,territoryId:scopedTerritoryId,assignmentId:assignment.id});
+  return dispatchBusinessAccounting(req,res,{
+    headers:{Authorization:authHeader(req),'Content-Type':'application/json','x-bl-admin-assertion':assertion},
+    afterSuccess:!['GET','HEAD'].includes(req.method)?()=>appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission,territoryId:scopedTerritoryId,targetType,targetId,eventCode:'admin_forwarded_action',after:{path:req.path,method:req.method},reason:clean(req.body?.reason||req.body?.note,800),correlationId:correlation(req)}):null
+  });
 }
 
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,upstream:r.ok,version:'0.10-admin-rbac-support'})}catch{res.status(503).json({ok:false,db:false,upstream:false,version:'0.10-admin-rbac-support'})}});
+app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');const ok=businessAccountingReady&&r.ok;res.status(ok?200:503).json({ok,db:true,upstream:ok,business_accounting:businessAccountingReady,profile_governance:r.ok,version:'0.10-admin-rbac-support'})}catch{res.status(503).json({ok:false,db:false,upstream:false,business_accounting:false,profile_governance:false,version:'0.10-admin-rbac-support'})}});
 app.get('/admin-operations.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-operations.css'),'utf8')));
 app.get('/admin-operations-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-operations-ui.js'),'utf8')));
 app.get('/admin-console.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-console.css'),'utf8')));
 app.get('/admin-console.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-console.js'),'utf8')));
 app.get('/admin',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});const html=await r.text();res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/admin/me',async(req,res,next)=>{try{
@@ -856,34 +895,18 @@ app.post('/api/admin/metrics/snapshot',body,async(req,res,next)=>{try{
   res.status(201).json(rows[0]);
 }catch(e){next(e)}});
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Admin upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
-}
-app.use(proxy);
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected admin operations error'})});
-
-function start(){child=spawn(process.execPath,['server-business-accounting.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Business accounting child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<startupWaitAttempts(260);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Business accounting child failed health check')}
+app.use((req,res,next)=>{
+  if(!businessAccountingApp)return res.status(503).json({error:'Multi-business Accounting runtime is not ready'});
+  return businessAccountingApp(req,res,next);
+});
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected admin operations error'})});
 
 let embeddedStartPromise=null;
 export async function startEmbeddedAdminOperations(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      businessAccountingApp=await startEmbeddedBusinessAccounting();
+      businessAccountingReady=true;
       await initDb();
       console.log('Business & Life scoped Admin + Support mounted in-process');
       return app;
@@ -895,7 +918,8 @@ export async function startEmbeddedAdminOperations(){
 async function stopAdminOperations(){
   if(shuttingDown)return;
   shuttingDown=true;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  businessAccountingReady=false;
+  await stopEmbeddedBusinessAccounting().catch(()=>{});
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedAdminOperations(){await stopAdminOperations()}

@@ -22,24 +22,24 @@ test('notification transaction hooks observe embedded Admin responses instead of
   assert.match(notifications,/const chunks=\[\]/);
   assert.match(notifications,/Buffer\.concat\(chunks\)\.toString\('utf8'\)/);
   assert.match(notifications,/Post-transaction notification hook/);
-  assert.match(notifications,/INTERNAL_BUSINESS_ACCOUNTING_PORT\|\|4207/);
+  assert.match(notifications,/INTERNAL_PROFILE_GOVERNANCE_PORT\|\|4107/);
 });
 
-test('embedded Admin preserves parsed JSON when forwarding to Business Accounting',()=>{
-  assert.match(admin,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(admin,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(admin,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(admin,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+test('embedded Admin delegates through the in-process Accounting app',()=>{
+  assert.match(admin,/startEmbeddedBusinessAccounting/);
+  assert.match(admin,/dispatchBusinessAccounting/);
+  assert.match(admin,/businessAccountingApp\.handle\(req,res/);
+  assert.doesNotMatch(admin,/INTERNAL_BUSINESS_ACCOUNTING_PORT/);
+  assert.doesNotMatch(admin,/\|\|4207/);
 });
 
 test('Admin + Support remains standalone-capable while exposing embedded lifecycle',()=>{
   assert.match(admin,/export async function startEmbeddedAdminOperations/);
   assert.match(admin,/export async function stopEmbeddedAdminOperations/);
-  assert.match(admin,/startupWaitAttempts\(260\)/);
   assert.match(admin,/directExecution/);
   assert.match(admin,/Business & Life scoped Admin \+ Support mounted in-process/);
   assert.match(admin,/Business & Life scoped Admin \+ Support gateway listening on/);
-  assert.match(admin,/spawn\(process\.execPath,\['server-business-accounting\.js'\]/);
+  assert.match(admin,/businessAccountingApp=await startEmbeddedBusinessAccounting\(\)/);
 });
 
 test('Resend raw-body verification remains owned by isolated Notifications',()=>{

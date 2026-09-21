@@ -1,9 +1,10 @@
+import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { verifyAdminAssertion } from './admin-authorization.js';
 import { businessFinanceOverview } from './business-finance-view-core.js';
@@ -630,12 +631,54 @@ app.post('/api/merchant/storefront/import-legacy',jsonBody,async(req,res,next)=>
 
 app.post('/api/governance/admin/applications/:id/review',jsonBody,async(req,res,next)=>{try{const assertionHeader=req.headers['x-bl-admin-assertion'];const response=await upstream(req.originalUrl,{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json',...(assertionHeader?{'x-bl-admin-assertion':String(assertionHeader)}:{})},body:JSON.stringify(req.body||{})});const data=await response.json().catch(()=>({}));if(response.ok&&req.body?.decision==='approve'){const a=await pool.query(`SELECT account_id,role,territory_id,proposed_business_name FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(a.rowCount&&['merchant','supplier'].includes(a.rows[0].role)){const asserted=verifyAdminAssertion(TOKEN_SECRET,assertionHeader,null);const actorId=asserted?.accountId||1;await ensureProfileBusinessBinding(Number(a.rows[0].account_id),a.rows[0].role,Number(a.rows[0].territory_id)||null,a.rows[0].proposed_business_name||'',actorId)}}res.status(response.status).json(data)}catch(e){next(e)}});
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Platform upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
+  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Platform upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'});});
 
 function start(){child=spawn(process.execPath,['server-profile-governance.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Profile governance child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<180;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(resolve=>setTimeout(resolve,250))}throw new Error('Profile governance child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initAccountingTenancyDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life multi-business accounting gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+async function wait(){for(let i=0;i<startupWaitAttempts(180);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(resolve=>setTimeout(resolve,250))}throw new Error('Profile governance child failed health check')}
+
+let embeddedStartPromise=null;
+export async function startEmbeddedBusinessAccounting(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      await initAccountingTenancyDb();
+      console.log('Business & Life multi-business accounting mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopBusinessAccounting(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedBusinessAccounting(){await stopBusinessAccounting()}
+
+async function shutdown(sig){console.log(`Received ${sig}`);await stopBusinessAccounting();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedBusinessAccounting().then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life multi-business accounting gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+}

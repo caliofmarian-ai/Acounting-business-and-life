@@ -33,7 +33,21 @@ async function profileApi(path, options = {}) {
   try {
     const response = await fetch(path, { ...options, headers, signal: options.signal || controller?.signal });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+    if (response.status === 401) {
+      localStorage.removeItem('abl_token');
+      snapshot=null;profileFetchedAt=0;adminContext=null;adminContextFetchedAt=0;activeRole=null;activeSurface='account';
+      document.getElementById('shell')?.classList.add('hidden');
+      document.getElementById('login')?.classList.remove('hidden');
+      document.dispatchEvent(new CustomEvent('abl:auth-expired'));
+      const error=new Error(data.error || 'Please sign in again.');
+      error.status=401;
+      throw error;
+    }
+    if (!response.ok) {
+      const error=new Error(data.error || `Request failed (${response.status})`);
+      error.status=response.status;
+      throw error;
+    }
     return data;
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('The app is taking too long to respond. Check your connection and try again.');
