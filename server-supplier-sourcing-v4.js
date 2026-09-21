@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import {supplierDomainV2Internals} from './server-supplier-domain-v2.js';
 import {
-  normalizeDiscoverySettings,normalizeRfq,compareQuotes,validatePreferenceRanks
+  normalizeDiscoverySettings,normalizeRfq,compareQuotes,validatePreferenceRanks,reorderPackSuggestion
 } from './supplier-sourcing-core.js';
 
 const {exactProfileBusiness}=supplierDomainV2Internals;
@@ -735,16 +735,20 @@ export async function supplierReorderSuggestions(pool,businessId){
      ORDER BY (i.reorder_level-i.quantity) DESC,i.item,i.id`,
     [Number(businessId)]
   );
-  return rows.map(x=>({
-    ...x,
-    source_status:x.catalog_item_id?'PREFERRED_SOURCE':'NO_CONFIGURED_SOURCE',
-    suggested_packs:x.catalog_item_id
-      ?Math.max(
-        Number(x.minimum_packs||1),
-        Math.ceil(Math.max(0,Number(x.reorder_level)-Number(x.quantity))/Number(x.base_units_per_pack||1))
-      )
-      :null
-  }));
+  return rows.map(x=>{
+    if(!x.catalog_item_id)return{...x,source_status:'NO_CONFIGURED_SOURCE',suggested_packs:null};
+    const suggestion=reorderPackSuggestion({
+      quantity:Number(x.quantity),reorderLevel:Number(x.reorder_level),
+      inventoryUnit:x.inventory_base_unit||x.unit,
+      baseUnitsPerPack:Number(x.base_units_per_pack),supplierBaseUnit:x.base_unit,
+      minimumPacks:Number(x.minimum_packs||1)
+    });
+    return{
+      ...x,
+      source_status:suggestion.status==='COMPARABLE'?'PREFERRED_SOURCE':suggestion.status,
+      suggested_packs:suggestion.suggested_packs
+    };
+  });
 }
 
 export const supplierSourcingV4Internals={
