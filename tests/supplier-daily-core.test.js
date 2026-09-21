@@ -69,3 +69,16 @@ test('Today summary groups work and commercial receivables deterministically',()
   assert.equal(s.money.receivable_total,300);
   assert.equal(s.money.overdue_receivable_total,200);
 });
+
+
+test('a receivable due today is not overdue until the next calendar day',()=>{
+  const sameDay=supplierOrderAttention({
+    status:'received',commercial_outstanding:100,earliest_due_date:'2026-09-21'
+  },{now:new Date('2026-09-21T23:30:00Z')});
+  assert.ok(!sameDay.includes('RECEIVABLE_OVERDUE'));
+
+  const nextDay=supplierOrderAttention({
+    status:'received',commercial_outstanding:100,earliest_due_date:'2026-09-21'
+  },{now:new Date('2026-09-22T00:01:00Z')});
+  assert.ok(nextDay.includes('RECEIVABLE_OVERDUE'));
+});
