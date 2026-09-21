@@ -235,3 +235,35 @@ test('custom mode remains manual and compact settings stay closed by default',()
   assert.match(css,/notificationModeChoices/);
   assert.doesNotMatch(ui,/<details class="notificationSettingsGroup" open/);
 });
+
+
+test('extended inbox threading is opt-in and preserves legacy event views',()=>{
+  assert.match(server,/threaded=String\(req\.query\.threaded\|\|''\)==='all'/);
+  assert.match(server,/\$3::boolean AND e\.entity_type IN \('order','delivery','purchase_order','service_job'\)/);
+  assert.match(server,/e\.entity_type='support_ticket' OR/);
+  assert.match(server,/thread_count/);
+  assert.match(server,/unread_count/);
+  assert.match(ui,/\/api\/notifications\?limit=80&threaded=all/);
+  assert.match(ui,/\/api\/notifications\/unread-count\?threaded=all/);
+});
+
+test('threaded notification actions affect the selected entity thread only when UI opts in',()=>{
+  assert.match(server,/THREAD_ENTITY_TYPES/);
+  assert.match(server,/isNotificationThreadEntity/);
+  assert.match(ui,/JSON\.stringify\(\{threaded:true\}\)/);
+  assert.match(ui,/\?threaded=all/);
+  assert.match(server,/e\.entity_type=\$2 AND e\.entity_id=\$3/);
+});
+
+test('grouped entity threads expose update and unread counts in the inbox',()=>{
+  assert.match(ui,/n\.thread_count/);
+  assert.match(ui,/n\.unread_count/);
+  assert.match(ui,/updates ·/);
+  assert.match(ui,/unread ·/);
+});
+
+test('Web Push reuses one system notification per groupable business entity',()=>{
+  assert.match(sw,/threadedTypes=new Set\(\['support_ticket','order','delivery','purchase_order','service_job'\]\)/);
+  assert.match(sw,/\['business-life',data\.entity_type,data\.entity_id\]\.join\(': '\)|\['business-life',data\.entity_type,data\.entity_id\]\.join\(':'\)/);
+  assert.match(sw,/renotify:Boolean\(attention\.renotify\)/);
+});

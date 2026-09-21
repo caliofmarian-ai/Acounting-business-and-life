@@ -14,7 +14,7 @@ function addBell(){
   let b=document.getElementById('notificationBell');
   if(!b){b=document.createElement('button');b.id='notificationBell';b.className='notificationBell';b.type='button';b.innerHTML='<span aria-hidden="true">🔔</span><b id="notificationBadge" class="hidden">0</b>';b.setAttribute('aria-label','Notifications');b.onclick=openNotifications;top.prepend(b)}
 }
-async function refreshUnread(){if(!token())return;try{addBell();const x=await api('/api/notifications/unread-count');const badge=document.getElementById('notificationBadge');if(!badge)return;badge.textContent=String(x.unread||0);badge.classList.toggle('hidden',!x.unread)}catch{}}
+async function refreshUnread(){if(!token())return;try{addBell();const x=await api('/api/notifications/unread-count?threaded=all');const badge=document.getElementById('notificationBadge');if(!badge)return;badge.textContent=String(x.unread||0);badge.classList.toggle('hidden',!x.unread)}catch{}}
 function closeNotifications(){document.getElementById('notificationBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
 async function openNotifications(){ensureNotificationUi();document.getElementById('notificationBackdrop').classList.remove('hidden');document.body.style.overflow='hidden';await renderNotificationCenter()}
 function iconFor(code){if(code.startsWith('order.'))return'🛍️';if(code.startsWith('delivery.'))return'🛵';if(code.startsWith('procurement.')||code.startsWith('supplier.'))return'📦';if(code.startsWith('service.'))return'🧰';if(code.startsWith('support.'))return'💬';if(code.startsWith('incident.'))return'🛡️';if(code.startsWith('profile.'))return'👤';return'🔔'}
@@ -34,10 +34,10 @@ function detectNotificationMode(p){const cats=p?.categories||[];if(cats.length&&
 async function renderNotificationCenter(){
   const body=document.getElementById('notificationBody');body.innerHTML='<div class="notificationLoading">Loading…</div>';
   try{
-    const [rows,prefs]=await Promise.all([api('/api/notifications?limit=80'),api('/api/notifications/preferences')]);
+    const [rows,prefs]=await Promise.all([api('/api/notifications?limit=80&threaded=all'),api('/api/notifications/preferences')]);
     notificationPanel={rows,prefs};
-    const unreadCount=rows.filter(x=>!x.read_at).length;
-    const actionCount=rows.filter(x=>!x.read_at&&needsNotificationAction(x)).length;
+    const unreadCount=rows.filter(x=>Number(x.unread_count??(!x.read_at?1:0))>0).length;
+    const actionCount=rows.filter(x=>Number(x.unread_count??(!x.read_at?1:0))>0&&needsNotificationAction(x)).length;
     body.innerHTML=`
       <div class="notificationTabs"><button class="active" data-ntab="inbox">Inbox <span>${unreadCount}</span></button><button data-ntab="settings">Settings</button></div>
       <section id="notificationInbox">
@@ -55,18 +55,18 @@ async function renderNotificationCenter(){
 function renderNotificationList(rows){
   const box=document.getElementById('notificationList');if(!box)return;
   if(!rows.length){box.innerHTML='<div class="notificationEmpty">No notifications yet.</div>';return}
-  box.innerHTML=rows.map(n=>`<article class="notificationCard ${n.read_at?'read':'unread'} ${notificationRoleClass(n.role_hint)}" data-notification="${n.recipient_id}">
+  box.innerHTML=rows.map(n=>`<article class="notificationCard ${Number(n.unread_count??(!n.read_at?1:0))>0?'unread':'read'} ${notificationRoleClass(n.role_hint)}" data-notification="${n.recipient_id}">
     <div class="notificationIcon">${iconFor(n.event_code)}</div>
     <div class="notificationCopy">
       <div class="notificationMeta"><span class="notificationRole">${esc(notificationRoleLabel(n.role_hint))}</span><span class="notificationTopic">${esc(notificationTopic(n.event_code))}</span><time>${timeAgo(n.created_at)}</time></div>
       <strong class="notificationTitle">${esc(n.title)}</strong>
       <p>${esc(n.body)}</p>
-      <small class="notificationState">${esc(n.priority==='urgent'?'Urgent':n.priority==='high'?'Important':'Update')}</small>
+      <small class="notificationState">${Number(n.thread_count||1)>1?`${Number(n.thread_count)} updates · ${Number(n.unread_count||0)} unread · `:''}${esc(n.priority==='urgent'?'Urgent':n.priority==='high'?'Important':'Update')}</small>
     </div>
     <button class="notificationDismiss" data-dismiss="${n.recipient_id}" type="button" aria-label="Dismiss">×</button>
   </article>`).join('');
-  box.querySelectorAll('[data-notification]').forEach(card=>card.onclick=async e=>{if(e.target.closest('[data-dismiss]'))return;const id=Number(card.dataset.notification),n=rows.find(x=>Number(x.recipient_id)===id);if(card.classList.contains('unread')){await api(`/api/notifications/${id}/read`,{method:'PATCH',body:'{}'}).catch(()=>{});card.classList.remove('unread');card.classList.add('read');await refreshUnread()}if(n?.entity_type==='support_ticket'&&n.entity_id){const ticketId=Number(n.entity_id);try{if(window.BusinessLifeAdminConsole?.openSupportTicket)await window.BusinessLifeAdminConsole.openSupportTicket(ticketId);else if(window.BusinessLifeFeatureLoader?.openSupportTicket)await window.BusinessLifeFeatureLoader.openSupportTicket(ticketId);else if(window.BusinessLifeAdminOps?.openTicket)await window.BusinessLifeAdminOps.openTicket(ticketId);else{window.__ABL_LAZY_FEATURES__=true;await import('/admin-operations-ui.js');await window.BusinessLifeAdminOps.openTicket(ticketId)}closeNotifications()}catch(err){toast(err.message||'Could not open this support ticket.')}}});
-  box.querySelectorAll('[data-dismiss]').forEach(b=>b.onclick=async e=>{e.stopPropagation();await api(`/api/notifications/${b.dataset.dismiss}`,{method:'DELETE'});b.closest('.notificationCard')?.remove();await refreshUnread()});
+  box.querySelectorAll('[data-notification]').forEach(card=>card.onclick=async e=>{if(e.target.closest('[data-dismiss]'))return;const id=Number(card.dataset.notification),n=rows.find(x=>Number(x.recipient_id)===id);if(card.classList.contains('unread')){await api(`/api/notifications/${id}/read`,{method:'PATCH',body:JSON.stringify({threaded:true})}).catch(()=>{});card.classList.remove('unread');card.classList.add('read');await refreshUnread()}if(n?.entity_type==='support_ticket'&&n.entity_id){const ticketId=Number(n.entity_id);try{if(window.BusinessLifeAdminConsole?.openSupportTicket)await window.BusinessLifeAdminConsole.openSupportTicket(ticketId);else if(window.BusinessLifeFeatureLoader?.openSupportTicket)await window.BusinessLifeFeatureLoader.openSupportTicket(ticketId);else if(window.BusinessLifeAdminOps?.openTicket)await window.BusinessLifeAdminOps.openTicket(ticketId);else{window.__ABL_LAZY_FEATURES__=true;await import('/admin-operations-ui.js');await window.BusinessLifeAdminOps.openTicket(ticketId)}closeNotifications()}catch(err){toast(err.message||'Could not open this support ticket.')}}});
+  box.querySelectorAll('[data-dismiss]').forEach(b=>b.onclick=async e=>{e.stopPropagation();await api(`/api/notifications/${b.dataset.dismiss}?threaded=all`,{method:'DELETE'});b.closest('.notificationCard')?.remove();await refreshUnread()});
 }
 function switchNotificationTab(tab,btn){document.querySelectorAll('[data-ntab]').forEach(x=>x.classList.toggle('active',x===btn));document.getElementById('notificationInbox').classList.toggle('hidden',tab!=='inbox');document.getElementById('notificationSettings').classList.toggle('hidden',tab!=='settings')}
 function prefFor(category){return notificationPanel?.prefs?.preferences?.find(x=>x.category===category&&x.profile_role==='')||null}
