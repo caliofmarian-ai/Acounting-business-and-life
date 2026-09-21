@@ -3,3 +3,4 @@
 @media(min-width:960px){.ordersBoard{grid-template-columns:repeat(4,minmax(0,1fr));align-items:start}.orderLane{position:sticky;top:82px}.orderCard{padding:12px}.orderActions button{padding:7px 8px}}
 
 .ordersLoadError strong{display:block;color:#17233c;font-size:15px;margin-bottom:5px}.ordersLoadError p{margin:0 0 13px}.ordersLoadError .primaryAction{border:0;border-radius:12px;min-height:44px;padding:10px 14px;background:#0a7c66;color:#fff;font-size:13px;font-weight:900}.orderCardMain,.ordersHeaderCopy,.counterProduct>div{min-width:0}.orderCardMain strong,.orderCardMain p,.counterProduct strong,.counterProduct small{overflow-wrap:anywhere}
+.ordersInlineError{color:#8b3a3f;border-color:#edc8ca;background:#fff8f8}.ordersInlineError small{display:block;margin-top:5px;color:#8b3a3f;font-size:11px;overflow-wrap:anywhere}
