@@ -16,6 +16,7 @@ import {
 import { DEFAULT_NOTIFICATION_SOUND_VARIANT,notificationSoundVariants,notificationSoundSlots } from './notification-sound-options.js';
 import { notificationAudioConfigured,notificationAudioDescriptor,presignNotificationAudioUrl } from './notification-audio-core.js';
 import { notificationVoiceTranscriptMatrix } from './notification-voice-copy.js';
+import { verifyResendWebhook,recordResendProviderEvent } from './resend-delivery-observability.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -177,6 +178,30 @@ app.post('/api/governance/admin/applications/:id/review',body,(req,res)=>forward
 app.post('/api/governance/admin/authorizations/:id/status',body,(req,res)=>forwardJson(req,res,async()=>{const a=await authorizationInfo(req.params.id);if(!a)return;await safeEmit({eventKey:`profile-auth:${a.id}:${a.status}`,eventCode:'profile.authorization_changed',sourceService:'governance',entityType:'profile_authorization',entityId:String(a.id),correlationId:correlation(req),category:'security',priority:'high',mandatory:true,emailDefault:true,pushDefault:true,data:{role:a.role,status:a.status},recipients:[{accountId:Number(a.account_id),roleHint:a.role}]})}));
 
 // Notification APIs
+app.post('/api/notifications/webhooks/resend',express.raw({type:'application/json',limit:'1mb'}),async(req,res)=>{
+  try{
+    const verified=verifyResendWebhook({
+      rawBody:req.body,
+      headers:req.headers,
+      secret:process.env.RESEND_WEBHOOK_SECRET||''
+    });
+    const result=await recordResendProviderEvent(pool,{
+      providerEventId:verified.providerEventId,
+      event:verified.event,
+      payloadDigest:verified.payloadDigest
+    });
+    res.status(result.ignored?202:200).json({
+      ok:true,
+      ignored:Boolean(result.ignored),
+      duplicate:Boolean(result.duplicate),
+      matched:Boolean(result.matched)
+    });
+  }catch(e){
+    const status=Number(e?.status)||500;
+    if(status>=500)console.error('Resend webhook:',e?.message||'unexpected error');
+    res.status(status).json({error:status===503?'Resend webhook is not configured':'Invalid Resend webhook'});
+  }
+});
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,admin_support:childAlive,notifications:true,version:'0.11-notifications'})}catch{res.status(503).json({ok:false,db:false,admin_support:false,notifications:false,version:'0.11-notifications'})}});
 app.get('/notifications.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','notifications.css'),'utf8')));
 app.get('/notifications-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','notifications-ui.js'),'utf8')));
