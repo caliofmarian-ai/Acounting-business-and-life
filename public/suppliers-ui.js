@@ -28,7 +28,7 @@ async function renderMerchantProcurement(){
     papi('/api/procurement/sourcing/rfqs').catch(()=>[])
   ]);
   supWorkspace.innerHTML=supHeader('Suppliers & Restock','Relationships, sourcing, purchase orders and receiving')
-    +`<section class="supHero"><h2>Find, compare, then choose.</h2><p>Request quotes from eligible Suppliers, compare factual cost and lead time, and create a purchase order only when you decide.</p></section>`
+    +`<section class="supHero"><h2>Find, compare, then choose.</h2><p>Request quotes from eligible Suppliers, compare factual cost and lead time, and create a purchase order only when you decide.</p><p>A purchase order is a commitment, receiving is physical stock, an invoice is supplier evidence, and payment is real money movement.</p></section>`
     +supplierSourcingCard(rfqs)
     +suggestionsCard(suggestions,rels)
     +supplyNetworkCard(parties,lots,returns,recalls)
