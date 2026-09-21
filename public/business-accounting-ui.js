@@ -189,5 +189,6 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
 }
 
 document.addEventListener('abl:profile-state',event=>bootAccountingWorkspace(event.detail),{passive:true});
+window.BusinessLifeAccounting=Object.freeze({getState:()=>({role:accountingState.role,activeBusinessId:accountingState.activeBusinessId,businesses:[...accountingState.businesses]})});
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>bootAccountingWorkspace(),120));
 else setTimeout(()=>bootAccountingWorkspace(),120);
