@@ -184,9 +184,10 @@ function wireProfiles(){
     button.disabled=true;
     try{
       const created=await api('/api/governance/admin/invitations',{method:'POST',body:JSON.stringify({target_email:fd.get('target_email'),role,territory_id:territoryId,note:fd.get('note')||'',expires_days:Number(fd.get('expires_days')||7)})});
-      const link=location.origin+'/?invite='+encodeURIComponent(created.invite_token);
+      const {invite_token,...inviteMeta}=created;
+      const link=location.origin+'/?invite='+encodeURIComponent(invite_token);
       const territory=inviteTerritories().find(t=>Number(t.id)===territoryId);
-      state.overview.invitations=[{...created,territory_name:territory?.name||'Scoped territory'},...(state.overview?.invitations||[]).filter(x=>Number(x.id)!==Number(created.id))];
+      state.overview.invitations=[{...inviteMeta,territory_name:territory?.name||'Scoped territory'},...(state.overview?.invitations||[]).filter(x=>Number(x.id)!==Number(created.id))];
       out.innerHTML='<div class="adminInviteResult"><strong>Private invitation created</strong><span>Share this link only with '+esc(created.target_email)+'. It is shown here now because the raw token is not kept in Admin history.</span><code id="profileInviteLink">'+esc(link)+'</code><button id="copyProfileInvite" class="secondary" type="button">Copy private link</button></div>';
       document.getElementById('copyProfileInvite').onclick=async()=>{try{await navigator.clipboard.writeText(link);document.getElementById('copyProfileInvite').textContent='Copied'}catch{document.getElementById('copyProfileInvite').textContent='Copy manually'}};
       form.reset();form.elements.expires_days.value='7';

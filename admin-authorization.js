@@ -201,16 +201,19 @@ async function territoryWithin(pool,rootId,targetId){
 export async function hasAdminPermission(pool,accountId,permission,territoryId=null){
   const assignments=await getAdminAssignments(pool,accountId);
   for(const a of assignments){
-    if(a.admin_role==='super_admin') return {allowed:true,assignment:a};
+    const rank=String(a.effective_rank||a.authority_rank||a.admin_role||'');
+    if(rank==='super_admin'||a.admin_role==='super_admin') return {allowed:true,assignment:a};
     const perms=new Set(Array.isArray(a.permissions)?a.permissions:[]);
     if(!perms.has(permission)) continue;
-    if(a.admin_role==='country_admin'){
-      if(a.country_code==='PH') return {allowed:true,assignment:a};
+    // Delegated Admin workspaces may be opened without a target territory.
+    // Scope is still carried by the assignment and downstream list/query filters.
+    if(a.territory_id!=null){
+      if(territoryId==null||await territoryWithin(pool,a.territory_id,territoryId)){
+        return {allowed:true,assignment:a};
+      }
       continue;
     }
-    if(a.admin_role==='territory_admin'&&await territoryWithin(pool,a.territory_id,territoryId)){
-      return {allowed:true,assignment:a};
-    }
+    if(a.country_code==='PH') return {allowed:true,assignment:a};
   }
   return {allowed:false,assignment:null};
 }
