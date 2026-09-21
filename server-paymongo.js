@@ -28,6 +28,29 @@ let child;let shuttingDown=false;
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',120);
+
+const cspReportOnly=[
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data: https:",
+  "style-src 'self' 'unsafe-inline' https:",
+  "script-src 'self' 'unsafe-inline' https:",
+  "connect-src 'self' https: wss:",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'"
+].join('; ');
+
+app.use((_req,res,next)=>{
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
+  res.setHeader('Content-Security-Policy-Report-Only',cspReportOnly);
+  next();
+});
+
 async function upstream(path,options={}){return fetch('http://127.0.0.1:'+upstreamPort+path,options)}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 
