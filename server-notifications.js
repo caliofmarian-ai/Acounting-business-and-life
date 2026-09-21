@@ -1,9 +1,6 @@
-import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,18 +15,19 @@ import { notificationAudioConfigured,notificationAudioDescriptor,presignNotifica
 import { notificationVoiceTranscriptMatrix } from './notification-voice-copy.js';
 import { verifyResendWebhook,recordResendProviderEvent } from './resend-delivery-observability.js';
 import { bootstrapResendWebhook,resendWebhookReadiness } from './resend-webhook-bootstrap.js';
+import { startEmbeddedAdminOperations,stopEmbeddedAdminOperations } from './server-admin-operations.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_ADMIN_OPERATIONS_PORT||4307);
+const upstreamPort=Number(process.env.INTERNAL_BUSINESS_ACCOUNTING_PORT||4207);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb'});
 const CATEGORIES=['operational','security','legal','support','compliance','marketing'];
 const THREAD_ENTITY_TYPES=new Set(['support_ticket','order','delivery','purchase_order','service_job']);
 const isNotificationThreadEntity=(type,id)=>Boolean(String(id??'').trim())&&THREAD_ENTITY_TYPES.has(String(type||''));
-let child;let shuttingDown=false;let workerTimer=null;let workerRunning=false;
+let adminApp=null;let adminReady=false;let shuttingDown=false;let workerTimer=null;let workerRunning=false;
 let resendWebhookRuntime={ready:Boolean(process.env.RESEND_WEBHOOK_SECRET),status:process.env.RESEND_WEBHOOK_SECRET?'ready':'not_ready',source:process.env.RESEND_WEBHOOK_SECRET?'env':'none',endpoint:'',webhook_id:'',secret:process.env.RESEND_WEBHOOK_SECRET||''};
 
 const clean=(v,max=1200)=>String(v??'').trim().slice(0,max);
@@ -70,12 +68,30 @@ async function authorizationInfo(id){
 }
 
 async function forwardJson(req,res,after){
-  try{
-    const r=await upstream(req.originalUrl,{method:req.method,headers:{Authorization:authHeader(req),'Content-Type':'application/json',...(req.headers['x-bl-admin-assertion']?{'x-bl-admin-assertion':String(req.headers['x-bl-admin-assertion'])}:{})},body:['GET','HEAD'].includes(req.method)?undefined:JSON.stringify(req.body??{})});
-    const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{}
-    if(r.ok&&after){Promise.resolve().then(()=>after(data)).catch(e=>console.error('Post-transaction notification hook:',e.message))}
-    res.status(r.status);const ct=r.headers.get('content-type');if(ct)res.type(ct);res.send(text);
-  }catch(e){if(!res.headersSent)res.status(502).json({error:'Notification gateway upstream unavailable'});}
+  if(!adminApp)return res.status(503).json({error:'Admin + Support runtime is not ready'});
+  const chunks=[];let observedBytes=0;let completed=false;
+  const capture=chunk=>{
+    if(!after||chunk==null||observedBytes>=2_000_000)return;
+    const part=Buffer.isBuffer(chunk)?chunk:Buffer.from(String(chunk));
+    observedBytes+=part.length;
+    if(observedBytes<=2_000_000)chunks.push(part);
+  };
+  const originalWrite=res.write.bind(res),originalEnd=res.end.bind(res);
+  const restore=()=>{res.write=originalWrite;res.end=originalEnd};
+  const finishHook=()=>{
+    if(completed)return;completed=true;
+    if(!after||res.statusCode<200||res.statusCode>=400)return;
+    const text=Buffer.concat(chunks).toString('utf8');let data={};try{data=text?JSON.parse(text):{}}catch{}
+    Promise.resolve().then(()=>after(data)).catch(e=>console.error('Post-transaction notification hook:',e.message));
+  };
+  res.write=function(chunk,...args){capture(chunk);return originalWrite(chunk,...args)};
+  res.end=function(chunk,...args){capture(chunk);restore();const out=originalEnd(chunk,...args);finishHook();return out};
+  adminApp.handle(req,res,err=>{
+    restore();
+    if(res.writableEnded)return;
+    if(err){console.error(err);return res.status(err.status||500).json({error:err.status?err.message:'Unexpected Admin + Support error'})}
+    if(!res.headersSent)res.status(502).json({error:'Admin + Support runtime did not handle request'});
+  });
 }
 
 async function emitOrderEvent(req,id,eventCode,{merchant=false,customer=true,emailDefault=false,pushDefault=true,priority='normal'}={}){
@@ -204,7 +220,7 @@ app.post('/api/notifications/webhooks/resend',express.raw({type:'application/jso
     res.status(status).json({error:status===503?'Resend webhook is not configured':'Invalid Resend webhook'});
   }
 });
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,admin_support:childAlive,notifications:true,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}catch{res.status(503).json({ok:false,db:false,admin_support:false,notifications:false,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}});
+app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');res.status(adminReady?200:503).json({ok:adminReady,db:true,admin_support:adminReady,notifications:true,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}catch{res.status(503).json({ok:false,db:false,admin_support:false,notifications:false,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}});
 app.get('/notifications.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','notifications.css'),'utf8')));
 app.get('/notifications-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','notifications-ui.js'),'utf8')));
 app.get('/notifications-sw.js',(_q,res)=>res.type('application/javascript').set('Service-Worker-Allowed','/').send(readFileSync(join(__dirname,'public','notifications-sw.js'),'utf8')));
@@ -296,8 +312,10 @@ app.get('/api/notifications/push/config',async(_req,res)=>res.json({enabled:Bool
 app.post('/api/notifications/push/subscribe',body,async(req,res,next)=>{try{const me=await identity(req),endpoint=clean(req.body?.endpoint,2000),p256dh=clean(req.body?.keys?.p256dh,1000),auth=clean(req.body?.keys?.auth,1000);if(!endpoint||!p256dh||!auth)return res.status(400).json({error:'Valid push subscription required'});await pool.query(`INSERT INTO push_subscriptions(account_id,endpoint,p256dh,auth,user_agent,last_seen_at,revoked_at) VALUES($1,$2,$3,$4,$5,NOW(),NULL) ON CONFLICT(endpoint) DO UPDATE SET account_id=EXCLUDED.account_id,p256dh=EXCLUDED.p256dh,auth=EXCLUDED.auth,user_agent=EXCLUDED.user_agent,last_seen_at=NOW(),revoked_at=NULL`,[me.account.id,endpoint,p256dh,auth,clean(req.headers['user-agent'],400)]);res.json({ok:true})}catch(e){next(e)}});
 app.delete('/api/notifications/push/subscriptions',async(req,res,next)=>{try{const me=await identity(req);await pool.query(`UPDATE push_subscriptions SET revoked_at=NOW() WHERE account_id=$1 AND revoked_at IS NULL`,[me.account.id]);res.json({ok:true})}catch(e){next(e)}});
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Notification upstream unavailable'})});req.pipe(up)}
-app.use(proxy);
+app.use((req,res,next)=>{
+  if(!adminApp)return res.status(503).json({error:'Admin + Support runtime is not ready'});
+  return adminApp(req,res,next);
+});
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected notification error'})});
 
 async function runWorker(){if(workerRunning)return;workerRunning=true;try{for(let i=0;i<5;i++){const n=await processNotificationDeliveries(pool,{limit:20});if(n<20)break}}catch(e){console.error('Notification worker:',e.message)}finally{workerRunning=false}}
@@ -309,8 +327,17 @@ async function bootstrapResendObservability(){
   else console.log('Resend delivery webhook not ready: '+safe.status);
   return safe;
 }
-function start(){child=spawn(process.execPath,['server-admin-operations.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Admin operations child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<startupWaitAttempts(300);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Admin operations child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(workerTimer)clearInterval(workerTimer);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
+async function start(){
+  adminApp=await startEmbeddedAdminOperations();
+  adminReady=true;
+}
+async function shutdown(sig){
+  if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);
+  if(workerTimer)clearInterval(workerTimer);
+  adminReady=false;
+  await stopEmbeddedAdminOperations().catch(()=>{});
+  await pool.end().catch(()=>{});
+  process.exit(0);
+}
 process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(()=>ensureNotificationSchema(pool)).then(()=>bootstrapResendObservability()).then(()=>{workerTimer=setInterval(runWorker,8000);runWorker();app.listen(port,'0.0.0.0',()=>console.log(`Business & Life notification gateway listening on ${port}`))}).catch(e=>{console.error(e);process.exit(1)});
+start().then(()=>ensureNotificationSchema(pool)).then(()=>bootstrapResendObservability()).then(()=>{workerTimer=setInterval(runWorker,8000);runWorker();app.listen(port,'0.0.0.0',()=>console.log(`Business & Life notification gateway listening on ${port}`))}).catch(e=>{console.error(e);process.exit(1)});
