@@ -65,3 +65,10 @@ test('new invitation and responsibility actions remain mobile safe',()=>{
   assert.match(css,/#assignmentFunctionsForm \.functionChoice\{min-height:44px\}/);
   assert.match(css,/\.adminInviteResult code\{[^}]*overflow-wrap:anywhere/);
 });
+
+test('raw invitation token stays ephemeral and is not copied into Admin overview state',()=>{
+  assert.match(ui,/const \{invite_token,\.\.\.inviteMeta\}=created/);
+  assert.match(ui,/encodeURIComponent\(invite_token\)/);
+  assert.match(ui,/\.\.\.inviteMeta,territory_name/);
+  assert.doesNotMatch(ui,/\.\.\.created,territory_name/);
+});
