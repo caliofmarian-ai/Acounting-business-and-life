@@ -34,7 +34,7 @@ test('Resend outbound messages are tagged with department and event',()=>{
 
 test('queued email delivery carries notification category into sender routing',()=>{
   assert.match(core,/e\.event_code,e\.category,e\.entity_type/);
-  assert.match(core,/category:row\.category\|\|'operational'/);
+  assert.match(core,/const category=row\.category\|\|'operational'/);
 });
 
 test('Resend sender identity is branded and Reply-To stays opt-in',()=>{
