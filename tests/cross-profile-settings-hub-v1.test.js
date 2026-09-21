@@ -25,7 +25,7 @@ test('production account runtime allows zero active profiles and preserves accou
   assert.match(runtimeAuth,/ALTER TABLE accounts ALTER COLUMN active_role DROP NOT NULL/);
   assert.match(runtimeAuth,/ALTER TABLE accounts ALTER COLUMN active_role DROP DEFAULT/);
   assert.match(runtimeAuth,/INSERT INTO accounts\(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role\)[^]*VALUES\(\$1,\$2,\$3,\$4,NULL,/);
-  assert.match(runtimeAuth,/if\(!activeProfile\)/);
+  assert.match(runtimeAuth,/if\(activeRole&&!activeProfile\)/);
   assert.match(runtimeAuth,/UPDATE accounts SET active_role=NULL/);
   assert.match(runtimeAuth,/const nextRole=await pool\.query/);
   assert.match(runtimeAuth,/enabled=TRUE AND role<>\$2/);
