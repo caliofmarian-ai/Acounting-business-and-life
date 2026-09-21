@@ -162,7 +162,7 @@ async function ensureSecondaryServiceTerritory({pool,base,adminToken,requestJson
 }
 
 async function verifyCredentialAdminScope({
-  pool,base,provider,customer,admin,territoryAdmin,territoryId,jobId,
+  pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,jobId,
   requestJson,expectStatus
 }){
   const created=await requestJson(base,'/api/service-provider/credentials',{
@@ -203,7 +203,7 @@ async function verifyCredentialAdminScope({
     method:'POST',
     token:admin.token,
     body:{
-      target_email:territoryAdmin.email,
+      target_email:territoryAdminEmail,
       admin_role:'territory_admin',
       territory_id:otherTerritoryId,
       permissions:['credential.verify'],
@@ -223,7 +223,7 @@ async function verifyCredentialAdminScope({
     method:'POST',
     token:admin.token,
     body:{
-      target_email:territoryAdmin.email,
+      target_email:territoryAdminEmail,
       admin_role:'territory_admin',
       territory_id:Number(territoryId),
       permissions:['credential.verify'],
@@ -522,7 +522,7 @@ export async function runServiceProviderExperienceAcceptance({
   if(!reviewId)throw new Error('Verified Local Services review was not created.');
 
   const credentialScope=await verifyCredentialAdminScope({
-    pool,base,provider,customer,admin,territoryAdmin,territoryId,jobId,
+    pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail:aliases.territoryAdmin,territoryId,jobId,
     requestJson,expectStatus
   });
 
