@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyAdminAssertion } from './admin-authorization.js';
+import { getAdminAssignments, verifyAdminAssertion } from './admin-authorization.js';
 import { companyTestAccountForEmail, companyTestProfileRole } from './company-test-accounts.js';
 
 const { Pool } = pg;
@@ -35,6 +35,23 @@ async function requireAdmin(req){const me=await identity(req);if(Number(me.accou
 function validTerritoryType(v){return ['country','region','province','city','municipality','district','barangay','custom_cell'].includes(v)}
 function validTerritoryStatus(v){return ['planned','onboarding','active','paused','suspended','closed'].includes(v)}
 async function activeAuthorization(accountId,role,territoryId=null){const args=[accountId,role];let q=`SELECT * FROM profile_authorizations WHERE account_id=$1 AND role=$2 AND status='active'`;if(territoryId!=null){args.push(territoryId);q+=` AND (territory_id=$3 OR territory_id IS NULL)`}q+=` ORDER BY territory_id NULLS LAST,id DESC LIMIT 1`;const r=await pool.query(q,args);return r.rows[0]||null}
+async function isActiveSuperAdmin(accountId){const assignments=await getAdminAssignments(pool,Number(accountId));return assignments.some(a=>(a.effective_rank||a.authority_rank||a.admin_role)==='super_admin')}
+async function ensureSuperAdminSelfProfile(client,me,role){
+  const accountId=Number(me.account.id),displayName=clean(me.account.display_name,120)||'Super Admin';
+  await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,$2,TRUE,'private','active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,visibility='private',status='active',updated_at=NOW()`,[accountId,role]);
+  if(role==='customer'){
+    await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET preferred_address=CASE WHEN customer_profiles.preferred_address='' THEN EXCLUDED.preferred_address ELSE customer_profiles.preferred_address END,updated_at=NOW()`,[accountId,clean(me.account.address,300)]);
+    return;
+  }
+  await client.query(`INSERT INTO profile_authorizations(account_id,role,territory_id,application_id,status,approved_by_account_id,approved_at,reason) VALUES($1,$2,NULL,NULL,'active',$1,NOW(),'Super Admin self-test bypass') ON CONFLICT(account_id,role,COALESCE(territory_id,0)) DO UPDATE SET application_id=NULL,status='active',approved_by_account_id=$1,approved_at=NOW(),expires_at=NULL,reason='Super Admin self-test bypass',updated_at=NOW()`,[accountId,role]);
+  if(role==='merchant'){
+    const existing=await client.query(`SELECT 1 FROM business_memberships WHERE account_id=$1 AND active=TRUE LIMIT 1`,[accountId]);
+    if(!existing.rowCount){const b=await client.query(`INSERT INTO businesses(name,country_code,currency_code,territory_id) VALUES($1,'PH','PHP',NULL) RETURNING id`,[displayName+' Admin Test Workspace']);await client.query(`INSERT INTO business_memberships(business_id,account_id,membership_role,active) VALUES($1,$2,'owner',TRUE)`,[b.rows[0].id,accountId]);}
+  }
+  if(role==='supplier')await client.query(`INSERT INTO supplier_profiles(account_id,supplier_name) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET supplier_name=CASE WHEN supplier_profiles.supplier_name='' THEN EXCLUDED.supplier_name ELSE supplier_profiles.supplier_name END,updated_at=NOW()`,[accountId,displayName]);
+  if(role==='courier')await client.query(`INSERT INTO courier_profiles(account_id,display_name,eligibility_status,available,approval_note) VALUES($1,$2,'approved',FALSE,'Super Admin testing only') ON CONFLICT(account_id) DO UPDATE SET display_name=COALESCE(NULLIF(courier_profiles.display_name,''),EXCLUDED.display_name),eligibility_status='approved',available=FALSE,approval_note='Super Admin testing only',updated_at=NOW()`,[accountId,displayName]);
+  if(role==='service_provider')await client.query(`INSERT INTO service_provider_profiles(account_id,display_name,professional_headline,about,service_area,years_experience) VALUES($1,$2,'','','',NULL) ON CONFLICT(account_id) DO UPDATE SET display_name=CASE WHEN service_provider_profiles.display_name='' THEN EXCLUDED.display_name ELSE service_provider_profiles.display_name END,updated_at=NOW()`,[accountId,displayName]);
+}
 async function applicationFor(accountId,role){const r=await pool.query(`SELECT pa.*,t.name territory_name,t.status territory_status FROM profile_applications pa LEFT JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 AND pa.role=$2 ORDER BY pa.created_at DESC LIMIT 1`,[accountId,role]);return r.rows[0]||null}
 async function audit(actorId,eventCode,targetAccountId=null,role='',territoryId=null,detail={}){await pool.query(`INSERT INTO profile_governance_events(actor_account_id,event_code,target_account_id,role,territory_id,detail_json) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,[actorId,clean(eventCode,100),targetAccountId,clean(role,40),territoryId,JSON.stringify(detail)]).catch(()=>{})}
 
@@ -230,6 +247,16 @@ await client.query('COMMIT');await audit(me.account.id,`application_${decision}`
 app.post('/api/governance/admin/authorizations/:id/status',body,async(req,res,next)=>{try{const me=await requireAdmin(req),id=Number(req.params.id),status=clean(req.body?.status,30);if(!['active','suspended','revoked'].includes(status))return res.status(400).json({error:'Choose active, suspended or revoked'});const client=await pool.connect();try{await client.query('BEGIN');const q=await client.query(`SELECT * FROM profile_authorizations WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Authorization not found'),{status:404});const a=q.rows[0];await client.query(`UPDATE profile_authorizations SET status=$1,reason=$2,updated_at=NOW() WHERE id=$3`,[status,clean(req.body?.reason,1000),id]);if(status==='active')await client.query(`UPDATE profiles SET enabled=TRUE,status='active',updated_at=NOW() WHERE account_id=$1 AND role=$2`,[a.account_id,a.role]);else{await client.query(`UPDATE profiles SET enabled=FALSE,status=$1,visibility='private',updated_at=NOW() WHERE account_id=$2 AND role=$3`,[status,a.account_id,a.role]);if(a.role==='merchant')await client.query(`UPDATE merchant_storefronts ms SET publication_status='paused',updated_at=NOW() FROM business_memberships bm WHERE bm.business_id=ms.business_id AND bm.account_id=$1`,[a.account_id]);if(a.role==='courier')await client.query(`UPDATE courier_profiles SET available=FALSE,eligibility_status=CASE WHEN eligibility_status='approved' THEN 'suspended' ELSE eligibility_status END,updated_at=NOW() WHERE account_id=$1`,[a.account_id]);}await client.query('COMMIT');await audit(me.account.id,`authorization_${status}`,a.account_id,a.role,a.territory_id,{authorization_id:id,reason:clean(req.body?.reason,300)});res.json({ok:true,status})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
 async function forwardJson(req,res,path=req.originalUrl,bodyValue=req.body){const r=await upstream(path,{method:req.method,headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:['GET','HEAD'].includes(req.method)?undefined:JSON.stringify(bodyValue??{})});const b=await r.json().catch(()=>({}));res.status(r.status).json(b)}
+app.post('/api/governance/super-admin/self-test/profiles/:role/activate',body,async(req,res,next)=>{try{
+  const me=await identity(req),role=clean(req.params.role,40);
+  if(!['merchant','customer','supplier','courier','service_provider'].includes(role))return res.status(400).json({error:'Unknown profile role'});
+  if(!(await isActiveSuperAdmin(me.account.id)))return res.status(403).json({error:'Active Super Admin assignment required'});
+  const client=await pool.connect();
+  try{await client.query('BEGIN');await ensureSuperAdminSelfProfile(client,me,role);await client.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2`,[role,me.account.id]);await client.query('COMMIT')}
+  catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  await audit(me.account.id,'super_admin_self_test_profile_activated',me.account.id,role,null,{bypass:['email_verification','invitation','onboarding','documents'],visibility:'private'});
+  res.status(201).json(await identity(req));
+}catch(e){next(e)}})
 app.put('/api/profiles/:role',body,async(req,res,next)=>{try{const role=clean(req.params.role,40);if(role==='customer')return forwardJson(req,res);if(!GOVERNED_ROLES.has(role))return forwardJson(req,res);const me=await identity(req);if(req.body?.enabled===false){return forwardJson(req,res)}const auth=await activeAuthorization(me.account.id,role);if(!auth)return res.status(403).json({error:role==='service_provider'?'Submit and obtain approval for your Local Services application first.':'This profile is invitation-only and requires Admin approval.'});return forwardJson(req,res)}catch(e){next(e)}})
 app.put('/api/service-provider/services',body,async(req,res,next)=>{try{const me=await identity(req),auth=await activeAuthorization(me.account.id,'service_provider');if(!auth)return res.status(403).json({error:'Service Provider approval required'});const allowed=await pool.query(`SELECT category_id FROM service_category_authorizations WHERE account_id=$1 AND status='active'`,[me.account.id]);const set=new Set(allowed.rows.map(x=>Number(x.category_id)));const requested=Array.isArray(req.body?.services)?req.body.services:[];const filtered=requested.filter(x=>set.has(Number(x.category_id)));if(filtered.length!==requested.length)return res.status(403).json({error:'One or more selected service categories are not approved for this profile'});return forwardJson(req,res,req.originalUrl,{...req.body,services:filtered})}catch(e){next(e)}})
 
