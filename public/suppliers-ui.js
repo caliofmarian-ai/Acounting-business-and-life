@@ -587,6 +587,7 @@ function supplierTodayOrders(today){
   ];
 }
 function supplierTodayPanel(today){
+  if(today?.error)return `<section class="supCard"><div class="supAlert"><strong>Today needs business attribution</strong><small>${ph(today.error)}</small></div><p class="supCodeHelp">Business & Life will not combine orders or catalog activity from different Supplier businesses when ownership is ambiguous.</p></section>`;
   const c=today?.counts||{},m=today?.money||{};
   const attention=(Number(c.overdue_timing)||0)+(Number(c.rfqs)||0)+(Number(c.returns)||0)+(Number(c.catalog_attention)||0)+(Number(c.backorders)||0)+(Number(c.substitutions)||0);
   return `<section class="supCard"><div class="supKpiGrid">
@@ -619,6 +620,7 @@ function supplierAllOrdersPanel(pos){
   return supplierOrdersPanel(pos,'Procurement')+supplierOrdersPanel(pos,'ETA')+supplierOrdersPanel(pos,'Fulfilment');
 }
 function supplierMoneyPanel(today){
+  if(today?.error)return `<section class="supCard"><div class="supAlert"><strong>Money needs business attribution</strong><small>${ph(today.error)}</small></div><p class="supCodeHelp">No receivable is shown until Supplier-business attribution is unambiguous.</p></section>`;
   const m=today?.money||{},c=today?.counts||{};
   const due=supplierTodayOrders(today).filter(x=>Number(x.commercial_outstanding||0)>0);
   return `<section class="supCard"><div class="supKpiGrid">
@@ -674,7 +676,7 @@ async function renderSupplierWorkspace(section=supSupplierSection){
     normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([]),
     normalized==='Procurement'?papi('/api/supplier/v4/sourcing-settings').catch(()=>({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]})):Promise.resolve({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]}),
     normalized==='Procurement'?papi('/api/supplier/v4/rfqs').catch(()=>[]):Promise.resolve([]),
-    ['Today','Money'].includes(normalized)?papi('/api/supplier/v5/today').catch(()=>({sections:{},counts:{},money:{},rfqs:[],returns:[],catalog_attention:[]})):Promise.resolve(null)
+    ['Today','Money'].includes(normalized)?papi('/api/supplier/v5/today').catch(e=>({error:e.message,sections:{},counts:{},money:{},rfqs:[],returns:[],catalog_attention:[],backorders:[],substitutions:[]})):Promise.resolve(null)
   ]);
   const meta=SUPPLIER_SECTION_META[normalized];
   let body='';
