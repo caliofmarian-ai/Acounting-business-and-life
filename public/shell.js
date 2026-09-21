@@ -711,6 +711,59 @@ function renderCustomerHub(){
   loadCustomerHome(hub).catch(()=>{});
 }
 
+
+const COURIER_HOME_CACHE_MS=20000;
+const COURIER_HOME_ROUTE_STATES=new Set(['courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer']);
+const COURIER_HOME_TERMINAL_STATES=new Set(['delivered','failed','cancelled','quoted']);
+let courierHomeCache={accountId:null,data:null,loadedAt:0,promise:null};
+
+function invalidateCourierHome(){courierHomeCache={accountId:null,data:null,loadedAt:0,promise:null}}
+function courierHomeApproved(profile){
+  if(!profile||profile.eligibility_status!=='approved')return false;
+  if(!profile.eligibility_expires_at)return true;
+  const expiry=new Date(profile.eligibility_expires_at).getTime();
+  return Number.isFinite(expiry)&&expiry>Date.now();
+}
+function courierHomeCurrentWork(delivery){
+  const list=Array.isArray(delivery?.deliveries)?delivery.deliveries:[];
+  const route=list.find(item=>COURIER_HOME_ROUTE_STATES.has(item.status));
+  if(route)return{item:route,destination:'Tracking',label:'Open route'};
+  const assigned=list.find(item=>!COURIER_HOME_TERMINAL_STATES.has(item.status));
+  if(assigned)return{item:assigned,destination:'Deliveries',label:'Open delivery'};
+  return null;
+}
+function courierHomeSettlementPending(earnings){
+  return ['pending','eligible','held','processing'].reduce((sum,key)=>sum+Number(earnings?.[key]||0),0);
+}
+async function loadCourierHomeData(force=false){
+  const accountId=Number(snapshot?.account?.id)||null;
+  if(!accountId)throw new Error('Courier account is not ready yet.');
+  if(courierHomeCache.accountId!==accountId)invalidateCourierHome();
+  if(!force&&courierHomeCache.data&&Date.now()-courierHomeCache.loadedAt<COURIER_HOME_CACHE_MS)return courierHomeCache.data;
+  if(courierHomeCache.promise)return courierHomeCache.promise;
+  courierHomeCache.promise=(async()=>{
+    const [deliveryResult,moneyResult]=await Promise.allSettled([
+      profileApi('/api/courier/delivery-profile'),
+      profileApi('/api/profile-money/courier')
+    ]);
+    const failures=[];
+    const value=(result,label)=>{
+      if(result.status==='fulfilled')return result.value;
+      failures.push(label);
+      return null;
+    };
+    const data={
+      delivery:value(deliveryResult,'Delivery'),
+      money:value(moneyResult,'Money'),
+      failures
+    };
+    if(failures.length===2)throw new Error('Courier Home could not be loaded. Check your connection and try again.');
+    courierHomeCache={accountId,data,loadedAt:Date.now(),promise:null};
+    return data;
+  })();
+  try{return await courierHomeCache.promise}
+  finally{if(courierHomeCache.promise)courierHomeCache.promise=null}
+}
 function openCourierHubFeature(hub,feature){
   if(feature==='Money'&&window.BusinessLifeProfileMoney?.openProfileMoney){
     return window.BusinessLifeProfileMoney.openProfileMoney('courier');
@@ -720,33 +773,126 @@ function openCourierHubFeature(hub,feature){
   }
   showToast(feature+' is still loading. Try again in a moment.');
 }
+function bindCourierHomeDynamic(hub){
+  hub.querySelectorAll('[data-courier-home-open]').forEach(button=>button.onclick=()=>openCourierHubFeature(hub,button.dataset.courierHomeOpen));
+  const availability=hub.querySelector('#courierHomeAvailabilityAction');
+  if(availability)availability.onclick=async()=>{
+    const desired=availability.dataset.nextAvailable==='true';
+    const previous=availability.textContent;
+    availability.disabled=true;
+    availability.textContent='Saving…';
+    try{
+      const result=await profileApi('/api/courier/availability',{method:'PUT',body:JSON.stringify({available:desired})});
+      if(Boolean(result?.available)!==desired)throw new Error('Availability was not confirmed by the server.');
+      invalidateCourierHome();
+      showToast(desired?'You are available for assignments.':'Availability paused.');
+      await loadCourierHome(hub,{force:true});
+    }catch(err){
+      availability.disabled=false;
+      availability.textContent=previous;
+      showToast(err.message||'Availability could not be changed.');
+    }
+  };
+}
+function renderCourierHomeData(hub,data){
+  hub.querySelector('#courierHomeLoading')?.classList.add('hidden');
+  hub.querySelector('#courierHomeError')?.classList.add('hidden');
+  hub.querySelector('#courierHomeDynamic')?.classList.remove('hidden');
+
+  const profile=data.delivery?.profile||null;
+  const approved=courierHomeApproved(profile);
+  const expired=profile?.eligibility_status==='approved'&&!approved;
+  const statusLabel=!profile?'Status unavailable':expired?'Approval expired':customerNice(profile.eligibility_status||'not requested');
+  const vehicle=profile?.approved_vehicle_class||profile?.vehicle_type||'No approved vehicle';
+  const status=hub.querySelector('#courierHomeStatus');
+  if(status){
+    status.innerHTML=
+      '<div class="courierStatusMain"><div><span class="courierStatusEyebrow">Eligibility</span><strong>'+escapeHtml(statusLabel)+'</strong><small>'+escapeHtml(vehicle)+'</small></div>'+
+      '<button type="button" data-courier-home-open="Eligibility">'+(approved?'Review':'Fix eligibility')+'</button></div>'+
+      '<div class="courierAvailabilityRow"><div><strong>'+(profile?.available&&approved?'Available':'Not available')+'</strong><small>'+(approved?'You decide when you are open for new assignments.':'Admin approval is required before availability can be enabled.')+'</small></div>'+
+      '<button id="courierHomeAvailabilityAction" type="button" data-next-available="'+String(!(profile?.available&&approved))+'" '+(!approved?'disabled':'')+'>'+(profile?.available&&approved?'Pause availability':'Go available')+'</button></div>';
+  }
+
+  const work=courierHomeCurrentWork(data.delivery);
+  const workBox=hub.querySelector('#courierHomeWork');
+  if(workBox){
+    workBox.innerHTML=work
+      ?'<article class="courierCurrentWork"><div><span>'+escapeHtml(customerNice(work.item.status||'assigned'))+'</span><strong>'+escapeHtml(work.item.business_name||work.item.order_number||'Assigned delivery')+'</strong><small>'+escapeHtml(work.item.order_number||'Delivery')+'</small></div><button type="button" data-courier-home-open="'+escapeHtml(work.destination)+'">'+escapeHtml(work.label)+'</button></article>'
+      :'<div class="courierHomeEmpty"><strong>No assigned delivery right now.</strong><span>Stay available if you want to receive eligible assignments.</span><button type="button" data-courier-home-open="Deliveries">Open deliveries</button></div>';
+  }
+
+  const moneyBox=hub.querySelector('#courierHomeMoney');
+  if(moneyBox){
+    const summary=data.money?.summary||null;
+    const earnings=summary?.earnings||null;
+    if(!summary){
+      moneyBox.innerHTML='<div class="courierMoneyHold"><strong>Money summary unavailable</strong><span>Open Money to retry. No earnings amount has been assumed.</span></div>';
+    }else if(earnings?.tracked){
+      moneyBox.innerHTML=
+        '<div><span>Active</span><strong>'+escapeHtml(String(Number(summary.active_count||0)))+'</strong><small>Deliveries</small></div>'+
+        '<div><span>Paid earnings</span><strong>'+escapeHtml(customerMoney(earnings.paid))+'</strong><small>Recorded courier_net</small></div>'+
+        '<div><span>In settlement</span><strong>'+escapeHtml(customerMoney(courierHomeSettlementPending(earnings)))+'</strong><small>Pending / eligible / held / processing</small></div>';
+    }else{
+      moneyBox.innerHTML=
+        '<div><span>Active</span><strong>'+escapeHtml(String(Number(summary.active_count||0)))+'</strong><small>Deliveries</small></div>'+
+        '<div><span>Delivered</span><strong>'+escapeHtml(String(Number(summary.delivered_count||0)))+'</strong><small>Completed deliveries</small></div>'+
+        '<div class="courierMoneyHold"><strong>Earnings not configured yet</strong><span>No courier_net allocation evidence exists. Delivery fees stay customer charge context, not Courier earnings.</span></div>';
+    }
+  }
+
+  const partial=hub.querySelector('#courierHomePartial');
+  if(partial){
+    partial.classList.toggle('hidden',!data.failures.length);
+    partial.innerHTML=data.failures.length
+      ?'<span>Some Home information is unavailable: '+escapeHtml(data.failures.join(', '))+'.</span><button type="button" data-courier-home-retry>Retry</button>'
+      :'';
+  }
+  bindCourierHomeDynamic(hub);
+  hub.querySelectorAll('[data-courier-home-retry]').forEach(button=>button.onclick=()=>loadCourierHome(hub,{force:true}));
+}
+async function loadCourierHome(hub,{force=false}={}){
+  const loading=hub.querySelector('#courierHomeLoading');
+  const error=hub.querySelector('#courierHomeError');
+  if(force){
+    loading?.classList.remove('hidden');
+    error?.classList.add('hidden');
+  }
+  try{
+    const data=await loadCourierHomeData(force);
+    if(!hub.isConnected||activeRole!=='courier')return;
+    renderCourierHomeData(hub,data);
+  }catch(err){
+    loading?.classList.add('hidden');
+    hub.querySelector('#courierHomeDynamic')?.classList.add('hidden');
+    const message=hub.querySelector('#courierHomeErrorMessage');
+    if(message)message.textContent=err.message||'Courier Home could not be loaded.';
+    error?.classList.remove('hidden');
+  }
+}
 function renderCourierHub(){
   const hub=document.getElementById('roleHub');
   if(!hub)return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   hub.innerHTML=
-    '<div class="hubHero courierHomeHero"><div class="hubEyebrow">Delivery profile</div><h1>Ready for your next delivery?</h1><p>Approval first, availability second, assigned work third. Your route and money stay evidence-based.</p><span class="hubStatus">Courier workspace</span></div>'+
+    '<div class="hubHero courierHomeHero"><div class="hubEyebrow">Delivery profile</div><h1>Ready for your next delivery?</h1><p>See whether you can work, whether you are available, what is assigned now and what Money evidence is recorded.</p><span class="hubStatus">Courier workspace</span></div>'+
     '<section class="courierHomePanel">'+
-      '<div class="hubSectionTitle"><h2>Work status</h2><span>Open the step you need</span></div>'+
-      '<div class="courierHomeGrid">'+
-        '<button class="courierHomeCard courierEligibilityCard" type="button" data-hub-feature="Eligibility"><span>✅</span><strong>Eligibility</strong><small>Vehicle, documents and Admin approval. Availability stays locked until approval.</small><b>›</b></button>'+
-        '<button class="courierHomeCard" type="button" data-hub-feature="Availability"><span>🟢</span><strong>Availability</strong><small>Go available or pause only after eligibility is approved.</small><b>›</b></button>'+
-        '<button class="courierHomeCard" type="button" data-hub-feature="Tracking"><span>🗺️</span><strong>Current route</strong><small>Open active route, ETA, map and delivery progress when assigned.</small><b>›</b></button>'+
-        '<button class="courierHomeCard" type="button" data-hub-feature="Deliveries"><span>📋</span><strong>Assigned deliveries</strong><small>Your canonical delivery queue and handoff actions.</small><b>›</b></button>'+
+      '<div class="courierHomeToolbar"><div><strong>Home</strong><small>Your current work status</small></div><button id="courierHomeRefresh" type="button">Refresh</button></div>'+
+      '<div id="courierHomeLoading" class="courierHomeState"><strong>Checking your delivery status…</strong><span>Eligibility, availability, assigned work and Money evidence.</span></div>'+
+      '<div id="courierHomeError" class="courierHomeState courierHomeError hidden" role="alert"><strong>Courier Home could not be loaded.</strong><span id="courierHomeErrorMessage">Check your connection and try again.</span><button type="button" data-courier-home-retry>Try again</button></div>'+
+      '<div id="courierHomePartial" class="courierHomePartial hidden"></div>'+
+      '<div id="courierHomeDynamic" class="courierHomeDynamic hidden">'+
+        '<section id="courierHomeStatus" class="courierHomeSection"></section>'+
+        '<section class="courierHomeSection"><div class="hubSectionTitle"><h2>Current work</h2><span>What needs attention now</span></div><div id="courierHomeWork"></div></section>'+
+        '<section class="courierHomeSection"><div class="hubSectionTitle"><h2>Money</h2><button type="button" data-courier-home-open="Money">Open Money</button></div><div id="courierHomeMoney" class="courierMoneySnapshot"></div></section>'+
       '</div>'+
       '<button class="courierSettingsLink" type="button" data-hub-feature="Profile Settings"><span>⚙️</span><span><strong>Delivery settings</strong><small>Vehicle, documents, payout preferences and profile settings</small></span><b>›</b></button>'+
-      '<button class="courierFeatureProxy hidden" type="button" data-hub-feature="Money" tabindex="-1" aria-hidden="true">Money</button>'+
     '</section>'+
     '<nav class="courierPrimaryNav" aria-label="Delivery navigation">'+
       '<button type="button" class="active" data-courier-nav="home"><span>⌂</span><strong>Home</strong></button>'+
       '<button type="button" data-courier-nav="deliveries"><span>📋</span><strong>Deliveries</strong></button>'+
       '<button type="button" data-courier-nav="money"><span>💰</span><strong>Money</strong></button>'+
     '</nav>';
-  hub.querySelectorAll('[data-hub-feature]').forEach(button=>{
-    button.onclick=()=>button.dataset.hubFeature==='Profile Settings'
-      ?window.BusinessLifeProfileSettings?.open?.('courier')
-      :openCourierHubFeature(hub,button.dataset.hubFeature);
-  });
+  hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>window.BusinessLifeProfileSettings?.open?.('courier');
   hub.querySelectorAll('[data-courier-nav]').forEach(button=>button.onclick=()=>{
     const destination=button.dataset.courierNav;
     if(destination==='home'){
@@ -756,7 +902,10 @@ function renderCourierHub(){
     }
     openCourierHubFeature(hub,destination==='deliveries'?'Deliveries':'Money');
   });
+  hub.querySelector('#courierHomeRefresh')?.addEventListener('click',()=>loadCourierHome(hub,{force:true}));
+  hub.querySelectorAll('[data-courier-home-retry]').forEach(button=>button.onclick=()=>loadCourierHome(hub,{force:true}));
   hub.classList.remove('hidden');
+  loadCourierHome(hub).catch(()=>{});
 }
 function renderRoleHub(role) {
   if(role==='customer')return renderCustomerHub();
