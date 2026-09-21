@@ -2592,6 +2592,200 @@ async function runSupplierDailyV5Acceptance({pool,base,secret}){
     throw new Error('Supplier Daily V5 marked a future-due invoice overdue.');
   }
 
+  const exceptionPo=await requestJson(base,'/api/procurement/orders',{
+    method:'POST',token:merchant.token,
+    body:{
+      business_id:merchantBusinessId,
+      supplier_account_id:supplier.accountId,
+      fulfilment_mode:'pickup',
+      delivery_fee:0,
+      merchant_note:'Controlled QA Supplier Daily V5 exception PO',
+      items:[{catalog_item_id:catalogItemId,packs:4}]
+    }
+  });
+  expectStatus(exceptionPo,201,'Supplier Daily V5 exception PO create');
+  const exceptionPoId=Number(exceptionPo.json?.id);
+  const exceptionItem=exceptionPo.json?.items?.[0];
+  if(!exceptionPoId||!exceptionItem?.id||Number(exceptionItem.ordered_packs)!==4){
+    throw new Error('Supplier Daily V5 exception PO is invalid.');
+  }
+
+  const partial=await requestJson(base,`/api/supplier/orders/${exceptionPoId}/respond`,{
+    method:'POST',token:supplier.token,
+    body:{
+      items:[{
+        item_id:Number(exceptionItem.id),
+        confirmed_packs:2,
+        confirmed_price_per_pack:Number(exceptionItem.price_per_pack_snapshot),
+        supplier_note:'Controlled QA partial confirmation'
+      }],
+      supplier_note:'Controlled QA partial acceptance'
+    }
+  });
+  expectStatus(partial,200,'Supplier Daily V5 partial acceptance');
+  if(partial.json?.status!=='partially_accepted'){
+    throw new Error('Supplier Daily V5 exception PO did not become partially accepted.');
+  }
+
+  const inventoryBefore=exceptionItem.legacy_inventory_id
+    ?await pool.query(`SELECT quantity FROM inventory WHERE id=$1 AND business_id=$2`,[
+      Number(exceptionItem.legacy_inventory_id),merchantBusinessId
+    ])
+    :{rows:[]};
+  const inventoryQuantityBefore=inventoryBefore.rows.length?Number(inventoryBefore.rows[0].quantity):null;
+
+  const tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const backorder=await requestJson(base,`/api/supplier/orders/${exceptionPoId}/backorders`,{
+    method:'POST',token:supplier.token,
+    body:{
+      supplier_business_id:supplierBusinessId,
+      purchase_order_item_id:Number(exceptionItem.id),
+      proposed_packs:1,
+      expected_available_date:tomorrow,
+      supplier_note:'Controlled QA backorder proposal'
+    }
+  });
+  expectStatus(backorder,201,'Supplier Daily V5 backorder proposal');
+  const backorderId=Number(backorder.json?.id);
+  if(!backorderId||backorder.json?.po_quantities_changed!==false){
+    throw new Error('Supplier Daily V5 backorder proposal mutated PO quantities.');
+  }
+
+  const backorderAccepted=await requestJson(base,`/api/procurement/backorders/${backorderId}/respond`,{
+    method:'POST',token:merchant.token,
+    body:{accept:true,merchant_note:'Controlled QA backorder accepted'}
+  });
+  expectStatus(backorderAccepted,200,'Supplier Daily V5 backorder Merchant acceptance');
+  if(backorderAccepted.json?.state!=='merchant_accepted'
+    ||backorderAccepted.json?.po_quantities_changed!==false
+    ||backorderAccepted.json?.inventory_changed!==false
+    ||backorderAccepted.json?.money_changed!==false){
+    throw new Error('Supplier Daily V5 backorder Merchant decision crossed mutation boundaries.');
+  }
+
+  const afterBackorderAccept=await requestJson(base,`/api/procurement/orders/${exceptionPoId}`,{token:merchant.token});
+  expectStatus(afterBackorderAccept,200,'Supplier Daily V5 PO after backorder acceptance');
+  const itemAfterBackorderAccept=afterBackorderAccept.json?.items?.find(x=>Number(x.id)===Number(exceptionItem.id));
+  if(Number(itemAfterBackorderAccept?.ordered_packs)!==4||Number(itemAfterBackorderAccept?.confirmed_packs)!==2){
+    throw new Error('Supplier Daily V5 backorder acceptance changed ordered or confirmed packs.');
+  }
+
+  const todayBackorder=await requestJson(
+    base,`/api/supplier/v5/today?business_id=${supplierBusinessId}`,
+    {token:supplier.token}
+  );
+  expectStatus(todayBackorder,200,'Supplier Daily V5 Today accepted backorder');
+  if(!(todayBackorder.json?.backorders||[]).some(x=>Number(x.id)===backorderId)){
+    throw new Error('Supplier Daily V5 accepted backorder is missing from Today.');
+  }
+
+  const fulfilledBackorder=await requestJson(base,`/api/supplier/backorders/${backorderId}/fulfil`,{
+    method:'POST',token:supplier.token,body:{}
+  });
+  expectStatus(fulfilledBackorder,200,'Supplier Daily V5 backorder fulfilment');
+  if(fulfilledBackorder.json?.state!=='fulfilled'
+    ||Number(fulfilledBackorder.json?.added_confirmed_packs)!==1
+    ||fulfilledBackorder.json?.ordered_packs_unchanged!==true){
+    throw new Error('Supplier Daily V5 backorder fulfilment did not preserve ordered quantity.');
+  }
+
+  const afterBackorderFulfil=await requestJson(base,`/api/procurement/orders/${exceptionPoId}`,{token:merchant.token});
+  expectStatus(afterBackorderFulfil,200,'Supplier Daily V5 PO after backorder fulfilment');
+  const itemAfterFulfil=afterBackorderFulfil.json?.items?.find(x=>Number(x.id)===Number(exceptionItem.id));
+  if(Number(itemAfterFulfil?.ordered_packs)!==4||Number(itemAfterFulfil?.confirmed_packs)!==3){
+    throw new Error('Supplier Daily V5 backorder fulfilment confirmation delta is incorrect.');
+  }
+
+  const supplierProfileAfter=await requestJson(base,'/api/supplier/me',{token:supplier.token});
+  expectStatus(supplierProfileAfter,200,'Supplier Daily V5 substitute catalog discovery');
+  const substituteName='QA Supplier Daily V5 Substitute Rice';
+  let substitute=(supplierProfileAfter.json?.catalog||[]).find(x=>x.product_name===substituteName);
+  if(!substitute){
+    const created=await requestJson(base,'/api/supplier/catalog',{
+      method:'POST',token:supplier.token,
+      body:{
+        product_name:substituteName,
+        sku:'QA-SUP-V5-SUB-RICE',
+        unit_name:'sack',
+        base_unit:'kg',
+        base_units_per_pack:10,
+        price_per_pack:525,
+        minimum_packs:1,
+        availability_status:'available',
+        lead_time_days:2
+      }
+    });
+    expectStatus(created,201,'Supplier Daily V5 substitute catalog create');
+    substitute=created.json;
+  }
+  if(!substitute?.id)throw new Error('Supplier Daily V5 substitute catalog item is missing.');
+
+  const substituteHandling=await requestJson(base,`/api/supplier/catalog/${Number(substitute.id)}/v2`,{
+    method:'PUT',token:supplier.token,
+    body:{handling_mode:'sealed_resale',price_tiers:[],package_levels:[]}
+  });
+  expectStatus(substituteHandling,200,'Supplier Daily V5 substitute handling');
+
+  const substitution=await requestJson(base,`/api/supplier/orders/${exceptionPoId}/substitutions`,{
+    method:'POST',token:supplier.token,
+    body:{
+      supplier_business_id:supplierBusinessId,
+      purchase_order_item_id:Number(exceptionItem.id),
+      substitute_catalog_item_id:Number(substitute.id),
+      proposed_packs:1,
+      price_per_pack:525,
+      reason_code:'unavailable',
+      expected_available_date:tomorrow,
+      supplier_note:'Controlled QA substitution proposal'
+    }
+  });
+  expectStatus(substitution,201,'Supplier Daily V5 substitution proposal');
+  const substitutionId=Number(substitution.json?.id);
+  if(!substitutionId||substitution.json?.po_mutated!==false
+    ||substitution.json?.inventory_changed!==false||substitution.json?.money_changed!==false){
+    throw new Error('Supplier Daily V5 substitution proposal crossed mutation boundaries.');
+  }
+
+  const substitutionAccepted=await requestJson(base,`/api/procurement/substitutions/${substitutionId}/respond`,{
+    method:'POST',token:merchant.token,
+    body:{accept:true,merchant_note:'Controlled QA substitution accepted'}
+  });
+  expectStatus(substitutionAccepted,200,'Supplier Daily V5 substitution Merchant acceptance');
+  if(substitutionAccepted.json?.state!=='merchant_accepted'
+    ||substitutionAccepted.json?.po_mutated!==false
+    ||substitutionAccepted.json?.inventory_changed!==false
+    ||substitutionAccepted.json?.money_changed!==false
+    ||substitutionAccepted.json?.fulfilment_status!=='MERCHANT_APPROVED_NOT_YET_FULFILLED'){
+    throw new Error('Supplier Daily V5 substitution approval did not remain evidence-only.');
+  }
+
+  const afterSubstitution=await requestJson(base,`/api/procurement/orders/${exceptionPoId}`,{token:merchant.token});
+  expectStatus(afterSubstitution,200,'Supplier Daily V5 PO after substitution acceptance');
+  const itemAfterSubstitution=afterSubstitution.json?.items?.find(x=>Number(x.id)===Number(exceptionItem.id));
+  if(Number(itemAfterSubstitution?.ordered_packs)!==4||Number(itemAfterSubstitution?.confirmed_packs)!==3
+    ||Number(afterSubstitution.json?.paid_amount||0)!==0||Number(afterSubstitution.json?.actual_received_total||0)!==0){
+    throw new Error('Supplier Daily V5 substitution acceptance changed PO quantity, money or receiving.');
+  }
+
+  if(exceptionItem.legacy_inventory_id){
+    const inventoryAfter=await pool.query(
+      `SELECT quantity FROM inventory WHERE id=$1 AND business_id=$2`,
+      [Number(exceptionItem.legacy_inventory_id),merchantBusinessId]
+    );
+    if(!closeEnough(inventoryAfter.rows[0]?.quantity,inventoryQuantityBefore)){
+      throw new Error('Supplier Daily V5 exception proposals changed Inventory.');
+    }
+  }
+
+  const todaySubstitution=await requestJson(
+    base,`/api/supplier/v5/today?business_id=${supplierBusinessId}`,
+    {token:supplier.token}
+  );
+  expectStatus(todaySubstitution,200,'Supplier Daily V5 Today accepted substitution');
+  if(!(todaySubstitution.json?.substitutions||[]).some(x=>Number(x.id)===substitutionId)){
+    throw new Error('Supplier Daily V5 accepted substitution is missing from Today.');
+  }
+
   const restore=await requestJson(base,`/api/supplier/v5/catalog/${catalogItemId}/availability`,{
     method:'PATCH',token:supplier.token,
     body:{
@@ -2620,6 +2814,12 @@ async function runSupplierDailyV5Acceptance({pool,base,secret}){
     limited_availability_attention:true,
     invoice_becomes_receivable:true,
     future_due_not_overdue:true,
+    backorder_proposal_no_po_mutation:true,
+    backorder_merchant_acceptance_explicit:true,
+    backorder_fulfilment_confirmed_delta:true,
+    substitution_proposal_no_mutation:true,
+    substitution_merchant_acceptance_explicit:true,
+    substitution_not_physically_fulfilled:true,
     priority_score:false
   };
 }
