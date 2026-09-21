@@ -23,7 +23,7 @@ const emailAddress=v=>{
   const raw=clean(v,320);
   const angled=raw.match(/<([^<>]+)>/);
   const candidate=clean(angled?.[1]||raw,254).toLowerCase();
-  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(candidate)?candidate:'';
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate)?candidate:'';
 };
 
 export function communicationDepartment(department='operations'){
@@ -64,10 +64,10 @@ export function emailTargetUrl({baseUrl='/',entityType='',entityId=''}={}){
 
 function htmlToText(html=''){
   return String(html)
-    .replace(/<a\\b[^>]*href=["']([^"']+)["'][^>]*>([\\s\\S]*?)<\\/a>/gi,(_m,href,label)=>label.replace(/<[^>]+>/g,'').trim()+' ('+href+')')
-    .replace(/<br\\s*\\/?\\s*>/gi,'\\n')
-    .replace(/<\\/p\\s*>/gi,'\\n\\n')
-    .replace(/<\\/div\\s*>/gi,'\\n')
+    .replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,(_m,href,label)=>label.replace(/<[^>]+>/g,'').trim()+' ('+href+')')
+    .replace(/<br\s*\/?\s*>/gi,'\n')
+    .replace(/<\/p\s*>/gi,'\n\n')
+    .replace(/<\/div\s*>/gi,'\n')
     .replace(/<[^>]+>/g,'')
     .replace(/&nbsp;/g,' ')
     .replace(/&amp;/g,'&')
@@ -75,7 +75,7 @@ function htmlToText(html=''){
     .replace(/&gt;/g,'>')
     .replace(/&quot;/g,'"')
     .replace(/&#39;/g,"'")
-    .replace(/\\n{3,}/g,'\\n\\n')
+    .replace(/\n{3,}/g,'\n\n')
     .trim();
 }
 
@@ -118,10 +118,10 @@ export function renderTransactionalEmail({
     safeSubject,
     '',
     bodyText,
-    actionUrl?'\\n'+actionLabel+': '+actionUrl:'',
+    actionUrl?'\n'+actionLabel+': '+actionUrl:'',
     '',
     'Business & Life by Caliof',
     'caliof.com'
-  ].filter((v,i,a)=>v!==''||a[i-1]!=='').join('\\n').trim();
+  ].filter((v,i,a)=>v!==''||a[i-1]!=='').join('\n').trim();
   return{html,text,subject:safeSubject,department,context};
 }
