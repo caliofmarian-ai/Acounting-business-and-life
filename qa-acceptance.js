@@ -15,10 +15,11 @@ const MERCHANT_EXPERIENCE_WAVE='merchant_experience_v1';
 const SUPPLIER_EXPERIENCE_WAVE='supplier_experience_v1';
 const SUPPLIER_DOMAIN_V2_WAVE='supplier_domain_v2';
 const SUPPLIER_COMMERCIAL_V3_WAVE='supplier_commercial_v3';
+const SUPPLIER_SOURCING_V4_WAVE='supplier_sourcing_v4';
 const COURIER_EXPERIENCE_WAVE='courier_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -2225,6 +2226,256 @@ async function runSupplierCommercialV3Acceptance({pool,base,secret}){
   };
 }
 
+
+async function runSupplierSourcingV4Acceptance({pool,base,secret}){
+  const baseline=await runSupplierCommercialV3Acceptance({pool,base,secret});
+  if(baseline.status!=='PASS')throw new Error('Supplier Commercial V3 prerequisite did not pass.');
+
+  const [supplier,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPPLIER_ALIAS,role:'supplier',label:'Supplier Sourcing V4 QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Supplier Sourcing V4 Merchant QA'})
+  ]);
+  await ensureActiveRole({base,token:supplier.token,role:'supplier',label:'Supplier Sourcing V4 QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Supplier Sourcing V4 Merchant QA'});
+
+  const merchantBusinessId=Number(baseline.merchant_business_id);
+  const supplierBinding=await pool.query(
+    `SELECT business_id FROM profile_business_bindings
+      WHERE account_id=$1 AND role='supplier' AND status='active'
+      ORDER BY is_primary DESC,business_id LIMIT 1`,
+    [supplier.accountId]
+  );
+  const supplierBusinessId=Number(supplierBinding.rows[0]?.business_id);
+  if(!merchantBusinessId||!supplierBusinessId)throw new Error('Supplier Sourcing V4 business context is missing.');
+
+  const profile=await requestJson(base,'/api/supplier/me',{token:supplier.token});
+  expectStatus(profile,200,'Supplier Sourcing V4 catalog discovery');
+  const productName='QA Sourcing V4 Rice 10kg';
+  let item=(profile.json?.catalog||[]).find(x=>x.product_name===productName);
+  if(!item){
+    const created=await requestJson(base,'/api/supplier/catalog',{
+      method:'POST',token:supplier.token,
+      body:{
+        product_name:productName,sku:'QA-SUP-V4-RICE-10KG',unit_name:'sack',base_unit:'kg',
+        base_units_per_pack:10,price_per_pack:500,minimum_packs:1,availability_status:'available',lead_time_days:2
+      }
+    });
+    expectStatus(created,201,'Supplier Sourcing V4 catalog create');
+    item=created.json;
+  }
+  if(!item?.id)throw new Error('Supplier Sourcing V4 catalog item is unavailable.');
+
+  const handling=await requestJson(base,`/api/supplier/catalog/${Number(item.id)}/v2`,{
+    method:'PUT',token:supplier.token,
+    body:{handling_mode:'sealed_resale',price_tiers:[],package_levels:[]}
+  });
+  expectStatus(handling,200,'Supplier Sourcing V4 catalog handling');
+
+  const privateSettings=await requestJson(base,'/api/supplier/v4/sourcing-settings',{
+    method:'PUT',token:supplier.token,
+    body:{
+      business_id:supplierBusinessId,visibility:'private',accepts_rfqs:true,
+      categories:['rice_grains'],published_catalog_item_ids:[Number(item.id)]
+    }
+  });
+  expectStatus(privateSettings,200,'Supplier Sourcing V4 private settings');
+
+  const hiddenDirectory=await requestJson(
+    base,`/api/procurement/sourcing/directory?business_id=${merchantBusinessId}&category=rice_grains`,
+    {token:merchant.token}
+  );
+  expectStatus(hiddenDirectory,200,'Supplier Sourcing V4 private directory check');
+  if((hiddenDirectory.json||[]).some(x=>Number(x.supplier_business_id)===supplierBusinessId)){
+    throw new Error('Private Supplier leaked into controlled sourcing directory.');
+  }
+
+  const visibleSettings=await requestJson(base,'/api/supplier/v4/sourcing-settings',{
+    method:'PUT',token:supplier.token,
+    body:{
+      business_id:supplierBusinessId,visibility:'directory',accepts_rfqs:true,
+      categories:['rice_grains','packaging'],published_catalog_item_ids:[Number(item.id)]
+    }
+  });
+  expectStatus(visibleSettings,200,'Supplier Sourcing V4 directory opt-in');
+
+  const directory=await requestJson(
+    base,`/api/procurement/sourcing/directory?business_id=${merchantBusinessId}&category=rice_grains`,
+    {token:merchant.token}
+  );
+  expectStatus(directory,200,'Supplier Sourcing V4 directory');
+  const discovered=(directory.json||[]).find(x=>Number(x.supplier_business_id)===supplierBusinessId);
+  if(!discovered||!(discovered.published_catalog||[]).some(x=>Number(x.id)===Number(item.id))){
+    throw new Error('Opted-in Supplier or published catalog item is missing from directory.');
+  }
+  for(const forbidden of ['email','phone','notes']){
+    if(Object.prototype.hasOwnProperty.call(discovered,forbidden)){
+      throw new Error('Supplier directory exposed private contact/internal fields.');
+    }
+  }
+
+  const inventory=await pool.query(
+    `INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,measurement_family,base_unit)
+     VALUES($1,$2,'kg',0,20,0,'mass','kg')
+     ON CONFLICT(business_id,item) DO UPDATE SET
+       unit='kg',quantity=0,reorder_level=20,unit_cost=0,measurement_family='mass',base_unit='kg',updated_at=NOW()
+     RETURNING id`,
+    [merchantBusinessId,'QA Sourcing V4 Rice Inventory']
+  );
+  const inventoryId=Number(inventory.rows[0].id);
+
+  const map=await requestJson(base,`/api/procurement/catalog/${Number(item.id)}/link`,{
+    method:'PUT',token:merchant.token,
+    body:{business_id:merchantBusinessId,legacy_inventory_id:inventoryId,merchant_item_name:'QA Sourcing V4 Rice Inventory'}
+  });
+  expectStatus(map,200,'Supplier Sourcing V4 Inventory mapping');
+
+  const preference=await requestJson(base,`/api/procurement/inventory/${inventoryId}/supplier-sources`,{
+    method:'PUT',token:merchant.token,
+    body:{sources:[{catalog_item_id:Number(item.id),preference_rank:1,note:'Controlled QA preferred source'}]}
+  });
+  expectStatus(preference,200,'Supplier Sourcing V4 preferred source');
+  if(Number(preference.json?.[0]?.catalog_item_id)!==Number(item.id)||Number(preference.json?.[0]?.preference_rank)!==1){
+    throw new Error('Supplier Sourcing V4 preferred source did not persist.');
+  }
+
+  const poCountBefore=await pool.query(`SELECT COUNT(*)::int c FROM purchase_orders WHERE business_id=$1`,[merchantBusinessId]);
+
+  const rfq=await requestJson(base,'/api/procurement/sourcing/rfqs',{
+    method:'POST',token:merchant.token,
+    body:{
+      business_id:merchantBusinessId,supplier_business_ids:[supplierBusinessId],
+      item_specification:'QA Sourcing V4 Jasmine rice',requested_quantity:10,requested_unit:'kg',
+      fulfilment_mode:'delivery',service_area:'QA Pilot City, Philippines',
+      quality_requirements:'Controlled QA food grade',substitution_policy:'approval_required',
+      target_budget:600,note:'Controlled QA RFQ'
+    }
+  });
+  expectStatus(rfq,201,'Supplier Sourcing V4 RFQ');
+  const rfqId=Number(rfq.json?.id);
+  if(!rfqId||Number(rfq.json?.target_count)!==1)throw new Error('Supplier Sourcing V4 RFQ target count is incorrect.');
+
+  const poCountAfterRfq=await pool.query(`SELECT COUNT(*)::int c FROM purchase_orders WHERE business_id=$1`,[merchantBusinessId]);
+  if(Number(poCountAfterRfq.rows[0].c)!==Number(poCountBefore.rows[0].c)){
+    throw new Error('Supplier Sourcing V4 RFQ created a purchase order automatically.');
+  }
+
+  const inbox=await requestJson(base,`/api/supplier/v4/rfqs?business_id=${supplierBusinessId}`,{token:supplier.token});
+  expectStatus(inbox,200,'Supplier Sourcing V4 RFQ inbox');
+  if(!(inbox.json||[]).some(x=>Number(x.id)===rfqId))throw new Error('Supplier Sourcing V4 RFQ is missing from Supplier inbox.');
+
+  const future=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+  const earliest=new Date(Date.now()+2*86400000).toISOString().slice(0,10);
+  const quoted=await requestJson(base,`/api/supplier/v4/rfqs/${rfqId}/quote`,{
+    method:'PUT',token:supplier.token,
+    body:{
+      business_id:supplierBusinessId,catalog_item_id:Number(item.id),
+      offered_name:productName,quoted_packs:1,minimum_packs:1,package_unit:'sack',
+      base_unit:'kg',base_units_per_pack:10,price_per_pack:500,delivery_fee:20,
+      lead_days:2,earliest_fulfilment_date:earliest,valid_until:future,
+      availability_status:'available',payment_term_note:'COD or agreed terms',supplier_note:'Controlled QA connected quote'
+    }
+  });
+  expectStatus(quoted,200,'Supplier Sourcing V4 connected quote');
+  const connectedQuoteId=Number(quoted.json?.id);
+  if(!connectedQuoteId)throw new Error('Supplier Sourcing V4 connected quote id is missing.');
+
+  const party=await pool.query(
+    `SELECT id FROM merchant_supply_parties
+      WHERE business_id=$1 AND display_name=$2 AND status='active'
+      ORDER BY id DESC LIMIT 1`,
+    [merchantBusinessId,SUPPLIER_V2_EXTERNAL_NAME]
+  );
+  if(!party.rowCount)throw new Error('Supplier Sourcing V4 external Supplier fixture is missing.');
+
+  const external=await requestJson(base,`/api/procurement/sourcing/rfqs/${rfqId}/external-quotes`,{
+    method:'POST',token:merchant.token,
+    body:{
+      supply_party_id:Number(party.rows[0].id),offered_name:'QA incompatible pieces',
+      quoted_packs:10,minimum_packs:1,package_unit:'piece',base_unit:'piece',base_units_per_pack:1,
+      price_per_pack:10,delivery_fee:0,lead_days:1,valid_until:future,availability_status:'available'
+    }
+  });
+  if(![200,201].includes(external.status))throw new Error('Supplier Sourcing V4 external quote failed with status '+external.status);
+
+  const compare=await requestJson(base,`/api/procurement/sourcing/rfqs/${rfqId}`,{token:merchant.token});
+  expectStatus(compare,200,'Supplier Sourcing V4 quote comparison');
+  const connectedRow=(compare.json?.quotes||[]).find(x=>Number(x.id)===connectedQuoteId);
+  const externalRow=(compare.json?.quotes||[]).find(x=>x.source_type==='external');
+  if(!connectedRow||!connectedRow.comparable||!closeEnough(connectedRow.landed_total,520)
+    ||!closeEnough(connectedRow.normalized_landed_cost,0.052,0.000001)){
+    throw new Error('Supplier Sourcing V4 connected quote landed-cost normalization is incorrect.');
+  }
+  if(!externalRow||externalRow.comparison_status!=='NOT_COMPARABLE'||externalRow.normalized_landed_cost!=null){
+    throw new Error('Supplier Sourcing V4 incompatible quote did not fail closed.');
+  }
+  if(Number(compare.json?.factual_highlights?.lowest_normalized_landed_cost_quote_id)!==connectedQuoteId
+    ||compare.json?.auto_selected_quote_id!=null){
+    throw new Error('Supplier Sourcing V4 comparison invented or missed a factual highlight.');
+  }
+
+  const reorder=await requestJson(
+    base,`/api/procurement/reorder-suggestions?business_id=${merchantBusinessId}`,
+    {token:merchant.token}
+  );
+  expectStatus(reorder,200,'Supplier Sourcing V4 reorder suggestions');
+  const suggestion=(reorder.json||[]).find(x=>Number(x.inventory_id)===inventoryId);
+  if(!suggestion||Number(suggestion.catalog_item_id)!==Number(item.id)
+    ||Number(suggestion.preference_rank)!==1||Number(suggestion.suggested_packs)!==2){
+    throw new Error('Supplier Sourcing V4 reorder did not use the explicit preferred source.');
+  }
+
+  const poCountBeforeExplicit=await pool.query(`SELECT COUNT(*)::int c FROM purchase_orders WHERE business_id=$1`,[merchantBusinessId]);
+  if(Number(poCountBeforeExplicit.rows[0].c)!==Number(poCountBefore.rows[0].c)){
+    throw new Error('Supplier Sourcing V4 quote/preferences created a purchase order automatically.');
+  }
+
+  const po=await requestJson(base,`/api/procurement/sourcing/quotes/${connectedQuoteId}/create-po`,{
+    method:'POST',token:merchant.token,body:{order_packs:1,fulfilment_mode:'delivery',merchant_note:'Controlled QA V4 quote-selected PO'}
+  });
+  expectStatus(po,201,'Supplier Sourcing V4 explicit quote to PO');
+  const poId=Number(po.json?.purchase_order_id);
+  if(!poId||Number(po.json?.source_quote_id)!==connectedQuoteId||!closeEnough(po.json?.expected_total,520)){
+    throw new Error('Supplier Sourcing V4 quote to PO response is incorrect.');
+  }
+
+  const detail=await requestJson(base,`/api/procurement/orders/${poId}`,{token:merchant.token});
+  expectStatus(detail,200,'Supplier Sourcing V4 PO snapshot');
+  if(Number(detail.json?.source_quote_id)!==connectedQuoteId
+    ||!closeEnough(detail.json?.items?.[0]?.price_per_pack_snapshot,500)
+    ||detail.json?.items?.[0]?.handling_mode_snapshot!=='sealed_resale'){
+    throw new Error('Supplier Sourcing V4 PO did not snapshot quote evidence.');
+  }
+
+  const poCountAfterExplicit=await pool.query(`SELECT COUNT(*)::int c FROM purchase_orders WHERE business_id=$1`,[merchantBusinessId]);
+  if(Number(poCountAfterExplicit.rows[0].c)!==Number(poCountBefore.rows[0].c)+1){
+    throw new Error('Supplier Sourcing V4 explicit PO count is incorrect.');
+  }
+
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:supplier.token,body:{}});
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+
+  return{
+    status:'PASS',
+    wave:SUPPLIER_SOURCING_V4_WAVE,
+    supplier_v1_v2_v3_baseline:true,
+    merchant_business_id:merchantBusinessId,
+    supplier_business_id:supplierBusinessId,
+    private_supplier_hidden:true,
+    controlled_directory:true,
+    rfq_id:rfqId,
+    connected_quote_id:connectedQuoteId,
+    external_quote_not_comparable:true,
+    factual_comparison_no_auto_selection:true,
+    preferred_source:true,
+    reorder_business_id:merchantBusinessId,
+    reorder_preferred_source:true,
+    no_auto_po:true,
+    explicit_quote_to_po:true,
+    purchase_order_id:poId,
+    source_quote_snapshot:true
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -2241,6 +2492,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
           ?await runSupplierDomainV2Acceptance({pool,base,secret:config.secret})
         :config.wave===SUPPLIER_COMMERCIAL_V3_WAVE
           ?await runSupplierCommercialV3Acceptance({pool,base,secret:config.secret})
+        :config.wave===SUPPLIER_SOURCING_V4_WAVE
+          ?await runSupplierSourcingV4Acceptance({pool,base,secret:config.secret})
         :config.wave===COURIER_EXPERIENCE_WAVE
           ?await runCourierExperienceAcceptance({
             pool,base,secret:config.secret,
@@ -2263,5 +2516,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
