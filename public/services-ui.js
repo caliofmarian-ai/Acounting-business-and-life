@@ -50,5 +50,6 @@ function openReviewModal(id){const m=document.getElementById('serviceModal'),b=d
 function applySvcState(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState;if(state?.snapshot)svcMe=state.snapshot}
 async function decorateSvc(detail){if(!ensureSvc()||!stok())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applySvcState(state);if(!svcMe)return;await loadCategories();const role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(hub&&role==='customer'){const local=hub.querySelector('[data-hub-feature="Local Services"]');if(local)local.onclick=()=>openDirectory('')}if(hub&&role==='service_provider'){hub.querySelectorAll('[data-hub-feature]').forEach(b=>{if(['Profile','Services','Qualifications','Quotes','Jobs','Reviews'].includes(b.dataset.hubFeature))b.onclick=()=>openProviderWorkspace(b.dataset.hubFeature)})}}
 function observeSvc(){document.addEventListener('abl:profile-state',e=>decorateSvc(e.detail).catch(()=>{}),{passive:true})}
+window.BusinessLifeServices=Object.freeze({openDirectory,openCustomerJobs});
 async function boot(){ensureSvc();observeSvc();await decorateSvc(window.BusinessLifeProfileState)}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
