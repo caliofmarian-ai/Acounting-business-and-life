@@ -443,9 +443,6 @@ const HUBS = {
     ['📥','Orders','New, preparing and fulfilment orders','Orders'],
     ['💰','Money','Receivables and recorded payments','Money']
   ],
-  courier: [
-    ['✅','Eligibility','Admin approval and document status','Eligibility'],['🟢','Availability','Go available after approval','Availability'],['📋','Assigned Deliveries','Your active delivery queue','Deliveries'],['🗺️','Active Route','Pickup, transit and completion','Tracking'],['💰','Earnings & Money','Recorded earnings, settlement and payout status','Money']
-  ],
   service_provider: [
     ['👤','Public Profile','Headline, experience and service area','Profile'],['🧰','Services Offered','Choose the tasks you provide','Services'],['🎓','Qualifications & CV','Credentials, experience and portfolio','Qualifications'],['💬','Requests & Quotes','Review requests and send quotes','Quotes'],['🗓️','Jobs','Scheduled and active work','Jobs'],['⭐','Reviews','Verified feedback from completed work','Reviews'],['💰','Money','Job value, receivables and payout status','Money']
   ]
@@ -713,8 +710,59 @@ function renderCustomerHub(){
   hub.classList.remove('hidden');
   loadCustomerHome(hub).catch(()=>{});
 }
+
+function openCourierHubFeature(hub,feature){
+  if(feature==='Money'&&window.BusinessLifeProfileMoney?.openProfileMoney){
+    return window.BusinessLifeProfileMoney.openProfileMoney('courier');
+  }
+  if(['Eligibility','Availability','Deliveries','Tracking'].includes(feature)&&window.BusinessLifeDelivery?.openCourierWorkspace){
+    return window.BusinessLifeDelivery.openCourierWorkspace(feature);
+  }
+  const target=hub.querySelector('[data-hub-feature="'+feature+'"]');
+  if(target)return target.click();
+  showToast(feature+' is still loading. Try again in a moment.');
+}
+function renderCourierHub(){
+  const hub=document.getElementById('roleHub');
+  if(!hub)return;
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  hub.innerHTML=
+    '<div class="hubHero courierHomeHero"><div class="hubEyebrow">Delivery profile</div><h1>Ready for your next delivery?</h1><p>Approval first, availability second, assigned work third. Your route and money stay evidence-based.</p><span class="hubStatus">Courier workspace</span></div>'+
+    '<section class="courierHomePanel">'+
+      '<div class="hubSectionTitle"><h2>Work status</h2><span>Open the step you need</span></div>'+
+      '<div class="courierHomeGrid">'+
+        '<button class="courierHomeCard courierEligibilityCard" type="button" data-hub-feature="Eligibility"><span>✅</span><strong>Eligibility</strong><small>Vehicle, documents and Admin approval. Availability stays locked until approval.</small><b>›</b></button>'+
+        '<button class="courierHomeCard" type="button" data-hub-feature="Availability"><span>🟢</span><strong>Availability</strong><small>Go available or pause only after eligibility is approved.</small><b>›</b></button>'+
+        '<button class="courierHomeCard" type="button" data-hub-feature="Tracking"><span>🗺️</span><strong>Current route</strong><small>Open active route, ETA, map and delivery progress when assigned.</small><b>›</b></button>'+
+        '<button class="courierHomeCard" type="button" data-hub-feature="Deliveries"><span>📋</span><strong>Assigned deliveries</strong><small>Your canonical delivery queue and handoff actions.</small><b>›</b></button>'+
+      '</div>'+
+      '<button class="courierSettingsLink" type="button" data-hub-feature="Profile Settings"><span>⚙️</span><span><strong>Delivery settings</strong><small>Vehicle, documents, payout preferences and profile settings</small></span><b>›</b></button>'+
+      '<button class="courierFeatureProxy hidden" type="button" data-hub-feature="Money" tabindex="-1" aria-hidden="true">Money</button>'+
+    '</section>'+
+    '<nav class="courierPrimaryNav" aria-label="Delivery navigation">'+
+      '<button type="button" class="active" data-courier-nav="home"><span>⌂</span><strong>Home</strong></button>'+
+      '<button type="button" data-courier-nav="deliveries"><span>📋</span><strong>Deliveries</strong></button>'+
+      '<button type="button" data-courier-nav="money"><span>💰</span><strong>Money</strong></button>'+
+    '</nav>';
+  hub.querySelectorAll('[data-hub-feature]').forEach(button=>{
+    button.onclick=()=>button.dataset.hubFeature==='Profile Settings'
+      ?window.BusinessLifeProfileSettings?.open?.('courier')
+      :openCourierHubFeature(hub,button.dataset.hubFeature);
+  });
+  hub.querySelectorAll('[data-courier-nav]').forEach(button=>button.onclick=()=>{
+    const destination=button.dataset.courierNav;
+    if(destination==='home'){
+      hub.querySelectorAll('[data-courier-nav]').forEach(x=>x.classList.toggle('active',x===button));
+      window.scrollTo({top:0,behavior:'smooth'});
+      return;
+    }
+    openCourierHubFeature(hub,destination==='deliveries'?'Deliveries':'Money');
+  });
+  hub.classList.remove('hidden');
+}
 function renderRoleHub(role) {
   if(role==='customer')return renderCustomerHub();
+  if(role==='courier')return renderCourierHub();
   const meta = ROLE_META[role];
   const hub = document.getElementById('roleHub');
   if (!hub || !meta) return;
