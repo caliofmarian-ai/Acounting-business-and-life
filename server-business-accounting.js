@@ -1,8 +1,5 @@
-import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,18 +9,20 @@ import { loadMerchantToday } from './merchant-today-core.js';
 import { deriveStockPurchase,weightedAverageUnitCost,computeRecipeBatch,normalizedProductKind,toBaseQuantity } from './merchant-catalog-core.js';
 import { recordPoReceiptLot,commercialOutstandingForPo } from './server-supplier-commercial-v3.js';
 import { supplierReorderSuggestions } from './server-supplier-sourcing-v4.js';
+import {startEmbeddedProfileGovernance,stopEmbeddedProfileGovernance} from './server-profile-governance.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const upstreamPort = Number(process.env.INTERNAL_PROFILE_GOVERNANCE_PORT || 4107);
+const upstreamPort = Number(process.env.INTERNAL_AUTH_HARDENING_PORT || 4007);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '14mb' });
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const ACCOUNTS = new Set(['cash','gcash','bank','other']);
 const TYPES = new Set(['sale','business_expense','money_received','personal_withdrawal','adjustment']);
-let child;
+let profileGovernanceApp=null;
+let profileGovernanceReady=false;
 let shuttingDown = false;
 
 const clean = (value,max=500) => String(value ?? '').trim().slice(0,max);
@@ -380,7 +379,7 @@ async function commercialMetrics(ctx){
   return{customer_receivables:Number(merchant.rows[0].receivables),supplier_payables:Number(procurement.rows[0].payables),procurement_commitments:Number(procurement.rows[0].commitments),supplier_fulfilled_revenue:supplierRevenue,supplier_receivables:supplierReceivables};
 }
 
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,profile_governance:r.ok,accounting_tenancy:true,version:'0.9.0-multi-business-accounting'})}catch{res.status(503).json({ok:false,db:false,profile_governance:false,accounting_tenancy:false,version:'0.9.0-multi-business-accounting'})}});
+app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');const ok=profileGovernanceReady&&r.ok;res.status(ok?200:503).json({ok,db:true,profile_governance:profileGovernanceReady,auth_hardening:r.ok,accounting_tenancy:true,version:'0.9.0-multi-business-accounting'})}catch{res.status(503).json({ok:false,db:false,profile_governance:false,auth_hardening:false,accounting_tenancy:false,version:'0.9.0-multi-business-accounting'})}});
 app.get('/business-accounting.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','business-accounting.css'),'utf8')));
 app.get('/business-accounting-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','business-accounting-ui.js'),'utf8')));
 
@@ -629,36 +628,67 @@ app.get('/api/procurement/reorder-suggestions',async(req,res,next)=>{try{
 }catch(e){next(e)}});
 app.post('/api/merchant/storefront/import-legacy',jsonBody,async(req,res,next)=>{try{const ctx=await accountingContext(req);if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});const businessId=Number(req.body?.business_id||ctx.business.id),owned=ctx.businesses.find(b=>Number(b.id)===businessId);if(!owned)return res.status(403).json({error:'Business unavailable'});const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT $1,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);const products=await pool.query(`SELECT * FROM marketplace_products WHERE business_id=$1 ORDER BY category,name`,[businessId]);res.json({imported_or_updated:r.rowCount,products:products.rows})}catch(e){next(e)}});
 
-app.post('/api/governance/admin/applications/:id/review',jsonBody,async(req,res,next)=>{try{const assertionHeader=req.headers['x-bl-admin-assertion'];const response=await upstream(req.originalUrl,{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json',...(assertionHeader?{'x-bl-admin-assertion':String(assertionHeader)}:{})},body:JSON.stringify(req.body||{})});const data=await response.json().catch(()=>({}));if(response.ok&&req.body?.decision==='approve'){const a=await pool.query(`SELECT account_id,role,territory_id,proposed_business_name FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(a.rowCount&&['merchant','supplier'].includes(a.rows[0].role)){const asserted=verifyAdminAssertion(TOKEN_SECRET,assertionHeader,null);const actorId=asserted?.accountId||1;await ensureProfileBusinessBinding(Number(a.rows[0].account_id),a.rows[0].role,Number(a.rows[0].territory_id)||null,a.rows[0].proposed_business_name||'',actorId)}}res.status(response.status).json(data)}catch(e){next(e)}});
-
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
+function dispatchProfileGovernanceJson(req,res,{afterSuccess=null}={}){
+  if(!profileGovernanceApp)return Promise.reject(Object.assign(new Error('Profile Governance runtime is not ready'),{status:503}));
+  const routeParams={...req.params};
+  const chunks=[];let ended=false;
+  const originalWrite=res.write.bind(res),originalEnd=res.end.bind(res);
+  const restore=()=>{res.write=originalWrite;res.end=originalEnd;req.params=routeParams};
+  const capture=(chunk,encoding)=>{
+    if(chunk==null)return;
+    chunks.push(Buffer.isBuffer(chunk)?chunk:Buffer.from(String(chunk),typeof encoding==='string'?encoding:undefined));
+  };
+  return new Promise((resolve,reject)=>{
+    res.write=function(chunk,encoding,cb){capture(chunk,encoding);if(typeof cb==='function')queueMicrotask(cb);return true};
+    res.end=function(chunk,encoding,cb){
+      if(ended)return res;ended=true;capture(chunk,encoding);
+      const status=res.statusCode,payload=Buffer.concat(chunks);
+      restore();
+      let data={};try{data=payload.length?JSON.parse(payload.toString('utf8')):{}}catch{}
+      Promise.resolve(status>=200&&status<400&&afterSuccess?afterSuccess(data,status):undefined).then(()=>{
+        originalEnd(payload,typeof encoding==='string'?encoding:undefined,typeof cb==='function'?cb:undefined);
+        resolve();
+      }).catch(reject);
+      return res;
+    };
+    profileGovernanceApp.handle(req,res,err=>{
+      if(ended)return;
+      restore();
+      if(err)return reject(err);
+      reject(Object.assign(new Error('Profile Governance runtime did not handle request'),{status:502}));
+    });
   });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Platform upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
 }
-app.use(proxy);
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'});});
 
-function start(){child=spawn(process.execPath,['server-profile-governance.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Profile governance child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<startupWaitAttempts(180);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(resolve=>setTimeout(resolve,250))}throw new Error('Profile governance child failed health check')}
+app.post('/api/governance/admin/applications/:id/review',jsonBody,async(req,res,next)=>{
+  try{
+    const assertionHeader=req.headers['x-bl-admin-assertion'];
+    return dispatchProfileGovernanceJson(req,res,{
+      afterSuccess:async()=>{
+        if(req.body?.decision!=='approve')return;
+        const a=await pool.query(`SELECT account_id,role,territory_id,proposed_business_name FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);
+        if(a.rowCount&&['merchant','supplier'].includes(a.rows[0].role)){
+          const asserted=verifyAdminAssertion(TOKEN_SECRET,assertionHeader,null);
+          const actorId=asserted?.accountId||1;
+          await ensureProfileBusinessBinding(Number(a.rows[0].account_id),a.rows[0].role,Number(a.rows[0].territory_id)||null,a.rows[0].proposed_business_name||'',actorId);
+        }
+      }
+    });
+  }catch(e){next(e)}
+});
+
+app.use((req,res,next)=>{
+  if(!profileGovernanceApp)return res.status(503).json({error:'Profile Governance runtime is not ready'});
+  return profileGovernanceApp(req,res,next);
+});
+app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'});});
 
 let embeddedStartPromise=null;
 export async function startEmbeddedBusinessAccounting(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      profileGovernanceApp=await startEmbeddedProfileGovernance();
+      profileGovernanceReady=true;
       await initAccountingTenancyDb();
       console.log('Business & Life multi-business accounting mounted in-process');
       return app;
@@ -670,7 +700,8 @@ export async function startEmbeddedBusinessAccounting(){
 async function stopBusinessAccounting(){
   if(shuttingDown)return;
   shuttingDown=true;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  profileGovernanceReady=false;
+  await stopEmbeddedProfileGovernance().catch(()=>{});
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedBusinessAccounting(){await stopBusinessAccounting()}

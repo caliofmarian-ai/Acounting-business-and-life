@@ -26,7 +26,7 @@ test('Help Center article identities and help-code mappings are valid',()=>{
   }
 });
 
-test('public Help Center routes are served before the upstream proxy',()=>{
+test('public Help Center routes are served before the downstream application boundary',()=>{
   for(const route of [
     "app.get('/help',helpPage)",
     "app.get('/help/profile/:role',helpPage)",
@@ -35,7 +35,9 @@ test('public Help Center routes are served before the upstream proxy',()=>{
     "app.get('/help/content.json'",
     "app.get('/help/product-map.svg'"
   ]) assert.ok(server.includes(route),`missing public route: ${route}`);
-  assert.ok(server.indexOf("app.get('/help',helpPage)")<server.indexOf('app.use(proxy)'),'Help Center must not depend on authentication/upstream proxy');
+  const boundary=server.indexOf("if(!profileGovernanceApp)return res.status(503)");
+  assert.ok(boundary>0,'embedded Profile Governance boundary must exist');
+  assert.ok(server.indexOf("app.get('/help',helpPage)")<boundary,'Help Center must not depend on authentication/downstream application dispatch');
 });
 
 test('Help Center shell loads local assets only',()=>{

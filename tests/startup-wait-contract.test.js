@@ -21,7 +21,7 @@ test('isolated QA doubles bounded child-startup attempts',()=>{
 
 test('remaining nested gateway waits use the shared QA-aware helper',()=>{
   const contracts=[
-    ['server-business-accounting.js',180],
+    ['server-profile-governance.js',220],
     ['server-legal.js',340]
   ];
   for(const [path,base] of contracts){

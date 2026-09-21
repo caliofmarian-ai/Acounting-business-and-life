@@ -1,10 +1,11 @@
+import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getAdminAssignments, verifyAdminAssertion } from './admin-authorization.js';
 import { companyTestAccountForEmail, companyTestProfileRole } from './company-test-accounts.js';
@@ -260,14 +261,56 @@ app.post('/api/governance/super-admin/self-test/profiles/:role/activate',body,as
 app.put('/api/profiles/:role',body,async(req,res,next)=>{try{const role=clean(req.params.role,40);if(role==='customer')return forwardJson(req,res);if(!GOVERNED_ROLES.has(role))return forwardJson(req,res);const me=await identity(req);if(req.body?.enabled===false){return forwardJson(req,res)}const auth=await activeAuthorization(me.account.id,role);if(!auth)return res.status(403).json({error:role==='service_provider'?'Submit and obtain approval for your Local Services application first.':'This profile is invitation-only and requires Admin approval.'});return forwardJson(req,res)}catch(e){next(e)}})
 app.put('/api/service-provider/services',body,async(req,res,next)=>{try{const me=await identity(req),auth=await activeAuthorization(me.account.id,'service_provider');if(!auth)return res.status(403).json({error:'Service Provider approval required'});const allowed=await pool.query(`SELECT category_id FROM service_category_authorizations WHERE account_id=$1 AND status='active'`,[me.account.id]);const set=new Set(allowed.rows.map(x=>Number(x.category_id)));const requested=Array.isArray(req.body?.services)?req.body.services:[];const filtered=requested.filter(x=>set.has(Number(x.category_id)));if(filtered.length!==requested.length)return res.status(403).json({error:'One or more selected service categories are not approved for this profile'});return forwardJson(req,res,req.originalUrl,{...req.body,services:filtered})}catch(e){next(e)}})
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Governance upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
+  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Governance upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.post('/api/governance/profiles/:role/start',body,async(req,res,next)=>{try{const me=await identity(req),role=clean(req.params.role,40),territoryId=Number(req.body?.territory_id);if(!['merchant','supplier','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use operational onboarding'});if(['merchant','supplier','courier'].includes(role)&&!me.account.is_test_account)return res.status(403).json({error:'This launch profile requires an invitation before onboarding can start'});const t=await pool.query(`SELECT id FROM territories WHERE id=$1 AND country_code=$2 AND status IN ('onboarding','active')`,[territoryId,me.account.country_code||'PH']);if(!t.rowCount)return res.status(409).json({error:'Choose an available operating territory'});const client=await pool.connect();try{await client.query('BEGIN');const a=await client.query(`INSERT INTO profile_applications(account_id,role,territory_id,status,application_data) VALUES($1,$2,$3,'application_started',$4::jsonb) ON CONFLICT(account_id,role,territory_id) WHERE status NOT IN ('rejected','revoked') DO UPDATE SET updated_at=NOW() RETURNING *`,[me.account.id,role,territoryId,JSON.stringify({onboarding_version:'person-first-v1'})]);await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,$2,FALSE,'private','application_started') ON CONFLICT(account_id,role) DO UPDATE SET enabled=FALSE,visibility='private',status='application_started',updated_at=NOW()`,[me.account.id,role]);await client.query('COMMIT');await audit(me.account.id,'profile_onboarding_started',me.account.id,role,territoryId,{application_id:a.rows[0].id});res.status(201).json(a.rows[0])}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
 app.use(proxy)
 app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected governance error'})})
 
 function start(){child=spawn(process.execPath,['server-auth-hardening.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Auth hardening child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<220;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Auth hardening child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life profile governance gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+async function wait(){for(let i=0;i<startupWaitAttempts(220);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Auth hardening child failed health check')}
+
+let embeddedStartPromise=null;
+export async function startEmbeddedProfileGovernance(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      await initDb();
+      console.log('Business & Life profile governance mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopProfileGovernance(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedProfileGovernance(){await stopProfileGovernance()}
+
+async function shutdown(sig){console.log(`Received ${sig}`);await stopProfileGovernance();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedProfileGovernance().then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life profile governance gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+}
