@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Webhook } from 'svix';
+import crypto from 'node:crypto';
 import {
   resendProviderEventTypes,
   resendProviderStatus,
@@ -12,17 +12,19 @@ const core=readFileSync(new URL('../resend-delivery-observability.js',import.met
 const notifications=readFileSync(new URL('../notification-core.js',import.meta.url),'utf8');
 const server=readFileSync(new URL('../server-notifications.js',import.meta.url),'utf8');
 
-function signedEvent(event){
+function signedEvent(event,{timestamp=Math.floor(Date.now()/1000)}={}){
   const raw=Buffer.from(JSON.stringify(event),'utf8');
-  const secret='whsec_'+Buffer.from('business-life-resend-test-secret-32b').toString('base64');
+  const secretBytes=Buffer.from('business-life-resend-test-secret-32b');
+  const secret='whsec_'+secretBytes.toString('base64');
   const id='msg_test_'+Date.now();
-  const date=new Date();
-  const signature=new Webhook(secret).sign(id,date,raw);
+  const signature='v1,'+crypto.createHmac('sha256',secretBytes)
+    .update(id+'.'+timestamp+'.'+raw.toString('utf8'),'utf8')
+    .digest('base64');
   return{
     raw,secret,
     headers:{
       'svix-id':id,
-      'svix-timestamp':String(Math.floor(date.getTime()/1000)),
+      'svix-timestamp':String(timestamp),
       'svix-signature':signature
     }
   };
@@ -56,6 +58,16 @@ test('altering the raw body invalidates the Resend webhook signature',()=>{
   assert.throws(
     ()=>verifyResendWebhook({rawBody:altered,headers:signed.headers,secret:signed.secret}),
     /Invalid Resend webhook signature/
+  );
+});
+
+test('stale signed Resend webhook is rejected to prevent replay',()=>{
+  const event={type:'email.sent',created_at:new Date().toISOString(),data:{email_id:'email_test_stale'}};
+  const timestamp=Math.floor(Date.now()/1000)-301;
+  const signed=signedEvent(event,{timestamp});
+  assert.throws(
+    ()=>verifyResendWebhook({rawBody:signed.raw,headers:signed.headers,secret:signed.secret}),
+    /Invalid Resend webhook timestamp/
   );
 });
 
