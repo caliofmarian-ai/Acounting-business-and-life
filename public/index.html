@@ -29,37 +29,74 @@
         <div class="topActions"><span id="onlineState" class="statusChip">Online</span><button id="refreshBtn" class="ghost">Refresh</button></div>
       </header>
 
-      <section id="viewDashboard" class="view">
-        <div class="hero legacyFinanceSnapshot"><span>Available money recorded</span><strong id="availableTotal">₱0</strong><small>Sales + support received − business expenses − personal withdrawals</small></div>
-        <div id="warningBox" class="warningBox hidden legacyFinanceSnapshot"></div>
-
-        <div class="sectionTitle legacyFinanceSnapshot"><h2>Where the money is</h2><small>Ledger balance by account</small></div>
-        <div class="grid2 accountsGrid legacyFinanceSnapshot">
-          <div class="metric"><span>Cash</span><strong id="acctCash">₱0</strong></div>
-          <div class="metric"><span>GCash</span><strong id="acctGcash">₱0</strong></div>
-          <div class="metric"><span>Bank</span><strong id="acctBank">₱0</strong></div>
-          <div class="metric"><span>Other</span><strong id="acctOther">₱0</strong></div>
-        </div>
-
-        <div class="grid2 metricsSpace legacyFinanceSnapshot">
-          <div class="metric"><span>Today's sales</span><strong id="todaySales">₱0</strong></div>
-          <div class="metric"><span>Today's cash operating result</span><strong id="todayProfit">₱0</strong><small>sales − cash business expenses</small></div>
-          <div class="metric"><span>Total business expenses</span><strong id="bizExpenses">₱0</strong></div>
-          <div class="metric"><span>Total personal withdrawals</span><strong id="personalWithdrawals">₱0</strong></div>
-          <div class="metric span2"><span>Money received / remittances</span><strong id="moneyReceived">₱0</strong><small id="remittanceReceived">Remittances: ₱0</small></div>
-        </div>
-
-        <div class="card stack menuSummary">
-          <div class="sectionHead"><div><h2>Today's menu profitability</h2><small class="muted">Recipe-cost estimate, not a second cash expense</small></div><button data-view-link="Sell" class="linkBtn">Sell item</button></div>
-          <div class="grid2">
-            <div class="metric compact"><span>Menu revenue</span><strong id="menuRevenueToday">₱0</strong></div>
-            <div class="metric compact"><span>Ingredient cost</span><strong id="menuCogsToday">₱0</strong></div>
-            <div class="metric compact"><span>Estimated gross</span><strong id="menuGrossToday">₱0</strong></div>
-            <div class="metric compact"><span>Gross margin</span><strong id="menuMarginToday">0.0%</strong></div>
+      <section id="viewDashboard" class="view merchantTodayView">
+        <div class="todayHeader">
+          <div>
+            <span class="todayEyebrow">Merchant · Today</span>
+            <h1>Today</h1>
+            <p id="todayBusinessName" class="muted">Your current business</p>
           </div>
+          <button id="todayRefresh" type="button" class="secondary todayRefresh">Refresh</button>
         </div>
 
-        <div class="card stack ledgerActivityCard"><div class="sectionHead"><div><h2>Recorded ledger activity</h2><small class="muted">Manual and system entries; these are not automatically confirmed customer payments.</small></div><div><button data-view-link="Add" class="linkBtn">+ Add ledger entry</button><button data-view-link="History" class="linkBtn">History</button></div></div><div id="recentList" class="list"></div></div>
+        <div id="todayLoading" class="todayState card">
+          <strong>Checking what needs your attention…</strong>
+          <span>Orders, stock, suppliers, catalog and confirmed money.</span>
+        </div>
+
+        <div id="todayError" class="todayState todayError card hidden">
+          <strong>Today could not be loaded.</strong>
+          <span id="todayErrorMessage">Check your connection and try again.</span>
+          <button id="todayRetry" type="button" class="primary">Try again</button>
+        </div>
+
+        <div id="todayContent" class="todayContent hidden">
+          <section class="todayCard todayOrders">
+            <div class="todayCardHead"><div><span>Customer orders</span><h2 id="todayOrdersHeadline">Nothing waiting</h2></div><strong id="todayOrdersTotal">0</strong></div>
+            <div class="todayChips" id="todayOrderChips"></div>
+            <p id="todayOrdersCopy" class="muted">New customer work will appear here.</p>
+            <button type="button" class="primary todayPrimaryAction" data-today-action="orders">Open Orders</button>
+          </section>
+
+          <section class="todayCard">
+            <div class="todayCardHead"><div><span>Inventory</span><h2 id="todayInventoryHeadline">Stock looks clear</h2></div><strong id="todayInventoryTotal">0</strong></div>
+            <div id="todayInventoryItems" class="todayMiniList"></div>
+            <p id="todayInventoryCopy" class="muted">Only recorded inventory evidence is shown here.</p>
+            <button type="button" class="secondary todayPrimaryAction" data-today-action="inventory">Open Inventory</button>
+          </section>
+
+          <section class="todayCard">
+            <div class="todayCardHead"><div><span>Suppliers</span><h2 id="todaySupplierHeadline">No supplier decisions</h2></div><strong id="todaySupplierTotal">0</strong></div>
+            <div class="todayChips" id="todaySupplierChips"></div>
+            <p class="muted">Quotes, supplier changes and received-but-unpaid stock stay under your control.</p>
+            <button type="button" class="secondary todayPrimaryAction" data-today-action="suppliers">Open Suppliers</button>
+          </section>
+
+          <section class="todayCard">
+            <div class="todayCardHead"><div><span>Catalog</span><h2 id="todayCatalogHeadline">Catalog is ready</h2></div><strong id="todayCatalogTotal">0</strong></div>
+            <div class="todayChips" id="todayCatalogChips"></div>
+            <p id="todayCatalogCopy" class="muted">Publishing, media and availability checks for this business.</p>
+            <button type="button" class="secondary todayPrimaryAction" data-today-action="catalog">Open Catalog</button>
+          </section>
+
+          <section class="todayCard todayMoneyCard">
+            <div class="todayCardHead"><div><span>Money</span><h2>Confirmed business snapshot</h2></div></div>
+            <div class="todayMoneyGrid">
+              <div><span>Money received</span><strong id="todayMoneyReceived">₱0</strong><small>Confirmed customer payments</small></div>
+              <div><span>Completed sales</span><strong id="todayCompletedSales">₱0</strong><small>Merchandise value</small></div>
+              <div><span>Awaiting payment</span><strong id="todayAwaitingPayment">₱0</strong><small>Completed, not fully paid</small></div>
+              <div><span>Expenses</span><strong id="todayBusinessExpenses">₱0</strong><small>Business expenses</small></div>
+            </div>
+            <button type="button" class="secondary todayPrimaryAction" data-today-action="money">Open Money</button>
+          </section>
+
+          <section id="todayFoodActions" class="todayFoodActions hidden">
+            <div><strong>Food tools</strong><span>Only shown when this Merchant business supports food.</span></div>
+            <div><button type="button" class="secondary" data-today-action="quick-sale">Quick Sale</button><button type="button" class="secondary" data-today-action="recipes">Products & recipes</button></div>
+          </section>
+
+          <p id="todayUpdatedAt" class="todayUpdated muted"></p>
+        </div>
       </section>
 
       <section id="viewSell" class="view hidden">
@@ -89,7 +126,7 @@
       </section>
 
       <section id="viewMoney" class="view hidden">
-        <div class="sectionHead"><div><h1>Money control</h1><p class="muted">Remittances, physical cash and spending limits.</p></div></div>
+        <div class="sectionHead"><div><h1>Money control</h1><p class="muted">Confirmed finances, remittances, physical cash and advanced records.</p></div><div class="moneyAdvancedLinks"><button type="button" data-view-link="Add" class="linkBtn">Manual ledger</button><button type="button" data-view-link="History" class="linkBtn">History</button></div></div>
         <div class="card stack">
           <div class="sectionHead"><h2>Today's physical cash</h2><span id="dayStatusDate" class="muted"></span></div>
           <div class="grid2"><div class="metric compact"><span>Opening cash</span><strong id="openingCashShown">₱0</strong></div><div class="metric compact"><span>Expected now</span><strong id="expectedCashShown">₱0</strong></div></div>
@@ -183,7 +220,7 @@
 
       <section id="viewHistory" class="view hidden"><div class="sectionHead"><div><h1>History</h1><p class="muted">Corrections are logged; linked remittance/menu sales are protected from separate edits.</p></div><a id="exportLink" class="linkBtn" href="#">Export CSV</a></div><div class="card"><div id="historyList" class="list"></div></div><button data-view-link="Dashboard" class="secondary">Back home</button></section>
 
-      <nav class="bottomNav navSix"><button data-view="Dashboard" class="active">Home</button><button data-view="Sell">Sell</button><button data-view="Add">Add</button><button data-view="Money">Money</button><button data-view="Menu">Menu</button><button data-view="Stock">Stock</button></nav>
+      <nav class="bottomNav merchantPrimaryNav"><button data-view="Dashboard" class="active">Today</button><button type="button" data-merchant-action="orders">Orders</button><button type="button" data-merchant-action="catalog">Catalog</button><button data-view="Stock">Inventory</button><button data-view="Money">Money</button></nav>
     </section>
   </main>
 
