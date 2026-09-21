@@ -15,3 +15,46 @@
 .webPushCompact{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px;border:1px solid #dfe8e4;border-radius:14px;margin-bottom:9px}.webPushCompact span{display:grid;gap:3px}.webPushCompact strong{font-size:11px}.webPushCompact small{font-size:10px;color:#74808e}.webPushCompact button{border:0;border-radius:11px;background:#0a7c66;color:#fff;padding:9px 11px;font-size:10px;font-weight:800}
 .compactChannelList{gap:7px}.preferenceAccordion{display:block!important;margin:0;border-radius:13px;padding:0!important}.preferenceAccordion>summary{padding:11px 12px}.preferenceAccordionBody{display:flex;gap:14px;flex-wrap:wrap;padding:11px 12px}.preferenceAccordionBody label{font-size:10px;display:flex;gap:5px;align-items:center;font-weight:800}
 @media(max-width:430px){.notificationSettingsGroup>summary,.voiceSettingAccordion>summary,.preferenceAccordion>summary{grid-template-columns:minmax(0,1fr) auto auto;padding:12px}.notificationSettingsGroup>summary b,.voiceSettingAccordion>summary b,.preferenceAccordion>summary b{max-width:115px;overflow:hidden;text-overflow:ellipsis}.webPushCompact{align-items:flex-start;flex-direction:column}.webPushCompact button{width:100%}.notificationSettingsGroupBody{padding:10px}.voiceSettingBody .soundChoiceControls{width:100%}}.preferenceRow>.preferenceAccordionBody{display:flex}
+
+/* Communications V2A — Caliof brand, profile context and quick modes */
+.notificationBrand{display:grid;gap:1px}
+.notificationBrand small{color:#0a7c66!important;letter-spacing:.14em!important}
+.notificationBrand h2{margin:1px 0 0}
+.notificationBrand span{font-size:10px;font-weight:800;color:#74808e}
+.notificationSummary{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:0 0 9px;padding:12px 13px;border:1px solid #b9ddd5;border-radius:16px;background:linear-gradient(145deg,#f2fbf8,#e9f7f2)}
+.notificationSummary>span{display:grid;gap:3px}
+.notificationSummary strong{font-size:13px;color:#075f50}
+.notificationSummary small{font-size:10px;color:#557068}
+.notificationSummary button{border:0;border-radius:11px;background:#fff;color:#08705c;padding:9px 11px;font-size:10px;font-weight:900;box-shadow:0 3px 12px rgba(23,35,60,.06)}
+.notificationToolbar{margin-top:-2px}
+.notificationCard{grid-template-columns:auto minmax(0,1fr) auto;padding:13px}
+.notificationCopy{min-width:0}
+.notificationMeta{display:grid!important;grid-template-columns:auto auto minmax(0,1fr);justify-content:start!important;align-items:center;gap:6px!important;margin-bottom:6px}
+.notificationMeta time{justify-self:end}
+.notificationRole,.notificationTopic{display:inline-flex;align-items:center;min-height:20px;padding:4px 7px;border-radius:999px;font-size:9px;font-weight:900;line-height:1;text-transform:uppercase;letter-spacing:.035em}
+.notificationRole{background:#eef6f3;color:#075f50}
+.notificationTopic{background:#f1f5f9;color:#64748b}
+.notificationTitle{display:block;font-size:13px;line-height:1.3}
+.notificationState{display:inline-block;margin-top:1px;font-weight:800;text-transform:uppercase;letter-spacing:.035em}
+.notificationCard.role-merchant .notificationRole{background:#eaf5ff;color:#0369a1}
+.notificationCard.role-courier .notificationRole,.notificationCard.role-delivery .notificationRole{background:#f3efff;color:#6d28d9}
+.notificationCard.role-supplier .notificationRole{background:#edf9ef;color:#15803d}
+.notificationCard.role-service_provider .notificationRole{background:#fff6e8;color:#9a5b06}
+.notificationCard.role-admin .notificationRole{background:#fff0eb;color:#b45309}
+.notificationCard.role-customer .notificationRole{background:#eef6f3;color:#075f50}
+.notificationModeCard{display:grid;gap:10px;margin:9px 0;padding:13px;border:1px solid #d7e5e0;border-radius:16px;background:#fff}
+.notificationModeCard>span{display:grid;gap:3px}
+.notificationModeCard strong{font-size:12px}
+.notificationModeCard small{font-size:10px;line-height:1.4;color:#74808e}
+.notificationModeChoices{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.notificationModeChoices button{min-height:40px;border:1px solid #d9e3df;border-radius:11px;background:#f8fbfa;color:#536075;font-size:10px;font-weight:900;padding:8px}
+.notificationModeChoices button.active{background:#17233c;border-color:#17233c;color:#fff}
+.notificationModeChoices button:disabled{opacity:.55}
+@media(max-width:430px){
+  .notificationSummary{align-items:flex-start}
+  .notificationSummary button{flex:0 0 auto}
+  .notificationMeta{grid-template-columns:auto auto 1fr}
+  .notificationRole,.notificationTopic{max-width:118px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .notificationModeChoices{grid-template-columns:1fr}
+  .notificationModeChoices button{min-height:42px}
+}
