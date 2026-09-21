@@ -42,12 +42,14 @@ test('Local Services runtime proves request through customer-confirmed completio
 });
 
 test('verified review boundary is denied before Customer confirmation and allowed after',()=>{
-  const blocked=service.indexOf("Premature Local Services review denial");
-  const confirm=service.indexOf("Customer Local Services completion confirmation");
-  const allowed=service.indexOf("Local Services verified review");
+  const start=service.indexOf('export async function runServiceProviderExperienceAcceptance');
+  assert.ok(start>=0);
+  const run=service.slice(start);
+  const blocked=run.indexOf("Premature Local Services review denial");
+  const confirm=run.indexOf("Customer Local Services completion confirmation");
+  const allowed=run.indexOf("const reviewId=await ensureServiceReview");
   assert.ok(blocked>=0&&confirm>blocked&&allowed>confirm);
-  assert.match(service,/expectStatus\(prematureReview,409/);
-  assert.match(service,/Review is available only after a completed, confirmed service job|Premature Local Services review denial/);
+  assert.match(run,/expectStatus\(prematureReview,409/);
 });
 
 test('credential authority proves ordinary denial, territory denial, in-scope allow and audit evidence',()=>{
