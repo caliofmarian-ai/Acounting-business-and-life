@@ -6,7 +6,7 @@ let foregroundVoiceReady=false,foregroundVoiceToken='',lastForegroundEventId=nul
 
 function toast(msg){let n=document.getElementById('notificationToast');if(!n){n=document.createElement('div');n.id='notificationToast';n.className='notificationToast';document.body.appendChild(n)}n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),2600)}
 function ensureNotificationUi(){
-  if(!document.getElementById('notificationBackdrop')){const wrap=document.createElement('div');wrap.id='notificationBackdrop';wrap.className='notificationBackdrop hidden';wrap.innerHTML=`<section class="notificationSheet" role="dialog" aria-modal="true"><header><div><small>Business & Life</small><h2>Notifications</h2></div><button class="notificationClose" type="button">×</button></header><div id="notificationBody"></div></section>`;document.body.appendChild(wrap);wrap.querySelector('.notificationClose').onclick=closeNotifications;wrap.addEventListener('click',e=>{if(e.target===wrap)closeNotifications()})}
+  if(!document.getElementById('notificationBackdrop')){const wrap=document.createElement('div');wrap.id='notificationBackdrop';wrap.className='notificationBackdrop hidden';wrap.innerHTML=`<section class="notificationSheet" role="dialog" aria-modal="true"><header><div class="notificationBrand"><small>CALIOF</small><h2>Notifications</h2><span>Business & Life</span></div><button class="notificationClose" type="button">×</button></header><div id="notificationBody"></div></section>`;document.body.appendChild(wrap);wrap.querySelector('.notificationClose').onclick=closeNotifications;wrap.addEventListener('click',e=>{if(e.target===wrap)closeNotifications()})}
   addBell();
 }
 function addBell(){
@@ -19,15 +19,23 @@ function closeNotifications(){document.getElementById('notificationBackdrop')?.c
 async function openNotifications(){ensureNotificationUi();document.getElementById('notificationBackdrop').classList.remove('hidden');document.body.style.overflow='hidden';await renderNotificationCenter()}
 function iconFor(code){if(code.startsWith('order.'))return'🛍️';if(code.startsWith('delivery.'))return'🛵';if(code.startsWith('procurement.')||code.startsWith('supplier.'))return'📦';if(code.startsWith('service.'))return'🧰';if(code.startsWith('support.'))return'💬';if(code.startsWith('incident.'))return'🛡️';if(code.startsWith('profile.'))return'👤';return'🔔'}
 function timeAgo(value){const ms=Date.now()-new Date(value).getTime(),m=Math.floor(ms/60000);if(m<1)return'now';if(m<60)return`${m}m`;const h=Math.floor(m/60);if(h<24)return`${h}h`;return`${Math.floor(h/24)}d`}
+const NOTIFICATION_ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Courier',delivery:'Courier',service_provider:'Local Services',admin:'Admin'};
+function notificationRoleLabel(role=''){return NOTIFICATION_ROLE_LABELS[String(role||'').toLowerCase()]||'Account'}
+function notificationRoleClass(role=''){const key=String(role||'account').toLowerCase().replace(/[^a-z0-9_-]/g,'');return 'role-'+(key||'account')}
+function notificationTopic(code=''){const x=String(code||'');if(x.startsWith('order.'))return'Order';if(x.startsWith('delivery.'))return'Delivery';if(x.startsWith('procurement.'))return'Purchase order';if(x.startsWith('supplier.'))return'Supplier';if(x.startsWith('service.'))return'Local Services';if(x.startsWith('support.'))return'Support';if(x.startsWith('incident.'))return'Incident';if(x.startsWith('profile.'))return'Profile';if(x.startsWith('auth.')||x.startsWith('security.'))return'Security';if(x.startsWith('legal.'))return'Legal';return'Update'}
+function needsNotificationAction(n){const family=String(n?.attention?.family||n?.attention?.attention_family||'').toLowerCase();return ['action','urgent','warning'].includes(family)||['high','urgent'].includes(String(n?.priority||'').toLowerCase())}
 async function renderNotificationCenter(){
   const body=document.getElementById('notificationBody');body.innerHTML='<div class="notificationLoading">Loading…</div>';
   try{
     const [rows,prefs]=await Promise.all([api('/api/notifications?limit=80'),api('/api/notifications/preferences')]);
     notificationPanel={rows,prefs};
+    const unreadCount=rows.filter(x=>!x.read_at).length;
+    const actionCount=rows.filter(x=>!x.read_at&&needsNotificationAction(x)).length;
     body.innerHTML=`
-      <div class="notificationTabs"><button class="active" data-ntab="inbox">Inbox <span>${rows.filter(x=>!x.read_at).length}</span></button><button data-ntab="settings">Settings</button></div>
+      <div class="notificationTabs"><button class="active" data-ntab="inbox">Inbox <span>${unreadCount}</span></button><button data-ntab="settings">Settings</button></div>
       <section id="notificationInbox">
-        <div class="notificationToolbar"><button id="markAllRead" type="button">Mark all read</button><button id="refreshNotifications" type="button">Refresh</button></div>
+        <div class="notificationSummary"><span><strong>${unreadCount} unread</strong><small>${actionCount?`${actionCount} need attention`:'You are caught up on important actions.'}</small></span><button id="markAllRead" type="button">Mark all read</button></div>
+        <div class="notificationToolbar"><button id="refreshNotifications" type="button">Refresh</button></div>
         <div id="notificationList" class="notificationList"></div>
       </section>
       <section id="notificationSettings" class="hidden"></section>`;
