@@ -32,7 +32,7 @@ test('invite UI only offers onboarding or active territories and does not preten
 });
 
 test('private invitation token is exposed only in the immediate copy result, not Admin history',()=>{
-  assert.match(ui,/location\.origin\+'\/\?invite='\+encodeURIComponent\(created\.invite_token\)/);
+  assert.match(ui,/location\.origin\+'\/\?invite='\+encodeURIComponent\(invite_token\)/);
   assert.match(ui,/raw token is not kept in Admin history/);
   assert.match(server,/SELECT i\.id,i\.target_email,i\.role,i\.territory_id,i\.status,i\.expires_at,i\.created_at,t\.name territory_name/);
   assert.doesNotMatch(server,/SELECT i\.id,i\.target_email,i\.role,i\.territory_id,i\.status,i\.expires_at,i\.created_at,i\.token_hash/);
