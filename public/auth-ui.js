@@ -49,7 +49,9 @@ function referralRegistrationContext(){
 function authToken(){return localStorage.getItem('abl_token') || ''}
 async function authFetch(path, options={}){
   const headers={'Content-Type':'application/json',...(options.headers||{})}; const t=authToken(); if(t)headers.Authorization=`Bearer ${t}`;
-  const r=await fetch(path,{...options,headers}); const body=await r.json().catch(()=>({})); if(!r.ok)throw new Error(body.error||`Request failed (${r.status})`);return body;
+  const r=await fetch(path,{...options,headers}); const body=await r.json().catch(()=>({}));
+  if(!r.ok){const error=new Error(body.error||`Request failed (${r.status})`);error.status=r.status;throw error}
+  return body;
 }
 function ensureAuthChoices(){
   const login=document.getElementById('login'); const form=document.getElementById('loginForm'); if(!login||!form||document.getElementById('accountAuthChoices'))return;
@@ -94,7 +96,20 @@ function decorateDrawer(){
   const mount=document.getElementById('accountSecurityMount');if(!mount||!currentProfile||mount.querySelector('.securityCard'))return;
   const section=document.createElement('section');section.className='accountSettingsCard securityCard';section.innerHTML=`<h2>Password & session</h2><form id="securityForm">${currentProfile.account.has_password?'<label>Current password<input name="current_password" type="password" autocomplete="current-password"></label>':''}<label>${currentProfile.account.has_password?'New password':'Set an email-account password'}<input name="new_password" type="password" minlength="8" autocomplete="new-password" required></label><div class="securityMessage avatarHint"></div><div class="securityActions"><button class="saveSecurity" type="submit">Save password</button><button class="logoutSecurity" type="button">Sign out</button></div></form>`;mount.appendChild(section);section.querySelector('#securityForm').onsubmit=e=>{e.preventDefault();updatePassword(e.currentTarget)};section.querySelector('.logoutSecurity').onclick=logoutAccount;
 }
-async function loadProfile(){if(!authToken())return null;try{currentProfile=await authFetch('/api/me');return currentProfile}catch{return null}}
+function showExpiredSessionLogin(){
+  localStorage.removeItem('abl_token');
+  currentProfile=null;
+  document.getElementById('shell')?.classList.add('hidden');
+  document.getElementById('login')?.classList.remove('hidden');
+  ensureAuthChoices();
+  ensureModal();
+  openAuth('login');
+}
+async function loadProfile(){
+  if(!authToken())return null;
+  try{currentProfile=await authFetch('/api/me');return currentProfile}
+  catch(error){if(error?.status===401)showExpiredSessionLogin();return null}
+}
 function guardNonOwnerMerchant(){
   const state=window.BusinessLifeProfileState||{};
   if(state.surface!=='profile'||state.activeRole!=='merchant'||!currentProfile||Number(currentProfile.account.id)===1)return;
@@ -103,5 +118,6 @@ function guardNonOwnerMerchant(){
 function observeDrawer(){const panel=document.getElementById('profileDrawerPanel');if(!panel)return setTimeout(observeDrawer,100);new MutationObserver(()=>decorateDrawer()).observe(panel,{childList:true,subtree:false})}
 async function boot(){ensureAuthChoices();ensureModal();observeDrawer();if(authToken()){await loadProfile();decorateDrawer();setTimeout(guardNonOwnerMerchant,150);const shell=document.getElementById('shell');if(shell)new MutationObserver(()=>setTimeout(guardNonOwnerMerchant,30)).observe(shell,{attributes:true,attributeFilter:['class']});}}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+document.addEventListener('abl:auth-expired',showExpiredSessionLogin);
 document.addEventListener('abl:account-settings-rendered',event=>{if(event.detail?.view==='security')decorateDrawer()},{passive:true});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeAuth()});
