@@ -16,10 +16,11 @@ const SUPPLIER_EXPERIENCE_WAVE='supplier_experience_v1';
 const SUPPLIER_DOMAIN_V2_WAVE='supplier_domain_v2';
 const SUPPLIER_COMMERCIAL_V3_WAVE='supplier_commercial_v3';
 const SUPPLIER_SOURCING_V4_WAVE='supplier_sourcing_v4';
+const SUPPLIER_DAILY_V5_WAVE='supplier_daily_v5';
 const COURIER_EXPERIENCE_WAVE='courier_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 
@@ -2476,6 +2477,153 @@ async function runSupplierSourcingV4Acceptance({pool,base,secret}){
   };
 }
 
+
+async function runSupplierDailyV5Acceptance({pool,base,secret}){
+  const baseline=await runSupplierSourcingV4Acceptance({pool,base,secret});
+  if(baseline.status!=='PASS')throw new Error('Supplier Sourcing V4 prerequisite did not pass.');
+
+  const [supplier,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPPLIER_ALIAS,role:'supplier',label:'Supplier Daily V5 QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Supplier Daily V5 Merchant QA'})
+  ]);
+  await ensureActiveRole({base,token:supplier.token,role:'supplier',label:'Supplier Daily V5 QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Supplier Daily V5 Merchant QA'});
+
+  const supplierBusinessId=Number(baseline.supplier_business_id);
+  const merchantBusinessId=Number(baseline.merchant_business_id);
+  const sourcePoId=Number(baseline.purchase_order_id);
+  if(!supplierBusinessId||!merchantBusinessId||!sourcePoId){
+    throw new Error('Supplier Daily V5 prerequisite context is missing.');
+  }
+
+  const before=await requestJson(
+    base,`/api/supplier/v5/today?business_id=${supplierBusinessId}`,
+    {token:supplier.token}
+  );
+  expectStatus(before,200,'Supplier Daily V5 Today before invoice');
+  const beforeOrders=[
+    ...(before.json?.sections?.new_orders||[]),
+    ...(before.json?.sections?.prepare||[]),
+    ...(before.json?.sections?.ready||[]),
+    ...(before.json?.sections?.completed||[])
+  ];
+  const sourceBefore=beforeOrders.find(x=>Number(x.id)===sourcePoId);
+  if(!sourceBefore||sourceBefore.status!=='sent'){
+    throw new Error('Supplier Daily V5 source PO is not visible as a new Supplier order.');
+  }
+  if(!closeEnough(sourceBefore.commercial_outstanding,0)){
+    throw new Error('Supplier Daily V5 treated an unreceived uninvoiced PO commitment as Money due.');
+  }
+  if(before.json?.authority?.priority_score!==false){
+    throw new Error('Supplier Daily V5 introduced an opaque priority score.');
+  }
+
+  const catalog=await pool.query(
+    `SELECT id FROM supplier_catalog_items
+      WHERE supplier_account_id=$1 AND product_name=$2 AND active=TRUE
+      ORDER BY id DESC LIMIT 1`,
+    [supplier.accountId,'QA Sourcing V4 Rice 10kg']
+  );
+  const catalogItemId=Number(catalog.rows[0]?.id);
+  if(!catalogItemId)throw new Error('Supplier Daily V5 catalog fixture is missing.');
+
+  const restock=new Date(Date.now()+2*86400000).toISOString().slice(0,10);
+  const availability=await requestJson(base,`/api/supplier/v5/catalog/${catalogItemId}/availability`,{
+    method:'PATCH',token:supplier.token,
+    body:{
+      business_id:supplierBusinessId,
+      availability_status:'limited',
+      lead_time_days:3,
+      availability_note:'Controlled QA limited availability',
+      expected_restock_date:restock
+    }
+  });
+  expectStatus(availability,200,'Supplier Daily V5 availability update');
+  if(availability.json?.stock_claim!=='AVAILABILITY_EVIDENCE_ONLY'
+    ||availability.json?.exact_on_hand_quantity!==null
+    ||availability.json?.availability_status!=='limited'){
+    throw new Error('Supplier Daily V5 availability update overclaimed exact stock or did not persist.');
+  }
+
+  const todayLimited=await requestJson(
+    base,`/api/supplier/v5/today?business_id=${supplierBusinessId}`,
+    {token:supplier.token}
+  );
+  expectStatus(todayLimited,200,'Supplier Daily V5 Today limited availability');
+  const attention=(todayLimited.json?.catalog_attention||[]).find(x=>Number(x.id)===catalogItemId);
+  if(!attention||!(attention.attention_signals||[]).includes('LIMITED')){
+    throw new Error('Supplier Daily V5 limited catalog item is missing from Today attention.');
+  }
+
+  const issueDate=new Date().toISOString().slice(0,10);
+  const dueDate=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const invoice=await requestJson(base,`/api/supplier/orders/${sourcePoId}/invoices`,{
+    method:'POST',token:supplier.token,
+    body:{
+      document_number:'QA-V5-INV-'+sourcePoId,
+      document_kind:'charge_invoice',
+      issue_date:issueDate,
+      due_date:dueDate,
+      gross_amount:520,
+      evidence_reference:'Controlled QA Supplier Daily V5 invoice'
+    }
+  });
+  expectStatus(invoice,201,'Supplier Daily V5 invoice evidence');
+
+  const after=await requestJson(
+    base,`/api/supplier/v5/today?business_id=${supplierBusinessId}`,
+    {token:supplier.token}
+  );
+  expectStatus(after,200,'Supplier Daily V5 Today after invoice');
+  const afterOrders=[
+    ...(after.json?.sections?.new_orders||[]),
+    ...(after.json?.sections?.prepare||[]),
+    ...(after.json?.sections?.ready||[]),
+    ...(after.json?.sections?.completed||[])
+  ];
+  const sourceAfter=afterOrders.find(x=>Number(x.id)===sourcePoId);
+  if(!sourceAfter||!closeEnough(sourceAfter.commercial_outstanding,520)){
+    throw new Error('Supplier Daily V5 invoice evidence did not become an operational receivable.');
+  }
+  if(Number(after.json?.money?.receivable_total)<520-0.001){
+    throw new Error('Supplier Daily V5 Money due total omitted the invoiced receivable.');
+  }
+  if((sourceAfter.attention_signals||[]).includes('RECEIVABLE_OVERDUE')){
+    throw new Error('Supplier Daily V5 marked a future-due invoice overdue.');
+  }
+
+  const restore=await requestJson(base,`/api/supplier/v5/catalog/${catalogItemId}/availability`,{
+    method:'PATCH',token:supplier.token,
+    body:{
+      business_id:supplierBusinessId,
+      availability_status:'available',
+      lead_time_days:2,
+      availability_note:'',
+      expected_restock_date:null
+    }
+  });
+  expectStatus(restore,200,'Supplier Daily V5 availability restore');
+
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:supplier.token,body:{}});
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+
+  return{
+    status:'PASS',
+    wave:SUPPLIER_DAILY_V5_WAVE,
+    supplier_v1_v2_v3_v4_baseline:true,
+    supplier_business_id:supplierBusinessId,
+    merchant_business_id:merchantBusinessId,
+    source_purchase_order_id:sourcePoId,
+    today_new_order_visible:true,
+    uninvoiced_unreceived_po_money_due_zero:true,
+    availability_evidence_only:true,
+    limited_availability_attention:true,
+    invoice_becomes_receivable:true,
+    future_due_not_overdue:true,
+    priority_score:false
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -2494,6 +2642,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
           ?await runSupplierCommercialV3Acceptance({pool,base,secret:config.secret})
         :config.wave===SUPPLIER_SOURCING_V4_WAVE
           ?await runSupplierSourcingV4Acceptance({pool,base,secret:config.secret})
+        :config.wave===SUPPLIER_DAILY_V5_WAVE
+          ?await runSupplierDailyV5Acceptance({pool,base,secret:config.secret})
         :config.wave===COURIER_EXPERIENCE_WAVE
           ?await runCourierExperienceAcceptance({
             pool,base,secret:config.secret,
@@ -2516,5 +2666,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
 };
