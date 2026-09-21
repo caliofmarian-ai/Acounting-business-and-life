@@ -1,9 +1,6 @@
-import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,15 +38,16 @@ import {
   getFinancialDocumentByPublicId,financialStatementForScope,FINANCIAL_IMPACT_CLASSES,
   normalizeFinancialProfileRole
 } from './financial-document-core.js';
+import { startEmbeddedLegal,stopEmbeddedLegal } from './server-legal.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_LEGAL_PORT||4507);
+const upstreamPort=Number(process.env.INTERNAL_NOTIFICATIONS_PORT||4407);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb'});
-let child;let shuttingDown=false;
+let legalReady=false;let shuttingDown=false;
 
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
@@ -81,7 +79,7 @@ async function canSeeIntent(me,intent){
 }
 async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileSubscriptionSchema(pool);await ensureProfileFinanceSchema(pool);await ensureAccountMoneySchema(pool);await ensureFinancialDocumentSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
 
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
+app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=legalReady;res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));
 app.get('/payments-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','payments-ui.js'),'utf8')));
 app.get('/profile-settings.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','profile-settings.css'),'utf8')));
@@ -873,35 +871,25 @@ app.post('/api/orders/merchant/:id/payment',body,(req,res)=>forwardJson(req,res,
   if(q.rowCount)await mirrorConfirmedOrderPayment(pool,Number(q.rows[0].id));
 }));
 
-function proxy(req,res){
-  const rawPayload=Buffer.isBuffer(req.rawBody)&&req.rawBody.length?req.rawBody:null;
-  const parsedJsonBody=!rawPayload&&req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=rawPayload||(parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null);
-  const headers={...req.headers,host:'127.0.0.1:'+upstreamPort};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
+let legalMounted=false;
+function mountLegalApp(legalApp){
+  if(legalMounted)return;
+  legalMounted=true;
+  app.use(legalApp);
+  app.use((err,_req,res,_next)=>{
+    console.error(err);
+    if(res.headersSent)return;
+    res.status(err.status||500).json({error:err.status?err.message:'Unexpected payment-core error'});
   });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Payment upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
 }
-app.use(proxy);
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected payment-core error'})});
-
-function start(){child=spawn(process.execPath,['server-legal.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error('Legal child exited '+code);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<startupWaitAttempts(380);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Legal child failed health check')}
 
 let embeddedStartPromise=null;
 export async function startEmbeddedPaymentCore(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      const legalApp=await startEmbeddedLegal();
+      legalReady=true;
+      mountLegalApp(legalApp);
       await initDb();
       console.log('Business & Life payment core mounted in-process');
       return app;
@@ -913,7 +901,8 @@ export async function startEmbeddedPaymentCore(){
 async function stopCore(){
   if(shuttingDown)return;
   shuttingDown=true;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  legalReady=false;
+  await stopEmbeddedLegal().catch(()=>{});
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedPaymentCore(){await stopCore()}
@@ -923,5 +912,5 @@ const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileU
 if(directExecution){
   process.on('SIGTERM',()=>shutdown('SIGTERM'));
   process.on('SIGINT',()=>shutdown('SIGINT'));
-  start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log('Business & Life payment core gateway listening on '+port))).catch(e=>{console.error(e);process.exit(1)});
+  startEmbeddedPaymentCore().then(()=>app.listen(port,'0.0.0.0',()=>console.log('Business & Life payment core gateway listening on '+port))).catch(e=>{console.error(e);process.exit(1)});
 }
