@@ -22,7 +22,7 @@ test('notification transaction hooks observe embedded Admin responses instead of
   assert.match(notifications,/const chunks=\[\]/);
   assert.match(notifications,/Buffer\.concat\(chunks\)\.toString\('utf8'\)/);
   assert.match(notifications,/Post-transaction notification hook/);
-  assert.match(notifications,/INTERNAL_PROFILE_GOVERNANCE_PORT\|\|4107/);
+  assert.match(notifications,/INTERNAL_AUTH_HARDENING_PORT\|\|4007/);
 });
 
 test('embedded Admin delegates through the in-process Accounting app',()=>{
