@@ -25,6 +25,13 @@ test('notification transaction hooks observe embedded Admin responses instead of
   assert.match(notifications,/INTERNAL_BUSINESS_ACCOUNTING_PORT\|\|4207/);
 });
 
+test('embedded Admin preserves parsed JSON when forwarding to Business Accounting',()=>{
+  assert.match(admin,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(admin,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(admin,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(admin,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+});
+
 test('Admin + Support remains standalone-capable while exposing embedded lifecycle',()=>{
   assert.match(admin,/export async function startEmbeddedAdminOperations/);
   assert.match(admin,/export async function stopEmbeddedAdminOperations/);
