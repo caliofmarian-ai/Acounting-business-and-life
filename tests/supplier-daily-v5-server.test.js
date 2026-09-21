@@ -13,12 +13,16 @@ test('Today endpoint aggregates existing Supplier authorities instead of inventi
   assert.match(source,/existing purchase_order lifecycle states/);
 });
 
-test('Today receivables reuse V3 commercial basis and confirmed credits',()=>{
+test('Today receivables use invoice or received value and do not treat unreceived PO commitment as money due',()=>{
   assert.match(source,/purchase_invoice_evidence/);
   assert.match(source,/confirmed_credit/);
   assert.match(source,/actual_received_total/);
-  assert.match(source,/p\.expected_total/);
   assert.match(source,/commercial_outstanding/);
+  const start=source.indexOf('GREATEST(');
+  const end=source.indexOf('commercial_outstanding',start);
+  const block=source.slice(start,end);
+  assert.doesNotMatch(block,/p\.expected_total/);
+  assert.match(source,/Unreceived PO commitment is not money due/);
 });
 
 test('Today RFQ action queue is scoped to the selected Supplier business and account',()=>{
