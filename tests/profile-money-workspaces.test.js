@@ -46,11 +46,12 @@ test('only Customer Courier and Local Services use this personal/profile Money e
 test('shell exposes role-specific Money destinations without changing Merchant or Supplier accounting model',()=>{
   assert.match(shell,/data-hub-feature="Money"><span>💳<\/span><strong>My money<\/strong>/);
   assert.match(shell,/data-customer-nav="money"/);
-  assert.match(shell,/\['💰','Earnings & Money'[^\n]*'Money'\]/);
+  assert.match(shell,/courierFeatureProxy hidden[^\n]*data-hub-feature="Money"/);
+  assert.match(shell,/data-courier-nav="money"/);
   assert.match(shell,/\['💰','Money'[^\n]*'Money'\]/);
   const supplierStart=shell.indexOf('supplier: [');
-  const courierStart=shell.indexOf('courier: [',supplierStart);
-  const supplier=shell.slice(supplierStart,courierStart);
+  const serviceStart=shell.indexOf('service_provider: [',supplierStart);
+  const supplier=shell.slice(supplierStart,serviceStart);
   assert.match(supplier,/\['💰','Money','Receivables and recorded payments','Money'\]/);
   assert.match(read('public/suppliers-ui.js'),/supplierMoneyPanel/);
   assert.match(read('public/suppliers-ui.js'),/Receivables use invoice evidence when present, otherwise received value/);
