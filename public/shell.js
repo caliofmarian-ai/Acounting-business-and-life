@@ -523,7 +523,7 @@ function customerHomeActivities(data){
     });
   }
   for(const job of Array.isArray(data.services)?data.services:[]){
-    if(['completed','cancelled'].includes(job.status))continue;
+    if(job.status==='cancelled'||(job.status==='completed'&&job.customer_confirmed_at))continue;
     active.push({
       type:'services',
       icon:'🛠️',
@@ -546,7 +546,7 @@ function customerRecentActivities(data){
     });
   }
   for(const job of Array.isArray(data.services)?data.services:[]){
-    if(job.status!=='completed')continue;
+    if(job.status!=='completed'||!job.customer_confirmed_at)continue;
     recent.push({
       type:'services',icon:'✓',title:job.service_label||job.category||'Completed service',
       detail:job.provider_name||'Local Services',
@@ -598,10 +598,11 @@ function renderCustomerHomeData(hub,data){
   const money=hub.querySelector('#customerMoneySnapshot');
   if(money){
     const summary=data.money?.summary;
+    const evidence=value=>value==null||!Number.isFinite(Number(value))?'Unavailable':customerMoney(value);
     money.innerHTML=summary
-      ?'<div><span>Paid</span><strong>'+customerMoney(summary.confirmed_payments)+'</strong><small>Confirmed payments</small></div>'+
-       '<div><span>Still due</span><strong>'+customerMoney(summary.outstanding_purchases)+'</strong><small>Outstanding purchases</small></div>'+
-       '<div><span>Refunded</span><strong>'+customerMoney(summary.refunded)+'</strong><small>Completed refunds</small></div>'
+      ?'<div><span>Paid</span><strong>'+evidence(summary.confirmed_payments)+'</strong><small>Confirmed payments</small></div>'+
+       '<div><span>Still due</span><strong>'+evidence(summary.outstanding_purchases)+'</strong><small>Outstanding purchases</small></div>'+
+       '<div><span>Refunded</span><strong>'+evidence(summary.refunded)+'</strong><small>Completed refunds</small></div>'
       :'<div class="customerMoneyUnavailable"><strong>Money summary unavailable</strong><small>Open My Money to try again. No balance has been assumed.</small></div>';
   }
 
@@ -821,5 +822,6 @@ function boot() {
     refreshProfile().catch(() => {});
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  document.addEventListener('abl:profile-state',e=>{if(e.detail?.activeRole!=='customer')invalidateCustomerHome()},{passive:true});
 }
 boot();
