@@ -73,9 +73,12 @@ async function createSession(accountId, req) {
     ipHash:requestIpHash(req)
   });
 }
-async function requireV2(req) {
+async function optionalV2(req) {
   const token=req.headers.authorization?.replace(/^Bearer\s+/i,'')||'';
-  const session=await resolveV2SessionToken(pool,TOKEN_SECRET,token);
+  return resolveV2SessionToken(pool,TOKEN_SECRET,token);
+}
+async function requireV2(req) {
+  const session=await optionalV2(req);
   if (!session) throw Object.assign(new Error('Sign in again to continue'), { status: 401 });
   return session;
 }
@@ -281,7 +284,7 @@ app.post('/api/auth/email-verification/request', jsonBody, async (req, res, next
 app.post('/api/auth/email-verification/verify', jsonBody, async (req, res, next) => {
   const token = clean(req.body?.token, 300); if (!token) return res.status(400).json({ error: 'Verification token is required' });
   try {
-    const session = await resolveV2(req);
+    const session = await optionalV2(req);
     const used = await consumeActionToken(token, 'verify_email', async (client, row) => client.query(`UPDATE accounts SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1`, [row.account_id]));
     const verificationSession = !session
       ? 'signed_out'
