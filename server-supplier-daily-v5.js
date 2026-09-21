@@ -156,21 +156,29 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
     try{
       const me=await identity(req);
       const business=await exactProfileBusiness(pool,me,'supplier',req.query.business_id||null);
-      const [orders,rfqs,returns,catalog,backorders,substitutions,bindingCount,moneyReceived]=await Promise.all([
+      const bindingCount=await supplierBindingCount(pool,me.account.id);
+      if(bindingCount!==1){
+        return res.status(409).json({
+          error:'Supplier Today is unavailable until this multi-business account has explicit business attribution for orders and catalog items.',
+          code:'SUPPLIER_BUSINESS_ATTRIBUTION_REQUIRED',
+          business_id:Number(business.id),
+          active_supplier_businesses:bindingCount
+        });
+      }
+      const [orders,rfqs,returns,catalog,backorders,substitutions,moneyReceived]=await Promise.all([
         supplierTodayOrders(pool,me.account.id),
         supplierTodayRfqs(pool,{businessId:business.id,accountId:me.account.id}),
         supplierTodayReturns(pool,me.account.id),
         supplierTodayCatalog(pool,me.account.id),
         supplierTodayBackorders(pool,{businessId:business.id,accountId:me.account.id}),
         supplierTodaySubstitutions(pool,{businessId:business.id,accountId:me.account.id}),
-        supplierBindingCount(pool,me.account.id),
         supplierMoneyReceived(pool,me.account.id)
       ]);
       const summary=summarizeSupplierToday({orders,rfqs,returns,catalog,now:new Date()});
       res.json({
         generated_at:new Date().toISOString(),
         business:{id:Number(business.id),name:business.name,currency_code:business.currency_code||'PHP'},
-        attribution_status:bindingCount===1?'SINGLE_SUPPLIER_BUSINESS_BINDING':'ACCOUNT_LEVEL_ORDER_ACTIVITY',
+        attribution_status:'SINGLE_SUPPLIER_BUSINESS_BINDING',
         ...summary,
         backorders,
         substitutions,
@@ -196,7 +204,16 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
   app.patch('/api/supplier/v5/catalog/:id/availability',body,async(req,res,next)=>{
     try{
       const me=await identity(req);
-      await exactProfileBusiness(pool,me,'supplier',req.body?.business_id||null);
+      const business=await exactProfileBusiness(pool,me,'supplier',req.body?.business_id||null);
+      const bindingCount=await supplierBindingCount(pool,me.account.id);
+      if(bindingCount!==1){
+        return res.status(409).json({
+          error:'Catalog availability update requires explicit catalog-to-business attribution for multi-business Supplier accounts.',
+          code:'SUPPLIER_CATALOG_BUSINESS_ATTRIBUTION_REQUIRED',
+          business_id:Number(business.id),
+          active_supplier_businesses:bindingCount
+        });
+      }
       const id=Number(req.params.id);
       const current=await pool.query(
         `SELECT * FROM supplier_catalog_items WHERE id=$1 AND supplier_account_id=$2 AND active=TRUE`,
