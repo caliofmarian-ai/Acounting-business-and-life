@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { notificationAttention } from './notification-attention-policy.js';
 import { DEFAULT_NOTIFICATION_SOUND_VARIANT,notificationSoundSlots,normalizeNotificationSoundVariant,isNotificationSoundSlot } from './notification-sound-options.js';
+import { brandedSender,configuredReplyTo,emailTargetUrl,renderTransactionalEmail } from './email-presentation.js';
 
 const CATEGORIES=new Set(['operational','security','legal','support','compliance','marketing']);
 const PRIORITIES=new Set(['low','normal','high','urgent']);
@@ -400,15 +401,20 @@ function resendConfig(eventCode='',category='operational'){
   const suffix=dept.toUpperCase();
   const apiKey=process.env['RESEND_API_KEY_'+suffix]||process.env.RESEND_API_KEY||'';
   const from=process.env['RESEND_FROM_'+suffix]||process.env.AUTH_FROM_EMAIL||'';
-  return{provider,department:dept,apiKey,from};
+  const replyTo=configuredReplyTo(process.env,dept);
+  const sender=brandedSender(from,dept);
+  return{provider,department:dept,apiKey,from,sender,replyTo};
 }
-async function resendEmail({to,subject,html,eventCode='',category='operational'}){
+async function resendEmail({to,subject,html,text='',eventCode='',category='operational'}){
   const cfg=resendConfig(eventCode,category);
   if(cfg.provider!=='resend'||!cfg.apiKey||!cfg.from)return{ok:false,notConfigured:true,error:'email_provider_not_configured',department:cfg.department};
   try{
-    const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${cfg.apiKey}`,'Content-Type':'application/json'},body:JSON.stringify({from:cfg.from,to:[to],subject,html,tags:[{name:'department',value:cfg.department},{name:'event',value:clean(eventCode||'generic',80).replace(/[^A-Za-z0-9_-]/g,'_')||'generic'}]})});
+    const payload={from:cfg.sender||cfg.from,to:[to],subject,html,tags:[{name:'department',value:cfg.department},{name:'event',value:clean(eventCode||'generic',80).replace(/[^A-Za-z0-9_-]/g,'_')||'generic'}]};
+    if(text)payload.text=text;
+    if(cfg.replyTo)payload.reply_to=cfg.replyTo;
+    const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+cfg.apiKey,'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const b=await r.json().catch(()=>({}));
-    if(!r.ok)return{ok:false,error:clean(b?.message||`provider_${r.status}`,300),department:cfg.department};
+    if(!r.ok)return{ok:false,error:clean(b?.message||('provider_'+r.status),300),department:cfg.department};
     return{ok:true,reference:clean(b?.id,300),department:cfg.department};
   }catch(e){return{ok:false,error:clean(e.message,300),department:cfg.department}}
 }
@@ -426,7 +432,9 @@ export async function sendTransientEmailNotification(pool,{
   if(!q.rowCount)return{sent:false};
   const deliveryId=Number(q.rows[0].id);
   await pool.query(`UPDATE notification_deliveries SET status='delivering',attempt_count=attempt_count+1,updated_at=NOW() WHERE id=$1`,[deliveryId]);
-  const sent=await resendEmail({to,subject,html,eventCode,category});
+  const department=emailDepartment(eventCode,category);
+  const presentation=renderTransactionalEmail({subject,bodyHtml:html,department});
+  const sent=await resendEmail({to,subject:presentation.subject,html:presentation.html,text:presentation.text,eventCode,category});
   if(sent.ok)await pool.query(`UPDATE notification_deliveries SET status='delivered',provider='resend',provider_reference=$1,error_code='',delivered_at=NOW(),updated_at=NOW() WHERE id=$2`,[sent.reference||'',deliveryId]);
   else await pool.query(`UPDATE notification_deliveries SET status=$1,error_code=$2,updated_at=NOW() WHERE id=$3`,[sent.notConfigured?'not_configured':'failed',sent.error||'',deliveryId]);
   return{sent:Boolean(sent.ok),reference:sent.reference||'',not_configured:Boolean(sent.notConfigured)};
@@ -437,8 +445,11 @@ async function sendQueuedEmail(pool,row){
   const email=clean(account.rows[0]?.email,180).toLowerCase();
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return{ok:false,skip:true,error:'recipient_email_missing'};
   const template=await loadTemplate(pool,row.event_code,row.locale,'email',row.data_json);
-  const html=`<p>${escapeHtml(template.body)}</p><p><a href="${escapeHtml(process.env.AUTH_PUBLIC_BASE_URL||'/')}">Open Business & Life</a></p>`;
-  return resendEmail({to:email,subject:template.title,html,eventCode:row.event_code,category:row.category||'operational'});
+  const category=row.category||'operational';
+  const department=emailDepartment(row.event_code,category);
+  const actionUrl=emailTargetUrl({baseUrl:process.env.AUTH_PUBLIC_BASE_URL||'/',entityType:row.entity_type,entityId:row.entity_id});
+  const presentation=renderTransactionalEmail({subject:template.title,body:template.body,department,roleHint:row.role_hint,actionUrl,actionLabel:'Open Business & Life'});
+  return resendEmail({to:email,subject:presentation.subject,html:presentation.html,text:presentation.text,eventCode:row.event_code,category});
 }
 
 function escapeHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
