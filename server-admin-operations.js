@@ -16,7 +16,7 @@ const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_PROFILE_GOVERNANCE_PORT||4107);
+const upstreamPort=Number(process.env.INTERNAL_AUTH_HARDENING_PORT||4007);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const body=express.json({limit:'28mb'});
@@ -590,7 +590,7 @@ async function forwardAdmin(req,res,permission,territoryId,targetType='',targetI
   });
 }
 
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');const ok=businessAccountingReady&&r.ok;res.status(ok?200:503).json({ok,db:true,upstream:ok,business_accounting:businessAccountingReady,profile_governance:r.ok,version:'0.10-admin-rbac-support'})}catch{res.status(503).json({ok:false,db:false,upstream:false,business_accounting:false,profile_governance:false,version:'0.10-admin-rbac-support'})}});
+app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');const ok=businessAccountingReady&&r.ok;res.status(ok?200:503).json({ok,db:true,upstream:ok,business_accounting:businessAccountingReady,profile_governance:businessAccountingReady,auth_hardening:r.ok,version:'0.10-admin-rbac-support'})}catch{res.status(503).json({ok:false,db:false,upstream:false,business_accounting:false,profile_governance:false,auth_hardening:false,version:'0.10-admin-rbac-support'})}});
 app.get('/admin-operations.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-operations.css'),'utf8')));
 app.get('/admin-operations-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-operations-ui.js'),'utf8')));
 app.get('/admin-console.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-console.css'),'utf8')));
