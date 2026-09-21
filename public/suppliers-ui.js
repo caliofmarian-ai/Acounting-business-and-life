@@ -404,7 +404,10 @@ async function payPo(id){
 }
 
 const SUPPLIER_SECTION_META={
+  Today:['Today','What needs your attention now'],
   Catalog:['My Catalog','Products, pricing, pack sizes and Supplier profile'],
+  Orders:['Orders','All active purchase orders in one place'],
+  Money:['Money','Receivables and recorded payments'],
   Procurement:['Incoming Orders','Merchant relationships and purchase orders awaiting response'],
   ETA:['ETA & Readiness','Accepted orders, preparation and promised ready times'],
   Fulfilment:['Fulfilment','Pickup and delivery status through Merchant receipt']
@@ -537,7 +540,7 @@ function supplierCatalogPanel(me,activityState){
   const p=me.profile||{};
   return `<section class="supCard"><h2>Supplier profile</h2><form id="supplierProfile" class="supForm"><label>Supplier/business name<input id="spName" value="${ph(p.supplier_name||supMe.account.display_name)}"></label><label>Description<textarea id="spDesc" rows="3">${ph(p.description||'')}</textarea></label><div class="supTwo"><label>Service area<input id="spArea" value="${ph(p.service_area||'')}"></label><label>Normal lead days<input id="spLead" type="number" min="0" value="${p.normal_lead_days??1}"></label></div><label class="toggleBox"><input id="spDelivery" type="checkbox" ${p.delivery_available?'checked':''}> I deliver to Merchant</label><button>Save profile</button></form></section>`
     +supplierActivitiesPanel(activityState)
-    +`<section class="supCard"><h2>My catalog</h2><p>Start with product, pack and price. Packaging rules and volume prices stay under Details.</p><form id="catalogAdd" class="supForm"><label>Product<input id="catName" required></label><div class="supTwo"><label>Pack name<input id="catPack" value="pack"></label><label>Price / pack ₱<input id="catPrice" type="number" min="0" step="0.01" required></label></div><div class="supTwo"><label>Base unit<input id="catBase" value="unit"></label><label>Units / pack<input id="catUnits" type="number" min="0.0001" step="0.0001" value="1"></label></div><button>Add catalog item</button></form><div class="supList" style="margin-top:10px">${me.catalog.length?me.catalog.map(item=>`<div class="supRow"><div><strong>${ph(item.product_name)}</strong><small>${pphp(item.price_per_pack)} / ${ph(item.unit_name)} • ${Number(item.base_units_per_pack)} ${ph(item.base_unit)}</small><div class="supMeta"><span class="${item.availability_status==='available'?'ok':'pending'}">${ph(pnice(item.availability_status))}</span><span>${ph(pnice(item.handling_mode||'sealed_resale'))}</span>${(item.price_tiers||[]).length?`<span>${item.price_tiers.length} volume price${item.price_tiers.length===1?'':'s'}</span>`:''}</div></div><div class="supActions"><button type="button" class="supBtn secondary" data-cat-v2="${item.id}">Details</button></div></div>`).join(''):'<div class="supEmpty">Catalog is empty.</div>'}</div></section>`;
+    +`<section class="supCard"><h2>My catalog</h2><p>Start with product, pack and price. Packaging rules and volume prices stay under Details.</p><form id="catalogAdd" class="supForm"><label>Product<input id="catName" required></label><div class="supTwo"><label>Pack name<input id="catPack" value="pack"></label><label>Price / pack ₱<input id="catPrice" type="number" min="0" step="0.01" required></label></div><div class="supTwo"><label>Base unit<input id="catBase" value="unit"></label><label>Units / pack<input id="catUnits" type="number" min="0.0001" step="0.0001" value="1"></label></div><button>Add catalog item</button></form><div class="supList" style="margin-top:10px">${me.catalog.length?me.catalog.map(item=>`<div class="supRow"><div><strong>${ph(item.product_name)}</strong><small>${pphp(item.price_per_pack)} / ${ph(item.unit_name)} • ${Number(item.base_units_per_pack)} ${ph(item.base_unit)}</small><div class="supMeta"><span class="${item.availability_status==='available'?'ok':'pending'}">${ph(pnice(item.availability_status))}</span><span>${ph(pnice(item.handling_mode||'sealed_resale'))}</span>${(item.price_tiers||[]).length?`<span>${item.price_tiers.length} volume price${item.price_tiers.length===1?'':'s'}</span>`:''}</div></div><div class="supActions"><button type="button" class="supBtn secondary" data-v5-availability="${item.id}">Availability</button><button type="button" class="supBtn secondary" data-cat-v2="${item.id}">Details</button></div></div>`).join(''):'<div class="supEmpty">Catalog is empty.</div>'}</div></section>`;
 }
 function supplierRelationshipsPanel(rels){
   return `<section class="supCard"><h2>Merchant relationships</h2><p>Only accepted Merchant relationships can exchange procurement orders. Payment terms stay attached to each relationship.</p><div class="supList">${rels.length?rels.map(r=>`<div class="supRow"><div><strong>${ph(r.business_name)}</strong><small>${ph(pnice(r.state))}</small></div><div class="supActions">${['invited','pending'].includes(r.state)?`<button class="supBtn" data-rel-accept="${r.business_id}">Accept</button><button class="supBtn secondary" data-rel-decline="${r.business_id}">Decline</button>`:r.state==='accepted'?`<button class="supBtn secondary" data-sup-terms="${r.business_id}">Terms</button>`:''}</div></div>`).join(''):'<div class="supEmpty">No Merchant invitations yet.</div>'}</div></section>`;
@@ -545,6 +548,73 @@ function supplierRelationshipsPanel(rels){
 function supplierCommercialPanel(returns=[]){
   return `<details class="supDetails supCard"><summary><span><strong>Commercial terms, returns & recall</strong><small>Advanced controls for credit sales, return resolutions and lot/batch recall.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody"><div class="supInlineActions"><button type="button" class="supBtn secondary" id="supIssueRecall">Issue lot recall</button></div>${returns.length?`<h3>Merchant returns</h3><div class="supList">${returns.slice(0,10).map(r=>`<div class="supRow"><div><strong>Return #${r.id} • ${ph(r.business_name)}</strong><small>${ph(pnice(r.status))} • expected credit ${pphp(r.expected_credit)}</small><div class="supMeta">${r.resolution_type&&r.resolution_type!=='pending'?`<span>${ph(pnice(r.resolution_type))}</span>`:''}${Number(r.confirmed_credit)>0?`<span>Credit ${pphp(r.confirmed_credit)}</span>`:''}</div></div><div class="supActions">${r.status==='requested'?`<button class="supBtn" data-return-auth="${r.id}">Authorize</button><button class="supBtn secondary" data-return-reject="${r.id}">Reject</button>`:''}${r.status==='returned'?`<button class="supBtn" data-return-resolve="${r.id}">Resolve</button>`:''}</div></div>`).join('')}</div>`:'<div class="supEmpty" style="margin-top:10px">No Merchant returns need attention.</div>'}<p class="supCodeHelp">A confirmed credit changes the commercial balance. It is not cash paid back unless a separate refund-money event is recorded.</p></div></details>`;
 }
+function supplierTodayOrders(today){
+  return [
+    ...(today?.sections?.new_orders||[]),
+    ...(today?.sections?.prepare||[]),
+    ...(today?.sections?.ready||[]),
+    ...(today?.sections?.completed||[])
+  ];
+}
+function supplierTodayPanel(today){
+  const c=today?.counts||{},m=today?.money||{};
+  const attention=(Number(c.overdue_timing)||0)+(Number(c.rfqs)||0)+(Number(c.returns)||0)+(Number(c.catalog_attention)||0);
+  return `<section class="supCard"><div class="supKpiGrid">
+    <button type="button" class="supKpi" data-v5-open="Procurement"><strong>${Number(c.new_orders||0)}</strong><span>New orders</span></button>
+    <button type="button" class="supKpi" data-v5-open="ETA"><strong>${Number(c.prepare||0)}</strong><span>Prepare</span></button>
+    <button type="button" class="supKpi" data-v5-open="Fulfilment"><strong>${Number(c.ready||0)}</strong><span>Ready / delivery</span></button>
+    <button type="button" class="supKpi" data-v5-open="Money"><strong>${pphp(m.receivable_total||0)}</strong><span>Money due</span></button>
+  </div>${attention?`<div class="supAlert"><strong>${attention} item${attention===1?'':'s'} need attention</strong><small>${Number(c.overdue_timing||0)} timing overdue • ${Number(c.rfqs||0)} RFQ • ${Number(c.returns||0)} return • ${Number(c.catalog_attention||0)} availability</small></div>`:''}</section>`
+  +supplierTodayActionPanel('New orders',today?.sections?.new_orders||[],'No new purchase order needs a response.')
+  +supplierTodayActionPanel('Prepare next',today?.sections?.prepare||[],'Nothing is waiting for preparation or ETA.')
+  +supplierTodayActionPanel('Ready / delivery',today?.sections?.ready||[],'Nothing is waiting for pickup, delivery or Merchant receipt.')
+  +supplierTodaySecondary(today);
+}
+function supplierTodayActionPanel(title,rows,empty){
+  return `<section class="supCard"><h2>${ph(title)}</h2><div class="supList">${rows.length?rows.slice(0,6).map(poCardSupplier).join(''):`<div class="supEmpty">${ph(empty)}</div>`}</div></section>`;
+}
+function supplierTodaySecondary(today){
+  const rfqs=today?.rfqs||[],returns=today?.returns||[],catalog=today?.catalog_attention||[];
+  if(!rfqs.length&&!returns.length&&!catalog.length)return '';
+  return `<details class="supDetails supCard"><summary><span><strong>Other attention</strong><small>RFQs, returns and catalog availability.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody">
+    ${rfqs.length?`<h3>RFQs</h3><div class="supList">${rfqs.slice(0,6).map(r=>`<div class="supRow"><div><strong>RFQ #${r.id} • ${ph(r.item_specification)}</strong><small>${ph(r.merchant_business_name)} • ${Number(r.requested_quantity)} ${ph(r.requested_unit)}</small></div><div class="supActions"><button class="supBtn" data-rfq-quote="${r.id}">Quote</button><button class="supBtn secondary" data-rfq-decline="${r.id}">Decline</button></div></div>`).join('')}</div>`:''}
+    ${returns.length?`<h3>Returns</h3><div class="supList">${returns.slice(0,6).map(r=>`<div class="supRow"><div><strong>Return #${r.id} • ${ph(r.business_name)}</strong><small>${ph(pnice(r.status))} • expected credit ${pphp(r.expected_credit)}</small></div><div class="supActions">${r.status==='requested'?`<button class="supBtn" data-return-auth="${r.id}">Authorize</button><button class="supBtn secondary" data-return-reject="${r.id}">Reject</button>`:''}${r.status==='returned'?`<button class="supBtn" data-return-resolve="${r.id}">Resolve</button>`:''}</div></div>`).join('')}</div>`:''}
+    ${catalog.length?`<h3>Catalog availability</h3><div class="supList">${catalog.slice(0,8).map(i=>`<div class="supRow"><div><strong>${ph(i.product_name)}</strong><small>${ph(pnice(i.availability_status))}${i.expected_restock_date?` • restock ${new Date(i.expected_restock_date).toLocaleDateString()}`:''}</small><div class="supMeta">${(i.attention_signals||[]).map(x=>`<span class="pending">${ph(pnice(x))}</span>`).join('')}</div></div><div class="supActions"><button class="supBtn secondary" data-v5-availability="${i.id}">Availability</button></div></div>`).join('')}</div>`:''}
+  </div></details>`;
+}
+function supplierAllOrdersPanel(pos){
+  return supplierOrdersPanel(pos,'Procurement')+supplierOrdersPanel(pos,'ETA')+supplierOrdersPanel(pos,'Fulfilment');
+}
+function supplierMoneyPanel(today){
+  const m=today?.money||{},c=today?.counts||{};
+  const due=supplierTodayOrders(today).filter(x=>Number(x.commercial_outstanding||0)>0);
+  return `<section class="supCard"><div class="supKpiGrid">
+    <div class="supKpi static"><strong>${pphp(m.receivable_total||0)}</strong><span>Total receivable</span></div>
+    <div class="supKpi static"><strong>${pphp(m.overdue_receivable_total||0)}</strong><span>Overdue</span></div>
+    <div class="supKpi static"><strong>${Number(c.merchant_balances||0)}</strong><span>Merchant balances</span></div>
+    <div class="supKpi static"><strong>${pphp(m.money_received_recorded||0)}</strong><span>Recorded received</span></div>
+  </div><p class="supCodeHelp">Receivables use invoice evidence when present, otherwise received value, otherwise the PO; confirmed credits and recorded payments are subtracted.</p></section>
+  <section class="supCard"><h2>Money due by order</h2><div class="supList">${due.length?due.map(p=>`<div class="supRow"><div><strong>${ph(p.po_number)} • ${ph(p.business_name)}</strong><small>${pphp(p.commercial_outstanding)} outstanding${p.earliest_due_date?` • due ${new Date(p.earliest_due_date).toLocaleDateString()}`:''}</small><div class="supMeta">${(p.attention_signals||[]).includes('RECEIVABLE_OVERDUE')?'<span class="pending">Overdue</span>':''}</div></div><div class="supActions"><button class="supBtn secondary" data-sup-view="${p.id}">View</button></div></div>`).join(''):'<div class="supEmpty">No Supplier receivable is currently outstanding.</div>'}</div></section>`;
+}
+async function editSupplierAvailability(id){
+  const me=await papi('/api/supplier/me');
+  const item=(me.catalog||[]).find(x=>Number(x.id)===Number(id));
+  if(!item){ptoast('Catalog item is unavailable.');return}
+  openSupModal(`<h2>Availability • ${ph(item.product_name)}</h2><p class="supModalIntro">This is availability evidence, not an exact warehouse stock count.</p><form id="v5AvailabilityForm" class="supForm"><label>Status<select id="v5AvailabilityStatus"><option value="available" ${item.availability_status==='available'?'selected':''}>Available</option><option value="limited" ${item.availability_status==='limited'?'selected':''}>Limited</option><option value="unavailable" ${item.availability_status==='unavailable'?'selected':''}>Unavailable</option></select></label><div class="supTwo"><label>Lead days<input id="v5AvailabilityLead" type="number" min="0" max="365" value="${Number(item.lead_time_days||0)}"></label><label>Expected restock<input id="v5RestockDate" type="date" value="${item.expected_restock_date?String(item.expected_restock_date).slice(0,10):''}"></label></div><label>Availability note<textarea id="v5AvailabilityNote" rows="2">${ph(item.availability_note||'')}</textarea></label><div id="v5AvailabilityMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="v5AvailabilityCancel">Cancel</button><button>Save availability</button></div></form>`);
+  document.getElementById('v5AvailabilityCancel').onclick=closeSupModal;
+  document.getElementById('v5AvailabilityForm').onsubmit=async e=>{
+    e.preventDefault();try{
+      await papi(`/api/supplier/v5/catalog/${id}/availability`,{method:'PATCH',body:JSON.stringify({
+        availability_status:document.getElementById('v5AvailabilityStatus').value,
+        lead_time_days:Number(document.getElementById('v5AvailabilityLead').value||0),
+        expected_restock_date:document.getElementById('v5RestockDate').value||null,
+        availability_note:document.getElementById('v5AvailabilityNote').value
+      })});
+      closeSupModal();ptoast('Availability updated.');await renderSupplierWorkspace(supSupplierSection);
+    }catch(err){document.getElementById('v5AvailabilityMsg').textContent=err.message}
+  };
+}
+
 function supplierOrdersPanel(pos,section){
   const source=section==='Procurement'?SUPPLIER_PROCUREMENT_STATES:section==='ETA'?SUPPLIER_ETA_STATES:SUPPLIER_FULFILMENT_STATES;
   const rows=pos.filter(p=>source.has(p.status));
@@ -555,26 +625,30 @@ function supplierOrdersPanel(pos,section){
       :['Fulfilment','Track ready-for-pickup, supplier delivery and Merchant receipt states.','No purchase orders are currently in fulfilment.'];
   return `<section class="supCard"><h2>${copy[0]}</h2><p>${copy[1]}</p><div class="supList">${rows.length?rows.map(poCardSupplier).join(''):`<div class="supEmpty">${copy[2]}</div>`}</div></section>`;
 }
-async function openSupplierWorkspace(section='Catalog'){
-  supSupplierSection=SUPPLIER_SECTION_META[section]?section:'Catalog';
+async function openSupplierWorkspace(section='Today'){
+  supSupplierSection=SUPPLIER_SECTION_META[section]?section:'Today';
   ensureSup();hideSupBase();supWorkspace.classList.remove('hidden');
   await renderSupplierWorkspace(supSupplierSection);
 }
 async function renderSupplierWorkspace(section=supSupplierSection){
-  const normalized=SUPPLIER_SECTION_META[section]?section:'Catalog';
+  const normalized=SUPPLIER_SECTION_META[section]?section:'Today';
   supSupplierSection=normalized;
-  const [me,rels,pos,activityState,supplierReturns,sourcingState,incomingRfqs]=await Promise.all([
+  const [me,rels,pos,activityState,supplierReturns,sourcingState,incomingRfqs,todayState]=await Promise.all([
     papi('/api/supplier/me'),
     papi('/api/procurement/relationships'),
     papi('/api/procurement/orders'),
     normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]}),
     normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([]),
     normalized==='Procurement'?papi('/api/supplier/v4/sourcing-settings').catch(()=>({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]})):Promise.resolve({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]}),
-    normalized==='Procurement'?papi('/api/supplier/v4/rfqs').catch(()=>[]):Promise.resolve([])
+    normalized==='Procurement'?papi('/api/supplier/v4/rfqs').catch(()=>[]):Promise.resolve([]),
+    ['Today','Money'].includes(normalized)?papi('/api/supplier/v5/today').catch(()=>({sections:{},counts:{},money:{},rfqs:[],returns:[],catalog_attention:[]})):Promise.resolve(null)
   ]);
   const meta=SUPPLIER_SECTION_META[normalized];
   let body='';
-  if(normalized==='Catalog')body=supplierCatalogPanel(me,activityState);
+  if(normalized==='Today')body=supplierTodayPanel(todayState);
+  else if(normalized==='Catalog')body=supplierCatalogPanel(me,activityState);
+  else if(normalized==='Orders')body=supplierAllOrdersPanel(pos);
+  else if(normalized==='Money')body=supplierMoneyPanel(todayState);
   else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierSourcingPanel(sourcingState,incomingRfqs,me.catalog)+supplierCommercialPanel(supplierReturns)+supplierOrdersPanel(pos,'Procurement');
   else body=supplierOrdersPanel(pos,normalized);
   supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
@@ -598,6 +672,8 @@ function bindSupplierWorkspace(){
   if(catalogForm)catalogForm.onsubmit=async e=>{e.preventDefault();try{await papi('/api/supplier/catalog',{method:'POST',body:JSON.stringify({product_name:document.getElementById('catName').value,unit_name:document.getElementById('catPack').value,price_per_pack:Number(document.getElementById('catPrice').value),base_unit:document.getElementById('catBase').value,base_units_per_pack:Number(document.getElementById('catUnits').value)})});ptoast('Catalog item added.');await renderSupplierWorkspace('Catalog')}catch(err){ptoast(err.message)}};
   const activitiesForm=document.getElementById('supplierActivities');
   if(activitiesForm)activitiesForm.onsubmit=async e=>{e.preventDefault();const activities=[...e.currentTarget.querySelectorAll('input[type="checkbox"]:checked')].map(x=>x.value);try{await papi('/api/supplier/v2/activities',{method:'PUT',body:JSON.stringify({activities})});ptoast('Business activities saved.');await renderSupplierWorkspace('Catalog')}catch(err){document.getElementById('supplierActivitiesMsg').textContent=err.message}};
+  supWorkspace.querySelectorAll('[data-v5-open]').forEach(b=>b.onclick=()=>renderSupplierWorkspace(b.dataset.v5Open));
+  supWorkspace.querySelectorAll('[data-v5-availability]').forEach(b=>b.onclick=()=>editSupplierAvailability(Number(b.dataset.v5Availability)));
   supWorkspace.querySelectorAll('[data-cat-v2]').forEach(b=>b.onclick=()=>openCatalogV2(Number(b.dataset.catV2)));
   document.getElementById('supEditSourcing')?.addEventListener('click',async()=>{
     const [state,me]=await Promise.all([papi('/api/supplier/v4/sourcing-settings'),papi('/api/supplier/me')]);
