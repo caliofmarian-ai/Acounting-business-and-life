@@ -32,11 +32,11 @@ test('Courier has dedicated Home Deliveries Money navigation',()=>{
 
 test('Courier Home keeps eligibility availability route and assigned work as contextual actions',()=>{
   const block=courierBlock();
-  for(const feature of ['Eligibility','Availability','Tracking','Deliveries']){
-    assert.match(block,new RegExp('data-hub-feature="'+feature+'"'));
-  }
-  assert.match(block,/Availability stays locked until approval/);
-  assert.match(block,/Admin approval/);
+  assert.match(block,/data-courier-home-open="Eligibility"/);
+  assert.match(block,/courierHomeAvailabilityAction/);
+  assert.match(block,/destination:'Tracking'/);
+  assert.match(block,/destination:'Deliveries'/);
+  assert.match(block,/Admin approval is required before availability can be enabled/);
 });
 
 test('Courier shell reuses the canonical Delivery workspace launcher',()=>{
@@ -97,7 +97,8 @@ test('Courier navigation adds no polling or network calls',()=>{
 test('Courier navigation is mobile safe with three primary destinations',()=>{
   assert.match(shellCss,/\.courierPrimaryNav\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.match(shellCss,/\.courierPrimaryNav button\{[^}]*min-height:52px/);
-  assert.match(shellCss,/\.courierHomeCard\{[^}]*min-height:132px/);
+  assert.match(shellCss,/\.courierStatusMain button,[^}]*\.courierAvailabilityRow button\{[^}]*min-height:44px/);
+  assert.match(shellCss,/\.courierCurrentWork button,[^}]*\.courierHomeEmpty button\{[^}]*min-height:44px/);
   assert.match(shellCss,/@media\(max-width:420px\)/);
   assert.match(shellCss,/@media\(max-width:350px\)/);
 });
