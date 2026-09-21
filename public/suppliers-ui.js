@@ -1,4 +1,4 @@
-let supMe=null,supWorkspace=null,supInventory=[],supSupplierSection='Catalog';
+let supMe=null,supWorkspace=null,supInventory=[],supSupplierSection='Today';
 const ptok=()=>localStorage.getItem('abl_token')||'';
 const ph=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const pphp=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -660,6 +660,19 @@ function supplierOrdersPanel(pos,section){
       :['Fulfilment','Track ready-for-pickup, supplier delivery and Merchant receipt states.','No purchase orders are currently in fulfilment.'];
   return `<section class="supCard"><h2>${copy[0]}</h2><p>${copy[1]}</p><div class="supList">${rows.length?rows.map(poCardSupplier).join(''):`<div class="supEmpty">${copy[2]}</div>`}</div></section>`;
 }
+function supplierWorkspaceLoading(section){
+  const meta=SUPPLIER_SECTION_META[section]||SUPPLIER_SECTION_META.Today;
+  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+\`<section class="supCard supState" role="status" aria-live="polite"><span class="supSpinner" aria-hidden="true"></span><div><h2>Loading ${ph(meta[0])}</h2><p>Getting the latest Supplier information…</p></div></section>\`;
+  bindSupBack();
+}
+function supplierWorkspaceError(section,error){
+  const meta=SUPPLIER_SECTION_META[section]||SUPPLIER_SECTION_META.Today;
+  const message=error?.message||'The Supplier workspace could not be loaded.';
+  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+\`<section class="supCard supState supStateError" role="alert"><div><h2>We couldn’t load ${ph(meta[0])}</h2><p>${ph(message)}</p><div class="supInlineActions"><button type="button" class="supBtn" id="supWorkspaceRetry">Try again</button><button type="button" class="supBtn secondary" id="supWorkspaceBack">Back</button></div></div></section>\`;
+  bindSupBack();
+  document.getElementById('supWorkspaceRetry')?.addEventListener('click',()=>renderSupplierWorkspace(section));
+  document.getElementById('supWorkspaceBack')?.addEventListener('click',closeSupWorkspace);
+}
 async function openSupplierWorkspace(section='Today'){
   supSupplierSection=SUPPLIER_SECTION_META[section]?section:'Today';
   ensureSup();hideSupBase();supWorkspace.classList.remove('hidden');
@@ -668,26 +681,31 @@ async function openSupplierWorkspace(section='Today'){
 async function renderSupplierWorkspace(section=supSupplierSection){
   const normalized=SUPPLIER_SECTION_META[section]?section:'Today';
   supSupplierSection=normalized;
-  const [me,rels,pos,activityState,supplierReturns,sourcingState,incomingRfqs,todayState]=await Promise.all([
-    papi('/api/supplier/me'),
-    papi('/api/procurement/relationships'),
-    papi('/api/procurement/orders'),
-    normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]}),
-    normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([]),
-    normalized==='Procurement'?papi('/api/supplier/v4/sourcing-settings').catch(()=>({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]})):Promise.resolve({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]}),
-    normalized==='Procurement'?papi('/api/supplier/v4/rfqs').catch(()=>[]):Promise.resolve([]),
-    ['Today','Money'].includes(normalized)?papi('/api/supplier/v5/today').catch(e=>({error:e.message,sections:{},counts:{},money:{},rfqs:[],returns:[],catalog_attention:[],backorders:[],substitutions:[]})):Promise.resolve(null)
-  ]);
-  const meta=SUPPLIER_SECTION_META[normalized];
-  let body='';
-  if(normalized==='Today')body=supplierTodayPanel(todayState);
-  else if(normalized==='Catalog')body=supplierCatalogPanel(me,activityState);
-  else if(normalized==='Orders')body=supplierAllOrdersPanel(pos);
-  else if(normalized==='Money')body=supplierMoneyPanel(todayState);
-  else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierSourcingPanel(sourcingState,incomingRfqs,me.catalog)+supplierCommercialPanel(supplierReturns)+supplierOrdersPanel(pos,'Procurement');
-  else body=supplierOrdersPanel(pos,normalized);
-  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
-  bindSupBack();bindSupplierWorkspace();
+  supplierWorkspaceLoading(normalized);
+  try{
+    const [me,rels,pos,activityState,supplierReturns,sourcingState,incomingRfqs,todayState]=await Promise.all([
+      papi('/api/supplier/me'),
+      papi('/api/procurement/relationships'),
+      papi('/api/procurement/orders'),
+      normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]}),
+      normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([]),
+      normalized==='Procurement'?papi('/api/supplier/v4/sourcing-settings').catch(()=>({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]})):Promise.resolve({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]}),
+      normalized==='Procurement'?papi('/api/supplier/v4/rfqs').catch(()=>[]):Promise.resolve([]),
+      ['Today','Money'].includes(normalized)?papi('/api/supplier/v5/today').catch(e=>({error:e.message,sections:{},counts:{},money:{},rfqs:[],returns:[],catalog_attention:[],backorders:[],substitutions:[]})):Promise.resolve(null)
+    ]);
+    const meta=SUPPLIER_SECTION_META[normalized];
+    let body='';
+    if(normalized==='Today')body=supplierTodayPanel(todayState);
+    else if(normalized==='Catalog')body=supplierCatalogPanel(me,activityState);
+    else if(normalized==='Orders')body=supplierAllOrdersPanel(pos);
+    else if(normalized==='Money')body=supplierMoneyPanel(todayState);
+    else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierSourcingPanel(sourcingState,incomingRfqs,me.catalog)+supplierCommercialPanel(supplierReturns)+supplierOrdersPanel(pos,'Procurement');
+    else body=supplierOrdersPanel(pos,normalized);
+    supWorkspace.innerHTML=supHeader(meta[0],meta[1])+\`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>\`+body;
+    bindSupBack();bindSupplierWorkspace();
+  }catch(err){
+    supplierWorkspaceError(normalized,err);
+  }
 }
 function poCardSupplier(p){
   let acts='';
