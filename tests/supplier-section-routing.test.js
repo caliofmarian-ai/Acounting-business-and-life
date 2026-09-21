@@ -6,10 +6,13 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const shell=read('public/shell.js');
 const ui=read('public/suppliers-ui.js');
 
-test('Supplier shell exposes four distinct procurement destinations',()=>{
-  for(const feature of ['Catalog','Procurement','ETA','Fulfilment']){
-    assert.match(shell,new RegExp("['\"]"+feature+"['\"]"));
+test('Supplier shell exposes simplified daily destinations while retaining legacy operational routes',()=>{
+  for(const feature of ['Today','Catalog','Orders','Money']){
+    assert.match(shell,new RegExp("['\\"]"+feature+"['\\"]"));
     assert.match(ui,new RegExp(feature));
+  }
+  for(const legacy of ['Procurement','ETA','Fulfilment']){
+    assert.match(ui,new RegExp(legacy));
   }
   assert.match(ui,/openSupplierWorkspace\(b\.dataset\.hubFeature\)/);
   assert.doesNotMatch(ui,/b\.onclick=openSupplierWorkspace/);
