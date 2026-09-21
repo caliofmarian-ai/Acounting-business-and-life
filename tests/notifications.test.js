@@ -158,11 +158,17 @@ test('notification settings provide an explicit listen button for every sound sl
   assert.match(ui,/notificationAudioUrl/);
 });
 
-test('foreground voice polling establishes a baseline and only plays fresh unread audible events',()=>{
+test('foreground notifications are push-driven with one bounded fallback refresh',()=>{
   assert.match(ui,/primeForegroundVoice/);
   assert.match(ui,/lastForegroundEventId=rows\[0\]\?\.event_id/);
   assert.match(ui,/fresh\.find\(row=>!row\.read_at&&row\.attention\?\.soundSlot&&!row\.attention\?\.silent\)/);
-  assert.match(ui,/voicePollTimer=setInterval\(pollForegroundVoice,10000\)/);
+  assert.match(ui,/refreshForegroundNotifications/);
+  assert.match(ui,/pollTimer=setInterval\(\(\)=>\{if\(!document\.hidden\)refreshForegroundNotifications\(\)\},60000\)/);
+  assert.match(ui,/navigator\.serviceWorker\.addEventListener\('message'/);
+  assert.match(sw,/business-life-notification-push/);
+  assert.match(sw,/clients\.matchAll\(\{type:'window',includeUncontrolled:true\}\)/);
+  assert.doesNotMatch(ui,/voicePollTimer/);
+  assert.doesNotMatch(ui,/setInterval\(pollForegroundVoice,10000\)/);
   assert.match(ui,/foregroundSoundEnabled/);
   assert.match(ui,/audioUserInteracted/);
 });
