@@ -124,7 +124,7 @@ function mountWorkspaceBar() {
       accountingState={role:state.role,activeBusinessId:Number(state.active_business_id),businesses:state.businesses||[]};
       mountWorkspaceBar();
       mountSupplierAccountingTile();
-      await mountEconomicSummary();
+      if(accountingState.role==='supplier'&&document.body.classList.contains('supplierAccountingMode'))await mountEconomicSummary('viewDashboard');
       document.dispatchEvent(new CustomEvent('abl:business-workspace-changed',{detail:{role:accountingState.role,activeBusinessId:accountingState.activeBusinessId}}));
     }catch(err){
       accountingState.activeBusinessId=previous;
@@ -155,13 +155,14 @@ async function openSupplierAccounting() {
   await mountEconomicSummary();
 }
 
-async function mountEconomicSummary() {
+async function mountEconomicSummary(targetId=null) {
   try{
     const overview=await api('/api/accounting/finance-overview');
+    const destination=document.getElementById(targetId||(overview.role==='merchant'?'viewMoney':'viewDashboard'));
+    if(!destination)return;
     let panel=document.getElementById('economicWorkspaceSummary');
-    const dashboard=document.getElementById('viewDashboard');
-    if(!dashboard)return;
-    if(!panel){panel=document.createElement('section');panel.id='economicWorkspaceSummary';dashboard.prepend(panel)}
+    if(!panel){panel=document.createElement('section');panel.id='economicWorkspaceSummary'}
+    if(panel.parentElement!==destination)destination.prepend(panel);
     panel.className='economicWorkspaceSummary businessFinanceOverview';
     panel.innerHTML=roleFinanceHtml(overview);
     applyFinancePresentation(overview);
@@ -184,11 +185,16 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     accountingState={role:workspaceState.role,activeBusinessId:Number(workspaceState.active_business_id),businesses:workspaceState.businesses||[]};
     mountWorkspaceBar();
     mountSupplierAccountingTile();
-    if(role==='merchant') mountEconomicSummary();
   }catch(err){console.warn('Accounting workspace:',err.message)}
 }
 
 document.addEventListener('abl:profile-state',event=>bootAccountingWorkspace(event.detail),{passive:true});
+document.addEventListener('abl:merchant-money-opened',()=>{
+  if(accountingState.role==='merchant')mountEconomicSummary('viewMoney');
+},{passive:true});
+document.addEventListener('abl:merchant-today-data',event=>{
+  if(accountingState.role==='merchant')applyFinancePresentation({role:'merchant',presentation:event.detail?.presentation||{}});
+},{passive:true});
 window.BusinessLifeAccounting=Object.freeze({getState:()=>({role:accountingState.role,activeBusinessId:accountingState.activeBusinessId,businesses:[...accountingState.businesses]})});
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>bootAccountingWorkspace(),120));
 else setTimeout(()=>bootAccountingWorkspace(),120);
