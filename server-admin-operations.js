@@ -3,7 +3,7 @@ import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ADMIN_PERMISSIONS, ensureAdminSchema, getAdminAssignments, hasAdminPermission,
@@ -20,7 +20,8 @@ const port=Number(process.env.PORT||3000);
 const upstreamPort=Number(process.env.INTERNAL_BUSINESS_ACCOUNTING_PORT||4207);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
-const body=express.json({limit:'28mb'});
+const jsonBody=express.json({limit:'28mb'});
+const body=(req,res,next)=>req.body!==undefined?next():jsonBody(req,res,next);
 const SUPPORT_STATUSES=new Set(['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened']);
 const SUPPORT_PRIORITIES=new Set(['low','normal','high','urgent']);
 const PRIVACY_SUPPORT_CATEGORIES=new Set(['privacy_objection','privacy_access','privacy_correction','privacy_erasure_blocking','privacy_other_request']);
@@ -855,12 +856,64 @@ app.post('/api/admin/metrics/snapshot',body,async(req,res,next)=>{try{
   res.status(201).json(rows[0]);
 }catch(e){next(e)}});
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Admin upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const rawPayload=Buffer.isBuffer(req.rawBody)&&req.rawBody.length?req.rawBody:null;
+  const parsedJsonBody=!rawPayload&&req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=rawPayload||(parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null);
+  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Admin upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected admin operations error'})});
 
-function start(){child=spawn(process.execPath,['server-business-accounting.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Business accounting child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<260;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Business accounting child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life scoped Admin + Support gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+function start(){
+  child=spawn(process.execPath,['server-business-accounting.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});
+  child.on('exit',code=>{if(!shuttingDown){console.error(`Business accounting child exited ${code}`);process.exit(code||1)}});
+}
+async function wait(){
+  for(let i=0;i<260;i++){
+    try{const r=await upstream('/health');if(r.ok)return}catch{}
+    await new Promise(r=>setTimeout(r,250));
+  }
+  throw new Error('Business accounting child failed health check');
+}
+
+let embeddedStartPromise=null;
+export async function startEmbeddedAdminOperations(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      await initDb();
+      console.log('Business & Life scoped Admin + Support mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopAdminOperations(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedAdminOperations(){await stopAdminOperations()}
+
+async function shutdown(sig){console.log(`Received ${sig}`);await stopAdminOperations();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedAdminOperations().then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life scoped Admin + Support gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+}
