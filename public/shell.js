@@ -905,15 +905,17 @@ function renderCourierHub(){
   loadCourierHome(hub).catch(()=>{});
 }
 
+let serviceProviderHubPanel='home';
 function openServiceProviderSection(section){
   if(window.BusinessLifeServices?.openProviderWorkspace)return window.BusinessLifeServices.openProviderWorkspace(section);
   showToast('Local Services is still loading. Try again in a moment.');
 }
-function setServiceProviderHubPanel(hub,panel){
+function setServiceProviderHubPanel(hub,panel,{scroll=true}={}){
   const target=['home','services','jobs'].includes(panel)?panel:'home';
+  serviceProviderHubPanel=target;
   hub.querySelectorAll('[data-service-provider-panel]').forEach(node=>node.classList.toggle('hidden',node.dataset.serviceProviderPanel!==target));
   hub.querySelectorAll('[data-service-provider-nav]').forEach(button=>button.classList.toggle('active',button.dataset.serviceProviderNav===target));
-  window.scrollTo({top:0,behavior:'smooth'});
+  if(scroll)window.scrollTo({top:0,behavior:'smooth'});
 }
 function openServiceProviderHubDestination(hub,destination){
   if(destination==='money'){
@@ -964,6 +966,7 @@ function renderServiceProviderHub(){
   hub.querySelectorAll('[data-service-provider-nav]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,button.dataset.serviceProviderNav));
   hub.querySelectorAll('[data-service-provider-section]').forEach(button=>button.onclick=()=>openServiceProviderSection(button.dataset.serviceProviderSection));
   hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>window.BusinessLifeProfileSettings?.open?.('service_provider');
+  setServiceProviderHubPanel(hub,serviceProviderHubPanel,{scroll:false});
   hub.classList.remove('hidden');
 }
 
