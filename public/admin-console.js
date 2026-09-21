@@ -79,8 +79,10 @@ function rows(items,formatter){
   return '<div class="list">'+items.map(formatter).join('')+'</div>';
 }
 function overviewPanel(){
-  return hero()+metrics()+'<div class="sectionTitle"><h3>My delegated functions</h3></div><div class="permissionPills">'+(state.me.permissions||[]).map(p=>'<span>'+esc(p)+'</span>').join('')+'</div>';
+  const work=modules.filter(m=>!['overview','settings'].includes(m.id)&&hasAny(m.any));
+  return hero()+metrics()+'<div class="sectionTitle"><h3>Available work areas</h3></div>'+(work.length?'<div class="adminOverviewActions">'+work.map(m=>'<button type="button" class="row queueRow" data-overview-module="'+esc(m.id)+'"><strong>'+esc(m.label)+'</strong><span class="muted">'+esc(({profiles:'Review people and profile access',delivery:'Courier, dispatch and delivery pricing',support:'Help users and manage tickets',safety:'Review incidents and safety actions',territories:'Manage operating territory structure',finance:'Company money, budgets and platform economics',audit:'Review activity and operational metrics',team:'Delegate Admin responsibilities'})[m.id]||'Open Admin work area')+'</span><span class="adminRowAction">Open ›</span></button>').join('')+'</div>':'<div class="empty">No operational work areas are delegated to this account.</div>')+'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>TECHNICAL ACCESS</small><strong>Permission references</strong><span>Advanced audit reference only</span></span></summary><div class="adminDisclosureBody"><div class="permissionPills">'+(state.me.permissions||[]).map(p=>'<span>'+esc(p)+'</span>').join('')+'</div></div></details>';
 }
+function wireOverview(){document.querySelectorAll('[data-overview-module]').forEach(button=>button.onclick=()=>activateModule(button.dataset.overviewModule));}
 function profileRoleLabel(role){
   return ({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services',customer:'Customer'})[role]||readableCode(role);
 }
@@ -229,7 +231,7 @@ async function openAdminSupportTicket(id){
     document.getElementById('adminAiDraft').onclick=()=>draftAdminReply(id);
     document.getElementById('adminAiTranslate').onclick=()=>translateAdminReply(id);
     document.getElementById('adminSupportReply').onsubmit=async e=>{
-      e.preventDefault();const form=e.currentTarget,button=form.querySelector('button'),out=document.getElementById('supportReplyResult');button.disabled=true;
+      e.preventDefault();const form=e.currentTarget,button=form.querySelector('button[type="submit"]'),out=document.getElementById('supportReplyResult');button.disabled=true;
       try{await api('/api/admin/support/'+id+'/messages',{method:'POST',body:JSON.stringify({message:form.message.value,visibility:form.internal.checked?'internal':'user'})});await openAdminSupportTicket(id)}catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>';button.disabled=false}
     };
     document.getElementById('adminSupportUpdate').onsubmit=async e=>{
@@ -846,7 +848,7 @@ async function renderActive(){
   const loading=setTimeout(()=>{if(request===state.renderRequest)p.innerHTML='<div class="adminLoading">Loading '+esc(modules.find(m=>m.id===active)?.label||'Admin data')+'…</div>'},180);
   try{
     let html='',wire=null;
-    if(active==='overview')html=overviewPanel();
+    if(active==='overview'){html=overviewPanel();wire=wireOverview}
     else if(active==='profiles'){html=profilesPanel();wire=wireProfiles}
     else if(active==='delivery'){html=await deliveryPanel();wire=wireDelivery}
     else if(active==='support'){html=await queuePanel('support');wire=bindSupportQueue}
