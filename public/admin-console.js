@@ -13,7 +13,7 @@ let state={me:null,catalog:null,overview:null,active:'overview',assignments:null
 
 const modules=[
   {id:'overview',label:'Overview',any:['admin.console']},
-  {id:'profiles',label:'Profiles',any:['merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider','profile.suspend']},
+  {id:'profiles',label:'Profiles',any:['profiles.invite_merchant','profiles.invite_supplier','profiles.invite_courier','merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider','profile.suspend']},
   {id:'delivery',label:'Delivery',any:['delivery.dispatch.manage','delivery.pricing.manage','courier.verify']},
   {id:'support',label:'Support',any:['support.manage']},
   {id:'safety',label:'Trust & Safety',any:['incident.triage']},
@@ -86,6 +86,23 @@ function wireOverview(){document.querySelectorAll('[data-overview-module]').forE
 function profileRoleLabel(role){
   return ({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services',customer:'Customer'})[role]||readableCode(role);
 }
+const PROFILE_INVITE_PERMISSIONS={merchant:'profiles.invite_merchant',supplier:'profiles.invite_supplier',courier:'profiles.invite_courier'};
+function inviteRolesForAdmin(){
+  return Object.entries(PROFILE_INVITE_PERMISSIONS).filter(([,permission])=>hasAny([permission])).map(([role])=>role);
+}
+function inviteTerritories(){
+  return (state.overview?.territories||[]).filter(t=>['onboarding','active'].includes(String(t.status||'')));
+}
+function invitationRow(x){
+  const expires=x.expires_at?new Date(x.expires_at).toLocaleDateString('en-PH'):'—';
+  return '<div class="row adminInvitationRow"><div class="rowHeader"><strong>'+esc(x.target_email)+'</strong><span class="status">'+esc(readableCode(x.status||'invited'))+'</span></div><span class="muted">'+esc(profileRoleLabel(x.role))+' · '+esc(x.territory_name||'Scoped territory')+' · expires '+esc(expires)+'</span></div>';
+}
+function invitationAction(){
+  const roles=inviteRolesForAdmin(),territories=inviteTerritories();
+  if(!roles.length)return '';
+  if(!territories.length)return '<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>PROFILE ACTION</small><strong>Invite operational profile</strong><span>Merchant, Supplier or Delivery access</span></span></summary><div class="adminDisclosureBody"><div class="notice"><strong>No territory is open for onboarding yet.</strong><br>Create or activate the real operating territory before inviting Merchant, Supplier or Delivery profiles.</div></div></details>';
+  return '<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>PROFILE ACTION</small><strong>Invite operational profile</strong><span>Create one private, territory-scoped onboarding invitation</span></span></summary><div class="adminDisclosureBody"><form id="profileInviteForm" class="adminForm"><div class="financeFormGrid"><label>Email<input name="target_email" type="email" autocomplete="off" required placeholder="person@example.com"></label><label>Profile<select name="role" required>'+roles.map(role=>'<option value="'+esc(role)+'">'+esc(profileRoleLabel(role))+'</option>').join('')+'</select></label><label>Operating territory<select name="territory_id" required>'+territories.map(t=>'<option value="'+Number(t.id)+'">'+esc(t.name)+' · '+esc(readableCode(t.status))+'</option>').join('')+'</select></label><label>Link expires in days<input name="expires_days" type="number" min="1" max="30" step="1" value="7" required></label></div><label>Invitation note<textarea name="note" maxlength="700" placeholder="Optional context for the invited person"></textarea></label><div class="notice">This creates an invitation to apply. It does not approve the profile or replace required evidence.</div><button class="primary" type="submit">Create private invitation</button><div id="profileInviteResult"></div></form></div></details>';
+}
 function profileApplicationRow(x){
   const waiting=['submitted','under_review'].includes(x.status);
   return '<button type="button" class="row queueRow adminReviewRow" data-admin-application="'+Number(x.id)+'"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(profileRoleLabel(x.role))+' · '+esc(x.territory_name||'Scoped territory')+' · '+Number(x.document_count||0)+' document'+(Number(x.document_count||0)===1?'':'s')+'</span><span class="adminRowAction">'+(waiting?'Review application':'Open details')+' ›</span></button>';
@@ -95,9 +112,9 @@ function profileAuthorizationRow(x){
   return '<div class="row adminReviewRow"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(profileRoleLabel(x.role))+' · '+esc(x.territory_name||'Country scope')+'</span>'+(x.reason?'<span class="muted">'+esc(x.reason)+'</span>':'')+(canManage?'<button class="secondary adminInlineAction" type="button" data-admin-authorization="'+Number(x.id)+'">Manage access</button>':'')+'</div>';
 }
 function profilesPanel(){
-  const apps=state.overview?.applications||[];
-  const auths=state.overview?.authorizations||[];
-  return hero()+'<p class="moduleIntro">Review onboarding evidence and manage profile authorization inside your delegated scope.</p><div class="sectionTitle"><h3>Applications</h3></div>'+rows(apps,profileApplicationRow)+'<div class="sectionTitle"><h3>Authorizations</h3></div>'+rows(auths,profileAuthorizationRow);
+  const apps=state.overview?.applications||[],auths=state.overview?.authorizations||[],invites=state.overview?.invitations||[];
+  const canInvite=inviteRolesForAdmin().length>0;
+  return hero()+'<p class="moduleIntro">Invite governed profiles, review onboarding evidence and manage profile authorization inside your delegated scope.</p>'+invitationAction()+(canInvite||invites.length?'<div class="sectionTitle"><h3>Invitations</h3><span class="muted">Private onboarding links</span></div><div id="profileInvitationList">'+rows(invites,invitationRow)+'</div>':'')+'<div class="sectionTitle"><h3>Applications</h3></div>'+rows(apps,profileApplicationRow)+'<div class="sectionTitle"><h3>Authorizations</h3></div>'+rows(auths,profileAuthorizationRow);
 }
 function applicationCategoryChoices(a){
   if(a.role!=='service_provider')return '';
@@ -157,6 +174,25 @@ async function openAdminAuthorization(id){
   };
 }
 function wireProfiles(){
+  const inviteForm=document.getElementById('profileInviteForm');
+  if(inviteForm)inviteForm.onsubmit=async e=>{
+    e.preventDefault();
+    const form=e.currentTarget,out=document.getElementById('profileInviteResult'),button=form.querySelector('button[type="submit"]'),fd=new FormData(form);
+    const role=String(fd.get('role')||''),territoryId=Number(fd.get('territory_id'));
+    if(!inviteRolesForAdmin().includes(role))return out.innerHTML='<div class="error">This Admin account cannot invite that profile.</div>';
+    if(!inviteTerritories().some(t=>Number(t.id)===territoryId))return out.innerHTML='<div class="error">Choose an onboarding or active operating territory.</div>';
+    button.disabled=true;
+    try{
+      const created=await api('/api/governance/admin/invitations',{method:'POST',body:JSON.stringify({target_email:fd.get('target_email'),role,territory_id:territoryId,note:fd.get('note')||'',expires_days:Number(fd.get('expires_days')||7)})});
+      const link=location.origin+'/?invite='+encodeURIComponent(created.invite_token);
+      const territory=inviteTerritories().find(t=>Number(t.id)===territoryId);
+      state.overview.invitations=[{...created,territory_name:territory?.name||'Scoped territory'},...(state.overview?.invitations||[]).filter(x=>Number(x.id)!==Number(created.id))];
+      out.innerHTML='<div class="adminInviteResult"><strong>Private invitation created</strong><span>Share this link only with '+esc(created.target_email)+'. It is shown here now because the raw token is not kept in Admin history.</span><code id="profileInviteLink">'+esc(link)+'</code><button id="copyProfileInvite" class="secondary" type="button">Copy private link</button></div>';
+      document.getElementById('copyProfileInvite').onclick=async()=>{try{await navigator.clipboard.writeText(link);document.getElementById('copyProfileInvite').textContent='Copied'}catch{document.getElementById('copyProfileInvite').textContent='Copy manually'}};
+      form.reset();form.elements.expires_days.value='7';
+    }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>'}
+    finally{button.disabled=false}
+  };
   document.querySelectorAll('[data-admin-application]').forEach(button=>button.onclick=()=>openAdminApplication(Number(button.dataset.adminApplication)));
   document.querySelectorAll('[data-admin-authorization]').forEach(button=>button.onclick=()=>openAdminAuthorization(Number(button.dataset.adminAuthorization)));
 }
@@ -833,16 +869,45 @@ function drawFunctionChoices(){
     else{territory.required=false}
   }
 }
+function adminFunction(code){return (state.catalog?.functions||[]).find(f=>f.code===code)||null}
+function adminFunctionLabel(code){return adminFunction(code)?.label||readableCode(code)}
+function assignmentFunctionEditor(a,rank){
+  const current=[...new Set(Array.isArray(a.functions)?a.functions:[])];
+  const editable=(state.catalog?.functions||[]).filter(fn=>fn.can_delegate&&fn.assignable_to.includes(rank));
+  const editableCodes=new Set(editable.map(fn=>fn.code)),blocked=current.filter(code=>!editableCodes.has(code));
+  if(blocked.length)return '<section class="card"><h3>Assigned responsibilities</h3><div class="permissionPills">'+current.map(code=>'<span>'+esc(adminFunctionLabel(code))+'</span>').join('')+'</div><div class="notice"><strong>Function editing is locked from this account.</strong><br>One or more current responsibilities are outside your delegation authority: '+esc(blocked.map(adminFunctionLabel).join(', '))+'. Their authority is not changed here.</div></section>';
+  if(!editable.length)return '<section class="card"><h3>Assigned responsibilities</h3><div class="empty">No function bundle can be changed from your current authority.</div></section>';
+  return '<form id="assignmentFunctionsForm" class="adminForm"><h3>Assigned responsibilities</h3><p class="muted">Choose the work this Admin should actually perform. The server derives the permissions from these function bundles.</p><div class="functionGrid">'+editable.map(fn=>'<label class="functionChoice"><input type="checkbox" name="function_codes" value="'+esc(fn.code)+'" '+(current.includes(fn.code)?'checked':'')+'><span><strong>'+esc(fn.label)+'</strong><small>'+esc(fn.description)+'</small></span></label>').join('')+'</div><label>Reason for responsibility change<textarea name="reason" maxlength="1000" required placeholder="Why these delegated functions are changing"></textarea></label><label class="inlineChoice"><input name="confirmed" type="checkbox" required><span>I understand these function choices change this Admin’s operational authority.</span></label><button class="primary" type="submit">Save responsibilities</button><div id="assignmentFunctionsResult"></div></form>';
+}
+function assignmentExplicitPermissions(a){
+  const bundled=new Set();
+  for(const code of Array.isArray(a.functions)?a.functions:[]){for(const permission of adminFunction(code)?.permissions||[])bundled.add(permission)}
+  return (Array.isArray(a.permissions)?a.permissions:[]).filter(permission=>!bundled.has(permission));
+}
 async function teamPanel(){
   state.assignments=await api('/api/admin/assignments');
-  return hero()+'<p class="moduleIntro">Ranks define scope and hierarchy. Functions define the actual work delegated to each person.</p>'+delegationForm()+'<div class="sectionTitle"><h3>Delegated team</h3></div>'+rows(state.assignments,x=>{const rank=x.effective_rank||x.authority_rank||x.admin_role,isOwner=rank==='super_admin';return '<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email)+'</strong><span class="status">'+esc(rankLabel(rank))+' · '+esc(x.status||'active')+'</span></div><span class="muted">'+esc(x.territory_name||x.country_code||'PH')+'</span><div class="permissionPills">'+(x.functions||[]).map(f=>'<span>'+esc(f)+'</span>').join('')+'</div>'+(!isOwner?'<button class="secondary adminInlineAction" type="button" data-admin-assignment="'+Number(x.id)+'">Manage responsibility</button>':'<span class="muted">Protected Platform Owner assignment</span>')+'</div>'});
+  return hero()+'<p class="moduleIntro">Ranks define scope and hierarchy. Functions define the actual work delegated to each person.</p>'+delegationForm()+'<div class="sectionTitle"><h3>Delegated team</h3></div>'+rows(state.assignments,x=>{const rank=x.effective_rank||x.authority_rank||x.admin_role,isOwner=rank==='super_admin';return '<div class="row"><div class="rowHeader"><strong>'+esc(x.display_name||x.email)+'</strong><span class="status">'+esc(rankLabel(rank))+' · '+esc(x.status||'active')+'</span></div><span class="muted">'+esc(x.territory_name||x.country_code||'PH')+'</span><div class="permissionPills">'+(x.functions||[]).map(f=>'<span>'+esc(adminFunctionLabel(f))+'</span>').join('')+'</div>'+(!isOwner?'<button class="secondary adminInlineAction" type="button" data-admin-assignment="'+Number(x.id)+'">Manage responsibility</button>':'<span class="muted">Protected Platform Owner assignment</span>')+'</div>'});
 }
 async function openAdminAssignment(id){
   const a=(state.assignments||[]).find(x=>Number(x.id)===Number(id));if(!a)return showError(new Error('Admin assignment is no longer available.'));
   const p=document.getElementById('adminPanel');if(!p)return;const rank=a.effective_rank||a.authority_rank||a.admin_role;
-  p.innerHTML='<button type="button" class="secondary supportBack" id="assignmentBack">← Back to Team & Delegation</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">ADMIN RESPONSIBILITY</small><h2>'+esc(a.display_name||a.email)+'</h2></div><span class="status">'+esc(rankLabel(rank))+'</span></div><div class="supportMeta"><span>'+esc(a.territory_name||a.country_code||'PH')+'</span><span>'+esc(a.status||'active')+'</span></div><div class="permissionPills">'+(a.functions||[]).map(f=>'<span>'+esc(f)+'</span>').join('')+'</div><form id="assignmentStatusForm" class="adminForm"><label>Status<select name="status">'+['active','suspended','revoked'].map(x=>'<option value="'+x+'" '+(x===a.status?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" maxlength="1000" required placeholder="Why this responsibility is changing">'+esc(a.reason||'')+'</textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I understand this changes this person’s delegated Admin access.</span></label><button class="primary" type="submit">Save Admin status</button><div id="assignmentStatusResult"></div></form></section>';
+  p.innerHTML='<button type="button" class="secondary supportBack" id="assignmentBack">← Back to Team & Delegation</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">ADMIN RESPONSIBILITY</small><h2>'+esc(a.display_name||a.email)+'</h2></div><span class="status">'+esc(rankLabel(rank))+'</span></div><div class="supportMeta"><span>'+esc(a.territory_name||a.country_code||'PH')+'</span><span>'+esc(a.status||'active')+'</span></div>'+assignmentFunctionEditor(a,rank)+'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>ACCESS CONTROL</small><strong>Change Admin access status</strong><span>Suspend, reactivate or revoke this assignment</span></span></summary><div class="adminDisclosureBody"><form id="assignmentStatusForm" class="adminForm"><label>Status<select name="status">'+['active','suspended','revoked'].map(x=>'<option value="'+x+'" '+(x===a.status?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" maxlength="1000" required placeholder="Why this access status is changing">'+esc(a.reason||'')+'</textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I understand this changes this person’s delegated Admin access.</span></label><button class="primary" type="submit">Save Admin status</button><div id="assignmentStatusResult"></div></form></div></details></section>';
   document.getElementById('assignmentBack').onclick=async()=>{state.active='team';shell();await renderActive()};
-  document.getElementById('assignmentStatusForm').onsubmit=async e=>{
+  const functionForm=document.getElementById('assignmentFunctionsForm');
+  if(functionForm)functionForm.onsubmit=async e=>{
+    e.preventDefault();const form=e.currentTarget,out=document.getElementById('assignmentFunctionsResult'),button=form.querySelector('button[type="submit"]');
+    if(!form.confirmed.checked)return out.innerHTML='<div class="error">Confirm the responsibility change first.</div>';
+    const functionCodes=[...form.querySelectorAll('[name="function_codes"]:checked')].map(x=>x.value);
+    const explicitPermissions=assignmentExplicitPermissions(a);
+    if(rank==='specialist'&&!functionCodes.length&&!explicitPermissions.includes('admin.console'))return out.innerHTML='<div class="error">A Specialist needs at least one delegated function.</div>';
+    button.disabled=true;
+    try{
+      await api('/api/admin/assignments/'+Number(a.id)+'/permissions',{method:'PUT',body:JSON.stringify({function_codes:functionCodes,permissions:explicitPermissions,reason:form.reason.value})});
+      await loadBase();state.active='team';shell();await renderActive();
+    }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+  };
+  const statusForm=document.getElementById('assignmentStatusForm');
+  if(statusForm)statusForm.onsubmit=async e=>{
     e.preventDefault();const form=e.currentTarget,out=document.getElementById('assignmentStatusResult'),button=form.querySelector('button[type="submit"]');
     if(!form.confirmed.checked)return out.innerHTML='<div class="error">Confirm the Admin access change first.</div>';
     button.disabled=true;
