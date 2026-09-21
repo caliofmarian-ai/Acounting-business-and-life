@@ -2,6 +2,8 @@ const SERVICE_JOB_DESCRIPTION='Controlled QA Local Services handyman job v1';
 const SERVICE_SUPPORT_PREFIX='Controlled QA Service Provider support job ';
 const SERVICE_QUOTE_AMOUNT=350;
 const SERVICE_FINAL_PRICE=375;
+const QA_EVIDENCE_IMAGE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlWhVQAAAAASUVORK5CYII=';
+const SECONDARY_TERRITORY_CODE='QA-SERVICE-OTHER';
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -132,6 +134,149 @@ async function publishQaServiceProvider({
   }
 }
 
+
+async function ensureSecondaryServiceTerritory({pool,base,adminToken,requestJson,expectStatus}){
+  const existing=await pool.query(
+    "SELECT id,status FROM territories WHERE country_code='PH' AND code=$1 LIMIT 1",
+    [SECONDARY_TERRITORY_CODE]
+  );
+  if(existing.rowCount){
+    if(!['onboarding','active'].includes(existing.rows[0].status)){
+      await pool.query("UPDATE territories SET status='active',updated_at=NOW() WHERE id=$1",[existing.rows[0].id]);
+    }
+    return Number(existing.rows[0].id);
+  }
+  const created=await requestJson(base,'/api/governance/admin/territories',{
+    method:'POST',
+    token:adminToken,
+    body:{
+      country_code:'PH',
+      territory_type:'city',
+      name:'QA Service Other City',
+      code:SECONDARY_TERRITORY_CODE,
+      status:'active'
+    }
+  });
+  expectStatus(created,201,'Secondary QA territory creation');
+  return Number(created.json?.id);
+}
+
+async function verifyCredentialAdminScope({
+  pool,base,provider,customer,admin,territoryAdmin,territoryId,jobId,
+  requestJson,expectStatus
+}){
+  const created=await requestJson(base,'/api/service-provider/credentials',{
+    method:'POST',
+    token:provider.token,
+    body:{
+      credential_type:'other',
+      title:'Controlled QA evidence record',
+      issuing_body:'Business & Life QA',
+      reference_number:'QA-SERVICE-'+Number(jobId),
+      evidence_data_url:QA_EVIDENCE_IMAGE
+    }
+  });
+  expectStatus(created,201,'Service Provider controlled credential evidence');
+  const credentialId=Number(created.json?.id);
+  if(!credentialId)throw new Error('Controlled Service Provider credential was not created.');
+
+  const ordinaryDenied=await requestJson(base,'/api/admin/service-credentials/'+credentialId,{
+    method:'PATCH',
+    token:customer.token,
+    body:{verification_status:'verified'}
+  });
+  expectStatus(ordinaryDenied,403,'Ordinary Customer credential-review denial');
+
+  const otherTerritoryId=await ensureSecondaryServiceTerritory({
+    pool,base,adminToken:admin.token,requestJson,expectStatus
+  });
+  if(otherTerritoryId===Number(territoryId)){
+    throw new Error('Credential scope test requires two distinct QA territories.');
+  }
+
+  await pool.query(
+    "UPDATE platform_admin_assignments SET status='revoked',updated_at=NOW() WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin'",
+    [territoryAdmin.accountId]
+  );
+
+  const outside=await requestJson(base,'/api/admin/assignments',{
+    method:'POST',
+    token:admin.token,
+    body:{
+      target_email:territoryAdmin.email,
+      admin_role:'territory_admin',
+      territory_id:otherTerritoryId,
+      permissions:['credential.verify'],
+      reason:'Controlled QA out-of-scope credential authority'
+    }
+  });
+  expectStatus(outside,201,'Out-of-scope Territory Admin assignment');
+
+  const scopedDenied=await requestJson(base,'/api/admin/service-credentials/'+credentialId,{
+    method:'PATCH',
+    token:territoryAdmin.token,
+    body:{verification_status:'verified'}
+  });
+  expectStatus(scopedDenied,403,'Out-of-scope credential-review denial');
+
+  const inside=await requestJson(base,'/api/admin/assignments',{
+    method:'POST',
+    token:admin.token,
+    body:{
+      target_email:territoryAdmin.email,
+      admin_role:'territory_admin',
+      territory_id:Number(territoryId),
+      permissions:['credential.verify'],
+      reason:'Controlled QA in-scope credential authority'
+    }
+  });
+  expectStatus(inside,201,'In-scope Territory Admin assignment');
+
+  const verified=await requestJson(base,'/api/admin/service-credentials/'+credentialId,{
+    method:'PATCH',
+    token:territoryAdmin.token,
+    body:{verification_status:'verified'}
+  });
+  expectStatus(verified,200,'In-scope credential verification');
+
+  const evidence=await pool.query(
+    "SELECT verification_status,verified_by_account_id,verified_at FROM profile_credentials WHERE id=$1",
+    [credentialId]
+  );
+  if(evidence.rows[0]?.verification_status!=='verified'
+    ||Number(evidence.rows[0]?.verified_by_account_id)!==Number(territoryAdmin.accountId)
+    ||!evidence.rows[0]?.verified_at){
+    throw new Error('Credential verifier/timestamp evidence did not persist.');
+  }
+
+  const audit=await pool.query(
+    "SELECT id,assignment_id,permission_code,territory_id,actor_account_id FROM admin_audit_events WHERE event_code='service_credential.reviewed' AND target_type='profile_credential' AND target_id=$1 AND actor_account_id=$2 ORDER BY id DESC LIMIT 1",
+    [String(credentialId),territoryAdmin.accountId]
+  );
+  if(!audit.rowCount||audit.rows[0].permission_code!=='credential.verify'
+    ||Number(audit.rows[0].territory_id)!==Number(territoryId)
+    ||!audit.rows[0].assignment_id){
+    throw new Error('Credential verification audit evidence is incomplete.');
+  }
+
+  const cleanup=await requestJson(base,'/api/admin/service-credentials/'+credentialId,{
+    method:'PATCH',
+    token:territoryAdmin.token,
+    body:{
+      verification_status:'rejected',
+      rejection_reason:'Controlled QA evidence cleanup; not a real professional credential.'
+    }
+  });
+  expectStatus(cleanup,200,'Controlled credential cleanup');
+  return{
+    credentialId,
+    auditId:Number(audit.rows[0].id),
+    ordinaryDenied:true,
+    outOfScopeDenied:true,
+    inScopeAllowed:true
+  };
+}
+
 async function serviceNotifications({
   base,customerToken,providerToken,jobId,requestJson,expectStatus
 }){
@@ -242,10 +387,11 @@ export async function runServiceProviderExperienceAcceptance({
   const customerPrerequisite=await runCustomerOnboarding({pool,base,secret});
   if(customerPrerequisite.status!=='PASS')throw new Error('Customer prerequisite did not pass.');
 
-  const [admin,provider,customer]=await Promise.all([
+  const [admin,provider,customer,territoryAdmin]=await Promise.all([
     qaAccountSession({pool,base,secret,email:aliases.superAdmin,role:'super_admin',label:'Service Provider Super Admin QA'}),
     qaAccountSession({pool,base,secret,email:aliases.serviceProvider,role:'service_provider',label:'Service Provider Experience QA'}),
-    qaAccountSession({pool,base,secret,email:aliases.customer,role:'customer',label:'Local Services Customer QA'})
+    qaAccountSession({pool,base,secret,email:aliases.customer,role:'customer',label:'Local Services Customer QA'}),
+    qaAccountSession({pool,base,secret,email:aliases.territoryAdmin,role:'territory_admin',label:'Service Provider Territory Admin QA'})
   ]);
 
   const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
@@ -282,28 +428,20 @@ export async function runServiceProviderExperienceAcceptance({
     throw new Error('QA Service Provider unexpectedly exposes a verified credential.');
   }
 
-  const existing=await pool.query(
-    "SELECT * FROM service_jobs WHERE customer_account_id=$1 AND provider_account_id=$2 AND description=$3 ORDER BY id DESC LIMIT 1",
-    [customer.accountId,provider.accountId,SERVICE_JOB_DESCRIPTION]
-  );
-
-  let job=existing.rows[0]||null;
-  if(!job){
-    const created=await requestJson(base,'/api/services/jobs',{
-      method:'POST',
-      token:customer.token,
-      body:{
-        provider_account_id:provider.accountId,
-        category_id:categoryId,
-        service_label:'General handyman',
-        description:SERVICE_JOB_DESCRIPTION,
-        service_location:'Internal QA service location — Philippines',
-        requested_window:'Controlled QA window'
-      }
-    });
-    expectStatus(created,201,'Local Services Customer request');
-    job=created.json;
-  }
+  const created=await requestJson(base,'/api/services/jobs',{
+    method:'POST',
+    token:customer.token,
+    body:{
+      provider_account_id:provider.accountId,
+      category_id:categoryId,
+      service_label:'General handyman',
+      description:SERVICE_JOB_DESCRIPTION,
+      service_location:'Internal QA service location — Philippines',
+      requested_window:'Controlled QA window'
+    }
+  });
+  expectStatus(created,201,'Local Services Customer request');
+  let job=created.json;
   const jobId=Number(job?.id);
   if(!jobId)throw new Error('Local Services QA job is missing.');
 
@@ -355,6 +493,20 @@ export async function runServiceProviderExperienceAcceptance({
 
   if(job.status!=='completed')throw new Error('Local Services job did not reach completed state.');
 
+  if(job.customer_confirmed_at){
+    throw new Error('Fresh Local Services QA job was unexpectedly customer-confirmed before the Customer action.');
+  }
+  const prematureReview=await requestJson(base,'/api/services/jobs/'+jobId+'/review',{
+    method:'POST',
+    token:customer.token,
+    body:{
+      workmanship:5,reliability:5,communication:5,professionalism:5,
+      property_care:5,price_transparency:5,overall:5,
+      review_text:'This controlled QA review must be rejected before Customer confirmation.'
+    }
+  });
+  expectStatus(prematureReview,409,'Premature Local Services review denial');
+
   if(!job.customer_confirmed_at){
     const confirmed=await requestJson(base,'/api/services/jobs/'+jobId+'/confirm-completion',{
       method:'POST',token:customer.token,body:{}
@@ -368,6 +520,11 @@ export async function runServiceProviderExperienceAcceptance({
     pool,base,customerToken:customer.token,jobId,requestJson,expectStatus
   });
   if(!reviewId)throw new Error('Verified Local Services review was not created.');
+
+  const credentialScope=await verifyCredentialAdminScope({
+    pool,base,provider,customer,admin,territoryAdmin,territoryId,jobId,
+    requestJson,expectStatus
+  });
 
   const [customerJobs,providerJobs]=await Promise.all([
     requestJson(base,'/api/services/jobs/mine',{token:customer.token}),
@@ -443,7 +600,7 @@ export async function runServiceProviderExperienceAcceptance({
   });
   const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
   expectStatus(finalLogout,200,'Service Provider Experience final logout');
-  for(const [label,session] of [['Customer',customer],['Admin',admin]]){
+  for(const [label,session] of [['Customer',customer],['Admin',admin],['Territory Admin',territoryAdmin]]){
     const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:session.token,body:{}});
     expectStatus(logout,200,'Service Provider Experience '+label+' logout');
   }
@@ -463,6 +620,13 @@ export async function runServiceProviderExperienceAcceptance({
     final_price:SERVICE_FINAL_PRICE,
     customer_confirmed_completion:true,
     verified_review_id:reviewId,
+    review_blocked_before_customer_confirmation:true,
+    credential_scope_authority:true,
+    credential_id:credentialScope.credentialId,
+    credential_audit_id:credentialScope.auditId,
+    credential_ordinary_user_denied:credentialScope.ordinaryDenied,
+    credential_out_of_scope_denied:credentialScope.outOfScopeDenied,
+    credential_in_scope_allowed:credentialScope.inScopeAllowed,
     finance_commercial_value:true,
     service_provider_net_allocations:providerNetCount,
     provider_income_settlement:providerNetCount>0?'TRACKED':'HOLD_NO_SERVICE_PROVIDER_NET',
