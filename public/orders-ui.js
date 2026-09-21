@@ -22,12 +22,20 @@ function progress(status){let idx=ORDER_PROGRESS.indexOf(status);if(status==='aw
 async function openCustomerOrders(){
   ordersMode='customer';ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderCustomerOrders()
 }
+function openCustomerDeliveries(){
+  const api=window.BusinessLifeDelivery;
+  if(api?.openCustomerDelivery)return api.openCustomerDelivery();
+  const launcher=document.getElementById('roleHub')?.querySelector('[data-hub-feature="Delivery"]');
+  if(launcher)return launcher.click();
+  toast('Delivery is still loading. Try again in a moment.');
+}
 async function renderCustomerOrders(showLoading=true){
   if(showLoading)orderWorkspace.innerHTML=header('My Orders','Preparation, payment and pickup status in one place')+'<div class="ordersEmpty">Loading orders…</div>';
   const orders=await oapi('/api/orders/mine');
   const outstanding=orders.reduce((s,o)=>s+Number(o.outstanding_amount||0),0),active=orders.filter(o=>!['completed','cancelled'].includes(o.order_status)).length;
-  orderWorkspace.innerHTML=header('My Orders','Preparation, payment and pickup status in one place')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active}</strong></div><div class="orderSummaryMetric"><small>Total orders</small><strong>${orders.length}</strong></div><div class="orderSummaryMetric"><small>Amount due</small><strong>${php(outstanding)}</strong></div></div><div class="customerOrdersList">${orders.length?orders.map(customerCard).join(''):'<div class="ordersEmpty">No orders yet. Your Marketplace orders will appear here.</div>'}</div>`;
+  orderWorkspace.innerHTML=header('My Orders','Preparation, payment and pickup status in one place')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active}</strong></div><div class="orderSummaryMetric"><small>Total orders</small><strong>${orders.length}</strong></div><div class="orderSummaryMetric"><small>Amount due</small><strong>${php(outstanding)}</strong></div></div><div class="customerOrderTools"><button id="customerDeliveriesBtn" type="button"><span>📍</span><span><strong>My deliveries</strong><small>Live status, ETA and secure handoff for delivery orders</small></span><b>›</b></button></div><div class="customerOrdersList">${orders.length?orders.map(customerCard).join(''):'<div class="ordersEmpty">No orders yet. Your Marketplace orders will appear here.</div>'}</div>`;
   bindHeader(()=>renderCustomerOrders());
+  document.getElementById('customerDeliveriesBtn')?.addEventListener('click',openCustomerDeliveries);
   orderWorkspace.querySelectorAll('[data-checkin]').forEach(b=>b.onclick=()=>customerCheckIn(Number(b.dataset.checkin)));
   orderWorkspace.querySelectorAll('[data-track]').forEach(b=>b.onclick=()=>window.open(`/track.html?t=${encodeURIComponent(b.dataset.track)}`,'_blank'));
 }
