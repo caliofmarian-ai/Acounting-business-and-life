@@ -85,6 +85,38 @@ async function supplierTodayReturns(pool,accountId){
   return rows;
 }
 
+async function supplierTodayBackorders(pool,{businessId,accountId}){
+  const {rows}=await pool.query(
+    `SELECT b.*,p.po_number,i.name_snapshot original_item_name,mb.name merchant_business_name
+       FROM supplier_backorders b
+       JOIN purchase_orders p ON p.id=b.purchase_order_id
+       JOIN purchase_order_items i ON i.id=b.purchase_order_item_id
+       JOIN businesses mb ON mb.id=b.business_id
+      WHERE b.supplier_business_id=$1
+        AND b.supplier_account_id=$2
+        AND b.state='merchant_accepted'
+      ORDER BY b.expected_available_date,b.created_at,b.id`,
+    [Number(businessId),Number(accountId)]
+  );
+  return rows;
+}
+
+async function supplierTodaySubstitutions(pool,{businessId,accountId}){
+  const {rows}=await pool.query(
+    `SELECT s.*,p.po_number,i.name_snapshot original_item_name,mb.name merchant_business_name
+       FROM supplier_substitution_proposals s
+       JOIN purchase_orders p ON p.id=s.purchase_order_id
+       JOIN purchase_order_items i ON i.id=s.original_purchase_order_item_id
+       JOIN businesses mb ON mb.id=s.business_id
+      WHERE s.supplier_business_id=$1
+        AND s.supplier_account_id=$2
+        AND s.state='merchant_accepted'
+      ORDER BY COALESCE(s.expected_available_date,CURRENT_DATE),s.created_at,s.id`,
+    [Number(businessId),Number(accountId)]
+  );
+  return rows;
+}
+
 async function supplierTodayCatalog(pool,accountId){
   const {rows}=await pool.query(
     `SELECT id,product_name,sku,unit_name,base_unit,base_units_per_pack,price_per_pack,
@@ -124,11 +156,13 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
     try{
       const me=await identity(req);
       const business=await exactProfileBusiness(pool,me,'supplier',req.query.business_id||null);
-      const [orders,rfqs,returns,catalog,bindingCount,moneyReceived]=await Promise.all([
+      const [orders,rfqs,returns,catalog,backorders,substitutions,bindingCount,moneyReceived]=await Promise.all([
         supplierTodayOrders(pool,me.account.id),
         supplierTodayRfqs(pool,{businessId:business.id,accountId:me.account.id}),
         supplierTodayReturns(pool,me.account.id),
         supplierTodayCatalog(pool,me.account.id),
+        supplierTodayBackorders(pool,{businessId:business.id,accountId:me.account.id}),
+        supplierTodaySubstitutions(pool,{businessId:business.id,accountId:me.account.id}),
         supplierBindingCount(pool,me.account.id),
         supplierMoneyReceived(pool,me.account.id)
       ]);
@@ -138,6 +172,13 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
         business:{id:Number(business.id),name:business.name,currency_code:business.currency_code||'PHP'},
         attribution_status:bindingCount===1?'SINGLE_SUPPLIER_BUSINESS_BINDING':'ACCOUNT_LEVEL_ORDER_ACTIVITY',
         ...summary,
+        backorders,
+        substitutions,
+        counts:{
+          ...summary.counts,
+          backorders:backorders.length,
+          substitutions:substitutions.length
+        },
         money:{
           ...summary.money,
           money_received_recorded:Math.round(moneyReceived*100)/100
@@ -202,5 +243,5 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
 
 export const supplierDailyV5Internals={
   supplierBindingCount,supplierTodayOrders,supplierTodayRfqs,
-  supplierTodayReturns,supplierTodayCatalog,supplierMoneyReceived
+  supplierTodayReturns,supplierTodayCatalog,supplierTodayBackorders,supplierTodaySubstitutions,supplierMoneyReceived
 };
