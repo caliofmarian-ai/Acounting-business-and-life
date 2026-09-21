@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
+import {createV2Session,isLegacyBearerToken,resolveV2SessionToken} from './auth-session-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -47,7 +48,6 @@ function safeTextEqual(a, b) {
 function safeHexEqual(a, b) {
   try { const aa = Buffer.from(String(a), 'hex'); const bb = Buffer.from(String(b), 'hex'); return aa.length === bb.length && crypto.timingSafeEqual(aa, bb); } catch { return false; }
 }
-function isLegacyBearer(token = '') { return token && token.split('.').length === 3; }
 function requestIpHash(req) { return sha256(req.ip || req.headers['x-forwarded-for'] || 'unknown'); }
 function throttled(req, key, max = 6, windowMs = 15 * 60_000) {
   const id = `${requestIpHash(req)}:${sha256(key)}`; const now = Date.now();
@@ -67,30 +67,15 @@ async function hashPassword(password) {
   const derived = await scryptAsync(password, salt, 64);
   return { salt, hash: Buffer.from(derived).toString('hex') };
 }
-function signAccountToken(accountId, sessionId) {
-  const payload = `v2.${Date.now()}.${accountId}.${sessionId}`;
-  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
-  return `${payload}.${sig}`;
-}
 async function createSession(accountId, req) {
-  const sessionId = crypto.randomUUID();
-  await pool.query(`INSERT INTO account_sessions(session_id,account_id,expires_at,user_agent,ip_hash) VALUES($1,$2,NOW()+INTERVAL '24 hours',$3,$4)`, [sessionId, accountId, clean(req.headers['user-agent'], 400), requestIpHash(req)]);
-  return { sessionId, token: signAccountToken(accountId, sessionId) };
-}
-async function resolveV2(req) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
-  if (!TOKEN_SECRET || !token) return null;
-  const parts = token.split('.');
-  if (parts.length !== 5 || parts[0] !== 'v2') return null;
-  const issued = Number(parts[1]), accountId = Number(parts[2]), sessionId = parts[3];
-  if (!Number.isFinite(issued) || !Number.isInteger(accountId) || accountId < 1 || Date.now() - issued > 24 * 60 * 60_000 || issued > Date.now() + 60_000) return null;
-  const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(parts.slice(0, 4).join('.')).digest('hex');
-  if (!safeHexEqual(parts[4], expected)) return null;
-  const q = await pool.query(`SELECT account_id FROM account_sessions WHERE session_id=$1 AND account_id=$2 AND revoked_at IS NULL AND expires_at>NOW()`, [sessionId, accountId]);
-  return q.rowCount ? { accountId, sessionId } : null;
+  return createV2Session(pool,TOKEN_SECRET,accountId,{
+    userAgent:clean(req.headers['user-agent'],400),
+    ipHash:requestIpHash(req)
+  });
 }
 async function requireV2(req) {
-  const session = await resolveV2(req);
+  const token=req.headers.authorization?.replace(/^Bearer\s+/i,'')||'';
+  const session=await resolveV2SessionToken(pool,TOKEN_SECRET,token);
   if (!session) throw Object.assign(new Error('Sign in again to continue'), { status: 401 });
   return session;
 }
@@ -398,7 +383,7 @@ app.post('/api/auth/oauth/handoff', jsonBody, async (req, res, next) => {
 app.use('/api', async (req, res, next) => {
   if (req.path === '/login' && req.method === 'POST') return res.status(410).json({ error: 'PIN login has been retired from the public app. Use email/password or account recovery.' });
   const raw = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
-  if (isLegacyBearer(raw)) return res.status(401).json({ error: 'Legacy PIN session expired. Sign in with your email account.' });
+  if (isLegacyBearerToken(raw)) return res.status(401).json({ error: 'Legacy PIN session expired. Sign in with your email account.' });
   next();
 });
 

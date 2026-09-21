@@ -15,6 +15,7 @@ import { persistUnconvertedReferralEvent } from './growth/referral-unconverted-a
 import { bindReferralSignupConversion } from './growth/referral-conversion-binding.js';
 import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
 import { companyTestAccountForEmail, companyTestContact, companyTestProfileRole } from './company-test-accounts.js';
+import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-session-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -25,7 +26,7 @@ const port = Number(process.env.PORT || 3000);
 const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const TOKEN_TTL_MS = AUTH_SESSION_TTL_MS;
 const ROLES = new Set(['merchant', 'customer', 'supplier', 'courier', 'service_provider']);
 const jsonBody = express.json({ limit: '450kb' });
 const loginAttempts = new Map();
@@ -102,27 +103,10 @@ function signLegacyToken() {
   const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
-function signAccountToken(accountId, sessionId) {
-  const payload = `v2.${Date.now()}.${accountId}.${sessionId}`;
-  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
-  return `${payload}.${sig}`;
-}
 async function resolveAccountToken(token = '') {
   const legacy = legacyTokenAccount(token);
   if (legacy) return legacy;
-  if (!TOKEN_SECRET || !token) return null;
-  const parts = token.split('.');
-  if (parts.length !== 5 || parts[0] !== 'v2') return null;
-  const issued = Number(parts[1]);
-  const accountId = Number(parts[2]);
-  const sessionId = parts[3];
-  if (!Number.isInteger(accountId) || accountId < 1 || !Number.isFinite(issued) || Date.now() - issued > TOKEN_TTL_MS || issued > Date.now() + 60_000) return null;
-  const payload = parts.slice(0, 4).join('.');
-  const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
-  if (!safeEqualHex(parts[4], expected)) return null;
-  const session = await pool.query(`SELECT account_id FROM account_sessions WHERE session_id=$1 AND account_id=$2 AND revoked_at IS NULL AND expires_at > NOW()`, [sessionId, accountId]);
-  if (!session.rowCount) return null;
-  return { accountId, legacy: false, sessionId, issued };
+  return resolveV2SessionToken(pool,TOKEN_SECRET,token,{ttlMs:TOKEN_TTL_MS});
 }
 async function auth(req, res, next) {
   try {
@@ -135,9 +119,7 @@ async function auth(req, res, next) {
   } catch (err) { next(err); }
 }
 async function createSession(accountId) {
-  const sessionId = crypto.randomUUID();
-  await pool.query(`INSERT INTO account_sessions(session_id,account_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '24 hours')`, [sessionId, accountId]);
-  return { sessionId, token: signAccountToken(accountId, sessionId) };
+  return createV2Session(pool,TOKEN_SECRET,accountId);
 }
 
 async function initDb() {
