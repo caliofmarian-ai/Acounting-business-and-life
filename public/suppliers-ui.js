@@ -662,13 +662,13 @@ function supplierOrdersPanel(pos,section){
 }
 function supplierWorkspaceLoading(section){
   const meta=SUPPLIER_SECTION_META[section]||SUPPLIER_SECTION_META.Today;
-  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+\`<section class="supCard supState" role="status" aria-live="polite"><span class="supSpinner" aria-hidden="true"></span><div><h2>Loading ${ph(meta[0])}</h2><p>Getting the latest Supplier information…</p></div></section>\`;
+  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supCard supState" role="status" aria-live="polite"><span class="supSpinner" aria-hidden="true"></span><div><h2>Loading ${ph(meta[0])}</h2><p>Getting the latest Supplier information…</p></div></section>`;
   bindSupBack();
 }
 function supplierWorkspaceError(section,error){
   const meta=SUPPLIER_SECTION_META[section]||SUPPLIER_SECTION_META.Today;
   const message=error?.message||'The Supplier workspace could not be loaded.';
-  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+\`<section class="supCard supState supStateError" role="alert"><div><h2>We couldn’t load ${ph(meta[0])}</h2><p>${ph(message)}</p><div class="supInlineActions"><button type="button" class="supBtn" id="supWorkspaceRetry">Try again</button><button type="button" class="supBtn secondary" id="supWorkspaceBack">Back</button></div></div></section>\`;
+  supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supCard supState supStateError" role="alert"><div><h2>We couldn’t load ${ph(meta[0])}</h2><p>${ph(message)}</p><div class="supInlineActions"><button type="button" class="supBtn" id="supWorkspaceRetry">Try again</button><button type="button" class="supBtn secondary" id="supWorkspaceBack">Back</button></div></div></section>`;
   bindSupBack();
   document.getElementById('supWorkspaceRetry')?.addEventListener('click',()=>renderSupplierWorkspace(section));
   document.getElementById('supWorkspaceBack')?.addEventListener('click',closeSupWorkspace);
@@ -701,7 +701,7 @@ async function renderSupplierWorkspace(section=supSupplierSection){
     else if(normalized==='Money')body=supplierMoneyPanel(todayState);
     else if(normalized==='Procurement')body=supplierRelationshipsPanel(rels)+supplierSourcingPanel(sourcingState,incomingRfqs,me.catalog)+supplierCommercialPanel(supplierReturns)+supplierOrdersPanel(pos,'Procurement');
     else body=supplierOrdersPanel(pos,normalized);
-    supWorkspace.innerHTML=supHeader(meta[0],meta[1])+\`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>\`+body;
+    supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
     bindSupBack();bindSupplierWorkspace();
   }catch(err){
     supplierWorkspaceError(normalized,err);
