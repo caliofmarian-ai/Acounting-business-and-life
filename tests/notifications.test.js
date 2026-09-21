@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const core=readFileSync(new URL('../notification-core.js',import.meta.url),'utf8');
 const server=readFileSync(new URL('../server-notifications.js',import.meta.url),'utf8');
 const ui=readFileSync(new URL('../public/notifications-ui.js',import.meta.url),'utf8');
+const css=readFileSync(new URL('../public/notifications.css',import.meta.url),'utf8');
 const sw=readFileSync(new URL('../public/notifications-sw.js',import.meta.url),'utf8');
 const auth=readFileSync(new URL('../server-auth-hardening.js',import.meta.url),'utf8');
 
@@ -193,4 +194,44 @@ test('compact notification summaries update after voice and channel changes',()=
 test('permission-scoped Admin notification routing uses a PostgreSQL parameter placeholder',()=>{
   assert.ok(core.includes("g.permission_code=$" + "${params.length}"));
   assert.ok(!core.includes("g.permission_code=" + "${params.length}"));
+});
+
+
+test('notification center visibly identifies Caliof, Business & Life and recipient profile context',()=>{
+  assert.match(ui,/class="notificationBrand"/);
+  assert.match(ui,/>CALIOF</);
+  assert.match(ui,/Business & Life/);
+  assert.match(ui,/NOTIFICATION_ROLE_LABELS/);
+  assert.match(ui,/notificationRoleLabel/);
+  assert.match(ui,/notificationTopic/);
+  assert.match(ui,/class="notificationRole"/);
+  assert.match(css,/notificationCard\.role-merchant/);
+  assert.match(css,/notificationCard\.role-courier/);
+  assert.match(css,/notificationCard\.role-supplier/);
+});
+
+test('notification inbox summarizes unread and attention-required items without changing event authority',()=>{
+  assert.match(ui,/const unreadCount=rows\.filter/);
+  assert.match(ui,/const actionCount=rows\.filter/);
+  assert.match(ui,/needsNotificationAction/);
+  assert.match(ui,/class="notificationSummary"/);
+  assert.match(ui,/need attention/);
+});
+
+test('quick notification modes are safe presets over existing category preferences',()=>{
+  assert.match(ui,/QUICK_NOTIFICATION_MODES/);
+  assert.match(ui,/data-notification-mode="recommended"/);
+  assert.match(ui,/data-notification-mode="essential"/);
+  assert.match(ui,/data-notification-mode="custom"/);
+  assert.match(ui,/profile_role:''/);
+  assert.match(ui,/cat==='security'\?true:v\.in_app/);
+  assert.match(ui,/marketing/);
+  assert.match(ui,/applyQuickNotificationMode/);
+  assert.doesNotMatch(ui,/marketing.*urgent/s);
+});
+
+test('custom mode remains manual and compact settings stay closed by default',()=>{
+  assert.match(ui,/Open a section below to customize notifications/);
+  assert.match(css,/notificationModeChoices/);
+  assert.doesNotMatch(ui,/<details class="notificationSettingsGroup" open/);
 });
