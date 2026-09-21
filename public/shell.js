@@ -425,7 +425,10 @@ const HUBS = {
     ['💳','My Money','Payments, refunds and personal purchase flow','Money']
   ],
   supplier: [
-    ['📦','My Catalog','Products and raw materials you supply','Catalog'],['📥','Incoming Orders','Purchase orders from connected merchants','Procurement'],['⏱️','ETA & Readiness','Confirm availability and ready times','ETA'],['🚚','Fulfilment','Pickup or supplier delivery status','Fulfilment']
+    ['☀️','Today','What needs your attention now','Today'],
+    ['📦','Catalog','Products, pricing and availability','Catalog'],
+    ['📥','Orders','New, preparing and fulfilment orders','Orders'],
+    ['💰','Money','Receivables and recorded payments','Money']
   ],
   courier: [
     ['✅','Eligibility','Admin approval and document status','Eligibility'],['🟢','Availability','Go available after approval','Availability'],['📋','Assigned Deliveries','Your active delivery queue','Deliveries'],['🗺️','Active Route','Pickup, transit and completion','Tracking'],['💰','Earnings & Money','Recorded earnings, settlement and payout status','Money']

@@ -17,6 +17,8 @@ import { priceForQuantity } from './supplier-domain-core.js';
 import {
   ensureSupplierSourcingV4Schema,registerSupplierSourcingV4Routes,supplierReorderSuggestions
 } from './server-supplier-sourcing-v4.js';
+import {ensureSupplierDailyV5Schema,registerSupplierDailyV5Routes} from './server-supplier-daily-v5.js';
+import {ensureSupplierExceptionsV5Schema,registerSupplierExceptionsV5Routes} from './server-supplier-exceptions-v5.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -159,7 +161,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     PRIMARY KEY(receipt_id,purchase_order_item_id)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS supplier_payment_tx_unique ON transactions(source,source_id) WHERE source='supplier_payment';
-`);await ensureCatalogMediaSchema(pool);await ensureSupplierDomainV2Schema(pool);await ensureSupplierCommercialV3Schema(pool);await ensureSupplierSourcingV4Schema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureSupplierDomainV2Schema(pool);await ensureSupplierCommercialV3Schema(pool);await ensureSupplierSourcingV4Schema(pool);await ensureSupplierDailyV5Schema(pool);await ensureSupplierExceptionsV5Schema(pool)}
 
 async function relationship(businessId,supplierId){const r=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value FROM supplier_relationships r JOIN accounts a ON a.id=r.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=r.supplier_account_id WHERE r.business_id=$1 AND r.supplier_account_id=$2`,[businessId,supplierId]);return r.rows[0]||null}
 async function catalog(supplierId){const{rows}=await pool.query(`SELECT * FROM supplier_catalog_items WHERE supplier_account_id=$1 AND active=TRUE ORDER BY availability_status='available' DESC,product_name`,[supplierId]);const ids=rows.map(x=>Number(x.id));const[media,tierRows]=await Promise.all([mediaForEntities(pool,{entityType:'supplier_catalog_item',entityIds:ids,publicOnly:false}),ids.length?pool.query(`SELECT catalog_item_id,minimum_quantity,price_per_pack,label FROM supplier_catalog_price_tiers WHERE catalog_item_id=ANY($1::bigint[]) ORDER BY catalog_item_id,minimum_quantity`,[ids]):Promise.resolve({rows:[]})]);const tiers=new Map();for(const tier of tierRows.rows){const id=Number(tier.catalog_item_id);if(!tiers.has(id))tiers.set(id,[]);tiers.get(id).push(tier)}return rows.map(row=>{const images=media.get(Number(row.id))||[];const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible)||null;return{...row,price_tiers:tiers.get(Number(row.id))||[],images,image_data_url:primary?.data_url||'',image_source_type:primary?.source_type||''}})}
@@ -201,6 +203,8 @@ app.get('/api/procurement/respond/:token',async(req,res,next)=>{try{const po=awa
 registerSupplierDomainV2Routes({app,pool,body,identity});
 registerSupplierCommercialV3Routes({app,pool,body,identity});
 registerSupplierSourcingV4Routes({app,pool,body,identity});
+registerSupplierDailyV5Routes({app,pool,body,identity});
+registerSupplierExceptionsV5Routes({app,pool,body,identity});
 
 function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Supplier upstream unavailable'})});req.pipe(up)}
 app.use(proxy)
