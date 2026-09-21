@@ -75,3 +75,15 @@ test('new Admin action surfaces keep mobile touch targets and compact nav contra
   assert.match(css,/\.adminNav\{[^}]*overflow-x:auto/);
   assert.match(css,/\.adminNav button\{[^}]*min-height:38px/);
 });
+
+
+test('Admin Overview leads with understandable work areas and keeps raw permissions collapsed',()=>{
+  assert.match(ui,/Available work areas/);
+  assert.match(ui,/data-overview-module/);
+  assert.match(ui,/TECHNICAL ACCESS/);
+  assert.doesNotMatch(ui,/<h3>My delegated functions<\/h3>/);
+});
+
+test('Support reply disables the actual submit action while sending',()=>{
+  assert.match(ui,/button=form\.querySelector\('button\[type="submit"\]'\),out=document\.getElementById\('supportReplyResult'\)/);
+});
