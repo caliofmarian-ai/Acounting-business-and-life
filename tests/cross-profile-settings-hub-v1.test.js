@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const shell=read('public/shell.js');
-const identity=read('identity-server.js');
+const runtimeAuth=read('server-auth.js');
 const settings=read('public/profile-settings-ui.js');
 const notifications=read('public/notifications-ui.js');
 const legal=read('public/legal-ui.js');
@@ -21,10 +21,15 @@ test('signed-in bootstrap opens canonical Account Home instead of forcing a prof
   assert.match(shell,/Choose where you want to continue/);
 });
 
-test('disabling an active profile preserves account continuity and chooses next enabled profile or null',()=>{
-  assert.match(identity,/if\(!enabled\)\{const next=await pool\.query/);
-  assert.match(identity,/enabled=TRUE AND role<>\$2/);
-  assert.match(identity,/UPDATE accounts SET active_role=\$1[^]*next\.rows\[0\]\?\.role\|\|null/);
+test('production account runtime allows zero active profiles and preserves account continuity',()=>{
+  assert.match(runtimeAuth,/ALTER TABLE accounts ALTER COLUMN active_role DROP NOT NULL/);
+  assert.match(runtimeAuth,/ALTER TABLE accounts ALTER COLUMN active_role DROP DEFAULT/);
+  assert.match(runtimeAuth,/INSERT INTO accounts\(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role\)[^]*VALUES\(\$1,\$2,\$3,\$4,NULL,/);
+  assert.match(runtimeAuth,/if\(!activeProfile\)/);
+  assert.match(runtimeAuth,/UPDATE accounts SET active_role=NULL/);
+  assert.match(runtimeAuth,/const nextRole=await pool\.query/);
+  assert.match(runtimeAuth,/enabled=TRUE AND role<>\$2/);
+  assert.match(runtimeAuth,/nextRole\.rows\[0\]\?\.role\|\|null/);
   const start=shell.indexOf('async function toggleProfile');
   const end=shell.indexOf('async function openDrawer',start);
   const block=shell.slice(start,end);
