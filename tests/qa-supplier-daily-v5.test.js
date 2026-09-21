@@ -30,3 +30,21 @@ test('Supplier Daily V5 acceptance preserves V1 through V4 baseline and no opaqu
   assert.match(source,/supplier_v1_v2_v3_v4_baseline:true/);
   assert.match(source,/priority_score:false/);
 });
+
+
+test('Supplier Daily V5 acceptance validates explicit backorder lifecycle without hidden PO mutation',()=>{
+  assert.match(source,/backorder_proposal_no_po_mutation:true/);
+  assert.match(source,/backorder_merchant_acceptance_explicit:true/);
+  assert.match(source,/backorder_fulfilment_confirmed_delta:true/);
+  assert.match(source,/backorder acceptance changed ordered or confirmed packs/);
+  assert.match(source,/backorder fulfilment did not preserve ordered quantity/);
+});
+
+test('Supplier Daily V5 acceptance keeps substitution approval evidence-only until physical fulfilment exists',()=>{
+  assert.match(source,/substitution_proposal_no_mutation:true/);
+  assert.match(source,/substitution_merchant_acceptance_explicit:true/);
+  assert.match(source,/substitution_not_physically_fulfilled:true/);
+  assert.match(source,/MERCHANT_APPROVED_NOT_YET_FULFILLED/);
+  assert.match(source,/substitution acceptance changed PO quantity, money or receiving/);
+  assert.match(source,/exception proposals changed Inventory/);
+});
