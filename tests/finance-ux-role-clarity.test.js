@@ -24,16 +24,16 @@ test('role shell is fail-closed and never defaults unresolved identity to Mercha
 });
 
 test('Customer hub contains shopper features and no Merchant accounting/menu creation destination',()=>{
-  const hubs=between(shell,'const HUBS = {','function renderRoleHub');
-  const customer=between(hubs,'customer: [','supplier: [');
-  assert.match(customer,/Food/);
-  assert.match(customer,/Non-food/);
-  assert.match(customer,/My Orders/);
-  assert.match(customer,/My Money/);
+  const customer=between(shell,'function renderCustomerHub(){','function renderRoleHub');
+  assert.match(customer,/Shop local/);
+  assert.match(customer,/>Food</);
+  assert.match(customer,/>Non-food</);
+  assert.match(customer,/My orders/);
+  assert.match(customer,/My money/);
+  assert.match(customer,/Local Services/);
   assert.doesNotMatch(customer,/Finance & Accounting/);
-  assert.doesNotMatch(customer,/Food menu/);
   assert.doesNotMatch(customer,/Create menu/);
-  assert.doesNotMatch(customer,/Stock/);
+  assert.doesNotMatch(customer,/Stock & purchases/);
 });
 
 test('Customer Settings stays profile-scoped and links to shared account banking',()=>{
