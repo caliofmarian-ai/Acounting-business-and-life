@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeDiscoverySettings,normalizeRfq,quoteEconomics,compareQuotes,validatePreferenceRanks
+  normalizeDiscoverySettings,normalizeRfq,quoteEconomics,compareQuotes,validatePreferenceRanks,reorderPackSuggestion
 } from '../supplier-sourcing-core.js';
 
 test('Supplier sourcing is private by default and categories are explicit',()=>{
@@ -61,4 +61,16 @@ test('preferred sources require unique explicit ranks',()=>{
   assert.throws(()=>validatePreferenceRanks([
     {catalog_item_id:7,preference_rank:1},{catalog_item_id:8,preference_rank:1}
   ]),/Duplicate preference rank/);
+});
+
+
+test('reorder suggestion converts Inventory and Supplier pack units before calculating packs',()=>{
+  assert.deepEqual(reorderPackSuggestion({
+    quantity:10000,reorderLevel:50000,inventoryUnit:'g',
+    baseUnitsPerPack:10,supplierBaseUnit:'kg',minimumPacks:1
+  }),{status:'COMPARABLE',suggested_packs:4});
+  assert.deepEqual(reorderPackSuggestion({
+    quantity:0,reorderLevel:10,inventoryUnit:'kg',
+    baseUnitsPerPack:1,supplierBaseUnit:'piece',minimumPacks:1
+  }),{status:'NOT_COMPARABLE',suggested_packs:null});
 });
