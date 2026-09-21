@@ -91,5 +91,7 @@ test('Customer Profile Settings stays reachable without becoming a primary navig
 });
 
 test('Customer Money language remains personal rather than Merchant business accounting',()=>{
-  assert.match(money,/Personal purchases, payments, refunds and optional personal money tracking\. This is not business accounting\./);
+  assert.match(money,/Personal purchase activity only/);
+  assert.match(money,/Optional personal money tracking/);
+  assert.match(money,/Personal cash flow/);
 });
