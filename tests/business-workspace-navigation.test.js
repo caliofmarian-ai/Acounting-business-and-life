@@ -14,12 +14,15 @@ test('business workspace selector switches context in-app without hard reload',(
   assert.match(accounting,/abl:business-workspace-changed/);
 });
 
-test('workspace switch refreshes visible accounting surfaces without rebuilding the app',()=>{
+test('workspace switch refreshes only the visible role surface without rebuilding the app',()=>{
   assert.match(accounting,/mountWorkspaceBar\(\)/);
   assert.match(accounting,/mountSupplierAccountingTile\(\)/);
-  assert.match(accounting,/await mountEconomicSummary\(\)/);
+  assert.match(accounting,/supplierAccountingMode/);
+  assert.match(accounting,/mountEconomicSummary\('viewDashboard'\)/);
   assert.match(production,/abl:business-workspace-changed/);
-  assert.match(production,/if\(isMerchantBaseActive\(\)\)refreshAll\(\)/);
+  assert.match(production,/invalidateMerchantToday\(\)/);
+  assert.match(production,/loadMerchantToday\(\{force:true\}\)/);
+  assert.doesNotMatch(production,/refreshAll\(/);
 });
 
 test('accounting workspace requires canonical Profile surface and never refetches identity',()=>{
