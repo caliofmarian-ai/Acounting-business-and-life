@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import { Webhook } from 'svix';
-
 const SUPPORTED_RESEND_EVENTS=new Set([
   'email.sent',
   'email.delivered',
@@ -31,23 +29,46 @@ export function resendProviderStatus(eventType=''){
   return STATUS_BY_EVENT[clean(eventType,80)]||'';
 }
 
-export function verifyResendWebhook({rawBody,headers={},secret=''}) {
+export function verifyResendWebhook({rawBody,headers={},secret='',now=Date.now()}) {
   const webhookSecret=clean(secret,500);
   if(!webhookSecret)throw Object.assign(new Error('Resend webhook is not configured'),{status:503,code:'resend_webhook_not_configured'});
   const payload=Buffer.isBuffer(rawBody)?rawBody.toString('utf8'):String(rawBody??'');
   if(!payload)throw Object.assign(new Error('Empty webhook payload'),{status:400,code:'empty_webhook_payload'});
   const id=headerValue(headers['svix-id']??headers['Svix-Id']);
-  const timestamp=headerValue(headers['svix-timestamp']??headers['Svix-Timestamp']);
-  const signature=headerValue(headers['svix-signature']??headers['Svix-Signature']);
-  if(!id||!timestamp||!signature)throw Object.assign(new Error('Missing webhook signature headers'),{status:400,code:'missing_webhook_signature'});
-  try{
-    const webhook=new Webhook(webhookSecret);
-    const event=webhook.verify(payload,{'svix-id':id,'svix-timestamp':timestamp,'svix-signature':signature});
-    if(!event||typeof event!=='object')throw new Error('Invalid webhook body');
-    return{event,providerEventId:id,payloadDigest:digest(rawBody)};
-  }catch(e){
-    throw Object.assign(new Error('Invalid Resend webhook signature'),{status:400,code:'invalid_webhook_signature',cause:e});
+  const timestampRaw=headerValue(headers['svix-timestamp']??headers['Svix-Timestamp']);
+  const signatureHeader=headerValue(headers['svix-signature']??headers['Svix-Signature']);
+  if(!id||!timestampRaw||!signatureHeader)throw Object.assign(new Error('Missing webhook signature headers'),{status:400,code:'missing_webhook_signature'});
+
+  const timestamp=Number.parseInt(timestampRaw,10);
+  const nowSeconds=Math.floor(Number(now)/1000);
+  if(!Number.isFinite(timestamp)||Math.abs(nowSeconds-timestamp)>300){
+    throw Object.assign(new Error('Invalid Resend webhook timestamp'),{status:400,code:'invalid_webhook_timestamp'});
   }
+
+  let key;
+  try{
+    const encoded=webhookSecret.startsWith('whsec_')?webhookSecret.slice(6):webhookSecret;
+    key=Buffer.from(encoded,'base64');
+  }catch{
+    throw Object.assign(new Error('Invalid Resend webhook secret'),{status:500,code:'invalid_webhook_secret'});
+  }
+  if(!key.length)throw Object.assign(new Error('Invalid Resend webhook secret'),{status:500,code:'invalid_webhook_secret'});
+
+  const signedContent=id+'.'+timestamp+'.'+payload;
+  const expected=crypto.createHmac('sha256',key).update(signedContent,'utf8').digest('base64');
+  const valid=signatureHeader.split(/\s+/).some(item=>{
+    const comma=item.indexOf(',');
+    if(comma<0||item.slice(0,comma)!=='v1')return false;
+    const received=item.slice(comma+1);
+    const a=Buffer.from(received,'utf8'),b=Buffer.from(expected,'utf8');
+    return a.length===b.length&&crypto.timingSafeEqual(a,b);
+  });
+  if(!valid)throw Object.assign(new Error('Invalid Resend webhook signature'),{status:400,code:'invalid_webhook_signature'});
+
+  let event;
+  try{event=JSON.parse(payload)}catch{throw Object.assign(new Error('Invalid Resend webhook body'),{status:400,code:'invalid_webhook_body'})}
+  if(!event||typeof event!=='object')throw Object.assign(new Error('Invalid Resend webhook body'),{status:400,code:'invalid_webhook_body'});
+  return{event,providerEventId:id,payloadDigest:digest(rawBody)};
 }
 
 export async function ensureResendObservabilitySchema(pool){
