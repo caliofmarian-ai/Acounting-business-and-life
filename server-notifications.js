@@ -327,7 +327,7 @@ app.use((req,res,next)=>{
   if(!adminApp)return res.status(503).json({error:'Admin + Support runtime is not ready'});
   return adminApp(req,res,next);
 });
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected notification error'})});
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected notification error'})});
 
 async function runWorker(){if(workerRunning)return;workerRunning=true;try{for(let i=0;i<5;i++){const n=await processNotificationDeliveries(pool,{limit:20});if(n<20)break}}catch(e){console.error('Notification worker:',e.message)}finally{workerRunning=false}}
 async function bootstrapResendObservability(){
