@@ -60,6 +60,12 @@ test('Reviews remain backed by published verified Customer-confirmed job reviews
   assert.match(ui,/customer-confirmed completed service job/);
 });
 
+test('returning from a detailed Local Services workspace preserves the contextual panel',()=>{
+  assert.match(shell,/let serviceProviderHubPanel='home'/);
+  assert.match(shell,/serviceProviderHubPanel=target/);
+  assert.match(shell,/setServiceProviderHubPanel\(hub,serviceProviderHubPanel,\{scroll:false\}\)/);
+});
+
 test('Local Services navigation loads detailed data only when a canonical section is opened',()=>{
   const decorateStart=ui.indexOf('async function decorateSvc');
   const decorateEnd=ui.indexOf('function observeSvc',decorateStart);
