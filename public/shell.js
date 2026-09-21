@@ -437,15 +437,6 @@ window.BusinessLifeShell=Object.freeze({
 });
 
 const HUBS = {
-  customer: [
-    ['🍲','Food','Local food merchants, menus and ordering','Marketplace'],
-    ['🧺','Non-food','Everyday goods from nearby merchants','Marketplace'],
-    ['🛠️','Local Services','Electricians, carpenters, painters and more','Local Services'],
-    ['🛒','Platform Store','Philippines-only platform Shopify store','Platform Store'],
-    ['🧾','My Orders','Preparation, payment and order history','Orders'],
-    ['📍','Delivery','Courier status and live tracking','Delivery'],
-    ['💳','My Money','Payments, refunds and personal purchase flow','Money']
-  ],
   supplier: [
     ['☀️','Today','What needs your attention now','Today'],
     ['📦','Catalog','Products, pricing and availability','Catalog'],
@@ -460,7 +451,67 @@ const HUBS = {
   ]
 };
 
+
+function setCustomerHubPanel(hub,panel){
+  const target=panel==='shop'?'shop':'home';
+  hub.querySelectorAll('[data-customer-panel]').forEach(node=>node.classList.toggle('hidden',node.dataset.customerPanel!==target));
+  hub.querySelectorAll('[data-customer-nav]').forEach(button=>button.classList.toggle('active',button.dataset.customerNav===target));
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function openCustomerHubFeature(hub,feature){
+  const target=hub.querySelector('[data-hub-feature="'+feature+'"]');
+  if(!target)return showToast(feature+' is still loading. Try again in a moment.');
+  target.click();
+}
+function renderCustomerHub(){
+  const hub=document.getElementById('roleHub');
+  if(!hub)return;
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  hub.innerHTML=
+    '<div class="hubHero customerHomeHero"><div class="hubEyebrow">Customer profile</div><h1>What would you like to do?</h1><p>Shop local, book trusted help, or continue something already in progress.</p><span class="hubStatus">Philippines Edition</span></div>'+
+    '<section class="customerHomePanel" data-customer-panel="home">'+
+      '<div class="hubSectionTitle"><h2>Start or continue</h2><span>Simple shortcuts</span></div>'+
+      '<div class="customerStartGrid">'+
+        '<button class="customerActionCard primaryCustomerAction" type="button" data-customer-nav-target="shop"><span>🛍️</span><strong>Shop local</strong><small>Food, everyday goods and the separate Platform Store</small></button>'+
+        '<button class="customerActionCard" type="button" data-hub-feature="Local Services"><span>🛠️</span><strong>Find a local service</strong><small>Request quotes and manage service jobs</small></button>'+
+        '<button class="customerActionCard" type="button" data-hub-feature="Orders"><span>🧾</span><strong>My orders</strong><small>Payment, preparation, pickup and delivery context</small></button>'+
+        '<button class="customerActionCard" type="button" data-hub-feature="Money"><span>💳</span><strong>My money</strong><small>Confirmed payments, refunds and personal purchase history</small></button>'+
+      '</div>'+
+      '<button class="customerFeatureProxy hidden" type="button" data-hub-feature="Delivery" tabindex="-1" aria-hidden="true">Deliveries</button>'+
+      '<button class="customerSettingsLink" type="button" data-hub-feature="Profile Settings"><span>⚙️</span><span><strong>Customer settings</strong><small>Shopping, delivery, privacy and payment preferences</small></span><b>›</b></button>'+
+    '</section>'+
+    '<section class="customerHomePanel hidden" data-customer-panel="shop">'+
+      '<div class="hubSectionTitle"><h2>Shop</h2><span>Choose what you need</span></div>'+
+      '<div class="customerShopGrid">'+
+        '<button class="customerShopCard" type="button" data-hub-feature="Marketplace"><span>🍲</span><strong>Food</strong><small>Local food merchants, menus and ordering</small></button>'+
+        '<button class="customerShopCard" type="button" data-hub-feature="Marketplace"><span>🧺</span><strong>Non-food</strong><small>Everyday goods from nearby merchants</small></button>'+
+        '<button class="customerShopCard platform" type="button" data-hub-feature="Platform Store"><span>🛒</span><strong>Platform Store</strong><small>Separate Philippines platform store</small></button>'+
+      '</div>'+
+      '<p class="customerShopBoundary">Merchant Marketplace and Platform Store stay separate. Products, pricing and baskets are never mixed automatically.</p>'+
+    '</section>'+
+    '<nav class="customerPrimaryNav" aria-label="Customer navigation">'+
+      '<button type="button" class="active" data-customer-nav="home"><span>⌂</span><strong>Home</strong></button>'+
+      '<button type="button" data-customer-nav="shop"><span>🛍️</span><strong>Shop</strong></button>'+
+      '<button type="button" data-customer-nav="services"><span>🛠️</span><strong>Services</strong></button>'+
+      '<button type="button" data-customer-nav="orders"><span>🧾</span><strong>Orders</strong></button>'+
+      '<button type="button" data-customer-nav="money"><span>💳</span><strong>Money</strong></button>'+
+    '</nav>';
+  hub.querySelectorAll('[data-hub-feature]').forEach(button=>{
+    button.onclick=()=>button.dataset.hubFeature==='Profile Settings'
+      ?window.BusinessLifeProfileSettings?.open?.('customer')
+      :showToast(button.dataset.hubFeature+' is still loading. Try again in a moment.');
+  });
+  hub.querySelectorAll('[data-customer-nav-target]').forEach(button=>button.onclick=()=>setCustomerHubPanel(hub,button.dataset.customerNavTarget));
+  hub.querySelectorAll('[data-customer-nav]').forEach(button=>button.onclick=()=>{
+    const destination=button.dataset.customerNav;
+    if(destination==='home'||destination==='shop')return setCustomerHubPanel(hub,destination);
+    const feature=destination==='services'?'Local Services':destination==='orders'?'Orders':'Money';
+    openCustomerHubFeature(hub,feature);
+  });
+  hub.classList.remove('hidden');
+}
 function renderRoleHub(role) {
+  if(role==='customer')return renderCustomerHub();
   const meta = ROLE_META[role];
   const hub = document.getElementById('roleHub');
   if (!hub || !meta) return;
