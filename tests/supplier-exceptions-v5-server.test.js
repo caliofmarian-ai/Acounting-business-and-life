@@ -45,3 +45,10 @@ test('multi-business Supplier accounts fail closed when PO business attribution 
   assert.match(source,/quote_supplier_business_id/);
   assert.match(source,/activeSupplierBindingCount/);
 });
+
+
+test('multi-business substitutions fail closed until catalog items have explicit business attribution',()=>{
+  assert.match(source,/SUPPLIER_SUBSTITUTE_CATALOG_ATTRIBUTION_REQUIRED/);
+  assert.match(source,/Substitution requires explicit catalog-to-business attribution/);
+  assert.match(source,/activeSupplierBindingCount\(pool,me\.account\.id\)!==1/);
+});
