@@ -118,13 +118,14 @@ test('Merchant Finance translates internal states into plain user language',()=>
   assert.doesNotMatch(ui,/replaceAll\('_',' '\)/);
 });
 
-test('Merchant dashboard has one primary financial summary and labels ledger activity',()=>{
+test('Merchant Today replaces the legacy finance-heavy dashboard while Money preserves evidence boundaries',()=>{
   const index=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const legacyUi=readFileSync(new URL('../public/v03.js',import.meta.url),'utf8');
-  assert.match(index,/legacyFinanceSnapshot/);
-  assert.match(index,/Recorded ledger activity/);
-  assert.match(index,/not automatically confirmed customer payments/);
-  assert.match(ui,/\.legacyFinanceSnapshot/);
+  assert.match(index,/id="viewDashboard" class="view merchantTodayView"/);
+  assert.match(index,/Confirmed business snapshot/);
+  assert.match(index,/Confirmed customer payments/);
+  assert.doesNotMatch(index,/legacyFinanceSnapshot/);
+  assert.match(ui,/mountEconomicSummary\('viewMoney'\)/);
   assert.match(ui,/classList\.add\('roleFinanceHidden'\)/);
   assert.match(css,/\.ledgerReconciliation\.separate/);
   assert.match(legacyUi,/Manual ledger entry/);
