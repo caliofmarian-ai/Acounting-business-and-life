@@ -718,8 +718,6 @@ function openCourierHubFeature(hub,feature){
   if(['Eligibility','Availability','Deliveries','Tracking'].includes(feature)&&window.BusinessLifeDelivery?.openCourierWorkspace){
     return window.BusinessLifeDelivery.openCourierWorkspace(feature);
   }
-  const target=hub.querySelector('[data-hub-feature="'+feature+'"]');
-  if(target)return target.click();
   showToast(feature+' is still loading. Try again in a moment.');
 }
 function renderCourierHub(){
