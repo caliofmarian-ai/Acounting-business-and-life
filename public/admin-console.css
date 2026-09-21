@@ -59,3 +59,10 @@
 @media(max-width:520px){.supportControls{grid-template-columns:1fr}.adminDetail .sectionTitle{align-items:flex-start}.adminDetail .supportMeta{gap:5px}}
 
 .adminTopActions{display:flex;align-items:center;gap:8px}.adminTopActions .notificationBell{flex:0 0 auto}.courierDocumentReview{display:grid;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}.courierDocumentReview:last-child{border-bottom:0}.courierDocumentReview label{display:grid;gap:5px}.courierDocumentReview select,.courierDocumentReview input{min-height:44px}@media(max-width:520px){.adminTopbar{align-items:flex-start}.adminTopActions{align-items:center}.backToApp{white-space:nowrap}}
+
+.adminInviteResult{display:grid;gap:8px;margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.035)}
+.adminInviteResult span{color:var(--muted);font-size:12px;line-height:1.45}
+.adminInviteResult code{display:block;max-width:100%;padding:9px;border-radius:10px;background:rgba(0,0,0,.18);white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.adminInviteResult button{min-height:44px}
+.adminInvitationRow{overflow-wrap:anywhere}
+#assignmentFunctionsForm .functionChoice{min-height:44px}
