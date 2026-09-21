@@ -174,5 +174,6 @@ function openGate(gate){
   Array.prototype.forEach.call(body.querySelectorAll("[data-gate-version]"),function(b){b.onclick=function(){viewDoc(Number(b.dataset.gateVersion),gate.action_code,gate.role);};});
   document.getElementById("gateCenter").onclick=openCenter;
 }
+window.BusinessLifeLegal=Object.freeze({open:openCenter,close:closeLegal});
 function boot(){ensureUi();addButton();document.addEventListener("abl:profile-state",addButton);}
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();

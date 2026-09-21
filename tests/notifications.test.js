@@ -66,6 +66,13 @@ test('auth reset and verification email uses the shared notification delivery le
   assert.match(core,/notification_deliveries/);
 });
 
+test('Account Settings can open the canonical notification center directly on Settings',()=>{
+  assert.match(ui,/function openNotificationSettings\(\)/);
+  assert.match(ui,/renderNotificationCenter\(\)/);
+  assert.match(ui,/switchNotificationTab\('settings',settingsTab\)/);
+  assert.match(ui,/BusinessLifeNotifications=Object\.freeze\(\{open:openNotifications,openSettings:openNotificationSettings,close:closeNotifications\}\)/);
+});
+
 test('notification center supports inbox preferences locale and Web Push opt-in',()=>{
   assert.match(ui,/notificationBell/);
   assert.match(ui,/unread-count/);

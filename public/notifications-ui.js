@@ -17,6 +17,14 @@ function addBell(){
 async function refreshUnread(){if(!token())return;try{addBell();const x=await api('/api/notifications/unread-count?threaded=all');const badge=document.getElementById('notificationBadge');if(!badge)return;badge.textContent=String(x.unread||0);badge.classList.toggle('hidden',!x.unread)}catch{}}
 function closeNotifications(){document.getElementById('notificationBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
 async function openNotifications(){ensureNotificationUi();document.getElementById('notificationBackdrop').classList.remove('hidden');document.body.style.overflow='hidden';await renderNotificationCenter()}
+async function openNotificationSettings(){
+  ensureNotificationUi();
+  document.getElementById('notificationBackdrop').classList.remove('hidden');
+  document.body.style.overflow='hidden';
+  await renderNotificationCenter();
+  const settingsTab=document.querySelector('[data-ntab="settings"]');
+  if(settingsTab)switchNotificationTab('settings',settingsTab);
+}
 function iconFor(code){if(code.startsWith('order.'))return'🛍️';if(code.startsWith('delivery.'))return'🛵';if(code.startsWith('procurement.')||code.startsWith('supplier.'))return'📦';if(code.startsWith('service.'))return'🧰';if(code.startsWith('support.'))return'💬';if(code.startsWith('incident.'))return'🛡️';if(code.startsWith('profile.'))return'👤';return'🔔'}
 function timeAgo(value){const ms=Date.now()-new Date(value).getTime(),m=Math.floor(ms/60000);if(m<1)return'now';if(m<60)return`${m}m`;const h=Math.floor(m/60);if(h<24)return`${h}h`;return`${Math.floor(h/24)}d`}
 const NOTIFICATION_ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Courier',delivery:'Courier',service_provider:'Local Services',admin:'Admin'};
@@ -309,6 +317,7 @@ async function pollForegroundVoice(){
   }catch{}
 }
 function noteAudioInteraction(){audioUserInteracted=true}
+window.BusinessLifeNotifications=Object.freeze({open:openNotifications,openSettings:openNotificationSettings,close:closeNotifications});
 function boot(){
   ensureNotificationUi();addBell();refreshUnread();primeForegroundVoice();
   pollTimer=setInterval(()=>{if(!document.hidden)refreshUnread()},60000);
