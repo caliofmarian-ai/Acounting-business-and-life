@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#0b1423">
   <title>Business & Life Admin</title>
   <link rel="stylesheet" href="/admin-console.css">
+  <link rel="stylesheet" href="/notifications.css">
 </head>
 <body>
   <div id="adminApp" class="adminShell">
@@ -14,10 +15,13 @@
         <small>Business & Life</small>
         <h1>Admin Workspace</h1>
       </div>
-      <a class="backToApp" href="/">User app</a>
+      <div class="topActions adminTopActions">
+        <a class="backToApp" href="/">User app</a>
+      </div>
     </header>
     <main id="adminRoot" class="adminLoading" aria-live="polite">Checking delegated access…</main>
   </div>
   <script src="/admin-console.js" defer></script>
+  <script src="/notifications-ui.js" defer></script>
 </body>
 </html>
