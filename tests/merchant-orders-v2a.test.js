@@ -34,9 +34,11 @@ test('Orders server snapshots only products from the requested business',()=>{
   assert.match(server,/i\.business_id=\$2/);
 });
 
-test('counter-order product list is business scoped',()=>{
+test('counter-order product list is private to the selected Merchant business',()=>{
+  assert.match(server,/\/api\/orders\/products'[\s\S]*requireMerchant\(req,businessId\)/);
   assert.match(server,/WHERE p\.business_id=\$1 AND p\.active=TRUE/);
   assert.match(server,/A valid business_id is required/);
+  assert.doesNotMatch(server,/Customer or Merchant profile required/);
   assert.doesNotMatch(server,/if\(businessId!==1\) return res\.json\(\[\]\)/);
 });
 
