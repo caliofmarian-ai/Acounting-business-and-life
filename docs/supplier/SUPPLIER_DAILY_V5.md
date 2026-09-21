@@ -204,11 +204,39 @@ Physical substitute fulfilment/receiving is intentionally deferred until the nor
 
 ## 9. Multi-business safety
 
+Business & Life must not combine Supplier activity from multiple businesses merely because they share one account.
+
+### Today / Money / availability
+
+The current V1–V4 catalog and some direct PO history are account-scoped and do not always contain explicit Supplier-business attribution.
+
+Therefore, when an account has more than one active Supplier-business binding:
+
+- `Today` fails closed with `SUPPLIER_BUSINESS_ATTRIBUTION_REQUIRED`;
+- quick catalog availability fails closed with `SUPPLIER_CATALOG_BUSINESS_ATTRIBUTION_REQUIRED`;
+- UI shows the attribution problem explicitly instead of an empty dashboard.
+
+Business & Life does not show an account-wide mixed Today dashboard and call it business-specific.
+
+### Backorder
+
 Supplier business attribution is explicit when the PO originated from a quote with `supplier_business_id`.
 
-For a Supplier account with multiple active Supplier-business bindings, a PO without attributable Supplier business fails closed for backorder/substitution actions.
+Backorder may use that attributable PO evidence because it does not introduce a new catalog item.
 
-The system does not guess which Supplier business owns the exception.
+A direct PO without attributable Supplier business fails closed on a multi-business Supplier account.
+
+### Substitution
+
+Substitution introduces a new Supplier catalog item. The current catalog is account-scoped and does not yet have a general canonical catalog-item→Supplier-business binding.
+
+Therefore multi-business substitution fails closed with:
+
+`SUPPLIER_SUBSTITUTE_CATALOG_ATTRIBUTION_REQUIRED`
+
+until explicit catalog-to-business attribution exists.
+
+The system does not guess which Supplier business owns the substitute item.
 
 ## 10. Today exception surfaces
 
