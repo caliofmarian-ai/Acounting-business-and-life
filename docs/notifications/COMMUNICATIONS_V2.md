@@ -1,6 +1,6 @@
 # Business & Life Communications V2
 
-Status: **IMPLEMENTATION IN REVIEW**
+Status: **V2 EMAIL + NOTIFICATION CENTER LIVE / V2C OBSERVABILITY IN REVIEW**
 
 Parent issue: #385
 
@@ -91,16 +91,17 @@ Resend supports inbound email via `email.received` webhooks, but Business & Life
 
 The existing `notification_deliveries` ledger remains canonical.
 
-Future signed Resend webhook handling should reconcile at least:
+Communications V2C implements signed provider reconciliation for:
 
 - sent;
 - delivered;
 - delivery delayed;
 - bounced;
 - complained;
-- failed.
+- failed;
+- suppressed.
 
-Provider webhooks update delivery evidence; they do not replace Business & Life domain state.
+Provider webhooks update separate provider evidence; they do not replace Business & Life domain state. Payloads are verified from raw bytes before trust, deduplicated by provider event id, and minimized so provider webhook storage does not copy recipient addresses or message content.
 
 ## 8. Company Gmail organization
 
@@ -164,10 +165,16 @@ Implemented on `communications/caliof-email-v2`:
 - opt-in Reply-To configuration;
 - reuse of existing Resend routing and delivery ledger.
 
-Still separate follow-up work:
+Merged follow-up slices:
+- Notification Center V2A — CALIOF identity, profile context and Recommended / Essential / Custom modes;
+- Notification Center V2B — opt-in entity threading for Support, Orders, Delivery, Purchase Orders and Service Jobs plus grouped Web Push.
 
-- signed Resend delivery webhooks;
+Current V2C review:
+- signed Resend delivery observability;
+- provider outcome reconciliation without exposing message content.
+
+Still separate follow-up work:
+- production Resend webhook registration + signed controlled evidence;
 - inbound Support email → ticket;
-- notification thread grouping for order/delivery/support/procurement/service;
 - digest generation;
 - broader verified entity deep-links.
