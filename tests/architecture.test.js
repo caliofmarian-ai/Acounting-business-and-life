@@ -45,7 +45,16 @@ test('database bootstrap upgrades legacy ambiguous SSL modes to verify-full', ()
   const probe = spawnSync(process.execPath, ['--import', './bootstrap-env.js', '-e', 'process.stdout.write(process.env.DATABASE_URL || "")'], {
     cwd: new URL('..', import.meta.url),
     encoding: 'utf8',
-    env: { ...process.env, DATABASE_URL: 'postgres://user:pass@example.com/db?sslmode=require' }
+    env: {
+      ...process.env,
+      // This probe tests only DATABASE_URL normalization. Do not inherit a
+      // Railway service identity, otherwise runtime-safety correctly treats
+      // the intentionally dummy example.com database as a real preview DB.
+      RAILWAY_SERVICE_NAME: '',
+      APP_ENV: '',
+      OWNER_MIGRATION_ENABLED: 'false',
+      DATABASE_URL: 'postgres://user:pass@example.com/db?sslmode=require'
+    }
   });
   assert.equal(probe.status, 0, probe.stderr);
   assert.match(probe.stdout, /sslmode=verify-full/);
