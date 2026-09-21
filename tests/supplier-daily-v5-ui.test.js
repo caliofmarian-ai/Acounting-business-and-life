@@ -53,3 +53,11 @@ test('availability UI explicitly says it is not exact warehouse stock',()=>{
   assert.match(ui,/Availability updated/);
   assert.match(ui,/data-v5-availability/);
 });
+
+
+test('Supplier Today and Money explain multi-business attribution blocks instead of showing mixed data',()=>{
+  assert.match(ui,/Today needs business attribution/);
+  assert.match(ui,/Business & Life will not combine orders or catalog activity from different Supplier businesses/);
+  assert.match(ui,/Money needs business attribution/);
+  assert.match(ui,/No receivable is shown until Supplier-business attribution is unambiguous/);
+});
