@@ -54,6 +54,149 @@ function analysisRows(data){if(!data.categories?.length)return[emptyRow('No spen
 
 $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';try{const r=await api('/api/login',{method:'POST',body:JSON.stringify({pin:$('pin').value})});token=r.token;localStorage.setItem('abl_token',token);showShell()}catch(err){$('loginError').textContent=err.message}});
 
+let merchantTodayCache=null;
+let merchantTodayPromise=null;
+let merchantTodayBusinessId=null;
+
+function currentMerchantBusinessId(){
+  const id=Number(window.BusinessLifeAccounting?.getState?.()?.activeBusinessId);
+  return Number.isInteger(id)&&id>0?id:null;
+}
+function invalidateMerchantToday(){
+  merchantTodayCache=null;
+  merchantTodayPromise=null;
+  merchantTodayBusinessId=null;
+}
+function todayChip(label,value,{muted=false}={}){
+  const n=Number(value||0);
+  return '<span class="todayChip '+(n>0&&!muted?'attention':'')+'"><strong>'+n+'</strong>'+esc(label)+'</span>';
+}
+function renderMerchantToday(data){
+  if(!data)return;
+  merchantTodayCache=data;
+  merchantTodayBusinessId=Number(data.business?.id)||currentMerchantBusinessId();
+  $('todayBusinessName').textContent=data.business?.name||'Current business';
+  $('todayOrdersTotal').textContent=String(Number(data.orders?.attention_total||0));
+  $('todayOrdersHeadline').textContent=Number(data.orders?.attention_total||0)>0?'Orders need attention':'No active order work';
+  $('todayOrderChips').innerHTML=[
+    todayChip('Waiting',data.orders?.waiting_customer),
+    todayChip('Payment',data.orders?.awaiting_payment),
+    todayChip('Accepted',data.orders?.accepted),
+    todayChip('Preparing',data.orders?.preparing),
+    todayChip('Ready',Number(data.orders?.ready||0)+Number(data.orders?.delivery_handoff||0))
+  ].join('');
+  $('todayOrdersCopy').textContent=Number(data.orders?.attention_total||0)>0
+    ?'Open Orders to handle the next customer action.'
+    :'New customer work will appear here.';
+
+  $('todayInventoryTotal').textContent=String(Number(data.inventory?.attention_total||0));
+  $('todayInventoryHeadline').textContent=Number(data.inventory?.out_of_stock||0)>0
+    ?'Out-of-stock items need action'
+    :Number(data.inventory?.low_stock||0)>0?'Low stock needs attention':'Stock looks clear';
+  const inv=Array.isArray(data.inventory?.items)?data.inventory.items:[];
+  $('todayInventoryItems').innerHTML=inv.length
+    ?inv.map(x=>'<div><strong>'+esc(x.item)+'</strong><span>'+num(x.quantity,4)+' '+esc(x.unit)+' · reorder '+num(x.reorder_level,4)+'</span></div>').join('')
+    :'<div class="todayEmpty">No low-stock inventory evidence.</div>';
+  $('todayInventoryCopy').textContent=Number(data.inventory?.source_attention||0)>0
+    ?String(Number(data.inventory.source_attention))+' low-stock item(s) already have supplier-source evidence.'
+    :'Only recorded Inventory is shown; catalog items never create fake stock.';
+
+  $('todaySupplierTotal').textContent=String(Number(data.supplier?.attention_total||0));
+  $('todaySupplierHeadline').textContent=Number(data.supplier?.decisions_required||0)>0
+    ?'Supplier changes need a decision'
+    :Number(data.supplier?.rfqs_to_compare||0)>0?'Quotes are ready to compare'
+    :Number(data.supplier?.received_unpaid||0)>0?'Received stock is still unpaid':'No supplier decisions';
+  $('todaySupplierChips').innerHTML=[
+    todayChip('Decisions',data.supplier?.decisions_required),
+    todayChip('Quotes',data.supplier?.rfqs_to_compare),
+    todayChip('Waiting RFQ',data.supplier?.rfqs_waiting_supplier,{muted:true}),
+    todayChip('Received unpaid',data.supplier?.received_unpaid)
+  ].join('');
+
+  $('todayCatalogTotal').textContent=String(Number(data.catalog?.attention_total||0));
+  $('todayCatalogHeadline').textContent=Number(data.catalog?.attention_total||0)>0?'Catalog needs review':'Catalog is ready';
+  const catalogChips=[
+    todayChip('Unpublished',data.catalog?.unpublished),
+    todayChip('Unavailable',data.catalog?.unavailable),
+    todayChip('Missing media',data.catalog?.missing_media),
+    todayChip('AI review',data.catalog?.ai_drafts_to_review)
+  ];
+  if(data.presentation?.food_modules_enabled)catalogChips.push(todayChip('Recipe',data.catalog?.recipe_attention));
+  $('todayCatalogChips').innerHTML=catalogChips.join('');
+  $('todayCatalogCopy').textContent=data.presentation?.merchant_domain==='non_food'
+    ?'Non-food catalog checks use stock, publication and media evidence — never recipe requirements.'
+    :'Publishing, media, availability and food-recipe evidence for this business.';
+
+  $('todayMoneyReceived').textContent=money(data.money?.confirmed_received);
+  $('todayCompletedSales').textContent=money(data.money?.completed_sales);
+  $('todayAwaitingPayment').textContent=money(data.money?.awaiting_payment);
+  $('todayBusinessExpenses').textContent=money(data.money?.business_expenses);
+  $('todayFoodActions').classList.toggle('hidden',!data.presentation?.food_modules_enabled);
+  const stamp=data.generated_at?new Date(data.generated_at):new Date();
+  $('todayUpdatedAt').textContent='Updated '+stamp.toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'});
+  $('todayLoading').classList.add('hidden');
+  $('todayError').classList.add('hidden');
+  $('todayContent').classList.remove('hidden');
+  document.dispatchEvent(new CustomEvent('abl:merchant-today-data',{detail:{business:data.business,presentation:data.presentation}}));
+}
+function merchantTodayLoading(){
+  $('todayError')?.classList.add('hidden');
+  $('todayContent')?.classList.add('hidden');
+  $('todayLoading')?.classList.remove('hidden');
+}
+function merchantTodayError(error){
+  $('todayLoading')?.classList.add('hidden');
+  $('todayContent')?.classList.add('hidden');
+  $('todayError')?.classList.remove('hidden');
+  if($('todayErrorMessage'))$('todayErrorMessage').textContent=error?.message||'Check your connection and try again.';
+}
+async function loadMerchantToday({force=false}={}){
+  if(!isMerchantBaseActive()||!$('viewDashboard'))return null;
+  const activeId=currentMerchantBusinessId();
+  if(!force&&merchantTodayCache&&(!activeId||Number(merchantTodayBusinessId)===activeId)){
+    renderMerchantToday(merchantTodayCache);
+    return merchantTodayCache;
+  }
+  if(!force&&merchantTodayPromise)return merchantTodayPromise;
+  merchantTodayLoading();
+  merchantTodayPromise=api('/api/merchant/today')
+    .then(data=>{renderMerchantToday(data);return data})
+    .catch(error=>{merchantTodayError(error);throw error})
+    .finally(()=>{merchantTodayPromise=null});
+  return merchantTodayPromise;
+}
+async function openMerchantAction(action){
+  document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.merchantAction===action));
+  if(action==='orders'){
+    if(window.BusinessLifeOrders?.openMerchantOrders)return window.BusinessLifeOrders.openMerchantOrders();
+    return document.getElementById('ordersQuickButton')?.click();
+  }
+  if(action==='catalog'){
+    if(window.BusinessLifeMarketplace?.openMerchantStore)return window.BusinessLifeMarketplace.openMerchantStore();
+    return document.getElementById('marketQuickButton')?.click();
+  }
+  if(action==='suppliers'){
+    if(window.BusinessLifeSuppliers?.openMerchantProcurement)return window.BusinessLifeSuppliers.openMerchantProcurement();
+    return document.getElementById('supQuickButton')?.click();
+  }
+  if(action==='inventory')return setView('Stock');
+  if(action==='money')return setView('Money');
+  if(action==='quick-sale')return setView('Sell');
+  if(action==='recipes')return setView('Menu');
+}
+async function loadMerchantView(name){
+  if(!isMerchantBaseActive())return;
+  if(name==='Dashboard')return loadMerchantToday();
+  if(name==='Money'){
+    document.dispatchEvent(new CustomEvent('abl:merchant-money-opened'));
+    return Promise.all([loadDay(),loadRemittances(),loadAnalysis(7),loadAnalysis(30)]);
+  }
+  if(name==='Stock')return loadStock();
+  if(name==='Sell')return Promise.all([loadStock(),loadProducts()]);
+  if(name==='Menu')return Promise.all([loadStock(),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)]);
+  if(name==='History')return loadTransactions();
+}
+
 async function loadSummary(){
   const s=await cachedJson('/api/summary','summary');$('availableTotal').textContent=money(s.available_total);$('todaySales').textContent=money(s.today_sales);$('todayProfit').textContent=money(s.today_profit);$('bizExpenses').textContent=money(s.business_expenses);$('personalWithdrawals').textContent=money(s.personal_withdrawals);$('moneyReceived').textContent=money(s.money_received);$('remittanceReceived').textContent=`Remittances: ${money(s.remittance_received)}`;$('acctCash').textContent=money(s.accounts?.cash);$('acctGcash').textContent=money(s.accounts?.gcash);$('acctBank').textContent=money(s.accounts?.bank);$('acctOther').textContent=money(s.accounts?.other);$('lowStock').textContent=s.low_stock;
   $('menuRevenueToday').textContent=money(s.product_today_revenue);$('menuCogsToday').textContent=money(s.product_today_cogs);$('menuGrossToday').textContent=money(s.product_today_gross_profit);$('menuMarginToday').textContent=`${Number(s.product_today_margin_pct||0).toFixed(1)}% • ${num(s.product_today_portions)} portions`;
