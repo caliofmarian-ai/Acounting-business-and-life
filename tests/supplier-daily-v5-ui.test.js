@@ -40,9 +40,10 @@ test('Today shows daily action buckets and factual money due',()=>{
   assert.match(ui,/supplierTodayPanel/);
 });
 
-test('Money panel preserves V3 commercial authority language',()=>{
-  assert.match(ui,/Receivables use invoice evidence when present, otherwise received value, otherwise the PO/);
+test('Money panel shows operational receivables without treating unreceived PO as money due',()=>{
+  assert.match(ui,/Receivables use invoice evidence when present, otherwise received value/);
   assert.match(ui,/confirmed credits and recorded payments are subtracted/);
+  assert.match(ui,/An unreceived PO is not money due/);
   assert.match(ui,/Money due by order/);
 });
 
