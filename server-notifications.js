@@ -17,6 +17,7 @@ import { DEFAULT_NOTIFICATION_SOUND_VARIANT,notificationSoundVariants,notificati
 import { notificationAudioConfigured,notificationAudioDescriptor,presignNotificationAudioUrl } from './notification-audio-core.js';
 import { notificationVoiceTranscriptMatrix } from './notification-voice-copy.js';
 import { verifyResendWebhook,recordResendProviderEvent } from './resend-delivery-observability.js';
+import { bootstrapResendWebhook,resendWebhookReadiness } from './resend-webhook-bootstrap.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,7 @@ const CATEGORIES=['operational','security','legal','support','compliance','marke
 const THREAD_ENTITY_TYPES=new Set(['support_ticket','order','delivery','purchase_order','service_job']);
 const isNotificationThreadEntity=(type,id)=>Boolean(String(id??'').trim())&&THREAD_ENTITY_TYPES.has(String(type||''));
 let child;let shuttingDown=false;let workerTimer=null;let workerRunning=false;
+let resendWebhookRuntime={ready:Boolean(process.env.RESEND_WEBHOOK_SECRET),status:process.env.RESEND_WEBHOOK_SECRET?'ready':'not_ready',source:process.env.RESEND_WEBHOOK_SECRET?'env':'none',endpoint:'',webhook_id:'',secret:process.env.RESEND_WEBHOOK_SECRET||''};
 
 const clean=(v,max=1200)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
@@ -183,7 +185,7 @@ app.post('/api/notifications/webhooks/resend',express.raw({type:'application/jso
     const verified=verifyResendWebhook({
       rawBody:req.body,
       headers:req.headers,
-      secret:process.env.RESEND_WEBHOOK_SECRET||''
+      secret:resendWebhookRuntime.secret||process.env.RESEND_WEBHOOK_SECRET||''
     });
     const result=await recordResendProviderEvent(pool,{
       providerEventId:verified.providerEventId,
@@ -202,7 +204,7 @@ app.post('/api/notifications/webhooks/resend',express.raw({type:'application/jso
     res.status(status).json({error:status===503?'Resend webhook is not configured':'Invalid Resend webhook'});
   }
 });
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,admin_support:childAlive,notifications:true,version:'0.11-notifications'})}catch{res.status(503).json({ok:false,db:false,admin_support:false,notifications:false,version:'0.11-notifications'})}});
+app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,admin_support:childAlive,notifications:true,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}catch{res.status(503).json({ok:false,db:false,admin_support:false,notifications:false,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}});
 app.get('/notifications.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','notifications.css'),'utf8')));
 app.get('/notifications-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','notifications-ui.js'),'utf8')));
 app.get('/notifications-sw.js',(_q,res)=>res.type('application/javascript').set('Service-Worker-Allowed','/').send(readFileSync(join(__dirname,'public','notifications-sw.js'),'utf8')));
@@ -299,8 +301,16 @@ app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected notification error'})});
 
 async function runWorker(){if(workerRunning)return;workerRunning=true;try{for(let i=0;i<5;i++){const n=await processNotificationDeliveries(pool,{limit:20});if(n<20)break}}catch(e){console.error('Notification worker:',e.message)}finally{workerRunning=false}}
+async function bootstrapResendObservability(){
+  const result=await bootstrapResendWebhook();
+  resendWebhookRuntime=result;
+  const safe=resendWebhookReadiness(result);
+  if(safe.ready)console.log('Resend delivery webhook ready: '+safe.status+' ('+safe.source+')');
+  else console.log('Resend delivery webhook not ready: '+safe.status);
+  return safe;
+}
 function start(){child=spawn(process.execPath,['server-admin-operations.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Admin operations child exited ${code}`);process.exit(code||1)}})}
 async function wait(){for(let i=0;i<startupWaitAttempts(300);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Admin operations child failed health check')}
 async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(workerTimer)clearInterval(workerTimer);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
 process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(()=>ensureNotificationSchema(pool)).then(()=>{workerTimer=setInterval(runWorker,8000);runWorker();app.listen(port,'0.0.0.0',()=>console.log(`Business & Life notification gateway listening on ${port}`))}).catch(e=>{console.error(e);process.exit(1)});
+start();wait().then(()=>ensureNotificationSchema(pool)).then(()=>bootstrapResendObservability()).then(()=>{workerTimer=setInterval(runWorker,8000);runWorker();app.listen(port,'0.0.0.0',()=>console.log(`Business & Life notification gateway listening on ${port}`))}).catch(e=>{console.error(e);process.exit(1)});
