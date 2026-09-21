@@ -20,7 +20,10 @@ test('Supplier opens with a visible loading state before required data arrives',
   assert.match(ui,/role="status"/);
   assert.match(ui,/aria-live="polite"/);
   assert.match(ui,/Getting the latest Supplier information/);
-  assert.ok(ui.indexOf('supplierWorkspaceLoading(normalized)')<ui.indexOf("papi('/api/supplier/me')"));
+  const renderStart=ui.indexOf('async function renderSupplierWorkspace');
+  const loadingAt=ui.indexOf('supplierWorkspaceLoading(normalized)',renderStart);
+  const requiredFetchAt=ui.indexOf("papi('/api/supplier/me')",renderStart);
+  assert.ok(renderStart>=0&&loadingAt>renderStart&&requiredFetchAt>loadingAt);
 });
 
 test('Required Supplier load failures render a retryable full-workspace error',()=>{
