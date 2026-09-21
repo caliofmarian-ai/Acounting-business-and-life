@@ -1,7 +1,7 @@
 const token=()=>localStorage.getItem('abl_token')||'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token())headers.Authorization=`Bearer ${token()}`;const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}
-let notificationPanel=null,pollTimer=null,voicePollTimer=null,currentNotificationAudio=null;
+let notificationPanel=null,pollTimer=null,currentNotificationAudio=null;
 let foregroundVoiceReady=false,foregroundVoiceToken='',lastForegroundEventId=null,foregroundSoundEnabled=true,audioUserInteracted=false;
 
 function toast(msg){let n=document.getElementById('notificationToast');if(!n){n=document.createElement('div');n.id='notificationToast';n.className='notificationToast';document.body.appendChild(n)}n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),2600)}
@@ -316,15 +316,24 @@ async function pollForegroundVoice(){
     await playNotificationVoice(candidate.attention.soundSlot,Number(candidate.attention.soundVariant)||2,{quiet:true});
   }catch{}
 }
+async function refreshForegroundNotifications(){
+  if(!token()||document.hidden)return;
+  await Promise.allSettled([refreshUnread(),pollForegroundVoice()]);
+}
 function noteAudioInteraction(){audioUserInteracted=true}
 window.BusinessLifeNotifications=Object.freeze({open:openNotifications,openSettings:openNotificationSettings,close:closeNotifications});
 function boot(){
   ensureNotificationUi();addBell();refreshUnread();primeForegroundVoice();
-  pollTimer=setInterval(()=>{if(!document.hidden)refreshUnread()},60000);
-  voicePollTimer=setInterval(pollForegroundVoice,10000);
+  pollTimer=setInterval(()=>{if(!document.hidden)refreshForegroundNotifications()},60000);
   document.addEventListener('pointerdown',noteAudioInteraction,{passive:true});
   document.addEventListener('keydown',noteAudioInteraction);
   document.addEventListener('abl:profile-state',()=>{addBell();if(foregroundVoiceToken!==token()){foregroundVoiceReady=false;primeForegroundVoice()}});
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshUnread();pollForegroundVoice()}});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshForegroundNotifications()});
+  if('serviceWorker'in navigator)navigator.serviceWorker.addEventListener('message',event=>{
+    if(event.data?.type!=='business-life-notification-push')return;
+    refreshForegroundNotifications();
+    const backdrop=document.getElementById('notificationBackdrop');
+    if(backdrop&&!backdrop.classList.contains('hidden'))renderNotificationCenter();
+  });
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
