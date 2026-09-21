@@ -51,9 +51,11 @@ test('shell exposes role-specific Money destinations without changing Merchant o
   assert.match(shell,/data-courier-nav="money"/);
   assert.match(shell,/\['💰','Money'[^\n]*'Money'\]/);
   const supplierStart=shell.indexOf('supplier: [');
-  const serviceStart=shell.indexOf('service_provider: [',supplierStart);
-  const supplier=shell.slice(supplierStart,serviceStart);
+  const hubsEnd=shell.indexOf('};',supplierStart);
+  const supplier=shell.slice(supplierStart,hubsEnd);
   assert.match(supplier,/\['💰','Money','Receivables and recorded payments','Money'\]/);
+  assert.match(shell,/data-service-provider-nav="money"/);
+  assert.match(shell,/openProfileMoney\('service_provider'\)/);
   assert.match(read('public/suppliers-ui.js'),/supplierMoneyPanel/);
   assert.match(read('public/suppliers-ui.js'),/Receivables use invoice evidence when present, otherwise received value/);
   assert.match(read('public/suppliers-ui.js'),/An unreceived PO is not money due/);
