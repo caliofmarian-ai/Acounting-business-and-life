@@ -7,9 +7,11 @@ import {spawnSync} from 'node:child_process';
 const uiUrl=new URL('../public/orders-ui.js',import.meta.url);
 const serverUrl=new URL('../server-orders.js',import.meta.url);
 const cssUrl=new URL('../public/orders.css',import.meta.url);
+const accountingUrl=new URL('../public/business-accounting-ui.js',import.meta.url);
 const ui=readFileSync(uiUrl,'utf8');
 const server=readFileSync(serverUrl,'utf8');
 const css=readFileSync(cssUrl,'utf8');
+const accounting=readFileSync(accountingUrl,'utf8');
 
 for(const [label,url] of [['Orders UI',uiUrl],['Orders server',serverUrl]]){
   test(label+' has valid JavaScript syntax',()=>{
@@ -19,6 +21,9 @@ for(const [label,url] of [['Orders UI',uiUrl],['Orders server',serverUrl]]){
 }
 
 test('Merchant Orders resolves the canonical active business instead of hardcoding business 1',()=>{
+  assert.match(accounting,/window\.BusinessLifeAccounting=Object\.freeze/);
+  assert.match(accounting,/activeBusinessId:accountingState\.activeBusinessId/);
+  assert.match(ui,/BusinessLifeAccounting\?\.getState/);
   assert.match(ui,/\/api\/accounting\/workspaces/);
   assert.match(ui,/active_business_id/);
   assert.match(ui,/merchantBusinessId=id/);
@@ -79,4 +84,13 @@ test('Merchant Orders protects narrow mobile layouts from accidental overflow',(
   assert.match(css,/\.ordersWorkspace\{[^}]*overflow-x:hidden/);
   assert.match(css,/\.orderCardMain,\.ordersHeaderCopy,\.counterProduct>div\{min-width:0\}/);
   assert.match(css,/overflow-wrap:anywhere/);
+});
+
+
+test('Merchant Orders reuses the cached accounting business before requesting workspace state',()=>{
+  const resolverStart=ui.indexOf('async function resolveMerchantBusiness');
+  const resolverEnd=ui.indexOf('function merchantOrdersError',resolverStart);
+  const resolver=ui.slice(resolverStart,resolverEnd);
+  assert.ok(resolverStart>=0&&resolverEnd>resolverStart);
+  assert.ok(resolver.indexOf('BusinessLifeAccounting?.getState')<resolver.indexOf("oapi('/api/accounting/workspaces')"));
 });
