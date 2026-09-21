@@ -24,8 +24,7 @@ async function supplierTodayOrders(pool,accountId){
        GREATEST(
          CASE
            WHEN COALESCE(inv.invoice_total,0)>0 THEN inv.invoice_total
-           WHEN COALESCE(p.actual_received_total,0)>0 THEN p.actual_received_total
-           ELSE p.expected_total
+           ELSE COALESCE(p.actual_received_total,0)
          END
          -COALESCE(cr.confirmed_credits,0)-p.paid_amount,
          0
@@ -145,7 +144,7 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
         },
         authority:{
           orders:'existing purchase_order lifecycle states',
-          receivables:'V3 commercial basis: invoice evidence, otherwise received value, otherwise PO; minus credits and payments',
+          receivables:'Operational Supplier receivables: invoice evidence when present, otherwise received value; minus credits and payments. Unreceived PO commitment is not money due.',
           catalog_availability:'Supplier-declared availability evidence; not exact warehouse stock',
           priority_score:false
         }
