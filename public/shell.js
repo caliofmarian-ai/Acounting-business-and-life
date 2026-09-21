@@ -219,7 +219,14 @@ function renderAccountSettings(view=accountSettingsView){
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
       <button type="button" id="accountMoneyBanking"><span>🏦</span><strong>Money & Banking</strong><small>Shared payment methods, payout destination and financial identity</small><b>›</b></button>
-    </div><div class="accountSettingsBoundary"><strong>Profile settings stay inside each profile</strong><p>Open Customer, Merchant, Supplier, Delivery or Local Services and use its dedicated Profile Settings card.</p></div>`;
+    </div>
+    <section class="accountSettingsCard accountSharedUtilities"><h2>Communication, privacy & help</h2><p>These settings belong to your account and stay shared when you switch profiles.</p><div class="accountUtilityList">
+      <button type="button" id="accountNotifications"><span>🔔</span><span><strong>Notifications & language</strong><small>Notification language, sounds, vibration, push and alert categories</small></span><b>›</b></button>
+      <button type="button" id="accountLegalPrivacy"><span>⚖️</span><span><strong>Legal & privacy</strong><small>Terms, privacy notices, consent and acceptance history</small></span><b>›</b></button>
+      <button type="button" id="accountHelpSupport"><span>💬</span><span><strong>Help & Support</strong><small>Contact Support, view tickets and submit privacy-rights requests</small></span><b>›</b></button>
+      <a href="/help"><span>?</span><span><strong>Help Center</strong><small>Public guides and troubleshooting for Business & Life</small></span><b>›</b></a>
+    </div><p class="accountLocaleBoundary">Language here controls supported account communications and document routing. It does not yet translate every application screen.</p></section>
+    <div class="accountSettingsBoundary"><strong>Profile settings stay inside each profile</strong><p>Open Customer, Merchant, Supplier, Delivery or Local Services and use its dedicated Profile Settings card.</p></div>`;
   }else if(view==='personal'){
     workspace.innerHTML=accountSettingsHeader(test?'Test account details':'Personal details',test?'Company-managed test identity. It must not contain invented personal contact data.':'Identity and contact information shared by your account.')+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Not a personal account</strong><p>Managed by ${escapeHtml(account.managed_by||'Business & Life')} for ${escapeHtml(testAccountRoleLabel(account))} testing. Personal phone and home address are not applicable. ${account.contact_requirements?.company_address_configured?'The configured company address is available to supported test flows.':'No company address is configured yet; flows that genuinely need a location must request one for that test scenario.'}</p></div></section>`:''}<section class="accountSettingsCard"><form id="accountIdentityForm" class="profileForm">
       <div class="avatarEdit"><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"><button id="removeAvatar" class="miniBtn" type="button">Remove photo</button></div>
@@ -239,6 +246,21 @@ function renderAccountSettings(view=accountSettingsView){
   workspace.querySelector('#accountSettingsBack').onclick=()=>view==='home'?closeAccountSettings():renderAccountSettings('home');
   workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>button.dataset.accountSettingsView==='profiles'?openAccountSettings('profiles'):renderAccountSettings(button.dataset.accountSettingsView));
   workspace.querySelector('#accountMoneyBanking')?.addEventListener('click',()=>window.BusinessLifeProfileSettings?.openAccountMoney?.());
+  workspace.querySelector('#accountNotifications')?.addEventListener('click',()=>{
+    const api=window.BusinessLifeNotifications;
+    if(api?.openSettings)return api.openSettings();
+    showToast('Notification settings are still loading. Try again in a moment.');
+  });
+  workspace.querySelector('#accountLegalPrivacy')?.addEventListener('click',()=>{
+    const api=window.BusinessLifeFeatureLoader;
+    if(api?.openLegalCenter)return api.openLegalCenter();
+    showToast('Legal & Privacy is still loading. Try again in a moment.');
+  });
+  workspace.querySelector('#accountHelpSupport')?.addEventListener('click',()=>{
+    const api=window.BusinessLifeFeatureLoader;
+    if(api?.openSupport)return api.openSupport();
+    showToast('Support is still loading. Try again in a moment.');
+  });
   workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
   workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
   workspace.querySelector('#removeAvatar')?.addEventListener('click',removeAvatar);
