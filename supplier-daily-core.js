@@ -20,6 +20,12 @@ export function supplierTodayBucket(status){
   return null;
 }
 
+function dateKey(value){
+  if(value==null||value==='')return null;
+  const d=value instanceof Date?value:new Date(value);
+  return Number.isNaN(d.getTime())?null:d.toISOString().slice(0,10);
+}
+
 export function supplierOrderAttention(order,{now=new Date()}={}){
   const signals=[];
   const status=String(order?.status||'');
@@ -38,8 +44,9 @@ export function supplierOrderAttention(order,{now=new Date()}={}){
   if(['delivered','partially_received'].includes(status))signals.push('AWAITING_MERCHANT_RECEIPT');
 
   const outstanding=Number(order?.commercial_outstanding||0);
-  const due=asDate(order?.earliest_due_date);
-  if(outstanding>0&&due&&due.getTime()<now.getTime()){
+  const dueKey=dateKey(order?.earliest_due_date);
+  const todayKey=dateKey(now);
+  if(outstanding>0&&dueKey&&todayKey&&dueKey<todayKey){
     signals.push('RECEIVABLE_OVERDUE');
   }
 
