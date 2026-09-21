@@ -19,7 +19,8 @@ test('department-specific credentials fall back to legacy shared Resend configur
 test('auth mail is routed through Security department',()=>{
   assert.match(core,/cat==='security'/);
   assert.match(core,/sendTransientEmailNotification/);
-  assert.match(core,/resendEmail\(\{to,subject,html,eventCode,category\}\)/);
+  assert.match(core,/renderTransactionalEmail\(\{subject,bodyHtml:html,department\}\)/);
+  assert.match(core,/text:presentation\.text/);
 });
 
 test('billing and finance event families route to Billing',()=>{
@@ -33,5 +34,16 @@ test('Resend outbound messages are tagged with department and event',()=>{
 
 test('queued email delivery carries notification category into sender routing',()=>{
   assert.match(core,/e\.event_code,e\.category,e\.entity_type/);
-  assert.match(core,/category:row\.category\|\|'operational'/);
+  assert.match(core,/const category=row\.category\|\|'operational'/);
+});
+
+test('Resend sender identity is branded and Reply-To stays opt-in',()=>{
+  assert.match(core,/brandedSender\(from,dept\)/);
+  assert.match(core,/configuredReplyTo\(process\.env,dept\)/);
+  assert.match(core,/payload\.reply_to=cfg\.replyTo/);
+});
+
+test('queued email uses the reusable professional presentation and safe target helper',()=>{
+  assert.match(core,/emailTargetUrl\(\{baseUrl:process\.env\.AUTH_PUBLIC_BASE_URL/);
+  assert.match(core,/renderTransactionalEmail\(\{subject:template\.title,body:template\.body/);
 });
