@@ -131,17 +131,15 @@
       "tagline": "Present verified skills, quote work and complete local service jobs.",
       "accent": "red",
       "modules": [
-        "Public profile",
+        "Home",
         "Services",
-        "Credentials",
-        "Requests & quotes",
         "Jobs",
-        "Reviews"
+        "Money"
       ],
       "startHere": [
         "Start/complete the Local Services application.",
-        "Build the public profile and choose services.",
-        "Keep credentials/evidence updated, then respond to requests through the in-app job flow."
+        "Open Services to manage the public profile, approved services and qualification/work evidence.",
+        "Open Jobs for requests, quotes, active work and verified-review context; use Money only for recorded commercial and settlement evidence."
       ],
       "journey": [
         "Apply and receive approved scope",
