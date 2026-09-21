@@ -1,3 +1,4 @@
+import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
 import http from 'node:http';
@@ -877,7 +878,7 @@ app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected payment-core error'})});
 
 function start(){child=spawn(process.execPath,['server-legal.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error('Legal child exited '+code);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<380;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Legal child failed health check')}
+async function wait(){for(let i=0;i<startupWaitAttempts(380);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Legal child failed health check')}
 async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log('Received '+sig);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
 process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
 start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log('Business & Life payment core gateway listening on '+port))).catch(e=>{console.error(e);process.exit(1)});
