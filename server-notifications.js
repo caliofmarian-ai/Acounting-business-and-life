@@ -25,6 +25,8 @@ const upstreamPort=Number(process.env.INTERNAL_ADMIN_OPERATIONS_PORT||4307);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb'});
 const CATEGORIES=['operational','security','legal','support','compliance','marketing'];
+const THREAD_ENTITY_TYPES=new Set(['support_ticket','order','delivery','purchase_order','service_job']);
+const isNotificationThreadEntity=(type,id)=>Boolean(String(id??'').trim())&&THREAD_ENTITY_TYPES.has(String(type||''));
 let child;let shuttingDown=false;let workerTimer=null;let workerRunning=false;
 
 const clean=(v,max=1200)=>String(v??'').trim().slice(0,max);
@@ -183,27 +185,68 @@ app.get('/manifest.webmanifest',(_q,res)=>res.type('application/manifest+json').
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="manifest" href="/manifest.webmanifest" />\n  <link rel="stylesheet" href="/notifications.css" />\n</head>').replace('</body>','  <script type="module" src="/notifications-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
-app.get('/api/notifications',async(req,res,next)=>{try{const me=await identity(req),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50));const soundPreferences=await notificationSoundPreferences(pool,me.account.id);const{rows}=await pool.query(`
-  WITH inbox AS (
-    SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,r.role_hint,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
-      ROW_NUMBER() OVER(PARTITION BY CASE WHEN e.entity_type='support_ticket' THEN 'support_ticket:'||e.entity_id ELSE 'recipient:'||r.id::text END ORDER BY e.created_at DESC,e.id DESC) thread_rank
-    FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
-    JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
-    WHERE r.account_id=$1 AND r.dismissed_at IS NULL
-  ) SELECT recipient_id,read_at,dismissed_at,locale,role_hint,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at
-    FROM inbox WHERE thread_rank=1 ORDER BY created_at DESC LIMIT $2
-`,[me.account.id,limit]);const out=[];for(const row of rows){const msg=await renderNotification(pool,row,'in_app');const attention={...msg.attention,soundVariant:soundPreferences[msg.attention.soundSlot]??DEFAULT_NOTIFICATION_SOUND_VARIANT};out.push({...row,title:msg.title,body:msg.body,attention})}res.json(out)}catch(e){next(e)}});
-app.get('/api/notifications/unread-count',async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`
-  WITH inbox AS (
-    SELECT r.read_at,ROW_NUMBER() OVER(PARTITION BY CASE WHEN e.entity_type='support_ticket' THEN 'support_ticket:'||e.entity_id ELSE 'recipient:'||r.id::text END ORDER BY e.created_at DESC,e.id DESC) thread_rank
-    FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
-    JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
-    WHERE r.account_id=$1 AND r.dismissed_at IS NULL
-  ) SELECT COUNT(*)::int n FROM inbox WHERE thread_rank=1 AND read_at IS NULL
-`,[me.account.id]);res.json({unread:Number(q.rows[0].n)})}catch(e){next(e)}});
-app.patch('/api/notifications/:id/read',body,async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`UPDATE notification_recipients SET read_at=COALESCE(read_at,NOW()) WHERE id=$1 AND account_id=$2 RETURNING id,read_at`,[Number(req.params.id),me.account.id]);if(!q.rowCount)return res.status(404).json({error:'Notification not found'});res.json(q.rows[0])}catch(e){next(e)}});
+app.get('/api/notifications',async(req,res,next)=>{try{
+  const me=await identity(req),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50)),threaded=String(req.query.threaded||'')==='all';
+  const soundPreferences=await notificationSoundPreferences(pool,me.account.id);
+  const{rows}=await pool.query(`
+    WITH base AS (
+      SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,r.role_hint,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
+        CASE WHEN (e.entity_type='support_ticket' OR ($3::boolean AND e.entity_type IN ('order','delivery','purchase_order','service_job'))) AND e.entity_id<>''
+          THEN e.entity_type||':'||e.entity_id ELSE 'recipient:'||r.id::text END thread_key
+      FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
+      JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
+      WHERE r.account_id=$1 AND r.dismissed_at IS NULL
+    ), inbox AS (
+      SELECT base.*,
+        ROW_NUMBER() OVER(PARTITION BY thread_key ORDER BY created_at DESC,event_id DESC) thread_rank,
+        (COUNT(*) OVER(PARTITION BY thread_key))::int thread_count,
+        (COUNT(*) FILTER (WHERE read_at IS NULL) OVER(PARTITION BY thread_key))::int unread_count
+      FROM base
+    ) SELECT recipient_id,read_at,dismissed_at,locale,role_hint,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at,thread_key,thread_count,unread_count
+      FROM inbox WHERE thread_rank=1 ORDER BY created_at DESC LIMIT $2
+  `,[me.account.id,limit,threaded]);
+  const out=[];for(const row of rows){const msg=await renderNotification(pool,row,'in_app');const attention={...msg.attention,soundVariant:soundPreferences[msg.attention.soundSlot]??DEFAULT_NOTIFICATION_SOUND_VARIANT};out.push({...row,title:msg.title,body:msg.body,attention})}
+  res.json(out)
+}catch(e){next(e)}});
+app.get('/api/notifications/unread-count',async(req,res,next)=>{try{
+  const me=await identity(req),threaded=String(req.query.threaded||'')==='all';
+  const q=await pool.query(`
+    WITH base AS (
+      SELECT r.id recipient_id,r.read_at,e.id event_id,e.entity_type,e.entity_id,e.created_at,
+        CASE WHEN (e.entity_type='support_ticket' OR ($2::boolean AND e.entity_type IN ('order','delivery','purchase_order','service_job'))) AND e.entity_id<>''
+          THEN e.entity_type||':'||e.entity_id ELSE 'recipient:'||r.id::text END thread_key
+      FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
+      JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
+      WHERE r.account_id=$1 AND r.dismissed_at IS NULL
+    ), inbox AS (
+      SELECT base.*,ROW_NUMBER() OVER(PARTITION BY thread_key ORDER BY created_at DESC,event_id DESC) thread_rank,
+        (COUNT(*) FILTER (WHERE read_at IS NULL) OVER(PARTITION BY thread_key))::int unread_count
+      FROM base
+    ) SELECT COUNT(*)::int n FROM inbox WHERE thread_rank=1 AND unread_count>0
+  `,[me.account.id,threaded]);
+  res.json({unread:Number(q.rows[0].n)})
+}catch(e){next(e)}});
+app.patch('/api/notifications/:id/read',body,async(req,res,next)=>{try{
+  const me=await identity(req),recipientId=Number(req.params.id),threaded=req.body?.threaded===true;
+  const target=await pool.query(`SELECT e.entity_type,e.entity_id FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id WHERE r.id=$1 AND r.account_id=$2`,[recipientId,me.account.id]);
+  if(!target.rowCount)return res.status(404).json({error:'Notification not found'});
+  const x=target.rows[0];let q;
+  if(threaded&&isNotificationThreadEntity(x.entity_type,x.entity_id)){
+    q=await pool.query(`UPDATE notification_recipients r SET read_at=COALESCE(r.read_at,NOW()) FROM notification_events e WHERE r.event_id=e.id AND r.account_id=$1 AND e.entity_type=$2 AND e.entity_id=$3 AND r.dismissed_at IS NULL RETURNING r.id,r.read_at`,[me.account.id,x.entity_type,x.entity_id]);
+  }else q=await pool.query(`UPDATE notification_recipients SET read_at=COALESCE(read_at,NOW()) WHERE id=$1 AND account_id=$2 RETURNING id,read_at`,[recipientId,me.account.id]);
+  if(!q.rowCount)return res.status(404).json({error:'Notification not found'});
+  res.json(q.rows.find(row=>Number(row.id)===recipientId)||q.rows[0]);
+}catch(e){next(e)}});
 app.post('/api/notifications/read-all',body,async(req,res,next)=>{try{const me=await identity(req);await pool.query(`UPDATE notification_recipients SET read_at=COALESCE(read_at,NOW()) WHERE account_id=$1 AND dismissed_at IS NULL`,[me.account.id]);res.json({ok:true})}catch(e){next(e)}});
-app.delete('/api/notifications/:id',async(req,res,next)=>{try{const me=await identity(req),recipientId=Number(req.params.id);const target=await pool.query(`SELECT e.entity_type,e.entity_id FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id WHERE r.id=$1 AND r.account_id=$2`,[recipientId,me.account.id]);if(!target.rowCount)return res.status(404).json({error:'Notification not found'});const x=target.rows[0];if(x.entity_type==='support_ticket')await pool.query(`UPDATE notification_recipients r SET dismissed_at=NOW() FROM notification_events e WHERE r.event_id=e.id AND r.account_id=$1 AND e.entity_type='support_ticket' AND e.entity_id=$2`,[me.account.id,x.entity_id]);else await pool.query(`UPDATE notification_recipients SET dismissed_at=NOW() WHERE id=$1 AND account_id=$2`,[recipientId,me.account.id]);res.json({ok:true})}catch(e){next(e)}});
+app.delete('/api/notifications/:id',async(req,res,next)=>{try{
+  const me=await identity(req),recipientId=Number(req.params.id),threaded=['1','all','true'].includes(String(req.query.threaded||'').toLowerCase());
+  const target=await pool.query(`SELECT e.entity_type,e.entity_id FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id WHERE r.id=$1 AND r.account_id=$2`,[recipientId,me.account.id]);
+  if(!target.rowCount)return res.status(404).json({error:'Notification not found'});
+  const x=target.rows[0],bulk=x.entity_type==='support_ticket'||(threaded&&isNotificationThreadEntity(x.entity_type,x.entity_id));
+  if(bulk)await pool.query(`UPDATE notification_recipients r SET dismissed_at=NOW() FROM notification_events e WHERE r.event_id=e.id AND r.account_id=$1 AND e.entity_type=$2 AND e.entity_id=$3`,[me.account.id,x.entity_type,x.entity_id]);
+  else await pool.query(`UPDATE notification_recipients SET dismissed_at=NOW() WHERE id=$1 AND account_id=$2`,[recipientId,me.account.id]);
+  res.json({ok:true})
+}catch(e){next(e)}});
 
 app.get('/api/notifications/preferences',async(req,res,next)=>{try{const me=await identity(req);const q=await pool.query(`SELECT preferred_locale FROM accounts WHERE id=$1`,[me.account.id]);const prefs=await pool.query(`SELECT * FROM notification_preferences WHERE account_id=$1 ORDER BY category,profile_role`,[me.account.id]);const attentionPreferences=await notificationAttentionPreference(pool,me.account.id);const soundPreferences=await notificationSoundPreferences(pool,me.account.id);const preferredLocale=normalizeNotificationLocale(q.rows[0]?.preferred_locale);res.json({preferred_locale:preferredLocale,categories:CATEGORIES,preferences:prefs.rows,attention_preferences:attentionPreferences,sound_variants:notificationSoundVariants(),sound_slots:notificationSoundSlots(),sound_preferences:soundPreferences,default_sound_variant:DEFAULT_NOTIFICATION_SOUND_VARIANT,voice_transcripts:notificationVoiceTranscriptMatrix('en-PH'),planned_voice_transcripts:notificationVoiceTranscriptMatrix(preferredLocale),localized_voice_variants:{'fil-PH':[2]},audio_configured:notificationAudioConfigured(),push_configured:Boolean(process.env.WEB_PUSH_VAPID_PUBLIC_KEY&&process.env.WEB_PUSH_VAPID_PRIVATE_KEY)})}catch(e){next(e)}});
 app.put('/api/notifications/attention-preferences',body,async(req,res,next)=>{try{const me=await identity(req);const current=await notificationAttentionPreference(pool,me.account.id);const saved=await saveNotificationAttentionPreference(pool,me.account.id,{sound_enabled:req.body?.sound_enabled??current.sound_enabled,vibration_enabled:req.body?.vibration_enabled??current.vibration_enabled,important_alerts_enabled:req.body?.important_alerts_enabled??current.important_alerts_enabled});res.json(saved)}catch(e){next(e)}});
