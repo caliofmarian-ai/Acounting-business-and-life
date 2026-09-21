@@ -46,3 +46,13 @@ test('quote to PO requires explicit Merchant call and snapshots source quote',()
   assert.match(source,/handling_mode_snapshot/);
   assert.match(source,/status='converted'/);
 });
+
+
+test('external quote INSERT uses the exact 18-value parameter contract',()=>{
+  const start=source.indexOf("app.post('/api/procurement/sourcing/rfqs/:id/external-quotes'");
+  const end=source.indexOf("app.put('/api/procurement/inventory/:inventoryId/supplier-sources'",start);
+  const block=source.slice(start,end);
+  assert.ok(start>=0&&end>start,'external quote route must exist');
+  assert.match(block,/\$15,\$16,\$17,'active',\$18\)/);
+  assert.doesNotMatch(block,/\$19/);
+});
