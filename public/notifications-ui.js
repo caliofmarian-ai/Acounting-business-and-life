@@ -48,9 +48,14 @@ async function renderNotificationCenter(){
 function renderNotificationList(rows){
   const box=document.getElementById('notificationList');if(!box)return;
   if(!rows.length){box.innerHTML='<div class="notificationEmpty">No notifications yet.</div>';return}
-  box.innerHTML=rows.map(n=>`<article class="notificationCard ${n.read_at?'read':'unread'}" data-notification="${n.recipient_id}">
+  box.innerHTML=rows.map(n=>`<article class="notificationCard ${n.read_at?'read':'unread'} ${notificationRoleClass(n.role_hint)}" data-notification="${n.recipient_id}">
     <div class="notificationIcon">${iconFor(n.event_code)}</div>
-    <div class="notificationCopy"><div><strong>${esc(n.title)}</strong><time>${timeAgo(n.created_at)}</time></div><p>${esc(n.body)}</p><small>${esc(n.category)} • ${esc(n.priority)}</small></div>
+    <div class="notificationCopy">
+      <div class="notificationMeta"><span class="notificationRole">${esc(notificationRoleLabel(n.role_hint))}</span><span class="notificationTopic">${esc(notificationTopic(n.event_code))}</span><time>${timeAgo(n.created_at)}</time></div>
+      <strong class="notificationTitle">${esc(n.title)}</strong>
+      <p>${esc(n.body)}</p>
+      <small class="notificationState">${esc(n.priority==='urgent'?'Urgent':n.priority==='high'?'Important':'Update')}</small>
+    </div>
     <button class="notificationDismiss" data-dismiss="${n.recipient_id}" type="button" aria-label="Dismiss">×</button>
   </article>`).join('');
   box.querySelectorAll('[data-notification]').forEach(card=>card.onclick=async e=>{if(e.target.closest('[data-dismiss]'))return;const id=Number(card.dataset.notification),n=rows.find(x=>Number(x.recipient_id)===id);if(card.classList.contains('unread')){await api(`/api/notifications/${id}/read`,{method:'PATCH',body:'{}'}).catch(()=>{});card.classList.remove('unread');card.classList.add('read');await refreshUnread()}if(n?.entity_type==='support_ticket'&&n.entity_id){const ticketId=Number(n.entity_id);try{if(window.BusinessLifeAdminConsole?.openSupportTicket)await window.BusinessLifeAdminConsole.openSupportTicket(ticketId);else if(window.BusinessLifeFeatureLoader?.openSupportTicket)await window.BusinessLifeFeatureLoader.openSupportTicket(ticketId);else if(window.BusinessLifeAdminOps?.openTicket)await window.BusinessLifeAdminOps.openTicket(ticketId);else{window.__ABL_LAZY_FEATURES__=true;await import('/admin-operations-ui.js');await window.BusinessLifeAdminOps.openTicket(ticketId)}closeNotifications()}catch(err){toast(err.message||'Could not open this support ticket.')}}});
