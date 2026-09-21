@@ -225,9 +225,9 @@ test('quick notification modes are safe presets over existing category preferenc
   assert.match(ui,/data-notification-mode="custom"/);
   assert.match(ui,/profile_role:''/);
   assert.match(ui,/cat==='security'\?true:v\.in_app/);
-  assert.match(ui,/marketing/);
+  assert.match(ui,/recommended:cat=>\(\{in_app:cat!==\'marketing\',email:false,push:cat!==\'marketing\'\}\)/);
+  assert.match(ui,/essential:cat=>\(\{in_app:\[\'security\',\'legal\',\'support\',\'compliance\'\]\.includes\(cat\),email:false,push:\[\'security\',\'legal\',\'support\',\'compliance\'\]\.includes\(cat\)\}\)/);
   assert.match(ui,/applyQuickNotificationMode/);
-  assert.doesNotMatch(ui,/marketing.*urgent/s);
 });
 
 test('custom mode remains manual and compact settings stay closed by default',()=>{
