@@ -899,7 +899,7 @@ app.use((req,res,next)=>{
   if(!businessAccountingApp)return res.status(503).json({error:'Multi-business Accounting runtime is not ready'});
   return businessAccountingApp(req,res,next);
 });
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected admin operations error'})});
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected admin operations error'})});
 
 let embeddedStartPromise=null;
 export async function startEmbeddedAdminOperations(){
