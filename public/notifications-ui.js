@@ -24,6 +24,13 @@ function notificationRoleLabel(role=''){return NOTIFICATION_ROLE_LABELS[String(r
 function notificationRoleClass(role=''){const key=String(role||'account').toLowerCase().replace(/[^a-z0-9_-]/g,'');return 'role-'+(key||'account')}
 function notificationTopic(code=''){const x=String(code||'');if(x.startsWith('order.'))return'Order';if(x.startsWith('delivery.'))return'Delivery';if(x.startsWith('procurement.'))return'Purchase order';if(x.startsWith('supplier.'))return'Supplier';if(x.startsWith('service.'))return'Local Services';if(x.startsWith('support.'))return'Support';if(x.startsWith('incident.'))return'Incident';if(x.startsWith('profile.'))return'Profile';if(x.startsWith('auth.')||x.startsWith('security.'))return'Security';if(x.startsWith('legal.'))return'Legal';return'Update'}
 function needsNotificationAction(n){const family=String(n?.attention?.family||n?.attention?.attention_family||'').toLowerCase();return ['action','urgent','warning'].includes(family)||['high','urgent'].includes(String(n?.priority||'').toLowerCase())}
+function effectiveCategoryPreference(p,cat){const x=(p?.preferences||[]).find(v=>v.category===cat&&v.profile_role==='');const marketing=cat==='marketing';return x?{in_app:Boolean(x.in_app_enabled),email:Boolean(x.email_enabled),push:Boolean(x.push_enabled)}:{in_app:!marketing,email:false,push:!marketing}}
+const QUICK_NOTIFICATION_MODES={
+  recommended:cat=>({in_app:cat!=='marketing',email:false,push:cat!=='marketing'}),
+  essential:cat=>({in_app:['security','legal','support','compliance'].includes(cat),email:false,push:['security','legal','support','compliance'].includes(cat)})
+};
+function sameModePreference(a,b){return a.in_app===b.in_app&&a.email===b.email&&a.push===b.push}
+function detectNotificationMode(p){const cats=p?.categories||[];if(cats.length&&cats.every(cat=>sameModePreference(effectiveCategoryPreference(p,cat),QUICK_NOTIFICATION_MODES.recommended(cat))))return'recommended';if(cats.length&&cats.every(cat=>sameModePreference(effectiveCategoryPreference(p,cat),QUICK_NOTIFICATION_MODES.essential(cat))))return'essential';return'custom'}
 async function renderNotificationCenter(){
   const body=document.getElementById('notificationBody');body.innerHTML='<div class="notificationLoading">Loading…</div>';
   try{
@@ -92,6 +99,15 @@ function renderSettings(p){
       <small>Open only the section you want to change.</small>
     </div>
 
+    <div class="notificationModeCard">
+      <span><strong>Quick mode</strong><small>Start simple. Custom changes stay available below.</small></span>
+      <div class="notificationModeChoices">
+        <button type="button" data-notification-mode="recommended" class="${detectNotificationMode(p)==='recommended'?'active':''}">Recommended</button>
+        <button type="button" data-notification-mode="essential" class="${detectNotificationMode(p)==='essential'?'active':''}">Essential only</button>
+        <button type="button" data-notification-mode="custom" class="${detectNotificationMode(p)==='custom'?'active':''}">Custom</button>
+      </div>
+    </div>
+
     <details class="notificationSettingsGroup">
       <summary><span><strong>Language</strong><small>Language used for notification text and supported voices.</small></span><b>${p.preferred_locale==='fil-PH'?'Filipino / Tagalog':'English'}</b></summary>
       <div class="notificationSettingsGroupBody">
@@ -155,12 +171,26 @@ function renderSettings(p){
       </div>
     </details>`;
 
+  box.querySelectorAll('[data-notification-mode]').forEach(button=>button.onclick=applyQuickNotificationMode);
   document.getElementById('notificationLocale').onchange=async e=>{try{await api('/api/notifications/locale',{method:'PUT',body:JSON.stringify({locale:e.target.value})});const refreshed=await api('/api/notifications/preferences');notificationPanel.prefs=refreshed;renderSettings(refreshed);toast('Notification language updated.')}catch(err){toast(err.message);}};
   document.getElementById('enablePush').onclick=enablePush;
   for(const id of ['notificationSounds','notificationVibration','notificationImportantAlerts'])document.getElementById(id).onchange=saveAttentionPreferences;
   box.querySelectorAll('[data-sound-slot]').forEach(select=>select.onchange=saveSoundPreference);
   box.querySelectorAll('[data-preview-sound]').forEach(button=>button.onclick=previewNotificationVoice);
   box.querySelectorAll('.preferenceRow[data-category] input').forEach(input=>input.onchange=savePreferenceRow);
+}
+async function applyQuickNotificationMode(e){
+  const mode=e.currentTarget.dataset.notificationMode;
+  if(mode==='custom'){toast('Open a section below to customize notifications.');return}
+  const preset=QUICK_NOTIFICATION_MODES[mode];if(!preset)return;
+  const buttons=[...document.querySelectorAll('[data-notification-mode]')];buttons.forEach(b=>b.disabled=true);
+  try{
+    const prefs=notificationPanel?.prefs||{};
+    await Promise.all((prefs.categories||[]).map(cat=>{const v=preset(cat);return api('/api/notifications/preferences',{method:'PUT',body:JSON.stringify({category:cat,profile_role:'',in_app_enabled:cat==='security'?true:v.in_app,email_enabled:v.email,push_enabled:v.push})})}));
+    const refreshed=await api('/api/notifications/preferences');notificationPanel.prefs=refreshed;renderSettings(refreshed);
+    toast(mode==='recommended'?'Recommended notifications restored.':'Essential-only notifications applied.');
+  }catch(err){toast(err.message||'Could not update notification mode.');await renderNotificationCenter()}
+  finally{buttons.forEach(b=>b.disabled=false)}
 }
 async function saveAttentionPreferences(){
   try{
