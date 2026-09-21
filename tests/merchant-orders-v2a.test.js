@@ -6,8 +6,10 @@ import {spawnSync} from 'node:child_process';
 
 const uiUrl=new URL('../public/orders-ui.js',import.meta.url);
 const serverUrl=new URL('../server-orders.js',import.meta.url);
+const cssUrl=new URL('../public/orders.css',import.meta.url);
 const ui=readFileSync(uiUrl,'utf8');
 const server=readFileSync(serverUrl,'utf8');
+const css=readFileSync(cssUrl,'utf8');
 
 for(const [label,url] of [['Orders UI',uiUrl],['Orders server',serverUrl]]){
   test(label+' has valid JavaScript syntax',()=>{
@@ -60,4 +62,19 @@ test('Merchant Orders has a retryable full-workspace load error',()=>{
 
 test('Orders module exposes stable open actions for the Merchant Today shell',()=>{
   assert.match(ui,/window\.BusinessLifeOrders=Object\.freeze\(\{openMerchantOrders,openCustomerOrders,closeOrders\}\)/);
+});
+
+
+test('Merchant Orders mobile UI keeps readable type and comfortable touch targets',()=>{
+  assert.match(css,/\.ordersBack\{[^}]*width:44px;[^}]*height:44px/);
+  assert.match(css,/\.ordersHeader \.ordersRefresh\{[^}]*min-height:44px;[^}]*font-size:13px/);
+  assert.match(css,/\.orderCreateCard input,\.orderCreateCard select,\.orderCreateCard textarea\{[^}]*font-size:16px;[^}]*min-height:44px/);
+  assert.match(css,/\.orderActions button\{[^}]*min-height:44px;[^}]*font-size:12px/);
+  assert.match(css,/\.customerOrderFooter button\{[^}]*min-height:44px;[^}]*font-size:12px/);
+});
+
+test('Merchant Orders protects narrow mobile layouts from accidental overflow',()=>{
+  assert.match(css,/\.ordersWorkspace\{[^}]*overflow-x:hidden/);
+  assert.match(css,/\.orderCardMain,\.ordersHeaderCopy,\.counterProduct>div\{min-width:0\}/);
+  assert.match(css,/overflow-wrap:anywhere/);
 });
