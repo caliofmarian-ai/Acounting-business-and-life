@@ -1,10 +1,5 @@
-import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   ensurePayMongoSchema,payMongoRuntimeConfig,createPayMongoCheckout,
   processPayMongoWebhook,executePayMongoRefund,ensurePayMongoWebhook,payMongoWebhookBootstrapStatus,
@@ -15,15 +10,15 @@ import { emitNotificationEvent,businessNotificationRecipients } from './notifica
 import { payMongoPilotReadiness,payMongoCheckoutPolicy } from './pilot-payment-readiness.js';
 import { publicDeploymentEvidence } from './deployment-evidence.js';
 import { runQaAcceptanceIfRequested } from './qa-acceptance.js';
+import { startEmbeddedPaymentCore,stopEmbeddedPaymentCore } from './server-payments.js';
 
 const {Pool}=pg;
-const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_PAYMENTS_PORT||4607);
+const upstreamPort=Number(process.env.INTERNAL_LEGAL_PORT||4507);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
-const body=express.json({limit:'30mb'});
-let child;let shuttingDown=false;
+const body=express.json({limit:'30mb',verify:(req,_res,buf)=>{req.rawBody=Buffer.from(buf)}});
+let paymentCoreReady=false;let shuttingDown=false;
 
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
@@ -109,7 +104,7 @@ app.get('/sw.js',(req,res,next)=>servePwaAsset(req,res,'/sw.js','application/jav
 app.get('/health',async(_req,res)=>{
   try{
     await pool.query('SELECT 1');
-    const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);
+    const childAlive=paymentCoreReady;
     const cfg=payMongoRuntimeConfig();
     res.status(childAlive?200:503).json({
       ok:childAlive,db:true,payment_core:childAlive,paymongo:true,
@@ -219,23 +214,6 @@ app.post('/api/payments/admin/paymongo/refunds/:id/execute',async(req,res,next)=
   }catch(e){next(e)}
 });
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:'127.0.0.1:'+upstreamPort};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Payment Core upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
-}
-app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected PayMongo adapter error',code:err.code||undefined,blockers:Array.isArray(err.blockers)?err.blockers:undefined})});
 
 async function initDb(){
@@ -244,27 +222,20 @@ async function initDb(){
   if(state.ready)console.log('PayMongo webhook ready: '+state.status+' via '+state.source);
   else console.log('PayMongo webhook not ready: '+state.status+(state.error?' ('+state.error+')':''));
 }
-function start(){
-  child=spawn(process.execPath,['server-payments.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});
-  child.on('exit',code=>{if(!shuttingDown){console.error('Payment Core child exited '+code);process.exit(code||1)}});
-}
-async function wait(){
-  for(let i=0;i<startupWaitAttempts(420);i++){
-    try{const r=await upstream('/health');if(r.ok)return}catch{}
-    await new Promise(r=>setTimeout(r,250));
-  }
-  throw new Error('Payment Core child failed health check');
-}
 async function shutdown(sig){
   if(shuttingDown)return;shuttingDown=true;console.log('Received '+sig);
-  if(child&&!child.killed)child.kill('SIGTERM');
+  await stopEmbeddedPaymentCore().catch(()=>{});
   await pool.end().catch(()=>{});
   process.exit(0);
 }
 process.on('SIGTERM',()=>shutdown('SIGTERM'));
 process.on('SIGINT',()=>shutdown('SIGINT'));
-start();
-wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>{
-  console.log('Business & Life PayMongo webhook-bootstrap gateway listening on '+port);
+
+startEmbeddedPaymentCore().then(paymentApp=>{
+  paymentCoreReady=true;
+  app.use(paymentApp);
+  return initDb();
+}).then(()=>app.listen(port,'0.0.0.0',()=>{
+  console.log('Business & Life PayMongo + Payment Core runtime listening on '+port);
   runQaAcceptanceIfRequested({pool,port}).catch(e=>console.error('QA acceptance runner failed safely:',clean(e?.message||'unknown',240)));
 })).catch(e=>{console.error(e);process.exit(1)});
