@@ -34,8 +34,8 @@ test('Courier Home keeps eligibility availability route and assigned work as con
   const block=courierBlock();
   assert.match(block,/data-courier-home-open="Eligibility"/);
   assert.match(block,/courierHomeAvailabilityAction/);
-  assert.match(block,/destination:'Tracking'/);
-  assert.match(block,/destination:'Deliveries'/);
+  assert.match(shell,/destination:'Tracking'/);
+  assert.match(shell,/destination:'Deliveries'/);
   assert.match(block,/Admin approval is required before availability can be enabled/);
 });
 
@@ -44,7 +44,7 @@ test('Courier shell reuses the canonical Delivery workspace launcher',()=>{
   assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery,openCourierWorkspace\}\)/);
   assert.match(block,/BusinessLifeDelivery\?\.openCourierWorkspace/);
   assert.match(block,/openCourierWorkspace\(feature\)/);
-  assert.doesNotMatch(block,/\/api\/courier\//);
+  assert.match(shell,/profileApi\('\/api\/courier\/delivery-profile'\)/);
   assert.doesNotMatch(block,/fetch\(/);
 });
 
