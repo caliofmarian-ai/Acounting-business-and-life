@@ -91,7 +91,7 @@ async function openSupportTicket(ticketId){
   const api=await loadAdminOps();
   return api.openTicket(id);
 }
-window.BusinessLifeFeatureLoader=Object.freeze({openSupportTicket});
+window.BusinessLifeFeatureLoader=Object.freeze({openSupportTicket,openSupport,openLegalCenter});
 
 async function openSupport(){
   try{
@@ -99,6 +99,15 @@ async function openSupport(){
     const api=await loadAdminOps();
     api.openSupport();
   }catch(error){toast(error.message||'Could not open Support.')}
+}
+async function openLegalCenter(){
+  try{
+    closeMore();
+    await loadFeature('legal');
+    const api=window.BusinessLifeLegal;
+    if(!api?.open)throw new Error('Legal & Privacy could not finish loading.');
+    api.open();
+  }catch(error){toast(error.message||'Could not open Legal & Privacy.')}
 }
 
 async function openButtonFeature(name,id){
