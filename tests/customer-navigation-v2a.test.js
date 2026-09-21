@@ -61,7 +61,7 @@ test('Delivery is contextual to Orders and reuses canonical Customer Delivery wo
   assert.match(orders,/My deliveries/);
   assert.match(orders,/BusinessLifeDelivery/);
   assert.match(orders,/openCustomerDelivery/);
-  assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery\}\)/);
+  assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery,openCourierWorkspace\}\)/);
   assert.match(delivery,/async function openCustomerDelivery\(/);
 });
 
