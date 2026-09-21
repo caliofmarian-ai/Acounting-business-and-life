@@ -50,7 +50,9 @@ test('shell exposes role-specific Money destinations without changing Merchant o
   const supplierStart=shell.indexOf('supplier: [');
   const courierStart=shell.indexOf('courier: [',supplierStart);
   const supplier=shell.slice(supplierStart,courierStart);
-  assert.doesNotMatch(supplier,/['"]Money['"]/);
+  assert.match(supplier,/\['💰','Money','Receivables and recorded payments','Money'\]/);
+  assert.match(read('public/suppliers-ui.js'),/supplierMoneyPanel/);
+  assert.match(read('public/suppliers-ui.js'),/Receivables use invoice evidence when present, otherwise received value, otherwise the PO/);
 });
 
 test('Money workspace uses shared account-level Money & Banking while preserving legacy profile references',()=>{
