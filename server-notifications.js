@@ -31,6 +31,7 @@ let adminApp=null;let adminReady=false;let shuttingDown=false;let workerTimer=nu
 let resendWebhookRuntime={ready:Boolean(process.env.RESEND_WEBHOOK_SECRET),status:process.env.RESEND_WEBHOOK_SECRET?'ready':'not_ready',source:process.env.RESEND_WEBHOOK_SECRET?'env':'none',endpoint:'',webhook_id:'',secret:process.env.RESEND_WEBHOOK_SECRET||''};
 
 const clean=(v,max=1200)=>String(v??'').trim().slice(0,max);
+const positiveId=v=>{const n=Number(v);return Number.isSafeInteger(n)&&n>0?n:null};
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||crypto.randomUUID(),120);
 async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
@@ -39,36 +40,45 @@ const uniqueRecipients=(...groups)=>[...new Map(groups.flat().filter(Boolean).ma
 async function safeEmit(spec){try{return await emitNotificationEvent(pool,spec)}catch(e){console.error('Notification event failed:',e.message);return null}}
 
 async function orderInfo(id){
-  const q=await pool.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1`,[Number(id)]);
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1`,[key]);
   return q.rows[0]||null;
 }
 async function deliveryInfo(id){
-  const q=await pool.query(`SELECT d.*,o.order_number,o.customer_account_id,o.business_id,b.name business_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=o.business_id WHERE d.id=$1`,[Number(id)]);
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT d.*,o.order_number,o.customer_account_id,o.business_id,b.name business_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=o.business_id WHERE d.id=$1`,[key]);
   return q.rows[0]||null;
 }
 async function poInfo(id){
-  const q=await pool.query(`SELECT p.*,b.name business_name,COALESCE(s.supplier_name,a.display_name) supplier_name FROM purchase_orders p JOIN businesses b ON b.id=p.business_id JOIN accounts a ON a.id=p.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=p.supplier_account_id WHERE p.id=$1`,[Number(id)]);
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT p.*,b.name business_name,COALESCE(s.supplier_name,a.display_name) supplier_name FROM purchase_orders p JOIN businesses b ON b.id=p.business_id JOIN accounts a ON a.id=p.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=p.supplier_account_id WHERE p.id=$1`,[key]);
   return q.rows[0]||null;
 }
 async function serviceJobInfo(id){
-  const q=await pool.query(`SELECT j.*,c.name service_label FROM service_jobs j LEFT JOIN service_categories c ON c.id=j.category_id WHERE j.id=$1`,[Number(id)]);
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT j.*,c.name service_label FROM service_jobs j LEFT JOIN service_categories c ON c.id=j.category_id WHERE j.id=$1`,[key]);
   return q.rows[0]||null;
 }
 async function supportInfo(id){
-  const q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[Number(id)]);return q.rows[0]||null;
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[key]);return q.rows[0]||null;
 }
 async function incidentInfo(id){
-  const q=await pool.query(`SELECT * FROM incident_reports WHERE id=$1`,[Number(id)]);return q.rows[0]||null;
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT * FROM incident_reports WHERE id=$1`,[key]);return q.rows[0]||null;
 }
 async function applicationInfo(id){
-  const q=await pool.query(`SELECT * FROM profile_applications WHERE id=$1`,[Number(id)]);return q.rows[0]||null;
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT * FROM profile_applications WHERE id=$1`,[key]);return q.rows[0]||null;
 }
 async function authorizationInfo(id){
-  const q=await pool.query(`SELECT * FROM profile_authorizations WHERE id=$1`,[Number(id)]);return q.rows[0]||null;
+  const key=positiveId(id);if(!key)return null;
+  const q=await pool.query(`SELECT * FROM profile_authorizations WHERE id=$1`,[key]);return q.rows[0]||null;
 }
 
 async function forwardJson(req,res,after){
   if(!adminApp)return res.status(503).json({error:'Admin + Support runtime is not ready'});
+  const notificationParams={...req.params};
   const chunks=[];let observedBytes=0;let completed=false;
   const capture=chunk=>{
     if(!after||chunk==null||observedBytes>=2_000_000)return;
@@ -82,6 +92,7 @@ async function forwardJson(req,res,after){
     if(completed)return;completed=true;
     if(!after||res.statusCode<200||res.statusCode>=400)return;
     const text=Buffer.concat(chunks).toString('utf8');let data={};try{data=text?JSON.parse(text):{}}catch{}
+    req.params=notificationParams;
     Promise.resolve().then(()=>after(data)).catch(e=>console.error('Post-transaction notification hook:',e.message));
   };
   res.write=function(chunk,...args){capture(chunk);return originalWrite(chunk,...args)};
@@ -169,7 +180,7 @@ app.post('/api/courier/deliveries/:id/status',body,(req,res)=>forwardJson(req,re
 app.post('/api/courier/deliveries/:id/complete',body,(req,res)=>forwardJson(req,res,()=>emitDeliveryEvent(req,req.params.id,'delivery.completed')));
 
 // Supplier / procurement
-app.post('/api/procurement/relationships/invite',body,(req,res)=>forwardJson(req,res,async data=>{const supplierId=Number(data.supplier_account_id||req.body?.supplier_account_id);if(!supplierId)return;const businessId=Number(data.business_id||req.body?.business_id);const b=await pool.query(`SELECT name FROM businesses WHERE id=$1`,[businessId]);await safeEmit({eventKey:`supplier-rel:${businessId}:${supplierId}:invited`,eventCode:'supplier.relationship_invited',sourceService:'suppliers',entityType:'supplier_relationship',entityId:`${businessId}:${supplierId}`,correlationId:correlation(req),category:'operational',priority:'normal',emailDefault:true,pushDefault:true,data:{business_name:b.rows[0]?.name||'A business'},recipients:[{accountId:supplierId,roleHint:'supplier'}]})}));
+app.post('/api/procurement/relationships/invite',body,(req,res)=>forwardJson(req,res,async data=>{const supplierId=positiveId(data.supplier_account_id||req.body?.supplier_account_id);if(!supplierId)return;const businessId=positiveId(data.business_id||req.body?.business_id);if(!businessId)return;const b=await pool.query(`SELECT name FROM businesses WHERE id=$1`,[businessId]);await safeEmit({eventKey:`supplier-rel:${businessId}:${supplierId}:invited`,eventCode:'supplier.relationship_invited',sourceService:'suppliers',entityType:'supplier_relationship',entityId:`${businessId}:${supplierId}`,correlationId:correlation(req),category:'operational',priority:'normal',emailDefault:true,pushDefault:true,data:{business_name:b.rows[0]?.name||'A business'},recipients:[{accountId:supplierId,roleHint:'supplier'}]})}));
 app.post('/api/supplier/relationships/:businessId/respond',body,(req,res)=>forwardJson(req,res,async data=>{const supplierId=Number(data.supplier_account_id);if(!supplierId)return;const merchant=await businessNotificationRecipients(pool,Number(req.params.businessId),'merchant');const s=await pool.query(`SELECT COALESCE(s.supplier_name,a.display_name) supplier_name FROM accounts a LEFT JOIN supplier_profiles s ON s.account_id=a.id WHERE a.id=$1`,[supplierId]);await safeEmit({eventKey:`supplier-rel:${req.params.businessId}:${supplierId}:${data.state}`,eventCode:'supplier.relationship_updated',sourceService:'suppliers',entityType:'supplier_relationship',entityId:`${req.params.businessId}:${supplierId}`,correlationId:correlation(req),category:'operational',priority:'normal',emailDefault:false,pushDefault:true,data:{supplier_name:s.rows[0]?.supplier_name||'Supplier',status:data.state||''},recipients:merchant})}));
 app.post('/api/procurement/orders',body,(req,res)=>forwardJson(req,res,async data=>{const id=data.id||data.order?.id;if(id)await emitPoEvent(req,id,'procurement.po_created',{toSupplier:true,toMerchant:false,emailDefault:true})}));
 app.post('/api/supplier/orders/:id/respond',body,(req,res)=>forwardJson(req,res,()=>emitPoEvent(req,req.params.id,'procurement.po_updated',{toMerchant:true})));
