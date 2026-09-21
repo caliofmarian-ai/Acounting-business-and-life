@@ -7,12 +7,12 @@ const paymongo=read('server-paymongo.js');
 const shell=read('public/shell.js');
 const governance=read('public/profile-governance-ui.js');
 
-test('public gateway reserializes parsed JSON before catch-all proxying',()=>{
-  assert.match(paymongo,/parsedJsonBody/);
-  assert.match(paymongo,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(paymongo,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(paymongo,/delete headers\['transfer-encoding'\]/);
-  assert.match(paymongo,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+test('public gateway preserves raw JSON bytes before handing requests to embedded Payment Core',()=>{
+  assert.match(paymongo,/verify:\(req,_res,buf\)=>\{req\.rawBody=Buffer\.from\(buf\)\}/);
+  assert.match(paymongo,/startEmbeddedPaymentCore/);
+  assert.match(paymongo,/app\.use\(paymentApp\)/);
+  assert.doesNotMatch(paymongo,/Payment Core upstream unavailable/);
+  assert.doesNotMatch(paymongo,/spawn\(process\.execPath,\['server-payments\.js'\]/);
 });
 
 test('normal profile switching still uses the canonical active-role API',()=>{
