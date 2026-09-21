@@ -905,7 +905,194 @@ function renderCourierHub(){
   loadCourierHome(hub).catch(()=>{});
 }
 
+const SERVICE_PROVIDER_HOME_CACHE_MS=20000;
 let serviceProviderHubPanel='home';
+let serviceProviderHomeCache={accountId:null,data:null,loadedAt:0,promise:null};
+
+function invalidateServiceProviderHome(){serviceProviderHomeCache={accountId:null,data:null,loadedAt:0,promise:null}}
+function serviceProviderHomeMoney(value){
+  return value==null||!Number.isFinite(Number(value))?'Unavailable':customerMoney(value);
+}
+function serviceProviderHomeTime(value){
+  if(!value)return'';
+  try{return new Date(value).toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'short'})}
+  catch{return''}
+}
+function serviceProviderHomeSettlementPending(income){
+  return ['pending','eligible','held','processing'].reduce((sum,key)=>sum+Number(income?.[key]||0),0);
+}
+async function loadServiceProviderHomeData(force=false){
+  const accountId=Number(snapshot?.account?.id)||null;
+  if(!accountId)throw new Error('Service Provider account is not ready yet.');
+  if(serviceProviderHomeCache.accountId!==accountId)invalidateServiceProviderHome();
+  if(!force&&serviceProviderHomeCache.data&&Date.now()-serviceProviderHomeCache.loadedAt<SERVICE_PROVIDER_HOME_CACHE_MS)return serviceProviderHomeCache.data;
+  if(serviceProviderHomeCache.promise)return serviceProviderHomeCache.promise;
+  serviceProviderHomeCache.promise=(async()=>{
+    const [providerResult,jobsResult,moneyResult]=await Promise.allSettled([
+      profileApi('/api/service-provider/me'),
+      profileApi('/api/services/jobs/mine'),
+      profileApi('/api/profile-money/service_provider')
+    ]);
+    const failures=[];
+    const value=(result,label)=>{
+      if(result.status==='fulfilled')return result.value;
+      failures.push(label);
+      return null;
+    };
+    const provider=value(providerResult,'Profile');
+    const allJobs=value(jobsResult,'Jobs');
+    const jobs=Array.isArray(allJobs)
+      ?allJobs.filter(job=>Number(job.provider_account_id)===accountId)
+      :null;
+    const money=value(moneyResult,'Money');
+    if(failures.length===3)throw new Error('Local Services Home could not be loaded. Check your connection and try again.');
+    const data={provider,jobs,money,failures};
+    serviceProviderHomeCache={accountId,data,loadedAt:Date.now(),promise:null};
+    return data;
+  })();
+  try{return await serviceProviderHomeCache.promise}
+  finally{if(serviceProviderHomeCache.promise)serviceProviderHomeCache.promise=null}
+}
+function serviceProviderHomeReadiness(data){
+  const shellProfile=roleProfile('service_provider');
+  if(!data.provider)return{known:false,title:'Profile status unavailable',detail:'Open Services to check your public setup.',tone:'unknown'};
+  const profile=data.provider.profile||null;
+  const services=(data.provider.services||[]).filter(item=>item.active!==false);
+  const visibility=shellProfile?.visibility||'private';
+  if(!profile)return{known:true,title:'Finish your service profile',detail:'Your Local Services profile details are not ready yet.',tone:'block'};
+  if(!shellProfile?.enabled||shellProfile?.status!=='active')return{known:true,title:'Profile is not active',detail:'Customers cannot hire this profile until it is active.',tone:'block'};
+  if(visibility==='private')return{known:true,title:'Public discovery is off',detail:'Your profile is private. Customers cannot discover it in Local Services.',tone:'block'};
+  if(visibility==='relationship_only')return{known:true,title:'Discovery is limited',detail:'Only relationship-based visibility is enabled. Public Local Services discovery is off.',tone:'limited'};
+  if(!services.length)return{known:true,title:'Add at least one service',detail:'Your profile is public, but no active service is available for customers to request.',tone:'block'};
+  return{known:true,title:'Public and ready for requests',detail:services.length+' active service'+(services.length===1?'':'s')+' visible to customers.',tone:'ready'};
+}
+function serviceProviderHomeJobPriority(job){
+  const priorities={requested:0,provider_reviewing:0,accepted:1,disputed:1,in_progress:2,scheduled:3};
+  return priorities[job.status]??99;
+}
+function serviceProviderHomeAttentionJobs(data){
+  if(!Array.isArray(data.jobs))return null;
+  const states=new Set(['requested','provider_reviewing','accepted','scheduled','in_progress','disputed']);
+  return data.jobs.filter(job=>states.has(job.status)).sort((a,b)=>{
+    const pa=serviceProviderHomeJobPriority(a),pb=serviceProviderHomeJobPriority(b);
+    if(pa!==pb)return pa-pb;
+    if(a.status==='scheduled'&&b.status==='scheduled'){
+      const ad=new Date(a.scheduled_at||a.updated_at||0).getTime();
+      const bd=new Date(b.scheduled_at||b.updated_at||0).getTime();
+      return ad-bd;
+    }
+    return new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0);
+  }).slice(0,5);
+}
+function serviceProviderHomeWaitingJobs(data){
+  if(!Array.isArray(data.jobs))return null;
+  return data.jobs.filter(job=>job.status==='quoted'||(job.status==='completed'&&!job.customer_confirmed_at))
+    .sort((a,b)=>new Date(b.updated_at||b.created_at||0)-new Date(a.updated_at||a.created_at||0))
+    .slice(0,4);
+}
+function serviceProviderHomeJobMeta(job,waiting=false){
+  const customer=job.customer_name||'Customer';
+  if(job.status==='requested')return{section:'Quotes',badge:'New request',detail:customer+' is waiting for your response.'};
+  if(job.status==='provider_reviewing')return{section:'Quotes',badge:'Reviewing',detail:'Finish reviewing the request and send a quote when ready.'};
+  if(job.status==='accepted')return{section:'Jobs',badge:'Quote accepted',detail:customer+' accepted your quote. Schedule or start the work when appropriate.'};
+  if(job.status==='scheduled')return{section:'Jobs',badge:'Scheduled',detail:(job.scheduled_at?'Scheduled '+serviceProviderHomeTime(job.scheduled_at)+'. ':'')+'Open the job when it is time to work.'};
+  if(job.status==='in_progress')return{section:'Jobs',badge:'In progress',detail:'This job is active. Complete it only when the work is actually finished.'};
+  if(job.status==='disputed')return{section:'Jobs',badge:'Needs attention',detail:'This job is disputed. Review its current evidence and status.'};
+  if(job.status==='quoted')return{section:'Quotes',badge:'Waiting on Customer',detail:'Your quote was sent. No Provider action is required until the Customer responds.'};
+  if(waiting&&job.status==='completed'&&!job.customer_confirmed_at)return{section:'Jobs',badge:'Waiting on Customer',detail:'You marked the work complete. The Customer still needs to confirm completion.'};
+  return{section:'Jobs',badge:customerNice(job.status),detail:''};
+}
+function serviceProviderHomeJobRow(job,waiting=false){
+  const meta=serviceProviderHomeJobMeta(job,waiting);
+  return '<button class="serviceProviderHomeWorkRow" type="button" data-service-provider-home-section="'+escapeHtml(meta.section)+'">'+
+    '<span class="serviceProviderHomeWorkIcon">'+(waiting?'⏳':job.status==='requested'||job.status==='provider_reviewing'?'💬':'🗓️')+'</span>'+
+    '<span class="serviceProviderHomeWorkCopy"><span class="serviceProviderHomeWorkBadge">'+escapeHtml(meta.badge)+'</span><strong>'+escapeHtml(job.service_label||job.category||'Service job')+'</strong><small>'+escapeHtml(meta.detail)+'</small></span>'+
+    '<b>›</b></button>';
+}
+function bindServiceProviderHomeDynamic(hub){
+  hub.querySelectorAll('[data-service-provider-home-panel]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,button.dataset.serviceProviderHomePanel));
+  hub.querySelectorAll('[data-service-provider-home-section]').forEach(button=>button.onclick=()=>openServiceProviderSection(button.dataset.serviceProviderHomeSection));
+  hub.querySelectorAll('[data-service-provider-home-money]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,'money'));
+  hub.querySelectorAll('[data-service-provider-home-retry]').forEach(button=>button.onclick=()=>loadServiceProviderHome(hub,{force:true}));
+}
+function renderServiceProviderHomeData(hub,data){
+  hub.querySelector('#serviceProviderHomeLoading')?.classList.add('hidden');
+  hub.querySelector('#serviceProviderHomeError')?.classList.add('hidden');
+  hub.querySelector('#serviceProviderHomeDynamic')?.classList.remove('hidden');
+
+  const readiness=serviceProviderHomeReadiness(data);
+  const readinessBox=hub.querySelector('#serviceProviderHomeReadiness');
+  if(readinessBox){
+    readinessBox.innerHTML=
+      '<div class="serviceProviderReadinessCopy"><span class="serviceProviderReadinessState '+escapeHtml(readiness.tone)+'">'+(readiness.tone==='ready'?'Ready':readiness.tone==='unknown'?'Unknown':'Action needed')+'</span>'+
+      '<strong>'+escapeHtml(readiness.title)+'</strong><small>'+escapeHtml(readiness.detail)+'</small></div>'+
+      '<button type="button" data-service-provider-home-panel="services">'+(readiness.tone==='ready'?'Review services':'Fix setup')+'</button>';
+  }
+
+  const attention=serviceProviderHomeAttentionJobs(data);
+  const attentionMeta=hub.querySelector('#serviceProviderAttentionMeta');
+  const attentionList=hub.querySelector('#serviceProviderAttentionList');
+  if(attentionMeta)attentionMeta.textContent=attention===null?'Unavailable':attention.length?attention.length+' need attention':'Nothing waiting';
+  if(attentionList){
+    attentionList.innerHTML=attention===null
+      ?'<div class="serviceProviderHomeUnavailable"><strong>Jobs unavailable</strong><span>Open Jobs to retry. No job count has been assumed.</span></div>'
+      :attention.length
+        ?attention.map(job=>serviceProviderHomeJobRow(job)).join('')
+        :'<div class="serviceProviderHomeEmpty"><strong>You are caught up.</strong><span>No request or active job currently needs a Provider action.</span><button type="button" data-service-provider-home-panel="services">Review your services</button></div>';
+  }
+
+  const waiting=serviceProviderHomeWaitingJobs(data);
+  const waitingSection=hub.querySelector('#serviceProviderWaitingSection');
+  const waitingList=hub.querySelector('#serviceProviderWaitingList');
+  if(waitingSection)waitingSection.classList.toggle('hidden',waiting===null||waiting.length===0);
+  if(waitingList&&waiting)waitingList.innerHTML=waiting.map(job=>serviceProviderHomeJobRow(job,true)).join('');
+
+  const moneyBox=hub.querySelector('#serviceProviderHomeMoney');
+  if(moneyBox){
+    const summary=data.money?.summary||null;
+    if(!summary){
+      moneyBox.innerHTML='<div class="serviceProviderMoneyUnavailable"><strong>Money summary unavailable</strong><span>Open Money to retry. No amount has been assumed.</span></div>';
+    }else{
+      const income=summary.income||{};
+      const paid=income.tracked?serviceProviderHomeMoney(income.paid):'Not tracked';
+      const paidNote=income.tracked?'Recorded service_provider_net paid evidence':'No service_provider_net settlement evidence';
+      const settlement=income.tracked?serviceProviderHomeMoney(serviceProviderHomeSettlementPending(income)):'Not configured';
+      moneyBox.innerHTML=
+        '<div><span>Confirmed job value</span><strong>'+serviceProviderHomeMoney(summary.confirmed_job_value)+'</strong><small>'+Number(summary.confirmed_completed_count||0)+' Customer-confirmed completed</small></div>'+
+        '<div><span>Open work value</span><strong>'+serviceProviderHomeMoney(summary.open_commercial_value)+'</strong><small>'+Number(summary.open_commercial_jobs||0)+' quoted / active</small></div>'+
+        '<div><span>Money received</span><strong>'+escapeHtml(paid)+'</strong><small>'+escapeHtml(paidNote)+'</small></div>'+
+        '<div><span>In settlement</span><strong>'+escapeHtml(settlement)+'</strong><small>Only recorded provider allocation evidence</small></div>';
+    }
+  }
+
+  const partial=hub.querySelector('#serviceProviderHomePartial');
+  if(partial){
+    partial.classList.toggle('hidden',!data.failures.length);
+    partial.innerHTML=data.failures.length
+      ?'<span>Some Home information is unavailable: '+escapeHtml(data.failures.join(', '))+'.</span><button type="button" data-service-provider-home-retry>Retry</button>'
+      :'';
+  }
+  bindServiceProviderHomeDynamic(hub);
+}
+async function loadServiceProviderHome(hub,{force=false}={}){
+  const loading=hub.querySelector('#serviceProviderHomeLoading');
+  const error=hub.querySelector('#serviceProviderHomeError');
+  if(force){
+    loading?.classList.remove('hidden');
+    error?.classList.add('hidden');
+  }
+  try{
+    const data=await loadServiceProviderHomeData(force);
+    if(!hub.isConnected||activeRole!=='service_provider')return;
+    renderServiceProviderHomeData(hub,data);
+  }catch(err){
+    loading?.classList.add('hidden');
+    hub.querySelector('#serviceProviderHomeDynamic')?.classList.add('hidden');
+    const message=hub.querySelector('#serviceProviderHomeErrorMessage');
+    if(message)message.textContent=err.message||'Local Services Home could not be loaded.';
+    error?.classList.remove('hidden');
+  }
+}
 function openServiceProviderSection(section){
   if(window.BusinessLifeServices?.openProviderWorkspace)return window.BusinessLifeServices.openProviderWorkspace(section);
   showToast('Local Services is still loading. Try again in a moment.');
@@ -923,21 +1110,25 @@ function openServiceProviderHubDestination(hub,destination){
     return showToast('Money is still loading. Try again in a moment.');
   }
   setServiceProviderHubPanel(hub,destination);
+  if(destination==='home')loadServiceProviderHome(hub).catch(()=>{});
 }
 function renderServiceProviderHub(){
   const hub=document.getElementById('roleHub');
   if(!hub)return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   hub.innerHTML=
-    '<div class="hubHero serviceProviderHero"><div class="hubEyebrow">Local Services profile</div><h1>Your work, without the platform jargon.</h1><p>Set up what you offer, handle customer work, and keep Money evidence separate from job value.</p><span class="hubStatus">Service Provider workspace</span></div>'+
+    '<div class="hubHero serviceProviderHero"><div class="hubEyebrow">Local Services profile</div><h1>What needs your attention today?</h1><p>See whether customers can hire you, what work needs action, what is waiting on the Customer and what Money evidence is recorded.</p><span class="hubStatus">Service Provider workspace</span></div>'+
     '<section class="serviceProviderPanel" data-service-provider-panel="home">'+
-      '<div class="hubSectionTitle"><h2>Home</h2><span>Choose what needs attention</span></div>'+
-      '<div class="serviceProviderActionGrid">'+
-        '<button class="serviceProviderActionCard" type="button" data-service-provider-open="services"><span>🧰</span><strong>Set up your services</strong><small>Public profile, services offered, pricing, service area and trust evidence.</small></button>'+
-        '<button class="serviceProviderActionCard" type="button" data-service-provider-open="jobs"><span>🗓️</span><strong>Handle customer work</strong><small>Requests, quotes, scheduled work, completion and verified review context.</small></button>'+
-        '<button class="serviceProviderActionCard" type="button" data-service-provider-open="money"><span>💰</span><strong>Check Money</strong><small>Commercial job value and only the income or settlement evidence actually recorded.</small></button>'+
+      '<div class="serviceProviderHomeToolbar"><div><strong>Home</strong><small>Your live Service Provider summary</small></div><button id="serviceProviderHomeRefresh" type="button">Refresh</button></div>'+
+      '<div id="serviceProviderHomeLoading" class="serviceProviderHomeState"><strong>Checking your service work…</strong><span>Profile visibility, jobs and evidence-based Money.</span></div>'+
+      '<div id="serviceProviderHomeError" class="serviceProviderHomeState serviceProviderHomeError hidden" role="alert"><strong>Home could not be loaded.</strong><span id="serviceProviderHomeErrorMessage">Check your connection and try again.</span><button type="button" data-service-provider-home-retry>Try again</button></div>'+
+      '<div id="serviceProviderHomePartial" class="serviceProviderHomePartial hidden"></div>'+
+      '<div id="serviceProviderHomeDynamic" class="serviceProviderHomeDynamic hidden">'+
+        '<section id="serviceProviderHomeReadiness" class="serviceProviderHomeSection serviceProviderReadiness"></section>'+
+        '<section class="serviceProviderHomeSection"><div class="hubSectionTitle"><h2>Needs attention</h2><span id="serviceProviderAttentionMeta">Checking…</span></div><div id="serviceProviderAttentionList" class="serviceProviderHomeWorkList"></div></section>'+
+        '<section id="serviceProviderWaitingSection" class="serviceProviderHomeSection hidden"><div class="hubSectionTitle"><h2>Waiting on Customer</h2><span>No Provider action required</span></div><div id="serviceProviderWaitingList" class="serviceProviderHomeWorkList"></div></section>'+
+        '<section class="serviceProviderHomeSection serviceProviderMoneyHome"><div class="hubSectionTitle"><h2>Money</h2><button type="button" data-service-provider-home-money>Open Money</button></div><div id="serviceProviderHomeMoney" class="serviceProviderMoneySnapshot"></div><div class="serviceProviderMoneyBoundary"><strong>Commercial value is not cash received.</strong><span>Only recorded service_provider_net allocation evidence can appear as Provider income or settlement.</span></div></section>'+
       '</div>'+
-      '<div class="serviceProviderBoundary"><strong>Job value is not automatically income.</strong><span>Business & Life keeps payment and settlement evidence separate so this screen never invents earnings.</span></div>'+
     '</section>'+
     '<section class="serviceProviderPanel hidden" data-service-provider-panel="services">'+
       '<div class="hubSectionTitle"><h2>Services</h2><span>What customers can understand and hire</span></div>'+
@@ -962,12 +1153,14 @@ function renderServiceProviderHub(){
       '<button type="button" data-service-provider-nav="jobs"><span>🗓️</span><strong>Jobs</strong></button>'+
       '<button type="button" data-service-provider-nav="money"><span>💰</span><strong>Money</strong></button>'+
     '</nav>';
-  hub.querySelectorAll('[data-service-provider-open]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,button.dataset.serviceProviderOpen));
   hub.querySelectorAll('[data-service-provider-nav]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,button.dataset.serviceProviderNav));
   hub.querySelectorAll('[data-service-provider-section]').forEach(button=>button.onclick=()=>openServiceProviderSection(button.dataset.serviceProviderSection));
   hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>window.BusinessLifeProfileSettings?.open?.('service_provider');
+  hub.querySelector('#serviceProviderHomeRefresh')?.addEventListener('click',()=>loadServiceProviderHome(hub,{force:true}));
+  hub.querySelectorAll('[data-service-provider-home-retry]').forEach(button=>button.onclick=()=>loadServiceProviderHome(hub,{force:true}));
   setServiceProviderHubPanel(hub,serviceProviderHubPanel,{scroll:false});
   hub.classList.remove('hidden');
+  if(serviceProviderHubPanel==='home')loadServiceProviderHome(hub).catch(()=>{});
 }
 
 function renderRoleHub(role) {
@@ -1081,6 +1274,6 @@ function boot() {
     refreshProfile().catch(() => {});
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
-  document.addEventListener('abl:profile-state',e=>{if(e.detail?.activeRole!=='customer')invalidateCustomerHome()},{passive:true});
+  document.addEventListener('abl:profile-state',e=>{if(e.detail?.activeRole!=='customer')invalidateCustomerHome();if(e.detail?.activeRole!=='service_provider')invalidateServiceProviderHome()},{passive:true});
 }
 boot();
