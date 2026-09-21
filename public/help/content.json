@@ -138,8 +138,8 @@
       ],
       "startHere": [
         "Start/complete the Local Services application.",
-        "Open Services to manage the public profile, approved services and qualification/work evidence.",
-        "Open Jobs for requests, quotes, active work and verified-review context; use Money only for recorded commercial and settlement evidence."
+        "Open Home first to check public discovery, work needing your action, work waiting on the Customer and recorded Money evidence.",
+        "Open Services to manage the public profile, approved services and qualification/work evidence; use Jobs for the canonical request-to-completion lifecycle."
       ],
       "journey": [
         "Apply and receive approved scope",
