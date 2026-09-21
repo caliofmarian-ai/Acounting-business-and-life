@@ -39,8 +39,10 @@ test('availability quick update is Supplier-owned and never claims exact stock',
   assert.match(source,/availability_note/);
 });
 
-test('Today exposes multi-business attribution ambiguity instead of hiding it',()=>{
+test('Today and availability fail closed for ambiguous multi-business Supplier accounts',()=>{
+  assert.match(source,/SUPPLIER_BUSINESS_ATTRIBUTION_REQUIRED/);
+  assert.match(source,/SUPPLIER_CATALOG_BUSINESS_ATTRIBUTION_REQUIRED/);
+  assert.match(source,/bindingCount!==1/);
   assert.match(source,/SINGLE_SUPPLIER_BUSINESS_BINDING/);
-  assert.match(source,/ACCOUNT_LEVEL_ORDER_ACTIVITY/);
-  assert.match(source,/supplierBindingCount/);
+  assert.doesNotMatch(source,/ACCOUNT_LEVEL_ORDER_ACTIVITY/);
 });
