@@ -46,7 +46,8 @@ test('only Customer Courier and Local Services use this personal/profile Money e
 test('shell exposes role-specific Money destinations without changing Merchant or Supplier accounting model',()=>{
   assert.match(shell,/data-hub-feature="Money"><span>💳<\/span><strong>My money<\/strong>/);
   assert.match(shell,/data-customer-nav="money"/);
-  assert.match(shell,/courierFeatureProxy hidden[^\n]*data-hub-feature="Money"/);
+  assert.match(shell,/data-courier-home-open="Money"/);
+  assert.match(shell,/openProfileMoney\('courier'\)/);
   assert.match(shell,/data-courier-nav="money"/);
   assert.match(shell,/\['💰','Money'[^\n]*'Money'\]/);
   const supplierStart=shell.indexOf('supplier: [');
