@@ -65,6 +65,9 @@ function highestAdminAssignment(){
   const levels={super_admin:100,country_admin:80,territory_admin:60,specialist:40};
   return [...(adminContext?.assignments||[])].sort((a,b)=>(levels[adminRank(b)]||0)-(levels[adminRank(a)]||0))[0]||null;
 }
+function isSuperAdminAccount(){
+  return (adminContext?.assignments||[]).some(assignment=>adminRank(assignment)==='super_admin');
+}
 function countryMeta(code){return COUNTRY_META[code]||{flag:'🌐',label:code||'Country not set'}}
 function identityLine(id,label='ID'){
   return `<span class="publicIdentity"><span>${escapeHtml(label)}</span><code>${escapeHtml(id||'Preparing ID…')}</code>${id?`<button type="button" data-copy-id="${escapeHtml(id)}" aria-label="Copy ${escapeHtml(label)}">Copy</button>`:''}</span>`;
@@ -183,8 +186,10 @@ function renderDrawer() {
 
 function profileManagementMarkup(){
   const account=snapshot.account;
-  const emailReady=Boolean(account.email_verified_at);
-  const detailsReady=accountDetailsReady(account);
+  let emailReady=Boolean(account.email_verified_at);
+  let detailsReady=accountDetailsReady(account);
+  const superAdmin=isSuperAdminAccount();
+  if(superAdmin){emailReady=true;detailsReady=true}
   const roles=isCompanyTestAccount(account)?ROLE_ORDER.filter(role=>role===account.test_role):ROLE_ORDER;
   if(!roles.length)return `<div class="companyTestRoleBoundary"><strong>${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>This company-managed account is reserved for Admin testing and does not require a personal operational profile.</p></div>`;
   return roles.map(role=>{
@@ -196,8 +201,8 @@ function profileManagementMarkup(){
     else if(!emailReady){action=`data-verify-email="${role}"`;label='Verify email first'}
     else if(!detailsReady){action=`data-complete-personal="${role}"`;label='Complete details'}
     else if(reactivable){action=`data-profile-reactivate="${role}"`;label='Reactivate'}
-    else{action=`data-role-action="${role}"`;label=inProgress?'Continue onboarding':'Start onboarding'}
-    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':'Not active';
+    else{action=`data-role-action="${role}"`;label=superAdmin?'Activate':inProgress?'Continue onboarding':'Start onboarding'}
+    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':'Not active';
     return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`
   }).join('');
 }
@@ -225,14 +230,14 @@ function renderAccountSettings(view=accountSettingsView){
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
     </form></section>`;
   }else if(view==='profiles'){
-    const detailsReady=accountDetailsReady(account);
-    const activationGate=!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and primary address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:'';
+    const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount();
+    const activationGate=superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and primary address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:'';
     workspace.innerHTML=accountSettingsHeader(test?'Assigned test role':'Manage profiles',test?`This account is reserved for ${testAccountRoleLabel(account)} testing and does not require personal contact details.`:'Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+'<div id="accountSecurityMount"></div>';
   }
   workspace.querySelector('#accountSettingsBack').onclick=()=>view==='home'?closeAccountSettings():renderAccountSettings('home');
-  workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>renderAccountSettings(button.dataset.accountSettingsView));
+  workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>button.dataset.accountSettingsView==='profiles'?openAccountSettings('profiles'):renderAccountSettings(button.dataset.accountSettingsView));
   workspace.querySelector('#accountMoneyBanking')?.addEventListener('click',()=>window.BusinessLifeProfileSettings?.openAccountMoney?.());
   workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
   workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
@@ -248,7 +253,7 @@ function renderAccountSettings(view=accountSettingsView){
   document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{view,activeRole,accountId:Number(account.id)||null}}));
 }
 
-function openAccountSettings(view='home'){
+async function openAccountSettings(view='home'){
   closeDrawer();
   activeSurface='account';
   hideMerchantWorkspace();
@@ -257,6 +262,9 @@ function openAccountSettings(view='home'){
   document.getElementById('profileSettingsWorkspace')?.classList.add('hidden');
   const workspace=document.getElementById('accountSettingsWorkspace');
   workspace?.classList.remove('hidden');
+  if(view==='profiles'&&(!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS)){
+    await refreshAdminContext(true).catch(()=>null);
+  }
   renderAccountSettings(view);
   renderTopAccount();
   publishProfileState();
@@ -278,9 +286,23 @@ function openAccountHome(){
   if(!profileFetchedAt||Date.now()-profileFetchedAt>=PROFILE_CACHE_MS)refreshProfile().catch(error=>console.warn('Account refresh:',error.message));
 }
 
-async function reactivateProfile(role){try{snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:true,visibility:'private'})});activeRole=snapshot.account.active_role||role;profileFetchedAt=Date.now();renderAccountSettings('profiles');publishProfileState();showToast('Profile reactivated.')}catch(err){showToast(err.message)}}
+async function reactivateProfile(role){try{
+  if(isSuperAdminAccount())snapshot=await profileApi(`/api/governance/super-admin/self-test/profiles/${role}/activate`,{method:'POST',body:'{}'});
+  else if(role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});
+  else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:true,visibility:'private'})});
+  snapshot=await profileApi('/api/me/active-role',{method:'PATCH',body:JSON.stringify({role})});
+  activeRole=role;profileFetchedAt=Date.now();activeSurface='profile';applyActiveRole();publishProfileState();showToast('Profile reactivated.');
+}catch(err){showToast(err.message)}}
 
-async function toggleProfile(role,enabled){try{if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});activeRole=snapshot.account.active_role||null;profileFetchedAt=Date.now();if(enabled){activeSurface='profile';applyActiveRole()}else renderAccountHome();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.')}catch(err){showToast(err.message)}}
+async function toggleProfile(role,enabled){try{
+  if(enabled&&isSuperAdminAccount())snapshot=await profileApi(`/api/governance/super-admin/self-test/profiles/${role}/activate`,{method:'POST',body:'{}'});
+  else if(enabled&&role==='customer')snapshot=await profileApi('/api/profiles/customer/activate',{method:'POST',body:'{}'});
+  else if(enabled){document.dispatchEvent(new CustomEvent('abl:start-profile-onboarding',{detail:{role}}));return}
+  else snapshot=await profileApi(`/api/profiles/${role}`,{method:'PUT',body:JSON.stringify({enabled:false,visibility:'private'})});
+  if(enabled){snapshot=await profileApi('/api/me/active-role',{method:'PATCH',body:JSON.stringify({role})});activeRole=role}
+  else activeRole=snapshot.account.active_role||null;
+  profileFetchedAt=Date.now();if(enabled){activeSurface='profile';applyActiveRole()}else renderAccountHome();publishProfileState();renderAccountSettings();showToast(enabled?'Profile activated.':'Profile disabled.');
+}catch(err){showToast(err.message)}}
 
 async function openDrawer() {
   if (!token()) return showToast('Sign in first to open your account.');
