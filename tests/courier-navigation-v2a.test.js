@@ -8,6 +8,7 @@ const shellCss=read('public/shell.css');
 const delivery=read('public/delivery-ui.js');
 const money=read('public/profile-money-ui.js');
 const server=read('server-delivery.js');
+const moneyCore=read('profile-money-core.js');
 
 function courierBlock(){
   const start=shell.indexOf('function openCourierHubFeature');
@@ -65,7 +66,7 @@ test('Courier Settings remains non-primary and opens the Courier profile setting
 test('Courier Money remains canonical and delivery fee is not treated as earnings',()=>{
   assert.match(blockText(money),/Customer charges — not earnings/);
   assert.match(blockText(money),/No courier_net allocation yet/);
-  assert.match(server,/courier_net/);
+  assert.match(moneyCore,/courier_net/);
   function blockText(v){return v}
 });
 
