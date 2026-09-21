@@ -1,3 +1,49 @@
 .menuSummary{border-color:#dbeafe}.salePreview{background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:13px;color:#475569}.bigAction{min-height:52px;font-size:16px}.productList{display:grid;gap:12px}.productCard{border:1px solid #e5e7eb;border-radius:18px;padding:15px;display:grid;gap:12px;background:#fff}.productTop{display:flex;justify-content:space-between;gap:12px;align-items:start}.productTop>div{display:grid;gap:3px}.productTop small,.recipeMini{color:#6b7280}.productNumbers{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.productNumbers span{background:#f8fafc;border-radius:12px;padding:9px;display:grid;gap:3px;font-size:11px;color:#64748b}.productNumbers b{font-size:14px;color:#111827}.productNumbers b.positive{color:#047857}.productNumbers b.negative{color:#b91c1c}.recipeMini{font-size:12px;line-height:1.5}.shortageText{font-size:12px;font-weight:700;color:#b91c1c;background:#fef2f2;border-radius:10px;padding:8px 10px}.productActions{display:flex;flex-wrap:wrap;gap:8px}.recipeAdder{display:grid;grid-template-columns:1.6fr 1fr auto;gap:10px;align-items:end}.checkLabel{display:flex;align-items:center;gap:10px}.checkLabel input{width:auto}.navSix{grid-template-columns:repeat(6,1fr)}.sellCard{border-color:#c7d2fe;box-shadow:0 8px 28px rgba(30,64,175,.08)}@media(max-width:520px){.productNumbers{grid-template-columns:1fr 1fr}.productNumbers span:last-child{grid-column:1/-1}.recipeAdder{grid-template-columns:1fr 1fr}.recipeAdder button{grid-column:1/-1}.navSix button{font-size:10px;padding-inline:0}}
 .productTypeGuide{border-color:#dce7ef}.productTypeGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.productTypeGrid>div{background:#f0f8f6;border:1px solid #d8eee8;border-radius:14px;padding:11px;display:grid;gap:4px}.productTypeGrid strong{font-size:13px;color:#17243d}.productTypeGrid small{font-size:11px;line-height:1.35;color:#64748b}.batchSummary{background:#f0f8f6;color:#056b5e;border-radius:10px;padding:8px 10px;font-size:11px;font-weight:700}.recipeYieldGrid{display:grid;grid-template-columns:1.4fr .8fr 1.4fr .8fr;gap:8px}.recipeAdderV2{grid-template-columns:1.6fr 1fr .8fr auto}.recipeAdderV2 label{min-width:0}
 @media(max-width:520px){.productTypeGrid{grid-template-columns:1fr}.recipeYieldGrid{grid-template-columns:1fr 1fr}.recipeAdderV2{grid-template-columns:1.5fr 1fr}.recipeAdderV2 label:nth-child(3){grid-column:1/2}.recipeAdderV2 button{grid-column:2/3}}
+
+
+/* Merchant Today V2B — mobile-first daily action center */
+.merchantTodayView{padding-bottom:92px;overflow-x:hidden}
+.todayHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.todayHeader h1{margin:2px 0 0;font-size:1.7rem;line-height:1.1}
+.todayEyebrow{display:block;font-size:.72rem;font-weight:850;text-transform:uppercase;letter-spacing:.06em;color:#0f766e}
+.todayRefresh{min-height:44px;padding:10px 14px}
+.todayState{display:grid;gap:7px;min-height:110px;align-content:center}
+.todayState span{font-size:.86rem;line-height:1.45;color:#64748b}
+.todayError{border-color:#fecaca;background:#fff7f7}.todayError strong{color:#991b1b}.todayError button{min-height:44px;justify-self:start}
+.todayContent{display:grid;gap:12px}
+.todayCard{display:grid;gap:10px;padding:14px;border:1px solid #e2e8f0;border-radius:18px;background:#fff;box-shadow:0 7px 22px rgba(15,23,42,.045);min-width:0}
+.todayOrders{border-color:#bfdbfe;background:linear-gradient(180deg,#fff,#f8fbff)}
+.todayCardHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0}
+.todayCardHead>div{display:grid;gap:3px;min-width:0}.todayCardHead>div>span{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+.todayCardHead h2{margin:0;font-size:1rem;line-height:1.3;color:#0f172a;overflow-wrap:anywhere}
+.todayCardHead>strong{display:grid;place-items:center;min-width:38px;height:38px;padding:0 8px;border-radius:12px;background:#f1f5f9;color:#0f172a;font-size:1rem}
+.todayChips{display:flex;gap:7px;flex-wrap:wrap;min-width:0}
+.todayChip{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:7px 9px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:.74rem;font-weight:700}
+.todayChip strong{font-size:.78rem;color:#0f172a}.todayChip.attention{background:#fff7ed;color:#9a3412}.todayChip.attention strong{color:#9a3412}
+.todayMiniList{display:grid;gap:7px}.todayMiniList>div{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 9px;border-radius:11px;background:#f8fafc;min-width:0}
+.todayMiniList strong{font-size:.82rem;overflow-wrap:anywhere}.todayMiniList span{font-size:.74rem;color:#64748b;text-align:right}.todayEmpty{font-size:.8rem!important;color:#64748b}
+.todayPrimaryAction{min-height:44px;width:100%}
+.todayMoneyGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.todayMoneyGrid>div{display:grid;gap:3px;padding:10px;border-radius:13px;background:#f8fafc;border:1px solid #e2e8f0;min-width:0}
+.todayMoneyGrid span,.todayMoneyGrid small{font-size:.7rem;color:#64748b;line-height:1.3}.todayMoneyGrid strong{font-size:.96rem;color:#0f172a;overflow-wrap:anywhere}
+.todayFoodActions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 13px;border-radius:16px;background:#fffbeb;border:1px solid #fde68a}
+.todayFoodActions>div:first-child{display:grid;gap:3px}.todayFoodActions span{font-size:.74rem;color:#78716c}.todayFoodActions>div:last-child{display:flex;gap:7px;flex-wrap:wrap}.todayFoodActions button{min-height:44px}
+.todayUpdated{text-align:center;font-size:.72rem;margin:0 0 4px}
+.merchantPrimaryNav{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:2px}
+.merchantPrimaryNav button{min-width:0;min-height:52px;padding:7px 3px;font-size:.72rem;white-space:normal;line-height:1.15}
+.moneyAdvancedLinks{display:flex;gap:7px;flex-wrap:wrap}.moneyAdvancedLinks button{min-height:40px}
+@media(max-width:420px){
+  .merchantTodayView{padding-left:10px!important;padding-right:10px!important}
+  .todayHeader{align-items:center}.todayHeader h1{font-size:1.55rem}
+  .todayCard{padding:12px;border-radius:16px}
+  .todayMoneyGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .todayFoodActions{align-items:flex-start;flex-direction:column}
+  .merchantPrimaryNav button{font-size:.68rem}
+}
+@media(min-width:760px){
+  .todayContent{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .todayMoneyCard,.todayFoodActions,.todayUpdated{grid-column:1/-1}
+  .todayMoneyGrid{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
