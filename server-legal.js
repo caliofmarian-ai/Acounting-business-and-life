@@ -5,7 +5,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname,join } from 'node:path';
+import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensureLegalSchema,seedRepositoryLegalDrafts,resolveLegalGate,getCurrentLegalDocument,
@@ -165,12 +165,55 @@ app.put('/api/notifications/preferences',body,async(req,res,next)=>{try{if(req.b
 // All existing Admin actions can become gated by reviewed Admin confidentiality documents, while legal governance itself stays reachable.
 app.use('/api/admin',async(req,res,next)=>{try{const me=await identity(req),ctx=await activeAdminContext(me.account.id),out=await legalGateFor(req,{actionCode:'admin.access',role:'admin',territoryId:ctx.territoryId,adminAssignmentId:ctx.adminAssignmentId});if(out.gate.blocked)return blocked(res,out.gate);next()}catch(e){next(e)}});
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Legal gateway upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const rawPayload=Buffer.isBuffer(req.rawBody)&&req.rawBody.length?req.rawBody:null;
+  const parsedJsonBody=!rawPayload&&req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=rawPayload||(parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null);
+  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Legal gateway upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected legal/consent error'})});
 
 function start(){child=spawn(process.execPath,['server-notifications.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Notification child exited ${code}`);process.exit(code||1)}})}
 async function wait(){for(let i=0;i<startupWaitAttempts(340);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Notification child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life legal/consent gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+
+let embeddedStartPromise=null;
+export async function startEmbeddedLegal(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      await initDb();
+      console.log('Business & Life legal/consent mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopLegal(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedLegal(){await stopLegal()}
+
+async function shutdown(sig){console.log(`Received ${sig}`);await stopLegal();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedLegal().then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life legal/consent gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+}
