@@ -456,6 +456,7 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
       if(!offeredName||!packageUnit||!baseUnit||!positive(baseUnits)||!positive(quotedPacks)||!positive(minimumPacks)||!nonNegative(price)||!nonNegative(fee)){
         return res.status(400).json({error:'Complete quote item, package, quantity and price are required'});
       }
+      if(quotedPacks+1e-9<minimumPacks)return res.status(400).json({error:'Quoted quantity cannot be below the quote MOQ'});
       const validUntil=String(req.body?.valid_until||'').slice(0,10);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(validUntil)||new Date(validUntil+'T23:59:59Z').getTime()<Date.now()){
         return res.status(400).json({error:'Quote validity date must be current or future'});
@@ -523,14 +524,20 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
         `SELECT * FROM merchant_supply_parties WHERE id=$1 AND business_id=$2 AND status='active'`,[partyId,business.id]
       );
       if(!party.rowCount)return res.status(404).json({error:'External Supplier record not found'});
+      if(!['open','quoted'].includes(rfq.status)||new Date(rfq.expires_at).getTime()<=Date.now()){
+        return res.status(409).json({error:'RFQ is closed or expired'});
+      }
       const offeredName=clean(req.body?.offered_name,180),packageUnit=clean(req.body?.package_unit,50),baseUnit=clean(req.body?.base_unit,50);
       const baseUnits=Number(req.body?.base_units_per_pack),packs=Number(req.body?.quoted_packs),minimum=Number(req.body?.minimum_packs??1);
       const price=Number(req.body?.price_per_pack),fee=Number(req.body?.delivery_fee??0);
       if(!offeredName||!packageUnit||!baseUnit||!positive(baseUnits)||!positive(packs)||!positive(minimum)||!nonNegative(price)||!nonNegative(fee)){
         return res.status(400).json({error:'Complete external quote evidence is required'});
       }
+      if(packs+1e-9<minimum)return res.status(400).json({error:'Quoted quantity cannot be below the quote MOQ'});
       const validUntil=String(req.body?.valid_until||'').slice(0,10);
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(validUntil))return res.status(400).json({error:'Quote validity date is required'});
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(validUntil)||new Date(validUntil+'T23:59:59Z').getTime()<Date.now()){
+        return res.status(400).json({error:'Quote validity date must be current or future'});
+      }
       const existing=await pool.query(
         `SELECT id FROM supplier_quotes WHERE rfq_id=$1 AND supply_party_id=$2
          AND source_type='external' AND status IN ('active','converted')`,[rfq.id,partyId]
