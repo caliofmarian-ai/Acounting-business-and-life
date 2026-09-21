@@ -6,6 +6,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const notifications=read('server-notifications.js');
 const services=read('server-services.js');
 const admin=read('server-admin-operations.js');
+const governance=read('server-profile-governance.js');
 
 test('post-transaction notification hooks retain route params across embedded Express apps',()=>{
   const snapshot=notifications.indexOf('const notificationParams={...req.params}');
@@ -31,6 +32,10 @@ test('Local Services notification lifecycle remains wired after in-process conso
 test('expected access denials remain HTTP 4xx without noisy server-error stack logging',()=>{
   assert.match(services,/if\(status>=500\)console\.error\(err\)/);
   assert.match(admin,/if\(status>=500\)console\.error\(err\)/);
+  assert.match(notifications,/if\(status>=500\)console\.error\(err\)/);
+  assert.match(governance,/if\(status>=500\)console\.error\(err\)/);
   assert.match(services,/status<500\?err\.message:'Unexpected server error'/);
   assert.match(admin,/status<500\?err\.message:'Unexpected admin operations error'/);
+  assert.match(notifications,/status<500\?err\.message:'Unexpected notification error'/);
+  assert.match(governance,/status<500\?err\.message:'Unexpected governance error'/);
 });
