@@ -6,7 +6,7 @@ let foregroundVoiceReady=false,foregroundVoiceToken='',lastForegroundEventId=nul
 
 function toast(msg){let n=document.getElementById('notificationToast');if(!n){n=document.createElement('div');n.id='notificationToast';n.className='notificationToast';document.body.appendChild(n)}n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),2600)}
 function ensureNotificationUi(){
-  if(!document.getElementById('notificationBackdrop')){const wrap=document.createElement('div');wrap.id='notificationBackdrop';wrap.className='notificationBackdrop hidden';wrap.innerHTML=`<section class="notificationSheet" role="dialog" aria-modal="true"><header><div><small>Business & Life</small><h2>Notifications</h2></div><button class="notificationClose" type="button">×</button></header><div id="notificationBody"></div></section>`;document.body.appendChild(wrap);wrap.querySelector('.notificationClose').onclick=closeNotifications;wrap.addEventListener('click',e=>{if(e.target===wrap)closeNotifications()})}
+  if(!document.getElementById('notificationBackdrop')){const wrap=document.createElement('div');wrap.id='notificationBackdrop';wrap.className='notificationBackdrop hidden';wrap.innerHTML=`<section class="notificationSheet" role="dialog" aria-modal="true"><header><div class="notificationBrand"><small>CALIOF</small><h2>Notifications</h2><span>Business & Life</span></div><button class="notificationClose" type="button">×</button></header><div id="notificationBody"></div></section>`;document.body.appendChild(wrap);wrap.querySelector('.notificationClose').onclick=closeNotifications;wrap.addEventListener('click',e=>{if(e.target===wrap)closeNotifications()})}
   addBell();
 }
 function addBell(){
@@ -19,15 +19,30 @@ function closeNotifications(){document.getElementById('notificationBackdrop')?.c
 async function openNotifications(){ensureNotificationUi();document.getElementById('notificationBackdrop').classList.remove('hidden');document.body.style.overflow='hidden';await renderNotificationCenter()}
 function iconFor(code){if(code.startsWith('order.'))return'🛍️';if(code.startsWith('delivery.'))return'🛵';if(code.startsWith('procurement.')||code.startsWith('supplier.'))return'📦';if(code.startsWith('service.'))return'🧰';if(code.startsWith('support.'))return'💬';if(code.startsWith('incident.'))return'🛡️';if(code.startsWith('profile.'))return'👤';return'🔔'}
 function timeAgo(value){const ms=Date.now()-new Date(value).getTime(),m=Math.floor(ms/60000);if(m<1)return'now';if(m<60)return`${m}m`;const h=Math.floor(m/60);if(h<24)return`${h}h`;return`${Math.floor(h/24)}d`}
+const NOTIFICATION_ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Courier',delivery:'Courier',service_provider:'Local Services',admin:'Admin'};
+function notificationRoleLabel(role=''){return NOTIFICATION_ROLE_LABELS[String(role||'').toLowerCase()]||'Account'}
+function notificationRoleClass(role=''){const key=String(role||'account').toLowerCase().replace(/[^a-z0-9_-]/g,'');return 'role-'+(key||'account')}
+function notificationTopic(code=''){const x=String(code||'');if(x.startsWith('order.'))return'Order';if(x.startsWith('delivery.'))return'Delivery';if(x.startsWith('procurement.'))return'Purchase order';if(x.startsWith('supplier.'))return'Supplier';if(x.startsWith('service.'))return'Local Services';if(x.startsWith('support.'))return'Support';if(x.startsWith('incident.'))return'Incident';if(x.startsWith('profile.'))return'Profile';if(x.startsWith('auth.')||x.startsWith('security.'))return'Security';if(x.startsWith('legal.'))return'Legal';return'Update'}
+function needsNotificationAction(n){const family=String(n?.attention?.family||n?.attention?.attention_family||'').toLowerCase();return ['action','urgent','warning'].includes(family)||['high','urgent'].includes(String(n?.priority||'').toLowerCase())}
+function effectiveCategoryPreference(p,cat){const x=(p?.preferences||[]).find(v=>v.category===cat&&v.profile_role==='');const marketing=cat==='marketing';return x?{in_app:Boolean(x.in_app_enabled),email:Boolean(x.email_enabled),push:Boolean(x.push_enabled)}:{in_app:!marketing,email:false,push:!marketing}}
+const QUICK_NOTIFICATION_MODES={
+  recommended:cat=>({in_app:cat!=='marketing',email:false,push:cat!=='marketing'}),
+  essential:cat=>({in_app:['security','legal','support','compliance'].includes(cat),email:false,push:['security','legal','support','compliance'].includes(cat)})
+};
+function sameModePreference(a,b){return a.in_app===b.in_app&&a.email===b.email&&a.push===b.push}
+function detectNotificationMode(p){const cats=p?.categories||[];if(cats.length&&cats.every(cat=>sameModePreference(effectiveCategoryPreference(p,cat),QUICK_NOTIFICATION_MODES.recommended(cat))))return'recommended';if(cats.length&&cats.every(cat=>sameModePreference(effectiveCategoryPreference(p,cat),QUICK_NOTIFICATION_MODES.essential(cat))))return'essential';return'custom'}
 async function renderNotificationCenter(){
   const body=document.getElementById('notificationBody');body.innerHTML='<div class="notificationLoading">Loading…</div>';
   try{
     const [rows,prefs]=await Promise.all([api('/api/notifications?limit=80'),api('/api/notifications/preferences')]);
     notificationPanel={rows,prefs};
+    const unreadCount=rows.filter(x=>!x.read_at).length;
+    const actionCount=rows.filter(x=>!x.read_at&&needsNotificationAction(x)).length;
     body.innerHTML=`
-      <div class="notificationTabs"><button class="active" data-ntab="inbox">Inbox <span>${rows.filter(x=>!x.read_at).length}</span></button><button data-ntab="settings">Settings</button></div>
+      <div class="notificationTabs"><button class="active" data-ntab="inbox">Inbox <span>${unreadCount}</span></button><button data-ntab="settings">Settings</button></div>
       <section id="notificationInbox">
-        <div class="notificationToolbar"><button id="markAllRead" type="button">Mark all read</button><button id="refreshNotifications" type="button">Refresh</button></div>
+        <div class="notificationSummary"><span><strong>${unreadCount} unread</strong><small>${actionCount?`${actionCount} need attention`:'You are caught up on important actions.'}</small></span><button id="markAllRead" type="button">Mark all read</button></div>
+        <div class="notificationToolbar"><button id="refreshNotifications" type="button">Refresh</button></div>
         <div id="notificationList" class="notificationList"></div>
       </section>
       <section id="notificationSettings" class="hidden"></section>`;
@@ -40,9 +55,14 @@ async function renderNotificationCenter(){
 function renderNotificationList(rows){
   const box=document.getElementById('notificationList');if(!box)return;
   if(!rows.length){box.innerHTML='<div class="notificationEmpty">No notifications yet.</div>';return}
-  box.innerHTML=rows.map(n=>`<article class="notificationCard ${n.read_at?'read':'unread'}" data-notification="${n.recipient_id}">
+  box.innerHTML=rows.map(n=>`<article class="notificationCard ${n.read_at?'read':'unread'} ${notificationRoleClass(n.role_hint)}" data-notification="${n.recipient_id}">
     <div class="notificationIcon">${iconFor(n.event_code)}</div>
-    <div class="notificationCopy"><div><strong>${esc(n.title)}</strong><time>${timeAgo(n.created_at)}</time></div><p>${esc(n.body)}</p><small>${esc(n.category)} • ${esc(n.priority)}</small></div>
+    <div class="notificationCopy">
+      <div class="notificationMeta"><span class="notificationRole">${esc(notificationRoleLabel(n.role_hint))}</span><span class="notificationTopic">${esc(notificationTopic(n.event_code))}</span><time>${timeAgo(n.created_at)}</time></div>
+      <strong class="notificationTitle">${esc(n.title)}</strong>
+      <p>${esc(n.body)}</p>
+      <small class="notificationState">${esc(n.priority==='urgent'?'Urgent':n.priority==='high'?'Important':'Update')}</small>
+    </div>
     <button class="notificationDismiss" data-dismiss="${n.recipient_id}" type="button" aria-label="Dismiss">×</button>
   </article>`).join('');
   box.querySelectorAll('[data-notification]').forEach(card=>card.onclick=async e=>{if(e.target.closest('[data-dismiss]'))return;const id=Number(card.dataset.notification),n=rows.find(x=>Number(x.recipient_id)===id);if(card.classList.contains('unread')){await api(`/api/notifications/${id}/read`,{method:'PATCH',body:'{}'}).catch(()=>{});card.classList.remove('unread');card.classList.add('read');await refreshUnread()}if(n?.entity_type==='support_ticket'&&n.entity_id){const ticketId=Number(n.entity_id);try{if(window.BusinessLifeAdminConsole?.openSupportTicket)await window.BusinessLifeAdminConsole.openSupportTicket(ticketId);else if(window.BusinessLifeFeatureLoader?.openSupportTicket)await window.BusinessLifeFeatureLoader.openSupportTicket(ticketId);else if(window.BusinessLifeAdminOps?.openTicket)await window.BusinessLifeAdminOps.openTicket(ticketId);else{window.__ABL_LAZY_FEATURES__=true;await import('/admin-operations-ui.js');await window.BusinessLifeAdminOps.openTicket(ticketId)}closeNotifications()}catch(err){toast(err.message||'Could not open this support ticket.')}}});
@@ -77,6 +97,15 @@ function renderSettings(p){
     <div class="settingsIntro">
       <strong>Notification settings</strong>
       <small>Open only the section you want to change.</small>
+    </div>
+
+    <div class="notificationModeCard">
+      <span><strong>Quick mode</strong><small>Start simple. Custom changes stay available below.</small></span>
+      <div class="notificationModeChoices">
+        <button type="button" data-notification-mode="recommended" class="${detectNotificationMode(p)==='recommended'?'active':''}">Recommended</button>
+        <button type="button" data-notification-mode="essential" class="${detectNotificationMode(p)==='essential'?'active':''}">Essential only</button>
+        <button type="button" data-notification-mode="custom" class="${detectNotificationMode(p)==='custom'?'active':''}">Custom</button>
+      </div>
     </div>
 
     <details class="notificationSettingsGroup">
@@ -142,12 +171,26 @@ function renderSettings(p){
       </div>
     </details>`;
 
+  box.querySelectorAll('[data-notification-mode]').forEach(button=>button.onclick=applyQuickNotificationMode);
   document.getElementById('notificationLocale').onchange=async e=>{try{await api('/api/notifications/locale',{method:'PUT',body:JSON.stringify({locale:e.target.value})});const refreshed=await api('/api/notifications/preferences');notificationPanel.prefs=refreshed;renderSettings(refreshed);toast('Notification language updated.')}catch(err){toast(err.message);}};
   document.getElementById('enablePush').onclick=enablePush;
   for(const id of ['notificationSounds','notificationVibration','notificationImportantAlerts'])document.getElementById(id).onchange=saveAttentionPreferences;
   box.querySelectorAll('[data-sound-slot]').forEach(select=>select.onchange=saveSoundPreference);
   box.querySelectorAll('[data-preview-sound]').forEach(button=>button.onclick=previewNotificationVoice);
   box.querySelectorAll('.preferenceRow[data-category] input').forEach(input=>input.onchange=savePreferenceRow);
+}
+async function applyQuickNotificationMode(e){
+  const mode=e.currentTarget.dataset.notificationMode;
+  if(mode==='custom'){toast('Open a section below to customize notifications.');return}
+  const preset=QUICK_NOTIFICATION_MODES[mode];if(!preset)return;
+  const buttons=[...document.querySelectorAll('[data-notification-mode]')];buttons.forEach(b=>b.disabled=true);
+  try{
+    const prefs=notificationPanel?.prefs||{};
+    await Promise.all((prefs.categories||[]).map(cat=>{const v=preset(cat);return api('/api/notifications/preferences',{method:'PUT',body:JSON.stringify({category:cat,profile_role:'',in_app_enabled:cat==='security'?true:v.in_app,email_enabled:v.email,push_enabled:v.push})})}));
+    const refreshed=await api('/api/notifications/preferences');notificationPanel.prefs=refreshed;renderSettings(refreshed);
+    toast(mode==='recommended'?'Recommended notifications restored.':'Essential-only notifications applied.');
+  }catch(err){toast(err.message||'Could not update notification mode.');await renderNotificationCenter()}
+  finally{buttons.forEach(b=>b.disabled=false)}
 }
 async function saveAttentionPreferences(){
   try{
