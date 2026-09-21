@@ -452,6 +452,197 @@ const HUBS = {
 };
 
 
+const CUSTOMER_HOME_CACHE_MS=30000;
+let customerHomeCache={accountId:null,data:null,loadedAt:0,promise:null};
+
+function customerNice(value){return String(value||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}
+function customerMoney(value){return new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(value)||0)}
+function customerDate(value){if(!value)return'';try{return new Date(value).toLocaleDateString('en-PH')}catch{return''}}
+function invalidateCustomerHome(){customerHomeCache={accountId:null,data:null,loadedAt:0,promise:null}}
+async function loadCustomerHomeData(force=false){
+  const accountId=Number(snapshot?.account?.id)||null;
+  if(!accountId)throw new Error('Customer account is not ready yet.');
+  if(customerHomeCache.accountId!==accountId)invalidateCustomerHome();
+  if(!force&&customerHomeCache.data&&Date.now()-customerHomeCache.loadedAt<CUSTOMER_HOME_CACHE_MS)return customerHomeCache.data;
+  if(customerHomeCache.promise)return customerHomeCache.promise;
+  customerHomeCache.promise=(async()=>{
+    const [ordersResult,deliveryResult,servicesResult,moneyResult]=await Promise.allSettled([
+      profileApi('/api/orders/mine'),
+      profileApi('/api/delivery/mine'),
+      profileApi('/api/services/jobs/mine'),
+      profileApi('/api/profile-money/customer')
+    ]);
+    const failures=[];
+    const value=(result,label,fallback)=>{
+      if(result.status==='fulfilled')return result.value;
+      failures.push(label);
+      return fallback;
+    };
+    const allServices=value(servicesResult,'Local Services',null);
+    const services=Array.isArray(allServices)
+      ?allServices.filter(job=>Number(job.customer_account_id)===accountId)
+      :allServices;
+    const data={
+      orders:value(ordersResult,'Orders',null),
+      deliveries:value(deliveryResult,'Delivery',null),
+      services,
+      money:value(moneyResult,'Money',null),
+      failures
+    };
+    if(failures.length===4)throw new Error('Customer Home could not be loaded. Check your connection and try again.');
+    customerHomeCache={accountId,data,loadedAt:Date.now(),promise:null};
+    return data;
+  })();
+  try{return await customerHomeCache.promise}
+  finally{if(customerHomeCache.promise)customerHomeCache.promise=null}
+}
+function customerHomeActivities(data){
+  const active=[];
+  for(const order of Array.isArray(data.orders)?data.orders:[]){
+    if(['completed','cancelled'].includes(order.order_status))continue;
+    active.push({
+      type:'orders',
+      icon:'🧾',
+      title:(order.business_name||'Merchant')+' · '+(order.order_number||'Order'),
+      status:customerNice(order.order_status),
+      detail:Number(order.outstanding_amount||0)>0
+        ?customerMoney(order.outstanding_amount)+' still due'
+        :customerNice(order.fulfilment_method||'order'),
+      at:order.updated_at||order.created_at
+    });
+  }
+  for(const delivery of Array.isArray(data.deliveries)?data.deliveries:[]){
+    if(['delivered','failed','cancelled'].includes(delivery.status))continue;
+    active.push({
+      type:'delivery',
+      icon:'📍',
+      title:delivery.business_name||delivery.order_number||'Delivery',
+      status:customerNice(delivery.status),
+      detail:delivery.eta_minutes!=null?'ETA ~'+Number(delivery.eta_minutes)+' min':'Live Delivery status',
+      at:delivery.updated_at||delivery.created_at
+    });
+  }
+  for(const job of Array.isArray(data.services)?data.services:[]){
+    if(job.status==='cancelled'||(job.status==='completed'&&job.customer_confirmed_at))continue;
+    active.push({
+      type:'services',
+      icon:'🛠️',
+      title:job.service_label||job.category||'Local Service',
+      status:customerNice(job.status),
+      detail:job.provider_name?'With '+job.provider_name:'Service request',
+      at:job.updated_at||job.created_at
+    });
+  }
+  return active.sort((a,b)=>new Date(b.at||0)-new Date(a.at||0)).slice(0,6);
+}
+function customerRecentActivities(data){
+  const recent=[];
+  for(const order of Array.isArray(data.orders)?data.orders:[]){
+    if(order.order_status!=='completed')continue;
+    recent.push({
+      type:'orders',icon:'✓',title:order.business_name||order.order_number||'Completed order',
+      detail:(order.order_number||'Order')+' · '+customerMoney(order.total),
+      at:order.completed_at||order.updated_at||order.created_at
+    });
+  }
+  for(const job of Array.isArray(data.services)?data.services:[]){
+    if(job.status!=='completed'||!job.customer_confirmed_at)continue;
+    recent.push({
+      type:'services',icon:'✓',title:job.service_label||job.category||'Completed service',
+      detail:job.provider_name||'Local Services',
+      at:job.customer_confirmed_at||job.completed_at||job.updated_at||job.created_at
+    });
+  }
+  return recent.sort((a,b)=>new Date(b.at||0)-new Date(a.at||0)).slice(0,3);
+}
+function customerActivityCard(item){
+  return '<button class="customerContinueCard" type="button" data-customer-home-open="'+escapeHtml(item.type)+'">'+
+    '<span class="customerContinueIcon">'+escapeHtml(item.icon)+'</span>'+
+    '<span class="customerContinueCopy"><strong>'+escapeHtml(item.title)+'</strong><small>'+escapeHtml(item.status||'')+(item.detail?' · '+escapeHtml(item.detail):'')+'</small></span>'+
+    '<b>›</b></button>';
+}
+function openCustomerHomeDestination(kind,hub){
+  if(kind==='orders'){
+    if(window.BusinessLifeOrders?.openCustomerOrders)return window.BusinessLifeOrders.openCustomerOrders();
+    return openCustomerHubFeature(hub,'Orders');
+  }
+  if(kind==='delivery'){
+    if(window.BusinessLifeDelivery?.openCustomerDelivery)return window.BusinessLifeDelivery.openCustomerDelivery();
+    return openCustomerHubFeature(hub,'Delivery');
+  }
+  if(kind==='services'){
+    if(window.BusinessLifeServices?.openCustomerJobs)return window.BusinessLifeServices.openCustomerJobs();
+    return showToast('Local Services is still loading. Try again in a moment.');
+  }
+  if(kind==='money'){
+    if(window.BusinessLifeProfileMoney?.openCustomerMoney)return window.BusinessLifeProfileMoney.openCustomerMoney();
+    return openCustomerHubFeature(hub,'Money');
+  }
+}
+function renderCustomerHomeData(hub,data){
+  const loading=hub.querySelector('#customerHomeLoading');
+  const error=hub.querySelector('#customerHomeError');
+  const dynamic=hub.querySelector('#customerHomeDynamic');
+  loading?.classList.add('hidden');
+  error?.classList.add('hidden');
+  dynamic?.classList.remove('hidden');
+
+  const active=customerHomeActivities(data);
+  const continueList=hub.querySelector('#customerContinueList');
+  const continueMeta=hub.querySelector('#customerContinueMeta');
+  if(continueMeta)continueMeta.textContent=active.length?active.length+' active':'Nothing waiting';
+  if(continueList)continueList.innerHTML=active.length
+    ?active.map(customerActivityCard).join('')
+    :'<div class="customerHomeEmpty"><strong>You’re all caught up.</strong><span>Shop local or request a service whenever you need something.</span></div>';
+
+  const money=hub.querySelector('#customerMoneySnapshot');
+  if(money){
+    const summary=data.money?.summary;
+    const evidence=value=>value==null||!Number.isFinite(Number(value))?'Unavailable':customerMoney(value);
+    money.innerHTML=summary
+      ?'<div><span>Paid</span><strong>'+evidence(summary.confirmed_payments)+'</strong><small>Confirmed payments</small></div>'+
+       '<div><span>Still due</span><strong>'+evidence(summary.outstanding_purchases)+'</strong><small>Outstanding purchases</small></div>'+
+       '<div><span>Refunded</span><strong>'+evidence(summary.refunded)+'</strong><small>Completed refunds</small></div>'
+      :'<div class="customerMoneyUnavailable"><strong>Money summary unavailable</strong><small>Open My Money to try again. No balance has been assumed.</small></div>';
+  }
+
+  const recent=customerRecentActivities(data);
+  const recentSection=hub.querySelector('#customerRecentSection');
+  const recentList=hub.querySelector('#customerRecentList');
+  if(recentSection)recentSection.classList.toggle('hidden',!recent.length);
+  if(recentList)recentList.innerHTML=recent.map(item=>
+    '<button class="customerRecentRow" type="button" data-customer-home-open="'+escapeHtml(item.type)+'">'+
+      '<span>'+escapeHtml(item.icon)+'</span><span><strong>'+escapeHtml(item.title)+'</strong><small>'+escapeHtml(item.detail)+(item.at?' · '+escapeHtml(customerDate(item.at)):'')+'</small></span><b>›</b></button>'
+  ).join('');
+
+  const partial=hub.querySelector('#customerHomePartial');
+  if(partial){
+    partial.classList.toggle('hidden',!data.failures.length);
+    partial.innerHTML=data.failures.length
+      ?'<span>Some Home information is unavailable: '+escapeHtml(data.failures.join(', '))+'.</span><button type="button" data-customer-home-retry>Retry</button>'
+      :'';
+  }
+  hub.querySelectorAll('[data-customer-home-open]').forEach(button=>button.onclick=()=>openCustomerHomeDestination(button.dataset.customerHomeOpen,hub));
+  hub.querySelectorAll('[data-customer-home-retry]').forEach(button=>button.onclick=()=>loadCustomerHome(hub,{force:true}));
+}
+async function loadCustomerHome(hub,{force=false}={}){
+  const loading=hub.querySelector('#customerHomeLoading');
+  const error=hub.querySelector('#customerHomeError');
+  if(force){
+    loading?.classList.remove('hidden');
+    error?.classList.add('hidden');
+  }
+  try{
+    const data=await loadCustomerHomeData(force);
+    if(!hub.isConnected||activeRole!=='customer')return;
+    renderCustomerHomeData(hub,data);
+  }catch(err){
+    loading?.classList.add('hidden');
+    const message=hub.querySelector('#customerHomeErrorMessage');
+    if(message)message.textContent=err.message||'Customer Home could not be loaded.';
+    error?.classList.remove('hidden');
+  }
+}
 function setCustomerHubPanel(hub,panel){
   const target=panel==='shop'?'shop':'home';
   hub.querySelectorAll('[data-customer-panel]').forEach(node=>node.classList.toggle('hidden',node.dataset.customerPanel!==target));
@@ -470,7 +661,16 @@ function renderCustomerHub(){
   hub.innerHTML=
     '<div class="hubHero customerHomeHero"><div class="hubEyebrow">Customer profile</div><h1>What would you like to do?</h1><p>Shop local, book trusted help, or continue something already in progress.</p><span class="hubStatus">Philippines Edition</span></div>'+
     '<section class="customerHomePanel" data-customer-panel="home">'+
-      '<div class="hubSectionTitle"><h2>Start or continue</h2><span>Simple shortcuts</span></div>'+
+      '<div class="customerHomeToolbar"><div><strong>Home</strong><small>Your current activity and personal purchase snapshot</small></div><button id="customerHomeRefresh" type="button">Refresh</button></div>'+
+      '<div id="customerHomeLoading" class="customerHomeState"><strong>Checking your activity…</strong><span>Orders, Delivery, Local Services and confirmed personal money.</span></div>'+
+      '<div id="customerHomeError" class="customerHomeState customerHomeError hidden" role="alert"><strong>Home could not be loaded.</strong><span id="customerHomeErrorMessage">Check your connection and try again.</span><button type="button" data-customer-home-retry>Try again</button></div>'+
+      '<div id="customerHomePartial" class="customerHomePartial hidden"></div>'+
+      '<div id="customerHomeDynamic" class="customerHomeDynamic hidden">'+
+        '<section class="customerHomeSection"><div class="hubSectionTitle"><h2>Continue</h2><span id="customerContinueMeta">Checking…</span></div><div id="customerContinueList" class="customerContinueList"></div></section>'+
+        '<section class="customerHomeSection customerMoneyHome"><div class="hubSectionTitle"><h2>My money</h2><button type="button" data-customer-home-open="money">Open Money</button></div><div id="customerMoneySnapshot" class="customerMoneySnapshot"></div></section>'+
+        '<section id="customerRecentSection" class="customerHomeSection hidden"><div class="hubSectionTitle"><h2>Recent</h2><span>Completed activity</span></div><div id="customerRecentList" class="customerRecentList"></div></section>'+
+      '</div>'+
+      '<div class="hubSectionTitle customerDiscoverTitle"><h2>Discover</h2><span>Start something new</span></div>'+
       '<div class="customerStartGrid">'+
         '<button class="customerActionCard primaryCustomerAction" type="button" data-customer-nav-target="shop"><span>🛍️</span><strong>Shop local</strong><small>Food, everyday goods and the separate Platform Store</small></button>'+
         '<button class="customerActionCard" type="button" data-hub-feature="Local Services"><span>🛠️</span><strong>Find a local service</strong><small>Request quotes and manage service jobs</small></button>'+
@@ -508,7 +708,10 @@ function renderCustomerHub(){
     const feature=destination==='services'?'Local Services':destination==='orders'?'Orders':'Money';
     openCustomerHubFeature(hub,feature);
   });
+  hub.querySelector('#customerHomeRefresh')?.addEventListener('click',()=>loadCustomerHome(hub,{force:true}));
+  hub.querySelectorAll('[data-customer-home-retry]').forEach(button=>button.onclick=()=>loadCustomerHome(hub,{force:true}));
   hub.classList.remove('hidden');
+  loadCustomerHome(hub).catch(()=>{});
 }
 function renderRoleHub(role) {
   if(role==='customer')return renderCustomerHub();
@@ -619,5 +822,6 @@ function boot() {
     refreshProfile().catch(() => {});
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  document.addEventListener('abl:profile-state',e=>{if(e.detail?.activeRole!=='customer')invalidateCustomerHome()},{passive:true});
 }
 boot();
