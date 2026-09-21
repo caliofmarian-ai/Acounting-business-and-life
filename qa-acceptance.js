@@ -27,6 +27,7 @@ const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
 const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
+const originalAutomationCredentials=new Map();
 
 export function qaAcceptanceConfig(env=process.env){
   const wave=clean(env.QA_ACCEPTANCE_WAVE,80);
@@ -48,7 +49,7 @@ function derivePassword(secret,email){
 
 async function installAutomationCredential(pool,{secret,email,role}){
   const account=await pool.query(
-    `SELECT id,account_mode,test_role,email_verified_at
+    `SELECT id,account_mode,test_role,email_verified_at,password_salt,password_hash
        FROM accounts
       WHERE LOWER(email)=$1`,
     [email]
@@ -57,6 +58,14 @@ async function installAutomationCredential(pool,{secret,email,role}){
   const row=account.rows[0];
   if(row.account_mode!=='company_test'||row.test_role!==role)throw new Error('QA test identity classification is invalid.');
 
+  const accountId=Number(row.id);
+  if(!originalAutomationCredentials.has(accountId)){
+    originalAutomationCredentials.set(accountId,{
+      salt:row.password_salt??null,
+      hash:row.password_hash??null
+    });
+  }
+
   const password=derivePassword(secret,email);
   const salt=crypto.randomBytes(16).toString('hex');
   const derived=await scryptAsync(password,salt,64);
@@ -64,9 +73,22 @@ async function installAutomationCredential(pool,{secret,email,role}){
     `UPDATE accounts
         SET password_salt=$1,password_hash=$2,updated_at=NOW()
       WHERE id=$3 AND account_mode='company_test' AND test_role=$4`,
-    [salt,Buffer.from(derived).toString('hex'),row.id,role]
+    [salt,Buffer.from(derived).toString('hex'),accountId,role]
   );
-  return{accountId:Number(row.id),password,alreadyVerified:Boolean(row.email_verified_at)};
+  return{accountId,password,alreadyVerified:Boolean(row.email_verified_at)};
+}
+
+async function restoreAutomationCredentials(pool){
+  const entries=[...originalAutomationCredentials.entries()];
+  originalAutomationCredentials.clear();
+  for(const [accountId,credential] of entries){
+    await pool.query(
+      `UPDATE accounts
+          SET password_salt=$1,password_hash=$2,updated_at=NOW()
+        WHERE id=$3 AND account_mode='company_test'`,
+      [credential.salt,credential.hash,accountId]
+    );
+  }
 }
 
 async function requestJson(base,path,{method='GET',token='',body,headers:extraHeaders={}}={}){
@@ -2833,6 +2855,7 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   if(!config.enabled)return{status:'SKIPPED',wave:''};
 
   const base='http://127.0.0.1:'+Number(port);
+  let finalResult;
   try{
     const result=config.wave===MERCHANT_CATALOG_WAVE
       ?await runMerchantCatalogSeed({pool,base,secret:config.secret})
@@ -2873,13 +2896,15 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
         :config.wave===CUSTOMER_EXPERIENCE_WAVE
           ?await runCustomerExperienceAcceptance({pool,base,secret:config.secret})
           :await runCustomerOnboarding({pool,base,secret:config.secret});
+    finalResult=result;
     console.log('QA_ACCEPTANCE_RESULT '+JSON.stringify(result));
-    return result;
   }catch(error){
-    const result={status:'FAIL',wave:config.wave,reason:clean(error?.message||'QA acceptance failed.',240)};
-    console.error('QA_ACCEPTANCE_RESULT '+JSON.stringify(result));
-    return result;
+    finalResult={status:'FAIL',wave:config.wave,reason:clean(error?.message||'QA acceptance failed.',240)};
+    console.error('QA_ACCEPTANCE_RESULT '+JSON.stringify(finalResult));
+  }finally{
+    await restoreAutomationCredentials(pool).catch(error=>console.error('QA credential restore failed:',clean(error?.message,200)));
   }
+  return finalResult;
 }
 
 export {
