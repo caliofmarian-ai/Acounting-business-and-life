@@ -1,3 +1,4 @@
+import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
 import http from 'node:http';
@@ -225,7 +226,7 @@ function start(){
   child.on('exit',code=>{if(!shuttingDown){console.error('Payment Core child exited '+code);process.exit(code||1)}});
 }
 async function wait(){
-  for(let i=0;i<420;i++){
+  for(let i=0;i<startupWaitAttempts(420);i++){
     try{const r=await upstream('/health');if(r.ok)return}catch{}
     await new Promise(r=>setTimeout(r,250));
   }
