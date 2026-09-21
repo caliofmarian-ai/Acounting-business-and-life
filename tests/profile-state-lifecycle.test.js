@@ -36,7 +36,9 @@ test('role feature decorators are event-driven and never poll identity in backgr
   assert.doesNotMatch(checkoutLifecycle,/setInterval/,'checkout enhancement must not poll globally');
 });
 
-test('operational polling remains separate from profile identity lifecycle',()=>{
+test('operational refresh strategies remain separate from profile identity lifecycle',()=>{
   assert.match(modules.delivery,/openLiveDelivery[\s\S]*setInterval/);
-  assert.match(modules.orders,/openCustomerOrders[\s\S]*setInterval/);
+  assert.doesNotMatch(modules.orders,/setInterval\(/,'Orders must use explicit or lifecycle refresh instead of timer polling');
+  assert.match(modules.orders,/visibilitychange/);
+  assert.match(modules.orders,/data-orders-refresh/);
 });
