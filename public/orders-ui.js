@@ -36,6 +36,9 @@ async function customerCheckIn(id){try{await oapi(`/api/orders/${id}/check-in`,{
 
 async function resolveMerchantBusiness(){
   if(Number.isInteger(merchantBusinessId)&&merchantBusinessId>0)return merchantBusinessId;
+  const cached=window.BusinessLifeAccounting?.getState?.();
+  const cachedId=Number(cached?.role==='merchant'?cached.activeBusinessId:null);
+  if(Number.isInteger(cachedId)&&cachedId>0){merchantBusinessId=cachedId;return cachedId}
   const state=await oapi('/api/accounting/workspaces');
   const id=Number(state?.active_business_id);
   if(!Number.isInteger(id)||id<1)throw new Error('Choose a Merchant business before opening Orders.');
