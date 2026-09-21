@@ -1,6 +1,6 @@
 # Email Delivery Architecture V1
 
-Status: **OWNER-APPROVED DIRECTION / PROVIDER CREDENTIALS PENDING**
+Status: **OUTBOUND LIVE / PROVIDER OBSERVABILITY V2C IN REVIEW**
 
 Provider: **Resend**
 
@@ -70,14 +70,14 @@ Department-specific values take precedence over shared fallback.
 
 ## Sender naming
 
-Recommended addresses once a verified Business & Life domain exists:
+Current Caliof-domain sender architecture:
 
-- Security: `security@<verified-domain>`
-- Billing: `billing@<verified-domain>`
-- Support: `support@<verified-domain>`
-- Operations: `operations@<verified-domain>`
-- Legal: `legal@<verified-domain>`
-- Marketing: `hello@<verified-domain>`
+- Security: `security@caliof.com`
+- Billing: `billing@caliof.com`
+- Support: `support@caliof.com`
+- Operations: `operations@caliof.com`
+- Legal: `legal@caliof.com`
+- Marketing: `hello@caliof.com`
 
 Subdomains may be introduced later for stronger reputation separation without changing Business & Life application authority.
 
@@ -97,16 +97,22 @@ Target lifecycle:
 
 `queued → delivering → delivered / retry / failed / not_configured / skipped`
 
-A future Resend webhook adapter should update provider-delivery evidence for events such as delivery, bounce, complaint and failure after signature verification.
+Communications V2C adds a signed Resend webhook adapter and keeps provider outcome separate from the existing internal delivery lifecycle.
+
+Provider outcomes:
+`accepted → sent → delivered / delivery_delayed / bounced / complained / failed / suppressed`.
+
+The existing `notification_deliveries.status` remains the internal transport/worker state for backward compatibility. Resend webhook truth is stored in `provider_status` and `provider_last_event_at`, with minimized idempotent evidence in `notification_provider_events`.
 
 ## Webhook security
 
-A future Resend webhook:
-- must consume raw request bytes;
-- must verify the Resend/Svix signature;
-- must use a Railway secret such as `RESEND_WEBHOOK_SECRET`;
-- must be idempotent;
-- must never trust a webhook body before signature verification.
+The V2C Resend webhook:
+- consumes raw request bytes;
+- verifies the Resend/Svix signature before parsing trusted event state;
+- uses Railway secret `RESEND_WEBHOOK_SECRET`;
+- is idempotent on `svix-id`;
+- stores no recipient address, subject or body from provider payloads;
+- safely retains unmatched provider events for later reconciliation if a webhook wins the send-response timing race.
 
 ## Environment policy
 
@@ -120,8 +126,13 @@ A future Resend webhook:
 - verification/reset links are delivered by configured email provider;
 - missing provider fails visibly rather than claiming success.
 
-## Current blocker
+## Current state / remaining V2C setup
 
-No Resend account credentials or verified sender/domain are currently installed in Railway.
+Outbound Resend delivery is active on `caliof.com`. Test mail received through the current environment has verified SPF, DKIM and DMARC alignment for the Caliof sender domain.
 
-The code can route by department, but actual external email delivery remains `not_configured` until credentials and sender identities are supplied.
+Communications V2C code can receive signed provider delivery events, but production provider observability remains **HOLD** until:
+- a Resend webhook endpoint is registered for the canonical production URL;
+- `RESEND_WEBHOOK_SECRET` is installed in Railway secret storage;
+- a signed controlled webhook event is observed and reconciled to an existing `notification_deliveries.provider_reference`.
+
+Inbound Support email remains a separate later gate.
