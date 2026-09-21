@@ -319,6 +319,13 @@ export function registerSupplierExceptionsV5Routes({app,pool,body,identity}){
       }
       const item=await poItem(pool,po.id,req.body?.purchase_order_item_id);
       if(!item)return res.status(404).json({error:'Purchase order item not found'});
+      if(await activeSupplierBindingCount(pool,me.account.id)!==1){
+        return res.status(409).json({
+          error:'Substitution requires explicit catalog-to-business attribution for multi-business Supplier accounts.',
+          code:'SUPPLIER_SUBSTITUTE_CATALOG_ATTRIBUTION_REQUIRED',
+          supplier_business_id:Number(business.id)
+        });
+      }
       const substituteId=Number(req.body?.substitute_catalog_item_id);
       const cat=await pool.query(
         `SELECT * FROM supplier_catalog_items
