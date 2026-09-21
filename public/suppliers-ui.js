@@ -588,13 +588,13 @@ function supplierTodayOrders(today){
 }
 function supplierTodayPanel(today){
   const c=today?.counts||{},m=today?.money||{};
-  const attention=(Number(c.overdue_timing)||0)+(Number(c.rfqs)||0)+(Number(c.returns)||0)+(Number(c.catalog_attention)||0);
+  const attention=(Number(c.overdue_timing)||0)+(Number(c.rfqs)||0)+(Number(c.returns)||0)+(Number(c.catalog_attention)||0)+(Number(c.backorders)||0)+(Number(c.substitutions)||0);
   return `<section class="supCard"><div class="supKpiGrid">
     <button type="button" class="supKpi" data-v5-open="Procurement"><strong>${Number(c.new_orders||0)}</strong><span>New orders</span></button>
     <button type="button" class="supKpi" data-v5-open="ETA"><strong>${Number(c.prepare||0)}</strong><span>Prepare</span></button>
     <button type="button" class="supKpi" data-v5-open="Fulfilment"><strong>${Number(c.ready||0)}</strong><span>Ready / delivery</span></button>
     <button type="button" class="supKpi" data-v5-open="Money"><strong>${pphp(m.receivable_total||0)}</strong><span>Money due</span></button>
-  </div>${attention?`<div class="supAlert"><strong>${attention} item${attention===1?'':'s'} need attention</strong><small>${Number(c.overdue_timing||0)} timing overdue • ${Number(c.rfqs||0)} RFQ • ${Number(c.returns||0)} return • ${Number(c.catalog_attention||0)} availability</small></div>`:''}</section>`
+  </div>${attention?`<div class="supAlert"><strong>${attention} item${attention===1?'':'s'} need attention</strong><small>${Number(c.overdue_timing||0)} timing overdue • ${Number(c.rfqs||0)} RFQ • ${Number(c.returns||0)} return • ${Number(c.backorders||0)} backorder • ${Number(c.substitutions||0)} substitution • ${Number(c.catalog_attention||0)} availability</small></div>`:''}</section>`
   +supplierTodayActionPanel('New orders',today?.sections?.new_orders||[],'No new purchase order needs a response.')
   +supplierTodayActionPanel('Prepare next',today?.sections?.prepare||[],'Nothing is waiting for preparation or ETA.')
   +supplierTodayActionPanel('Ready / delivery',today?.sections?.ready||[],'Nothing is waiting for pickup, delivery or Merchant receipt.')
@@ -605,8 +605,11 @@ function supplierTodayActionPanel(title,rows,empty){
 }
 function supplierTodaySecondary(today){
   const rfqs=today?.rfqs||[],returns=today?.returns||[],catalog=today?.catalog_attention||[];
-  if(!rfqs.length&&!returns.length&&!catalog.length)return '';
-  return `<details class="supDetails supCard"><summary><span><strong>Other attention</strong><small>RFQs, returns and catalog availability.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody">
+  const backorders=today?.backorders||[],substitutions=today?.substitutions||[];
+  if(!rfqs.length&&!returns.length&&!catalog.length&&!backorders.length&&!substitutions.length)return '';
+  return `<details class="supDetails supCard"><summary><span><strong>Other attention</strong><small>RFQs, returns, backorders, substitutions and availability.</small></span><span class="supChevron">⌄</span></summary><div class="supDetailsBody">
+    ${backorders.length?`<h3>Accepted backorders</h3><div class="supList">${backorders.slice(0,6).map(b=>`<div class="supRow"><div><strong>${ph(b.po_number)} • ${ph(b.original_item_name)}</strong><small>${Number(b.proposed_packs)} pack${Number(b.proposed_packs)===1?'':'s'} • expected ${new Date(b.expected_available_date).toLocaleDateString()}</small></div><div class="supActions"><button class="supBtn" data-v5-backorder-fulfil="${b.id}">Available now</button></div></div>`).join('')}</div>`:''}
+    ${substitutions.length?`<h3>Approved substitutions</h3><div class="supList">${substitutions.slice(0,6).map(s=>`<div class="supRow"><div><strong>${ph(s.po_number)} • ${ph(s.original_item_name)}</strong><small>${ph(s.substitute_name_snapshot)} • ${Number(s.proposed_packs)} pack${Number(s.proposed_packs)===1?'':'s'}</small><div class="supMeta"><span class="pending">Merchant approved — physical fulfilment not recorded yet</span></div></div></div>`).join('')}</div>`:''}
     ${rfqs.length?`<h3>RFQs</h3><div class="supList">${rfqs.slice(0,6).map(r=>`<div class="supRow"><div><strong>RFQ #${r.id} • ${ph(r.item_specification)}</strong><small>${ph(r.merchant_business_name)} • ${Number(r.requested_quantity)} ${ph(r.requested_unit)}</small></div><div class="supActions"><button class="supBtn" data-rfq-quote="${r.id}">Quote</button><button class="supBtn secondary" data-rfq-decline="${r.id}">Decline</button></div></div>`).join('')}</div>`:''}
     ${returns.length?`<h3>Returns</h3><div class="supList">${returns.slice(0,6).map(r=>`<div class="supRow"><div><strong>Return #${r.id} • ${ph(r.business_name)}</strong><small>${ph(pnice(r.status))} • expected credit ${pphp(r.expected_credit)}</small></div><div class="supActions">${r.status==='requested'?`<button class="supBtn" data-return-auth="${r.id}">Authorize</button><button class="supBtn secondary" data-return-reject="${r.id}">Reject</button>`:''}${r.status==='returned'?`<button class="supBtn" data-return-resolve="${r.id}">Resolve</button>`:''}</div></div>`).join('')}</div>`:''}
     ${catalog.length?`<h3>Catalog availability</h3><div class="supList">${catalog.slice(0,8).map(i=>`<div class="supRow"><div><strong>${ph(i.product_name)}</strong><small>${ph(pnice(i.availability_status))}${i.expected_restock_date?` • restock ${new Date(i.expected_restock_date).toLocaleDateString()}`:''}</small><div class="supMeta">${(i.attention_signals||[]).map(x=>`<span class="pending">${ph(pnice(x))}</span>`).join('')}</div></div><div class="supActions"><button class="supBtn secondary" data-v5-availability="${i.id}">Availability</button></div></div>`).join('')}</div>`:''}
