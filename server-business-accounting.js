@@ -10,12 +10,12 @@ import { deriveStockPurchase,weightedAverageUnitCost,computeRecipeBatch,normaliz
 import { recordPoReceiptLot,commercialOutstandingForPo } from './server-supplier-commercial-v3.js';
 import { supplierReorderSuggestions } from './server-supplier-sourcing-v4.js';
 import {startEmbeddedProfileGovernance,stopEmbeddedProfileGovernance} from './server-profile-governance.js';
+import {authHardeningFetch} from './server-auth-hardening.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const upstreamPort = Number(process.env.INTERNAL_AUTH_HARDENING_PORT || 4007);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '14mb' });
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
@@ -31,7 +31,7 @@ const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
 const authHeader = req => req.headers.authorization || '';
 const roleEnabled = (me,role) => Boolean(me?.profiles?.some(p=>p.role===role && p.enabled));
 
-async function upstream(path,options={}) { return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options); }
+async function upstream(path,options={}){return authHardeningFetch(path,options)}
 async function identity(req) {
   const r = await upstream('/api/me',{headers:{Authorization:authHeader(req)}});
   const b = await r.json().catch(()=>({}));
@@ -396,7 +396,7 @@ app.get('/help/product-map.svg',(_req,res)=>res.type('image/svg+xml').send(readF
 app.get('/help-linking.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','help-linking.css'),'utf8')));
 app.get('/help-linking.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','help-linking.js'),'utf8')));
 
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/accounting/workspaces',async(req,res,next)=>{try{const ctx=await accountingContext(req);res.json({role:ctx.role,active_business_id:Number(ctx.business.id),businesses:ctx.businesses.map(b=>({id:Number(b.id),name:b.name,country_code:b.country_code,currency_code:b.currency_code,territory_id:b.territory_id,membership_role:b.membership_role,is_primary:Boolean(b.is_primary)}))})}catch(e){next(e)}});

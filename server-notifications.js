@@ -16,12 +16,12 @@ import { notificationVoiceTranscriptMatrix } from './notification-voice-copy.js'
 import { verifyResendWebhook,recordResendProviderEvent } from './resend-delivery-observability.js';
 import { bootstrapResendWebhook,resendWebhookReadiness } from './resend-webhook-bootstrap.js';
 import { startEmbeddedAdminOperations,stopEmbeddedAdminOperations } from './server-admin-operations.js';
+import {authHardeningFetch} from './server-auth-hardening.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_AUTH_HARDENING_PORT||4007);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb'});
 const CATEGORIES=['operational','security','legal','support','compliance','marketing'];
@@ -34,7 +34,7 @@ const clean=(v,max=1200)=>String(v??'').trim().slice(0,max);
 const positiveId=v=>{const n=Number(v);return Number.isSafeInteger(n)&&n>0?n:null};
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||crypto.randomUUID(),120);
-async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
+async function upstream(path,options={}){return authHardeningFetch(path,options)}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 const uniqueRecipients=(...groups)=>[...new Map(groups.flat().filter(Boolean).map(x=>[Number(x.accountId),x])).values()];
 async function safeEmit(spec){try{return await emitNotificationEvent(pool,spec)}catch(e){console.error('Notification event failed:',e.message);return null}}
@@ -236,7 +236,7 @@ app.get('/notifications.css',(_q,res)=>res.type('text/css').send(readFileSync(jo
 app.get('/notifications-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','notifications-ui.js'),'utf8')));
 app.get('/notifications-sw.js',(_q,res)=>res.type('application/javascript').set('Service-Worker-Allowed','/').send(readFileSync(join(__dirname,'public','notifications-sw.js'),'utf8')));
 app.get('/manifest.webmanifest',(_q,res)=>res.type('application/manifest+json').send(readFileSync(join(__dirname,'public','manifest.webmanifest'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n  <link rel="manifest" href="/manifest.webmanifest" />\n  <link rel="stylesheet" href="/notifications.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n  <link rel="manifest" href="/manifest.webmanifest" />\n  <link rel="stylesheet" href="/notifications.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/notifications',async(req,res,next)=>{try{
