@@ -24,7 +24,8 @@ const COURIER_EXPERIENCE_WAVE='courier_experience_v1';
 const SERVICE_PROVIDER_EXPERIENCE_WAVE='service_provider_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE]);
+const AUTH_RUNTIME_V6_WAVE='auth_runtime_v6';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -2850,6 +2851,131 @@ async function runSupplierDailyV5Acceptance({pool,base,secret}){
   };
 }
 
+
+async function runAuthRuntimeV6Acceptance({pool,base,secret}){
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Auth V6 Customer QA'
+  });
+
+  const firstToken=customer.token;
+  const firstMe=await requestJson(base,'/api/me',{token:firstToken});
+  expectStatus(firstMe,200,'Auth V6 first /api/me');
+
+  const secondToken=await loginWithCredential({
+    base,email:CUSTOMER_ALIAS,password:customer.password,label:'Auth V6 second login'
+  });
+  const secondMe=await requestJson(base,'/api/me',{token:secondToken});
+  expectStatus(secondMe,200,'Auth V6 second /api/me');
+
+  const revokeOthers=await requestJson(base,'/api/auth/sessions/revoke-others',{
+    method:'POST',token:secondToken,body:{}
+  });
+  expectStatus(revokeOthers,200,'Auth V6 revoke other sessions');
+
+  const revokedFirst=await requestJson(base,'/api/me',{token:firstToken});
+  expectStatus(revokedFirst,401,'Auth V6 revoked session denial');
+
+  const activeSecond=await requestJson(base,'/api/me',{token:secondToken});
+  expectStatus(activeSecond,200,'Auth V6 active session after revoke');
+
+  const retiredPin=await requestJson(base,'/api/login',{
+    method:'POST',body:{pin:'qa-retired-pin'}
+  });
+  expectStatus(retiredPin,410,'Auth V6 retired public PIN');
+  if(!/PIN login has been retired/i.test(clean(retiredPin.json?.error,240)))throw new Error('Auth V6 retired PIN response changed.');
+
+  const legacy=await requestJson(base,'/api/me',{token:'legacy.qa.signature'});
+  expectStatus(legacy,401,'Auth V6 legacy bearer denial');
+  if(!/Legacy PIN session expired/i.test(clean(legacy.json?.error,240)))throw new Error('Auth V6 legacy bearer response changed.');
+
+  const invalidVerification=await requestJson(base,'/api/auth/email-verification/verify',{
+    method:'POST',token:secondToken,body:{token:'qa-v6-invalid-verification-token'}
+  });
+  expectStatus(invalidVerification,400,'Auth V6 email verification invalid-token contract');
+
+  const hardeningStatus=await requestJson(base,'/api/auth/hardening/status');
+  expectStatus(hardeningStatus,200,'Auth V6 hardening status');
+
+  const oauthStart=await fetch(base+'/api/auth/google/start',{redirect:'manual'});
+  expectStatus({status:oauthStart.status},[302,503],'Auth V6 Google start route');
+  const oauthLink=await fetch(base+'/api/auth/google/link/start',{
+    headers:{Authorization:'Bearer '+secondToken},redirect:'manual'
+  });
+  expectStatus({status:oauthLink.status},[302,503],'Auth V6 Google link route');
+  const oauthCallback=await fetch(base+'/api/auth/google/callback',{redirect:'manual'});
+  expectStatus({status:oauthCallback.status},302,'Auth V6 Google callback route');
+  const oauthHandoff=await requestJson(base,'/api/auth/oauth/handoff',{
+    method:'POST',body:{code:'qa-v6-invalid-handoff'}
+  });
+  expectStatus(oauthHandoff,400,'Auth V6 OAuth handoff route');
+
+  const forgot=await requestJson(base,'/api/auth/forgot-password',{
+    method:'POST',body:{email:CUSTOMER_ALIAS}
+  });
+  expectStatus(forgot,200,'Auth V6 forgot password');
+  const previewUrl=clean(forgot.json?.preview_reset_url,1200);
+  if(!previewUrl)throw new Error('Auth V6 recovery did not return the isolated preview reset link.');
+
+  let resetToken='';
+  try{resetToken=new URL(previewUrl).searchParams.get('reset_token')||''}catch{}
+  if(!resetToken)throw new Error('Auth V6 recovery token was unavailable.');
+
+  const delivery=await pool.query(
+    `SELECT status FROM auth_email_deliveries
+      WHERE account_id=$1 AND template_code='password_reset'
+      ORDER BY id DESC LIMIT 1`,
+    [customer.accountId]
+  );
+  if(delivery.rows[0]?.status!=='sent')throw new Error('Auth V6 password recovery email was not delivered.');
+
+  const resetPassword=derivePassword(secret,CUSTOMER_ALIAS)+'-auth-v6-reset';
+  const reset=await requestJson(base,'/api/auth/reset-password',{
+    method:'POST',body:{token:resetToken,new_password:resetPassword}
+  });
+  expectStatus(reset,200,'Auth V6 reset password');
+
+  const revokedByReset=await requestJson(base,'/api/me',{token:secondToken});
+  expectStatus(revokedByReset,401,'Auth V6 reset revokes active session');
+
+  const recoveredToken=await loginWithCredential({
+    base,email:CUSTOMER_ALIAS,password:resetPassword,label:'Auth V6 recovery login'
+  });
+  const recoveredMe=await requestJson(base,'/api/me',{token:recoveredToken});
+  expectStatus(recoveredMe,200,'Auth V6 recovery /api/me');
+
+  const logout=await requestJson(base,'/api/auth/logout',{
+    method:'POST',token:recoveredToken,body:{}
+  });
+  expectStatus(logout,200,'Auth V6 logout');
+
+  const loggedOutDenied=await requestJson(base,'/api/me',{token:recoveredToken});
+  expectStatus(loggedOutDenied,401,'Auth V6 logged-out session denial');
+
+  const relogin=await loginWithCredential({
+    base,email:CUSTOMER_ALIAS,password:resetPassword,label:'Auth V6 re-login'
+  });
+  const reloginMe=await requestJson(base,'/api/me',{token:relogin});
+  expectStatus(reloginMe,200,'Auth V6 re-login /api/me');
+  const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
+  expectStatus(finalLogout,200,'Auth V6 final logout');
+
+  return{
+    status:'PASS',
+    wave:AUTH_RUNTIME_V6_WAVE,
+    login_v2:true,
+    account_me:true,
+    logout_relogin:true,
+    revoked_session:true,
+    legacy_bearer_rejection:true,
+    retired_pin_410:true,
+    email_verification_no_500:true,
+    password_recovery:true,
+    recovery_email_sent:true,
+    oauth_routes_present:true,
+    session_revoke_others:true
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -2857,7 +2983,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===MERCHANT_CATALOG_WAVE
+    const result=config.wave===AUTH_RUNTIME_V6_WAVE
+      ?await runAuthRuntimeV6Acceptance({pool,base,secret:config.secret})
+      :config.wave===MERCHANT_CATALOG_WAVE
       ?await runMerchantCatalogSeed({pool,base,secret:config.secret})
       :config.wave===MERCHANT_EXPERIENCE_WAVE
         ?await runMerchantExperienceAcceptance({pool,base,secret:config.secret})
@@ -2909,5 +3037,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE
 };
