@@ -16,8 +16,8 @@ test('Delivery Finance Runtime V8 has a fresh-order focused acceptance wave',()=
 });
 
 test('Delivery Finance Runtime V8 verifies canonical financial side effects exactly once',()=>{
+  assert.ok(courier.includes("provider_code:'qa_manual_delivery_finance_v8'"),'missing controlled V8 Merchant payment provider marker');
   for(const marker of [
-    "provider_code:'qa_manual_delivery_finance_v8'",
     "FROM order_payments p",
     "source='order_payment'",
     "delivery_fee_received",
