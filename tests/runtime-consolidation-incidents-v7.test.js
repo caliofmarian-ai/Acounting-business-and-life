@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const incidents=read('server-incidents.js');
+const finance=read('server-delivery-finance.js');
 const hardening=read('server-auth-hardening.js');
 const admin=read('server-admin-operations.js');
 const notifications=read('server-notifications.js');
@@ -11,8 +12,10 @@ const notifications=read('server-notifications.js');
 test('Incidents exposes embedded lifecycle and remains standalone rollback-capable',()=>{
   assert.match(incidents,/export async function startEmbeddedIncidents\(\)/);
   assert.match(incidents,/export async function stopEmbeddedIncidents\(\)/);
-  assert.match(incidents,/spawn\(process\.execPath,\['server-delivery-finance\.js'\]/);
-  assert.match(incidents,/INTERNAL_FINANCE_PORT \|\| 3807/);
+  assert.match(incidents,/startEmbeddedDeliveryFinance/);
+  assert.match(incidents,/deliveryFinanceApp=await startEmbeddedDeliveryFinance\(\)/);
+  assert.doesNotMatch(incidents,/INTERNAL_FINANCE_PORT/);
+  assert.doesNotMatch(incidents,/3807/);
   assert.match(incidents,/Business & Life incidents mounted in-process/);
   assert.match(incidents,/directExecution/);
   assert.match(incidents,/Business & Life incident gateway listening on/);
@@ -52,13 +55,14 @@ test('Incident routes and assets remain owned by server-incidents',()=>{
   ])assert.ok(incidents.includes(marker),`missing Incident marker: ${marker}`);
 });
 
-test('already parsed JSON is preserved before non-Incident fallthrough reaches Delivery Finance',()=>{
+test('already parsed JSON is preserved before Delivery Finance fallthrough reaches Delivery',()=>{
   assert.match(incidents,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(incidents,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(incidents,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(incidents,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(incidents,/delete headers\['transfer-encoding'\]/);
-  assert.match(incidents,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(finance,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(finance,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(finance,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(finance,/delete headers\['transfer-encoding'\]/);
+  assert.match(finance,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Admin incident creation traverses the embedded chain instead of fetch-bypassing Incidents',()=>{

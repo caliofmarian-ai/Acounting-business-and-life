@@ -1,16 +1,14 @@
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {deliveryFinanceFetch,startEmbeddedDeliveryFinance,stopEmbeddedDeliveryFinance} from './server-delivery-finance.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const upstreamPort = Number(process.env.INTERNAL_FINANCE_PORT || 3807);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '14mb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
@@ -20,18 +18,14 @@ const IMAGE_MIMES = new Set(['image/jpeg','image/png','image/webp']);
 const PDF_MIME = 'application/pdf';
 const MAX_IMAGE_BYTES = 1_500_000;
 const MAX_PDF_BYTES = 3_000_000;
-let child;
+let deliveryFinanceApp=null;
+let deliveryFinanceReady=false;
 let shuttingDown = false;
 
 function clean(v,max=1200){ return String(v??'').trim().slice(0,max); }
 function authHeader(req){ return req.headers.authorization || ''; }
-function copyHeaders(headers={}){
-  if(headers&&typeof headers.entries==='function')return Object.fromEntries(headers.entries());
-  return {...headers};
-}
 async function downstreamFetch(path,options={}){
-  const headers={...copyHeaders(options.headers),host:`127.0.0.1:${upstreamPort}`};
-  return fetch(`http://127.0.0.1:${upstreamPort}${path}`,{...options,headers});
+  return deliveryFinanceFetch(path,options);
 }
 export function isIncidentOwnedPath(path=''){
   const pathname=String(path||'').split('?')[0];
@@ -53,8 +47,9 @@ export async function incidentsFetch(path,options={}){
     try{
       await pool.query('SELECT 1');
       const downstream=await downstreamFetch('/health',{headers:options.headers||{}});
-      return new Response(JSON.stringify({ok:downstream.ok,db:true,upstream:downstream.ok,version:'0.8.4-incidents'}),{
-        status:downstream.ok?200:503,
+      const ok=deliveryFinanceReady&&downstream.ok;
+      return new Response(JSON.stringify({ok,db:true,upstream:ok,version:'0.8.4-incidents'}),{
+        status:ok?200:503,
         headers:{'content-type':'application/json; charset=utf-8'}
       });
     }catch{
@@ -220,47 +215,19 @@ app.patch('/api/admin/incidents/:id',body,async(req,res,next)=>{
   }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}
 });
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Incident upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
+function proxy(req,res,next){
+  if(!deliveryFinanceApp)return res.status(503).json({error:'Delivery Finance runtime is not ready'});
+  return deliveryFinanceApp(req,res,next);
 }
 app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})});
-
-function start(){
-  child=spawn(process.execPath,['server-delivery-finance.js'],{
-    cwd:__dirname,
-    env:{...process.env,PORT:String(upstreamPort)},
-    stdio:'inherit'
-  });
-  child.on('exit',code=>{if(!shuttingDown){console.error(`Finance child exited ${code}`);process.exit(code||1)}});
-}
-async function wait(){
-  for(let i=0;i<160;i++){
-    try{const r=await downstreamFetch('/health');if(r.ok)return}catch{}
-    await new Promise(r=>setTimeout(r,250));
-  }
-  throw new Error('Finance child failed health check');
-}
 
 let embeddedStartPromise=null;
 export async function startEmbeddedIncidents(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      deliveryFinanceApp=await startEmbeddedDeliveryFinance();
+      deliveryFinanceReady=true;
       await initDb();
       console.log('Business & Life incidents mounted in-process');
       return app;
@@ -272,7 +239,9 @@ export async function startEmbeddedIncidents(){
 async function stopIncidents(){
   if(shuttingDown)return;
   shuttingDown=true;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  deliveryFinanceReady=false;
+  deliveryFinanceApp=null;
+  await stopEmbeddedDeliveryFinance().catch(()=>{});
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedIncidents(){await stopIncidents()}
