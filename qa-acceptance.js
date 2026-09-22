@@ -26,7 +26,8 @@ const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
 const AUTH_RUNTIME_V6_WAVE='auth_runtime_v6';
 const INCIDENT_RUNTIME_V7_WAVE='incident_runtime_v7';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE]);
+const DELIVERY_FINANCE_RUNTIME_V8_WAVE='delivery_finance_runtime_v8';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3102,6 +3103,147 @@ async function runIncidentRuntimeV7Acceptance({pool,base,secret}){
   };
 }
 
+
+async function runDeliveryFinanceRuntimeV8Acceptance({pool,base,secret}){
+  const orderNote='Controlled QA Delivery Finance V8 '+Date.now();
+  const courierResult=await runCourierExperienceAcceptance({
+    pool,base,secret,
+    aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,courier:COURIER_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
+    helpers:{requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,runMerchantCatalogSeed,ensureQaTerritory,ensureActiveRole,loginWithCredential},
+    orderNote,
+    paymentMode:'merchant_confirmation'
+  });
+  if(courierResult.status!=='PASS')throw new Error('Delivery Finance V8 Courier prerequisite did not pass.');
+
+  const orderId=Number(courierResult.order_id),deliveryId=Number(courierResult.delivery_id),businessId=Number(courierResult.business_id);
+  if(!orderId||!deliveryId||!businessId)throw new Error('Delivery Finance V8 Courier result is missing canonical ids.');
+
+  const payment=await pool.query(
+    `SELECT p.id,p.amount,p.merchandise_amount,p.delivery_amount,p.payment_intent_id,
+            p.provider_code,p.provider_reference,o.subtotal,o.delivery_fee,o.total
+       FROM order_payments p
+       JOIN orders o ON o.id=p.order_id
+      WHERE p.order_id=$1 AND p.status='confirmed'
+      ORDER BY p.id`,
+    [orderId]
+  );
+  if(payment.rowCount!==1)throw new Error('Delivery Finance V8 expected exactly one confirmed order payment.');
+  const p=payment.rows[0];
+  const paymentId=Number(p.id),intentId=Number(p.payment_intent_id);
+  if(!paymentId||!intentId)throw new Error('Delivery Finance V8 Payment Core mirror was not attached to the confirmed payment.');
+  if(!closeEnough(p.amount,p.total))throw new Error('Delivery Finance V8 confirmed payment total does not match the order total.');
+  if(!closeEnough(p.merchandise_amount,p.subtotal))throw new Error('Delivery Finance V8 merchandise allocation does not match order subtotal.');
+  if(!(Number(p.delivery_fee)>0)||!closeEnough(p.delivery_amount,p.delivery_fee))throw new Error('Delivery Finance V8 delivery allocation does not match the delivery fee.');
+  if(p.provider_code!=='qa_manual_delivery_finance_v8')throw new Error('Delivery Finance V8 payment did not use the controlled manual provider marker.');
+
+  const [ledger,deliveryEvent,intent,allocations,notification]=await Promise.all([
+    pool.query(
+      "SELECT COUNT(*)::int n,COALESCE(SUM(amount),0)::numeric total FROM transactions WHERE business_id=$1 AND source='order_payment' AND source_id=$2",
+      [businessId,paymentId]
+    ),
+    pool.query(
+      "SELECT COUNT(*)::int n,COALESCE(SUM(amount),0)::numeric total FROM delivery_financial_events WHERE order_id=$1 AND delivery_id=$2 AND event_type='delivery_fee_received' AND source_payment_id=$3",
+      [orderId,deliveryId,paymentId]
+    ),
+    pool.query(
+      "SELECT id,idempotency_key,status,amount FROM payment_intents WHERE id=$1",
+      [intentId]
+    ),
+    pool.query(
+      "SELECT component_code,COUNT(*)::int n,COALESCE(SUM(amount),0)::numeric total FROM payment_allocations WHERE payment_intent_id=$1 AND settlement_status<>'reversed' GROUP BY component_code ORDER BY component_code",
+      [intentId]
+    ),
+    pool.query(
+      "SELECT COUNT(*)::int n FROM notification_events WHERE event_code='order.payment_confirmed' AND entity_type='order' AND entity_id=$1",
+      [String(orderId)]
+    )
+  ]);
+  if(Number(ledger.rows[0]?.n)!==1||!closeEnough(ledger.rows[0]?.total,p.merchandise_amount))throw new Error('Delivery Finance V8 expected exactly one Merchant ledger record.');
+  if(Number(deliveryEvent.rows[0]?.n)!==1||!closeEnough(deliveryEvent.rows[0]?.total,p.delivery_amount))throw new Error('Delivery Finance V8 expected exactly one delivery financial event.');
+  if(intent.rows[0]?.status!=='succeeded'||intent.rows[0]?.idempotency_key!=='legacy-order-payment:'+paymentId||!closeEnough(intent.rows[0]?.amount,p.amount)){
+    throw new Error('Delivery Finance V8 Payment Core mirror evidence is incomplete.');
+  }
+  const allocationMap=new Map((allocations.rows||[]).map(x=>[x.component_code,x]));
+  if(Number(allocationMap.get('merchandise')?.n)!==1||!closeEnough(allocationMap.get('merchandise')?.total,p.merchandise_amount)){
+    throw new Error('Delivery Finance V8 Payment Core merchandise allocation is incomplete.');
+  }
+  if(Number(allocationMap.get('delivery')?.n)!==1||!closeEnough(allocationMap.get('delivery')?.total,p.delivery_amount)){
+    throw new Error('Delivery Finance V8 Payment Core delivery allocation is incomplete.');
+  }
+  if(Number(notification.rows[0]?.n)!==1)throw new Error('Delivery Finance V8 expected exactly one payment-confirmed notification event.');
+
+  const [courier,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:COURIER_ALIAS,role:'courier',label:'Delivery Finance V8 Courier QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Delivery Finance V8 Merchant QA'})
+  ]);
+  await ensureActiveRole({base,token:courier.token,role:'courier',label:'Delivery Finance V8 Courier QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Delivery Finance V8 Merchant QA'});
+
+  const profileBefore=await requestJson(base,'/api/courier/delivery-profile',{token:courier.token});
+  expectStatus(profileBefore,200,'Delivery Finance V8 Courier profile read before update');
+
+  const profileUpdate=await requestJson(base,'/api/courier/delivery-profile',{
+    method:'PUT',
+    token:courier.token,
+    body:{vehicle_type:'bicycle',max_weight_kg:21,max_volume_l:81,service_radius_km:26}
+  });
+  expectStatus(profileUpdate,200,'Delivery Finance V8 Courier profile update');
+
+  const profileAfter=await requestJson(base,'/api/courier/delivery-profile',{token:courier.token});
+  expectStatus(profileAfter,200,'Delivery Finance V8 Courier profile read after update');
+  const updated=profileAfter.json?.profile;
+  if(updated?.vehicle_type!=='bicycle'||Number(updated?.max_weight_kg)!==21||Number(updated?.max_volume_l)!==81||Number(updated?.service_radius_km)!==26){
+    throw new Error('Delivery Finance V8 Courier profile update did not persist through the embedded boundary.');
+  }
+
+  const profileRestore=await requestJson(base,'/api/courier/delivery-profile',{
+    method:'PUT',
+    token:courier.token,
+    body:{vehicle_type:'bicycle',max_weight_kg:20,max_volume_l:80,service_radius_km:25}
+  });
+  expectStatus(profileRestore,200,'Delivery Finance V8 Courier profile restore');
+
+  const duplicatePayment=await requestJson(base,'/api/orders/merchant/'+orderId+'/payment',{
+    method:'POST',
+    token:merchant.token,
+    body:{amount:1,account:'cash',method_code:'cash',provider_code:'qa_manual_delivery_finance_v8_repeat'}
+  });
+  expectStatus(duplicatePayment,409,'Delivery Finance V8 duplicate payment denial');
+
+  const duplicateEvidence=await Promise.all([
+    pool.query("SELECT COUNT(*)::int n FROM order_payments WHERE order_id=$1 AND status='confirmed'",[orderId]),
+    pool.query("SELECT COUNT(*)::int n FROM transactions WHERE business_id=$1 AND source='order_payment' AND source_id=$2",[businessId,paymentId]),
+    pool.query("SELECT COUNT(*)::int n FROM delivery_financial_events WHERE order_id=$1 AND source_payment_id=$2 AND event_type='delivery_fee_received'",[orderId,paymentId]),
+    pool.query("SELECT COUNT(*)::int n FROM notification_events WHERE event_code='order.payment_confirmed' AND entity_type='order' AND entity_id=$1",[String(orderId)])
+  ]);
+  if(duplicateEvidence.some(x=>Number(x.rows[0]?.n)!==1))throw new Error('Delivery Finance V8 duplicate attempt changed canonical evidence counts.');
+
+  for(const [label,token] of [['Courier',courier.token],['Merchant',merchant.token]]){
+    const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token,body:{}});
+    expectStatus(logout,200,'Delivery Finance V8 '+label+' logout');
+  }
+
+  return{
+    status:'PASS',
+    wave:DELIVERY_FINANCE_RUNTIME_V8_WAVE,
+    order_id:orderId,
+    delivery_id:deliveryId,
+    business_id:businessId,
+    payment_id:paymentId,
+    payment_intent_id:intentId,
+    courier_profile_update:true,
+    one_confirmed_payment:true,
+    merchandise_allocation:true,
+    delivery_allocation:true,
+    one_business_ledger_record:true,
+    one_delivery_financial_event:true,
+    payment_core_mirror:true,
+    one_payment_notification:true,
+    duplicate_payment_denied:true,
+    delivery_fee:Number(p.delivery_fee)
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -3109,7 +3251,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===INCIDENT_RUNTIME_V7_WAVE
+    const result=config.wave===DELIVERY_FINANCE_RUNTIME_V8_WAVE
+      ?await runDeliveryFinanceRuntimeV8Acceptance({pool,base,secret:config.secret})
+      :config.wave===INCIDENT_RUNTIME_V7_WAVE
       ?await runIncidentRuntimeV7Acceptance({pool,base,secret:config.secret})
       :config.wave===AUTH_RUNTIME_V6_WAVE
       ?await runAuthRuntimeV6Acceptance({pool,base,secret:config.secret})
@@ -3165,5 +3309,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE
 };

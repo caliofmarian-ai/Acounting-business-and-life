@@ -443,7 +443,9 @@ async function ensureCourierSupportTicket({pool,base,courier,deliveryId,requestJ
 export async function runCourierExperienceAcceptance({
   pool,base,secret,
   aliases,
-  helpers
+  helpers,
+  orderNote=COURIER_QA_ORDER_NOTE,
+  paymentMode='paymongo'
 }){
   const {
     requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,runMerchantCatalogSeed,
@@ -481,7 +483,7 @@ export async function runCourierExperienceAcceptance({
 
   const existing=await pool.query(
     "SELECT o.id order_id,o.order_status,o.payment_status,d.id delivery_id,d.status delivery_status FROM orders o LEFT JOIN deliveries d ON d.order_id=o.id WHERE o.business_id=$1 AND o.customer_account_id=$2 AND o.note=$3 AND o.order_status<>'cancelled' ORDER BY o.id DESC LIMIT 1",
-    [businessId,customer.accountId,COURIER_QA_ORDER_NOTE]
+    [businessId,customer.accountId,orderNote]
   );
 
   let orderId=Number(existing.rows[0]?.order_id||0);
@@ -514,7 +516,7 @@ export async function runCourierExperienceAcceptance({
         payment_method:'online',
         delivery_quote_id:Number(quote.json.id),
         delivery_address:'Internal QA customer destination — Philippines',
-        note:COURIER_QA_ORDER_NOTE
+        note:orderNote
       }
     });
     expectStatus(checkout,201,'Courier QA delivery checkout');
@@ -523,9 +525,34 @@ export async function runCourierExperienceAcceptance({
     if(!orderId||!deliveryId)throw new Error('Courier QA delivery checkout did not create order and delivery ids.');
   }
 
-  let order=await ensureQaDigitalPayment({
-    pool,base,customer,orderId,requestJson,expectStatus
-  });
+  let order;
+  if(paymentMode==='merchant_confirmation'){
+    const beforePayment=await requestJson(base,'/api/orders/'+orderId,{token:customer.token});
+    expectStatus(beforePayment,200,'Courier QA order before Merchant payment confirmation');
+    if(beforePayment.json?.payment_status==='paid')throw new Error('Fresh V8 delivery order was already paid before Merchant confirmation.');
+    const outstanding=Number(beforePayment.json?.outstanding_amount||0);
+    if(!(outstanding>0))throw new Error('Fresh V8 delivery order has no positive outstanding amount.');
+    const paid=await requestJson(base,'/api/orders/merchant/'+orderId+'/payment',{
+      method:'POST',
+      token:merchant.token,
+      body:{
+        amount:outstanding,
+        account:'cash',
+        method_code:'cash',
+        provider_code:'qa_manual_delivery_finance_v8',
+        provider_reference:'qa-v8-order-'+orderId
+      }
+    });
+    expectStatus(paid,200,'Courier QA Merchant payment confirmation');
+    order=paid.json;
+    if(order?.payment_status!=='paid'||Number(order?.outstanding_amount||0)>0.001){
+      throw new Error('Merchant payment confirmation did not fully pay the V8 delivery order.');
+    }
+  }else{
+    order=await ensureQaDigitalPayment({
+      pool,base,customer,orderId,requestJson,expectStatus
+    });
+  }
 
   if(order.order_status==='accepted'){
     const started=await requestJson(base,'/api/orders/merchant/'+orderId+'/start',{
@@ -711,8 +738,9 @@ export async function runCourierExperienceAcceptance({
     order_id:orderId,
     delivery_id:deliveryId,
     delivery_fee:Number(delivery.delivery_fee||quoteFee||0),
-    digital_payment_server_confirmed:true,
-    paymongo_mode:'test',
+    digital_payment_server_confirmed:paymentMode==='paymongo',
+    payment_mode:paymentMode,
+    paymongo_mode:paymentMode==='paymongo'?'test':'not_used',
     courier_eligible:true,
     admin_dispatch:true,
     live_tracking_closed_after_completion:true,
