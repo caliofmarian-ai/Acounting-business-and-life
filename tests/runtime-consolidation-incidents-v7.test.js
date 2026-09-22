@@ -57,7 +57,8 @@ test('Incident routes and assets remain owned by server-incidents',()=>{
 
 test('already parsed JSON is preserved before Delivery fallthrough reaches Suppliers',()=>{
   assert.match(incidents,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);\n  assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(delivery,/const parsedJsonBody=req\.body!==undefined/);
   assert.match(delivery,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
   assert.match(delivery,/headers\['content-length'\]=String\(payload\.length\)/);
