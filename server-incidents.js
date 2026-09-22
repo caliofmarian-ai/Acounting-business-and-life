@@ -3,7 +3,7 @@ import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const { Pool } = pg;
@@ -12,7 +12,8 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const upstreamPort = Number(process.env.INTERNAL_FINANCE_PORT || 3807);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
-const body = express.json({ limit: '14mb' });
+const jsonBody = express.json({ limit: '14mb' });
+const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 const INCIDENT_STATUSES = new Set(['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated']);
 const RELATED_TYPES = new Set(['order','delivery','merchant','courier','service_job','service_provider','supplier','payment','other']);
 const IMAGE_MIMES = new Set(['image/jpeg','image/png','image/webp']);
@@ -24,9 +25,49 @@ let shuttingDown = false;
 
 function clean(v,max=1200){ return String(v??'').trim().slice(0,max); }
 function authHeader(req){ return req.headers.authorization || ''; }
-async function upstream(path,options={}){ return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options); }
+function copyHeaders(headers={}){
+  if(headers&&typeof headers.entries==='function')return Object.fromEntries(headers.entries());
+  return {...headers};
+}
+async function downstreamFetch(path,options={}){
+  const headers={...copyHeaders(options.headers),host:`127.0.0.1:${upstreamPort}`};
+  return fetch(`http://127.0.0.1:${upstreamPort}${path}`,{...options,headers});
+}
+export function isIncidentOwnedPath(path=''){
+  const pathname=String(path||'').split('?')[0];
+  return pathname==='/incidents.css'
+    ||pathname==='/incidents-ui.js'
+    ||pathname==='/api/incidents'
+    ||pathname.startsWith('/api/incidents/')
+    ||pathname==='/api/admin/incidents'
+    ||pathname.startsWith('/api/admin/incidents/');
+}
+export async function incidentsFetch(path,options={}){
+  const pathname=String(path||'').split('?')[0];
+  if(isIncidentOwnedPath(pathname)){
+    throw Object.assign(new Error('Incident-owned paths require in-process Incident dispatch'),{
+      status:500,code:'INCIDENT_EMBEDDED_DISPATCH_REQUIRED'
+    });
+  }
+  if(pathname==='/health'){
+    try{
+      await pool.query('SELECT 1');
+      const downstream=await downstreamFetch('/health',{headers:options.headers||{}});
+      return new Response(JSON.stringify({ok:downstream.ok,db:true,upstream:downstream.ok,version:'0.8.4-incidents'}),{
+        status:downstream.ok?200:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }catch{
+      return new Response(JSON.stringify({ok:false,db:false,upstream:false,version:'0.8.4-incidents'}),{
+        status:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }
+  }
+  return downstreamFetch(path,options);
+}
 async function identity(req){
-  const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});
+  const r=await downstreamFetch('/api/me',{headers:{Authorization:authHeader(req)}});
   const b=await r.json().catch(()=>({}));
   if(!r.ok) throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});
   return b;
@@ -113,13 +154,15 @@ async function authorizeIncident(req,id){
   return {me,incident};
 }
 
-app.get('/health',async(_req,res)=>{
-  try{await pool.query('SELECT 1');const r=await upstream('/health');res.status(r.ok?200:503).json({ok:r.ok,db:true,upstream:r.ok,version:'0.8.4-incidents'});}catch{res.status(503).json({ok:false,db:false,upstream:false,version:'0.8.4-incidents'});}
+app.get('/health',async(req,res)=>{
+  const r=await incidentsFetch('/health',{headers:req.headers});
+  const payload=await r.json().catch(()=>({ok:false,db:false,upstream:false,version:'0.8.4-incidents'}));
+  res.status(r.status).json(payload);
 });
 app.get('/incidents.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','incidents.css'),'utf8')));
 app.get('/incidents-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','incidents-ui.js'),'utf8')));
 async function root(req,res){
-  const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});
+  const r=await incidentsFetch(req.path,{headers:req.headers});
   const html=await r.text();
   res.status(r.status).type('html').send(html);
 }
@@ -177,12 +220,73 @@ app.patch('/api/admin/incidents/:id',body,async(req,res,next)=>{
   }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}
 });
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Incident upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
+  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Incident upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy);
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})});
 
-function start(){child=spawn(process.execPath,['server-delivery-finance.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Finance child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<160;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Finance child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life incident gateway listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+function start(){
+  child=spawn(process.execPath,['server-delivery-finance.js'],{
+    cwd:__dirname,
+    env:{...process.env,PORT:String(upstreamPort)},
+    stdio:'inherit'
+  });
+  child.on('exit',code=>{if(!shuttingDown){console.error(`Finance child exited ${code}`);process.exit(code||1)}});
+}
+async function wait(){
+  for(let i=0;i<160;i++){
+    try{const r=await downstreamFetch('/health');if(r.ok)return}catch{}
+    await new Promise(r=>setTimeout(r,250));
+  }
+  throw new Error('Finance child failed health check');
+}
+
+let embeddedStartPromise=null;
+export async function startEmbeddedIncidents(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      await initDb();
+      console.log('Business & Life incidents mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopIncidents(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedIncidents(){await stopIncidents()}
+
+async function shutdown(sig){
+  console.log(`Received ${sig}`);
+  await stopIncidents();
+  process.exit(0);
+}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedIncidents()
+    .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life incident gateway listening on ${port}`)))
+    .catch(e=>{console.error(e);process.exit(1)});
+}

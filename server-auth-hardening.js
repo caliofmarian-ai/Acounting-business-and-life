@@ -1,22 +1,20 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import http from 'node:http';
 import { promisify } from 'node:util';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
 import {createV2Session,isLegacyBearerToken,resolveV2SessionToken} from './auth-session-core.js';
+import {incidentsFetch,startEmbeddedIncidents,stopEmbeddedIncidents} from './server-incidents.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const upstreamPort = Number(process.env.INTERNAL_INCIDENTS_PORT || 3907);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
 const APP_PIN = process.env.APP_PIN || '';
@@ -32,7 +30,8 @@ const RESET_TTL_MIN = Math.max(10, Math.min(60, Number(process.env.AUTH_RESET_TT
 const VERIFY_TTL_HOURS = Math.max(1, Math.min(72, Number(process.env.AUTH_VERIFY_TTL_HOURS || 24)));
 const jsonBody = express.json({ limit: '450kb' });
 const attempts = new Map();
-let child;
+let incidentsApp=null;
+let incidentsReady=false;
 let shuttingDown = false;
 
 function clean(value, max = 500) { return String(value ?? '').trim().slice(0, max); }
@@ -207,10 +206,6 @@ function headerValue(headers, name) {
   for (const [key, value] of Object.entries(headers)) if (String(key).toLowerCase() === wanted) return String(value || '');
   return '';
 }
-function copyHeaders(headers = {}) {
-  if (headers && typeof headers.entries === 'function') return Object.fromEntries(headers.entries());
-  return { ...headers };
-}
 function hardeningPolicyResponse(path, method = 'GET', headers = {}) {
   const pathname = String(path || '').split('?')[0];
   if (!pathname.startsWith('/api')) return null;
@@ -222,10 +217,6 @@ function hardeningPolicyResponse(path, method = 'GET', headers = {}) {
     return responseJson(401, { error: 'Legacy PIN session expired. Sign in with your email account.' });
   }
   return null;
-}
-async function incidentFetch(path, options = {}) {
-  const headers = { ...copyHeaders(options.headers), host: `127.0.0.1:${upstreamPort}` };
-  return fetch(`http://127.0.0.1:${upstreamPort}${path}`, { ...options, headers });
 }
 function injectAuthRoot(html) {
   let next = String(html || '');
@@ -242,18 +233,19 @@ export async function authHardeningFetch(path, options = {}) {
   if (pathname === '/health') {
     try {
       await pool.query('SELECT 1');
-      const incidents = await incidentFetch('/health', { headers: options.headers || {} });
-      return responseJson(incidents.ok ? 200 : 503, { ok: incidents.ok, db: true, incidents: incidents.ok, version: '0.8.5-auth-hardening' });
+      const incidents = await incidentsFetch('/health', { headers: options.headers || {} });
+      const ok=incidentsReady&&incidents.ok;
+      return responseJson(ok ? 200 : 503, { ok, db: true, incidents: ok, version: '0.8.5-auth-hardening' });
     } catch {
       return responseJson(503, { ok: false, db: false, incidents: false, version: '0.8.5-auth-hardening' });
     }
   }
   if (pathname === '/' || pathname === '/index.html') {
-    const upstream = await incidentFetch(path, options);
+    const upstream = await incidentsFetch(path, options);
     const html = injectAuthRoot(await upstream.text());
     return new Response(html, { status: upstream.status, headers: { 'content-type': 'text/html; charset=utf-8' } });
   }
-  return incidentFetch(path, options);
+  return incidentsFetch(path, options);
 }
 
 app.get('/health', async (req, res) => {
@@ -444,43 +436,19 @@ app.use('/api', async (req, res, next) => {
   res.status(blocked.status).json(await blocked.json());
 });
 
-function proxy(req, res) {
-  const parsedJsonBody = req.body !== undefined && !['GET', 'HEAD'].includes(req.method) && Boolean(req.is('application/json'));
-  const payload = parsedJsonBody ? Buffer.from(JSON.stringify(req.body ?? {})) : null;
-  const headers = { ...req.headers, host: `127.0.0.1:${upstreamPort}` };
-  if (payload) {
-    headers['content-length'] = String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up = http.request({ hostname: '127.0.0.1', port: upstreamPort, path: req.originalUrl, method: req.method, headers }, ur => {
-    res.statusCode = ur.statusCode || 502;
-    for (const [k, v] of Object.entries(ur.headers)) if (v !== undefined) res.setHeader(k, v);
-    ur.pipe(res);
-  });
-  up.on('error', e => { console.error(e); if (!res.headersSent) res.status(502).json({ error: 'Application upstream unavailable' }); });
-  if (payload) up.end(payload); else req.pipe(up);
+function proxy(req,res,next){
+  if(!incidentsApp)return res.status(503).json({error:'Incidents runtime is not ready'});
+  return incidentsApp(req,res,next);
 }
 app.use(proxy);
 app.use((err, _req, res, _next) => { console.error(err); if (res.headersSent) return; res.status(err.status || 500).json({ error: err.status ? err.message : 'Unexpected authentication error' }); });
-
-function start() {
-  child = spawn(process.execPath, ['server-incidents.js'], { cwd: __dirname, env: { ...process.env, PORT: String(upstreamPort) }, stdio: 'inherit' });
-  child.on('exit', code => { if (!shuttingDown) { console.error(`Incident child exited ${code}`); process.exit(code || 1); } });
-}
-async function wait() {
-  for (let i = 0; i < 180; i++) {
-    try { const r = await fetch(`http://127.0.0.1:${upstreamPort}/health`); if (r.ok) return; } catch {}
-    await new Promise(r => setTimeout(r, 250));
-  }
-  throw new Error('Incident child failed health check');
-}
 
 let embeddedStartPromise = null;
 export async function startEmbeddedAuthHardening() {
   if (!embeddedStartPromise) {
     embeddedStartPromise = (async () => {
-      start();
-      await wait();
+      incidentsApp=await startEmbeddedIncidents();
+      incidentsReady=true;
       await initDb();
       console.log('Business & Life auth hardening mounted in-process');
       return app;
@@ -492,7 +460,9 @@ export async function startEmbeddedAuthHardening() {
 async function stopAuthHardening() {
   if (shuttingDown) return;
   shuttingDown = true;
-  if (child && !child.killed) child.kill('SIGTERM');
+  incidentsReady=false;
+  incidentsApp=null;
+  await stopEmbeddedIncidents().catch(()=>{});
   await pool.end().catch(() => {});
 }
 export async function stopEmbeddedAuthHardening() { await stopAuthHardening(); }

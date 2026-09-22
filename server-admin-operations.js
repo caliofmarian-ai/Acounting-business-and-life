@@ -564,8 +564,10 @@ function dispatchBusinessAccounting(req,res,{headers={},afterSuccess=null}={}){
     res.end=function(chunk,encoding,cb){
       if(ended)return res;ended=true;capture(chunk,encoding);
       const status=res.statusCode,payload=Buffer.concat(chunks);
+      let responseBody=null;
+      try{responseBody=payload.length?JSON.parse(payload.toString('utf8')):null}catch{}
       restore();
-      Promise.resolve(status>=200&&status<400&&afterSuccess?afterSuccess(status):undefined).then(()=>{
+      Promise.resolve(status>=200&&status<400&&afterSuccess?afterSuccess(status,responseBody,payload):undefined).then(()=>{
         originalEnd(payload,typeof encoding==='string'?encoding:undefined,typeof cb==='function'?cb:undefined);
         resolve();
       }).catch(reject);
@@ -871,7 +873,15 @@ app.get('/api/admin/incidents/:id',async(req,res,next)=>{try{const me=await iden
 app.get('/api/admin/incidents/:id/attachments/:attachmentId',async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT territory_id FROM incident_reports WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Incident not found'});await requireAdminPermission(pool,me.account.id,'incident.triage',q.rows[0].territory_id);const a=await pool.query(`SELECT id,kind,mime_type,file_name,byte_size,evidence_data_url FROM incident_attachments WHERE incident_id=$1 AND id=$2`,[id,Number(req.params.attachmentId)]);if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});const x=a.rows[0];res.json({id:x.id,kind:x.kind,mime_type:x.mime_type,file_name:x.file_name,byte_size:x.byte_size,data_url:x.evidence_data_url})}catch(e){next(e)}});
 app.patch('/api/admin/incidents/:id',body,async(req,res,next)=>{const client=await pool.connect();try{const me=await identity(req),id=Number(req.params.id);await client.query('BEGIN');const q=await client.query(`SELECT * FROM incident_reports WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Incident not found'),{status:404});const before=q.rows[0],assignment=await requireAdminPermission(pool,me.account.id,'incident.triage',before.territory_id),status=clean(req.body?.status,40),note=clean(req.body?.note,3000),resolution=clean(req.body?.resolution_summary,4000);if(!INCIDENT_STATUSES.has(status))throw Object.assign(new Error('Unknown incident status'),{status:400});await client.query(`UPDATE incident_reports SET status=$1,assigned_admin_account_id=COALESCE(assigned_admin_account_id,$2),resolution_summary=CASE WHEN $3<>'' THEN $3 ELSE resolution_summary END,resolved_at=CASE WHEN $1 IN ('resolved','dismissed') THEN COALESCE(resolved_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$4`,[status,me.account.id,resolution,id]);await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,from_status,to_status,note) VALUES($1,$2,'admin_status',$3,$4,$5)`,[id,me.account.id,before.status,status,note]);await client.query('COMMIT');await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:before.territory_id,targetType:'incident',targetId:String(id),eventCode:'incident_status_changed',before:{status:before.status},after:{status},reason:note,correlationId:correlation(req)});res.json({ok:true,status})}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
 
-app.post('/api/incidents',body,async(req,res,next)=>{try{const r=await upstream('/api/incidents',{method:'POST',headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:JSON.stringify(req.body||{})});const data=await r.json().catch(()=>({}));if(r.ok&&data.id){const territoryId=await inferTerritory(clean(req.body?.related_type,50),req.body?.related_id?Number(req.body.related_id):null,req.body?.territory_id);if(territoryId)await pool.query(`UPDATE incident_reports SET territory_id=$1 WHERE id=$2`,[territoryId,data.id])}res.status(r.status).json(data)}catch(e){next(e)}});
+app.post('/api/incidents',body,async(req,res,next)=>{try{
+  await dispatchBusinessAccounting(req,res,{
+    afterSuccess:async(_status,data)=>{
+      if(!data?.id)return;
+      const territoryId=await inferTerritory(clean(req.body?.related_type,50),req.body?.related_id?Number(req.body.related_id):null,req.body?.territory_id);
+      if(territoryId)await pool.query(`UPDATE incident_reports SET territory_id=$1 WHERE id=$2`,[territoryId,Number(data.id)]);
+    }
+  });
+}catch(e){next(e)}});
 
 app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{const parent=req.body?.parent_id?Number(req.body.parent_id):null;return forwardAdmin(req,res,'territory.manage',parent,'territory','new')}catch(e){next(e)}});
 app.post('/api/governance/admin/invitations',body,async(req,res,next)=>{try{const role=clean(req.body?.role,40),perm=role==='merchant'?'profiles.invite_merchant':role==='supplier'?'profiles.invite_supplier':'profiles.invite_courier';return forwardAdmin(req,res,perm,Number(req.body?.territory_id)||null,'profile_invitation',role)}catch(e){next(e)}});

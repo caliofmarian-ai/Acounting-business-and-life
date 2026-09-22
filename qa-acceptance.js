@@ -25,7 +25,8 @@ const SERVICE_PROVIDER_EXPERIENCE_WAVE='service_provider_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
 const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
 const AUTH_RUNTIME_V6_WAVE='auth_runtime_v6';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE]);
+const INCIDENT_RUNTIME_V7_WAVE='incident_runtime_v7';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -2976,6 +2977,131 @@ async function runAuthRuntimeV6Acceptance({pool,base,secret}){
   };
 }
 
+
+const QA_INCIDENT_EVIDENCE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlWhVQAAAAASUVORK5CYII=';
+
+async function runIncidentRuntimeV7Acceptance({pool,base,secret}){
+  const [customer,merchant,admin,territoryAdmin]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Incident V7 Customer QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Incident V7 Merchant QA'}),
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Incident V7 Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:TERRITORY_ADMIN_ALIAS,role:'territory_admin',label:'Incident V7 Territory Admin QA'})
+  ]);
+
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+
+  await pool.query(
+    "UPDATE platform_admin_assignments SET status='revoked',updated_at=NOW() WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin'",
+    [territoryAdmin.accountId]
+  );
+
+  const assignment=await requestJson(base,'/api/admin/assignments',{
+    method:'POST',
+    token:admin.token,
+    body:{
+      target_email:TERRITORY_ADMIN_ALIAS,
+      admin_role:'territory_admin',
+      territory_id:territoryId,
+      function_codes:['trust_safety'],
+      reason:'Controlled Incident V7 scoped triage acceptance'
+    }
+  });
+  expectStatus(assignment,201,'Incident V7 Territory Admin assignment');
+  if(Number(assignment.json?.territory_id)!==Number(territoryId))throw new Error('Incident V7 Admin assignment resolved the wrong territory.');
+  if(!(assignment.json?.permissions||[]).includes('incident.triage'))throw new Error('Incident V7 Admin assignment did not include incident.triage.');
+
+  const created=await requestJson(base,'/api/incidents',{
+    method:'POST',
+    token:customer.token,
+    body:{
+      category:'Controlled QA runtime incident',
+      description:'Controlled Incident V7 acceptance record used only to verify the embedded Incident boundary.',
+      related_type:'other',
+      territory_id:territoryId,
+      attachments:[{
+        file_name:'incident-v7.png',
+        data_url:QA_INCIDENT_EVIDENCE
+      }]
+    }
+  });
+  expectStatus(created,201,'Incident V7 create');
+  const incidentId=Number(created.json?.id);
+  if(!incidentId)throw new Error('Incident V7 create returned no incident id.');
+
+  const persisted=await pool.query(
+    'SELECT reporter_account_id,territory_id,status FROM incident_reports WHERE id=$1',
+    [incidentId]
+  );
+  if(Number(persisted.rows[0]?.reporter_account_id)!==Number(customer.accountId))throw new Error('Incident V7 reporter ownership did not persist.');
+  if(Number(persisted.rows[0]?.territory_id)!==Number(territoryId))throw new Error('Incident V7 territory enrichment did not persist.');
+  if(persisted.rows[0]?.status!=='submitted')throw new Error('Incident V7 did not start submitted.');
+
+  const mine=await requestJson(base,'/api/incidents/mine',{token:customer.token});
+  expectStatus(mine,200,'Incident V7 mine');
+  if(!(Array.isArray(mine.json)&&mine.json.some(x=>Number(x.id)===incidentId)))throw new Error('Incident V7 was missing from Customer incident history.');
+
+  const detail=await requestJson(base,'/api/incidents/'+incidentId,{token:customer.token});
+  expectStatus(detail,200,'Incident V7 detail');
+  const attachmentId=Number(detail.json?.attachments?.[0]?.id);
+  if(!attachmentId)throw new Error('Incident V7 attachment metadata was missing.');
+
+  const attachment=await requestJson(base,'/api/incidents/'+incidentId+'/attachments/'+attachmentId,{token:customer.token});
+  expectStatus(attachment,200,'Incident V7 attachment');
+  if(!String(attachment.json?.data_url||'').startsWith('data:image/png;base64,'))throw new Error('Incident V7 attachment evidence was not returned to its owner.');
+
+  const note=await requestJson(base,'/api/incidents/'+incidentId+'/note',{
+    method:'POST',token:customer.token,body:{note:'Controlled Customer follow-up for Incident V7 acceptance.'}
+  });
+  expectStatus(note,200,'Incident V7 note');
+
+  const crossAccount=await requestJson(base,'/api/incidents/'+incidentId,{token:merchant.token});
+  expectStatus(crossAccount,403,'Incident V7 cross-account denial');
+
+  const scopedRead=await requestJson(base,'/api/admin/incidents/'+incidentId,{token:territoryAdmin.token});
+  expectStatus(scopedRead,200,'Incident V7 scoped Admin read');
+  if(Number(scopedRead.json?.territory_id)!==Number(territoryId))throw new Error('Incident V7 scoped Admin read crossed territory.');
+
+  const triage=await requestJson(base,'/api/admin/incidents/'+incidentId,{
+    method:'PATCH',
+    token:territoryAdmin.token,
+    body:{
+      status:'investigating',
+      note:'Controlled scoped triage for Incident V7 acceptance.',
+      resolution_summary:''
+    }
+  });
+  expectStatus(triage,200,'Incident V7 scoped Admin triage');
+
+  const after=await requestJson(base,'/api/incidents/'+incidentId,{token:customer.token});
+  expectStatus(after,200,'Incident V7 detail after triage');
+  if(after.json?.status!=='investigating')throw new Error('Incident V7 scoped triage status did not persist.');
+  if(!(after.json?.actions||[]).some(x=>x.action_type==='admin_status'))throw new Error('Incident V7 Admin triage action evidence was missing.');
+
+  for(const [label,token] of [
+    ['Customer',customer.token],
+    ['Merchant',merchant.token],
+    ['Super Admin',admin.token],
+    ['Territory Admin',territoryAdmin.token]
+  ]){
+    const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token,body:{}});
+    expectStatus(logout,200,'Incident V7 '+label+' logout');
+  }
+
+  return{
+    status:'PASS',
+    wave:INCIDENT_RUNTIME_V7_WAVE,
+    incident_id:incidentId,
+    territory_id:territoryId,
+    create:true,
+    mine_detail:true,
+    note:true,
+    attachment_authorization:true,
+    cross_account_denial:true,
+    scoped_admin_triage:true,
+    incident_status:'investigating'
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -2983,7 +3109,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===AUTH_RUNTIME_V6_WAVE
+    const result=config.wave===INCIDENT_RUNTIME_V7_WAVE
+      ?await runIncidentRuntimeV7Acceptance({pool,base,secret:config.secret})
+      :config.wave===AUTH_RUNTIME_V6_WAVE
       ?await runAuthRuntimeV6Acceptance({pool,base,secret:config.secret})
       :config.wave===MERCHANT_CATALOG_WAVE
       ?await runMerchantCatalogSeed({pool,base,secret:config.secret})
@@ -3037,5 +3165,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE
 };
