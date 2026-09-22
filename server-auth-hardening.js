@@ -5,7 +5,7 @@ import http from 'node:http';
 import { promisify } from 'node:util';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
@@ -197,19 +197,74 @@ async function maybeRetireOwnerPin(accountId) {
   await pool.query(`UPDATE accounts SET legacy_pin_retired_at=COALESCE(legacy_pin_retired_at,NOW()),updated_at=NOW() WHERE id=1 AND email_verified_at IS NOT NULL AND password_hash IS NOT NULL AND email<>''`);
 }
 
-app.get('/health', async (_req, res) => {
-  try { await pool.query('SELECT 1'); const u = await fetch(`http://127.0.0.1:${upstreamPort}/health`); res.status(u.ok ? 200 : 503).json({ ok: u.ok, db: true, incidents: u.ok, version: '0.8.5-auth-hardening' }); }
-  catch { res.status(503).json({ ok: false, db: false, incidents: false, version: '0.8.5-auth-hardening' }); }
+function responseJson(status, payload) {
+  return new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
+}
+function headerValue(headers, name) {
+  if (!headers) return '';
+  if (typeof headers.get === 'function') return String(headers.get(name) || '');
+  const wanted = String(name).toLowerCase();
+  for (const [key, value] of Object.entries(headers)) if (String(key).toLowerCase() === wanted) return String(value || '');
+  return '';
+}
+function copyHeaders(headers = {}) {
+  if (headers && typeof headers.entries === 'function') return Object.fromEntries(headers.entries());
+  return { ...headers };
+}
+function hardeningPolicyResponse(path, method = 'GET', headers = {}) {
+  const pathname = String(path || '').split('?')[0];
+  if (!pathname.startsWith('/api')) return null;
+  if (pathname === '/api/login' && String(method || 'GET').toUpperCase() === 'POST') {
+    return responseJson(410, { error: 'PIN login has been retired from the public app. Use email/password or account recovery.' });
+  }
+  const raw = headerValue(headers, 'authorization').replace(/^Bearer\s+/i, '');
+  if (isLegacyBearerToken(raw)) {
+    return responseJson(401, { error: 'Legacy PIN session expired. Sign in with your email account.' });
+  }
+  return null;
+}
+async function incidentFetch(path, options = {}) {
+  const headers = { ...copyHeaders(options.headers), host: `127.0.0.1:${upstreamPort}` };
+  return fetch(`http://127.0.0.1:${upstreamPort}${path}`, { ...options, headers });
+}
+function injectAuthRoot(html) {
+  let next = String(html || '');
+  if (!next.includes('id="modernAuthRoot"')) next = next.replace('<form id="loginForm"', '<div id="modernAuthRoot"></div><form id="loginForm"');
+  if (!next.includes('/auth-hardening.css')) next = next.replace('</head>', '  <link rel="stylesheet" href="/auth-hardening.css" />\n</head>');
+  if (!next.includes('/auth-hardening-ui.js')) next = next.replace('</body>', '  <script type="module" src="/auth-hardening-ui.js"></script>\n</body>');
+  return next;
+}
+
+export async function authHardeningFetch(path, options = {}) {
+  const pathname = String(path || '').split('?')[0];
+  const policy = hardeningPolicyResponse(pathname, options.method || 'GET', options.headers || {});
+  if (policy) return policy;
+  if (pathname === '/health') {
+    try {
+      await pool.query('SELECT 1');
+      const incidents = await incidentFetch('/health', { headers: options.headers || {} });
+      return responseJson(incidents.ok ? 200 : 503, { ok: incidents.ok, db: true, incidents: incidents.ok, version: '0.8.5-auth-hardening' });
+    } catch {
+      return responseJson(503, { ok: false, db: false, incidents: false, version: '0.8.5-auth-hardening' });
+    }
+  }
+  if (pathname === '/' || pathname === '/index.html') {
+    const upstream = await incidentFetch(path, options);
+    const html = injectAuthRoot(await upstream.text());
+    return new Response(html, { status: upstream.status, headers: { 'content-type': 'text/html; charset=utf-8' } });
+  }
+  return incidentFetch(path, options);
+}
+
+app.get('/health', async (req, res) => {
+  const r = await authHardeningFetch('/health', { headers: req.headers });
+  res.status(r.status).json(await r.json());
 });
 app.get('/auth-hardening.css', (_req, res) => res.type('text/css').send(readFileSync(join(__dirname, 'public', 'auth-hardening.css'), 'utf8')));
 app.get('/auth-hardening-ui.js', (_req, res) => res.type('application/javascript').send(readFileSync(join(__dirname, 'public', 'auth-hardening-ui.js'), 'utf8')));
 async function root(req, res) {
-  const r = await fetch(`http://127.0.0.1:${upstreamPort}${req.path}`, { headers: { ...req.headers, host: `127.0.0.1:${upstreamPort}` } });
-  let html = await r.text();
-  html = html.replace('<form id="loginForm"', '<div id="modernAuthRoot"></div><form id="loginForm"');
-  html = html.replace('</head>', '  <link rel="stylesheet" href="/auth-hardening.css" />\n</head>')
-             .replace('</body>', '  <script type="module" src="/auth-hardening-ui.js"></script>\n</body>');
-  res.status(r.status).type('html').send(html);
+  const r = await authHardeningFetch(req.path, { headers: req.headers });
+  res.status(r.status).type('html').send(await r.text());
 }
 app.get('/', root); app.get('/index.html', root);
 
@@ -384,22 +439,74 @@ app.post('/api/auth/oauth/handoff', jsonBody, async (req, res, next) => {
 });
 
 app.use('/api', async (req, res, next) => {
-  if (req.path === '/login' && req.method === 'POST') return res.status(410).json({ error: 'PIN login has been retired from the public app. Use email/password or account recovery.' });
-  const raw = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
-  if (isLegacyBearerToken(raw)) return res.status(401).json({ error: 'Legacy PIN session expired. Sign in with your email account.' });
-  next();
+  const blocked = hardeningPolicyResponse(`/api${req.path}`, req.method, req.headers);
+  if (!blocked) return next();
+  res.status(blocked.status).json(await blocked.json());
 });
 
 function proxy(req, res) {
+  const parsedJsonBody = req.body !== undefined && !['GET', 'HEAD'].includes(req.method) && Boolean(req.is('application/json'));
+  const payload = parsedJsonBody ? Buffer.from(JSON.stringify(req.body ?? {})) : null;
   const headers = { ...req.headers, host: `127.0.0.1:${upstreamPort}` };
-  const up = http.request({ hostname: '127.0.0.1', port: upstreamPort, path: req.originalUrl, method: req.method, headers }, ur => { res.statusCode = ur.statusCode || 502; for (const [k, v] of Object.entries(ur.headers)) if (v !== undefined) res.setHeader(k, v); ur.pipe(res); });
-  up.on('error', e => { console.error(e); if (!res.headersSent) res.status(502).json({ error: 'Application upstream unavailable' }); }); req.pipe(up);
+  if (payload) {
+    headers['content-length'] = String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up = http.request({ hostname: '127.0.0.1', port: upstreamPort, path: req.originalUrl, method: req.method, headers }, ur => {
+    res.statusCode = ur.statusCode || 502;
+    for (const [k, v] of Object.entries(ur.headers)) if (v !== undefined) res.setHeader(k, v);
+    ur.pipe(res);
+  });
+  up.on('error', e => { console.error(e); if (!res.headersSent) res.status(502).json({ error: 'Application upstream unavailable' }); });
+  if (payload) up.end(payload); else req.pipe(up);
 }
 app.use(proxy);
 app.use((err, _req, res, _next) => { console.error(err); if (res.headersSent) return; res.status(err.status || 500).json({ error: err.status ? err.message : 'Unexpected authentication error' }); });
 
-function start() { child = spawn(process.execPath, ['server-incidents.js'], { cwd: __dirname, env: { ...process.env, PORT: String(upstreamPort) }, stdio: 'inherit' }); child.on('exit', code => { if (!shuttingDown) { console.error(`Incident child exited ${code}`); process.exit(code || 1); } }); }
-async function wait() { for (let i = 0; i < 180; i++) { try { const r = await fetch(`http://127.0.0.1:${upstreamPort}/health`); if (r.ok) return; } catch {} await new Promise(r => setTimeout(r, 250)); } throw new Error('Incident child failed health check'); }
-async function shutdown(sig) { if (shuttingDown) return; shuttingDown = true; console.log(`Received ${sig}`); if (child && !child.killed) child.kill('SIGTERM'); await pool.end().catch(() => {}); process.exit(0); }
-process.on('SIGTERM', () => shutdown('SIGTERM')); process.on('SIGINT', () => shutdown('SIGINT'));
-start(); wait().then(initDb).then(() => app.listen(port, '0.0.0.0', () => console.log(`Business & Life auth hardening gateway listening on ${port}`))).catch(e => { console.error(e); process.exit(1); });
+function start() {
+  child = spawn(process.execPath, ['server-incidents.js'], { cwd: __dirname, env: { ...process.env, PORT: String(upstreamPort) }, stdio: 'inherit' });
+  child.on('exit', code => { if (!shuttingDown) { console.error(`Incident child exited ${code}`); process.exit(code || 1); } });
+}
+async function wait() {
+  for (let i = 0; i < 180; i++) {
+    try { const r = await fetch(`http://127.0.0.1:${upstreamPort}/health`); if (r.ok) return; } catch {}
+    await new Promise(r => setTimeout(r, 250));
+  }
+  throw new Error('Incident child failed health check');
+}
+
+let embeddedStartPromise = null;
+export async function startEmbeddedAuthHardening() {
+  if (!embeddedStartPromise) {
+    embeddedStartPromise = (async () => {
+      start();
+      await wait();
+      await initDb();
+      console.log('Business & Life auth hardening mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopAuthHardening() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  if (child && !child.killed) child.kill('SIGTERM');
+  await pool.end().catch(() => {});
+}
+export async function stopEmbeddedAuthHardening() { await stopAuthHardening(); }
+
+async function shutdown(sig) {
+  console.log(`Received ${sig}`);
+  await stopAuthHardening();
+  process.exit(0);
+}
+const directExecution = Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (directExecution) {
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  startEmbeddedAuthHardening()
+    .then(() => app.listen(port, '0.0.0.0', () => console.log(`Business & Life auth hardening gateway listening on ${port}`)))
+    .catch(e => { console.error(e); process.exit(1); });
+}

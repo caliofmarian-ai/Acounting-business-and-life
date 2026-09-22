@@ -8,6 +8,7 @@ import {
   requireAdminPermission, visibleTerritoryIds, signAdminAssertion, appendAdminAudit
 } from './admin-authorization.js';
 import {startEmbeddedBusinessAccounting,stopEmbeddedBusinessAccounting} from './server-business-accounting.js';
+import {authHardeningFetch} from './server-auth-hardening.js';
 import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
 import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
 import {buildSessionBootstrap} from './session-bootstrap-core.js';
@@ -16,7 +17,6 @@ const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_AUTH_HARDENING_PORT||4007);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const body=express.json({limit:'28mb'});
@@ -154,7 +154,7 @@ let businessAccountingApp=null;let businessAccountingReady=false;let shuttingDow
 const clean=(v,max=1600)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',120);
-async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
+async function upstream(path,options={}){return authHardeningFetch(path,options)}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 function rolePermission(role){return role==='merchant'?'merchant.approve':role==='supplier'?'supplier.approve':role==='courier'?'courier.verify':'profiles.review_service_provider'}
 const assignmentRank=a=>clean(a?.effective_rank||a?.authority_rank||a?.admin_role,40);
@@ -597,7 +597,7 @@ app.get('/admin-console.css',(_q,res)=>res.type('text/css').send(readFileSync(jo
 app.get('/admin-console.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-console.js'),'utf8')));
 app.get('/admin',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/admin/me',async(req,res,next)=>{try{
