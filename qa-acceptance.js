@@ -27,7 +27,8 @@ const CUSTOMER_EXPERIENCE_WAVE='customer_experience_v1';
 const AUTH_RUNTIME_V6_WAVE='auth_runtime_v6';
 const INCIDENT_RUNTIME_V7_WAVE='incident_runtime_v7';
 const DELIVERY_FINANCE_RUNTIME_V8_WAVE='delivery_finance_runtime_v8';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE]);
+const DELIVERY_RUNTIME_V9_WAVE='delivery_runtime_v9';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3244,6 +3245,98 @@ async function runDeliveryFinanceRuntimeV8Acceptance({pool,base,secret}){
   };
 }
 
+
+async function runDeliveryRuntimeV9Acceptance({pool,base,secret}){
+  const orderNote='Controlled QA Delivery Runtime V9 '+Date.now();
+  const courierResult=await runCourierExperienceAcceptance({
+    pool,base,secret,
+    aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,courier:COURIER_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
+    helpers:{requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,runMerchantCatalogSeed,ensureQaTerritory,ensureActiveRole,loginWithCredential},
+    orderNote,
+    paymentMode:'merchant_confirmation'
+  });
+  if(courierResult.status!=='PASS')throw new Error('Delivery Runtime V9 Courier flow did not pass.');
+  if(courierResult.payment_mode!=='merchant_confirmation')throw new Error('Delivery Runtime V9 did not exercise the controlled Merchant payment path.');
+  if(courierResult.delivery_completed!==true||courierResult.order_completed!==true)throw new Error('Delivery Runtime V9 did not complete Delivery and order.');
+  if(courierResult.completion_code_required!==true)throw new Error('Delivery Runtime V9 completion-code security was not exercised.');
+  if(courierResult.live_tracking_closed_after_completion!==true)throw new Error('Delivery Runtime V9 did not close live tracking after completion.');
+
+  const orderId=Number(courierResult.order_id);
+  const deliveryId=Number(courierResult.delivery_id);
+  const businessId=Number(courierResult.business_id);
+  if(!orderId||!deliveryId||!businessId)throw new Error('Delivery Runtime V9 result is missing canonical ids.');
+
+  const [deliveryState,quoteState,monetization]=await Promise.all([
+    pool.query(
+      `SELECT d.id,d.order_id,d.quote_id,d.status,d.delivery_fee,d.last_lat,d.last_lng,d.last_location_at,
+              d.courier_account_id,o.order_status,o.payment_status,o.business_id,o.subtotal,o.delivery_fee order_delivery_fee
+         FROM deliveries d
+         JOIN orders o ON o.id=d.order_id
+        WHERE d.id=$1 AND d.order_id=$2`,
+      [deliveryId,orderId]
+    ),
+    pool.query(
+      `SELECT q.id,q.status,q.fee,q.pricing_rule_version,q.required_vehicle_class,q.formula_type,q.pricing_snapshot
+         FROM delivery_quotes q
+         JOIN deliveries d ON d.quote_id=q.id
+        WHERE d.id=$1`,
+      [deliveryId]
+    ),
+    pool.query(
+      `SELECT service_scope,source_type,source_id,COUNT(*)::int n,COALESCE(SUM(gross_value),0)::numeric gross
+         FROM service_monetization_events
+        WHERE (service_scope='marketplace' AND source_type='order' AND source_id=$1)
+           OR (service_scope='delivery' AND source_type='delivery' AND source_id=$2)
+        GROUP BY service_scope,source_type,source_id
+        ORDER BY service_scope`,
+      [orderId,deliveryId]
+    )
+  ]);
+
+  const d=deliveryState.rows[0],q=quoteState.rows[0];
+  if(!d||d.status!=='delivered'||d.order_status!=='completed'||d.payment_status!=='paid'){
+    throw new Error('Delivery Runtime V9 canonical Delivery/order state is incomplete.');
+  }
+  if(Number(d.business_id)!==businessId)throw new Error('Delivery Runtime V9 business binding changed.');
+  if(d.last_lat!=null||d.last_lng!=null||d.last_location_at!=null)throw new Error('Delivery Runtime V9 live tracking remained open after completion.');
+  if(!(Number(d.delivery_fee)>0)||!closeEnough(d.delivery_fee,d.order_delivery_fee))throw new Error('Delivery Runtime V9 delivery fee evidence is inconsistent.');
+
+  if(!q||q.status!=='used'||!closeEnough(q.fee,d.delivery_fee))throw new Error('Delivery Runtime V9 quote was not consumed exactly into Delivery.');
+  if(!(Number(q.pricing_rule_version)>0))throw new Error('Delivery Runtime V9 quote lost pricing version evidence.');
+  if(!q.required_vehicle_class)throw new Error('Delivery Runtime V9 quote lost required vehicle class.');
+  if(!q.formula_type)throw new Error('Delivery Runtime V9 quote lost pricing formula evidence.');
+  if(!q.pricing_snapshot||typeof q.pricing_snapshot!=='object')throw new Error('Delivery Runtime V9 quote lost pricing snapshot evidence.');
+
+  const marketEvent=monetization.rows.find(x=>x.service_scope==='marketplace'&&x.source_type==='order'&&Number(x.source_id)===orderId);
+  const deliveryEvent=monetization.rows.find(x=>x.service_scope==='delivery'&&x.source_type==='delivery'&&Number(x.source_id)===deliveryId);
+  if(Number(marketEvent?.n)!==1)throw new Error('Delivery Runtime V9 expected one marketplace monetization completion.');
+  if(Number(deliveryEvent?.n)!==1)throw new Error('Delivery Runtime V9 expected one delivery monetization completion.');
+  if(!closeEnough(marketEvent?.gross,d.subtotal))throw new Error('Delivery Runtime V9 marketplace monetization gross is inconsistent.');
+  if(!closeEnough(deliveryEvent?.gross,d.delivery_fee))throw new Error('Delivery Runtime V9 delivery monetization gross is inconsistent.');
+
+  return{
+    status:'PASS',
+    wave:DELIVERY_RUNTIME_V9_WAVE,
+    order_id:orderId,
+    delivery_id:deliveryId,
+    business_id:businessId,
+    delivery_quote_used:true,
+    pricing_snapshot_preserved:true,
+    courier_eligibility:true,
+    admin_dispatch:true,
+    live_tracking:true,
+    completion_code_security:true,
+    delivery_completed:true,
+    order_completed:true,
+    tracking_closed_after_completion:true,
+    marketplace_monetization_event:true,
+    delivery_monetization_event:true,
+    notification_lifecycle:Boolean(courierResult.notification_lifecycle),
+    support:Boolean(courierResult.support),
+    logout_relogin:Boolean(courierResult.logout_relogin)
+  };
+}
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -3251,7 +3344,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===DELIVERY_FINANCE_RUNTIME_V8_WAVE
+    const result=config.wave===DELIVERY_RUNTIME_V9_WAVE
+      ?await runDeliveryRuntimeV9Acceptance({pool,base,secret:config.secret})
+      :config.wave===DELIVERY_FINANCE_RUNTIME_V8_WAVE
       ?await runDeliveryFinanceRuntimeV8Acceptance({pool,base,secret:config.secret})
       :config.wave===INCIDENT_RUNTIME_V7_WAVE
       ?await runIncidentRuntimeV7Acceptance({pool,base,secret:config.secret})
@@ -3309,5 +3404,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE
 };

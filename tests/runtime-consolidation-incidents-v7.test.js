@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const incidents=read('server-incidents.js');
-const finance=read('server-delivery-finance.js');
+const finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js');
 const hardening=read('server-auth-hardening.js');
 const admin=read('server-admin-operations.js');
 const notifications=read('server-notifications.js');
@@ -55,14 +55,15 @@ test('Incident routes and assets remain owned by server-incidents',()=>{
   ])assert.ok(incidents.includes(marker),`missing Incident marker: ${marker}`);
 });
 
-test('already parsed JSON is preserved before Delivery Finance fallthrough reaches Delivery',()=>{
+test('already parsed JSON is preserved before Delivery fallthrough reaches Suppliers',()=>{
   assert.match(incidents,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(finance,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(finance,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(finance,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(finance,/delete headers\['transfer-encoding'\]/);
-  assert.match(finance,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(delivery,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(delivery,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(delivery,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(delivery,/delete headers\['transfer-encoding'\]/);
+  assert.match(delivery,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Admin incident creation traverses the embedded chain instead of fetch-bypassing Incidents',()=>{

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
-const hardening=read('server-auth-hardening.js'),incidents=read('server-incidents.js'),finance=read('server-delivery-finance.js'),governance=read('server-profile-governance.js'),accounting=read('server-business-accounting.js'),admin=read('server-admin-operations.js'),notifications=read('server-notifications.js');
+const hardening=read('server-auth-hardening.js'),incidents=read('server-incidents.js'),finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js'),governance=read('server-profile-governance.js'),accounting=read('server-business-accounting.js'),admin=read('server-admin-operations.js'),notifications=read('server-notifications.js');
 const composed=[hardening,governance,accounting,admin,notifications];
 
 test('Auth Hardening exposes embedded lifecycle and remains standalone rollback-capable',()=>{
@@ -21,8 +21,8 @@ test('canonical V2 sessions and hotfix optional verification remain intact',()=>
 test('all Auth Hardening owned routes and assets remain present',()=>{
   for(const route of ['/api/auth/hardening/status','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/email-verification/request','/api/auth/email-verification/verify','/api/auth/owner-migrate','/api/auth/sessions/revoke-others','/api/auth/identities','/api/auth/google/start','/api/auth/google/link/start','/api/auth/google/callback','/api/auth/oauth/handoff','/auth-hardening.css','/auth-hardening-ui.js'])assert.ok(hardening.includes(route),`missing Auth Hardening route/asset ${route}`);
 });
-test('parsed JSON and untouched raw streams cross the embedded Delivery Finance boundary safely',()=>{
-  assert.match(finance,/const parsedJsonBody=req\.body!==undefined/);assert.match(finance,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);assert.match(finance,/headers\['content-length'\]=String\(payload\.length\)/);assert.match(finance,/delete headers\['transfer-encoding'\]/);assert.match(finance,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);assert.match(notifications,/app\.post\('\/api\/notifications\/webhooks\/resend',express\.raw/);
+test('parsed JSON and untouched raw streams cross the embedded Delivery boundary safely',()=>{
+  assert.match(delivery,/const parsedJsonBody=req\.body!==undefined/);assert.match(delivery,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);assert.match(delivery,/headers\['content-length'\]=String\(payload\.length\)/);assert.match(delivery,/delete headers\['transfer-encoding'\]/);assert.match(delivery,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);assert.match(notifications,/app\.post\('\/api\/notifications\/webhooks\/resend',express\.raw/);
 });
 test('Governance Accounting Admin and Notifications cannot bypass Auth Hardening for direct reads',()=>{
   assert.match(governance,/authHardeningFetch/);for(const source of [accounting,admin,notifications]){assert.match(source,/authHardeningFetch/);assert.doesNotMatch(source,/http:\/\/127\.0\.0\.1:\$\{upstreamPort\}/)}

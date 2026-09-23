@@ -4,7 +4,7 @@ import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePricingRule} from './delivery-pricing-v2-core.js';
@@ -22,8 +22,10 @@ const authPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const accountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
-const body = express.json({ limit: '2500kb' });
+const jsonBody = express.json({ limit: '2500kb' });
+const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 let child;
+let supplierReady=false;
 let shuttingDown = false;
 
 function clean(v,max=700){return String(v??'').trim().slice(0,max)}
@@ -32,6 +34,54 @@ function finite(v){return Number.isFinite(num(v))}
 function clamp(v,min,max){return Math.max(min,Math.min(max,num(v)))}
 function authHeader(req){return req.headers.authorization||''}
 async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
+export function isDeliveryOwnedPath(path='',method='GET'){
+  const pathname=String(path||'').split('?')[0];
+  const verb=String(method||'GET').toUpperCase();
+  if(pathname==='/delivery.css'||pathname==='/delivery-ui.js')return true;
+  if(pathname.startsWith('/api/delivery/'))return true;
+  if(verb==='POST'&&pathname==='/api/marketplace/checkout')return true;
+  if(pathname==='/api/courier/delivery-profile')return true;
+  if(pathname==='/api/courier/documents')return true;
+  if(pathname==='/api/courier/availability')return true;
+  if(pathname.startsWith('/api/courier/deliveries/'))return true;
+  if(pathname.startsWith('/api/admin/delivery/'))return true;
+  if(pathname==='/api/admin/deliveries'||pathname.startsWith('/api/admin/deliveries/'))return true;
+  if(pathname==='/api/admin/couriers'||pathname.startsWith('/api/admin/couriers/'))return true;
+  return false;
+}
+export async function deliveryFetch(path,options={}){
+  const pathname=String(path||'').split('?')[0];
+  const method=String(options.method||'GET').toUpperCase();
+  if(isDeliveryOwnedPath(pathname,method)){
+    throw Object.assign(new Error('Delivery-owned paths require in-process Delivery dispatch'),{
+      status:500,code:'DELIVERY_EMBEDDED_DISPATCH_REQUIRED'
+    });
+  }
+  if(pathname==='/health'){
+    try{
+      await pool.query('SELECT 1');
+      const supplier=await upstream('/health',{headers:options.headers||{}});
+      const ok=supplierReady&&supplier.ok;
+      return new Response(JSON.stringify({ok,db:true,suppliers:ok,version:'0.7-delivery'}),{
+        status:ok?200:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }catch{
+      return new Response(JSON.stringify({ok:false,db:false,suppliers:false,version:'0.7-delivery'}),{
+        status:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }
+  }
+  if(pathname==='/'||pathname==='/index.html'){
+    const headers={...(options.headers||{}),host:`127.0.0.1:${upstreamPort}`};
+    const r=await upstream(path,{...options,headers});
+    let html=await r.text();
+    html=html.replace('</head>','  <link rel="stylesheet" href="/delivery.css" />\n</head>').replace('</body>','  <script type="module" src="/delivery-ui.js"></script>\n</body>');
+    return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
+  }
+  return upstream(path,options);
+}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)}
 function business(me,id=null){const list=me?.businesses||[];return id==null?(list[0]||null):(list.find(b=>Number(b.id)===Number(id))||null)}
@@ -226,10 +276,10 @@ async function allowedDelivery(req,d){const me=await identity(req);const id=Numb
 function activeTracking(status){return !['delivered','failed','cancelled'].includes(status)}
 function etaMinutes(d,rule){if(!d.last_lat||!d.last_lng||!rule||!d.vehicle_class)return null;const dist=haversine(Number(d.last_lat),Number(d.last_lng),Number(d.dropoff_lat),Number(d.dropoff_lng))*Number(rule.route_factor||1);let speed=null;if(d.vehicle_class==='bicycle')speed=rule.average_speed_bicycle_kmh;else if(['motorbike','scooter'].includes(d.vehicle_class))speed=rule.average_speed_motorbike_kmh;else if(['car','van'].includes(d.vehicle_class))speed=rule.average_speed_car_kmh;if(!speed||Number(speed)<=0)return null;return Math.ceil(dist/Number(speed)*60)}
 
-app.get('/health',async(_q,r)=>{try{await pool.query('SELECT 1');const u=await upstream('/health');r.status(u.ok?200:503).json({ok:u.ok,db:true,suppliers:u.ok,version:'0.7-delivery'})}catch{r.status(503).json({ok:false,db:false,suppliers:false,version:'0.7-delivery'})}})
+app.get('/health',async(req,res)=>{const r=await deliveryFetch('/health',{headers:req.headers});const payload=await r.json().catch(()=>({ok:false,db:false,suppliers:false,version:'0.7-delivery'}));res.status(r.status).json(payload)})
 app.get('/delivery.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','delivery.css'),'utf8')))
 app.get('/delivery-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','delivery-ui.js'),'utf8')))
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/delivery.css" />\n</head>').replace('</body>','  <script type="module" src="/delivery-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await deliveryFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/delivery/config',async(req,res,next)=>{try{await identity(req);const rule=await activeRule();res.json({enabled:Boolean(rule),pricing_rule_version:rule?.version||null,routing_provider:'straight_line_estimate',live_map_provider:'OpenStreetMap/Leaflet preview'})}catch(e){next(e)}})
@@ -483,12 +533,83 @@ app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{
   res.json(await deliveryDetail(id));
 }catch(e){next(e)}})
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Delivery upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
+  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Delivery upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy)
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})})
 
-function start(){child=spawn(process.execPath,['server-suppliers.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort),INTERNAL_SERVICES_PORT:String(servicesPort),INTERNAL_MARKETPLACE_PORT:String(marketplacePort),INTERNAL_ORDERS_PORT:String(ordersPort),INTERNAL_AUTH_PORT:String(authPort),INTERNAL_ACCOUNTING_PORT:String(accountingPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Supplier child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<140;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Supplier child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life delivery server listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+function start(){
+  child=spawn(process.execPath,['server-suppliers.js'],{
+    cwd:__dirname,
+    env:{
+      ...process.env,
+      PORT:String(upstreamPort),
+      INTERNAL_SERVICES_PORT:String(servicesPort),
+      INTERNAL_MARKETPLACE_PORT:String(marketplacePort),
+      INTERNAL_ORDERS_PORT:String(ordersPort),
+      INTERNAL_AUTH_PORT:String(authPort),
+      INTERNAL_ACCOUNTING_PORT:String(accountingPort)
+    },
+    stdio:'inherit'
+  });
+  child.on('exit',code=>{if(!shuttingDown){console.error(`Supplier child exited ${code}`);process.exit(code||1)}});
+}
+async function wait(){
+  for(let i=0;i<140;i++){
+    try{const r=await upstream('/health');if(r.ok)return}catch{}
+    await new Promise(r=>setTimeout(r,250));
+  }
+  throw new Error('Supplier child failed health check');
+}
+
+let embeddedStartPromise=null;
+export async function startEmbeddedDelivery(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      supplierReady=true;
+      await initDb();
+      console.log('Business & Life delivery mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopDelivery(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  supplierReady=false;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedDelivery(){await stopDelivery()}
+
+async function shutdown(sig){
+  console.log(`Received ${sig}`);
+  await stopDelivery();
+  process.exit(0);
+}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedDelivery()
+    .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life delivery server listening on ${port}`)))
+    .catch(e=>{console.error(e);process.exit(1)});
+}
