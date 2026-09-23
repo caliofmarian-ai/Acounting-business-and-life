@@ -28,7 +28,8 @@ const AUTH_RUNTIME_V6_WAVE='auth_runtime_v6';
 const INCIDENT_RUNTIME_V7_WAVE='incident_runtime_v7';
 const DELIVERY_FINANCE_RUNTIME_V8_WAVE='delivery_finance_runtime_v8';
 const DELIVERY_RUNTIME_V9_WAVE='delivery_runtime_v9';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE]);
+const SUPPLIER_RUNTIME_V10_WAVE='supplier_runtime_v10';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3337,6 +3338,94 @@ async function runDeliveryRuntimeV9Acceptance({pool,base,secret}){
   };
 }
 
+
+async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
+  const baseline=await runSupplierDailyV5Acceptance({pool,base,secret});
+  if(baseline.status!=='PASS')throw new Error('Supplier Runtime V10 Supplier V1–V5 baseline did not pass.');
+
+  const [supplier,merchant,customer]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPPLIER_ALIAS,role:'supplier',label:'Supplier Runtime V10 Supplier QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Supplier Runtime V10 Merchant QA'}),
+    qaAccountSession({pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Supplier Runtime V10 Customer QA'})
+  ]);
+  await ensureActiveRole({base,token:supplier.token,role:'supplier',label:'Supplier Runtime V10 Supplier QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Supplier Runtime V10 Merchant QA'});
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Supplier Runtime V10 Customer QA'});
+
+  const supplierProfile=await requestJson(base,'/api/supplier/me',{token:supplier.token});
+  expectStatus(supplierProfile,200,'Supplier Runtime V10 Supplier profile');
+  if(!Array.isArray(supplierProfile.json?.catalog)||supplierProfile.json.catalog.length<1){
+    throw new Error('Supplier Runtime V10 Supplier catalog is unavailable after V1–V5 baseline.');
+  }
+
+  const merchantBusinessId=Number(baseline.merchant_business_id);
+  if(!merchantBusinessId)throw new Error('Supplier Runtime V10 Merchant business context is missing.');
+
+  const newestPo=await pool.query(
+    `SELECT id,public_token,status,payment_status,supplier_ready_at,supplier_delivery_eta
+       FROM purchase_orders
+      WHERE business_id=$1 AND supplier_account_id=$2
+      ORDER BY id DESC LIMIT 1`,
+    [merchantBusinessId,supplier.accountId]
+  );
+  const po=newestPo.rows[0];
+  if(!po?.id||!po.public_token)throw new Error('Supplier Runtime V10 fresh procurement evidence is missing.');
+
+  const merchantDetail=await requestJson(base,`/api/procurement/orders/${Number(po.id)}`,{token:merchant.token});
+  expectStatus(merchantDetail,200,'Supplier Runtime V10 Merchant PO read');
+
+  const customerDenied=await requestJson(base,`/api/procurement/orders/${Number(po.id)}`,{token:customer.token});
+  expectStatus(customerDenied,403,'Supplier Runtime V10 cross-role procurement denial');
+
+  const publicEvidence=await requestJson(base,`/api/procurement/respond/${encodeURIComponent(po.public_token)}`);
+  expectStatus(publicEvidence,200,'Supplier Runtime V10 public PO evidence');
+  if(Number(publicEvidence.json?.id)!==Number(po.id)){
+    throw new Error('Supplier Runtime V10 public PO token resolved a different purchase order.');
+  }
+
+  const today=await requestJson(
+    base,`/api/supplier/v5/today?business_id=${Number(baseline.supplier_business_id)}`,
+    {token:supplier.token}
+  );
+  expectStatus(today,200,'Supplier Runtime V10 Today');
+
+  const relationshipList=await requestJson(
+    base,`/api/procurement/relationships?business_id=${merchantBusinessId}`,
+    {token:merchant.token}
+  );
+  expectStatus(relationshipList,200,'Supplier Runtime V10 relationship list');
+  if(!(relationshipList.json||[]).some(x=>Number(x.supplier_account_id)===Number(supplier.accountId)&&x.state==='accepted')){
+    throw new Error('Supplier Runtime V10 accepted Merchant–Supplier relationship is missing.');
+  }
+
+  for(const [label,token] of [['Supplier',supplier.token],['Merchant',merchant.token],['Customer',customer.token]]){
+    const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token,body:{}});
+    expectStatus(logout,200,'Supplier Runtime V10 '+label+' logout');
+  }
+
+  return{
+    status:'PASS',
+    wave:SUPPLIER_RUNTIME_V10_WAVE,
+    supplier_v1_v2_v3_v4_v5_baseline:true,
+    supplier_business_id:Number(baseline.supplier_business_id),
+    merchant_business_id:merchantBusinessId,
+    purchase_order_id:Number(po.id),
+    supplier_profile:true,
+    catalog:true,
+    relationship:true,
+    procurement_read:true,
+    public_token_scope:true,
+    cross_role_denial:true,
+    domain_v2:true,
+    commercial_v3:true,
+    sourcing_v4:true,
+    daily_v5:true,
+    backorder_and_substitution:true,
+    logout:true
+  };
+}
+
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -3344,7 +3433,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===DELIVERY_RUNTIME_V9_WAVE
+    const result=config.wave===SUPPLIER_RUNTIME_V10_WAVE
+      ?await runSupplierRuntimeV10Acceptance({pool,base,secret:config.secret})
+      :config.wave===DELIVERY_RUNTIME_V9_WAVE
       ?await runDeliveryRuntimeV9Acceptance({pool,base,secret:config.secret})
       :config.wave===DELIVERY_FINANCE_RUNTIME_V8_WAVE
       ?await runDeliveryFinanceRuntimeV8Acceptance({pool,base,secret:config.secret})
@@ -3404,5 +3495,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE
 };
