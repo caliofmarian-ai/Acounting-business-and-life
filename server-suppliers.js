@@ -4,7 +4,7 @@ import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureCatalogMediaSchema,mediaForEntities } from './catalog-media-core.js';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
@@ -30,8 +30,10 @@ const ordersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
 const authPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const accountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
-const body = express.json({ limit: '600kb' });
+const jsonBody = express.json({ limit: '600kb' });
+const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 let child;
+let servicesReady=false;
 let shuttingDown = false;
 
 function clean(v,max=500){return String(v??'').trim().slice(0,max)}
@@ -41,6 +43,47 @@ function positive(v){return finite(v)&&num(v)>0}
 function tok(){return crypto.randomBytes(24).toString('base64url')}
 function authHeader(req){return req.headers.authorization||''}
 async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
+export function isSupplierOwnedPath(path='',method='GET'){
+  const pathname=String(path||'').split('?')[0];
+  if(pathname==='/suppliers.css'||pathname==='/suppliers-ui.js')return true;
+  if(pathname.startsWith('/api/supplier/'))return true;
+  if(pathname.startsWith('/api/procurement/'))return true;
+  return false;
+}
+export async function suppliersFetch(path,options={}){
+  const pathname=String(path||'').split('?')[0];
+  const method=String(options.method||'GET').toUpperCase();
+  if(isSupplierOwnedPath(pathname,method)){
+    throw Object.assign(new Error('Supplier-owned paths require in-process Supplier dispatch'),{
+      status:500,code:'SUPPLIER_EMBEDDED_DISPATCH_REQUIRED'
+    });
+  }
+  if(pathname==='/health'){
+    try{
+      await pool.query('SELECT 1');
+      const services=await upstream('/health',{headers:options.headers||{}});
+      const ok=servicesReady&&services.ok;
+      return new Response(JSON.stringify({ok,db:true,services:ok,version:'0.5-supplier-procurement'}),{
+        status:ok?200:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }catch{
+      return new Response(JSON.stringify({ok:false,db:false,services:false,version:'0.5-supplier-procurement'}),{
+        status:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }
+  }
+  if(pathname==='/'||pathname==='/index.html'){
+    const headers={...(options.headers||{}),host:`127.0.0.1:${upstreamPort}`};
+    const r=await upstream(path,{...options,headers});
+    let html=await r.text();
+    html=html.replace('</head>','  <link rel="stylesheet" href="/suppliers.css" />\n</head>')
+      .replace('</body>','  <script type="module" src="/suppliers-ui.js"></script>\n</body>');
+    return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
+  }
+  return upstream(path,options);
+}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)}
 function business(me,id=null){const list=me?.businesses||[];return id==null?(list[0]||null):(list.find(b=>Number(b.id)===Number(id))||null)}
@@ -206,12 +249,62 @@ registerSupplierSourcingV4Routes({app,pool,body,identity});
 registerSupplierDailyV5Routes({app,pool,body,identity});
 registerSupplierExceptionsV5Routes({app,pool,body,identity});
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Supplier upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
+  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Supplier upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy)
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})})
 
 function start(){child=spawn(process.execPath,['server-services.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort),INTERNAL_MARKETPLACE_PORT:String(marketplacePort),INTERNAL_ORDERS_PORT:String(ordersPort),INTERNAL_AUTH_PORT:String(authPort),INTERNAL_ACCOUNTING_PORT:String(accountingPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Services child exited ${code}`);process.exit(code||1)}})}
 async function wait(){for(let i=0;i<120;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Services child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life supplier procurement server listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+
+let embeddedStartPromise=null;
+export async function startEmbeddedSuppliers(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      servicesReady=true;
+      await initDb();
+      console.log('Business & Life supplier procurement mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopSuppliers(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  servicesReady=false;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedSuppliers(){await stopSuppliers()}
+
+async function shutdown(sig){
+  console.log(`Received ${sig}`);
+  await stopSuppliers();
+  process.exit(0);
+}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedSuppliers()
+    .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life supplier procurement server listening on ${port}`)))
+    .catch(e=>{console.error(e);process.exit(1)});
+}
