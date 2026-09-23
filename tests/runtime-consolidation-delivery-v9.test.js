@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const finance=read('server-delivery-finance.js');
 const delivery=read('server-delivery.js');
+const suppliers=read('server-suppliers.js');
 const notifications=read('server-notifications.js');
 const legal=read('server-legal.js');
 
@@ -23,11 +24,16 @@ test('Delivery is embedded beneath Delivery Finance and localhost 3707 is retire
   assert.doesNotMatch(finance,/spawn\(process\.execPath,\['server-delivery\.js'\]/);
 });
 
-test('Delivery remains rollback-capable over Suppliers on 3607',()=>{
-  assert.match(delivery,/spawn\(process\.execPath,\['server-suppliers\.js'\]/);
-  assert.match(delivery,/INTERNAL_SUPPLIERS_PORT \|\| 3607/);
-  assert.match(delivery,/Supplier child failed health check/);
-  assert.match(delivery,/supplierReady=true/);
+test('Delivery remains standalone rollback-capable while Suppliers is embedded beneath it',()=>{
+  assert.match(delivery,/startEmbeddedSuppliers/);
+  assert.match(delivery,/stopEmbeddedSuppliers/);
+  assert.match(delivery,/suppliersApp=await startEmbeddedSuppliers\(\)/);
+  assert.match(delivery,/return suppliersApp\(req,res,next\)/);
+  assert.doesNotMatch(delivery,/INTERNAL_SUPPLIERS_PORT/);
+  assert.doesNotMatch(delivery,/\|\|\s*3607/);
+  assert.doesNotMatch(delivery,/spawn\(process\.execPath,\['server-suppliers\.js'\]/);
+  assert.match(suppliers,/spawn\(process\.execPath,\['server-services\.js'\]/);
+  assert.match(suppliers,/INTERNAL_SERVICES_PORT \|\| 3507/);
 });
 
 test('Delivery fetch facade refuses to bypass Delivery-owned routes',()=>{
@@ -65,13 +71,14 @@ test('Delivery domain ownership remains on server-delivery',()=>{
   ])assert.ok(delivery.includes(marker),`missing Delivery marker: ${marker}`);
 });
 
-test('parsed JSON is preserved at the Delivery to Suppliers boundary',()=>{
+test('parsed JSON remains preserved below Delivery at the Suppliers to Local Services boundary',()=>{
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(delivery,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(delivery,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(delivery,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(delivery,/delete headers\['transfer-encoding'\]/);
-  assert.match(delivery,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(suppliers,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(suppliers,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(suppliers,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(suppliers,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(suppliers,/delete headers\['transfer-encoding'\]/);
+  assert.match(suppliers,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('V9 preserves scoped Admin Legal and notification wrappers above Delivery',()=>{
