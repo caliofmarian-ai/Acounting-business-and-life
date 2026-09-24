@@ -52,6 +52,15 @@ test('verified review boundary is denied before Customer confirmation and allowe
   assert.match(run,/expectStatus\(prematureReview,409/);
 });
 
+test('Service Provider QA preflight only rejects its own stale credential evidence',()=>{
+  assert.match(service,/resetStaleQaCredentialEvidence/);
+  assert.match(service,/title='Controlled QA evidence record'/);
+  assert.match(service,/issuing_body='Business & Life QA'/);
+  assert.match(service,/verification_status='verified'/);
+  assert.match(service,/non-QA verified credential evidence; refusing automatic cleanup/);
+  assert.match(service,/Controlled QA preflight cleanup; not a real professional credential/);
+});
+
 test('credential authority proves ordinary denial, territory denial, in-scope allow and audit evidence',()=>{
   assert.match(service,/Ordinary Customer credential-review denial/);
   assert.match(service,/Out-of-scope credential-review denial/);

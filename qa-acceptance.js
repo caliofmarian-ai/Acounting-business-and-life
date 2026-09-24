@@ -29,7 +29,8 @@ const INCIDENT_RUNTIME_V7_WAVE='incident_runtime_v7';
 const DELIVERY_FINANCE_RUNTIME_V8_WAVE='delivery_finance_runtime_v8';
 const DELIVERY_RUNTIME_V9_WAVE='delivery_runtime_v9';
 const SUPPLIER_RUNTIME_V10_WAVE='supplier_runtime_v10';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE]);
+const LOCAL_SERVICES_RUNTIME_V11_WAVE='local_services_runtime_v11';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -101,6 +102,17 @@ async function verifySupplierDeliveryRootComposition(base,path,label){
   const html=await response.text();
   if(response.status!==200)throw new Error(label+' returned an unexpected status.');
   for(const marker of ['/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js']){
+    const count=html.split(marker).length-1;
+    if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
+  }
+  return true;
+}
+
+async function verifyLocalServicesRootComposition(base,path,label){
+  const response=await fetch(base+path,{headers:{Accept:'text/html'}});
+  const html=await response.text();
+  if(response.status!==200)throw new Error(label+' returned an unexpected status.');
+  for(const marker of ['/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js']){
     const count=html.split(marker).length-1;
     if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
   }
@@ -3442,6 +3454,41 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runLocalServicesRuntimeV11Acceptance({pool,base,secret}){
+  const rootComposition=await verifyLocalServicesRootComposition(base,'/','Local Services Runtime V11 root composition');
+  const indexComposition=await verifyLocalServicesRootComposition(base,'/index.html','Local Services Runtime V11 index composition');
+
+  const baseline=await runServiceProviderExperienceAcceptance({
+    pool,base,secret,
+    aliases:{
+      customer:CUSTOMER_ALIAS,
+      serviceProvider:SERVICE_PROVIDER_ALIAS,
+      superAdmin:SUPER_ADMIN_ALIAS,
+      territoryAdmin:TERRITORY_ADMIN_ALIAS
+    },
+    helpers:{
+      requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,
+      ensureQaTerritory,ensureActiveRole,loginWithCredential
+    }
+  });
+  if(baseline.status!=='PASS')throw new Error('Local Services Runtime V11 Service Provider baseline did not pass.');
+
+  return{
+    ...baseline,
+    status:'PASS',
+    wave:LOCAL_SERVICES_RUNTIME_V11_WAVE,
+    service_provider_experience_v1:true,
+    root_composition:Boolean(rootComposition),
+    index_composition:Boolean(indexComposition),
+    service_job_lifecycle:true,
+    customer_confirmation:true,
+    credential_scope:true,
+    monetization_evidence:true,
+    logout_relogin:true
+  };
+}
+
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled)return{status:'SKIPPED',wave:''};
@@ -3449,7 +3496,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===SUPPLIER_RUNTIME_V10_WAVE
+    const result=config.wave===LOCAL_SERVICES_RUNTIME_V11_WAVE
+      ?await runLocalServicesRuntimeV11Acceptance({pool,base,secret:config.secret})
+      :config.wave===SUPPLIER_RUNTIME_V10_WAVE
       ?await runSupplierRuntimeV10Acceptance({pool,base,secret:config.secret})
       :config.wave===DELIVERY_RUNTIME_V9_WAVE
       ?await runDeliveryRuntimeV9Acceptance({pool,base,secret:config.secret})
@@ -3511,5 +3560,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE
 };

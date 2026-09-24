@@ -1,8 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,20 +17,16 @@ import {
 } from './server-supplier-sourcing-v4.js';
 import {ensureSupplierDailyV5Schema,registerSupplierDailyV5Routes} from './server-supplier-daily-v5.js';
 import {ensureSupplierExceptionsV5Schema,registerSupplierExceptionsV5Routes} from './server-supplier-exceptions-v5.js';
+import {servicesFetch,startEmbeddedServices,stopEmbeddedServices} from './server-services.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const upstreamPort = Number(process.env.INTERNAL_SERVICES_PORT || 3507);
-const marketplacePort = Number(process.env.INTERNAL_MARKETPLACE_PORT || 3407);
-const ordersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
-const authPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
-const accountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '600kb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
-let child;
+let servicesApp=null;
 let servicesReady=false;
 let shuttingDown = false;
 
@@ -42,7 +36,7 @@ function finite(v){return Number.isFinite(num(v))}
 function positive(v){return finite(v)&&num(v)>0}
 function tok(){return crypto.randomBytes(24).toString('base64url')}
 function authHeader(req){return req.headers.authorization||''}
-async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
+async function upstream(path,options={}){return servicesFetch(path,options)}
 export function isSupplierOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
   if(pathname==='/suppliers.css'||pathname==='/suppliers-ui.js')return true;
@@ -75,8 +69,7 @@ export async function suppliersFetch(path,options={}){
     }
   }
   if(pathname==='/'||pathname==='/index.html'){
-    const headers={...(options.headers||{}),host:`127.0.0.1:${upstreamPort}`};
-    const r=await upstream(path,{...options,headers});
+    const r=await upstream(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/suppliers.css" />\n</head>')
       .replace('</body>','  <script type="module" src="/suppliers-ui.js"></script>\n</body>');
@@ -213,7 +206,7 @@ async function poDetail(id){const q=await pool.query(`SELECT p.*,b.name business
 app.get('/health',async(_q,r)=>{try{await pool.query('SELECT 1');const c=await upstream('/health');r.status(c.ok?200:503).json({ok:c.ok,db:true,services:c.ok,version:'0.5-supplier-procurement'})}catch{r.status(503).json({ok:false,db:false,services:false,version:'0.5-supplier-procurement'})}})
 app.get('/suppliers.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','suppliers.css'),'utf8')))
 app.get('/suppliers-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','suppliers-ui.js'),'utf8')))
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/suppliers.css" />\n</head>').replace('</body>','  <script type="module" src="/suppliers-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await suppliersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/supplier/me',async(req,res,next)=>{try{const me=await requireSupplier(req);res.json({profile:me.supplier||null,catalog:await catalog(me.account.id)})}catch(e){next(e)}})
@@ -249,34 +242,18 @@ registerSupplierSourcingV4Routes({app,pool,body,identity});
 registerSupplierDailyV5Routes({app,pool,body,identity});
 registerSupplierExceptionsV5Routes({app,pool,body,identity});
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Supplier upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
+function proxy(req,res,next){
+  if(!servicesApp)return res.status(503).json({error:'Local Services runtime is not ready'});
+  return servicesApp(req,res,next);
 }
 app.use(proxy)
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})})
-
-function start(){child=spawn(process.execPath,['server-services.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort),INTERNAL_MARKETPLACE_PORT:String(marketplacePort),INTERNAL_ORDERS_PORT:String(ordersPort),INTERNAL_AUTH_PORT:String(authPort),INTERNAL_ACCOUNTING_PORT:String(accountingPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Services child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<120;i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Services child failed health check')}
 
 let embeddedStartPromise=null;
 export async function startEmbeddedSuppliers(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      servicesApp=await startEmbeddedServices();
       servicesReady=true;
       await initDb();
       console.log('Business & Life supplier procurement mounted in-process');
@@ -290,7 +267,8 @@ async function stopSuppliers(){
   if(shuttingDown)return;
   shuttingDown=true;
   servicesReady=false;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  servicesApp=null;
+  await stopEmbeddedServices().catch(()=>{});
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedSuppliers(){await stopSuppliers()}

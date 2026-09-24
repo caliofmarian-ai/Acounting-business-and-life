@@ -3,7 +3,7 @@ import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
@@ -17,15 +17,59 @@ const internalOrdersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
 const internalAuthPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
-const body = express.json({ limit: '2500kb' });
+const jsonBody = express.json({ limit: '2500kb' });
+const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 let child;
+let marketplaceReady=false;
 let shuttingDown = false;
 
 function clean(v,max=600){return String(v??'').trim().slice(0,max)}
 function authHeader(req){return req.headers.authorization||''}
 function numberOrNull(v){if(v===''||v==null)return null;const x=Number(v);return Number.isFinite(x)?x:null}
 async function childFetch(path,options={}){return fetch(`http://127.0.0.1:${internalMarketplacePort}${path}`,options)}
-async function identity(req){const r=await childFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
+export function isServicesOwnedPath(path='',method='GET'){
+  const pathname=String(path||'').split('?')[0];
+  if(pathname==='/services.css'||pathname==='/services-ui.js')return true;
+  if(pathname.startsWith('/api/services/'))return true;
+  if(pathname.startsWith('/api/service-provider/'))return true;
+  if(pathname.startsWith('/api/admin/service-credentials/'))return true;
+  return false;
+}
+export async function servicesFetch(path,options={}){
+  const pathname=String(path||'').split('?')[0];
+  const method=String(options.method||'GET').toUpperCase();
+  if(isServicesOwnedPath(pathname,method)){
+    throw Object.assign(new Error('Local Services-owned paths require in-process Local Services dispatch'),{
+      status:500,code:'LOCAL_SERVICES_EMBEDDED_DISPATCH_REQUIRED'
+    });
+  }
+  if(pathname==='/health'){
+    try{
+      await pool.query('SELECT 1');
+      const marketplace=await childFetch('/health',{headers:options.headers||{}});
+      const ok=marketplaceReady&&marketplace.ok;
+      return new Response(JSON.stringify({ok,db:true,marketplace:ok,version:'0.8.1-services'}),{
+        status:ok?200:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }catch{
+      return new Response(JSON.stringify({ok:false,db:false,marketplace:false,version:'0.8.1-services'}),{
+        status:503,
+        headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }
+  }
+  if(pathname==='/'||pathname==='/index.html'){
+    const headers={...(options.headers||{}),host:`127.0.0.1:${internalMarketplacePort}`};
+    const r=await childFetch(path,{...options,headers});
+    let html=await r.text();
+    html=html.replace('</head>','  <link rel="stylesheet" href="/services.css" />\n</head>')
+      .replace('</body>','  <script type="module" src="/services-ui.js"></script>\n</body>');
+    return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
+  }
+  return childFetch(path,options);
+}
+async function identity(req){const r=await servicesFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)}
 async function requireProvider(req){const me=await identity(req);if(!enabled(me,'service_provider'))throw Object.assign(new Error('Service Provider profile required'),{status:403});return me}
 async function requireCustomer(req){const me=await identity(req);if(!enabled(me,'customer'))throw Object.assign(new Error('Customer profile required'),{status:403});return me}
@@ -151,10 +195,10 @@ async function rating(accountId){const r=await pool.query(`SELECT COUNT(*)::int 
 async function publicProvider(accountId){const q=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url,pr.visibility FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE WHERE a.id=$1 AND pr.visibility='public'`,[accountId]);if(!q.rowCount)return null;const [services,credentials,portfolio,rate]=await Promise.all([pool.query(`SELECT c.code,c.name,s.service_label FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name,s.service_label`,[accountId]),pool.query(`SELECT credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status FROM profile_credentials WHERE account_id=$1 AND verification_status IN ('verified','submitted','unverified','expired') ORDER BY verification_status='verified' DESC,created_at DESC`,[accountId]),pool.query(`SELECT p.id,p.title,p.description,p.image_data_url,p.approximate_date,p.linked_job_id,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 AND (p.linked_job_id IS NULL OR p.customer_publication_consent=TRUE) ORDER BY p.created_at DESC LIMIT 20`,[accountId]),rating(accountId)]);const base=q.rows[0];return{...base,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,...(base.public_reputation_enabled?rate:{rating:null,review_count:0})}}
 async function privateProfile(accountId){const p=await pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`,[accountId]);const [services,credentials,portfolio,rate,reviews]=await Promise.all([pool.query(`SELECT s.category_id,c.code,c.name,c.credential_gate,s.service_label,s.active FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[accountId]),pool.query(`SELECT id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[accountId]),pool.query(`SELECT p.*,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 ORDER BY p.created_at DESC`,[accountId]),rating(accountId),pool.query(`SELECT r.id,r.job_id,r.overall,r.workmanship,r.reliability,r.communication,r.professionalism,r.property_care,r.price_transparency,r.review_text,r.created_at,a.display_name reviewer_name,j.service_label FROM service_reviews r JOIN accounts a ON a.id=r.reviewer_account_id JOIN service_jobs j ON j.id=r.job_id WHERE r.provider_account_id=$1 AND r.moderation_status='published' ORDER BY r.created_at DESC LIMIT 50`,[accountId])]);return{profile:p.rows[0]||null,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,reviews:reviews.rows,...rate}}
 
-app.get('/health',async(_q,r)=>{try{await pool.query('SELECT 1');const c=await childFetch('/health');r.status(c.ok?200:503).json({ok:c.ok,db:true,marketplace:c.ok,version:'0.8.1-services'})}catch{r.status(503).json({ok:false,db:false,marketplace:false,version:'0.8.1-services'})}})
+app.get('/health',async(req,res)=>{const r=await servicesFetch('/health',{headers:req.headers});const payload=await r.json().catch(()=>({ok:false,db:false,marketplace:false,version:'0.8.1-services'}));res.status(r.status).json(payload)})
 app.get('/services.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','services.css'),'utf8')))
 app.get('/services-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','services-ui.js'),'utf8')))
-async function root(req,res){const r=await childFetch(req.path,{headers:{...req.headers,host:`127.0.0.1:${internalMarketplacePort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/services.css" />\n</head>').replace('</body>','  <script type="module" src="/services-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await servicesFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/services/categories',async(req,res,next)=>{try{await identity(req);const{rows}=await pool.query(`SELECT id,code,name,credential_gate FROM service_categories WHERE active=TRUE ORDER BY sort_order,name`);res.json(rows)}catch(e){next(e)}})
@@ -237,11 +281,60 @@ app.patch('/api/admin/service-credentials/:id',body,async(req,res,next)=>{
   }catch(e){next(e)}
 })
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${internalMarketplacePort}`};const up=http.request({hostname:'127.0.0.1',port:internalMarketplacePort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Services upstream unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
+  const headers={...req.headers,host:`127.0.0.1:${internalMarketplacePort}`};
+  if(payload){
+    headers['content-length']=String(payload.length);
+    delete headers['transfer-encoding'];
+  }
+  const up=http.request({hostname:'127.0.0.1',port:internalMarketplacePort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Services upstream unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy)
 app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected server error'})})
 function start(){child=spawn(process.execPath,['server-marketplace.js'],{cwd:__dirname,env:{...process.env,PORT:String(internalMarketplacePort),INTERNAL_ORDERS_PORT:String(internalOrdersPort),INTERNAL_AUTH_PORT:String(internalAuthPort),INTERNAL_ACCOUNTING_PORT:String(internalAccountingPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Marketplace child exited ${code}`);process.exit(code||1)}})}
 async function wait(){for(let i=0;i<100;i++){try{const r=await childFetch('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Marketplace child failed health check')}
-async function shutdown(sig){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);if(child&&!child.killed)child.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start();wait().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life Local Services server listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+let embeddedStartPromise=null;
+export async function startEmbeddedServices(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      start();
+      await wait();
+      marketplaceReady=true;
+      await initDb();
+      console.log('Business & Life Local Services mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+
+async function stopServices(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  marketplaceReady=false;
+  if(child&&!child.killed)child.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedServices(){await stopServices()}
+
+async function shutdown(sig){
+  console.log(`Received ${sig}`);
+  await stopServices();
+  process.exit(0);
+}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedServices()
+    .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life Local Services server listening on ${port}`)))
+    .catch(e=>{console.error(e);process.exit(1)});
+}
