@@ -25,12 +25,16 @@ test('Marketplace is embedded beneath Local Services and localhost 3407 is retir
   assert.doesNotMatch(services,/spawn\(process\.execPath,\['server-marketplace\.js'\]/);
 });
 
-test('Marketplace remains standalone rollback-capable over Orders on 3307',()=>{
-  assert.match(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
-  assert.match(marketplace,/INTERNAL_ORDERS_PORT \|\| 3307/);
-  assert.match(marketplace,/Orders child failed health check/);
-  assert.match(marketplace,/ordersReady=true/);
-  assert.match(orders,/server-auth\.js/);
+test('Marketplace remains standalone rollback-capable while Orders is embedded beneath it',()=>{
+  assert.match(marketplace,/startEmbeddedOrders/);
+  assert.match(marketplace,/stopEmbeddedOrders/);
+  assert.match(marketplace,/ordersApp=await startEmbeddedOrders\(\)/);
+  assert.match(marketplace,/return ordersApp\(req,res,next\)/);
+  assert.doesNotMatch(marketplace,/INTERNAL_ORDERS_PORT/);
+  assert.doesNotMatch(marketplace,/\|\|\s*3307/);
+  assert.doesNotMatch(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
+  assert.match(orders,/spawn\(process\.execPath,\['server-auth\.js'\]/);
+  assert.match(orders,/INTERNAL_AUTH_PORT \|\| 3207/);
 });
 
 test('Delivery delegates shared checkout to the in-process Marketplace command without bypassing ownership',()=>{
@@ -47,7 +51,7 @@ test('Marketplace fetch facade refuses to bypass Marketplace-owned routes',()=>{
   assert.match(marketplace,/pathname==='\/api\/merchant\/storefront'/);
   assert.match(marketplace,/\(\?:start\|cancel\)/);
   assert.match(marketplace,/MARKETPLACE_EMBEDDED_DISPATCH_REQUIRED/);
-  assert.match(marketplace,/return childFetch\(path,options\)/);
+  assert.match(marketplace,/return ordersFetch\(path,options\)/);
 });
 
 test('Marketplace route ownership remains on server-marketplace',()=>{
@@ -81,15 +85,16 @@ test('shared Merchant start and cancel remain Marketplace-first before Orders fa
   assert.match(marketplace,/source_kind='marketplace_product'/);
 });
 
-test('parsed JSON is reconstructed only at the final Marketplace to Orders HTTP boundary',()=>{
+test('parsed JSON is reconstructed only at the final Orders to Auth HTTP boundary',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.doesNotMatch(services,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(marketplace,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(marketplace,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(marketplace,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(marketplace,/delete headers\['transfer-encoding'\]/);
-  assert.match(marketplace,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.doesNotMatch(marketplace,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(orders,/delete headers\['transfer-encoding'\]/);
+  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Marketplace and Local Services root composition remains layered exactly once',()=>{

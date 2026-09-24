@@ -9,6 +9,7 @@ const delivery=read('server-delivery.js');
 const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
 const marketplace=read('server-marketplace.js');
+const orders=read('server-orders.js');
 const accounting=read('server-business-accounting.js');
 const notifications=read('server-notifications.js');
 const payments=read('server-payments.js');
@@ -74,16 +75,17 @@ test('composed Merchant payment authority remains above rollback-compatible Deli
   assert.match(finance,/app\.post\('\/api\/orders\/merchant\/:id\/payment'/);
 });
 
-test('parsed JSON reconstruction now lives at the final Marketplace to Orders boundary',()=>{
+test('parsed JSON reconstruction now lives at the final Orders to Auth boundary',()=>{
   assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(marketplace,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(marketplace,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(marketplace,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(marketplace,/delete headers\['transfer-encoding'\]/);
-  assert.match(marketplace,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(orders,/delete headers\['transfer-encoding'\]/);
+  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('V8 leaves Incident and raw-body webhook boundaries unchanged',()=>{

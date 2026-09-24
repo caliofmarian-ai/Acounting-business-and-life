@@ -7,6 +7,7 @@ const delivery=read('server-delivery.js');
 const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
 const marketplace=read('server-marketplace.js');
+const orders=read('server-orders.js');
 
 test('Suppliers is embedded beneath Delivery and localhost 3607 is retired',()=>{
   assert.match(suppliers,/export async function startEmbeddedSuppliers\(\)/);
@@ -41,8 +42,11 @@ test('Suppliers remains standalone rollback-capable while Local Services and Mar
   assert.match(services,/marketplaceApp=await startEmbeddedMarketplace\(\)/);
   assert.doesNotMatch(services,/INTERNAL_MARKETPLACE_PORT/);
   assert.doesNotMatch(services,/\|\|\s*3407/);
-  assert.match(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
-  assert.match(marketplace,/INTERNAL_ORDERS_PORT \|\| 3307/);
+  assert.match(marketplace,/startEmbeddedOrders/);
+  assert.match(marketplace,/ordersApp=await startEmbeddedOrders\(\)/);
+  assert.doesNotMatch(marketplace,/INTERNAL_ORDERS_PORT/);
+  assert.doesNotMatch(marketplace,/\|\|\s*3307/);
+  assert.match(orders,/INTERNAL_AUTH_PORT \|\| 3207/);
 });
 
 test('Supplier fetch facade refuses to bypass Supplier-owned routes',()=>{
@@ -86,15 +90,16 @@ test('Supplier V2 through V5 modules remain registered before fallback',()=>{
   ])assert.ok(suppliers.includes(marker),`missing Supplier module registration: ${marker}`);
 });
 
-test('parsed JSON is preserved below Suppliers and reconstructed at Marketplace to Orders',()=>{
+test('parsed JSON is preserved below Suppliers and reconstructed at Orders to Auth',()=>{
   assert.match(suppliers,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(marketplace,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(marketplace,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(marketplace,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(marketplace,/delete headers\['transfer-encoding'\]/);
-  assert.match(marketplace,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(orders,/delete headers\['transfer-encoding'\]/);
+  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Supplier business authorization and procurement authorities remain intact',()=>{

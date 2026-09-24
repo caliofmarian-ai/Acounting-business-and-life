@@ -9,6 +9,7 @@ import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePrici
 import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
+import {readOrderDetail} from './orders-read-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -377,7 +378,8 @@ app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{
     await client.query(`UPDATE orders SET delivery_fee=$1,total=subtotal+$1,outstanding_amount=(subtotal+$1)-paid_amount,updated_at=NOW() WHERE id=$2`,[quote.fee,order.id]);
     const d=await client.query(`INSERT INTO deliveries(order_id,quote_id,business_id,customer_account_id,status,delivery_fee,currency_code,route_distance_km,estimated_weight_kg,estimated_volume_l,required_vehicle_class,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng) VALUES($1,$2,$3,$4,'quoted',$5,'PHP',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,[order.id,quote.id,quote.business_id,me.account.id,quote.fee,quote.route_distance_km,quote.estimated_weight_kg,quote.estimated_volume_l,quote.required_vehicle_class||'',store.rows[0]?.pickup_address||'',quote.pickup_lat,quote.pickup_lng,clean(req.body?.delivery_address||me.account.address,500),quote.dropoff_lat,quote.dropoff_lng]);
     await client.query('COMMIT');
-    const updated=await upstream(`/api/orders/${order.id}`,{headers:{Authorization:authHeader(req)}}).then(x=>x.json());
+    const updated=await readOrderDetail(pool,order.id);
+    if(!updated)throw Object.assign(new Error('Order detail unavailable after Delivery checkout'),{status:500});
     res.status(201).json({...updated,delivery_id:d.rows[0].id});
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
 }catch(e){next(e)}})

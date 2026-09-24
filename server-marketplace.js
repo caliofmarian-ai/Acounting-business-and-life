@@ -1,24 +1,21 @@
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureCatalogMediaSchema,mediaForEntities,listCatalogMedia,buildPreparedFoodImagePrompt,generateCatalogImage,approveCatalogMedia,archiveCatalogMedia } from './catalog-media-core.js';
+import { ordersFetch,startEmbeddedOrders,stopEmbeddedOrders } from './server-orders.js';
+import { readOrderDetail } from './orders-read-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const internalOrdersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
-const internalAuthPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
-const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '500kb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
-let ordersChild;
+let ordersApp=null;
 let ordersReady=false;
 let shuttingDown = false;
 
@@ -28,7 +25,6 @@ function positive(v){return Number.isFinite(n(v))&&n(v)>0}
 function money(v){return Math.round((n(v)+Number.EPSILON)*100)/100}
 function token(){return crypto.randomBytes(24).toString('base64url')}
 function authHeader(req){return req.headers.authorization || ''}
-async function childFetch(path,options={}){return fetch(`http://127.0.0.1:${internalOrdersPort}${path}`,options)}
 export function isMarketplaceOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
   if(['/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js'].includes(pathname))return true;
@@ -49,7 +45,7 @@ export async function marketplaceFetch(path,options={}){
   if(pathname==='/health'){
     try{
       await pool.query('SELECT 1');
-      const orders=await childFetch('/health',{headers:options.headers||{}});
+      const orders=await ordersFetch('/health',{headers:options.headers||{}});
       const ok=ordersReady&&orders.ok;
       return new Response(JSON.stringify({ok,db:true,orders:ok,version:'0.7-marketplace'}),{
         status:ok?200:503,headers:{'content-type':'application/json; charset=utf-8'}
@@ -61,14 +57,13 @@ export async function marketplaceFetch(path,options={}){
     }
   }
   if(pathname==='/'||pathname==='/index.html'){
-    const headers={...(options.headers||{}),host:`127.0.0.1:${internalOrdersPort}`};
-    const r=await childFetch(path,{...options,headers});
+    const r=await ordersFetch(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/marketplace.css" />\n  <link rel="stylesheet" href="/guest-explore.css" />\n</head>')
       .replace('</body>','  <script type="module" src="/marketplace-ui.js"></script>\n  <script type="module" src="/guest-explore.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
-  return childFetch(path,options);
+  return ordersFetch(path,options);
 }
 async function identity(req){const r=await marketplaceFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)}
@@ -249,7 +244,7 @@ async function createMarketplaceOrder(req){
     }
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Marketplace checkout')`,[orderId,status,customerId]);
     await client.query('COMMIT');
-    return(await childFetch(`/api/orders/${orderId}`,{headers:{Authorization:authHeader(req)}})).json();
+    return readOrderDetail(pool,orderId);
   }catch(e){
     try{await client.query('ROLLBACK')}catch{}
     throw e;
@@ -319,21 +314,22 @@ async function marketplaceStart(req,res,next){
     await client.query(`UPDATE orders SET stock_consumed_at=COALESCE(stock_consumed_at,NOW()),order_status='preparing',preparing_at=COALESCE(preparing_at,NOW()),expected_ready_at=COALESCE(expected_ready_at,NOW()+(preparation_eta_minutes*INTERVAL '1 minute')),updated_at=NOW() WHERE id=$1`,[id]);
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'preparing',$3,'Preparation started')`,[id,o.order_status,me.account.id]);
     await client.query('COMMIT');
-    const out=await childFetch(`/api/orders/${id}`,{headers:{Authorization:authHeader(req)}});
-    res.status(out.status).json(await out.json());
+    const out=await readOrderDetail(pool,id);
+    if(!out)throw Object.assign(new Error('Order detail unavailable after Marketplace start'),{status:500});
+    res.json(out);
   }catch(e){
     try{await client.query('ROLLBACK')}catch{}
     next(e);
   }finally{client.release()}
 }
-async function marketplaceCancel(req,res,next){const id=Number(req.params.id);if(!(await marketplaceOrderKind(id)))return proxy(req,res);const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});if(o.stock_consumed_at&&!o.stock_reversed_at){const mp=await client.query(`SELECT * FROM marketplace_stock_events WHERE order_id=$1 AND action='consume'`,[id]);for(const e of mp.rows){await client.query(`UPDATE marketplace_products SET stock_quantity=stock_quantity+$1,updated_at=NOW() WHERE id=$2`,[e.quantity,e.marketplace_product_id]);await client.query(`INSERT INTO marketplace_stock_events(order_id,marketplace_product_id,quantity,action) VALUES($1,$2,$3,'reverse') ON CONFLICT DO NOTHING`,[id,e.marketplace_product_id,e.quantity])}const inv=await client.query(`SELECT * FROM order_stock_consumptions WHERE order_id=$1 AND reversed_at IS NULL`,[id]);for(const x of inv.rows){await client.query(`UPDATE inventory SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2`,[x.quantity_used,x.inventory_id]);await client.query(`UPDATE order_stock_consumptions SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2`,[id,x.inventory_id])}await client.query(`UPDATE orders SET stock_reversed_at=NOW() WHERE id=$1`,[id])}const reason=clean(req.body?.reason,300);await client.query(`UPDATE orders SET order_status='cancelled',cancelled_at=NOW(),cancellation_reason=$1,updated_at=NOW() WHERE id=$2`,[reason,id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'cancelled',$3,$4)`,[id,o.order_status,me.account.id,reason||'Cancelled']);await client.query('COMMIT');const out=await childFetch(`/api/orders/${id}`,{headers:{Authorization:authHeader(req)}});res.status(out.status).json(await out.json())}catch(e){try{await client.query('ROLLBACK')}catch{}next(e)}finally{client.release()}}
+async function marketplaceCancel(req,res,next){const id=Number(req.params.id);if(!(await marketplaceOrderKind(id)))return proxy(req,res);const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});if(o.stock_consumed_at&&!o.stock_reversed_at){const mp=await client.query(`SELECT * FROM marketplace_stock_events WHERE order_id=$1 AND action='consume'`,[id]);for(const e of mp.rows){await client.query(`UPDATE marketplace_products SET stock_quantity=stock_quantity+$1,updated_at=NOW() WHERE id=$2`,[e.quantity,e.marketplace_product_id]);await client.query(`INSERT INTO marketplace_stock_events(order_id,marketplace_product_id,quantity,action) VALUES($1,$2,$3,'reverse') ON CONFLICT DO NOTHING`,[id,e.marketplace_product_id,e.quantity])}const inv=await client.query(`SELECT * FROM order_stock_consumptions WHERE order_id=$1 AND reversed_at IS NULL`,[id]);for(const x of inv.rows){await client.query(`UPDATE inventory SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2`,[x.quantity_used,x.inventory_id]);await client.query(`UPDATE order_stock_consumptions SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2`,[id,x.inventory_id])}await client.query(`UPDATE orders SET stock_reversed_at=NOW() WHERE id=$1`,[id])}const reason=clean(req.body?.reason,300);await client.query(`UPDATE orders SET order_status='cancelled',cancelled_at=NOW(),cancellation_reason=$1,updated_at=NOW() WHERE id=$2`,[reason,id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'cancelled',$3,$4)`,[id,o.order_status,me.account.id,reason||'Cancelled']);await client.query('COMMIT');const out=await readOrderDetail(pool,id);if(!out)throw Object.assign(new Error('Order detail unavailable after Marketplace cancel'),{status:500});res.json(out)}catch(e){try{await client.query('ROLLBACK')}catch{}next(e)}finally{client.release()}}
 
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await childFetch('/health');const ok=ordersReady&&r.ok;res.status(ok?200:503).json({ok,db:true,orders:ok,version:'0.7-marketplace'})}catch{res.status(503).json({ok:false,db:false,orders:false,version:'0.7-marketplace'})}})
+app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await ordersFetch('/health');const ok=ordersReady&&r.ok;res.status(ok?200:503).json({ok,db:true,orders:ok,version:'0.8-marketplace'})}catch{res.status(503).json({ok:false,db:false,orders:false,version:'0.8-marketplace'})}})
 app.get('/marketplace.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','marketplace.css'),'utf8')))
 app.get('/marketplace-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','marketplace-ui.js'),'utf8')))
 app.get('/guest-explore.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','guest-explore.css'),'utf8')))
 app.get('/guest-explore.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','guest-explore.js'),'utf8')))
-async function root(req,res){const r=await childFetch(req.path,{headers:{...req.headers,host:`127.0.0.1:${internalOrdersPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/marketplace.css" />\n  <link rel="stylesheet" href="/guest-explore.css" />\n</head>').replace('</body>','  <script type="module" src="/marketplace-ui.js"></script>\n  <script type="module" src="/guest-explore.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await ordersFetch(req.path,{headers:req.headers});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/marketplace.css" />\n  <link rel="stylesheet" href="/guest-explore.css" />\n</head>').replace('</body>','  <script type="module" src="/marketplace-ui.js"></script>\n  <script type="module" src="/guest-explore.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/public/marketplace/storefronts',async(req,res,next)=>{try{res.set('Cache-Control','public, max-age=30');res.json(await guestPublicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
@@ -465,27 +461,18 @@ app.post('/api/merchant/storefront/products/:id/images/:mediaId/archive',body,as
 app.post('/api/orders/merchant/:id/start',body,marketplaceStart)
 app.post('/api/orders/merchant/:id/cancel',body,marketplaceCancel)
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${internalOrdersPort}`};
-  if(payload){headers['content-length']=String(payload.length);delete headers['transfer-encoding'];}
-  const up=http.request({hostname:'127.0.0.1',port:internalOrdersPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Marketplace upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
+function proxy(req,res,next){
+  if(!ordersApp)return res.status(503).json({error:'Orders runtime is not ready'});
+  return ordersApp(req,res,next);
 }
 app.use(proxy)
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})})
 
-function startOrders(){ordersChild=spawn(process.execPath,['server-orders.js'],{cwd:__dirname,env:{...process.env,PORT:String(internalOrdersPort),INTERNAL_AUTH_PORT:String(internalAuthPort),INTERNAL_ACCOUNTING_PORT:String(internalAccountingPort)},stdio:'inherit'});ordersChild.on('exit',code=>{if(!shuttingDown){console.error(`Orders child exited ${code}`);process.exit(code||1)}})}
-async function waitOrders(){for(let i=0;i<80;i++){try{const r=await childFetch('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Orders child failed health check')}
 let embeddedStartPromise=null;
 export async function startEmbeddedMarketplace(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      startOrders();await waitOrders();ordersReady=true;await initDb();
+      ordersApp=await startEmbeddedOrders();ordersReady=true;await initDb();
       console.log('Business & Life Marketplace mounted in-process');return app;
     })();
   }
@@ -493,7 +480,8 @@ export async function startEmbeddedMarketplace(){
 }
 async function stopMarketplace(){
   if(shuttingDown)return;shuttingDown=true;ordersReady=false;
-  if(ordersChild&&!ordersChild.killed)ordersChild.kill('SIGTERM');
+  await stopEmbeddedOrders().catch(()=>{});
+  ordersApp=null;
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedMarketplace(){await stopMarketplace()}
