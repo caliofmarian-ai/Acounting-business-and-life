@@ -67,8 +67,7 @@ export async function deliveryFetch(path,options={}){
     }
   }
   if(pathname==='/'||pathname==='/index.html'){
-    const headers={...(options.headers||{}),host:`127.0.0.1:${upstreamPort}`};
-    const r=await upstream(path,{...options,headers});
+    const r=await upstream(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/delivery.css" />\n</head>').replace('</body>','  <script type="module" src="/delivery-ui.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
