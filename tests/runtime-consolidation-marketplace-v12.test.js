@@ -51,7 +51,7 @@ test('Marketplace fetch facade refuses to bypass Marketplace-owned routes',()=>{
   assert.match(marketplace,/pathname==='\/api\/merchant\/storefront'/);
   assert.match(marketplace,/\(\?:start\|cancel\)/);
   assert.match(marketplace,/MARKETPLACE_EMBEDDED_DISPATCH_REQUIRED/);
-  assert.match(marketplace,/return childFetch\(path,options\)/);
+  assert.match(marketplace,/return ordersFetch\(path,options\)/);
 });
 
 test('Marketplace route ownership remains on server-marketplace',()=>{
