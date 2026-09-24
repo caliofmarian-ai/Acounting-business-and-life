@@ -183,6 +183,10 @@ async function importLegacyProducts(businessId){const r=await pool.query(`INSERT
 function manilaStamp(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const x=Object.fromEntries(parts.map(p=>[p.type,p.value]));return `${x.year}${x.month}${x.day}`}
 async function trust(client,businessId,customerId){const count=await client.query(`SELECT COUNT(*)::int count FROM orders WHERE business_id=$1 AND customer_account_id=$2 AND order_status='completed'`,[businessId,customerId]);const s=await client.query(`SELECT allow_remote_cash_prep,trust_suspended_at FROM merchant_customer_settings WHERE business_id=$1 AND customer_account_id=$2`,[businessId,customerId]);const c=Number(count.rows[0]?.count||0),row=s.rows[0];return{eligible:c>=5&&!row?.trust_suspended_at,allowed:c>=5&&Boolean(row?.allow_remote_cash_prep)&&!row?.trust_suspended_at}}
 
+export async function createEmbeddedMarketplaceOrder({authorization='',body={}}={}){
+  return createMarketplaceOrder({headers:{authorization:String(authorization||'')},body:body??{}});
+}
+
 async function createMarketplaceOrder(req){
   const me=await requireCustomer(req);
   const customerId=Number(me.account.id),businessId=Number(req.body?.business_id),ids=[],qty=new Map();

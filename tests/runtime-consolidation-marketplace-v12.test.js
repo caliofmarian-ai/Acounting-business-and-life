@@ -32,6 +32,13 @@ test('Marketplace remains standalone rollback-capable over Orders on 3307',()=>{
   assert.match(orders,/server-auth\.js/);
 });
 
+test('Delivery delegates shared checkout to the in-process Marketplace command without bypassing ownership',()=>{
+  assert.match(marketplace,/export async function createEmbeddedMarketplaceOrder/);
+  assert.match(delivery,/import \{createEmbeddedMarketplaceOrder\} from '\.\/server-marketplace\.js'/);
+  assert.match(delivery,/createEmbeddedMarketplaceOrder\(\{authorization:authHeader\(req\),body:req\.body\?\?\{\}\}\)/);
+  assert.doesNotMatch(delivery,/upstream\('\/api\/marketplace\/checkout'/);
+});
+
 test('Marketplace fetch facade refuses to bypass Marketplace-owned routes',()=>{
   assert.match(marketplace,/export function isMarketplaceOwnedPath/);
   assert.match(marketplace,/pathname\.startsWith\('\/api\/public\/marketplace\/'\)/);
