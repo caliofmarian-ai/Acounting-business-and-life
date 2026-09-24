@@ -6,6 +6,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
 const marketplace=read('server-marketplace.js');
+const qa=read('qa-acceptance.js');
 
 test('Local Services is embedded beneath Suppliers and localhost 3507 is retired',()=>{
   assert.match(services,/export async function startEmbeddedServices\(\)/);
@@ -94,4 +95,14 @@ test('Local Services UI remains composed exactly at its layer',()=>{
   assert.match(services,/src="\/services-ui\.js"/);
   assert.match(services,/pathname==='\/'\|\|pathname==='\/index\.html'/);
   assert.match(services,/const r=await servicesFetch\(req\.path,\{headers:req\.headers\}\)/);
+});
+
+
+test('Local Services V11 runtime acceptance is wired into canonical QA',()=>{
+  assert.match(qa,/LOCAL_SERVICES_RUNTIME_V11_WAVE='local_services_runtime_v11'/);
+  assert.match(qa,/runLocalServicesRuntimeV11Acceptance/);
+  assert.match(qa,/config\.wave===LOCAL_SERVICES_RUNTIME_V11_WAVE/);
+  assert.match(qa,/service_provider_experience_v1:true/);
+  assert.match(qa,/root_composition:Boolean\(rootComposition\)/);
+  assert.match(qa,/index_composition:Boolean\(indexComposition\)/);
 });
