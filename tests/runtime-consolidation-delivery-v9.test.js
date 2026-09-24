@@ -7,6 +7,7 @@ const finance=read('server-delivery-finance.js');
 const delivery=read('server-delivery.js');
 const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
+const marketplace=read('server-marketplace.js');
 const notifications=read('server-notifications.js');
 const legal=read('server-legal.js');
 
@@ -74,15 +75,16 @@ test('Delivery domain ownership remains on server-delivery',()=>{
   ])assert.ok(delivery.includes(marker),`missing Delivery marker: ${marker}`);
 });
 
-test('parsed JSON remains preserved below Delivery at the Local Services to Marketplace boundary',()=>{
+test('parsed JSON remains preserved below Delivery until Marketplace reaches Orders',()=>{
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(suppliers,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(services,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(services,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(services,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(services,/delete headers\['transfer-encoding'\]/);
-  assert.match(services,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(marketplace,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(marketplace,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(marketplace,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(marketplace,/delete headers\['transfer-encoding'\]/);
+  assert.match(marketplace,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('V9 preserves scoped Admin Legal and notification wrappers above Delivery',()=>{

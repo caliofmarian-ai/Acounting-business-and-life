@@ -30,12 +30,16 @@ test('Supplier root composition delegates to embedded Local Services without sta
   assert.match(suppliers,/async function upstream\(path,options=\{\}\)\{return servicesFetch\(path,options\)\}/);
 });
 
-test('Local Services remains standalone rollback-capable over Marketplace on 3407',()=>{
-  assert.match(services,/spawn\(process\.execPath,\['server-marketplace\.js'\]/);
-  assert.match(services,/INTERNAL_MARKETPLACE_PORT \|\| 3407/);
-  assert.match(services,/Marketplace child failed health check/);
-  assert.match(services,/marketplaceReady=true/);
-  assert.match(marketplace,/server-orders\.js/);
+test('Local Services remains standalone rollback-capable while Marketplace is embedded beneath it',()=>{
+  assert.match(services,/startEmbeddedMarketplace/);
+  assert.match(services,/stopEmbeddedMarketplace/);
+  assert.match(services,/marketplaceApp=await startEmbeddedMarketplace\(\)/);
+  assert.match(services,/return marketplaceApp\(req,res,next\)/);
+  assert.doesNotMatch(services,/INTERNAL_MARKETPLACE_PORT/);
+  assert.doesNotMatch(services,/\|\|\s*3407/);
+  assert.doesNotMatch(services,/spawn\(process\.execPath,\['server-marketplace\.js'\]/);
+  assert.match(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
+  assert.match(marketplace,/INTERNAL_ORDERS_PORT \|\| 3307/);
 });
 
 test('Local Services fetch facade refuses to bypass Service-owned routes',()=>{
@@ -44,7 +48,7 @@ test('Local Services fetch facade refuses to bypass Service-owned routes',()=>{
   assert.match(services,/pathname\.startsWith\('\/api\/service-provider\/'\)/);
   assert.match(services,/pathname\.startsWith\('\/api\/admin\/service-credentials\/'\)/);
   assert.match(services,/LOCAL_SERVICES_EMBEDDED_DISPATCH_REQUIRED/);
-  assert.match(services,/return childFetch\(path,options\)/);
+  assert.match(services,/return marketplaceFetch\(path,options\)/);
 });
 
 test('Local Services domain ownership remains on server-services',()=>{
@@ -70,13 +74,14 @@ test('Local Services domain ownership remains on server-services',()=>{
   ])assert.ok(services.includes(marker),`missing Local Services marker: ${marker}`);
 });
 
-test('parsed JSON is preserved at the Local Services to Marketplace boundary',()=>{
+test('parsed JSON remains preserved through Local Services and is reconstructed only at Marketplace to Orders',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(services,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(services,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(services,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(services,/delete headers\['transfer-encoding'\]/);
-  assert.match(services,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(marketplace,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(marketplace,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(marketplace,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(marketplace,/delete headers\['transfer-encoding'\]/);
+  assert.match(marketplace,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Local Services authorization state monetization and credential audit authorities remain intact',()=>{
