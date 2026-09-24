@@ -6,6 +6,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const finance=read('server-delivery-finance.js');
 const delivery=read('server-delivery.js');
 const suppliers=read('server-suppliers.js');
+const services=read('server-services.js');
 const notifications=read('server-notifications.js');
 const legal=read('server-legal.js');
 
@@ -32,8 +33,10 @@ test('Delivery remains standalone rollback-capable while Suppliers is embedded b
   assert.doesNotMatch(delivery,/INTERNAL_SUPPLIERS_PORT/);
   assert.doesNotMatch(delivery,/\|\|\s*3607/);
   assert.doesNotMatch(delivery,/spawn\(process\.execPath,\['server-suppliers\.js'\]/);
-  assert.match(suppliers,/spawn\(process\.execPath,\['server-services\.js'\]/);
-  assert.match(suppliers,/INTERNAL_SERVICES_PORT \|\| 3507/);
+  assert.match(suppliers,/startEmbeddedServices/);
+  assert.match(suppliers,/servicesApp=await startEmbeddedServices\(\)/);
+  assert.doesNotMatch(suppliers,/INTERNAL_SERVICES_PORT/);
+  assert.doesNotMatch(suppliers,/\|\|\s*3507/);
 });
 
 test('Delivery fetch facade refuses to bypass Delivery-owned routes',()=>{
@@ -71,14 +74,15 @@ test('Delivery domain ownership remains on server-delivery',()=>{
   ])assert.ok(delivery.includes(marker),`missing Delivery marker: ${marker}`);
 });
 
-test('parsed JSON remains preserved below Delivery at the Suppliers to Local Services boundary',()=>{
+test('parsed JSON remains preserved below Delivery at the Local Services to Marketplace boundary',()=>{
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(suppliers,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(suppliers,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(suppliers,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(suppliers,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(suppliers,/delete headers\['transfer-encoding'\]/);
-  assert.match(suppliers,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(services,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(services,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(services,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(services,/delete headers\['transfer-encoding'\]/);
+  assert.match(services,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('V9 preserves scoped Admin Legal and notification wrappers above Delivery',()=>{
