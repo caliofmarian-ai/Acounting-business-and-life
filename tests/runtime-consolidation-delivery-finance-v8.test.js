@@ -7,6 +7,7 @@ const finance=read('server-delivery-finance.js');
 const incidents=read('server-incidents.js');
 const delivery=read('server-delivery.js');
 const suppliers=read('server-suppliers.js');
+const services=read('server-services.js');
 const accounting=read('server-business-accounting.js');
 const notifications=read('server-notifications.js');
 const payments=read('server-payments.js');
@@ -40,8 +41,10 @@ test('Delivery Finance remains standalone rollback-capable while Delivery is emb
   assert.match(delivery,/suppliersApp=await startEmbeddedSuppliers\(\)/);
   assert.doesNotMatch(delivery,/INTERNAL_SUPPLIERS_PORT/);
   assert.doesNotMatch(delivery,/\|\|\s*3607/);
-  assert.match(suppliers,/spawn\(process\.execPath,\['server-services\.js'\]/);
-  assert.match(suppliers,/INTERNAL_SERVICES_PORT \|\| 3507/);
+  assert.match(suppliers,/startEmbeddedServices/);
+  assert.match(suppliers,/servicesApp=await startEmbeddedServices\(\)/);
+  assert.doesNotMatch(suppliers,/INTERNAL_SERVICES_PORT/);
+  assert.doesNotMatch(suppliers,/\|\|\s*3507/);
 });
 
 test('Delivery Finance fetch facade refuses to bypass its owned mutation routes',()=>{
@@ -70,14 +73,14 @@ test('composed Merchant payment authority remains above rollback-compatible Deli
   assert.match(finance,/app\.post\('\/api\/orders\/merchant\/:id\/payment'/);
 });
 
-test('parsed JSON reconstruction now lives at the final Suppliers to Local Services boundary',()=>{
+test('parsed JSON reconstruction now lives at the final Local Services to Marketplace boundary',()=>{
   assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(suppliers,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(suppliers,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(suppliers,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(suppliers,/delete headers\['transfer-encoding'\]/);
-  assert.match(suppliers,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(services,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(services,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(services,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(services,/delete headers\['transfer-encoding'\]/);
+  assert.match(services,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('V8 leaves Incident and raw-body webhook boundaries unchanged',()=>{
