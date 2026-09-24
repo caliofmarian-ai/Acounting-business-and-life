@@ -22,6 +22,12 @@ test('Suppliers is embedded beneath Delivery and localhost 3607 is retired',()=>
   assert.doesNotMatch(delivery,/spawn\(process\.execPath,\['server-suppliers\.js'\]/);
 });
 
+test('Delivery root composition delegates to embedded Suppliers without stale localhost Supplier state',()=>{
+  assert.doesNotMatch(delivery,/\bupstreamPort\b/);
+  assert.match(delivery,/if\(pathname==='\/'\|\|pathname==='\/index\.html'\)\{\s*const r=await upstream\(path,options\);/);
+  assert.doesNotMatch(delivery,/host:`127\.0\.0\.1:\$\{upstreamPort\}`/);
+});
+
 test('Suppliers remains rollback-capable over Local Services on 3507',()=>{
   assert.match(suppliers,/spawn\(process\.execPath,\['server-services\.js'\]/);
   assert.match(suppliers,/INTERNAL_SERVICES_PORT \|\| 3507/);
