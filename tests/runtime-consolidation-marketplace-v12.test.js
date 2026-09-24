@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const services=read('server-services.js');
+const delivery=read('server-delivery.js');
 const marketplace=read('server-marketplace.js');
 const orders=read('server-orders.js');
 const qa=read('qa-acceptance.js');
