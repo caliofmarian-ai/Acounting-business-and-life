@@ -1,30 +1,23 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePricingRule} from './delivery-pricing-v2-core.js';
 import {verifyAdminAssertion} from './admin-authorization.js';
+import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const upstreamPort = Number(process.env.INTERNAL_SUPPLIERS_PORT || 3607);
-const servicesPort = Number(process.env.INTERNAL_SERVICES_PORT || 3507);
-const marketplacePort = Number(process.env.INTERNAL_MARKETPLACE_PORT || 3407);
-const ordersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
-const authPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
-const accountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
 const jsonBody = express.json({ limit: '2500kb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
-let child;
+let suppliersApp=null;
 let supplierReady=false;
 let shuttingDown = false;
 
@@ -33,7 +26,7 @@ function num(v){return Number(v)}
 function finite(v){return Number.isFinite(num(v))}
 function clamp(v,min,max){return Math.max(min,Math.min(max,num(v)))}
 function authHeader(req){return req.headers.authorization||''}
-async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
+async function upstream(path,options={}){return suppliersFetch(path,options)}
 export function isDeliveryOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
   const verb=String(method||'GET').toUpperCase();
@@ -74,8 +67,7 @@ export async function deliveryFetch(path,options={}){
     }
   }
   if(pathname==='/'||pathname==='/index.html'){
-    const headers={...(options.headers||{}),host:`127.0.0.1:${upstreamPort}`};
-    const r=await upstream(path,{...options,headers});
+    const r=await upstream(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/delivery.css" />\n</head>').replace('</body>','  <script type="module" src="/delivery-ui.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
@@ -533,55 +525,18 @@ app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{
   res.json(await deliveryDetail(id));
 }catch(e){next(e)}})
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Delivery upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
+function proxy(req,res,next){
+  if(!suppliersApp)return res.status(503).json({error:'Supplier runtime is not ready'});
+  return suppliersApp(req,res,next);
 }
 app.use(proxy)
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})})
-
-function start(){
-  child=spawn(process.execPath,['server-suppliers.js'],{
-    cwd:__dirname,
-    env:{
-      ...process.env,
-      PORT:String(upstreamPort),
-      INTERNAL_SERVICES_PORT:String(servicesPort),
-      INTERNAL_MARKETPLACE_PORT:String(marketplacePort),
-      INTERNAL_ORDERS_PORT:String(ordersPort),
-      INTERNAL_AUTH_PORT:String(authPort),
-      INTERNAL_ACCOUNTING_PORT:String(accountingPort)
-    },
-    stdio:'inherit'
-  });
-  child.on('exit',code=>{if(!shuttingDown){console.error(`Supplier child exited ${code}`);process.exit(code||1)}});
-}
-async function wait(){
-  for(let i=0;i<140;i++){
-    try{const r=await upstream('/health');if(r.ok)return}catch{}
-    await new Promise(r=>setTimeout(r,250));
-  }
-  throw new Error('Supplier child failed health check');
-}
 
 let embeddedStartPromise=null;
 export async function startEmbeddedDelivery(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      suppliersApp=await startEmbeddedSuppliers();
       supplierReady=true;
       await initDb();
       console.log('Business & Life delivery mounted in-process');
@@ -595,7 +550,8 @@ async function stopDelivery(){
   if(shuttingDown)return;
   shuttingDown=true;
   supplierReady=false;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  suppliersApp=null;
+  await stopEmbeddedSuppliers().catch(()=>{});
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedDelivery(){await stopDelivery()}

@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const incidents=read('server-incidents.js');
-const finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js');
+const finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js'),suppliers=read('server-suppliers.js');
 const hardening=read('server-auth-hardening.js');
 const admin=read('server-admin-operations.js');
 const notifications=read('server-notifications.js');
@@ -55,15 +55,15 @@ test('Incident routes and assets remain owned by server-incidents',()=>{
   ])assert.ok(incidents.includes(marker),`missing Incident marker: ${marker}`);
 });
 
-test('already parsed JSON is preserved before Delivery fallthrough reaches Suppliers',()=>{
+test('already parsed JSON is preserved through Delivery until Suppliers reaches Local Services',()=>{
   assert.match(incidents,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(delivery,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(delivery,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(delivery,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(delivery,/delete headers\['transfer-encoding'\]/);
-  assert.match(delivery,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(suppliers,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(suppliers,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(suppliers,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(suppliers,/delete headers\['transfer-encoding'\]/);
+  assert.match(suppliers,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Admin incident creation traverses the embedded chain instead of fetch-bypassing Incidents',()=>{
