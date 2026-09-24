@@ -7,6 +7,7 @@ const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
 const marketplace=read('server-marketplace.js');
 const orders=read('server-orders.js');
+const auth=read('server-auth.js');
 const qa=read('qa-acceptance.js');
 const governance=read('server-profile-governance.js');
 
@@ -43,7 +44,10 @@ test('Local Services remains standalone rollback-capable while Marketplace is em
   assert.match(marketplace,/ordersApp=await startEmbeddedOrders\(\)/);
   assert.doesNotMatch(marketplace,/INTERNAL_ORDERS_PORT/);
   assert.doesNotMatch(marketplace,/\|\|\s*3307/);
-  assert.match(orders,/INTERNAL_AUTH_PORT \|\| 3207/);
+  assert.match(orders,/startEmbeddedAccountAuth/);
+  assert.doesNotMatch(orders,/INTERNAL_AUTH_PORT/);
+  assert.doesNotMatch(orders,/\|\|\s*3207/);
+  assert.match(auth,/INTERNAL_ACCOUNTING_PORT \|\| 3107/);
 });
 
 test('Local Services fetch facade refuses to bypass Service-owned routes',()=>{
@@ -78,15 +82,16 @@ test('Local Services domain ownership remains on server-services',()=>{
   ])assert.ok(services.includes(marker),`missing Local Services marker: ${marker}`);
 });
 
-test('parsed JSON remains preserved through Local Services and is reconstructed only at Orders to Auth',()=>{
+test('parsed JSON remains preserved through Local Services and is reconstructed only at Account/Auth to Accounting',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(orders,/delete headers\['transfer-encoding'\]/);
-  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(auth,/delete headers\['transfer-encoding'\]/);
+  assert.match(auth,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Local Services authorization state monetization and credential audit authorities remain intact',()=>{

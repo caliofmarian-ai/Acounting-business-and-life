@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const hardening=read('server-auth-hardening.js'),incidents=read('server-incidents.js'),finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js'),suppliers=read('server-suppliers.js'),services=read('server-services.js'),marketplace=read('server-marketplace.js'),governance=read('server-profile-governance.js'),accounting=read('server-business-accounting.js'),admin=read('server-admin-operations.js'),notifications=read('server-notifications.js');
 const orders=read('server-orders.js');
+const auth=read('server-auth.js');
 
 test('Profile Governance remains embedded and retired port 4107 stays absent',()=>{
   assert.match(accounting,/startEmbeddedProfileGovernance/);assert.match(accounting,/stopEmbeddedProfileGovernance/);assert.match(accounting,/profileGovernanceApp=await startEmbeddedProfileGovernance\(\)/);assert.match(accounting,/return profileGovernanceApp\(req,res,next\)/);
@@ -23,15 +24,16 @@ test('Accounting Admin and Notifications reuse the Auth Hardening policy-aware d
   assert.match(accounting,/profile_governance:profileGovernanceReady/);assert.match(admin,/profile_governance:businessAccountingReady/);
 });
 
-test('parsed JSON preservation now lives through Local Services until Orders reaches Auth',()=>{
+test('parsed JSON preservation now lives through Local Services until Account/Auth reaches Accounting',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(orders,/delete headers\['transfer-encoding'\]/);
-  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(auth,/delete headers\['transfer-encoding'\]/);
+  assert.match(auth,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
   assert.match(governance,/return authHardeningApp\(req,res,next\)/);
 });
 

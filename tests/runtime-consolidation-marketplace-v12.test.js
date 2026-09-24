@@ -7,6 +7,7 @@ const services=read('server-services.js');
 const delivery=read('server-delivery.js');
 const marketplace=read('server-marketplace.js');
 const orders=read('server-orders.js');
+const auth=read('server-auth.js');
 const qa=read('qa-acceptance.js');
 const workflow=read('.github/workflows/admin-runtime.yml');
 
@@ -34,7 +35,10 @@ test('Marketplace remains standalone rollback-capable while Orders is embedded b
   assert.doesNotMatch(marketplace,/\|\|\s*3307/);
   assert.doesNotMatch(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
   assert.match(orders,/spawn\(process\.execPath,\['server-auth\.js'\]/);
-  assert.match(orders,/INTERNAL_AUTH_PORT \|\| 3207/);
+  assert.match(orders,/startEmbeddedAccountAuth/);
+  assert.doesNotMatch(orders,/INTERNAL_AUTH_PORT/);
+  assert.doesNotMatch(orders,/\|\|\s*3207/);
+  assert.match(auth,/INTERNAL_ACCOUNTING_PORT \|\| 3107/);
 });
 
 test('Delivery delegates shared checkout to the in-process Marketplace command without bypassing ownership',()=>{
@@ -85,16 +89,17 @@ test('shared Merchant start and cancel remain Marketplace-first before Orders fa
   assert.match(marketplace,/source_kind='marketplace_product'/);
 });
 
-test('parsed JSON is reconstructed only at the final Orders to Auth HTTP boundary',()=>{
+test('parsed JSON is reconstructed only at the final Account/Auth to Accounting HTTP boundary',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(marketplace,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(orders,/delete headers\['transfer-encoding'\]/);
-  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(auth,/delete headers\['transfer-encoding'\]/);
+  assert.match(auth,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Marketplace and Local Services root composition remains layered exactly once',()=>{

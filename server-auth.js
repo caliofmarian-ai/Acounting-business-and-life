@@ -5,7 +5,7 @@ import http from 'node:http';
 import { promisify } from 'node:util';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildLiveReferralPayload, ensureAccountReferral, ensureReferralAccountSchema, normalizeReferralProfileRole } from './growth/referral-account.js';
 import { buildLocalReferralQr } from './growth/referral-qr.js';
@@ -29,11 +29,13 @@ const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
 const TOKEN_TTL_MS = AUTH_SESSION_TTL_MS;
 const ROLES = new Set(['merchant', 'customer', 'supplier', 'courier', 'service_provider']);
 const jsonBody = express.json({ limit: '450kb' });
+const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 const loginAttempts = new Map();
 const growthAnalyticsAttempts = new Map();
 const ACCOUNT_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_link_created','referral_shared']);
 const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_qr_opened','referral_landing_viewed','referral_shared','referral_signup_started']);
 let accountingChild;
+let accountingReady=false;
 let shuttingDown = false;
 
 function clean(value, max = 250) { return String(value ?? '').trim().slice(0, max); }
@@ -43,6 +45,57 @@ function safeEqualHex(a, b) {
 }
 function validEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
 function passwordOkay(value) { return typeof value === 'string' && value.length >= 8 && value.length <= 160; }
+
+async function accountingFetch(path,options={}){
+  return fetch(`http://127.0.0.1:${internalAccountingPort}${path}`,options);
+}
+function responseJson(status,payload){
+  return new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json; charset=utf-8'}});
+}
+export function isAccountAuthOwnedPath(path='',method='GET'){
+  const pathname=String(path||'').split('?')[0];
+  if(['/shell.css','/shell.js','/auth-ui.js'].includes(pathname))return true;
+  if(pathname==='/api/me'||pathname.startsWith('/api/me/'))return true;
+  if(pathname.startsWith('/api/auth/'))return true;
+  if(pathname.startsWith('/api/profiles/'))return true;
+  if(pathname==='/api/courier'||pathname.startsWith('/api/context/'))return true;
+  if(pathname==='/api/growth/referral'||pathname.startsWith('/api/growth/referral-'))return true;
+  return false;
+}
+export async function accountAuthFetch(path,options={}){
+  const pathname=String(path||'').split('?')[0];
+  const method=String(options.method||'GET').toUpperCase();
+  if(pathname==='/health'){
+    try{
+      await pool.query('SELECT 1');
+      const accounting=await accountingFetch('/health',{headers:options.headers||{}});
+      const ok=accountingReady&&accounting.ok;
+      return responseJson(ok?200:503,{ok,db:true,accounting:ok,version:'0.3.8-account-auth'});
+    }catch{
+      return responseJson(503,{ok:false,db:false,accounting:false,version:'0.3.8-account-auth'});
+    }
+  }
+  if(pathname==='/'||pathname==='/index.html'){
+    return new Response(injectedIndex(),{status:200,headers:{'content-type':'text/html; charset=utf-8'}});
+  }
+  if(pathname==='/api/me'&&method==='GET'){
+    try{
+      const authorization=new Headers(options.headers||{}).get('authorization')||'';
+      const token=authorization.replace(/^Bearer\s+/i,'');
+      const resolved=await resolveAccountToken(token);
+      if(!resolved)return responseJson(401,{error:'Unauthorized'});
+      return responseJson(200,await profileSnapshot(resolved.accountId));
+    }catch(e){
+      return responseJson(e?.status||500,{error:e?.status?e.message:'Unexpected server error'});
+    }
+  }
+  if(isAccountAuthOwnedPath(pathname,method)||pathname.startsWith('/api/')){
+    throw Object.assign(new Error('Account/Auth policy-protected paths require in-process dispatch'),{
+      status:500,code:'ACCOUNT_AUTH_EMBEDDED_DISPATCH_REQUIRED'
+    });
+  }
+  return accountingFetch(path,options);
+}
 
 function referralRequestOrigin(req) {
   const explicit = clean(process.env.REFERRAL_PUBLIC_ORIGIN || process.env.PUBLIC_APP_ORIGIN || '', 500).replace(/\/+$/, '');
@@ -295,13 +348,9 @@ app.get('/', (_req, res) => res.type('html').send(injectedIndex()));
 app.get('/index.html', (_req, res) => res.type('html').send(injectedIndex()));
 app.use(express.static(publicDir, { index: false }));
 
-app.get('/health', async (_req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    const child = await fetch(`http://127.0.0.1:${internalAccountingPort}/health`).then(r => r.ok).catch(() => false);
-    if (!child) return res.status(503).json({ ok: false, db: true, accounting: false, version: '0.3.7-account-auth' });
-    res.json({ ok: true, db: true, accounting: true, version: '0.3.7-account-auth' });
-  } catch { res.status(503).json({ ok: false, db: false, accounting: false, version: '0.3.7-account-auth' }); }
+app.get('/health',async(req,res)=>{
+  const r=await accountAuthFetch('/health',{headers:req.headers});
+  res.status(r.status).json(await r.json());
 });
 
 function throttled(req, identity) {
@@ -364,7 +413,7 @@ async function sendReferralAnalytics(res, input) {
   }
 }
 
-app.post('/api/auth/register', jsonBody, async (req, res, next) => {
+app.post('/api/auth/register', body, async (req, res, next) => {
   const email = normalizeEmail(req.body?.email);
   const name = clean(req.body?.display_name, 120);
   const password = String(req.body?.password || '');
@@ -416,7 +465,7 @@ app.post('/api/auth/register', jsonBody, async (req, res, next) => {
   } catch (err) { await client.query('ROLLBACK').catch(() => {}); next(err); } finally { client.release(); }
 });
 
-app.post('/api/auth/login', jsonBody, async (req, res, next) => {
+app.post('/api/auth/login', body, async (req, res, next) => {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || '');
   if (!validEmail(email) || !password) return res.status(400).json({ error: 'Email and password are required' });
@@ -432,12 +481,12 @@ app.post('/api/auth/login', jsonBody, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.post('/api/auth/logout', jsonBody, auth, async (req, res) => {
+app.post('/api/auth/logout', body, auth, async (req, res) => {
   if (!req.authSession.legacy && req.authSession.sessionId) await pool.query(`UPDATE account_sessions SET revoked_at=NOW() WHERE session_id=$1 AND account_id=$2`, [req.authSession.sessionId, req.accountId]);
   res.json({ ok: true });
 });
 
-app.post('/api/auth/password', jsonBody, auth, async (req, res, next) => {
+app.post('/api/auth/password', body, auth, async (req, res, next) => {
   const current = String(req.body?.current_password || '');
   const nextPassword = String(req.body?.new_password || '');
   if (!passwordOkay(nextPassword)) return res.status(400).json({ error: 'New password must be at least 8 characters' });
@@ -488,7 +537,7 @@ app.get('/api/growth/referral', auth, async (req, res, next) => {
   }
 });
 
-app.post('/api/growth/referral-analytics/account', jsonBody, auth, async (req, res, next) => {
+app.post('/api/growth/referral-analytics/account', body, auth, async (req, res, next) => {
   const event = clean(req.body?.event, 80);
   if (!ACCOUNT_REFERRAL_ANALYTICS_EVENTS.has(event)) {
     return res.status(400).json({ error: 'Referral analytics event is not allowed for account instrumentation' });
@@ -518,7 +567,7 @@ app.post('/api/growth/referral-analytics/account', jsonBody, auth, async (req, r
   }
 });
 
-app.post('/api/growth/referral-analytics/public', jsonBody, async (req, res, next) => {
+app.post('/api/growth/referral-analytics/public', body, async (req, res, next) => {
   const event = clean(req.body?.event, 80);
   if (!PUBLIC_REFERRAL_ANALYTICS_EVENTS.has(event)) {
     return res.status(400).json({ error: 'Referral analytics event is not allowed for public instrumentation' });
@@ -567,7 +616,7 @@ app.post('/api/growth/referral-analytics/public', jsonBody, async (req, res, nex
   }
 });
 
-app.patch('/api/me', jsonBody, auth, async (req, res, next) => {
+app.patch('/api/me', body, auth, async (req, res, next) => {
   const name = clean(req.body?.display_name, 120);
   const phone = clean(req.body?.phone, 40);
   const email = normalizeEmail(req.body?.email);
@@ -596,7 +645,7 @@ app.patch('/api/me', jsonBody, auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.patch('/api/me/active-role', jsonBody, auth, async (req, res, next) => {
+app.patch('/api/me/active-role', body, auth, async (req, res, next) => {
   const role = clean(req.body?.role, 40);
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
   try {
@@ -610,7 +659,7 @@ app.patch('/api/me/active-role', jsonBody, auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
+app.put('/api/profiles/:role', body, auth, async (req, res, next) => {
   const role = req.params.role;
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
   const enabled = req.body?.enabled !== false;
@@ -634,7 +683,7 @@ app.put('/api/profiles/:role', jsonBody, auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.post('/api/profiles/customer/activate', jsonBody, auth, async (req,res,next)=>{
+app.post('/api/profiles/customer/activate', body, auth, async (req,res,next)=>{
   try{
     const account=await pool.query(`SELECT display_name,email,address,email_verified_at,account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
     const a=account.rows[0];
@@ -650,7 +699,7 @@ app.post('/api/profiles/customer/activate', jsonBody, auth, async (req,res,next)
   }catch(err){next(err)}
 });
 
-app.patch('/api/courier', jsonBody, auth, async (req, res, next) => {
+app.patch('/api/courier', body, auth, async (req, res, next) => {
   try {
     const enabled=await pool.query(
       `SELECT 1 FROM profiles WHERE account_id=$1 AND role='courier' AND enabled=TRUE AND status='active'`,
@@ -709,16 +758,20 @@ app.get('/api/context/:role', auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-function pipeToAccounting(req, res, authorizationOverride = null) {
-  const headers = { ...req.headers, host: `127.0.0.1:${internalAccountingPort}` };
-  if (authorizationOverride) headers.authorization = authorizationOverride;
-  const upstream = http.request({ hostname: '127.0.0.1', port: internalAccountingPort, path: req.originalUrl, method: req.method, headers }, upstreamRes => {
-    res.statusCode = upstreamRes.statusCode || 502;
-    for (const [key, value] of Object.entries(upstreamRes.headers)) if (value !== undefined) res.setHeader(key, value);
+function pipeToAccounting(req,res,authorizationOverride=null){
+  const rawPayload=Buffer.isBuffer(req.rawBody)&&req.rawBody.length?req.rawBody:null;
+  const parsedJsonBody=!rawPayload&&req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=rawPayload||(parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null);
+  const headers={...req.headers,host:`127.0.0.1:${internalAccountingPort}`};
+  if(authorizationOverride)headers.authorization=authorizationOverride;
+  if(payload){headers['content-length']=String(payload.length);delete headers['transfer-encoding'];}
+  const upstream=http.request({hostname:'127.0.0.1',port:internalAccountingPort,path:req.originalUrl,method:req.method,headers},upstreamRes=>{
+    res.statusCode=upstreamRes.statusCode||502;
+    for(const[key,value]of Object.entries(upstreamRes.headers))if(value!==undefined)res.setHeader(key,value);
     upstreamRes.pipe(res);
   });
-  upstream.on('error', err => { console.error('Accounting proxy error', err); if (!res.headersSent) res.status(502).json({ error: 'Accounting service unavailable' }); });
-  req.pipe(upstream);
+  upstream.on('error',err=>{console.error('Accounting proxy error',err);if(!res.headersSent)res.status(502).json({error:'Accounting service unavailable'})});
+  if(payload)upstream.end(payload);else req.pipe(upstream);
 }
 
 app.use('/api', async (req, res, next) => {
@@ -735,36 +788,45 @@ app.use('/api', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-function startAccountingChild() {
-  accountingChild = spawn(process.execPath, ['server-v03.js'], { cwd: __dirname, env: { ...process.env, PORT: String(internalAccountingPort) }, stdio: 'inherit' });
-  accountingChild.on('exit', code => { if (!shuttingDown) { console.error(`Accounting child exited with code ${code}`); process.exit(code || 1); } });
+function startAccountingChild(){
+  accountingChild=spawn(process.execPath,['server-v03.js'],{cwd:__dirname,env:{...process.env,PORT:String(internalAccountingPort)},stdio:'inherit'});
+  accountingChild.on('exit',code=>{if(!shuttingDown){console.error(`Accounting child exited with code ${code}`);process.exit(code||1)}});
 }
-async function waitForAccounting() {
-  for (let i = 0; i < 40; i++) {
-    try { const r = await fetch(`http://127.0.0.1:${internalAccountingPort}/health`); if (r.ok) return; } catch {}
-    await new Promise(resolve => setTimeout(resolve, 250));
+async function waitForAccounting(){
+  for(let i=0;i<40;i++){
+    try{const r=await accountingFetch('/health');if(r.ok)return}catch{}
+    await new Promise(resolve=>setTimeout(resolve,250));
   }
   throw new Error('Accounting child failed health check');
 }
-async function shutdown(signal) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log(`Received ${signal}, shutting down`);
-  if (accountingChild && !accountingChild.killed) accountingChild.kill('SIGTERM');
-  await pool.end().catch(() => {});
-  process.exit(0);
+let embeddedStartPromise=null;
+export async function startEmbeddedAccountAuth(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      await initDb();
+      startAccountingChild();
+      await waitForAccounting();
+      accountingReady=true;
+      console.log('Business & Life Account/Auth mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
 }
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  if (res.headersSent) return;
-  res.status(err.status || 500).json({ error: err.status ? err.message : 'Unexpected server error' });
-});
-
-initDb().then(async () => {
-  startAccountingChild();
-  await waitForAccounting();
-  app.listen(port, '0.0.0.0', () => console.log(`Business & Life account server listening on ${port}`));
-}).catch(err => { console.error(err); process.exit(1); });
+async function stopAccountAuth(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  accountingReady=false;
+  if(accountingChild&&!accountingChild.killed)accountingChild.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedAccountAuth(){await stopAccountAuth()}
+async function shutdown(signal){console.log(`Received ${signal}, shutting down`);await stopAccountAuth();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedAccountAuth()
+    .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life account server listening on ${port}`)))
+    .catch(err=>{console.error(err);process.exit(1)});
+}

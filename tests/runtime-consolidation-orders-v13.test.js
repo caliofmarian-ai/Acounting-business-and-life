@@ -28,12 +28,17 @@ test('Orders is embedded beneath Marketplace and localhost 3307 is retired',()=>
   assert.doesNotMatch(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
 });
 
-test('Orders remains standalone rollback-capable over Auth on 3207',()=>{
-  assert.match(orders,/spawn\(process\.execPath,\['server-auth\.js'\]/);
-  assert.match(orders,/INTERNAL_AUTH_PORT \|\| 3207/);
-  assert.match(orders,/Auth child failed health check/);
-  assert.match(orders,/authReady=true/);
-  assert.match(auth,/server-v03\.js/);
+test('Orders remains standalone rollback-capable while Account/Auth is embedded beneath it',()=>{
+  assert.match(orders,/startEmbeddedAccountAuth/);
+  assert.match(orders,/stopEmbeddedAccountAuth/);
+  assert.match(orders,/authApp=await startEmbeddedAccountAuth\(\)/);
+  assert.match(orders,/return authApp\(req,res,next\)/);
+  assert.doesNotMatch(orders,/INTERNAL_AUTH_PORT/);
+  assert.doesNotMatch(orders,/\|\|\s*3207/);
+  assert.doesNotMatch(orders,/spawn\(process\.execPath,\['server-auth\.js'\]/);
+  assert.match(auth,/export async function startEmbeddedAccountAuth\(\)/);
+  assert.match(auth,/spawn\(process\.execPath,\['server-v03\.js'\]/);
+  assert.match(auth,/INTERNAL_ACCOUNTING_PORT \|\| 3107/);
 });
 
 test('Orders fetch facade refuses to bypass Orders-owned paths',()=>{
@@ -43,7 +48,7 @@ test('Orders fetch facade refuses to bypass Orders-owned paths',()=>{
   assert.match(orders,/pathname==='\/api\/orders'/);
   assert.match(orders,/pathname\.startsWith\('\/api\/orders\/'\)/);
   assert.match(orders,/ORDERS_EMBEDDED_DISPATCH_REQUIRED/);
-  assert.match(orders,/return internalFetch\(path,options\)/);
+  assert.match(orders,/return accountAuthFetch\(path,options\)/);
 });
 
 test('Orders route ownership remains on server-orders',()=>{
@@ -86,21 +91,22 @@ test('authorized cross-layer Order reads use the shared Orders read core',()=>{
   assert.doesNotMatch(accounting,/upstream.*api\/orders/);
 });
 
-test('parsed JSON reconstruction moves to the final Orders to Auth HTTP boundary',()=>{
+test('parsed JSON reconstruction moves to the final Account/Auth to Accounting HTTP boundary',()=>{
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(marketplace,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(orders,/delete headers\['transfer-encoding'\]/);
-  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(auth,/delete headers\['transfer-encoding'\]/);
+  assert.match(auth,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Orders root composes Auth exactly once before Marketplace decorators',()=>{
   assert.match(orders,/href="\/orders\.css"/);
   assert.match(orders,/src="\/orders-ui\.js"/);
-  assert.match(orders,/internalFetch\(path,\{\.\.\.options,headers\}\)/);
+  assert.match(orders,/accountAuthFetch\(path,options\)/);
   assert.match(marketplace,/ordersFetch\(req\.path,\{headers:req\.headers\}\)/);
 });
 

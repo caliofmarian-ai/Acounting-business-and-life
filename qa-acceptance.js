@@ -32,7 +32,8 @@ const SUPPLIER_RUNTIME_V10_WAVE='supplier_runtime_v10';
 const LOCAL_SERVICES_RUNTIME_V11_WAVE='local_services_runtime_v11';
 const MARKETPLACE_RUNTIME_V12_WAVE='marketplace_runtime_v12';
 const ORDERS_RUNTIME_V13_WAVE='orders_runtime_v13';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE]);
+const ACCOUNT_AUTH_RUNTIME_V14_WAVE='account_auth_runtime_v14';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -137,6 +138,17 @@ async function verifyOrdersRootComposition(base,path,label){
   const html=await response.text();
   if(response.status!==200)throw new Error(label+' returned an unexpected status.');
   for(const marker of ['/orders.css','/orders-ui.js','/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js','/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js']){
+    const count=html.split(marker).length-1;
+    if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
+  }
+  return true;
+}
+
+async function verifyAccountAuthRootComposition(base,path,label){
+  const response=await fetch(base+path,{headers:{Accept:'text/html'}});
+  const html=await response.text();
+  if(response.status!==200)throw new Error(label+' returned an unexpected status.');
+  for(const marker of ['/shell.css','/shell.js','/auth-ui.js','/orders.css','/orders-ui.js','/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js','/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js','/auth-hardening.css','/auth-hardening-ui.js']){
     const count=html.split(marker).length-1;
     if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
   }
@@ -3478,6 +3490,66 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runAccountAuthRuntimeV14Acceptance({pool,base,secret}){
+  const rootComposition=await verifyAccountAuthRootComposition(base,'/','Account/Auth Runtime V14 root composition');
+  const indexComposition=await verifyAccountAuthRootComposition(base,'/index.html','Account/Auth Runtime V14 index composition');
+
+  const baseline=await runCustomerOnboarding({pool,base,secret});
+  if(baseline.status!=='PASS')throw new Error('Account/Auth Runtime V14 Customer onboarding baseline did not pass.');
+
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Account/Auth Runtime V14 Customer QA'
+  });
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Account/Auth Runtime V14 Customer QA'});
+
+  const me=await requestJson(base,'/api/me',{token:customer.token});
+  expectStatus(me,200,'Account/Auth Runtime V14 account read');
+  if(me.json?.account?.account_mode!=='company_test'||me.json?.account?.test_role!=='customer'){
+    throw new Error('Account/Auth Runtime V14 account identity lost its controlled classification.');
+  }
+  const profile=(me.json?.profiles||[]).find(x=>x.role==='customer');
+  if(!profile?.enabled||profile.status!=='active')throw new Error('Account/Auth Runtime V14 Customer profile is not active.');
+
+  const context=await requestJson(base,'/api/context/customer',{token:customer.token});
+  expectStatus(context,200,'Account/Auth Runtime V14 Customer context');
+  if(context.json?.role!=='customer')throw new Error('Account/Auth Runtime V14 Customer context resolved the wrong role.');
+
+  const activeRole=await requestJson(base,'/api/me/active-role',{
+    method:'PATCH',token:customer.token,body:{role:'customer'}
+  });
+  expectStatus(activeRole,200,'Account/Auth Runtime V14 active role mutation');
+  if(activeRole.json?.account?.active_role!=='customer')throw new Error('Account/Auth Runtime V14 active role mutation did not persist.');
+
+  const unauthAccounting=await requestJson(base,'/api/summary');
+  expectStatus(unauthAccounting,401,'Account/Auth Runtime V14 unauthenticated Accounting gate');
+
+  const nonMerchantAccounting=await requestJson(base,'/api/summary',{token:customer.token});
+  expectStatus(nonMerchantAccounting,403,'Account/Auth Runtime V14 non-Merchant Accounting gate');
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Account/Auth Runtime V14 logout');
+  const relogin=await loginWithCredential({
+    base,email:CUSTOMER_ALIAS,password:customer.password,label:'Account/Auth Runtime V14 re-login'
+  });
+  const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
+  expectStatus(finalLogout,200,'Account/Auth Runtime V14 final logout');
+
+  return{
+    status:'PASS',
+    wave:ACCOUNT_AUTH_RUNTIME_V14_WAVE,
+    customer_onboarding_baseline:true,
+    root_composition:Boolean(rootComposition),
+    index_composition:Boolean(indexComposition),
+    account_me:true,
+    profile_context:true,
+    active_role_mutation:true,
+    accounting_unauthorized_gate:true,
+    accounting_nonmerchant_gate:true,
+    logout_relogin:true
+  };
+}
+
+
 async function runOrdersRuntimeV13Acceptance({pool,base,secret}){
   const rootComposition=await verifyOrdersRootComposition(base,'/','Orders Runtime V13 root composition');
   const indexComposition=await verifyOrdersRootComposition(base,'/index.html','Orders Runtime V13 index composition');
@@ -3658,7 +3730,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===ORDERS_RUNTIME_V13_WAVE
+    const result=config.wave===ACCOUNT_AUTH_RUNTIME_V14_WAVE
+      ?await runAccountAuthRuntimeV14Acceptance({pool,base,secret:config.secret})
+      :config.wave===ORDERS_RUNTIME_V13_WAVE
       ?await runOrdersRuntimeV13Acceptance({pool,base,secret:config.secret})
       :config.wave===MARKETPLACE_RUNTIME_V12_WAVE
       ?await runMarketplaceRuntimeV12Acceptance({pool,base,secret:config.secret})
@@ -3726,5 +3800,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE
 };
