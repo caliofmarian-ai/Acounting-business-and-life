@@ -7,6 +7,7 @@ const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
 const marketplace=read('server-marketplace.js');
 const qa=read('qa-acceptance.js');
+const governance=read('server-profile-governance.js');
 
 test('Local Services is embedded beneath Suppliers and localhost 3507 is retired',()=>{
   assert.match(services,/export async function startEmbeddedServices\(\)/);
@@ -105,4 +106,18 @@ test('Local Services V11 runtime acceptance is wired into canonical QA',()=>{
   assert.match(qa,/service_provider_experience_v1:true/);
   assert.match(qa,/root_composition:Boolean\(rootComposition\)/);
   assert.match(qa,/index_composition:Boolean\(indexComposition\)/);
+});
+
+
+test('Governance preserves Service category authorization then dispatches selection through the embedded runtime',()=>{
+  const start=governance.indexOf("app.put('/api/service-provider/services'");
+  const end=governance.indexOf("function proxy(req,res,next)",start);
+  assert.ok(start>=0&&end>start,'Service Provider governance route is missing');
+  const route=governance.slice(start,end);
+  assert.match(route,/activeAuthorization\(me\.account\.id,'service_provider'\)/);
+  assert.match(route,/service_category_authorizations/);
+  assert.match(route,/filtered\.length!==requested\.length/);
+  assert.match(route,/req\.body=\{\.\.\.req\.body,services:filtered\}/);
+  assert.match(route,/return authHardeningApp\(req,res,next\)/);
+  assert.doesNotMatch(route,/return forwardJson\(req,res,req\.originalUrl/);
 });
