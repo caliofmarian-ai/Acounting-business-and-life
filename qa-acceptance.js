@@ -96,6 +96,17 @@ async function restoreAutomationCredentials(pool){
   }
 }
 
+async function verifySupplierDeliveryRootComposition(base,path,label){
+  const response=await fetch(base+path,{headers:{Accept:'text/html'}});
+  const html=await response.text();
+  if(response.status!==200)throw new Error(label+' returned an unexpected status.');
+  for(const marker of ['/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js']){
+    const count=html.split(marker).length-1;
+    if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
+  }
+  return true;
+}
+
 async function requestJson(base,path,{method='GET',token='',body,headers:extraHeaders={}}={}){
   const headers={Accept:'application/json',...extraHeaders};
   if(token)headers.Authorization='Bearer '+token;
@@ -3340,6 +3351,9 @@ async function runDeliveryRuntimeV9Acceptance({pool,base,secret}){
 
 
 async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
+  const rootComposition=await verifySupplierDeliveryRootComposition(base,'/','Supplier Runtime V10 root composition');
+  const indexComposition=await verifySupplierDeliveryRootComposition(base,'/index.html','Supplier Runtime V10 index composition');
+
   const baseline=await runSupplierDailyV5Acceptance({pool,base,secret});
   if(baseline.status!=='PASS')throw new Error('Supplier Runtime V10 Supplier V1–V5 baseline did not pass.');
 
@@ -3410,6 +3424,8 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
     supplier_business_id:Number(baseline.supplier_business_id),
     merchant_business_id:merchantBusinessId,
     purchase_order_id:Number(po.id),
+    root_composition:Boolean(rootComposition),
+    index_composition:Boolean(indexComposition),
     supplier_profile:true,
     catalog:true,
     relationship:true,
