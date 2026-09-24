@@ -161,6 +161,33 @@ async function ensureSecondaryServiceTerritory({pool,base,adminToken,requestJson
   return Number(created.json?.id);
 }
 
+async function resetStaleQaCredentialEvidence({pool,providerAccountId}){
+  const unexpected=await pool.query(
+    `SELECT id,title,issuing_body
+       FROM profile_credentials
+      WHERE account_id=$1
+        AND verification_status='verified'
+        AND NOT (title='Controlled QA evidence record' AND issuing_body='Business & Life QA')`,
+    [providerAccountId]
+  );
+  if(unexpected.rowCount){
+    throw new Error('Controlled QA Service Provider has non-QA verified credential evidence; refusing automatic cleanup.');
+  }
+  const cleaned=await pool.query(
+    `UPDATE profile_credentials
+        SET verification_status='rejected',
+            rejection_reason='Controlled QA preflight cleanup; not a real professional credential.',
+            updated_at=NOW()
+      WHERE account_id=$1
+        AND title='Controlled QA evidence record'
+        AND issuing_body='Business & Life QA'
+        AND verification_status<>'rejected'
+      RETURNING id`,
+    [providerAccountId]
+  );
+  return cleaned.rowCount;
+}
+
 async function verifyCredentialAdminScope({
   pool,base,provider,customer,admin,territoryAdmin,territoryAdminEmail,territoryId,jobId,
   requestJson,expectStatus
@@ -394,6 +421,10 @@ export async function runServiceProviderExperienceAcceptance({
     qaAccountSession({pool,base,secret,email:aliases.territoryAdmin,role:'territory_admin',label:'Service Provider Territory Admin QA'})
   ]);
 
+  const staleQaCredentialsRejected=await resetStaleQaCredentialEvidence({
+    pool,providerAccountId:provider.accountId
+  });
+
   const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
   const category=await pool.query(
     "SELECT id,code,name,credential_gate FROM service_categories WHERE code='handyman' AND active=TRUE LIMIT 1"
@@ -621,6 +652,7 @@ export async function runServiceProviderExperienceAcceptance({
     customer_confirmed_completion:true,
     verified_review_id:reviewId,
     review_blocked_before_customer_confirmation:true,
+    stale_qa_credentials_rejected:Number(staleQaCredentialsRejected),
     credential_scope_authority:true,
     credential_id:credentialScope.credentialId,
     credential_audit_id:credentialScope.auditId,
