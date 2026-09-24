@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
-const hardening=read('server-auth-hardening.js'),incidents=read('server-incidents.js'),finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js'),suppliers=read('server-suppliers.js'),services=read('server-services.js'),governance=read('server-profile-governance.js'),accounting=read('server-business-accounting.js'),admin=read('server-admin-operations.js'),notifications=read('server-notifications.js');
+const hardening=read('server-auth-hardening.js'),incidents=read('server-incidents.js'),finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js'),suppliers=read('server-suppliers.js'),services=read('server-services.js'),marketplace=read('server-marketplace.js'),governance=read('server-profile-governance.js'),accounting=read('server-business-accounting.js'),admin=read('server-admin-operations.js'),notifications=read('server-notifications.js');
 
 test('Profile Governance remains embedded and retired port 4107 stays absent',()=>{
   assert.match(accounting,/startEmbeddedProfileGovernance/);assert.match(accounting,/stopEmbeddedProfileGovernance/);assert.match(accounting,/profileGovernanceApp=await startEmbeddedProfileGovernance\(\)/);assert.match(accounting,/return profileGovernanceApp\(req,res,next\)/);
@@ -22,8 +22,8 @@ test('Accounting Admin and Notifications reuse the Auth Hardening policy-aware d
   assert.match(accounting,/profile_governance:profileGovernanceReady/);assert.match(admin,/profile_governance:businessAccountingReady/);
 });
 
-test('parsed JSON preservation now lives at the Local Services to Marketplace boundary',()=>{
-  assert.match(services,/const parsedJsonBody=req\.body!==undefined/);assert.match(services,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);assert.match(services,/headers\['content-length'\]=String\(payload\.length\)/);assert.match(services,/delete headers\['transfer-encoding'\]/);assert.match(services,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);assert.match(governance,/return authHardeningApp\(req,res,next\)/);
+test('parsed JSON preservation now lives through Local Services until Marketplace reaches Orders',()=>{
+  assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);assert.match(marketplace,/const parsedJsonBody=req\.body!==undefined/);assert.match(marketplace,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);assert.match(marketplace,/headers\['content-length'\]=String\(payload\.length\)/);assert.match(marketplace,/delete headers\['transfer-encoding'\]/);assert.match(marketplace,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);assert.match(governance,/return authHardeningApp\(req,res,next\)/);
 });
 
 test('Merchant and Supplier approval still traverses Governance before Accounting business binding',()=>{

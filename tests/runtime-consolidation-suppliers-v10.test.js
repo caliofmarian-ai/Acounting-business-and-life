@@ -6,6 +6,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const delivery=read('server-delivery.js');
 const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
+const marketplace=read('server-marketplace.js');
 
 test('Suppliers is embedded beneath Delivery and localhost 3607 is retired',()=>{
   assert.match(suppliers,/export async function startEmbeddedSuppliers\(\)/);
@@ -28,7 +29,7 @@ test('Delivery root composition delegates to embedded Suppliers without stale lo
   assert.doesNotMatch(delivery,/host:`127\.0\.0\.1:\$\{upstreamPort\}`/);
 });
 
-test('Suppliers remains standalone rollback-capable while Local Services is embedded beneath it',()=>{
+test('Suppliers remains standalone rollback-capable while Local Services and Marketplace are embedded beneath it',()=>{
   assert.match(suppliers,/startEmbeddedServices/);
   assert.match(suppliers,/stopEmbeddedServices/);
   assert.match(suppliers,/servicesApp=await startEmbeddedServices\(\)/);
@@ -36,8 +37,12 @@ test('Suppliers remains standalone rollback-capable while Local Services is embe
   assert.doesNotMatch(suppliers,/INTERNAL_SERVICES_PORT/);
   assert.doesNotMatch(suppliers,/\|\|\s*3507/);
   assert.doesNotMatch(suppliers,/spawn\(process\.execPath,\['server-services\.js'\]/);
-  assert.match(services,/spawn\(process\.execPath,\['server-marketplace\.js'\]/);
-  assert.match(services,/INTERNAL_MARKETPLACE_PORT \|\| 3407/);
+  assert.match(services,/startEmbeddedMarketplace/);
+  assert.match(services,/marketplaceApp=await startEmbeddedMarketplace\(\)/);
+  assert.doesNotMatch(services,/INTERNAL_MARKETPLACE_PORT/);
+  assert.doesNotMatch(services,/\|\|\s*3407/);
+  assert.match(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
+  assert.match(marketplace,/INTERNAL_ORDERS_PORT \|\| 3307/);
 });
 
 test('Supplier fetch facade refuses to bypass Supplier-owned routes',()=>{
@@ -81,14 +86,15 @@ test('Supplier V2 through V5 modules remain registered before fallback',()=>{
   ])assert.ok(suppliers.includes(marker),`missing Supplier module registration: ${marker}`);
 });
 
-test('parsed JSON is preserved below Suppliers at the Local Services to Marketplace boundary',()=>{
+test('parsed JSON is preserved below Suppliers and reconstructed at Marketplace to Orders',()=>{
   assert.match(suppliers,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(services,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(services,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(services,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(services,/delete headers\['transfer-encoding'\]/);
-  assert.match(services,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(marketplace,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(marketplace,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(marketplace,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(marketplace,/delete headers\['transfer-encoding'\]/);
+  assert.match(marketplace,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Supplier business authorization and procurement authorities remain intact',()=>{

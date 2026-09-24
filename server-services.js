@@ -1,32 +1,29 @@
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
+import { marketplaceFetch,startEmbeddedMarketplace,stopEmbeddedMarketplace } from './server-marketplace.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const internalMarketplacePort = Number(process.env.INTERNAL_MARKETPLACE_PORT || 3407);
 const internalOrdersPort = Number(process.env.INTERNAL_ORDERS_PORT || 3307);
 const internalAuthPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '2500kb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
-let child;
+let marketplaceApp;
 let marketplaceReady=false;
 let shuttingDown = false;
 
 function clean(v,max=600){return String(v??'').trim().slice(0,max)}
 function authHeader(req){return req.headers.authorization||''}
 function numberOrNull(v){if(v===''||v==null)return null;const x=Number(v);return Number.isFinite(x)?x:null}
-async function childFetch(path,options={}){return fetch(`http://127.0.0.1:${internalMarketplacePort}${path}`,options)}
 export function isServicesOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
   if(pathname==='/services.css'||pathname==='/services-ui.js')return true;
@@ -46,7 +43,7 @@ export async function servicesFetch(path,options={}){
   if(pathname==='/health'){
     try{
       await pool.query('SELECT 1');
-      const marketplace=await childFetch('/health',{headers:options.headers||{}});
+      const marketplace=await marketplaceFetch('/health',{headers:options.headers||{}});
       const ok=marketplaceReady&&marketplace.ok;
       return new Response(JSON.stringify({ok,db:true,marketplace:ok,version:'0.8.1-services'}),{
         status:ok?200:503,
@@ -60,14 +57,13 @@ export async function servicesFetch(path,options={}){
     }
   }
   if(pathname==='/'||pathname==='/index.html'){
-    const headers={...(options.headers||{}),host:`127.0.0.1:${internalMarketplacePort}`};
-    const r=await childFetch(path,{...options,headers});
+    const r=await marketplaceFetch(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/services.css" />\n</head>')
       .replace('</body>','  <script type="module" src="/services-ui.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
-  return childFetch(path,options);
+  return marketplaceFetch(path,options);
 }
 async function identity(req){const r=await servicesFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)}
@@ -281,32 +277,17 @@ app.patch('/api/admin/service-credentials/:id',body,async(req,res,next)=>{
   }catch(e){next(e)}
 })
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${internalMarketplacePort}`};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:internalMarketplacePort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Services upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
+function proxy(req,res,next){
+  if(!marketplaceApp)return res.status(503).json({error:'Marketplace runtime is not ready'});
+  return marketplaceApp(req,res,next);
 }
 app.use(proxy)
 app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected server error'})})
-function start(){child=spawn(process.execPath,['server-marketplace.js'],{cwd:__dirname,env:{...process.env,PORT:String(internalMarketplacePort),INTERNAL_ORDERS_PORT:String(internalOrdersPort),INTERNAL_AUTH_PORT:String(internalAuthPort),INTERNAL_ACCOUNTING_PORT:String(internalAccountingPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Marketplace child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<100;i++){try{const r=await childFetch('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Marketplace child failed health check')}
 let embeddedStartPromise=null;
 export async function startEmbeddedServices(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      marketplaceApp=await startEmbeddedMarketplace();
       marketplaceReady=true;
       await initDb();
       console.log('Business & Life Local Services mounted in-process');
@@ -320,7 +301,8 @@ async function stopServices(){
   if(shuttingDown)return;
   shuttingDown=true;
   marketplaceReady=false;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  await stopEmbeddedMarketplace().catch(()=>{});
+  marketplaceApp=null;
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedServices(){await stopServices()}
