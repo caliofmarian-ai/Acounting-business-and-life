@@ -3,6 +3,7 @@ import pg from 'pg';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {deliveryFetch,startEmbeddedDelivery,stopEmbeddedDelivery} from './server-delivery.js';
+import {readOrderDetail} from './orders-read-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -152,8 +153,9 @@ app.post('/api/orders/merchant/:id/payment',body,async(req,res,next)=>{
       await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,'awaiting_payment','accepted',$2,'Payment confirmed')`,[order.id,me.account.id]);
     }
     await client.query('COMMIT');
-    const r=await downstreamFetch(`/api/orders/${order.id}`,{headers:{Authorization:authHeader(req)}});
-    res.status(r.status).json(await r.json());
+    const detail=await readOrderDetail(pool,order.id);
+    if(!detail)throw Object.assign(new Error('Order detail unavailable after payment'),{status:500});
+    res.json(detail);
   }catch(e){
     await client.query('ROLLBACK').catch(()=>{});
     next(e);

@@ -31,7 +31,8 @@ const DELIVERY_RUNTIME_V9_WAVE='delivery_runtime_v9';
 const SUPPLIER_RUNTIME_V10_WAVE='supplier_runtime_v10';
 const LOCAL_SERVICES_RUNTIME_V11_WAVE='local_services_runtime_v11';
 const MARKETPLACE_RUNTIME_V12_WAVE='marketplace_runtime_v12';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE]);
+const ORDERS_RUNTIME_V13_WAVE='orders_runtime_v13';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -125,6 +126,17 @@ async function verifyMarketplaceRootComposition(base,path,label){
   const html=await response.text();
   if(response.status!==200)throw new Error(label+' returned an unexpected status.');
   for(const marker of ['/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js','/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js']){
+    const count=html.split(marker).length-1;
+    if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
+  }
+  return true;
+}
+
+async function verifyOrdersRootComposition(base,path,label){
+  const response=await fetch(base+path,{headers:{Accept:'text/html'}});
+  const html=await response.text();
+  if(response.status!==200)throw new Error(label+' returned an unexpected status.');
+  for(const marker of ['/orders.css','/orders-ui.js','/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js','/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js']){
     const count=html.split(marker).length-1;
     if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
   }
@@ -3466,6 +3478,122 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runOrdersRuntimeV13Acceptance({pool,base,secret}){
+  const rootComposition=await verifyOrdersRootComposition(base,'/','Orders Runtime V13 root composition');
+  const indexComposition=await verifyOrdersRootComposition(base,'/index.html','Orders Runtime V13 index composition');
+
+  const marketplace=await runCustomerMarketplaceE2E({
+    pool,base,secret,orderNote:'Controlled QA Orders Runtime V13 Marketplace baseline'
+  });
+  if(marketplace.status!=='PASS')throw new Error('Orders Runtime V13 Marketplace baseline did not pass.');
+
+  const [customer,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Orders Runtime V13 Customer QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Orders Runtime V13 Merchant QA'})
+  ]);
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Orders Runtime V13 Customer QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Orders Runtime V13 Merchant QA'});
+
+  const businessId=Number(marketplace.business_id);
+  if(!businessId)throw new Error('Orders Runtime V13 Marketplace baseline is missing business id.');
+
+  const products=await requestJson(base,`/api/orders/products?business_id=${businessId}`,{token:merchant.token});
+  expectStatus(products,200,'Orders Runtime V13 Orders product read');
+  const product=(Array.isArray(products.json)?products.json:[]).find(x=>x.name==='QA Fish Soup')||(Array.isArray(products.json)?products.json:[])[0];
+  if(!product?.id)throw new Error('Orders Runtime V13 did not find an Orders-owned product fixture.');
+
+  const created=await requestJson(base,'/api/orders',{
+    method:'POST',token:customer.token,
+    body:{
+      business_id:businessId,
+      items:[{product_id:Number(product.id),quantity:1}],
+      fulfilment_method:'pickup',
+      payment_method:'cash',
+      note:'Controlled QA Orders Runtime V13 direct order'
+    }
+  });
+  expectStatus(created,201,'Orders Runtime V13 direct Customer order');
+  const orderId=Number(created.json?.id);
+  const publicToken=clean(created.json?.public_token,200);
+  if(!orderId||!publicToken)throw new Error('Orders Runtime V13 direct order is missing canonical identifiers.');
+
+  let order=created.json;
+  if(order.order_status==='awaiting_customer_presence'){
+    const checkIn=await requestJson(base,`/api/orders/${orderId}/check-in`,{method:'POST',token:customer.token,body:{}});
+    expectStatus(checkIn,200,'Orders Runtime V13 Customer check-in');
+    const presence=await requestJson(base,`/api/orders/merchant/${orderId}/confirm-presence`,{method:'POST',token:merchant.token,body:{manual_confirmation:false}});
+    expectStatus(presence,200,'Orders Runtime V13 Merchant presence confirmation');
+    order=presence.json;
+  }
+  if(order.order_status!=='accepted')throw new Error('Orders Runtime V13 direct order did not reach accepted state.');
+
+  const started=await requestJson(base,`/api/orders/merchant/${orderId}/start`,{method:'POST',token:merchant.token,body:{}});
+  expectStatus(started,200,'Orders Runtime V13 Merchant start');
+  if(started.json?.order_status!=='preparing')throw new Error('Orders Runtime V13 direct order did not start preparation.');
+
+  const ready=await requestJson(base,`/api/orders/merchant/${orderId}/ready`,{method:'POST',token:merchant.token,body:{}});
+  expectStatus(ready,200,'Orders Runtime V13 Merchant ready');
+  if(ready.json?.order_status!=='ready')throw new Error('Orders Runtime V13 direct order did not reach ready.');
+
+  const amount=Number(ready.json?.outstanding_amount??ready.json?.total);
+  if(!(amount>0))throw new Error('Orders Runtime V13 direct order has no payable balance.');
+  const payment=await requestJson(base,`/api/orders/merchant/${orderId}/payment`,{
+    method:'POST',token:merchant.token,
+    body:{amount,account:'cash',method_code:'cash',provider_code:'qa_orders_runtime_v13'}
+  });
+  expectStatus(payment,200,'Orders Runtime V13 Merchant payment');
+  if(payment.json?.payment_status!=='paid')throw new Error('Orders Runtime V13 direct order payment did not settle.');
+
+  const completed=await requestJson(base,`/api/orders/merchant/${orderId}/complete`,{method:'POST',token:merchant.token,body:{}});
+  expectStatus(completed,200,'Orders Runtime V13 Merchant complete');
+  if(completed.json?.order_status!=='completed')throw new Error('Orders Runtime V13 direct order did not complete.');
+
+  const customerDetail=await requestJson(base,`/api/orders/${orderId}`,{token:customer.token});
+  expectStatus(customerDetail,200,'Orders Runtime V13 Customer order detail');
+  if(Number(customerDetail.json?.id)!==orderId||customerDetail.json?.order_status!=='completed')throw new Error('Orders Runtime V13 Customer detail is inconsistent.');
+
+  const history=await requestJson(base,'/api/orders/mine',{token:customer.token});
+  expectStatus(history,200,'Orders Runtime V13 Customer history');
+  if(!(Array.isArray(history.json)?history.json:[]).some(x=>Number(x.id)===orderId&&x.order_status==='completed')){
+    throw new Error('Orders Runtime V13 direct order is missing from Customer history.');
+  }
+
+  const tracker=await requestJson(base,`/api/orders/track/${publicToken}`);
+  expectStatus(tracker,200,'Orders Runtime V13 public tracker');
+  if(Number(tracker.json?.id)!==orderId||tracker.json?.order_status!=='completed')throw new Error('Orders Runtime V13 public tracker is inconsistent.');
+
+  const trust=await requestJson(base,`/api/orders/merchant/customers/${customer.accountId}/trust?business_id=${businessId}`,{token:merchant.token});
+  expectStatus(trust,200,'Orders Runtime V13 Merchant trust read');
+  if(!Number.isFinite(Number(trust.json?.completed_orders)))throw new Error('Orders Runtime V13 trust evidence is missing.');
+
+  for(const [label,token] of [['Customer',customer.token],['Merchant',merchant.token]]){
+    const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token,body:{}});
+    expectStatus(logout,200,'Orders Runtime V13 '+label+' logout');
+  }
+
+  return{
+    status:'PASS',
+    wave:ORDERS_RUNTIME_V13_WAVE,
+    marketplace_v12_baseline:true,
+    root_composition:Boolean(rootComposition),
+    index_composition:Boolean(indexComposition),
+    direct_order_id:orderId,
+    direct_order_creation:true,
+    customer_check_in:true,
+    merchant_presence:true,
+    merchant_start:true,
+    merchant_ready:true,
+    payment_wrappers:true,
+    direct_order_completed:true,
+    customer_detail:true,
+    customer_history:true,
+    public_tracker:true,
+    merchant_trust:true,
+    logout:true
+  };
+}
+
+
 async function runMarketplaceRuntimeV12Acceptance({pool,base,secret}){
   const rootComposition=await verifyMarketplaceRootComposition(base,'/','Marketplace Runtime V12 root composition');
   const indexComposition=await verifyMarketplaceRootComposition(base,'/index.html','Marketplace Runtime V12 index composition');
@@ -3530,7 +3658,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===MARKETPLACE_RUNTIME_V12_WAVE
+    const result=config.wave===ORDERS_RUNTIME_V13_WAVE
+      ?await runOrdersRuntimeV13Acceptance({pool,base,secret:config.secret})
+      :config.wave===MARKETPLACE_RUNTIME_V12_WAVE
       ?await runMarketplaceRuntimeV12Acceptance({pool,base,secret:config.secret})
       :config.wave===LOCAL_SERVICES_RUNTIME_V11_WAVE
       ?await runLocalServicesRuntimeV11Acceptance({pool,base,secret:config.secret})
@@ -3596,5 +3726,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE
 };

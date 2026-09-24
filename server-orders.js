@@ -4,9 +4,10 @@ import pg from 'pg';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
+import { readOrderDetail } from './orders-read-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,11 +17,13 @@ const internalAuthPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
 const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '350kb' });
+const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 const ACCOUNTS = new Set(['cash', 'gcash', 'bank', 'other']);
 const FULFILMENT = new Set(['pickup', 'delivery']);
 const PAYMENT_METHODS = new Set(['cash', 'online']);
 const ORDER_STATUSES = new Set(['awaiting_payment','awaiting_customer_presence','accepted','preparing','ready','handoff_to_delivery','completed','cancelled']);
 let authChild;
+let authReady=false;
 let shuttingDown = false;
 
 function clean(value, max = 300) { return String(value ?? '').trim().slice(0, max); }
@@ -36,6 +39,44 @@ function manilaDateStamp() {
 
 async function internalFetch(path, options = {}) {
   return fetch(`http://127.0.0.1:${internalAuthPort}${path}`, options);
+}
+export function isOrdersOwnedPath(path='',method='GET'){
+  const pathname=String(path||'').split('?')[0];
+  if(pathname==='/orders.css'||pathname==='/orders-ui.js')return true;
+  if(pathname==='/api/orders'||pathname.startsWith('/api/orders/'))return true;
+  return false;
+}
+export async function ordersFetch(path,options={}){
+  const pathname=String(path||'').split('?')[0];
+  const method=String(options.method||'GET').toUpperCase();
+  if(isOrdersOwnedPath(pathname,method)){
+    throw Object.assign(new Error('Orders-owned paths require in-process Orders dispatch'),{
+      status:500,code:'ORDERS_EMBEDDED_DISPATCH_REQUIRED'
+    });
+  }
+  if(pathname==='/health'){
+    try{
+      await pool.query('SELECT 1');
+      const auth=await internalFetch('/health',{headers:options.headers||{}});
+      const ok=authReady&&auth.ok;
+      return new Response(JSON.stringify({ok,db:true,auth:ok,version:'0.5-orders'}),{
+        status:ok?200:503,headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }catch{
+      return new Response(JSON.stringify({ok:false,db:false,auth:false,version:'0.5-orders'}),{
+        status:503,headers:{'content-type':'application/json; charset=utf-8'}
+      });
+    }
+  }
+  if(pathname==='/'||pathname==='/index.html'){
+    const headers={...(options.headers||{}),host:`127.0.0.1:${internalAuthPort}`};
+    const r=await internalFetch(path,{...options,headers});
+    let html=await r.text();
+    html=html.replace('</head>','  <link rel="stylesheet" href="/orders.css" />\n</head>')
+      .replace('</body>','  <script type="module" src="/orders-ui.js"></script>\n</body>');
+    return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
+  }
+  return internalFetch(path,options);
 }
 async function identity(req) {
   const r = await internalFetch('/api/me', { headers: { Authorization: bearer(req) } });
@@ -173,16 +214,7 @@ async function initDb() {
   `);
 }
 
-async function orderDetail(id, client = pool) {
-  const o = await client.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1`,[id]);
-  if (!o.rowCount) return null;
-  const [items,payments,events] = await Promise.all([
-    client.query(`SELECT * FROM order_items WHERE order_id=$1 ORDER BY id`,[id]),
-    client.query(`SELECT id,amount,account,method_code,provider_code,provider_reference,status,created_at FROM order_payments WHERE order_id=$1 ORDER BY created_at,id`,[id]),
-    client.query(`SELECT from_status,to_status,note,created_at FROM order_status_events WHERE order_id=$1 ORDER BY created_at,id`,[id])
-  ]);
-  return {...o.rows[0],items:items.rows,payments:payments.rows,events:events.rows};
-}
+async function orderDetail(id,client=pool){return readOrderDetail(client,id)}
 async function setStatus(client, order, toStatus, actorId, note='') {
   if (!ORDER_STATUSES.has(toStatus)) throw Object.assign(new Error('Unknown order status'),{status:400});
   if (order.order_status === toStatus) return order;
@@ -277,42 +309,81 @@ async function recordPayment(client, order, {amount,account,method_code='cash',p
   return {...order,paid_amount:paid,outstanding_amount:remaining,payment_status:paymentStatus,order_status:status};
 }
 
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const child=await internalFetch('/health').then(r=>r.ok).catch(()=>false);res.status(child?200:503).json({ok:child,db:true,auth:child,version:'0.4-orders'})}catch{res.status(503).json({ok:false,db:false,auth:false,version:'0.4-orders'})}});
+app.get('/health',async(req,res)=>{const r=await ordersFetch('/health',{headers:req.headers});const payload=await r.json().catch(()=>({ok:false,db:false,auth:false,version:'0.5-orders'}));res.status(r.status).json(payload)});
 
 app.get('/orders-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-ui.js'),'utf8')));
 app.get('/orders.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','orders.css'),'utf8')));
-async function proxyHtml(req,res){const r=await internalFetch(req.path,{headers:{...req.headers,host:`127.0.0.1:${internalAuthPort}`}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/orders.css" />\n</head>').replace('</body>','  <script type="module" src="/orders-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function proxyHtml(req,res){const r=await ordersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 
 app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);const{rows}=await pool.query(`SELECT p.id,p.name,p.category,p.selling_price,p.active,COALESCE(SUM(r.quantity*i.unit_cost),0) unit_cost FROM products p LEFT JOIN recipes r ON r.product_id=p.id LEFT JOIN inventory i ON i.id=r.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 AND p.active=TRUE GROUP BY p.id ORDER BY p.category,p.name`,[business.id]);res.json(rows)}catch(e){next(e)}});
 
-app.post('/api/orders',jsonBody,async(req,res,next)=>{try{const me=await requireCustomer(req);const a=me.account;const result=await createOrder({businessId:Number(req.body?.business_id),customerAccountId:Number(a.id),customerName:a.display_name,customerContact:a.email||a.phone,items:req.body?.items,fulfilmentMethod:req.body?.fulfilment_method,paymentMethod:req.body?.payment_method,deliveryAddress:req.body?.delivery_address||a.address,note:req.body?.note,preparationEtaMinutes:req.body?.preparation_eta_minutes});res.status(201).json(result)}catch(e){next(e)}});
+app.post('/api/orders',body,async(req,res,next)=>{try{const me=await requireCustomer(req);const a=me.account;const result=await createOrder({businessId:Number(req.body?.business_id),customerAccountId:Number(a.id),customerName:a.display_name,customerContact:a.email||a.phone,items:req.body?.items,fulfilmentMethod:req.body?.fulfilment_method,paymentMethod:req.body?.payment_method,deliveryAddress:req.body?.delivery_address||a.address,note:req.body?.note,preparationEtaMinutes:req.body?.preparation_eta_minutes});res.status(201).json(result)}catch(e){next(e)}});
 app.get('/api/orders/mine',async(req,res,next)=>{try{const me=await requireCustomer(req);const{rows}=await pool.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.customer_account_id=$1 ORDER BY o.created_at DESC LIMIT 100`,[me.account.id]);res.json(rows)}catch(e){next(e)}});
 app.get('/api/orders/:id',async(req,res,next)=>{try{const me=await identity(req);const order=await orderDetail(Number(req.params.id));if(!order)return res.status(404).json({error:'Order not found'});const merchant=businessFor(me,order.business_id);if(Number(order.customer_account_id)!==Number(me.account.id)&&!merchant)return res.status(403).json({error:'Not allowed'});res.json(order)}catch(e){next(e)}});
-app.post('/api/orders/:id/check-in',jsonBody,async(req,res,next)=>{try{const me=await requireCustomer(req);const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount) throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];if(Number(o.customer_account_id)!==Number(me.account.id)) throw Object.assign(new Error('Not allowed'),{status:403});if(o.order_status!=='awaiting_customer_presence') throw Object.assign(new Error('This order is not waiting for customer presence'),{status:409});await client.query(`UPDATE orders SET customer_checked_in_at=COALESCE(customer_checked_in_at,NOW()),updated_at=NOW() WHERE id=$1`,[id]);await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/:id/check-in',body,async(req,res,next)=>{try{const me=await requireCustomer(req);const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount) throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];if(Number(o.customer_account_id)!==Number(me.account.id)) throw Object.assign(new Error('Not allowed'),{status:403});if(o.order_status!=='awaiting_customer_presence') throw Object.assign(new Error('This order is not waiting for customer presence'),{status:409});await client.query(`UPDATE orders SET customer_checked_in_at=COALESCE(customer_checked_in_at,NOW()),updated_at=NOW() WHERE id=$1`,[id]);await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
 
 app.get('/api/orders/track/:token',async(req,res,next)=>{try{const r=await pool.query(`SELECT o.id,o.order_number,o.business_id,b.name business_name,o.fulfilment_method,o.order_status,o.payment_status,o.payment_method,o.currency_code,o.subtotal,o.delivery_fee,o.total,o.paid_amount,o.outstanding_amount,o.preparation_eta_minutes,o.accepted_at,o.preparing_at,o.expected_ready_at,o.ready_at,o.handoff_at,o.completed_at,o.created_at FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.public_token=$1`,[clean(req.params.token,100)]);if(!r.rowCount)return res.status(404).json({error:'Order not found'});const o=r.rows[0];const items=await pool.query(`SELECT name_snapshot,quantity,unit_price_snapshot,line_total FROM order_items WHERE order_id=$1 ORDER BY id`,[o.id]);res.json({...o,items:items.rows})}catch(e){next(e)}});
 
 app.get('/api/orders/merchant/list',async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.query.business_id||1));const{rows}=await pool.query(`SELECT o.*,a.display_name customer_account_name FROM orders o LEFT JOIN accounts a ON a.id=o.customer_account_id WHERE o.business_id=$1 ORDER BY CASE o.order_status WHEN 'awaiting_customer_presence' THEN 1 WHEN 'awaiting_payment' THEN 2 WHEN 'accepted' THEN 3 WHEN 'preparing' THEN 4 WHEN 'ready' THEN 5 ELSE 9 END,o.created_at DESC LIMIT 200`,[business.id]);res.json(rows)}catch(e){next(e)}});
-app.post('/api/orders/merchant/create',jsonBody,async(req,res,next)=>{try{const{me,business}=await requireMerchant(req,Number(req.body?.business_id||1));const customerId=req.body?.customer_account_id?Number(req.body.customer_account_id):null;let name=clean(req.body?.customer_name,120),contact=clean(req.body?.customer_contact,160);if(customerId){const c=await pool.query(`SELECT display_name,email,phone FROM accounts WHERE id=$1`,[customerId]);if(!c.rowCount)return res.status(404).json({error:'Customer account not found'});name=c.rows[0].display_name;contact=c.rows[0].email||c.rows[0].phone}const result=await createOrder({businessId:Number(business.id),customerAccountId:customerId,customerName:name||'Walk-in customer',customerContact:contact,items:req.body?.items,fulfilmentMethod:req.body?.fulfilment_method||'pickup',paymentMethod:req.body?.payment_method||'cash',deliveryAddress:req.body?.delivery_address,note:req.body?.note,preparationEtaMinutes:req.body?.preparation_eta_minutes,counterPresence:req.body?.counter_presence!==false});res.status(201).json(result)}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/confirm-presence',jsonBody,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.order_status!=='awaiting_customer_presence')throw Object.assign(new Error('Order is not waiting for presence'),{status:409});if(!o.customer_checked_in_at&&!req.body?.manual_confirmation)throw Object.assign(new Error('Customer has not checked in; use explicit manual confirmation if physically verified'),{status:409});await client.query(`UPDATE orders SET presence_confirmed_at=COALESCE(presence_confirmed_at,NOW()) WHERE id=$1`,[id]);await setStatus(client,o,'accepted',me.account.id,'Customer presence confirmed');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/start',jsonBody,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});let o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.order_status==='awaiting_payment')throw Object.assign(new Error('Payment must be confirmed before preparation'),{status:409});if(o.order_status==='awaiting_customer_presence'&&!(o.remote_cash_eligible&&o.remote_cash_allowed))throw Object.assign(new Error('Customer presence must be confirmed before preparation'),{status:409});if(!['accepted','awaiting_customer_presence'].includes(o.order_status))throw Object.assign(new Error('Order cannot start from its current status'),{status:409});await consumeStock(client,o);o=await setStatus(client,o,'preparing',me.account.id,'Preparation started');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/ready',jsonBody,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.order_status!=='preparing')throw Object.assign(new Error('Only a preparing order can be marked ready'),{status:409});await setStatus(client,o,'ready',me.account.id,'Order ready');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/handoff',jsonBody,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.fulfilment_method!=='delivery'||o.order_status!=='ready')throw Object.assign(new Error('Only a ready delivery order can be handed off'),{status:409});await setStatus(client,o,'handoff_to_delivery',me.account.id,'Ready for delivery handoff');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/payment',jsonBody,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);await recordPayment(client,o,{amount:req.body?.amount,account:req.body?.account,method_code:req.body?.method_code||o.payment_method,provider_code:req.body?.provider_code||'manual_merchant_confirmation',provider_reference:req.body?.provider_reference,receiverId:me.account.id});await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/complete',jsonBody,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.fulfilment_method!=='pickup'||o.order_status!=='ready')throw Object.assign(new Error('Only a ready pickup order can be completed here'),{status:409});if(Number(o.outstanding_amount)>0.001&&!req.body?.allow_credit)throw Object.assign(new Error('Record payment or explicitly leave the balance as credit'),{status:409});await setStatus(client,o,'completed',me.account.id,req.body?.allow_credit?'Completed with receivable':'Collected');const done=await client.query(`SELECT o.completed_at,b.territory_id FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1`,[o.id]);await recordMonetizableCompletion(client,{serviceScope:'marketplace',subjectType:'business',subjectId:o.business_id,sourceType:'order',sourceId:o.id,territoryId:done.rows[0]?.territory_id,completedAt:done.rows[0]?.completed_at,grossValue:o.subtotal,currencyCode:o.currency_code||'PHP'});await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/cancel',jsonBody,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});await reverseStock(client,o);await client.query(`UPDATE orders SET cancellation_reason=$1 WHERE id=$2`,[clean(req.body?.reason,300),id]);await setStatus(client,o,'cancelled',me.account.id,clean(req.body?.reason,300)||'Cancelled');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/create',body,async(req,res,next)=>{try{const{me,business}=await requireMerchant(req,Number(req.body?.business_id||1));const customerId=req.body?.customer_account_id?Number(req.body.customer_account_id):null;let name=clean(req.body?.customer_name,120),contact=clean(req.body?.customer_contact,160);if(customerId){const c=await pool.query(`SELECT display_name,email,phone FROM accounts WHERE id=$1`,[customerId]);if(!c.rowCount)return res.status(404).json({error:'Customer account not found'});name=c.rows[0].display_name;contact=c.rows[0].email||c.rows[0].phone}const result=await createOrder({businessId:Number(business.id),customerAccountId:customerId,customerName:name||'Walk-in customer',customerContact:contact,items:req.body?.items,fulfilmentMethod:req.body?.fulfilment_method||'pickup',paymentMethod:req.body?.payment_method||'cash',deliveryAddress:req.body?.delivery_address,note:req.body?.note,preparationEtaMinutes:req.body?.preparation_eta_minutes,counterPresence:req.body?.counter_presence!==false});res.status(201).json(result)}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/confirm-presence',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.order_status!=='awaiting_customer_presence')throw Object.assign(new Error('Order is not waiting for presence'),{status:409});if(!o.customer_checked_in_at&&!req.body?.manual_confirmation)throw Object.assign(new Error('Customer has not checked in; use explicit manual confirmation if physically verified'),{status:409});await client.query(`UPDATE orders SET presence_confirmed_at=COALESCE(presence_confirmed_at,NOW()) WHERE id=$1`,[id]);await setStatus(client,o,'accepted',me.account.id,'Customer presence confirmed');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/start',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});let o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.order_status==='awaiting_payment')throw Object.assign(new Error('Payment must be confirmed before preparation'),{status:409});if(o.order_status==='awaiting_customer_presence'&&!(o.remote_cash_eligible&&o.remote_cash_allowed))throw Object.assign(new Error('Customer presence must be confirmed before preparation'),{status:409});if(!['accepted','awaiting_customer_presence'].includes(o.order_status))throw Object.assign(new Error('Order cannot start from its current status'),{status:409});await consumeStock(client,o);o=await setStatus(client,o,'preparing',me.account.id,'Preparation started');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/ready',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.order_status!=='preparing')throw Object.assign(new Error('Only a preparing order can be marked ready'),{status:409});await setStatus(client,o,'ready',me.account.id,'Order ready');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/handoff',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.fulfilment_method!=='delivery'||o.order_status!=='ready')throw Object.assign(new Error('Only a ready delivery order can be handed off'),{status:409});await setStatus(client,o,'handoff_to_delivery',me.account.id,'Ready for delivery handoff');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/payment',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);await recordPayment(client,o,{amount:req.body?.amount,account:req.body?.account,method_code:req.body?.method_code||o.payment_method,provider_code:req.body?.provider_code||'manual_merchant_confirmation',provider_reference:req.body?.provider_reference,receiverId:me.account.id});await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/complete',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.fulfilment_method!=='pickup'||o.order_status!=='ready')throw Object.assign(new Error('Only a ready pickup order can be completed here'),{status:409});if(Number(o.outstanding_amount)>0.001&&!req.body?.allow_credit)throw Object.assign(new Error('Record payment or explicitly leave the balance as credit'),{status:409});await setStatus(client,o,'completed',me.account.id,req.body?.allow_credit?'Completed with receivable':'Collected');const done=await client.query(`SELECT o.completed_at,b.territory_id FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1`,[o.id]);await recordMonetizableCompletion(client,{serviceScope:'marketplace',subjectType:'business',subjectId:o.business_id,sourceType:'order',sourceId:o.id,territoryId:done.rows[0]?.territory_id,completedAt:done.rows[0]?.completed_at,grossValue:o.subtotal,currencyCode:o.currency_code||'PHP'});await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/cancel',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});await reverseStock(client,o);await client.query(`UPDATE orders SET cancellation_reason=$1 WHERE id=$2`,[clean(req.body?.reason,300),id]);await setStatus(client,o,'cancelled',me.account.id,clean(req.body?.reason,300)||'Cancelled');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
 app.get('/api/orders/merchant/customers/:customerId/trust',async(req,res,next)=>{try{const customerId=Number(req.params.customerId);const{business}=await requireMerchant(req,Number(req.query.business_id||1));res.json(await trustInfo(Number(business.id),customerId))}catch(e){next(e)}});
-app.put('/api/orders/merchant/customers/:customerId/trust',jsonBody,async(req,res,next)=>{try{const customerId=Number(req.params.customerId);const{business}=await requireMerchant(req,Number(req.body?.business_id||1));const info=await trustInfo(Number(business.id),customerId);const allow=Boolean(req.body?.allow_remote_cash_prep);if(allow&&!info.eligible) return res.status(409).json({error:'Customer needs 5 successful completed orders with this Merchant before remote cash preparation can be enabled.',completed_orders:info.completed_orders});await pool.query(`INSERT INTO merchant_customer_settings(business_id,customer_account_id,allow_remote_cash_prep,updated_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(business_id,customer_account_id) DO UPDATE SET allow_remote_cash_prep=EXCLUDED.allow_remote_cash_prep,updated_at=NOW()`,[business.id,customerId,allow]);res.json(await trustInfo(Number(business.id),customerId))}catch(e){next(e)}});
+app.put('/api/orders/merchant/customers/:customerId/trust',body,async(req,res,next)=>{try{const customerId=Number(req.params.customerId);const{business}=await requireMerchant(req,Number(req.body?.business_id||1));const info=await trustInfo(Number(business.id),customerId);const allow=Boolean(req.body?.allow_remote_cash_prep);if(allow&&!info.eligible) return res.status(409).json({error:'Customer needs 5 successful completed orders with this Merchant before remote cash preparation can be enabled.',completed_orders:info.completed_orders});await pool.query(`INSERT INTO merchant_customer_settings(business_id,customer_account_id,allow_remote_cash_prep,updated_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(business_id,customer_account_id) DO UPDATE SET allow_remote_cash_prep=EXCLUDED.allow_remote_cash_prep,updated_at=NOW()`,[business.id,customerId,allow]);res.json(await trustInfo(Number(business.id),customerId))}catch(e){next(e)}});
 
-function proxy(req,res){const headers={...req.headers,host:`127.0.0.1:${internalAuthPort}`};const up=http.request({hostname:'127.0.0.1',port:internalAuthPort,path:req.originalUrl,method:req.method,headers},ur=>{res.statusCode=ur.statusCode||502;for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);ur.pipe(res)});up.on('error',e=>{console.error('Auth proxy error',e);if(!res.headersSent)res.status(502).json({error:'Application service unavailable'})});req.pipe(up)}
+function proxy(req,res){
+  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
+  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
+  const headers={...req.headers,host:`127.0.0.1:${internalAuthPort}`};
+  if(payload){headers['content-length']=String(payload.length);delete headers['transfer-encoding'];}
+  const up=http.request({hostname:'127.0.0.1',port:internalAuthPort,path:req.originalUrl,method:req.method,headers},ur=>{
+    res.statusCode=ur.statusCode||502;
+    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
+    ur.pipe(res);
+  });
+  up.on('error',e=>{console.error('Auth proxy error',e);if(!res.headersSent)res.status(502).json({error:'Application service unavailable'})});
+  if(payload)up.end(payload);else req.pipe(up);
+}
 app.use(proxy);
 
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;const body={error:err.status?err.message:'Unexpected server error'};if(err.shortages)body.shortages=err.shortages;res.status(err.status||500).json(body)});
 
 function startAuth(){authChild=spawn(process.execPath,['server-auth.js'],{cwd:__dirname,env:{...process.env,PORT:String(internalAuthPort),INTERNAL_ACCOUNTING_PORT:String(internalAccountingPort)},stdio:'inherit'});authChild.on('exit',code=>{if(!shuttingDown){console.error(`Auth child exited ${code}`);process.exit(code||1)}})}
 async function waitAuth(){for(let i=0;i<60;i++){try{const r=await internalFetch('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Auth child failed health check')}
-async function shutdown(signal){if(shuttingDown)return;shuttingDown=true;console.log(`Received ${signal}`);if(authChild&&!authChild.killed)authChild.kill('SIGTERM');await pool.end().catch(()=>{});process.exit(0)}
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-
-startAuth();waitAuth().then(initDb).then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life order server listening on ${port}`))).catch(e=>{console.error(e);process.exit(1)});
+let embeddedStartPromise=null;
+export async function startEmbeddedOrders(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      startAuth();
+      await waitAuth();
+      authReady=true;
+      await initDb();
+      console.log('Business & Life Orders mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
+}
+async function stopOrders(){
+  if(shuttingDown)return;
+  shuttingDown=true;
+  authReady=false;
+  if(authChild&&!authChild.killed)authChild.kill('SIGTERM');
+  await pool.end().catch(()=>{});
+}
+export async function stopEmbeddedOrders(){await stopOrders()}
+async function shutdown(signal){console.log(`Received ${signal}`);await stopOrders();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedOrders()
+    .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life order server listening on ${port}`)))
+    .catch(e=>{console.error(e);process.exit(1)});
+}
