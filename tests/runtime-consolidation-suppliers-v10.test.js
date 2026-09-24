@@ -28,12 +28,16 @@ test('Delivery root composition delegates to embedded Suppliers without stale lo
   assert.doesNotMatch(delivery,/host:`127\.0\.0\.1:\$\{upstreamPort\}`/);
 });
 
-test('Suppliers remains rollback-capable over Local Services on 3507',()=>{
-  assert.match(suppliers,/spawn\(process\.execPath,\['server-services\.js'\]/);
-  assert.match(suppliers,/INTERNAL_SERVICES_PORT \|\| 3507/);
-  assert.match(suppliers,/Services child failed health check/);
-  assert.match(suppliers,/servicesReady=true/);
-  assert.match(services,/server-marketplace\.js/);
+test('Suppliers remains standalone rollback-capable while Local Services is embedded beneath it',()=>{
+  assert.match(suppliers,/startEmbeddedServices/);
+  assert.match(suppliers,/stopEmbeddedServices/);
+  assert.match(suppliers,/servicesApp=await startEmbeddedServices\(\)/);
+  assert.match(suppliers,/return servicesApp\(req,res,next\)/);
+  assert.doesNotMatch(suppliers,/INTERNAL_SERVICES_PORT/);
+  assert.doesNotMatch(suppliers,/\|\|\s*3507/);
+  assert.doesNotMatch(suppliers,/spawn\(process\.execPath,\['server-services\.js'\]/);
+  assert.match(services,/spawn\(process\.execPath,\['server-marketplace\.js'\]/);
+  assert.match(services,/INTERNAL_MARKETPLACE_PORT \|\| 3407/);
 });
 
 test('Supplier fetch facade refuses to bypass Supplier-owned routes',()=>{
@@ -77,13 +81,14 @@ test('Supplier V2 through V5 modules remain registered before fallback',()=>{
   ])assert.ok(suppliers.includes(marker),`missing Supplier module registration: ${marker}`);
 });
 
-test('parsed JSON is preserved at the Suppliers to Local Services boundary',()=>{
+test('parsed JSON is preserved below Suppliers at the Local Services to Marketplace boundary',()=>{
   assert.match(suppliers,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(suppliers,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(suppliers,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(suppliers,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(suppliers,/delete headers\['transfer-encoding'\]/);
-  assert.match(suppliers,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
+  assert.match(services,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(services,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(services,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(services,/delete headers\['transfer-encoding'\]/);
+  assert.match(services,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
 });
 
 test('Supplier business authorization and procurement authorities remain intact',()=>{
