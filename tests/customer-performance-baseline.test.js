@@ -6,6 +6,11 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const shell=read('public/shell.js');
 const qa=read('qa-acceptance.js');
 const notifications=read('public/notifications-ui.js');
+const ordersServer=read('server-orders.js');
+const deliveryServer=read('server-delivery.js');
+const servicesServer=read('server-services.js');
+const paymentsServer=read('server-payments.js');
+const moneyCore=read('profile-money-core.js');
 
 test('Customer Home already loads its four domain sources in parallel',()=>{
   const start=shell.indexOf('async function loadCustomerHomeData');
@@ -70,4 +75,73 @@ test('canonical Customer performance baseline records switch parallel paths timi
   assert.match(qa,/delivery_payload_bytes/);
   assert.match(qa,/services_payload_bytes/);
   assert.match(qa,/money_payload_bytes/);
+});
+
+
+test('optimized Customer Home requests slim domain views without changing detailed screens',()=>{
+  const start=shell.indexOf('async function loadCustomerHomeData');
+  const end=shell.indexOf('function customerHomeActivities',start);
+  const block=shell.slice(start,end);
+  for(const path of [
+    '/api/orders/mine?view=home',
+    '/api/delivery/mine?view=home',
+    '/api/services/jobs/mine?view=home',
+    '/api/profile-money/customer?view=home'
+  ])assert.ok(block.includes(path),path+' must be the Customer Home read');
+  assert.match(block,/Promise\.allSettled\(\[/);
+});
+
+test('Orders Home view returns active work plus only three recent completed summaries',()=>{
+  const start=ordersServer.indexOf("app.get('/api/orders/mine'");
+  const end=ordersServer.indexOf("app.get('/api/orders/:id'",start);
+  const block=ordersServer.slice(start,end);
+  assert.match(block,/String\(req\.query\.view\|\|''\)==='home'/);
+  assert.match(block,/order_status NOT IN \('completed','cancelled'\)/);
+  assert.match(block,/order_status='completed'/);
+  assert.match(block,/LIMIT 12/);
+  assert.match(block,/LIMIT 3/);
+  assert.doesNotMatch(block,/SELECT o\.\*/);
+});
+
+test('Delivery Home view excludes closed history and sensitive live-tracking fields',()=>{
+  const start=deliveryServer.indexOf("app.get('/api/delivery/mine'");
+  const end=deliveryServer.indexOf("app.get('/api/delivery/:id/live'",start);
+  const block=deliveryServer.slice(start,end);
+  assert.match(block,/String\(req\.query\.view\|\|''\)==='home'/);
+  assert.match(block,/status NOT IN \('delivered','failed','cancelled'\)/);
+  const home=block.slice(block.indexOf("if(String(req.query.view"));
+  const homeEnd=home.indexOf("const{rows}=await pool.query",home.indexOf("return res.json(rows)")+1);
+  assert.doesNotMatch(home.slice(0,homeEnd>0?homeEnd:home.length),/completion_code|last_lat|last_lng/);
+});
+
+test('Local Services Home view is Customer-scoped and keeps only active plus recent confirmed jobs',()=>{
+  const start=servicesServer.indexOf("app.get('/api/services/jobs/mine'");
+  const end=servicesServer.indexOf("app.post('/api/service-provider/jobs/:id/quote'",start);
+  const block=servicesServer.slice(start,end);
+  assert.match(block,/String\(req\.query\.view\|\|''\)==='home'/);
+  assert.match(block,/Customer profile required/);
+  assert.match(block,/j\.customer_account_id=\$1/);
+  assert.match(block,/NOT\(j\.status='completed' AND j\.customer_confirmed_at IS NOT NULL\)/);
+  assert.match(block,/j\.status='completed' AND j\.customer_confirmed_at IS NOT NULL/);
+  assert.match(block,/LIMIT 12/);
+  assert.match(block,/LIMIT 3/);
+});
+
+test('Customer Money Home view excludes detailed ledger banking and payment history',()=>{
+  assert.match(paymentsServer,/customerMoneyHomeSnapshot/);
+  assert.match(paymentsServer,/role==='customer'&&String\(req\.query\.view\|\|''\)==='home'/);
+  assert.match(moneyCore,/export async function customerMoneyHomeSnapshot/);
+  const start=moneyCore.indexOf('export async function customerMoneyHomeSnapshot');
+  const end=moneyCore.indexOf('export async function customerMoneySnapshot',start);
+  const block=moneyCore.slice(start,end);
+  assert.doesNotMatch(block,/recent_orders|recent_payments|account_money|financial_accounts|budgets/);
+});
+
+test('post-optimization Customer acceptance measures slim payloads against the same first-open shape',()=>{
+  assert.match(qa,/CUSTOMER_PERFORMANCE_RUNTIME_WAVE='customer_performance_runtime_v1'/);
+  assert.match(qa,/first_open_request_count:5/);
+  assert.match(qa,/parallel_home_request_count:4/);
+  assert.match(qa,/home_payload_bytes_total:totalPayload/);
+  assert.match(qa,/slim_home_reads:true/);
+  assert.match(qa,/deferred_history_excluded:true/);
 });
