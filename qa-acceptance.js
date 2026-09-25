@@ -3559,6 +3559,12 @@ async function runMerchantPerformanceRuntimeAcceptance({pool,base,secret}){
     throw new Error('Merchant Performance runtime workspace metadata is incomplete.');
   }
 
+  const deferredFinance=await timed('/api/accounting/finance-overview');
+  expectStatus(deferredFinance,200,'Merchant Performance runtime deferred finance overview');
+  if(Number(deferredFinance.json?.business?.id)!==businessId||deferredFinance.json?.role!=='merchant'){
+    throw new Error('Merchant Performance runtime deferred finance scope is invalid.');
+  }
+
   const logoutMerchant=await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
   expectStatus(logoutMerchant,200,'Merchant Performance runtime Merchant logout');
   const logoutAdmin=await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
@@ -3587,6 +3593,9 @@ async function runMerchantPerformanceRuntimeAcceptance({pool,base,secret}){
     inventory_attention_total:Number(today.json?.inventory?.attention_total||0),
     supplier_attention_total:Number(today.json?.supplier?.attention_total||0),
     catalog_attention_total:Number(today.json?.catalog?.attention_total||0),
+    deferred_finance_ms:deferredFinance.duration_ms,
+    deferred_finance_payload_bytes:deferredFinance.payload_bytes,
+    deferred_finance_validated:true,
     workspace_metadata_reused:true,
     full_finance_overview_deferred:true,
     deep_views_deferred:true,
