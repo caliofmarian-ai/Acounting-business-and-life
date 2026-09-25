@@ -101,6 +101,7 @@ test('Orders Home view returns active work plus only three recent completed summ
   assert.match(home,/order_status='completed'/);
   assert.match(home,/LIMIT 12/);
   assert.match(home,/LIMIT 3/);
+  assert.equal((home.match(/pool\.query\(/g)||[]).length,1);
   assert.doesNotMatch(home,/SELECT o\.\*/);
   const fallback=ordersServer.slice(homeEnd,ordersServer.indexOf("app.get('/api/orders/:id'",routeStart));
   assert.match(fallback,/SELECT o\.\*/);
@@ -128,6 +129,10 @@ test('Local Services Home view is Customer-scoped and keeps only active plus rec
   assert.match(block,/j\.status='completed' AND j\.customer_confirmed_at IS NOT NULL/);
   assert.match(block,/LIMIT 12/);
   assert.match(block,/LIMIT 3/);
+  const home=block.slice(block.indexOf("if(String(req.query.view"));
+  const homeEnd=home.indexOf("const{rows}=await pool.query",home.indexOf("return res.json(rows)")+1);
+  const homeBranch=home.slice(0,homeEnd>0?homeEnd:home.length);
+  assert.equal((homeBranch.match(/pool\.query\(/g)||[]).length,1);
 });
 
 test('Customer Money Home view excludes detailed ledger banking and payment history',()=>{
