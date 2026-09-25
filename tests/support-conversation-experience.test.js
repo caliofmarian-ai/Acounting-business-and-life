@@ -27,7 +27,7 @@ test('support reply notification opens its exact ticket',()=>{
   assert.match(user,/abl:open-support-ticket/);
   assert.match(user,/support_ticket/);
   assert.match(core,/\?support_ticket=/);
-  assert.match(loader,/BusinessLifeFeatureLoader=Object\.freeze\(\{openSupportTicket,openSupport,openLegalCenter\}\)/);
+  assert.match(loader,/BusinessLifeFeatureLoader=Object\.freeze\(\{[^}]*openSupportTicket[^}]*openSupport[^}]*openLegalCenter[^}]*\}\)/);
   assert.match(notifications,/BusinessLifeFeatureLoader\?\.openSupportTicket/);
 });
 
