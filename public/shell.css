@@ -303,3 +303,209 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
   .accountProfileGrid .accountHomeAction{transition:none}
   .accountProfileGrid .accountHomeAction:hover{transform:none}
 }
+
+
+/* Visual System V2A — shared profile home polish — #456 */
+.customerHomePanel,
+.courierHomePanel,
+.serviceProviderPanel{
+  --profile-ui-accent:#0a7c66;
+  --profile-ui-accent-soft:#e7f6f1;
+  --profile-ui-tint:#f5fbf9;
+  --profile-ui-glow:rgba(10,124,102,.10)
+}
+.customerHomePanel{--profile-ui-accent:#08765f;--profile-ui-accent-soft:#dcf3ea;--profile-ui-tint:#f2fbf8;--profile-ui-glow:rgba(8,118,95,.11)}
+.courierHomePanel{--profile-ui-accent:#286aa8;--profile-ui-accent-soft:#dfedfb;--profile-ui-tint:#f3f8fe;--profile-ui-glow:rgba(40,106,168,.11)}
+.serviceProviderPanel{--profile-ui-accent:#91547f;--profile-ui-accent-soft:#f5e2ef;--profile-ui-tint:#fff6fb;--profile-ui-glow:rgba(145,84,127,.11)}
+
+.customerHomeSection,
+.courierHomeSection,
+.serviceProviderHomeSection{
+  position:relative;
+  overflow:hidden;
+  border-color:#dce6e3;
+  border-radius:21px;
+  background:linear-gradient(150deg,#fff 0%,#fff 72%,var(--profile-ui-tint) 100%);
+  box-shadow:0 10px 30px rgba(23,35,60,.065)
+}
+.customerHomeSection::before,
+.courierHomeSection::before,
+.serviceProviderHomeSection::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:3px;
+  background:linear-gradient(180deg,var(--profile-ui-accent),transparent 92%);
+  opacity:.9
+}
+.customerHomeSection>.hubSectionTitle,
+.courierHomeSection>.hubSectionTitle,
+.serviceProviderHomeSection>.hubSectionTitle{
+  padding-left:2px
+}
+.customerHomeSection>.hubSectionTitle h2,
+.courierHomeSection>.hubSectionTitle h2,
+.serviceProviderHomeSection>.hubSectionTitle h2{
+  font-size:15.5px;
+  letter-spacing:-.015em
+}
+
+.customerActionCard,
+.customerShopCard,
+.serviceProviderActionCard{
+  position:relative;
+  overflow:hidden;
+  border-color:#dce6e3;
+  border-radius:20px;
+  background:linear-gradient(150deg,#fff 0%,#fff 62%,var(--profile-ui-tint) 100%);
+  box-shadow:0 9px 26px rgba(23,35,60,.06);
+  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease
+}
+.customerActionCard::after,
+.customerShopCard::after,
+.serviceProviderActionCard::after{
+  content:"";
+  position:absolute;
+  width:92px;
+  height:92px;
+  right:-46px;
+  bottom:-47px;
+  border-radius:50%;
+  background:var(--profile-ui-glow);
+  pointer-events:none
+}
+.customerActionCard:hover,
+.customerShopCard:hover,
+.serviceProviderActionCard:hover{
+  transform:translateY(-2px);
+  border-color:var(--profile-ui-accent);
+  box-shadow:0 14px 30px rgba(23,35,60,.10)
+}
+.customerActionCard:focus-visible,
+.customerShopCard:focus-visible,
+.serviceProviderActionCard:focus-visible,
+.customerContinueCard:focus-visible,
+.customerRecentRow:focus-visible,
+.serviceProviderHomeWorkRow:focus-visible,
+.courierCurrentWork button:focus-visible{
+  outline:3px solid var(--profile-ui-accent);
+  outline-offset:2px
+}
+.customerActionCard>span,
+.customerShopCard>span,
+.serviceProviderActionCard>span{
+  width:43px;
+  height:43px;
+  border-radius:14px;
+  display:grid;
+  place-items:center;
+  background:var(--profile-ui-accent-soft);
+  box-shadow:0 6px 16px var(--profile-ui-glow);
+  font-size:21px;
+  position:relative;
+  z-index:1
+}
+.customerActionCard strong,
+.customerShopCard strong,
+.serviceProviderActionCard strong{
+  font-size:14px;
+  letter-spacing:-.012em;
+  position:relative;
+  z-index:1
+}
+.customerActionCard small,
+.customerShopCard small,
+.serviceProviderActionCard small{
+  position:relative;
+  z-index:1
+}
+
+.customerContinueCard,
+.customerRecentRow,
+.serviceProviderHomeWorkRow,
+.courierCurrentWork{
+  border-color:#dde7e4;
+  border-radius:16px;
+  background:linear-gradient(145deg,#fbfdfc,var(--profile-ui-tint));
+  box-shadow:0 4px 14px rgba(23,35,60,.035)
+}
+.customerContinueIcon,
+.customerRecentRow>span:first-child,
+.serviceProviderHomeWorkIcon{
+  width:36px;
+  height:36px;
+  border-radius:12px;
+  display:grid;
+  place-items:center;
+  background:var(--profile-ui-accent-soft);
+  font-size:18px!important
+}
+.customerContinueCard b,
+.customerRecentRow b,
+.serviceProviderHomeWorkRow b{
+  width:30px;
+  height:30px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  background:#fff;
+  box-shadow:0 4px 12px rgba(23,35,60,.06);
+  color:var(--profile-ui-accent)
+}
+
+.customerMoneySnapshot>div,
+.courierMoneySnapshot>div,
+.serviceProviderMoneySnapshot>div{
+  border-color:#dfe8e5;
+  border-radius:15px;
+  background:linear-gradient(145deg,#fff,var(--profile-ui-tint));
+  box-shadow:0 5px 16px rgba(23,35,60,.035)
+}
+.customerMoneySnapshot strong,
+.courierMoneySnapshot strong,
+.serviceProviderMoneySnapshot strong{
+  color:var(--bl-text-primary);
+  font-size:13.5px
+}
+.customerMoneyHome .hubSectionTitle button,
+.courierHomeSection .hubSectionTitle button,
+.serviceProviderMoneyHome .hubSectionTitle button{
+  background:var(--profile-ui-accent-soft);
+  color:var(--profile-ui-accent);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.55)
+}
+
+.customerSettingsLink,
+.courierSettingsLink,
+.serviceProviderSettingsLink{
+  border-color:#dce6e3;
+  background:linear-gradient(145deg,#fff,var(--profile-ui-tint));
+  box-shadow:0 7px 20px rgba(23,35,60,.045)
+}
+.customerSettingsLink b,
+.courierSettingsLink b,
+.serviceProviderSettingsLink b{
+  color:var(--profile-ui-accent)
+}
+
+@media(max-width:420px){
+  .customerHomeSection,
+  .courierHomeSection,
+  .serviceProviderHomeSection{border-radius:18px}
+  .customerActionCard,
+  .customerShopCard,
+  .serviceProviderActionCard{border-radius:17px}
+  .customerActionCard:hover,
+  .customerShopCard:hover,
+  .serviceProviderActionCard:hover{transform:none}
+}
+@media(prefers-reduced-motion:reduce){
+  .customerActionCard,
+  .customerShopCard,
+  .serviceProviderActionCard{transition:none}
+  .customerActionCard:hover,
+  .customerShopCard:hover,
+  .serviceProviderActionCard:hover{transform:none}
+}
