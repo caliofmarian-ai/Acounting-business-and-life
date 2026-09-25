@@ -26,7 +26,7 @@ import {
   isBusinessFinanceRole,PROFILE_FINANCE_ROLES,FINANCIAL_ACCOUNT_KINDS,MONEY_METHODS,PAYOUT_SCHEDULES,
   BUDGET_PURPOSES,MONEY_MOVEMENT_TYPES
 } from './profile-finance-core.js';
-import {profileMoneySnapshot} from './profile-money-core.js';
+import {profileMoneySnapshot,customerMoneyHomeSnapshot} from './profile-money-core.js';
 import {allocateSharedCompanyCost50x50,PROFILE_MONETIZATION_MODEL,DIGITAL_PAYMENT_INCENTIVE_DEFAULT,monetizationPolicyDraft,OWNER_APPROVED_PLATFORM_TRANSACTION_RATE_PCT,OWNER_APPROVED_MONTHLY_SUBSCRIPTION_PHP,OWNER_APPROVED_DELIVERY_PRODUCTION_RATE_PCT,OWNER_APPROVED_DELIVERY_PROMO_DAYS} from './monetization-policy-v2.js';
 import {PAYMONGO_PH_BENCHMARK_AS_OF,PAYMONGO_PH_PAYMENT_BENCHMARKS,digitalPaymentIncentiveScenario,compareDigitalPaymentRails} from './digital-payment-incentive-core.js';
 import {
@@ -332,6 +332,7 @@ app.get('/api/profile-money/:role',async(req,res,next)=>{try{
   const me=await identity(req),role=clean(req.params.role,40);
   if(!['customer','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile uses business accounting or does not have a personal Money workspace'});
   if(!enabledProfile(me,role))return res.status(403).json({error:'Enable this profile before opening its Money workspace'});
+  if(role==='customer'&&String(req.query.view||'')==='home')return res.json(await customerMoneyHomeSnapshot(pool,me.account.id));
   const [snapshot,accounts,preferences,budgets,profileLedger,accountMoney]=await Promise.all([
     profileMoneySnapshot(pool,role,me.account.id),
     listProfileFinancialAccounts(pool,me.account.id),
