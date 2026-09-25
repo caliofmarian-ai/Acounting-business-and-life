@@ -38,33 +38,27 @@ async function customerMoneyHomeSummary(pool,accountId){
     SELECT
       (
         SELECT COUNT(*) FILTER(WHERE order_status<>'cancelled')::int
-        FROM orders
-        WHERE customer_account_id=$1
+        FROM orders WHERE customer_account_id=$1
       ) AS order_count,
       (
         SELECT COALESCE(SUM(total) FILTER(WHERE order_status<>'cancelled'),0)
-        FROM orders
-        WHERE customer_account_id=$1
+        FROM orders WHERE customer_account_id=$1
       ) AS purchase_value,
       (
         SELECT COALESCE(SUM(outstanding_amount) FILTER(WHERE order_status<>'cancelled'),0)
-        FROM orders
-        WHERE customer_account_id=$1
+        FROM orders WHERE customer_account_id=$1
       ) AS outstanding_amount,
       (
         SELECT COALESCE(SUM(amount) FILTER(WHERE status='succeeded'),0)
-        FROM payment_intents
-        WHERE payer_account_id=$1
+        FROM payment_intents WHERE payer_account_id=$1
       ) AS succeeded_amount,
       (
         SELECT COALESCE(SUM(amount) FILTER(WHERE status IN ('requires_provider','requires_action','processing')),0)
-        FROM payment_intents
-        WHERE payer_account_id=$1
+        FROM payment_intents WHERE payer_account_id=$1
       ) AS pending_amount,
       (
         SELECT COUNT(*) FILTER(WHERE status='failed')::int
-        FROM payment_intents
-        WHERE payer_account_id=$1
+        FROM payment_intents WHERE payer_account_id=$1
       ) AS failed_count,
       (
         SELECT COALESCE(SUM(r.amount) FILTER(WHERE r.status='succeeded'),0)
