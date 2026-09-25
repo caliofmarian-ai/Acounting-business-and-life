@@ -11,37 +11,55 @@ const notificationServer=read('server-notifications.js');
 test('Payment Core mounts Legal in-process instead of spawning port 4507',()=>{
   assert.match(paymentServer,/startEmbeddedLegal/);
   assert.match(paymentServer,/mountLegalApp/);
-  assert.match(paymentServer,/app\.use\(legalApp\)/);
+  assert.match(paymentServer,/app\.use\(appInstance\)/);
   assert.doesNotMatch(paymentServer,/spawn\(process\.execPath,\['server-legal\.js'\]/);
   assert.doesNotMatch(paymentServer,/INTERNAL_LEGAL_PORT/);
   assert.doesNotMatch(paymentServer,/\|\|4507/);
   assert.doesNotMatch(paymentServer,/Legal child failed health check/);
 });
 
-test('Legal remains standalone-capable and owns the remaining Notifications child boundary',()=>{
-  assert.match(legalServer,/export async function startEmbeddedLegal/);
-  assert.match(legalServer,/export async function stopEmbeddedLegal/);
-  assert.match(legalServer,/directExecution/);
-  assert.match(legalServer,/startupWaitAttempts\(340\)/);
-  assert.match(legalServer,/spawn\(process\.execPath,\['server-notifications\.js'\]/);
-  assert.match(legalServer,/Business & Life legal\/consent gateway listening on/);
+test('Legal embeds Notifications and retires localhost port 4407',()=>{
+  assert.match(legalServer,/startEmbeddedNotifications/);
+  assert.match(legalServer,/stopEmbeddedNotifications/);
+  assert.match(legalServer,/notificationsApp=await startEmbeddedNotifications\(\)/);
+  assert.match(legalServer,/notificationsReady=true/);
+  assert.doesNotMatch(legalServer,/INTERNAL_NOTIFICATIONS_PORT/);
+  assert.doesNotMatch(legalServer,/\|\|4407/);
+  assert.doesNotMatch(legalServer,/127\.0\.0\.1:4407/);
+  assert.doesNotMatch(legalServer,/spawn\(process\.execPath,\['server-notifications\.js'\]/);
+  assert.doesNotMatch(legalServer,/Notification child failed health check/);
+  assert.match(legalServer,/Business & Life legal\/consent mounted in-process/);
 });
 
-test('Resend signed payload bytes survive public JSON parsing and embedded Legal',()=>{
+test('Notifications remains standalone rollback-capable while exposing embedded lifecycle',()=>{
+  assert.match(notificationServer,/export async function startEmbeddedNotifications\(\)/);
+  assert.match(notificationServer,/export async function stopEmbeddedNotifications\(\)/);
+  assert.match(notificationServer,/directExecution/);
+  assert.match(notificationServer,/Business & Life notification gateway mounted in-process/);
+  assert.match(notificationServer,/Business & Life notification gateway listening on/);
+  assert.match(notificationServer,/startEmbeddedAdminOperations/);
+});
+
+test('Resend signed payload bytes survive public JSON parsing and in-process Legal dispatch',()=>{
   assert.match(publicServer,/verify:\(req,_res,buf\)=>\{req\.rawBody=Buffer\.from\(buf\)\}/);
-  assert.match(legalServer,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
-  assert.match(legalServer,/const payload=rawPayload\|\|/);
-  assert.match(legalServer,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(legalServer,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
-  assert.match(notificationServer,/express\.raw\(\{type:'application\/json',limit:'1mb'\}\)/);
-  assert.match(notificationServer,/verifyResendWebhook/);
+  assert.match(notificationServer,/Buffer\.isBuffer\(req\.rawBody\)&&req\.rawBody\.length/);
+  assert.match(notificationServer,/\?req\.rawBody/);
+  assert.match(notificationServer,/Buffer\.isBuffer\(req\.body\)\?req\.body:null/);
+  assert.match(notificationServer,/verifyResendWebhook\(\{\s*rawBody,/s);
+  assert.doesNotMatch(legalServer,/JSON\.stringify\(req\.body\?\?\{\}\).*webhook/s);
+  assert.doesNotMatch(legalServer,/http\.request/);
 });
 
-test('public and Payment Core internal identity calls bypass retired Legal port',()=>{
-  assert.match(publicServer,/INTERNAL_NOTIFICATIONS_PORT\|\|4407/);
-  assert.match(paymentServer,/INTERNAL_NOTIFICATIONS_PORT\|\|4407/);
-  assert.doesNotMatch(publicServer,/INTERNAL_LEGAL_PORT/);
-  assert.doesNotMatch(publicServer,/\|\|4507/);
+test('public Payment Core and Legal have no localhost Notifications dependency',()=>{
+  for(const source of [publicServer,paymentServer,legalServer]){
+    assert.doesNotMatch(source,/INTERNAL_NOTIFICATIONS_PORT/);
+    assert.doesNotMatch(source,/\|\|4407/);
+    assert.doesNotMatch(source,/127\.0\.0\.1:4407/);
+  }
+  assert.match(publicServer,/authHardeningFetch/);
+  assert.match(paymentServer,/authHardeningFetch/);
+  assert.match(paymentServer,/notificationsFetch/);
+  assert.match(legalServer,/notificationsFetch/);
 });
 
 test('Payment Core health reflects embedded Legal readiness without a Legal child handle',()=>{
