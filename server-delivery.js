@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
-import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePricingRule,calculateDeliveryQuoteTotal,deliveryPriceSplit,canonicalDeliveryVehicleClass} from './delivery-pricing-v2-core.js';
+import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePricingRule,deliveryVehicleRuleEligible,calculateDeliveryQuoteTotal,deliveryPriceSplit,canonicalDeliveryVehicleClass} from './delivery-pricing-v2-core.js';
 import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
