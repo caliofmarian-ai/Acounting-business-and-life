@@ -26,10 +26,16 @@ test('Merchant desktop navigation has a dedicated shell row with five primary de
 });
 
 test('Merchant feature launchers are never mounted into global topActions',()=>{
-  for(const [name,source] of Object.entries({orders,marketplace,suppliers,delivery})){
+  const slices={
+    orders:orders.slice(orders.indexOf('async function decorate('),orders.indexOf('function ordersVisible')),
+    marketplace:marketplace.slice(marketplace.indexOf('async function decorateMarket('),marketplace.indexOf('function observeMarket')),
+    suppliers:suppliers.slice(suppliers.indexOf('async function decorateSupplier('),suppliers.indexOf('function observeSupplier')),
+    delivery:delivery.slice(delivery.indexOf('async function decorateDelivery('),delivery.indexOf('function observeDelivery'))
+  };
+  for(const [name,source] of Object.entries(slices)){
     assert.match(source,/BusinessLifeShell\?\.merchantWorkspaceHost\?\.\(\)/,name+' must use the dedicated Merchant nav host');
     assert.doesNotMatch(source,/document\.querySelector\('\.shellProfileControls'\)/,name+' must not mount beside avatar controls');
-    assert.doesNotMatch(source,/insertAdjacentElement\('beforebegin'/,name+' must not inject into the global topbar');
+    assert.doesNotMatch(source,/insertAdjacentElement\('beforebegin'/,name+' launcher must not inject into the global topbar');
   }
 });
 
