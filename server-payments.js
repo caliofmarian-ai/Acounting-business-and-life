@@ -39,12 +39,13 @@ import {
   normalizeFinancialProfileRole
 } from './financial-document-core.js';
 import { startEmbeddedLegal,stopEmbeddedLegal } from './server-legal.js';
+import {notificationsFetch} from './server-notifications.js';
+import {authHardeningFetch} from './server-auth-hardening.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_NOTIFICATIONS_PORT||4407);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb'});
 let legalReady=false;let shuttingDown=false;
@@ -52,13 +53,34 @@ let legalReady=false;let shuttingDown=false;
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||crypto.randomUUID(),120);
-async function upstream(path,options={}){return fetch('http://127.0.0.1:'+upstreamPort+path,options)}
-async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
+async function identity(req){const r=await authHardeningFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 async function forwardJson(req,res,after){
-  const r=await upstream(req.originalUrl,{method:req.method,headers:{Authorization:authHeader(req),'Content-Type':'application/json'},body:['GET','HEAD'].includes(req.method)?undefined:JSON.stringify(req.body??{})});
-  const text=await r.text();let data={};try{data=text?JSON.parse(text):{}}catch{}
-  if(r.ok&&after)Promise.resolve().then(()=>after(data)).catch(e=>console.error('Payment mirror hook:',e.message));
-  res.status(r.status);const ct=r.headers.get('content-type');if(ct)res.type(ct);res.send(text);
+  if(!legalApp)return res.status(503).json({error:'Legal runtime is not ready'});
+  const paymentParams={...req.params};
+  const chunks=[];let observedBytes=0;let completed=false;
+  const capture=chunk=>{
+    if(!after||chunk==null||observedBytes>=2_000_000)return;
+    const part=Buffer.isBuffer(chunk)?chunk:Buffer.from(String(chunk));
+    observedBytes+=part.length;
+    if(observedBytes<=2_000_000)chunks.push(part);
+  };
+  const originalWrite=res.write.bind(res),originalEnd=res.end.bind(res);
+  const restore=()=>{res.write=originalWrite;res.end=originalEnd};
+  const finishHook=()=>{
+    if(completed)return;completed=true;
+    if(!after||res.statusCode<200||res.statusCode>=400)return;
+    const text=Buffer.concat(chunks).toString('utf8');let data={};try{data=text?JSON.parse(text):{}}catch{}
+    req.params=paymentParams;
+    Promise.resolve().then(()=>after(data)).catch(e=>console.error('Payment mirror hook:',e.message));
+  };
+  res.write=function(chunk,...args){capture(chunk);return originalWrite(chunk,...args)};
+  res.end=function(chunk,...args){capture(chunk);restore();const out=originalEnd(chunk,...args);finishHook();return out};
+  legalApp.handle(req,res,err=>{
+    restore();
+    if(res.writableEnded)return;
+    if(err){console.error(err);return res.status(err.status||500).json({error:err.status?err.message:'Unexpected Legal runtime error'})}
+    if(!res.headersSent)res.status(502).json({error:'Legal runtime did not handle request'});
+  });
 }
 function financeEvidence(req){
   const raw=clean(req.query?.evidence||'',200);
@@ -90,7 +112,7 @@ app.get('/pricing-transparency.css',(_q,res)=>res.type('text/css').send(readFile
 app.get('/pricing-transparency.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','pricing-transparency.js'),'utf8')));
 app.get('/financial-documents.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','financial-documents.css'),'utf8')));
 app.get('/financial-documents-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','financial-documents-ui.js'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n  <link rel="stylesheet" href="/profile-settings.css" />\n  <link rel="stylesheet" href="/profile-money.css" />\n  <link rel="stylesheet" href="/pricing-transparency.css" />\n  <link rel="stylesheet" href="/financial-documents.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n  <script type="module" src="/profile-settings-ui.js"></script>\n  <script type="module" src="/profile-money-ui.js"></script>\n  <script type="module" src="/pricing-transparency.js"></script>\n  <script type="module" src="/financial-documents-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await notificationsFetch(req.path,{headers:req.headers});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/mobile-feature-loader.css" />\n  <link rel="stylesheet" href="/profile-settings.css" />\n  <link rel="stylesheet" href="/profile-money.css" />\n  <link rel="stylesheet" href="/pricing-transparency.css" />\n  <link rel="stylesheet" href="/financial-documents.css" />\n</head>').replace('</body>','  <script type="module" src="/mobile-feature-loader.js"></script>\n  <script type="module" src="/profile-settings-ui.js"></script>\n  <script type="module" src="/profile-money-ui.js"></script>\n  <script type="module" src="/pricing-transparency.js"></script>\n  <script type="module" src="/financial-documents-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/public/pricing',(_req,res)=>{
@@ -871,11 +893,13 @@ app.post('/api/orders/merchant/:id/payment',body,(req,res)=>forwardJson(req,res,
   if(q.rowCount)await mirrorConfirmedOrderPayment(pool,Number(q.rows[0].id));
 }));
 
+let legalApp=null;
 let legalMounted=false;
-function mountLegalApp(legalApp){
+function mountLegalApp(appInstance){
   if(legalMounted)return;
   legalMounted=true;
-  app.use(legalApp);
+  legalApp=appInstance;
+  app.use(appInstance);
   app.use((err,_req,res,_next)=>{
     console.error(err);
     if(res.headersSent)return;
@@ -887,9 +911,9 @@ let embeddedStartPromise=null;
 export async function startEmbeddedPaymentCore(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      const legalApp=await startEmbeddedLegal();
+      const embeddedLegal=await startEmbeddedLegal();
       legalReady=true;
-      mountLegalApp(legalApp);
+      mountLegalApp(embeddedLegal);
       await initDb();
       console.log('Business & Life payment core mounted in-process');
       return app;
