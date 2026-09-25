@@ -212,12 +212,33 @@ app.get('/api/services/jobs/mine',async(req,res,next)=>{try{
   const me=await identity(req),id=Number(me.account.id);
   if(String(req.query.view||'')==='home'){
     if(!enabled(me,'customer'))return res.status(403).json({error:'Customer profile required'});
-    const fields=`j.id,j.customer_account_id,j.provider_account_id,j.service_label,j.status,j.customer_confirmed_at,j.provider_completed_at AS completed_at,j.updated_at,j.created_at,c.name category,a.display_name provider_name`;
-    const [active,recent]=await Promise.all([
-      pool.query(`SELECT ${fields} FROM service_jobs j LEFT JOIN service_categories c ON c.id=j.category_id JOIN accounts a ON a.id=j.provider_account_id WHERE j.customer_account_id=$1 AND j.status<>'cancelled' AND NOT(j.status='completed' AND j.customer_confirmed_at IS NOT NULL) ORDER BY j.updated_at DESC LIMIT 12`,[id]),
-      pool.query(`SELECT ${fields} FROM service_jobs j LEFT JOIN service_categories c ON c.id=j.category_id JOIN accounts a ON a.id=j.provider_account_id WHERE j.customer_account_id=$1 AND j.status='completed' AND j.customer_confirmed_at IS NOT NULL ORDER BY j.customer_confirmed_at DESC LIMIT 3`,[id])
-    ]);
-    return res.json([...active.rows,...recent.rows]);
+    const{rows}=await pool.query(`
+      WITH home_jobs AS (
+        (SELECT j.id,j.customer_account_id,j.provider_account_id,j.service_label,j.status,j.customer_confirmed_at,j.provider_completed_at AS completed_at,j.updated_at,j.created_at,c.name category,a.display_name provider_name,0 AS home_rank
+           FROM service_jobs j
+           LEFT JOIN service_categories c ON c.id=j.category_id
+           JOIN accounts a ON a.id=j.provider_account_id
+          WHERE j.customer_account_id=$1
+            AND j.status<>'cancelled'
+            AND NOT(j.status='completed' AND j.customer_confirmed_at IS NOT NULL)
+          ORDER BY j.updated_at DESC
+          LIMIT 12)
+        UNION ALL
+        (SELECT j.id,j.customer_account_id,j.provider_account_id,j.service_label,j.status,j.customer_confirmed_at,j.provider_completed_at AS completed_at,j.updated_at,j.created_at,c.name category,a.display_name provider_name,1 AS home_rank
+           FROM service_jobs j
+           LEFT JOIN service_categories c ON c.id=j.category_id
+           JOIN accounts a ON a.id=j.provider_account_id
+          WHERE j.customer_account_id=$1
+            AND j.status='completed'
+            AND j.customer_confirmed_at IS NOT NULL
+          ORDER BY j.customer_confirmed_at DESC
+          LIMIT 3)
+      )
+      SELECT id,customer_account_id,provider_account_id,service_label,status,customer_confirmed_at,completed_at,updated_at,created_at,category,provider_name
+        FROM home_jobs
+       ORDER BY home_rank,COALESCE(customer_confirmed_at,updated_at,created_at) DESC
+    `,[id]);
+    return res.json(rows);
   }
   const{rows}=await pool.query(`SELECT j.*,c.name category,a.display_name provider_name,cu.display_name customer_name FROM service_jobs j LEFT JOIN service_categories c ON c.id=j.category_id JOIN accounts a ON a.id=j.provider_account_id JOIN accounts cu ON cu.id=j.customer_account_id WHERE j.customer_account_id=$1 OR j.provider_account_id=$1 ORDER BY j.created_at DESC LIMIT 200`,[id]);
   res.json(rows)
