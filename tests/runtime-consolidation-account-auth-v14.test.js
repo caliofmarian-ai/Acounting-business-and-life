@@ -78,7 +78,9 @@ test('parsed JSON reconstruction moves to the final Account/Auth to Accounting H
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(auth,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(auth,/const parsedJsonBody=/);
+  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
+  assert.match(auth,/const payload=rawPayload\|\|/);
   assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
   assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
   assert.match(auth,/delete headers\['transfer-encoding'\]/);

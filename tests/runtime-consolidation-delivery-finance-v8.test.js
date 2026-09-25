@@ -83,11 +83,13 @@ test('parsed JSON reconstruction now lives at the final Account/Auth to Accounti
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(auth,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
+  assert.match(auth,/const payload=rawPayload\|\|/);
   assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
   assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
   assert.match(auth,/delete headers\['transfer-encoding'\]/);
-  assert.match(auth,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
 });
 
 test('V8 leaves Incident and raw-body webhook boundaries unchanged',()=>{

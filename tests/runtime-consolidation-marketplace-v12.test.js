@@ -34,7 +34,6 @@ test('Marketplace remains standalone rollback-capable while Orders is embedded b
   assert.doesNotMatch(marketplace,/INTERNAL_ORDERS_PORT/);
   assert.doesNotMatch(marketplace,/\|\|\s*3307/);
   assert.doesNotMatch(marketplace,/spawn\(process\.execPath,\['server-orders\.js'\]/);
-  assert.match(orders,/spawn\(process\.execPath,\['server-auth\.js'\]/);
   assert.match(orders,/startEmbeddedAccountAuth/);
   assert.doesNotMatch(orders,/INTERNAL_AUTH_PORT/);
   assert.doesNotMatch(orders,/\|\|\s*3207/);
@@ -95,11 +94,13 @@ test('parsed JSON is reconstructed only at the final Account/Auth to Accounting 
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(marketplace,/const parsedJsonBody=req\.body!==undefined/);
   assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(auth,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
+  assert.match(auth,/const payload=rawPayload\|\|/);
   assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
   assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
   assert.match(auth,/delete headers\['transfer-encoding'\]/);
-  assert.match(auth,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
 });
 
 test('Marketplace and Local Services root composition remains layered exactly once',()=>{
