@@ -13,6 +13,7 @@ const server=read('server-delivery.js');
 const adminGateway=read('server-admin-operations.js');
 const ui=read('public/delivery-ui.js');
 const pkg=read('package.json');
+const qa=read('qa-acceptance.js');
 
 const motorcycle={
   vehicle_class:'motorcycle',formula_type:'tiered_distance',priority:10,
@@ -213,6 +214,17 @@ test('Delivery checkout still rejects disabled storefronts and invalid quote ids
   assert.match(checkout,/Delivery is not enabled for this Merchant/);
   assert.match(checkout,/Number\.isInteger\(quoteId\)/);
   assert.match(checkout,/Delivery quote is missing or expired/);
+});
+
+test('Delivery Pricing V2B runtime wave proves preview math and zero persistence',()=>{
+  assert.match(qa,/DELIVERY_PRICING_V2B_RUNTIME_WAVE='delivery_pricing_v2b_runtime'/);
+  assert.match(qa,/runDeliveryPricingV2BRuntimeAcceptance/);
+  assert.match(qa,/simulation_only:true/);
+  assert.match(qa,/active_rule_unchanged:true/);
+  assert.match(qa,/pricing_rule_count_unchanged:true/);
+  assert.match(qa,/quote_count_unchanged:true/);
+  assert.match(qa,/motorcycle_no_expressway:true/);
+  assert.match(qa,/post_promo_platform_rate_pct:10/);
 });
 
 test('project syntax contract checks Delivery Pricing V2 core and tests',()=>{
