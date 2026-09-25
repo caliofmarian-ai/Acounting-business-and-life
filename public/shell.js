@@ -529,10 +529,10 @@ async function loadCustomerHomeData(force=false){
   if(customerHomeCache.promise)return customerHomeCache.promise;
   customerHomeCache.promise=(async()=>{
     const [ordersResult,deliveryResult,servicesResult,moneyResult]=await Promise.allSettled([
-      profileApi('/api/orders/mine'),
-      profileApi('/api/delivery/mine'),
-      profileApi('/api/services/jobs/mine'),
-      profileApi('/api/profile-money/customer')
+      profileApi('/api/orders/mine?view=home'),
+      profileApi('/api/delivery/mine?view=home'),
+      profileApi('/api/services/jobs/mine?view=home'),
+      profileApi('/api/profile-money/customer?view=home')
     ]);
     const failures=[];
     const value=(result,label,fallback)=>{
