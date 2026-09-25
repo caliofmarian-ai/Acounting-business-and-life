@@ -35,12 +35,15 @@ test('current Courier delivery profile endpoint carries documents and up to 100 
   assert.match(block,/deliveries:deliveries\.rows/);
 });
 
-test('current Courier Money endpoint loads recent delivery history and deep Money context',()=>{
+test('current Courier Money endpoint keeps canonical earnings evidence and detailed history for explicit Money intent',()=>{
   assert.match(paymentServer,/profileMoneySnapshot\(pool,role,me\.account\.id\)/);
-  const start=moneyCore.indexOf('export async function courierMoneySnapshot');
-  const end=moneyCore.indexOf('export async function serviceProviderMoneySnapshot',start);
-  const block=moneyCore.slice(start,end);
-  assert.match(block,/netAllocations\(pool,'courier_net',accountId\)/);
+  const helperStart=moneyCore.indexOf('async function courierMoneyHomeSummary');
+  const snapshotStart=moneyCore.indexOf('export async function courierMoneySnapshot',helperStart);
+  const end=moneyCore.indexOf('export async function serviceProviderMoneySnapshot',snapshotStart);
+  const helper=moneyCore.slice(helperStart,snapshotStart);
+  const block=moneyCore.slice(snapshotStart,end);
+  assert.match(helper,/netAllocations\(pool,'courier_net',accountId\)/);
+  assert.match(block,/courierMoneyHomeSummary\(pool,accountId\)/);
   assert.match(block,/ORDER BY d\.created_at DESC LIMIT 40/);
   assert.match(block,/recent_deliveries:recent\.rows/);
 });
