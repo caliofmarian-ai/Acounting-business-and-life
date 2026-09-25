@@ -12,6 +12,7 @@ import { supplierReorderSuggestions } from './server-supplier-sourcing-v4.js';
 import {startEmbeddedProfileGovernance,stopEmbeddedProfileGovernance} from './server-profile-governance.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
+import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -688,6 +689,7 @@ let embeddedStartPromise=null;
 export async function startEmbeddedBusinessAccounting(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
+      await ensureLegacyAccountingBaseSchema(pool);
       profileGovernanceApp=await startEmbeddedProfileGovernance();
       profileGovernanceReady=true;
       await initAccountingTenancyDb();
