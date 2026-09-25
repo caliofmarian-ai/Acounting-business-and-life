@@ -47,7 +47,8 @@ const SUPPLIER_PERFORMANCE_RUNTIME_WAVE='supplier_performance_runtime_v1';
 const COURIER_PERFORMANCE_BASELINE_WAVE='courier_performance_baseline_v1';
 const COURIER_PERFORMANCE_RUNTIME_WAVE='courier_performance_runtime_v1';
 const DELIVERY_PRICING_V2B_RUNTIME_WAVE='delivery_pricing_v2b_runtime';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE]);
+const DELIVERY_ROUTING_V2C_RUNTIME_WAVE='delivery_routing_v2c_runtime';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3613,6 +3614,87 @@ async function runSupplierPerformanceBaseline({pool,base,secret}){
 }
 
 
+async function runDeliveryRoutingV2CRuntimeAcceptance({pool,base,secret}){
+  const baseline=await runCourierExperienceAcceptance({
+    pool,base,secret,
+    aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,courier:COURIER_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
+    helpers:{requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,runMerchantCatalogSeed,ensureQaTerritory,ensureActiveRole,loginWithCredential},
+    orderNote:'Controlled QA Delivery Routing V2C',
+    paymentMode:'merchant_confirmation'
+  });
+  if(baseline.status!=='PASS')throw new Error('Delivery Routing V2C Courier prerequisite did not pass.');
+
+  const evidence=await pool.query(`
+    SELECT
+      q.id quote_id,q.route_source,q.route_profile,q.route_eta_minutes,q.route_distance_km,
+      q.pricing_snapshot,q.price_breakdown,
+      d.id delivery_id,d.route_source delivery_route_source,d.route_profile delivery_route_profile,
+      d.route_eta_minutes delivery_route_eta_minutes,d.route_distance_km delivery_route_distance_km
+    FROM deliveries d
+    JOIN delivery_quotes q ON q.id=d.quote_id
+    WHERE d.id=$1
+    LIMIT 1
+  `,[Number(baseline.delivery_id)]);
+  if(evidence.rowCount!==1)throw new Error('Delivery Routing V2C quote evidence is missing.');
+  const row=evidence.rows[0],snapshot=row.pricing_snapshot||{};
+  if(row.route_source!=='straight_line_estimate'||row.delivery_route_source!=='straight_line_estimate'){
+    throw new Error('Delivery Routing V2C did not preserve the labelled fallback without a provider credential.');
+  }
+  if(snapshot.routing_provider!=='fallback'||snapshot.route_fallback_estimate!==true){
+    throw new Error('Delivery Routing V2C fallback routing evidence is incomplete.');
+  }
+  if(Number(snapshot.provider_route_calls||0)!==0){
+    throw new Error('Delivery Routing V2C attempted a paid provider route call without configured readiness.');
+  }
+  if(!Number.isFinite(Number(row.route_distance_km))||Number(row.route_distance_km)<=0){
+    throw new Error('Delivery Routing V2C fallback distance is invalid.');
+  }
+  if(Math.abs(Number(row.route_distance_km)-Number(row.delivery_route_distance_km))>0.0001){
+    throw new Error('Delivery Routing V2C quote and Delivery route distance diverged.');
+  }
+  if(row.route_eta_minutes!=null||row.delivery_route_eta_minutes!=null){
+    throw new Error('Delivery Routing V2C fallback must not invent an ETA.');
+  }
+
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Delivery Routing V2C Customer QA'
+  });
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Delivery Routing V2C Customer QA'});
+  const config=await requestJson(base,'/api/delivery/config',{token:customer.token});
+  expectStatus(config,200,'Delivery Routing V2C config');
+  if(config.json?.routing_provider!=='straight_line_estimate'||config.json?.routing_provider_ready!==false){
+    throw new Error('Delivery Routing V2C config did not report the safe fallback state.');
+  }
+  for(const forbidden of ['google_routes_api_key','api_key','key']){
+    if(Object.prototype.hasOwnProperty.call(config.json||{},forbidden)){
+      throw new Error('Delivery Routing V2C config exposed a routing credential field.');
+    }
+  }
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Delivery Routing V2C Customer logout');
+
+  return{
+    status:'PASS',
+    wave:DELIVERY_ROUTING_V2C_RUNTIME_WAVE,
+    courier_experience_v1:true,
+    delivery_id:Number(baseline.delivery_id),
+    quote_id:Number(row.quote_id),
+    routing_provider:'fallback',
+    route_source:'straight_line_estimate',
+    route_profile:String(row.route_profile||''),
+    road_provider_ready:false,
+    provider_route_calls:0,
+    quote_delivery_distance_reconciled:true,
+    fallback_eta_invented:false,
+    credential_exposed:false,
+    motorcycle_google_mode_contract:'TWO_WHEELER',
+    motorcycle_avoid_highways_contract:true,
+    motorcycle_avoid_tolls_contract:true,
+    runtime_listener:8080,
+    logout:true
+  };
+}
+
 async function runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret}){
   const admin=await qaAccountSession({
     pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Delivery Pricing V2B Super Admin QA'
@@ -4979,7 +5061,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===DELIVERY_PRICING_V2B_RUNTIME_WAVE
+    const result=config.wave===DELIVERY_ROUTING_V2C_RUNTIME_WAVE
+      ?await runDeliveryRoutingV2CRuntimeAcceptance({pool,base,secret:config.secret})
+      :config.wave===DELIVERY_PRICING_V2B_RUNTIME_WAVE
       ?await runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===COURIER_PERFORMANCE_RUNTIME_WAVE
       ?await runCourierPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
@@ -5075,5 +5159,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE
 };
