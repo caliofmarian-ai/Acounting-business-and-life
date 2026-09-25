@@ -24,7 +24,7 @@ export const DELIVERY_ROUTE_PROFILES=Object.freeze([
 export const DELIVERY_STACKING_POLICIES=Object.freeze(['direct_only','explicit_shared']);
 export const DELIVERY_PASS_THROUGH_POLICIES=Object.freeze(['pass_through','included','disabled']);
 export const DELIVERY_PLATFORM_RATE_PCT=10;
-export const DELIVERY_FEE_BASIS='verified_delivery_service_fare';
+export const DELIVERY_FEE_BASIS='verified_delivery_price';
 
 const vehicleRank=Object.freeze({
   bicycle:1,motorcycle:2,sedan:3,mpv_suv:4,pickup:5,l300_van:6
