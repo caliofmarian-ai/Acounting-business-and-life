@@ -92,15 +92,18 @@ test('optimized Customer Home requests slim domain views without changing detail
 });
 
 test('Orders Home view returns active work plus only three recent completed summaries',()=>{
-  const start=ordersServer.indexOf("app.get('/api/orders/mine'");
-  const end=ordersServer.indexOf("app.get('/api/orders/:id'",start);
-  const block=ordersServer.slice(start,end);
-  assert.match(block,/String\(req\.query\.view\|\|''\)==='home'/);
-  assert.match(block,/order_status NOT IN \('completed','cancelled'\)/);
-  assert.match(block,/order_status='completed'/);
-  assert.match(block,/LIMIT 12/);
-  assert.match(block,/LIMIT 3/);
-  assert.doesNotMatch(block,/SELECT o\.\*/);
+  const routeStart=ordersServer.indexOf("app.get('/api/orders/mine'");
+  const homeStart=ordersServer.indexOf("if(String(req.query.view||'')==='home')",routeStart);
+  const homeEnd=ordersServer.indexOf("\n  const{rows}=await pool.query",homeStart);
+  const home=ordersServer.slice(homeStart,homeEnd);
+  assert.match(home,/String\(req\.query\.view\|\|''\)==='home'/);
+  assert.match(home,/order_status NOT IN \('completed','cancelled'\)/);
+  assert.match(home,/order_status='completed'/);
+  assert.match(home,/LIMIT 12/);
+  assert.match(home,/LIMIT 3/);
+  assert.doesNotMatch(home,/SELECT o\.\*/);
+  const fallback=ordersServer.slice(homeEnd,ordersServer.indexOf("app.get('/api/orders/:id'",routeStart));
+  assert.match(fallback,/SELECT o\.\*/);
 });
 
 test('Delivery Home view excludes closed history and sensitive live-tracking fields',()=>{
