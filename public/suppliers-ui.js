@@ -622,14 +622,14 @@ function supplierAllOrdersPanel(pos){
 function supplierMoneyPanel(today){
   if(today?.error)return `<section class="supCard"><div class="supAlert"><strong>Money needs business attribution</strong><small>${ph(today.error)}</small></div><p class="supCodeHelp">No receivable is shown until Supplier-business attribution is unambiguous.</p></section>`;
   const m=today?.money||{},c=today?.counts||{};
-  const due=supplierTodayOrders(today).filter(x=>Number(x.commercial_outstanding||0)>0);
+  const due=Array.isArray(today?.money_orders)?today.money_orders:[];
   return `<section class="supCard"><div class="supKpiGrid">
     <div class="supKpi static"><strong>${pphp(m.receivable_total||0)}</strong><span>Total receivable</span></div>
     <div class="supKpi static"><strong>${pphp(m.overdue_receivable_total||0)}</strong><span>Overdue</span></div>
     <div class="supKpi static"><strong>${Number(c.merchant_balances||0)}</strong><span>Merchant balances</span></div>
     <div class="supKpi static"><strong>${pphp(m.money_received_recorded||0)}</strong><span>Recorded received</span></div>
   </div><p class="supCodeHelp">Receivables use invoice evidence when present, otherwise received value; confirmed credits and recorded payments are subtracted. An unreceived PO is not money due.</p></section>
-  <section class="supCard"><h2>Money due by order</h2><div class="supList">${due.length?due.map(p=>`<div class="supRow"><div><strong>${ph(p.po_number)} • ${ph(p.business_name)}</strong><small>${pphp(p.commercial_outstanding)} outstanding${p.earliest_due_date?` • due ${new Date(p.earliest_due_date).toLocaleDateString()}`:''}</small><div class="supMeta">${(p.attention_signals||[]).includes('RECEIVABLE_OVERDUE')?'<span class="pending">Overdue</span>':''}</div></div><div class="supActions"><button class="supBtn secondary" data-sup-view="${p.id}">View</button></div></div>`).join(''):'<div class="supEmpty">No Supplier receivable is currently outstanding.</div>'}</div></section>`;
+  <section class="supCard"><h2>Money due by order</h2><div class="supList">${due.length?due.map(p=>`<div class="supRow"><div><strong>${ph(p.po_number)} • ${ph(p.business_name)}</strong><small>${pphp(p.commercial_outstanding)} outstanding${p.earliest_due_date?` • due ${new Date(p.earliest_due_date).toLocaleDateString()}`:''}</small><div class="supMeta">${p.receivable_overdue?'<span class="pending">Overdue</span>':''}</div></div><div class="supActions"><button class="supBtn secondary" data-sup-view="${p.id}">View</button></div></div>`).join(''):'<div class="supEmpty">No Supplier receivable is currently outstanding.</div>'}</div></section>`;
 }
 async function editSupplierAvailability(id){
   const me=await papi('/api/supplier/me');
@@ -683,16 +683,40 @@ async function renderSupplierWorkspace(section=supSupplierSection){
   supSupplierSection=normalized;
   supplierWorkspaceLoading(normalized);
   try{
-    const [me,rels,pos,activityState,supplierReturns,sourcingState,incomingRfqs,todayState]=await Promise.all([
-      papi('/api/supplier/me'),
-      papi('/api/procurement/relationships'),
-      papi('/api/procurement/orders'),
-      normalized==='Catalog'?papi('/api/supplier/v2/activities').catch(()=>({activities:[]})):Promise.resolve({activities:[]}),
-      normalized==='Procurement'?papi('/api/supplier/returns').catch(()=>[]):Promise.resolve([]),
-      normalized==='Procurement'?papi('/api/supplier/v4/sourcing-settings').catch(()=>({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]})):Promise.resolve({visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]}),
-      normalized==='Procurement'?papi('/api/supplier/v4/rfqs').catch(()=>[]):Promise.resolve([]),
-      ['Today','Money'].includes(normalized)?papi('/api/supplier/v5/today').catch(e=>({error:e.message,sections:{},counts:{},money:{},rfqs:[],returns:[],catalog_attention:[],backorders:[],substitutions:[]})):Promise.resolve(null)
-    ]);
+    let me=null,rels=[],pos=[],activityState={activities:[]},supplierReturns=[];
+    let sourcingState={visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]};
+    let incomingRfqs=[],todayState=null;
+
+    if(normalized==='Today'){
+      todayState=await papi('/api/supplier/v5/today').catch(e=>({
+        error:e.message,sections:{},counts:{},money:{},rfqs:[],returns:[],
+        catalog_attention:[],backorders:[],substitutions:[]
+      }));
+    }else if(normalized==='Money'){
+      todayState=await papi('/api/supplier/v5/today?view=money').catch(e=>({
+        error:e.message,sections:{},counts:{},money:{},money_orders:[],rfqs:[],returns:[],
+        catalog_attention:[],backorders:[],substitutions:[]
+      }));
+    }else if(normalized==='Catalog'){
+      [me,activityState]=await Promise.all([
+        papi('/api/supplier/me'),
+        papi('/api/supplier/v2/activities').catch(()=>({activities:[]}))
+      ]);
+    }else if(normalized==='Procurement'){
+      [me,rels,pos,supplierReturns,sourcingState,incomingRfqs]=await Promise.all([
+        papi('/api/supplier/me'),
+        papi('/api/procurement/relationships'),
+        papi('/api/procurement/orders'),
+        papi('/api/supplier/returns').catch(()=>[]),
+        papi('/api/supplier/v4/sourcing-settings').catch(()=>({
+          visibility:'private',accepts_rfqs:false,categories:[],published_catalog_item_ids:[]
+        })),
+        papi('/api/supplier/v4/rfqs').catch(()=>[])
+      ]);
+    }else{
+      pos=await papi('/api/procurement/orders');
+    }
+
     const meta=SUPPLIER_SECTION_META[normalized];
     let body='';
     if(normalized==='Today')body=supplierTodayPanel(todayState);
@@ -707,6 +731,7 @@ async function renderSupplierWorkspace(section=supSupplierSection){
     supplierWorkspaceError(normalized,err);
   }
 }
+
 function poCardSupplier(p){
   let acts='';
   if(['sent','supplier_received'].includes(p.status))acts+=`<button class="supBtn" data-sup-respond="${p.id}">Respond</button>`;
