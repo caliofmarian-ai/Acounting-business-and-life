@@ -3,3 +3,133 @@
 .supKpiGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.supKpi{border:1px solid #e4ebe8;border-radius:15px;background:#fbfdfc;padding:12px;text-align:left;display:grid;gap:4px;cursor:pointer;min-height:72px}.supKpi.static{cursor:default}.supKpi strong{font-size:18px;line-height:1.2}.supKpi span{font-size:12px;color:#687386;line-height:1.35}@media(max-width:360px){.supKpiGrid{grid-template-columns:1fr}}
 
 .supHeader>div,.supRow>div{min-width:0}.supRow strong,.supRow small,.supMeta span{overflow-wrap:anywhere}.supDetails>summary{min-height:44px}.supState{min-height:130px;display:flex;align-items:center;gap:14px}.supState h2{margin:0 0 4px}.supState p{margin:0;color:#687386;font-size:13px;line-height:1.45}.supStateError{align-items:flex-start}.supStateError .supInlineActions{margin-top:14px}.supSpinner{width:28px;height:28px;min-width:28px;border:3px solid #d7e1de;border-top-color:#0a7c66;border-radius:50%;animation:supSpin .8s linear infinite}@keyframes supSpin{to{transform:rotate(360deg)}}
+
+
+/* Visual System V2C — Supplier polish — #456 */
+.supWorkspace{
+  --supplier-ui-accent:#a86727;
+  --supplier-ui-accent-2:#dc9b55;
+  --supplier-ui-soft:#ffead2;
+  --supplier-ui-tint:#fff8ef;
+  --supplier-ui-glow:rgba(168,103,39,.12)
+}
+.supWorkspace .supHeader{
+  padding:3px 2px 1px;
+  align-items:center
+}
+.supWorkspace .supBack{
+  border:1px solid #e6dfd7;
+  background:linear-gradient(145deg,#fff,#f5f0eb);
+  color:#5e4935;
+  box-shadow:0 5px 14px rgba(23,35,60,.045)
+}
+.supWorkspace .supBack:focus-visible,
+.supWorkspace .supBtn:focus-visible,
+.supWorkspace .supRow button:focus-visible{
+  outline:3px solid var(--supplier-ui-accent);
+  outline-offset:2px
+}
+.supWorkspace .supHero{
+  position:relative;
+  overflow:hidden;
+  border:1px solid rgba(255,255,255,.08);
+  background:linear-gradient(135deg,#17233c 0%,#584638 55%,#a86727 100%);
+  box-shadow:0 16px 38px rgba(23,35,60,.19)
+}
+.supWorkspace .supHero::after{
+  content:"";
+  position:absolute;
+  width:150px;
+  height:150px;
+  right:-55px;
+  bottom:-84px;
+  border-radius:50%;
+  background:rgba(255,255,255,.10);
+  pointer-events:none
+}
+.supWorkspace .supHero>*{position:relative;z-index:1}
+.supWorkspace .supHero p{color:#f3e6d6}
+
+.supWorkspace .supCard{
+  position:relative;
+  overflow:hidden;
+  border-color:#e8dfd5;
+  border-radius:22px;
+  background:linear-gradient(150deg,#fff 0%,#fff 72%,var(--supplier-ui-tint) 100%);
+  box-shadow:0 10px 29px rgba(23,35,60,.06)
+}
+.supWorkspace .supCard::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:3px;
+  background:linear-gradient(180deg,var(--supplier-ui-accent),transparent 90%);
+  opacity:.86
+}
+.supWorkspace .supCard h2{font-size:15.5px;letter-spacing:-.012em}
+.supWorkspace .supRow{
+  border-color:#e9e1d8;
+  border-radius:17px;
+  background:linear-gradient(145deg,#fff,#fffaf4);
+  box-shadow:0 4px 14px rgba(23,35,60,.032)
+}
+.supWorkspace .supRow:hover{
+  border-color:#d9b98f;
+  box-shadow:0 8px 19px rgba(74,52,28,.06)
+}
+.supWorkspace .supMeta span{
+  border:1px solid #e7e0d7;
+  background:#faf7f3;
+  color:#655c54
+}
+.supWorkspace .supMeta .ok{border-color:#cce8dc;background:#eaf7f1;color:#086248}
+.supWorkspace .supMeta .pending{border-color:#f0d7a0;background:#fff6df;color:#765000}
+.supWorkspace .supPick{
+  border:1px solid #ece3da;
+  border-radius:14px;
+  background:linear-gradient(145deg,#fff,#fff9f2)
+}
+.supWorkspace .supEmpty{
+  border-color:#decfbe;
+  background:#fffaf4
+}
+.supWorkspace .supBtn,
+.supWorkspace .supForm button{
+  background:linear-gradient(135deg,#965b23,#b97836);
+  box-shadow:0 5px 14px rgba(150,91,35,.17)
+}
+.supWorkspace .supBtn.secondary{
+  border:1px solid #eadfD2;
+  background:var(--supplier-ui-soft);
+  color:#75471c;
+  box-shadow:none
+}
+.supWorkspace .supBtn.warm{
+  border:1px solid #efcf8b;
+  background:#fff3d6;
+  color:#765000;
+  box-shadow:none
+}
+.supWorkspace .supForm input,
+.supWorkspace .supForm select,
+.supWorkspace .supForm textarea{
+  border-color:#dfd5ca;
+  background:#fffdfb
+}
+.supWorkspace .supForm input:focus,
+.supWorkspace .supForm select:focus,
+.supWorkspace .supForm textarea:focus{
+  border-color:var(--supplier-ui-accent);
+  box-shadow:0 0 0 3px rgba(168,103,39,.10)
+}
+
+@media(max-width:420px){
+  .supWorkspace .supHero{border-radius:22px;padding:18px}
+  .supWorkspace .supCard{border-radius:18px;padding:13px}
+  .supWorkspace .supRow:hover{box-shadow:0 4px 14px rgba(23,35,60,.032)}
+}
+@media(prefers-reduced-motion:reduce){
+  .supWorkspace .supRow{scroll-behavior:auto}
+}
