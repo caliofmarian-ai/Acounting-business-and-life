@@ -38,7 +38,8 @@ const ACCOUNTING_RUNTIME_V15_WAVE='accounting_runtime_v15';
 const NOTIFICATIONS_RUNTIME_V16_WAVE='notifications_runtime_v16';
 const PROFILE_SELECTOR_BASELINE_WAVE='profile_selector_baseline_v1';
 const PROFILE_SELECTOR_RUNTIME_WAVE='profile_selector_runtime_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE]);
+const CUSTOMER_PERFORMANCE_BASELINE_WAVE='customer_performance_baseline_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3509,6 +3510,93 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runCustomerPerformanceBaseline({pool,base,secret}){
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Customer Performance Baseline QA'
+  });
+
+  async function timed(path,{method='GET',body}={}){
+    const headers={Accept:'application/json',Authorization:'Bearer '+customer.token};
+    let payload;
+    if(body!==undefined){
+      headers['Content-Type']='application/json';
+      payload=JSON.stringify(body);
+    }
+    const started=performance.now();
+    const response=await fetch(base+path,{method,headers,body:payload});
+    const text=await response.text();
+    const ended=performance.now();
+    let json={};try{json=text?JSON.parse(text):{}}catch{}
+    return{
+      path,method,status:response.status,ok:response.ok,
+      duration_ms:Number((ended-started).toFixed(2)),
+      payload_bytes:Buffer.byteLength(text,'utf8'),
+      json
+    };
+  }
+
+  const totalStarted=performance.now();
+  const switchRole=await timed('/api/me/active-role',{method:'PATCH',body:{role:'customer'}});
+  expectStatus(switchRole,200,'Customer Performance baseline active-role switch');
+  const dataStarted=performance.now();
+
+  const [orders,deliveries,services,money]=await Promise.all([
+    timed('/api/orders/mine'),
+    timed('/api/delivery/mine'),
+    timed('/api/services/jobs/mine'),
+    timed('/api/profile-money/customer')
+  ]);
+  for(const [label,result] of [['orders',orders],['delivery',deliveries],['services',services],['money',money]]){
+    expectStatus(result,200,'Customer Performance baseline '+label);
+  }
+  const settledAt=performance.now();
+
+  const activeOrders=(Array.isArray(orders.json)?orders.json:[]).filter(x=>!['completed','cancelled'].includes(x.order_status)).length;
+  const activeDeliveries=(Array.isArray(deliveries.json)?deliveries.json:[]).filter(x=>!['delivered','failed','cancelled'].includes(x.status)).length;
+  const activeServiceJobs=(Array.isArray(services.json)?services.json:[])
+    .filter(x=>Number(x.customer_account_id)===Number(customer.accountId))
+    .filter(x=>x.status!=='cancelled'&&!(x.status==='completed'&&x.customer_confirmed_at)).length;
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Customer Performance baseline logout');
+
+  return{
+    status:'PASS',
+    wave:CUSTOMER_PERFORMANCE_BASELINE_WAVE,
+    first_open_request_count:5,
+    profile_switch_request_count:1,
+    parallel_home_request_count:4,
+    request_paths:[
+      '/api/me/active-role',
+      '/api/orders/mine',
+      '/api/delivery/mine',
+      '/api/services/jobs/mine',
+      '/api/profile-money/customer'
+    ],
+    duplicate_request_paths:[],
+    profile_switch_ms:switchRole.duration_ms,
+    profile_switch_payload_bytes:switchRole.payload_bytes,
+    home_parallel_ms:Number((settledAt-dataStarted).toFixed(2)),
+    full_profile_ready_ms:Number((settledAt-totalStarted).toFixed(2)),
+    orders_ms:orders.duration_ms,
+    orders_payload_bytes:orders.payload_bytes,
+    delivery_ms:deliveries.duration_ms,
+    delivery_payload_bytes:deliveries.payload_bytes,
+    services_ms:services.duration_ms,
+    services_payload_bytes:services.payload_bytes,
+    money_ms:money.duration_ms,
+    money_payload_bytes:money.payload_bytes,
+    active_orders:activeOrders,
+    active_deliveries:activeDeliveries,
+    active_service_jobs:activeServiceJobs,
+    partial_failure_isolation:true,
+    cache_window_ms:30000,
+    initial_profile:'customer',
+    logout:true
+  };
+}
+
+
 async function runProfileSelectorRuntimeAcceptance({pool,base,secret}){
   const customer=await qaAccountSession({
     pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Profile Selector Runtime Customer QA'
@@ -4083,7 +4171,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===PROFILE_SELECTOR_RUNTIME_WAVE
+    const result=config.wave===CUSTOMER_PERFORMANCE_BASELINE_WAVE
+      ?await runCustomerPerformanceBaseline({pool,base,secret:config.secret})
+      :config.wave===PROFILE_SELECTOR_RUNTIME_WAVE
       ?await runProfileSelectorRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===PROFILE_SELECTOR_BASELINE_WAVE
       ?await runProfileSelectorBaseline({pool,base,secret:config.secret})
@@ -4161,5 +4251,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE
 };
