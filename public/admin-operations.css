@@ -17,3 +17,206 @@
 .authDeliveryWarning{margin-top:8px;padding:8px 10px;background:#fff6de;border-radius:10px;color:#7c5b00}
 .supportAiPrivacy{display:block;margin-top:5px;color:#7a8782;font-size:9px;line-height:1.4}
 .supportMessage.fromUser{border-left-color:#527bd8;background:#eef3ff}.supportMessage.fromAdmin{border-left-color:#0a7c66;background:#e9f7f2}.supportMessage small{display:block;color:#697587;font-size:10px;margin-top:2px}
+
+
+/* Visual System V2D — Support & operations polish — #456 */
+.opsSheet{
+  --ops-accent:#0a7c66;
+  --ops-accent-soft:#e4f5ef;
+  --ops-tint:#f4fbf8;
+  --ops-navy:#17233c;
+  background:linear-gradient(180deg,#f9fcfb 0%,#f5f8f7 100%);
+  border:1px solid rgba(255,255,255,.72);
+  box-shadow:0 -24px 70px rgba(7,17,29,.28)
+}
+.opsSheet>header{
+  margin:-18px -18px 14px;
+  padding:18px 18px 14px;
+  top:-18px;
+  background:linear-gradient(135deg,#17233c 0%,#164b51 58%,#0a7c66 100%);
+  color:#fff;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  box-shadow:0 7px 20px rgba(23,35,60,.12)
+}
+.opsSheet header small{color:#bfeadf}
+.opsSheet header h2{color:#fff}
+.opsClose{
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.12);
+  color:#fff;
+  backdrop-filter:blur(10px)
+}
+.opsClose:focus-visible,
+.opsTabs button:focus-visible,
+.ticketCard:focus-visible,
+.attachmentRow:focus-visible,
+.voiceActions button:focus-visible,
+.opsPrimary:focus-visible{
+  outline:3px solid #6be0c0;
+  outline-offset:2px
+}
+
+.opsTabs{
+  gap:7px;
+  padding:2px 0 3px
+}
+.opsTabs button{
+  border-color:#dce7e3;
+  background:#fff;
+  box-shadow:0 4px 12px rgba(23,35,60,.035);
+  transition:border-color .16s ease,background .16s ease,box-shadow .16s ease
+}
+.opsTabs button.active{
+  background:linear-gradient(135deg,#17233c,#24545a);
+  border-color:#17233c;
+  color:#fff;
+  box-shadow:0 6px 15px rgba(23,35,60,.16)
+}
+
+.opsNotice,
+.voicePanel,
+.translationBox,
+.supportComposer,
+.supportTranslationPanel{
+  border-color:#dce7e3;
+  border-radius:19px;
+  background:linear-gradient(145deg,#fff,var(--ops-tint));
+  box-shadow:0 7px 21px rgba(23,35,60,.045)
+}
+.voicePanel{border-color:#cfe3dd}
+.translationBox{
+  border-color:#d9e4e1;
+  background:linear-gradient(145deg,#fff,#f3f8ff)
+}
+.opsForm input,
+.opsForm select,
+.opsForm textarea{
+  border-color:#d7e2de;
+  background:#fff;
+  box-shadow:inset 0 1px 0 rgba(23,35,60,.015)
+}
+.opsForm input:focus,
+.opsForm select:focus,
+.opsForm textarea:focus{
+  border-color:var(--ops-accent);
+  outline:0;
+  box-shadow:0 0 0 3px rgba(10,124,102,.10)
+}
+.voiceActions button{
+  border-color:#dce7e3;
+  background:linear-gradient(145deg,#fff,#f6fbf9);
+  color:#34544d;
+  box-shadow:0 4px 12px rgba(23,35,60,.03)
+}
+.opsPrimary{
+  background:linear-gradient(135deg,#08715e,#0a8a70);
+  box-shadow:0 7px 17px rgba(10,124,102,.19)
+}
+
+.ticketCard,
+.attachmentRow{
+  position:relative;
+  overflow:hidden;
+  border-color:#dce7e3;
+  background:linear-gradient(145deg,#fff,#f8fcfa);
+  box-shadow:0 5px 16px rgba(23,35,60,.035);
+  transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease
+}
+.ticketCard::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:3px;
+  background:linear-gradient(180deg,var(--ops-accent),transparent)
+}
+.ticketCard:hover,
+.attachmentRow:hover{
+  transform:translateY(-1px);
+  border-color:#acd4c9;
+  box-shadow:0 9px 20px rgba(23,35,60,.07)
+}
+.ticketCard>b{
+  min-width:29px;
+  height:29px;
+  padding:0 7px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  background:var(--ops-accent-soft);
+  color:#086b59;
+  font-size:11px
+}
+.opsBadge{
+  border:1px solid #cfe5de;
+  background:var(--ops-accent-soft);
+  color:#086b59
+}
+
+.supportMessage{
+  max-width:92%;
+  padding:11px 13px;
+  border:1px solid #dce7e3;
+  border-left-width:3px;
+  border-radius:16px;
+  box-shadow:0 5px 15px rgba(23,35,60,.035)
+}
+.supportMessage strong{display:block;font-size:12.5px}
+.supportMessage small{display:block;margin-top:2px;font-size:10px;font-weight:800}
+.supportMessage p{margin:7px 0 0;line-height:1.48}
+.supportMessage.fromAdmin{
+  margin-right:34px;
+  border-color:#c8dfd8;
+  border-left-color:#08715e;
+  background:linear-gradient(145deg,#fff,#edf8f4)
+}
+.supportMessage.fromAdmin strong{color:#086b59}
+.supportMessage.fromAdmin small{color:#4b7b70}
+.supportMessage.fromUser{
+  margin-left:34px;
+  border-color:#d9dcec;
+  border-left-color:#5c52b8;
+  background:linear-gradient(145deg,#fff,#f6f4ff)
+}
+.supportMessage.fromUser strong{color:#4f469c}
+.supportMessage.fromUser small{color:#77709d}
+
+.adminHero{
+  position:relative;
+  overflow:hidden;
+  border-color:rgba(255,255,255,.1);
+  background:linear-gradient(135deg,#17233c 0%,#35366c 55%,#5147a8 100%);
+  box-shadow:0 12px 30px rgba(23,35,60,.16)
+}
+.adminHero::after{
+  content:"";
+  position:absolute;
+  width:120px;
+  height:120px;
+  right:-48px;
+  bottom:-68px;
+  border-radius:50%;
+  background:rgba(255,255,255,.09)
+}
+.adminHero>*{position:relative;z-index:1}
+.adminMetrics div,
+.adminRow{
+  border-color:#dfe3ed;
+  background:linear-gradient(145deg,#fff,#f7f6ff);
+  box-shadow:0 5px 15px rgba(23,35,60,.035)
+}
+.adminRow{border-radius:16px}
+
+@media(max-width:520px){
+  .supportMessage{max-width:96%}
+  .supportMessage.fromAdmin{margin-right:16px}
+  .supportMessage.fromUser{margin-left:16px}
+  .ticketCard:hover,.attachmentRow:hover{transform:none}
+}
+@media(prefers-reduced-motion:reduce){
+  .opsTabs button,
+  .ticketCard,
+  .attachmentRow{transition:none}
+  .ticketCard:hover,.attachmentRow:hover{transform:none}
+}
