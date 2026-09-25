@@ -324,8 +324,14 @@ async function openAccountSettings(view='home'){
   document.getElementById('profileSettingsWorkspace')?.classList.add('hidden');
   const workspace=document.getElementById('accountSettingsWorkspace');
   workspace?.classList.remove('hidden');
-  if(view==='profiles'&&(!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS)){
-    await refreshAdminContext(true).catch(()=>null);
+  if(view==='profiles'){
+    perfMark('governance_intent_start');
+    const tasks=[];
+    if(!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS)tasks.push(refreshAdminContext(true).catch(()=>null));
+    const governanceLoader=window.BusinessLifeFeatureLoader?.ensureGovernance;
+    if(governanceLoader)tasks.push(governanceLoader().catch(error=>{console.warn('Governance profile-management load:',error.message);return null}));
+    if(tasks.length)await Promise.all(tasks);
+    perfMark('governance_intent_ready');
   }
   renderAccountSettings(view);
   renderTopAccount();
