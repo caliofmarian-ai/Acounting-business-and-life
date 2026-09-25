@@ -140,6 +140,20 @@ test('Customer Money Home view excludes detailed ledger banking and payment hist
   assert.doesNotMatch(block,/recent_orders|recent_payments|account_money|financial_accounts|budgets/);
 });
 
+test('Customer Money Home aggregates use one database round trip',()=>{
+  const start=moneyCore.indexOf('async function customerMoneyHomeSummary');
+  const end=moneyCore.indexOf('export async function customerMoneyHomeSnapshot',start);
+  const block=moneyCore.slice(start,end);
+  assert.equal((block.match(/pool\.query\(/g)||[]).length,1);
+  assert.match(block,/FROM orders/);
+  assert.match(block,/FROM payment_intents/);
+  assert.match(block,/FROM refunds r/);
+  assert.match(block,/payment_intents\.status=succeeded/);
+  assert.match(block,/orders\.outstanding_amount/);
+  assert.match(block,/refunds\.status=succeeded/);
+});
+
+
 test('post-optimization Customer acceptance measures slim payloads against the same first-open shape',()=>{
   assert.match(qa,/CUSTOMER_PERFORMANCE_RUNTIME_WAVE='customer_performance_runtime_v1'/);
   assert.match(qa,/first_open_request_count:5/);
