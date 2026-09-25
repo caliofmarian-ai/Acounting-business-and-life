@@ -25,11 +25,13 @@ test('Account/Auth is embedded beneath Orders and localhost 3207 is retired',()=
   assert.doesNotMatch(orders,/spawn\(process\.execPath,\['server-auth\.js'\]/);
 });
 
-test('Account/Auth remains standalone rollback-capable over Accounting on 3107',()=>{
-  assert.match(auth,/spawn\(process\.execPath,\['server-v03\.js'\]/);
-  assert.match(auth,/INTERNAL_ACCOUNTING_PORT \|\| 3107/);
-  assert.match(auth,/Accounting child failed health check/);
-  assert.match(auth,/accountingReady=true/);
+test('Account/Auth remains standalone-capable after legacy Accounting boundary retirement',()=>{
+  assert.match(auth,/export async function startEmbeddedAccountAuth\(\)/);
+  assert.doesNotMatch(auth,/server-v03\.js/);
+  assert.doesNotMatch(auth,/INTERNAL_ACCOUNTING_PORT/);
+  assert.doesNotMatch(auth,/\|\|\s*3107/);
+  assert.doesNotMatch(auth,/spawn\(process\.execPath/);
+  assert.match(accounting,/ensureLegacyAccountingBaseSchema/);
   assert.match(accounting,/Accounting app v0\.3 listening on/);
 });
 
@@ -64,27 +66,23 @@ test('Account/Auth route authority remains on server-auth',()=>{
   ])assert.ok(auth.includes(marker),`missing Account/Auth marker: ${marker}`);
 });
 
-test('legacy Accounting authorization gate remains in Account/Auth before 3107',()=>{
-  assert.match(auth,/app\.use\('\/api', async \(req, res, next\) =>/);
-  assert.match(auth,/resolveAccountToken\(raw\)/);
-  assert.match(auth,/p\.role='merchant'/);
-  assert.match(auth,/Merchant accounting access is not available for this account/);
-  assert.match(auth,/Multi-business accounting isolation is being migrated/);
-  assert.match(auth,/signLegacyToken\(\)/);
-  assert.match(auth,/pipeToAccounting\(req, res, `Bearer \$\{signLegacyToken\(\)\}`\)/);
+test('Account/Auth no longer contains legacy Accounting proxy authority',()=>{
+  assert.doesNotMatch(auth,/pipeToAccounting/);
+  assert.doesNotMatch(auth,/signLegacyToken/);
+  assert.doesNotMatch(auth,/Merchant accounting access is not available for this account/);
+  assert.doesNotMatch(auth,/Multi-business accounting isolation is being migrated/);
+  assert.match(auth,/app\.use\('\/api',\(req,res\)=>/);
+  assert.match(auth,/No Account\/Auth route owns this request/);
 });
 
-test('parsed JSON reconstruction moves to the final Account/Auth to Accounting HTTP boundary',()=>{
+test('Account/Auth no longer reconstructs bodies for a legacy Accounting HTTP boundary',()=>{
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(auth,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
-  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
-  assert.match(auth,/const payload=rawPayload\|\|/);
-  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(auth,/delete headers\['transfer-encoding'\]/);
-  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
+  assert.doesNotMatch(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.doesNotMatch(auth,/http\.request/);
+  assert.doesNotMatch(auth,/INTERNAL_ACCOUNTING_PORT/);
+  assert.match(auth,/No Account\/Auth route owns this request/);
 });
 
 test('root composition begins at Account/Auth and Orders decorates it in-process',()=>{
