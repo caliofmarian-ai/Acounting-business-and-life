@@ -304,7 +304,13 @@ async function courierHomeSnapshot(accountId,profile=null){
   const compliance=complianceResult.rows[0]||{};
   return{
     detail_mode:'home',
-    profile:profile||null,
+    profile:profile?{
+      eligibility_status:profile.eligibility_status,
+      eligibility_expires_at:profile.eligibility_expires_at,
+      approved_vehicle_class:profile.approved_vehicle_class,
+      vehicle_type:profile.vehicle_type,
+      available:Boolean(profile.available)
+    }:null,
     deliveries:workResult.rows,
     compliance:{
       blocking_count:Number(compliance.blocking_count||0),
