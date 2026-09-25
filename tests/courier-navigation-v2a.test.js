@@ -44,7 +44,8 @@ test('Courier shell reuses the canonical Delivery workspace launcher',()=>{
   assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery,openCourierWorkspace\}\)/);
   assert.match(block,/BusinessLifeDelivery\?\.openCourierWorkspace/);
   assert.match(block,/openCourierWorkspace\(feature\)/);
-  assert.match(shell,/profileApi\('\/api\/courier\/delivery-profile'\)/);
+  assert.match(shell,/profileApi\('\/api\/courier\/home'\)/);
+  assert.match(shell,/profileApi\('\/api\/profile-money\/courier\?view=home'\)/);
   assert.doesNotMatch(block,/fetch\(/);
 });
 
