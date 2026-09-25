@@ -15,7 +15,7 @@ function bindSupBack(fn=closeSupWorkspace){supWorkspace.querySelector('.supBack'
 function closeSupModal(){document.getElementById('supModalBg')?.classList.add('hidden')}
 function openSupModal(html){document.getElementById('supModal').innerHTML=html;document.getElementById('supModalBg').classList.remove('hidden')}
 
-async function openMerchantProcurement(){ensureSup();hideSupBase();supWorkspace.classList.remove('hidden');await renderMerchantProcurement()}
+async function openMerchantProcurement(){ensureSup();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('supWorkspace')){hideSupBase();supWorkspace.classList.remove('hidden')}await renderMerchantProcurement()}
 async function renderMerchantProcurement(){
   const [rels,pos,suggestions,parties,lots,returns,recalls,rfqs,backorders,substitutions]=await Promise.all([
     papi('/api/procurement/relationships'),
@@ -899,7 +899,7 @@ async function supplierRespondPo(id){const p=await papi(`/api/procurement/orders
 async function setSupplierStatus(id,status){try{await papi(`/api/supplier/orders/${id}/status`,{method:'POST',body:JSON.stringify({status})});ptoast(`PO marked ${pnice(status)}.`);await renderSupplierWorkspace(['ready_for_pickup','out_for_delivery','delivered'].includes(status)?'Fulfilment':'ETA')}catch(e){ptoast(e.message)}}
 
 function applySupplierState(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState;if(state?.snapshot)supMe=state.snapshot}
-async function decorateSupplier(detail){if(!ensureSup()||!ptok())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applySupplierState(state);if(!supMe)return;const role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(role==='merchant'){const top=document.querySelector('.shellProfileControls');if(top&&!document.getElementById('supQuickButton')){const b=document.createElement('button');b.id='supQuickButton';b.className='ordersQuickButton';b.type='button';b.textContent='Suppliers';b.onclick=openMerchantProcurement;top.insertAdjacentElement('beforebegin',b)}}else document.getElementById('supQuickButton')?.remove();if(hub&&role==='supplier')hub.querySelectorAll('[data-hub-feature]').forEach(b=>{if(SUPPLIER_SECTION_META[b.dataset.hubFeature])b.onclick=()=>openSupplierWorkspace(b.dataset.hubFeature)})}
+async function decorateSupplier(detail){if(!ensureSup()||!ptok())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applySupplierState(state);if(!supMe)return;const role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(role==='merchant'){const top=document.querySelector('.shellProfileControls');if(top&&!document.getElementById('supQuickButton')){const b=document.createElement('button');b.id='supQuickButton';b.className='merchantWorkspaceButton';b.type='button';b.textContent='Suppliers';b.onclick=openMerchantProcurement;top.insertAdjacentElement('beforebegin',b)}}else document.getElementById('supQuickButton')?.remove();if(hub&&role==='supplier')hub.querySelectorAll('[data-hub-feature]').forEach(b=>{if(SUPPLIER_SECTION_META[b.dataset.hubFeature])b.onclick=()=>openSupplierWorkspace(b.dataset.hubFeature)})}
 function observeSupplier(){document.addEventListener('abl:profile-state',e=>decorateSupplier(e.detail).catch(()=>{}),{passive:true})}
 async function boot(){ensureSup();observeSupplier();await decorateSupplier(window.BusinessLifeProfileState)}
 window.BusinessLifeSuppliers=Object.freeze({openMerchantProcurement});
