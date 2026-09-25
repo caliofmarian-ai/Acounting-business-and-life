@@ -440,7 +440,9 @@ app.post('/api/merchant/storefront/media',body,async(req,res,next)=>{try{
   const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
   const kind=['cover','gallery'].includes(req.body?.media_kind)?req.body.media_kind:'';
   if(!kind)return res.status(400).json({error:'Media kind must be cover or gallery.'});
-  const dataUrl=clean(req.body?.data_url,420000);
+  const rawDataUrl=String(req.body?.data_url||'').trim();
+  if(rawDataUrl.length>420000)return res.status(413).json({error:'Storefront image is too large. Please use the in-app image optimiser.'});
+  const dataUrl=rawDataUrl;
   if(!dataUrl||!STOREFRONT_IMAGE_RE.test(dataUrl))return res.status(400).json({error:'Storefront image must be PNG, JPEG or WebP.'});
   const alt=clean(req.body?.alt_text,180);
   const client=await pool.connect();
@@ -478,7 +480,9 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
   const publicLocation=physical&&Boolean(req.body?.public_location_enabled);
   if(publicLocation&&(lat==null||lng==null))return res.status(400).json({error:'Set a valid map pin before making the store location public.'});
   const logoProvided=Object.prototype.hasOwnProperty.call(req.body||{},'logo_data_url');
-  const logo=logoProvided?clean(req.body?.logo_data_url,320000):clean(current?.logo_data_url,320000);
+  const rawLogo=logoProvided?String(req.body?.logo_data_url||'').trim():String(current?.logo_data_url||'').trim();
+  if(rawLogo.length>320000)return res.status(413).json({error:'Logo is too large. Please use the in-app image optimiser.'});
+  const logo=rawLogo;
   if(logo&&!STOREFRONT_IMAGE_RE.test(logo))return res.status(400).json({error:'Logo must be PNG, JPEG or WebP'});
   const{rows}=await pool.query(`
     INSERT INTO merchant_storefronts(
