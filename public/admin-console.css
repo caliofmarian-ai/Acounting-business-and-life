@@ -66,3 +66,193 @@
 .adminInviteResult button{min-height:44px}
 .adminInvitationRow{overflow-wrap:anywhere}
 #assignmentFunctionsForm .functionChoice{min-height:44px}
+
+
+/* Visual System V2D — privileged Admin polish — #456 */
+.adminShell{
+  --admin-accent:#60d6b4;
+  --admin-accent-2:#8a7de1;
+  --admin-panel:#101c2c;
+  --admin-panel-soft:#14243a;
+  --admin-glow:rgba(96,214,180,.12)
+}
+.adminTopbar{
+  border-bottom-color:#2b3d58;
+  background:linear-gradient(135deg,rgba(11,20,35,.98),rgba(18,32,52,.97));
+  box-shadow:0 8px 26px rgba(0,0,0,.18)
+}
+.adminTopbar h1{letter-spacing:-.018em}
+.backToApp,
+.adminButton{
+  border-color:#30445f;
+  background:linear-gradient(145deg,#172943,#122136);
+  box-shadow:0 5px 14px rgba(0,0,0,.14)
+}
+.backToApp:focus-visible,
+.adminButton:focus-visible,
+.adminNav button:focus-visible,
+.adminForm input:focus,
+.adminForm select:focus,
+.adminForm textarea:focus,
+.primary:focus-visible,
+.secondary:focus-visible,
+.row button:focus-visible{
+  outline:3px solid var(--admin-accent);
+  outline-offset:2px
+}
+
+.adminNav{
+  gap:7px;
+  padding:11px 12px;
+  background:linear-gradient(180deg,#0d1828,#0b1423);
+  box-shadow:0 7px 20px rgba(0,0,0,.12)
+}
+.adminNav button{
+  border-color:#2b3c55;
+  background:#122138;
+  color:#c4d0df;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+  transition:background .16s ease,border-color .16s ease,box-shadow .16s ease
+}
+.adminNav button.active{
+  background:linear-gradient(135deg,#60d6b4,#74e4c3);
+  color:#07101d;
+  border-color:#74e4c3;
+  box-shadow:0 6px 16px rgba(96,214,180,.18)
+}
+
+.adminMain{padding-top:18px}
+.adminMain .hero{
+  position:relative;
+  overflow:hidden;
+  padding:21px;
+  border:1px solid #31435e;
+  background:linear-gradient(135deg,#172b43 0%,#173f49 55%,#285b58 100%);
+  box-shadow:0 16px 40px rgba(0,0,0,.2)
+}
+.adminMain .hero::before{
+  content:"";
+  position:absolute;
+  width:190px;
+  height:190px;
+  right:-80px;
+  top:-100px;
+  border-radius:50%;
+  border:1px solid rgba(255,255,255,.08)
+}
+.adminMain .hero::after{
+  content:"";
+  position:absolute;
+  width:110px;
+  height:110px;
+  right:20px;
+  bottom:-64px;
+  border-radius:50%;
+  background:rgba(138,125,225,.12)
+}
+.adminMain .hero>*{position:relative;z-index:1}
+.adminMain .hero h2{letter-spacing:-.025em}
+.adminMain .badge{
+  border-color:rgba(255,255,255,.16);
+  background:rgba(255,255,255,.08);
+  backdrop-filter:blur(8px)
+}
+
+.adminMain .metric,
+.adminMain .card,
+.adminMain .row,
+.adminForm{
+  border-color:#293b55;
+  background:linear-gradient(145deg,#111f31,#0e1a2a);
+  box-shadow:0 8px 24px rgba(0,0,0,.13)
+}
+.adminMain .metric{
+  position:relative;
+  overflow:hidden;
+  border-radius:19px
+}
+.adminMain .metric::after{
+  content:"";
+  position:absolute;
+  width:72px;
+  height:72px;
+  right:-33px;
+  bottom:-36px;
+  border-radius:50%;
+  background:var(--admin-glow)
+}
+.adminMain .metric strong{
+  position:relative;
+  z-index:1;
+  color:#f4f8fb;
+  letter-spacing:-.025em
+}
+.adminMain .metric span{position:relative;z-index:1}
+.adminMain .row{
+  border-radius:17px;
+  transition:border-color .16s ease,background .16s ease,transform .16s ease
+}
+.adminMain .row:hover{
+  border-color:#3c5976;
+  background:linear-gradient(145deg,#14253a,#101d2e);
+  transform:translateY(-1px)
+}
+.adminMain .status{
+  display:inline-flex;
+  align-items:center;
+  width:max-content;
+  padding:4px 7px;
+  border-radius:999px;
+  background:rgba(96,214,180,.1);
+  color:#74e4c3
+}
+.adminMain .empty{
+  border-color:#33465f;
+  background:rgba(255,255,255,.015)
+}
+
+.adminForm input,
+.adminForm select,
+.adminForm textarea{
+  border-color:#31445f;
+  background:#0b1625;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.02)
+}
+.adminForm input:focus,
+.adminForm select:focus,
+.adminForm textarea:focus{
+  border-color:var(--admin-accent);
+  box-shadow:0 0 0 3px rgba(96,214,180,.09)
+}
+.adminMain .primary{
+  background:linear-gradient(135deg,#50c7a6,#6de0bf);
+  color:#07101d;
+  box-shadow:0 7px 17px rgba(96,214,180,.16)
+}
+.adminMain .secondary{
+  border:1px solid #334963;
+  background:#16263d;
+  color:#dbe5f0
+}
+
+.adminEvidenceGroup,
+.adminInviteResult{
+  border-color:#30435e;
+  background:linear-gradient(145deg,#122138,#0e1a2a);
+  box-shadow:0 6px 18px rgba(0,0,0,.09)
+}
+.adminDanger{
+  border-color:#824153;
+  background:linear-gradient(145deg,#47212c,#351a22)
+}
+
+@media(max-width:520px){
+  .adminMain{padding:12px}
+  .adminMain .hero{padding:18px;border-radius:20px}
+  .adminMain .row:hover{transform:none}
+}
+@media(prefers-reduced-motion:reduce){
+  .adminNav button,
+  .adminMain .row{transition:none}
+  .adminMain .row:hover{transform:none}
+}

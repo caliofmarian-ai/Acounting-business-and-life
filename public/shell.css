@@ -509,3 +509,165 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
   .customerShopCard:hover,
   .serviceProviderActionCard:hover{transform:none}
 }
+
+
+/* Visual System V2D — Account Settings polish — #456 */
+.accountSettingsWorkspace{
+  --settings-accent:#0a7c66;
+  --settings-accent-2:#3aa88e;
+  --settings-soft:#e4f5ef;
+  --settings-tint:#f4fbf8;
+  --settings-glow:rgba(10,124,102,.11)
+}
+.accountSettingsHeader{
+  position:relative;
+  overflow:hidden;
+  align-items:center;
+  padding:17px 18px;
+  margin-bottom:16px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:24px;
+  background:linear-gradient(135deg,#17233c 0%,#164b51 56%,#0a7c66 100%);
+  color:#fff;
+  box-shadow:0 15px 36px rgba(23,35,60,.17)
+}
+.accountSettingsHeader::after{
+  content:"";
+  position:absolute;
+  width:130px;
+  height:130px;
+  right:-54px;
+  bottom:-74px;
+  border-radius:50%;
+  background:rgba(255,255,255,.09);
+  pointer-events:none
+}
+.accountSettingsHeader>button,
+.accountSettingsHeader>div{position:relative;z-index:1}
+.accountSettingsHeader>button{
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.12);
+  color:#fff;
+  box-shadow:none;
+  backdrop-filter:blur(10px)
+}
+.accountSettingsHeader>button:focus-visible{
+  outline:3px solid #fff;
+  outline-offset:2px
+}
+.accountSettingsHeader span{color:#bfeadf}
+.accountSettingsHeader h1{color:#fff}
+.accountSettingsHeader p{color:#d7e8e4}
+
+.accountSettingsGrid{gap:13px}
+.accountSettingsGrid>button{
+  position:relative;
+  overflow:hidden;
+  border-color:#dce7e3;
+  border-radius:21px;
+  background:linear-gradient(150deg,#fff 0%,#fff 67%,var(--settings-tint) 100%);
+  box-shadow:0 9px 27px rgba(23,35,60,.06);
+  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease
+}
+.accountSettingsGrid>button::after{
+  content:"";
+  position:absolute;
+  width:92px;
+  height:92px;
+  right:-48px;
+  bottom:-50px;
+  border-radius:50%;
+  background:var(--settings-glow);
+  pointer-events:none
+}
+.accountSettingsGrid>button:hover{
+  transform:translateY(-2px);
+  border-color:#9fcfc2;
+  box-shadow:0 14px 30px rgba(23,35,60,.095)
+}
+.accountSettingsGrid>button:focus-visible,
+.accountUtilityList>button:focus-visible,
+.accountUtilityList>a:focus-visible{
+  outline:3px solid var(--settings-accent);
+  outline-offset:2px
+}
+.accountSettingsGrid>button>span{
+  position:relative;
+  z-index:1;
+  width:47px;
+  height:47px;
+  border-radius:15px;
+  background:var(--settings-soft);
+  box-shadow:0 6px 16px var(--settings-glow);
+  font-size:21px
+}
+.accountSettingsGrid strong,
+.accountSettingsGrid small,
+.accountSettingsGrid b{position:relative;z-index:1}
+.accountSettingsGrid strong{font-size:14.5px;letter-spacing:-.012em}
+.accountSettingsGrid b{
+  width:30px;
+  height:30px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  background:#fff;
+  box-shadow:0 4px 12px rgba(23,35,60,.06);
+  color:var(--settings-accent);
+  font-size:18px
+}
+
+.accountSettingsBoundary,
+.accountSettingsCard{
+  border-color:#dce7e3;
+  border-radius:22px;
+  background:linear-gradient(150deg,#fff 0%,#fff 78%,var(--settings-tint) 100%);
+  box-shadow:0 9px 27px rgba(23,35,60,.05)
+}
+.accountSettingsBoundary{
+  border-color:#badfd5;
+  background:linear-gradient(145deg,#f5fcf9,#e7f6f1)
+}
+.accountUtilityList{gap:9px}
+.accountUtilityList>button,
+.accountUtilityList>a{
+  border-color:#dfe8e5;
+  border-radius:15px;
+  background:linear-gradient(145deg,#fff,#f8fcfa);
+  box-shadow:0 4px 13px rgba(23,35,60,.03);
+  transition:border-color .16s ease,box-shadow .16s ease
+}
+.accountUtilityList>button:hover,
+.accountUtilityList>a:hover{
+  border-color:#afd6cb;
+  box-shadow:0 7px 17px rgba(23,35,60,.055)
+}
+.accountUtilityList>button>span:first-child,
+.accountUtilityList>a>span:first-child{
+  background:var(--settings-soft);
+  color:#086b59
+}
+.accountUtilityList b{color:var(--settings-accent)}
+
+.profileActivationGate{
+  border-color:#efd29a;
+  background:linear-gradient(145deg,#fffaf0,#fff4dc);
+  box-shadow:0 7px 19px rgba(122,82,0,.05)
+}
+.companyTestNotice{
+  box-shadow:0 8px 23px rgba(73,56,135,.06)
+}
+
+@media(max-width:520px){
+  .accountSettingsHeader{padding:15px 14px;border-radius:21px;align-items:flex-start}
+  .accountSettingsGrid{gap:10px}
+  .accountSettingsGrid>button{border-radius:18px;min-height:100px}
+  .accountSettingsGrid>button:hover{transform:none}
+  .accountSettingsBoundary,.accountSettingsCard{border-radius:18px}
+}
+@media(prefers-reduced-motion:reduce){
+  .accountSettingsGrid>button,
+  .accountUtilityList>button,
+  .accountUtilityList>a{transition:none}
+  .accountSettingsGrid>button:hover{transform:none}
+}
