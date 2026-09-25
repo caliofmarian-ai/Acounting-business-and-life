@@ -148,8 +148,9 @@ function ensureShellChrome() {
   if (!document.getElementById('accountAvatarButton')) {
     const controls = document.createElement('div');
     controls.className = 'shellProfileControls';
-    controls.innerHTML = `<span id="activeRolePill" class="activeRolePill" aria-live="polite"></span><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open Account Home"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
+    controls.innerHTML = `<button id="activeRolePill" class="activeRolePill" type="button" aria-live="polite" aria-label="Open active workspace"></button><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open Account Home"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
     topActions.appendChild(controls);
+    controls.querySelector('#activeRolePill').addEventListener('click',()=>{if(activeSurface==='profile'&&activeRole)showActiveWorkspace();else openAccountHome()});
     controls.querySelector('#accountAvatarButton').addEventListener('click', openAccountHome);
   }
   if (!document.getElementById('roleHub')) {
@@ -186,7 +187,11 @@ function renderTopAccount() {
   const button = document.getElementById('accountAvatarButton');
   const pill = document.getElementById('activeRolePill');
   if (button) button.innerHTML = avatarMarkup(snapshot.account);
-  if (pill) pill.textContent = activeSurface === 'profile' ? (ROLE_META[activeRole]?.label || activeRole || 'Account') : activeSurface === 'admin' ? 'Admin' : 'Account';
+  if (pill) {
+    pill.textContent = activeSurface === 'profile' ? (ROLE_META[activeRole]?.label || activeRole || 'Account') : activeSurface === 'admin' ? 'Admin' : 'Account';
+    pill.dataset.surface=activeSurface;
+    pill.setAttribute('aria-label',activeSurface==='profile'&&activeRole?`Open ${ROLE_META[activeRole]?.label||activeRole} home`:'Open Account Home');
+  }
 }
 
 function renderDrawer() {
@@ -476,16 +481,40 @@ function showMerchantWorkspace() {
   else document.getElementById('viewDashboard')?.classList.remove('hidden');
 }
 
-function hideFeatureWorkspaces() {
-  for (const id of ['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace']) {
-    document.getElementById(id)?.classList.add('hidden');
+const FEATURE_WORKSPACE_IDS=['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace'];
+const FEATURE_LAUNCHERS={ordersWorkspace:'ordersQuickButton',marketWorkspace:'marketQuickButton',supWorkspace:'supQuickButton',deliveryWorkspace:'deliveryQuickButton'};
+function syncFeatureLauncherState(activeWorkspaceId=null){
+  for(const [workspaceId,buttonId] of Object.entries(FEATURE_LAUNCHERS)){
+    const button=document.getElementById(buttonId);if(!button)continue;
+    const active=workspaceId===activeWorkspaceId;
+    button.classList.toggle('active',active);
+    if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
+  }
+}
+function hideFeatureWorkspaces(keepWorkspaceId=null) {
+  for (const id of FEATURE_WORKSPACE_IDS) {
+    if(id!==keepWorkspaceId)document.getElementById(id)?.classList.add('hidden');
   }
   for (const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg']) {
     document.getElementById(id)?.classList.add('hidden');
   }
+  syncFeatureLauncherState(keepWorkspaceId);
   document.body.classList.remove('supplierAccountingMode');
   document.getElementById('supplierAccountingBack')?.remove();
   document.body.style.overflow='';
+}
+function openFeatureWorkspace(workspaceId){
+  if(!FEATURE_WORKSPACE_IDS.includes(workspaceId)||activeSurface!=='profile'||!activeRole)return false;
+  const workspace=document.getElementById(workspaceId);if(!workspace)return false;
+  closeDrawer();
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  hideMerchantWorkspace();
+  document.getElementById('roleHub')?.classList.add('hidden');
+  hideFeatureWorkspaces(workspaceId);
+  workspace.classList.remove('hidden');
+  document.dispatchEvent(new CustomEvent('abl:feature-workspace',{detail:{workspaceId,activeRole}}));
+  window.scrollTo({top:0,behavior:'auto'});
+  return true;
 }
 function showActiveWorkspace() {
   hideFeatureWorkspaces();
@@ -497,6 +526,7 @@ function showActiveWorkspace() {
 }
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
+  openFeatureWorkspace,
   openAccountHome,
   openAccountSettings,
   signOutCurrentAccount,
@@ -1250,6 +1280,8 @@ function renderAccountHome(){
   perfRender('account_home');
   if(!snapshot?.account)return;
   activeSurface='account';
+  hideFeatureWorkspaces();
+  closeDrawer();
   hideMerchantWorkspace();
   const account=snapshot.account,hub=document.getElementById('roleHub');
   if(!hub)return;
