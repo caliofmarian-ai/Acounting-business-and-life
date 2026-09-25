@@ -46,7 +46,8 @@ const SUPPLIER_PERFORMANCE_BASELINE_WAVE='supplier_performance_baseline_v1';
 const SUPPLIER_PERFORMANCE_RUNTIME_WAVE='supplier_performance_runtime_v1';
 const COURIER_PERFORMANCE_BASELINE_WAVE='courier_performance_baseline_v1';
 const COURIER_PERFORMANCE_RUNTIME_WAVE='courier_performance_runtime_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE]);
+const DELIVERY_PRICING_V2B_RUNTIME_WAVE='delivery_pricing_v2b_runtime';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3612,6 +3613,114 @@ async function runSupplierPerformanceBaseline({pool,base,secret}){
 }
 
 
+async function runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret}){
+  const admin=await qaAccountSession({
+    pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Delivery Pricing V2B Super Admin QA'
+  });
+  const before=await pool.query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM delivery_pricing_rules) pricing_rules,
+      (SELECT COUNT(*)::int FROM delivery_quotes) quotes,
+      (SELECT id FROM delivery_pricing_rules WHERE country_code='PH' AND active=TRUE ORDER BY version DESC LIMIT 1) active_rule_id
+  `);
+  const baseline=before.rows[0]||{};
+  const preview=await requestJson(base,'/api/admin/delivery/pricing/preview',{
+    method:'POST',
+    token:admin.token,
+    body:{
+      distances_km:[3,5,10,15,20,30,40],
+      weight_kg:2,
+      volume_l:10,
+      vehicle_rules:[
+        {
+          vehicle_class:'motorcycle',formula_type:'tiered_distance',priority:1,
+          base_fee:27,included_distance_km:3,
+          distance_bands:[
+            {up_to_km:5,per_km:9.5},
+            {up_to_km:15,per_km:5.75},
+            {up_to_km:null,per_km:5}
+          ],
+          minimum_fee:27,maximum_distance_km:40,max_weight_kg:20,max_volume_l:80,
+          extra_stop_fee:35,free_wait_minutes:30,waiting_fee_per_minute:1,
+          demand_adjustment_cap_pct:25,route_profile:'motorcycle_no_expressway',
+          toll_policy:'disabled',parking_policy:'pass_through',stacking_policy:'direct_only'
+        },
+        {
+          vehicle_class:'sedan',formula_type:'tiered_distance',priority:2,
+          base_fee:65,included_distance_km:0,
+          distance_bands:[{up_to_km:5,per_km:15},{up_to_km:null,per_km:13}],
+          minimum_fee:65,maximum_distance_km:40,max_weight_kg:200,max_volume_l:700,
+          extra_stop_fee:40,free_wait_minutes:30,waiting_fee_per_minute:1.5,
+          demand_adjustment_cap_pct:25,route_profile:'car_optional_tolls',
+          toll_policy:'pass_through',parking_policy:'pass_through',stacking_policy:'direct_only'
+        },
+        {
+          vehicle_class:'l300_van',formula_type:'tiered_distance',priority:3,
+          base_fee:250,included_distance_km:0,
+          distance_bands:[{up_to_km:null,per_km:17}],
+          minimum_fee:250,maximum_distance_km:100,max_weight_kg:1000,max_volume_l:3000,
+          extra_stop_fee:90,free_wait_minutes:60,waiting_fee_per_minute:2.25,
+          demand_adjustment_cap_pct:25,route_profile:'light_commercial_optional_tolls',
+          toll_policy:'pass_through',parking_policy:'pass_through',stacking_policy:'direct_only'
+        }
+      ]
+    }
+  });
+  expectStatus(preview,200,'Delivery Pricing V2B Admin preview');
+  if(preview.json?.mode!=='simulation_only'||preview.json?.activation_changed!==false||preview.json?.quote_created!==false){
+    throw new Error('Delivery Pricing V2B preview changed state or did not identify itself as simulation-only.');
+  }
+  const rows=Array.isArray(preview.json?.rows)?preview.json.rows:[];
+  const find=(cls,km)=>rows.find(x=>x.vehicle_class===cls&&Number(x.distance_km)===km);
+  const m3=find('motorcycle',3),m5=find('motorcycle',5),m10=find('motorcycle',10),s10=find('sedan',10),v40=find('l300_van',40);
+  if(Number(m3?.customer_delivery_total)!==27||Number(m5?.customer_delivery_total)!==46||Number(m10?.customer_delivery_total)!==74.75){
+    throw new Error('Delivery Pricing V2B Motorcycle tier thresholds are incorrect.');
+  }
+  if(Number(s10?.customer_delivery_total)!==205||Number(v40?.customer_delivery_total)!==930){
+    throw new Error('Delivery Pricing V2B Sedan/L300 preview totals are incorrect.');
+  }
+  if(m10?.route_policy?.expressway_eligible!==false||m10?.route_policy?.route_profile!=='motorcycle_no_expressway'){
+    throw new Error('Delivery Pricing V2B Motorcycle route policy is unsafe.');
+  }
+  if(Number(m10?.post_promo?.business_life_fee)!==7.48||Number(m10?.post_promo?.courier_gross_entitlement)!==67.28){
+    throw new Error('Delivery Pricing V2B post-promo 10/90 economics are incorrect.');
+  }
+
+  const after=await pool.query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM delivery_pricing_rules) pricing_rules,
+      (SELECT COUNT(*)::int FROM delivery_quotes) quotes,
+      (SELECT id FROM delivery_pricing_rules WHERE country_code='PH' AND active=TRUE ORDER BY version DESC LIMIT 1) active_rule_id
+  `);
+  const final=after.rows[0]||{};
+  if(Number(final.pricing_rules)!==Number(baseline.pricing_rules)||Number(final.quotes)!==Number(baseline.quotes)){
+    throw new Error('Delivery Pricing V2B preview persisted pricing or quote rows.');
+  }
+  if(String(final.active_rule_id??'')!==String(baseline.active_rule_id??'')){
+    throw new Error('Delivery Pricing V2B preview changed the active pricing rule.');
+  }
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
+  expectStatus(logout,200,'Delivery Pricing V2B Admin logout');
+  return{
+    status:'PASS',
+    wave:DELIVERY_PRICING_V2B_RUNTIME_WAVE,
+    simulation_only:true,
+    active_rule_unchanged:true,
+    pricing_rule_count_unchanged:true,
+    quote_count_unchanged:true,
+    canonical_vehicle_classes:['motorcycle','sedan','l300_van'],
+    motorcycle_quotes:{km3:27,km5:46,km10:74.75,km20:Number(find('motorcycle',20)?.customer_delivery_total||0),km40:Number(find('motorcycle',40)?.customer_delivery_total||0)},
+    sedan_km10:Number(s10.customer_delivery_total),
+    l300_km40:Number(v40.customer_delivery_total),
+    motorcycle_no_expressway:true,
+    post_promo_platform_rate_pct:10,
+    toll_parking_pass_through_excluded_from_preview_fee_basis:true,
+    runtime_listener:8080,
+    logout:true
+  };
+}
+
 async function runCourierPerformanceRuntimeAcceptance({pool,base,secret}){
   const courier=await qaAccountSession({
     pool,base,secret,email:COURIER_ALIAS,role:'courier',label:'Courier Performance Runtime QA'
@@ -4837,7 +4946,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===COURIER_PERFORMANCE_RUNTIME_WAVE
+    const result=config.wave===DELIVERY_PRICING_V2B_RUNTIME_WAVE
+      ?await runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret:config.secret})
+      :config.wave===COURIER_PERFORMANCE_RUNTIME_WAVE
       ?await runCourierPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===COURIER_PERFORMANCE_BASELINE_WAVE
       ?await runCourierPerformanceBaseline({pool,base,secret:config.secret})
@@ -4931,5 +5042,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE
 };
