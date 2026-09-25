@@ -42,6 +42,7 @@ export function isNotificationsOwnedPath(path=''){
     ||pathname==='/notifications-ui.js'
     ||pathname==='/notifications-sw.js'
     ||pathname==='/manifest.webmanifest'
+    ||pathname==='/api/notifications'
     ||pathname.startsWith('/api/notifications/');
 }
 export async function notificationsFetch(path,options={}){
