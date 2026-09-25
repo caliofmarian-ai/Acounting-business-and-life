@@ -24,18 +24,17 @@ test('Accounting Admin and Notifications reuse the Auth Hardening policy-aware d
   assert.match(accounting,/profile_governance:profileGovernanceReady/);assert.match(admin,/profile_governance:businessAccountingReady/);
 });
 
-test('parsed JSON preservation now lives through Local Services until Account/Auth reaches Accounting',()=>{
+test('parsed request bodies stay in-process without a legacy Accounting HTTP boundary',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
-  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
-  assert.match(auth,/const payload=rawPayload\|\|/);
-  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(auth,/delete headers\['transfer-encoding'\]/);
-  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
+  assert.doesNotMatch(auth,/INTERNAL_ACCOUNTING_PORT/);
+  assert.doesNotMatch(auth,/\|\|\s*3107/);
+  assert.doesNotMatch(auth,/server-v03\.js/);
+  assert.doesNotMatch(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.doesNotMatch(auth,/http\.request/);
+  assert.match(auth,/No Account\/Auth route owns this request/);
   assert.match(governance,/return authHardeningApp\(req,res,next\)/);
 });
 

@@ -14,18 +14,17 @@ test('Accounting remains standalone-capable while Profile Governance is embedded
   assert.match(accounting,/export async function startEmbeddedBusinessAccounting/);assert.match(accounting,/export async function stopEmbeddedBusinessAccounting/);assert.match(accounting,/directExecution/);assert.match(accounting,/Business & Life multi-business accounting mounted in-process/);assert.match(accounting,/Business & Life multi-business accounting gateway listening on/);assert.match(accounting,/startEmbeddedProfileGovernance/);assert.match(accounting,/profileGovernanceApp=await startEmbeddedProfileGovernance\(\)/);assert.doesNotMatch(accounting,/spawn\(process\.execPath,\['server-profile-governance\.js'\]/);
 });
 
-test('parsed JSON preservation remains below Accounting until Account/Auth reaches Accounting',()=>{
+test('parsed request bodies stay in-process without a legacy Accounting HTTP boundary',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
-  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
-  assert.match(auth,/const payload=rawPayload\|\|/);
-  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(auth,/delete headers\['transfer-encoding'\]/);
-  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
+  assert.doesNotMatch(auth,/INTERNAL_ACCOUNTING_PORT/);
+  assert.doesNotMatch(auth,/\|\|\s*3107/);
+  assert.doesNotMatch(auth,/server-v03\.js/);
+  assert.doesNotMatch(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.doesNotMatch(auth,/http\.request/);
+  assert.match(auth,/No Account\/Auth route owns this request/);
   assert.match(governance,/authHardeningApp/);
 });
 

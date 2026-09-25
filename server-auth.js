@@ -1,9 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import http from 'node:http';
 import { promisify } from 'node:util';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +21,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, 'public');
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
 const TOKEN_TTL_MS = AUTH_SESSION_TTL_MS;
@@ -34,8 +31,6 @@ const loginAttempts = new Map();
 const growthAnalyticsAttempts = new Map();
 const ACCOUNT_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_link_created','referral_shared']);
 const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_qr_opened','referral_landing_viewed','referral_shared','referral_signup_started']);
-let accountingChild;
-let accountingReady=false;
 let shuttingDown = false;
 
 function clean(value, max = 250) { return String(value ?? '').trim().slice(0, max); }
@@ -46,9 +41,6 @@ function safeEqualHex(a, b) {
 function validEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email); }
 function passwordOkay(value) { return typeof value === 'string' && value.length >= 8 && value.length <= 160; }
 
-async function accountingFetch(path,options={}){
-  return fetch(`http://127.0.0.1:${internalAccountingPort}${path}`,options);
-}
 function responseJson(status,payload){
   return new Response(JSON.stringify(payload),{status,headers:{'content-type':'application/json; charset=utf-8'}});
 }
@@ -68,11 +60,9 @@ export async function accountAuthFetch(path,options={}){
   if(pathname==='/health'){
     try{
       await pool.query('SELECT 1');
-      const accounting=await accountingFetch('/health',{headers:options.headers||{}});
-      const ok=accountingReady&&accounting.ok;
-      return responseJson(ok?200:503,{ok,db:true,accounting:ok,version:'0.3.8-account-auth'});
+      return responseJson(200,{ok:true,db:true,legacy_accounting:'retired',version:'0.3.9-account-auth'});
     }catch{
-      return responseJson(503,{ok:false,db:false,accounting:false,version:'0.3.8-account-auth'});
+      return responseJson(503,{ok:false,db:false,legacy_accounting:'retired',version:'0.3.9-account-auth'});
     }
   }
   if(pathname==='/'||pathname==='/index.html'){
@@ -94,7 +84,7 @@ export async function accountAuthFetch(path,options={}){
       status:500,code:'ACCOUNT_AUTH_EMBEDDED_DISPATCH_REQUIRED'
     });
   }
-  return accountingFetch(path,options);
+  return responseJson(404,{error:'Account/Auth downstream route not found'});
 }
 
 function referralRequestOrigin(req) {
@@ -150,11 +140,6 @@ function legacyTokenAccount(token = '') {
   const expected = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
   if (!safeEqualHex(parts[2], expected)) return null;
   return { accountId: 1, legacy: true, issued };
-}
-function signLegacyToken() {
-  const payload = `${Date.now()}.${crypto.randomUUID()}`;
-  const sig = crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest('hex');
-  return `${payload}.${sig}`;
 }
 async function resolveAccountToken(token = '') {
   const legacy = legacyTokenAccount(token);
@@ -758,55 +743,15 @@ app.get('/api/context/:role', auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-function pipeToAccounting(req,res,authorizationOverride=null){
-  const rawPayload=Buffer.isBuffer(req.rawBody)&&req.rawBody.length?req.rawBody:null;
-  const parsedJsonBody=!rawPayload&&req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=rawPayload||(parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null);
-  const headers={...req.headers,host:`127.0.0.1:${internalAccountingPort}`};
-  if(authorizationOverride)headers.authorization=authorizationOverride;
-  if(payload){headers['content-length']=String(payload.length);delete headers['transfer-encoding'];}
-  const upstream=http.request({hostname:'127.0.0.1',port:internalAccountingPort,path:req.originalUrl,method:req.method,headers},upstreamRes=>{
-    res.statusCode=upstreamRes.statusCode||502;
-    for(const[key,value]of Object.entries(upstreamRes.headers))if(value!==undefined)res.setHeader(key,value);
-    upstreamRes.pipe(res);
-  });
-  upstream.on('error',err=>{console.error('Accounting proxy error',err);if(!res.headersSent)res.status(502).json({error:'Accounting service unavailable'})});
-  if(payload)upstream.end(payload);else req.pipe(upstream);
-}
-
-app.use('/api', async (req, res, next) => {
-  if (req.path === '/login' && req.method === 'POST') return pipeToAccounting(req, res);
-  try {
-    const raw = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
-    const session = await resolveAccountToken(raw);
-    if (!session) return res.status(401).json({ error: 'Unauthorized' });
-    if (session.legacy) return pipeToAccounting(req, res);
-    const access = await pool.query(`SELECT 1 FROM profiles p JOIN business_memberships bm ON bm.account_id=p.account_id AND bm.active=TRUE WHERE p.account_id=$1 AND p.role='merchant' AND p.enabled=TRUE LIMIT 1`, [session.accountId]);
-    if (!access.rowCount) return res.status(403).json({ error: 'Merchant accounting access is not available for this account' });
-    if (session.accountId !== 1) return res.status(409).json({ error: 'Multi-business accounting isolation is being migrated before this Merchant workspace can use the legacy ledger.' });
-    return pipeToAccounting(req, res, `Bearer ${signLegacyToken()}`);
-  } catch (err) { next(err); }
+app.use('/api',(req,res)=>{
+  res.status(404).json({error:'No Account/Auth route owns this request'});
 });
 
-function startAccountingChild(){
-  accountingChild=spawn(process.execPath,['server-v03.js'],{cwd:__dirname,env:{...process.env,PORT:String(internalAccountingPort)},stdio:'inherit'});
-  accountingChild.on('exit',code=>{if(!shuttingDown){console.error(`Accounting child exited with code ${code}`);process.exit(code||1)}});
-}
-async function waitForAccounting(){
-  for(let i=0;i<40;i++){
-    try{const r=await accountingFetch('/health');if(r.ok)return}catch{}
-    await new Promise(resolve=>setTimeout(resolve,250));
-  }
-  throw new Error('Accounting child failed health check');
-}
 let embeddedStartPromise=null;
 export async function startEmbeddedAccountAuth(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
       await initDb();
-      startAccountingChild();
-      await waitForAccounting();
-      accountingReady=true;
       console.log('Business & Life Account/Auth mounted in-process');
       return app;
     })();
@@ -816,8 +761,6 @@ export async function startEmbeddedAccountAuth(){
 async function stopAccountAuth(){
   if(shuttingDown)return;
   shuttingDown=true;
-  accountingReady=false;
-  if(accountingChild&&!accountingChild.killed)accountingChild.kill('SIGTERM');
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedAccountAuth(){await stopAccountAuth()}

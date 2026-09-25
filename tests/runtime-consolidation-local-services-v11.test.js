@@ -47,7 +47,8 @@ test('Local Services remains standalone rollback-capable while Marketplace is em
   assert.match(orders,/startEmbeddedAccountAuth/);
   assert.doesNotMatch(orders,/INTERNAL_AUTH_PORT/);
   assert.doesNotMatch(orders,/\|\|\s*3207/);
-  assert.match(auth,/INTERNAL_ACCOUNTING_PORT \|\| 3107/);
+  assert.doesNotMatch(auth,/INTERNAL_ACCOUNTING_PORT/);
+  assert.doesNotMatch(auth,/\|\|\s*3107/);
 });
 
 test('Local Services fetch facade refuses to bypass Service-owned routes',()=>{
@@ -82,18 +83,17 @@ test('Local Services domain ownership remains on server-services',()=>{
   ])assert.ok(services.includes(marker),`missing Local Services marker: ${marker}`);
 });
 
-test('parsed JSON remains preserved through Local Services and is reconstructed only at Account/Auth to Accounting',()=>{
+test('parsed request bodies stay in-process without a legacy Accounting HTTP boundary',()=>{
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
-  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
-  assert.match(auth,/const payload=rawPayload\|\|/);
-  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(auth,/delete headers\['transfer-encoding'\]/);
-  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
+  assert.doesNotMatch(auth,/INTERNAL_ACCOUNTING_PORT/);
+  assert.doesNotMatch(auth,/\|\|\s*3107/);
+  assert.doesNotMatch(auth,/server-v03\.js/);
+  assert.doesNotMatch(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.doesNotMatch(auth,/http\.request/);
+  assert.match(auth,/No Account\/Auth route owns this request/);
 });
 
 test('Local Services authorization state monetization and credential audit authorities remain intact',()=>{
