@@ -33,8 +33,8 @@ async function netAllocations(pool,componentCode,economicPartyId){
   return allocationSummary(rows[0]);
 }
 
-export async function customerMoneySnapshot(pool,accountId){
-  const [orders,payments,refunds,recentOrders,recentPayments]=await Promise.all([
+async function customerMoneyHomeSummary(pool,accountId){
+  const [orders,payments,refunds]=await Promise.all([
     pool.query(`
       SELECT
         COUNT(*) FILTER(WHERE order_status<>'cancelled')::int order_count,
@@ -59,18 +59,6 @@ export async function customerMoneySnapshot(pool,accountId){
       FROM refunds r
       JOIN payment_intents pi ON pi.id=r.payment_intent_id
       WHERE pi.payer_account_id=$1
-    `,[Number(accountId)]),
-    pool.query(`
-      SELECT o.id,o.order_number,o.business_id,b.name business_name,o.total,o.paid_amount,o.outstanding_amount,
-             o.payment_method,o.payment_status,o.order_status,o.currency_code,o.created_at
-      FROM orders o JOIN businesses b ON b.id=o.business_id
-      WHERE o.customer_account_id=$1
-      ORDER BY o.created_at DESC LIMIT 30
-    `,[Number(accountId)]),
-    pool.query(`
-      SELECT id,public_id,source_type,source_id,provider_code,logical_method,currency_code,amount,status,provider_status,created_at,updated_at
-      FROM payment_intents WHERE payer_account_id=$1
-      ORDER BY created_at DESC LIMIT 30
     `,[Number(accountId)])
   ]);
   const o=orders.rows[0]||{},p=payments.rows[0]||{},r=refunds.rows[0]||{};
@@ -90,10 +78,31 @@ export async function customerMoneySnapshot(pool,accountId){
       outstanding:'orders.outstanding_amount',
       refunds:'refunds.status=succeeded',
       note:'This is personal purchase/payment flow. It is not business profit accounting.'
-    },
-    recent_orders:recentOrders.rows,
-    recent_payments:recentPayments.rows
+    }
   };
+}
+
+export async function customerMoneyHomeSnapshot(pool,accountId){
+  return customerMoneyHomeSummary(pool,accountId);
+}
+
+export async function customerMoneySnapshot(pool,accountId){
+  const [home,recentOrders,recentPayments]=await Promise.all([
+    customerMoneyHomeSummary(pool,accountId),
+    pool.query(`
+      SELECT o.id,o.order_number,o.business_id,b.name business_name,o.total,o.paid_amount,o.outstanding_amount,
+             o.payment_method,o.payment_status,o.order_status,o.currency_code,o.created_at
+      FROM orders o JOIN businesses b ON b.id=o.business_id
+      WHERE o.customer_account_id=$1
+      ORDER BY o.created_at DESC LIMIT 30
+    `,[Number(accountId)]),
+    pool.query(`
+      SELECT id,public_id,source_type,source_id,provider_code,logical_method,currency_code,amount,status,provider_status,created_at,updated_at
+      FROM payment_intents WHERE payer_account_id=$1
+      ORDER BY created_at DESC LIMIT 30
+    `,[Number(accountId)])
+  ]);
+  return{...home,recent_orders:recentOrders.rows,recent_payments:recentPayments.rows};
 }
 
 export async function courierMoneySnapshot(pool,accountId){
