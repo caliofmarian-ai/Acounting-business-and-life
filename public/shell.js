@@ -153,6 +153,15 @@ function ensureShellChrome() {
     controls.querySelector('#activeRolePill').addEventListener('click',()=>{if(activeSurface==='profile'&&activeRole)showActiveWorkspace();else openAccountHome()});
     controls.querySelector('#accountAvatarButton').addEventListener('click', openAccountHome);
   }
+  if (!document.getElementById('merchantWorkspaceNav')) {
+    const nav=document.createElement('nav');
+    nav.id='merchantWorkspaceNav';
+    nav.className='merchantWorkspaceNav hidden';
+    nav.setAttribute('aria-label','Merchant workspace navigation');
+    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button></div>';
+    shell.querySelector('.topbar')?.insertAdjacentElement('afterend',nav);
+    nav.querySelector('#merchantHomeButton')?.addEventListener('click',showActiveWorkspace);
+  }
   if (!document.getElementById('roleHub')) {
     const hub = document.createElement('section');
     hub.id = 'roleHub';
@@ -182,6 +191,11 @@ function ensureShellChrome() {
   return true;
 }
 
+function syncMerchantWorkspaceNavVisibility(){
+  const nav=document.getElementById('merchantWorkspaceNav');
+  if(!nav)return;
+  nav.classList.toggle('hidden',!(activeSurface==='profile'&&activeRole==='merchant'));
+}
 function renderTopAccount() {
   if (!snapshot?.account) return;
   const button = document.getElementById('accountAvatarButton');
@@ -192,6 +206,7 @@ function renderTopAccount() {
     pill.dataset.surface=activeSurface;
     pill.setAttribute('aria-label',activeSurface==='profile'&&activeRole?`Open ${ROLE_META[activeRole]?.label||activeRole} home`:'Open Account Home');
   }
+  syncMerchantWorkspaceNavVisibility();
 }
 
 function renderDrawer() {
@@ -484,6 +499,12 @@ function showMerchantWorkspace() {
 const FEATURE_WORKSPACE_IDS=['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace'];
 const FEATURE_LAUNCHERS={ordersWorkspace:'ordersQuickButton',marketWorkspace:'marketQuickButton',supWorkspace:'supQuickButton',deliveryWorkspace:'deliveryQuickButton'};
 function syncFeatureLauncherState(activeWorkspaceId=null){
+  const home=document.getElementById('merchantHomeButton');
+  if(home){
+    const active=!activeWorkspaceId;
+    home.classList.toggle('active',active);
+    if(active)home.setAttribute('aria-current','page');else home.removeAttribute('aria-current');
+  }
   for(const [workspaceId,buttonId] of Object.entries(FEATURE_LAUNCHERS)){
     const button=document.getElementById(buttonId);if(!button)continue;
     const active=workspaceId===activeWorkspaceId;
@@ -510,6 +531,7 @@ function openFeatureWorkspace(workspaceId){
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   hideMerchantWorkspace();
   document.getElementById('roleHub')?.classList.add('hidden');
+  syncMerchantWorkspaceNavVisibility();
   hideFeatureWorkspaces(workspaceId);
   workspace.classList.remove('hidden');
   document.dispatchEvent(new CustomEvent('abl:feature-workspace',{detail:{workspaceId,activeRole}}));
@@ -527,6 +549,7 @@ function showActiveWorkspace() {
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
   openFeatureWorkspace,
+  merchantWorkspaceHost:()=>document.getElementById('merchantWorkspaceActions'),
   openAccountHome,
   openAccountSettings,
   signOutCurrentAccount,
