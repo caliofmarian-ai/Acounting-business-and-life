@@ -91,7 +91,7 @@ async function openSupportTicket(ticketId){
   const api=await loadAdminOps();
   return api.openTicket(id);
 }
-window.BusinessLifeFeatureLoader=Object.freeze({openSupportTicket,openSupport,openLegalCenter});
+window.BusinessLifeFeatureLoader=Object.freeze({openSupportTicket,openSupport,openLegalCenter,ensureGovernance});
 
 async function openSupport(){
   try{
@@ -216,10 +216,14 @@ async function mountLaunchers(){
 
 }
 
-async function loadDrawerFeatures(){
+async function ensureGovernance(){
   try{
-    await Promise.all([loadFeature('governance')]);
-  }catch(error){console.warn('Governance lazy-load:',error.message)}
+    await loadFeature('governance');
+    return true;
+  }catch(error){
+    console.warn('Governance lazy-load:',error.message);
+    throw error;
+  }
 }
 
 async function loadAccountingForRole(role,surface='account'){
@@ -236,7 +240,8 @@ function boot(){
   const initialState=window.BusinessLifeProfileState||{};
   const initialRole=initialState.activeRole||'';
   mountMerchantMobileTools(initialRole,initialState.surface||'account');
-  loadDrawerFeatures();
+  const inviteToken=new URLSearchParams(location.search).get('invite');
+  if(inviteToken)ensureGovernance().catch(error=>console.warn('Governance invite load:',error.message));
   if(initialState.surface==='profile')loadAccountingForRole(initialRole,initialState.surface);
   document.addEventListener('abl:profile-state',event=>{
     const role=event.detail?.activeRole||'';

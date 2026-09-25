@@ -21,6 +21,31 @@ let toastTimer;
 const PROFILE_CACHE_MS = 30000;
 const ADMIN_CONTEXT_CACHE_MS = 60000;
 
+const PERF_TRACE_ENABLED = new URLSearchParams(location.search).get('perf') === '1';
+const PERF_TRACE_STARTED_AT = performance.now();
+const PERF_TRACE = {
+  enabled: PERF_TRACE_ENABLED,
+  started_at: PERF_TRACE_STARTED_AT,
+  marks: {},
+  renders: { account_home:0, drawer:0 },
+  notes: []
+};
+function perfMark(name){
+  if(!PERF_TRACE_ENABLED)return;
+  PERF_TRACE.marks[name]=Number((performance.now()-PERF_TRACE_STARTED_AT).toFixed(2));
+}
+function perfRender(name){
+  if(!PERF_TRACE_ENABLED)return;
+  if(!(name in PERF_TRACE.renders))PERF_TRACE.renders[name]=0;
+  PERF_TRACE.renders[name]+=1;
+}
+if(PERF_TRACE_ENABLED){
+  perfMark('shell_script_loaded');
+  window.BusinessLifePerformanceTrace=Object.freeze({
+    snapshot:()=>JSON.parse(JSON.stringify(PERF_TRACE))
+  });
+}
+
 const token = () => localStorage.getItem('abl_token') || '';
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
@@ -165,6 +190,7 @@ function renderTopAccount() {
 }
 
 function renderDrawer() {
+  perfRender('drawer');
   if (!snapshot?.account) return;
   const account = snapshot.account;
   const panel = document.getElementById('profileDrawerPanel');
@@ -298,8 +324,14 @@ async function openAccountSettings(view='home'){
   document.getElementById('profileSettingsWorkspace')?.classList.add('hidden');
   const workspace=document.getElementById('accountSettingsWorkspace');
   workspace?.classList.remove('hidden');
-  if(view==='profiles'&&(!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS)){
-    await refreshAdminContext(true).catch(()=>null);
+  if(view==='profiles'){
+    perfMark('governance_intent_start');
+    const tasks=[];
+    if(!adminContextFetchedAt||Date.now()-adminContextFetchedAt>=ADMIN_CONTEXT_CACHE_MS)tasks.push(refreshAdminContext(true).catch(()=>null));
+    const governanceLoader=window.BusinessLifeFeatureLoader?.ensureGovernance;
+    if(governanceLoader)tasks.push(governanceLoader().catch(error=>{console.warn('Governance profile-management load:',error.message);return null}));
+    if(tasks.length)await Promise.all(tasks);
+    perfMark('governance_intent_ready');
   }
   renderAccountSettings(view);
   renderTopAccount();
@@ -1215,6 +1247,7 @@ function renderRoleHub(role) {
 }
 
 function renderAccountHome(){
+  perfRender('account_home');
   if(!snapshot?.account)return;
   activeSurface='account';
   hideMerchantWorkspace();
@@ -1273,7 +1306,9 @@ async function refreshProfile(force=false) {
   if(!force&&snapshot?.account&&profileFetchedAt&&Date.now()-profileFetchedAt<PROFILE_CACHE_MS)return snapshot;
   if(profileRefreshPromise)return profileRefreshPromise;
   profileRefreshPromise=(async()=>{
+    perfMark('profile_bootstrap_start');
     const bootstrap = await profileApi('/api/session/bootstrap');
+    perfMark('profile_bootstrap_end');
     snapshot = bootstrap.profile;
     adminContext = bootstrap.admin?.is_admin ? bootstrap.admin : null;
     adminContextFetchedAt=Date.now();
@@ -1281,6 +1316,7 @@ async function refreshProfile(force=false) {
     activeRole = snapshot.account?.active_role || null;
     ensureShellChrome();
     renderAccountHome();
+    perfMark('account_home_rendered');
     const params=new URLSearchParams(location.search),requested=params.get('account_settings');
     if(['home','personal','security','profiles'].includes(requested)){
       params.delete('account_settings');
@@ -1288,6 +1324,8 @@ async function refreshProfile(force=false) {
       openAccountSettings(requested);
     }
     publishProfileState();
+    perfMark('profile_state_published');
+    perfMark('account_home_settled');
     return snapshot;
   })();
   try{return await profileRefreshPromise}
@@ -1302,7 +1340,9 @@ function onShellVisibility() {
 }
 
 function boot() {
+  perfMark('shell_boot_start');
   if (!ensureShellChrome()) return setTimeout(boot, 80);
+  perfMark('shell_chrome_ready');
   hideMerchantWorkspace();
   const shell = document.getElementById('shell');
   if (shell) new MutationObserver(onShellVisibility).observe(shell, { attributes: true, attributeFilter: ['class'] });
