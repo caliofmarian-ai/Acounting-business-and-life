@@ -179,7 +179,7 @@ export async function requestGoogleDeliveryRoute({
       route_profile:request.route_profile,
       route_choice:request.route_choice,
       travel_mode:request.travel_mode,
-      distance_km:Math.round(distanceMeters/100)/10,
+      distance_km:Math.round(distanceMeters)/1000,
       duration_seconds:durationSeconds,
       eta_minutes:durationSeconds==null?null:Math.max(1,Math.ceil(durationSeconds/60)),
       fallback_estimate:false,
