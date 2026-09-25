@@ -109,6 +109,7 @@ test('explicit extras are itemized and toll parking remain pass-through rather t
   assert.equal(split.business_life_delivery_fee,29.43);
   assert.equal(split.courier_gross_entitlement,264.82);
   assert.equal(split.excluded_pass_through,108);
+  assert.equal(Number((split.business_life_delivery_fee+split.courier_gross_entitlement).toFixed(2)),split.platform_fee_basis_amount);
 });
 
 test('Motorcycle no-expressway policy rejects toll charges and hidden surge beyond cap',()=>{
