@@ -25,7 +25,7 @@ function routeChoice(value){
   if(!DELIVERY_ROUTE_CHOICES.includes(x))throw Object.assign(new Error('Unsupported delivery route choice'),{status:400});
   return x;
 }
-function routeProfile(value){
+function normalizeRouteProfile(value){
   const x=clean(value,80);
   if(!x)throw Object.assign(new Error('Delivery route profile is required'),{status:400});
   return x;
@@ -74,7 +74,7 @@ export function deliveryRoutingConfig(env=process.env){
 }
 
 export function fallbackDeliveryRouteEstimate({
-  pickupLat,pickupLng,dropoffLat,dropoffLng,routeFactor=1,routeProfile,routeChoice:choice='avoid_tolls',
+  pickupLat,pickupLng,dropoffLat,dropoffLng,routeFactor=1,routeProfile:routeProfileValue,routeChoice:choice='avoid_tolls',
   reason='provider_not_configured'
 }={}){
   const pLat=coord(pickupLat,-90,90,'pickup latitude');
@@ -82,7 +82,7 @@ export function fallbackDeliveryRouteEstimate({
   const dLat=coord(dropoffLat,-90,90,'dropoff latitude');
   const dLng=coord(dropoffLng,-180,180,'dropoff longitude');
   const factor=Math.max(1,finiteNumber(routeFactor,'route factor'));
-  const profile=routeProfile(routeProfile);
+  const profile=normalizeRouteProfile(routeProfileValue);
   const selectedChoice=routeChoice(choice);
   const distance=haversine(pLat,pLng,dLat,dLng)*factor;
   return{
@@ -107,7 +107,7 @@ export function buildGoogleRoutesRequest({
   pickupLat,pickupLng,dropoffLat,dropoffLng,routeProfile:profileValue,
   routeChoice:choiceValue='avoid_tolls',includeTolls=false
 }={}){
-  const profile=routeProfile(profileValue);
+  const profile=normalizeRouteProfile(profileValue);
   const requestedChoice=routeChoice(choiceValue);
   const choice=['motorcycle_no_expressway','bicycle_local'].includes(profile)?'avoid_tolls':requestedChoice;
   const travelMode=googleTravelMode(profile);
