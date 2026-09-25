@@ -168,7 +168,9 @@ test('runtime schema persists V2B bands extras route policy and immutable quote 
   ])assert.ok(server.includes(marker),marker);
   assert.match(server,/pricing_snapshot/);
   assert.match(server,/distance_band_components/);
-  assert.match(server,/routeSource='straight_line_estimate'/);
+  assert.match(server,/resolveDeliveryRoute/);
+  assert.match(server,/fallbackDeliveryRouteEstimate/);
+  assert.match(server,/routeSource=route\.source\|\|'straight_line_estimate'/);
 });
 
 test('Admin V2B preview is simulation-only and does not activate or create Customer quotes',()=>{
@@ -196,8 +198,11 @@ test('Customer quote exposes service fare pass-through and route-source evidence
   assert.match(block,/service_fare/);
   assert.match(block,/pass_through/);
   assert.match(block,/platform_fee_basis/);
-  assert.match(block,/routeSource='straight_line_estimate'/);
-  assert.match(block,/fallback_estimate:true/);
+  assert.match(block,/resolveDeliveryRoute/);
+  assert.match(block,/fallbackDeliveryRouteEstimate/);
+  assert.match(block,/routeSource=route\.source\|\|'straight_line_estimate'/);
+  assert.match(block,/fallback_estimate:Boolean\(route\.fallback_estimate\)/);
+  assert.match(block,/provider_route_calls:providerRouteCalls/);
 });
 
 test('checkout copies exact quote economics and completion monetizes only service fee basis',()=>{
