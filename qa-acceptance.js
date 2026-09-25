@@ -374,7 +374,10 @@ async function ensureInventoryItem({base,token,name,purchaseQuantity,purchaseUni
   const existing=(Array.isArray(inventory.json)?inventory.json:[]).find(
     item=>String(item.item||'').trim().toLowerCase()===String(name).toLowerCase()
   );
-  if(existing)return existing;
+  const currentQuantity=Number(existing?.quantity||0);
+  const reorderLevel=Number(existing?.reorder_level||0);
+  if(existing&&currentQuantity>reorderLevel)return existing;
+  const replenishing=Boolean(existing);
 
   const created=await requestJson(base,'/api/inventory/purchase',{
     method:'POST',
@@ -387,11 +390,11 @@ async function ensureInventoryItem({base,token,name,purchaseQuantity,purchaseUni
       reorder_quantity:reorderQuantity,
       reorder_unit:reorderUnit,
       account:'cash',
-      note:'Controlled QA catalog fixture — no real purchase',
+      note:replenishing?'Controlled QA catalog fixture replenishment — no real purchase':'Controlled QA catalog fixture — no real purchase',
       record_expense:false
     }
   });
-  expectStatus(created,201,'Merchant stock purchase '+name);
+  expectStatus(created,201,(replenishing?'Merchant stock replenishment ':'Merchant stock purchase ')+name);
   return created.json.inventory;
 }
 
