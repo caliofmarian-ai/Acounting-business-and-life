@@ -3616,7 +3616,7 @@ async function runSupplierPerformanceBaseline({pool,base,secret}){
 
 async function runDeliveryRoutingV2CRuntimeAcceptance({pool,base,secret}){
   let admin=null,customer=null,businessId=0,productId=0,quoteId=0,tempPricingId=0;
-  let storeSnapshot=null,productSnapshot=null,previousActiveIds=[];
+  let storeSnapshot=null,productSnapshot=null,previousActiveIds=[],pricingStateCaptured=false;
   let result=null;
   try{
     const customerPrerequisite=await runCustomerOnboarding({pool,base,secret});
@@ -3651,6 +3651,7 @@ async function runDeliveryRoutingV2CRuntimeAcceptance({pool,base,secret}){
     previousActiveIds=(await pool.query(
       "SELECT id FROM delivery_pricing_rules WHERE country_code='PH' AND active=TRUE ORDER BY version DESC"
     )).rows.map(x=>Number(x.id));
+    pricingStateCaptured=true;
 
     await pool.query(
       "UPDATE merchant_storefronts SET publication_status='published',delivery_enabled=TRUE,pickup_lat=$1,pickup_lng=$2,updated_at=NOW() WHERE business_id=$3",
@@ -3770,9 +3771,11 @@ async function runDeliveryRoutingV2CRuntimeAcceptance({pool,base,secret}){
   }finally{
     if(quoteId)await pool.query("DELETE FROM delivery_quotes WHERE id=$1",[quoteId]).catch(()=>{});
     if(tempPricingId)await pool.query("DELETE FROM delivery_pricing_rules WHERE id=$1",[tempPricingId]).catch(()=>{});
-    await pool.query("UPDATE delivery_pricing_rules SET active=FALSE WHERE country_code='PH'").catch(()=>{});
-    if(previousActiveIds.length){
-      await pool.query("UPDATE delivery_pricing_rules SET active=TRUE WHERE id=ANY($1::bigint[])",[previousActiveIds]).catch(()=>{});
+    if(pricingStateCaptured){
+      await pool.query("UPDATE delivery_pricing_rules SET active=FALSE WHERE country_code='PH'").catch(()=>{});
+      if(previousActiveIds.length){
+        await pool.query("UPDATE delivery_pricing_rules SET active=TRUE WHERE id=ANY($1::bigint[])",[previousActiveIds]).catch(()=>{});
+      }
     }
     if(productSnapshot&&productId){
       await pool.query(
