@@ -26,6 +26,13 @@ test('Account Home is the one selector for profiles Admin and account settings',
   assert.match(shell,/function accountIdentityLabel\(account=snapshot\?\.account\).*'Test Account ID':'Personal ID'/);
   assert.match(css,/\.accountHomeAction/);
   assert.match(css,/@media\(max-width:520px\)\{\.accountProfileGrid\{grid-template-columns:1fr\}/);
+  assert.match(css,/Account Home Visual Polish V1/);
+  assert.match(css,/\[data-account-role="merchant"\]/);
+  assert.match(css,/\[data-account-role="customer"\]/);
+  assert.match(css,/\[data-account-role="supplier"\]/);
+  assert.match(css,/\[data-account-role="courier"\]/);
+  assert.match(css,/\[data-account-role="service_provider"\]/);
+  assert.match(css,/@media\(prefers-reduced-motion:reduce\)/);
 });
 
 test('sign out is permanently reachable and ends the current server and browser session',()=>{
