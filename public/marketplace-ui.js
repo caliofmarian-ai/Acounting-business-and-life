@@ -78,7 +78,6 @@ function upgradeStorefrontFormV2(store){
   addStoreHelp('storeAddress','Enter the customer-facing address or a useful address to search on the map.','Bacoor, Cavite','Public only when location sharing is ON',false);
   addStoreHelp('storeOpening','Shows customers whether the store is currently open, busy or closed.','','Public',true);
   addStoreHelp('storeEta','Typical preparation time before pickup or delivery handoff.','15','Public',true);
-  syncStorePresence();
 }
 function syncStorePresence(){
   const select=document.getElementById('storePresence'),fields=document.getElementById('storePhysicalLocationFields'),share=document.getElementById('storePublicLocation');
