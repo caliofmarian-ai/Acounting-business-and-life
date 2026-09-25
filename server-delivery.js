@@ -535,6 +535,8 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
       route_provider_ready:Boolean(route.provider_ready),
       route_provider_error_code:route.provider_error_code||null,
       route_restrictions_partially_ignored:Boolean(route.route_restrictions_partially_ignored),
+      route_mode_warning_required:Boolean(route.mode_warning_required),
+      route_mode_warning_code:route.mode_warning_code||null,
       provider_route_calls:providerRouteCalls,
       toll_status:route.toll_status,
       toll_amount:route.toll_amount,
@@ -640,6 +642,8 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
     provider_ready:Boolean(route.provider_ready),
     provider_error_code:route.provider_error_code||null,
     provider_route_calls:providerRouteCalls,
+    mode_warning_required:Boolean(route.mode_warning_required),
+    mode_warning_code:route.mode_warning_code||null,
     toll_status:route.toll_status,
     toll_amount:route.toll_amount,
     toll_currency_code:route.toll_currency_code||'PHP'
