@@ -671,3 +671,31 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
   .accountUtilityList>a{transition:none}
   .accountSettingsGrid>button:hover{transform:none}
 }
+
+
+/* Merchant UX Stabilization V1 — #461 */
+.activeRolePill{border:0;cursor:pointer;align-items:center;justify-content:center;font-family:inherit}
+.activeRolePill:focus-visible,.merchantWorkspaceButton:focus-visible{outline:3px solid rgba(10,124,102,.28);outline-offset:2px}
+.merchantWorkspaceButton{
+  border:0;
+  background:var(--bl-bg-brand-soft);
+  color:#075f50;
+  border-radius:13px;
+  padding:10px 13px;
+  min-height:44px;
+  font:inherit;
+  font-size:13px;
+  font-weight:900;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  white-space:nowrap;
+  cursor:pointer
+}
+.merchantWorkspaceButton.active,.merchantWorkspaceButton[aria-current="page"]{
+  background:#075f50;
+  color:#fff;
+  box-shadow:0 5px 14px rgba(7,95,80,.18)
+}
+@media(min-width:650px){.merchantWorkspaceButton{display:inline-flex}}
+@media(max-width:640px){.topActions{scroll-snap-type:x proximity}.topActions>*{scroll-snap-align:start}}
