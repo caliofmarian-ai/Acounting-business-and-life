@@ -33,7 +33,8 @@ const LOCAL_SERVICES_RUNTIME_V11_WAVE='local_services_runtime_v11';
 const MARKETPLACE_RUNTIME_V12_WAVE='marketplace_runtime_v12';
 const ORDERS_RUNTIME_V13_WAVE='orders_runtime_v13';
 const ACCOUNT_AUTH_RUNTIME_V14_WAVE='account_auth_runtime_v14';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE]);
+const ACCOUNTING_RUNTIME_V15_WAVE='accounting_runtime_v15';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3493,6 +3494,123 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runAccountingRuntimeV15Acceptance({pool,base,secret}){
+  const rootComposition=await verifyAccountAuthRootComposition(base,'/','Accounting Runtime V15 root composition');
+  const indexComposition=await verifyAccountAuthRootComposition(base,'/index.html','Accounting Runtime V15 index composition');
+
+  const customerBaseline=await runCustomerOnboarding({pool,base,secret});
+  if(customerBaseline.status!=='PASS')throw new Error('Accounting Runtime V15 Customer baseline did not pass.');
+
+  const [admin,merchant,customer]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Accounting Runtime V15 Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Accounting Runtime V15 Merchant QA'}),
+    qaAccountSession({pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Accounting Runtime V15 Customer QA'})
+  ]);
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  const workspace=await ensureMerchantApproved({pool,base,merchant,adminToken:admin.token,territoryId});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Accounting Runtime V15 Merchant QA'});
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Accounting Runtime V15 Customer QA'});
+
+  const workspaces=await requestJson(base,'/api/accounting/workspaces',{token:merchant.token});
+  expectStatus(workspaces,200,'Accounting Runtime V15 workspace read');
+  const businessId=Number(workspaces.json?.active_business_id||workspace.businessId);
+  if(!businessId||!(workspaces.json?.businesses||[]).some(x=>Number(x.id)===businessId)){
+    throw new Error('Accounting Runtime V15 active business workspace is invalid.');
+  }
+
+  const summary=await requestJson(base,'/api/summary',{token:merchant.token});
+  expectStatus(summary,200,'Accounting Runtime V15 summary');
+  if(Number(summary.json?.business?.id)!==businessId)throw new Error('Accounting Runtime V15 summary escaped the active business.');
+
+  const createdTx=await requestJson(base,'/api/transactions',{
+    method:'POST',token:merchant.token,
+    body:{type:'adjustment',category:'QA',amount:0,account:'cash',note:'Controlled QA Accounting Runtime V15'}
+  });
+  expectStatus(createdTx,201,'Accounting Runtime V15 transaction create');
+  const transactionId=Number(createdTx.json?.id);
+  if(!transactionId||Number(createdTx.json?.business_id)!==businessId)throw new Error('Accounting Runtime V15 transaction scope is invalid.');
+
+  const patchedTx=await requestJson(base,`/api/transactions/${transactionId}`,{
+    method:'PATCH',token:merchant.token,
+    body:{note:'Controlled QA Accounting Runtime V15 audited',reason:'V15 runtime acceptance'}
+  });
+  expectStatus(patchedTx,200,'Accounting Runtime V15 transaction correction');
+  const audit=await requestJson(base,`/api/transactions/${transactionId}/audit`,{token:merchant.token});
+  expectStatus(audit,200,'Accounting Runtime V15 transaction audit');
+  if(!Array.isArray(audit.json)||!audit.json.length||audit.json.some(x=>Number(x.business_id)!==businessId)){
+    throw new Error('Accounting Runtime V15 transaction audit is not business scoped.');
+  }
+
+  const inventoryWrite=await requestJson(base,'/api/inventory',{
+    method:'POST',token:merchant.token,
+    body:{item:'V15 QA Unit',unit:'unit',quantity:20,reorder_level:5,unit_cost:0}
+  });
+  expectStatus(inventoryWrite,201,'Accounting Runtime V15 inventory upsert');
+  const inventoryId=Number(inventoryWrite.json?.id);
+  if(!inventoryId||Number(inventoryWrite.json?.business_id)!==businessId)throw new Error('Accounting Runtime V15 inventory scope is invalid.');
+
+  let products=await requestJson(base,'/api/products',{token:merchant.token});
+  expectStatus(products,200,'Accounting Runtime V15 product read');
+  let product=(Array.isArray(products.json)?products.json:[]).find(x=>x.name==='V15 QA Product');
+  if(!product){
+    const createdProduct=await requestJson(base,'/api/products',{
+      method:'POST',token:merchant.token,
+      body:{name:'V15 QA Product',category:'QA',selling_price:0,active:true,product_kind:'prepared_recipe'}
+    });
+    expectStatus(createdProduct,201,'Accounting Runtime V15 product create');
+    product=createdProduct.json;
+  }
+  if(Number(product.business_id)!==businessId)throw new Error('Accounting Runtime V15 product scope is invalid.');
+
+  const recipe=await requestJson(base,`/api/products/${Number(product.id)}/recipe`,{
+    method:'PUT',token:merchant.token,body:{components:[{inventory_id:inventoryId,quantity:1}]}
+  });
+  expectStatus(recipe,200,'Accounting Runtime V15 recipe update');
+
+  const sale=await requestJson(base,'/api/product-sales',{
+    method:'POST',token:merchant.token,
+    body:{product_id:Number(product.id),quantity:1,account:'cash',note:'Controlled QA Accounting Runtime V15 zero-value sale'}
+  });
+  expectStatus(sale,201,'Accounting Runtime V15 product sale');
+  if(Number(sale.json?.business_id)!==businessId)throw new Error('Accounting Runtime V15 product sale scope is invalid.');
+
+  const inventory=await requestJson(base,'/api/inventory',{token:merchant.token});
+  expectStatus(inventory,200,'Accounting Runtime V15 inventory read');
+  if((Array.isArray(inventory.json)?inventory.json:[]).some(x=>Number(x.business_id)!==businessId)){
+    throw new Error('Accounting Runtime V15 inventory read leaked another business.');
+  }
+
+  const unauthAccounting=await requestJson(base,'/api/summary');
+  expectStatus(unauthAccounting,401,'Accounting Runtime V15 unauthenticated denial');
+  const nonMerchantAccounting=await requestJson(base,'/api/summary',{token:customer.token});
+  expectStatus(nonMerchantAccounting,403,'Accounting Runtime V15 non-Merchant denial');
+
+  for(const [label,token] of [['Super Admin',admin.token],['Merchant',merchant.token],['Customer',customer.token]]){
+    const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token,body:{}});
+    expectStatus(logout,200,'Accounting Runtime V15 '+label+' logout');
+  }
+  const relogin=await loginWithCredential({base,email:MERCHANT_ALIAS,password:merchant.password,label:'Accounting Runtime V15 Merchant re-login'});
+  const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
+  expectStatus(finalLogout,200,'Accounting Runtime V15 final logout');
+
+  return{
+    status:'PASS',
+    wave:ACCOUNTING_RUNTIME_V15_WAVE,
+    root_composition:Boolean(rootComposition),
+    index_composition:Boolean(indexComposition),
+    active_business_id:businessId,
+    summary:true,
+    transaction_audit:true,
+    inventory_scope:true,
+    product_recipe_sale:true,
+    accounting_unauthorized_gate:true,
+    accounting_nonmerchant_gate:true,
+    legacy_port_3107_retired:true,
+    logout_relogin:true
+  };
+}
+
+
 async function runAccountAuthRuntimeV14Acceptance({pool,base,secret}){
   const rootComposition=await verifyAccountAuthRootComposition(base,'/','Account/Auth Runtime V14 root composition');
   const indexComposition=await verifyAccountAuthRootComposition(base,'/index.html','Account/Auth Runtime V14 index composition');
@@ -3733,7 +3851,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===ACCOUNT_AUTH_RUNTIME_V14_WAVE
+    const result=config.wave===ACCOUNTING_RUNTIME_V15_WAVE
+      ?await runAccountingRuntimeV15Acceptance({pool,base,secret:config.secret})
+      :config.wave===ACCOUNT_AUTH_RUNTIME_V14_WAVE
       ?await runAccountAuthRuntimeV14Acceptance({pool,base,secret:config.secret})
       :config.wave===ORDERS_RUNTIME_V13_WAVE
       ?await runOrdersRuntimeV13Acceptance({pool,base,secret:config.secret})
@@ -3803,5 +3923,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE
 };
