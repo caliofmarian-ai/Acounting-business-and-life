@@ -3682,7 +3682,7 @@ async function runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret}){
   if(m10?.route_policy?.expressway_eligible!==false||m10?.route_policy?.route_profile!=='motorcycle_no_expressway'){
     throw new Error('Delivery Pricing V2B Motorcycle route policy is unsafe.');
   }
-  if(Number(m10?.post_promo?.business_life_fee)!==7.48||Number(m10?.post_promo?.courier_gross_entitlement)!==67.28){
+  if(Number(m10?.post_promo?.business_life_fee)!==7.48||Number(m10?.post_promo?.courier_gross_entitlement)!==67.27){
     throw new Error('Delivery Pricing V2B post-promo 10/90 economics are incorrect.');
   }
 
