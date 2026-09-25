@@ -13,11 +13,12 @@ function courierHomeBlock(){
   return shell.slice(start,end);
 }
 
-test('Courier Home reads only canonical delivery profile and Courier Money in parallel',()=>{
+test('Courier Home reads only slim canonical Delivery and Courier Money views in parallel',()=>{
   const block=courierHomeBlock();
   assert.match(block,/Promise\.allSettled\(\[/);
-  assert.match(block,/profileApi\('\/api\/courier\/delivery-profile'\)/);
-  assert.match(block,/profileApi\('\/api\/profile-money\/courier'\)/);
+  assert.match(block,/profileApi\('\/api\/courier\/home'\)/);
+  assert.match(block,/profileApi\('\/api\/profile-money\/courier\?view=home'\)/);
+  assert.doesNotMatch(block,/profileApi\('\/api\/courier\/delivery-profile'\)/);
   assert.doesNotMatch(block,/\/api\/admin\//);
 });
 

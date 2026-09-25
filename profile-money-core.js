@@ -117,8 +117,8 @@ export async function customerMoneySnapshot(pool,accountId){
   return{...home,recent_orders:recentOrders.rows,recent_payments:recentPayments.rows};
 }
 
-export async function courierMoneySnapshot(pool,accountId){
-  const [deliveries,allocations,recent]=await Promise.all([
+async function courierMoneyHomeSummary(pool,accountId){
+  const [deliveries,allocations]=await Promise.all([
     pool.query(`
       SELECT
         COUNT(*) FILTER(WHERE status='delivered')::int delivered_count,
@@ -126,16 +126,7 @@ export async function courierMoneySnapshot(pool,accountId){
         COALESCE(SUM(delivery_fee) FILTER(WHERE status='delivered'),0) delivered_fee_context
       FROM deliveries WHERE courier_account_id=$1
     `,[Number(accountId)]),
-    netAllocations(pool,'courier_net',accountId),
-    pool.query(`
-      SELECT d.id,d.order_id,o.order_number,d.status,d.delivery_fee,d.currency_code,d.route_distance_km,
-             d.assigned_at,d.delivered_at,d.created_at,b.name business_name
-      FROM deliveries d
-      JOIN orders o ON o.id=d.order_id
-      JOIN businesses b ON b.id=d.business_id
-      WHERE d.courier_account_id=$1
-      ORDER BY d.created_at DESC LIMIT 40
-    `,[Number(accountId)])
+    netAllocations(pool,'courier_net',accountId)
   ]);
   const d=deliveries.rows[0]||{};
   return{
@@ -151,9 +142,28 @@ export async function courierMoneySnapshot(pool,accountId){
       note:allocations.tracked
         ?'Only recorded courier_net allocations are treated as Courier earnings.'
         :'Courier compensation allocation is not configured yet. No earnings amount is invented from delivery fees.'
-    },
-    recent_deliveries:recent.rows
+    }
   };
+}
+
+export async function courierMoneyHomeSnapshot(pool,accountId){
+  return courierMoneyHomeSummary(pool,accountId);
+}
+
+export async function courierMoneySnapshot(pool,accountId){
+  const [home,recent]=await Promise.all([
+    courierMoneyHomeSummary(pool,accountId),
+    pool.query(`
+      SELECT d.id,d.order_id,o.order_number,d.status,d.delivery_fee,d.currency_code,d.route_distance_km,
+             d.assigned_at,d.delivered_at,d.created_at,b.name business_name
+      FROM deliveries d
+      JOIN orders o ON o.id=d.order_id
+      JOIN businesses b ON b.id=d.business_id
+      WHERE d.courier_account_id=$1
+      ORDER BY d.created_at DESC LIMIT 40
+    `,[Number(accountId)])
+  ]);
+  return{...home,recent_deliveries:recent.rows};
 }
 
 export async function serviceProviderMoneySnapshot(pool,accountId){

@@ -808,8 +808,8 @@ async function loadCourierHomeData(force=false){
   if(courierHomeCache.promise)return courierHomeCache.promise;
   courierHomeCache.promise=(async()=>{
     const [deliveryResult,moneyResult]=await Promise.allSettled([
-      profileApi('/api/courier/delivery-profile'),
-      profileApi('/api/profile-money/courier')
+      profileApi('/api/courier/home'),
+      profileApi('/api/profile-money/courier?view=home')
     ]);
     const failures=[];
     const value=(result,label)=>{

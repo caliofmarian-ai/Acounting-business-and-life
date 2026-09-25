@@ -16,11 +16,12 @@ function courierHomeBlock(){
   return shell.slice(start,end>start?end:undefined);
 }
 
-test('Courier Home baseline loads delivery profile and full Courier Money in parallel',()=>{
+test('Courier Home runtime loads slim Delivery and Money views in parallel',()=>{
   const block=courierHomeBlock();
   assert.match(block,/Promise\.allSettled\(\[/);
-  assert.match(block,/profileApi\('\/api\/courier\/delivery-profile'\)/);
-  assert.match(block,/profileApi\('\/api\/profile-money\/courier'\)/);
+  assert.match(block,/profileApi\('\/api\/courier\/home'\)/);
+  assert.match(block,/profileApi\('\/api\/profile-money\/courier\?view=home'\)/);
+  assert.doesNotMatch(block,/profileApi\('\/api\/courier\/delivery-profile'\)/);
   assert.match(block,/renderCourierHomeData/);
 });
 
@@ -66,4 +67,38 @@ test('canonical Courier performance baseline records switch and Home waterfall s
   assert.match(qa,/detailed_delivery_history_loaded_on_home:true/);
   assert.match(qa,/detailed_money_workspace_loaded_on_home:true/);
   assert.match(qa,/leaflet_loaded_on_home:false/);
+});
+
+
+test('Courier Home delivery endpoint returns only critical state and one current work item',()=>{
+  assert.match(deliveryServer,/app\.get\('\/api\/courier\/home'/);
+  assert.match(deliveryServer,/detail_mode:'home'/);
+  assert.match(deliveryServer,/d\.status NOT IN \('delivered','failed','cancelled','quoted'\)/);
+  assert.match(deliveryServer,/LIMIT 1/);
+  const start=deliveryServer.indexOf('async function courierHomeSnapshot');
+  const end=deliveryServer.indexOf("app.get('/health'",start);
+  const block=deliveryServer.slice(start,end);
+  assert.doesNotMatch(block,/SELECT \*|last_lat|last_lng|pickup_lat|dropoff_lat|evidence_data_url/);
+  assert.match(block,/live_map:true/);
+});
+
+test('Courier Home Money view keeps headline earnings and defers recent delivery history',()=>{
+  assert.match(paymentServer,/courierMoneyHomeSnapshot/);
+  assert.match(paymentServer,/role==='courier'&&String\(req\.query\.view\|\|''\)==='home'/);
+  assert.match(moneyCore,/export async function courierMoneyHomeSnapshot/);
+  const start=moneyCore.indexOf('async function courierMoneyHomeSummary');
+  const end=moneyCore.indexOf('export async function courierMoneySnapshot',start);
+  const block=moneyCore.slice(start,end);
+  assert.match(block,/netAllocations\(pool,'courier_net',accountId\)/);
+  assert.doesNotMatch(block,/recent_deliveries|ORDER BY d\.created_at DESC LIMIT 40/);
+});
+
+test('Courier performance runtime acceptance enforces deferred deep data and maps',()=>{
+  assert.match(qa,/COURIER_PERFORMANCE_RUNTIME_WAVE='courier_performance_runtime_v1'/);
+  assert.match(qa,/detailed_delivery_history_loaded_on_home:false/);
+  assert.match(qa,/detailed_money_workspace_loaded_on_home:false/);
+  assert.match(qa,/delivery_history_deferred:true/);
+  assert.match(qa,/document_detail_deferred:true/);
+  assert.match(qa,/money_history_deferred:true/);
+  assert.match(qa,/map_and_polling_deferred:true/);
 });

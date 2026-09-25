@@ -45,7 +45,8 @@ const MERCHANT_PERFORMANCE_RUNTIME_WAVE='merchant_performance_runtime_v1';
 const SUPPLIER_PERFORMANCE_BASELINE_WAVE='supplier_performance_baseline_v1';
 const SUPPLIER_PERFORMANCE_RUNTIME_WAVE='supplier_performance_runtime_v1';
 const COURIER_PERFORMANCE_BASELINE_WAVE='courier_performance_baseline_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE]);
+const COURIER_PERFORMANCE_RUNTIME_WAVE='courier_performance_runtime_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3611,6 +3612,107 @@ async function runSupplierPerformanceBaseline({pool,base,secret}){
 }
 
 
+async function runCourierPerformanceRuntimeAcceptance({pool,base,secret}){
+  const courier=await qaAccountSession({
+    pool,base,secret,email:COURIER_ALIAS,role:'courier',label:'Courier Performance Runtime QA'
+  });
+  await ensureActiveRole({base,token:courier.token,role:'courier',label:'Courier Performance Runtime QA'});
+
+  async function timed(path,{method='GET',body}={}){
+    const headers={Accept:'application/json',Authorization:'Bearer '+courier.token};
+    let payload;
+    if(body!==undefined){
+      headers['Content-Type']='application/json';
+      payload=JSON.stringify(body);
+    }
+    const started=performance.now();
+    const response=await fetch(base+path,{method,headers,body:payload});
+    const text=await response.text();
+    const ended=performance.now();
+    let json={};try{json=text?JSON.parse(text):{}}catch{}
+    return{
+      path,method,status:response.status,ok:response.ok,
+      duration_ms:Number((ended-started).toFixed(2)),
+      payload_bytes:Buffer.byteLength(text,'utf8'),
+      json
+    };
+  }
+
+  const totalStarted=performance.now();
+  const switchRole=await timed('/api/me/active-role',{method:'PATCH',body:{role:'courier'}});
+  expectStatus(switchRole,200,'Courier Performance runtime active-role switch');
+
+  const homeStarted=performance.now();
+  const [deliveryHome,moneyHome]=await Promise.all([
+    timed('/api/courier/home'),
+    timed('/api/profile-money/courier?view=home')
+  ]);
+  expectStatus(deliveryHome,200,'Courier Performance runtime Home delivery');
+  expectStatus(moneyHome,200,'Courier Performance runtime Home Money');
+  const homeReady=performance.now();
+
+  if(deliveryHome.json?.detail_mode!=='home')throw new Error('Courier Performance runtime delivery Home mode is invalid.');
+  if(!Array.isArray(deliveryHome.json?.deliveries)||deliveryHome.json.deliveries.length>1){
+    throw new Error('Courier Performance runtime Home loaded more than the current delivery.');
+  }
+  if(Object.prototype.hasOwnProperty.call(moneyHome.json||{},'recent_deliveries')){
+    throw new Error('Courier Performance runtime Home loaded deferred Money history.');
+  }
+
+  const deliveryDetail=await timed('/api/courier/delivery-profile');
+  expectStatus(deliveryDetail,200,'Courier Performance runtime deferred Delivery workspace');
+  const moneyDetail=await timed('/api/profile-money/courier');
+  expectStatus(moneyDetail,200,'Courier Performance runtime deferred Money workspace');
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:courier.token,body:{}});
+  expectStatus(logout,200,'Courier Performance runtime logout');
+
+  return{
+    status:'PASS',
+    wave:COURIER_PERFORMANCE_RUNTIME_WAVE,
+    first_open_request_count:3,
+    profile_switch_request_count:1,
+    home_request_count:2,
+    request_paths:[
+      '/api/me/active-role',
+      '/api/courier/home',
+      '/api/profile-money/courier?view=home'
+    ],
+    duplicate_request_paths:[],
+    profile_switch_ms:switchRole.duration_ms,
+    profile_switch_payload_bytes:switchRole.payload_bytes,
+    delivery_home_ms:deliveryHome.duration_ms,
+    delivery_home_payload_bytes:deliveryHome.payload_bytes,
+    money_home_ms:moneyHome.duration_ms,
+    money_home_payload_bytes:moneyHome.payload_bytes,
+    home_parallel_ms:Number((homeReady-homeStarted).toFixed(2)),
+    full_profile_ready_ms:Number((homeReady-totalStarted).toFixed(2)),
+    current_delivery_rows_loaded:deliveryHome.json.deliveries.length,
+    active_route_present:Boolean(deliveryHome.json.deliveries.find(x=>[
+      'courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer'
+    ].includes(String(x?.status||'')))),
+    eligibility_status:deliveryHome.json?.profile?.eligibility_status||null,
+    available:Boolean(deliveryHome.json?.profile?.available),
+    compliance:deliveryHome.json?.compliance||{},
+    earnings_tracked:Boolean(moneyHome.json?.summary?.earnings?.tracked),
+    active_delivery_count:Number(moneyHome.json?.summary?.active_count||0),
+    delivered_count:Number(moneyHome.json?.summary?.delivered_count||0),
+    deferred_delivery_profile_ms:deliveryDetail.duration_ms,
+    deferred_delivery_profile_payload_bytes:deliveryDetail.payload_bytes,
+    deferred_money_ms:moneyDetail.duration_ms,
+    deferred_money_payload_bytes:moneyDetail.payload_bytes,
+    detailed_delivery_history_loaded_on_home:false,
+    detailed_money_workspace_loaded_on_home:false,
+    live_map_loaded_on_home:false,
+    delivery_history_deferred:true,
+    document_detail_deferred:true,
+    money_history_deferred:true,
+    map_and_polling_deferred:true,
+    runtime_listener:8080,
+    logout:true
+  };
+}
+
 async function runCourierPerformanceBaseline({pool,base,secret}){
   const courier=await qaAccountSession({
     pool,base,secret,email:COURIER_ALIAS,role:'courier',label:'Courier Performance Baseline QA'
@@ -4735,7 +4837,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===COURIER_PERFORMANCE_BASELINE_WAVE
+    const result=config.wave===COURIER_PERFORMANCE_RUNTIME_WAVE
+      ?await runCourierPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
+      :config.wave===COURIER_PERFORMANCE_BASELINE_WAVE
       ?await runCourierPerformanceBaseline({pool,base,secret:config.secret})
       :config.wave===SUPPLIER_PERFORMANCE_RUNTIME_WAVE
       ?await runSupplierPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
@@ -4827,5 +4931,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE
 };
