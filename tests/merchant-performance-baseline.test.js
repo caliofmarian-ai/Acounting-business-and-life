@@ -113,4 +113,6 @@ test('post-optimization Merchant acceptance models two cold-start requests',()=>
   assert.match(qa,/critical_request_count:1/);
   assert.match(qa,/workspace_metadata_reused:true/);
   assert.match(qa,/full_finance_overview_deferred:true/);
+  assert.match(qa,/deferred_finance_validated:true/);
+  assert.match(qa,/deferred_finance_ms/);
 });
