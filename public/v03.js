@@ -137,7 +137,7 @@ function renderMerchantToday(data){
   $('todayLoading').classList.add('hidden');
   $('todayError').classList.add('hidden');
   $('todayContent').classList.remove('hidden');
-  document.dispatchEvent(new CustomEvent('abl:merchant-today-data',{detail:{business:data.business,presentation:data.presentation}}));
+  document.dispatchEvent(new CustomEvent('abl:merchant-today-data',{detail:{business:data.business,presentation:data.presentation,workspace:data.workspace||null}}));
 }
 function merchantTodayLoading(){
   $('todayError')?.classList.add('hidden');
@@ -165,6 +165,10 @@ async function loadMerchantToday({force=false}={}){
     .finally(()=>{merchantTodayPromise=null});
   return merchantTodayPromise;
 }
+window.BusinessLifeMerchantToday=Object.freeze({
+  getState:()=>({data:merchantTodayCache,workspace:merchantTodayCache?.workspace||null,businessId:merchantTodayBusinessId}),
+  load:options=>loadMerchantToday(options)
+});
 async function openMerchantAction(action){
   document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.merchantAction===action));
   if(action==='orders'){

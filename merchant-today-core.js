@@ -102,14 +102,68 @@ export function merchantTodayViewModel({
   };
 }
 
-export async function loadMerchantToday(pool,ctx,{financeOverview}={}){
+
+async function merchantTodayFinanceSnapshot(pool,ctx){
+  const bid=Number(ctx.business.id);
+  const {rows}=await pool.query(`
+    WITH store AS (
+      SELECT merchant_domain,publication_status
+      FROM merchant_storefronts
+      WHERE business_id=$1
+      LIMIT 1
+    ),
+    order_finance AS (
+      WITH x AS (
+        SELECT o.id,o.order_status,o.subtotal,
+          COALESCE((SELECT SUM(op.merchandise_amount) FROM order_payments op
+            WHERE op.order_id=o.id AND op.status='confirmed'),0) merchandise_received
+        FROM orders o
+        WHERE o.business_id=$1 AND o.order_status<>'cancelled'
+      )
+      SELECT
+        COALESCE(SUM(subtotal) FILTER(WHERE order_status='completed'),0) completed_merchandise_value,
+        COALESCE(SUM(merchandise_received),0) confirmed_merchandise_received,
+        COALESCE(SUM(GREATEST(subtotal-merchandise_received,0)) FILTER(WHERE order_status='completed'),0) completed_receivables
+      FROM x
+    ),
+    ledger AS (
+      SELECT COALESCE(SUM(amount) FILTER(WHERE type='business_expense'),0) business_expenses
+      FROM transactions
+      WHERE business_id=$1
+    )
+    SELECT
+      COALESCE((SELECT merchant_domain FROM store),'unknown') merchant_domain,
+      COALESCE((SELECT publication_status FROM store),'not_configured') publication_status,
+      order_finance.completed_merchandise_value,
+      order_finance.confirmed_merchandise_received,
+      order_finance.completed_receivables,
+      ledger.business_expenses
+    FROM order_finance CROSS JOIN ledger
+  `,[bid]);
+  const x=rows[0]||{};
+  const domain=x.merchant_domain||'unknown';
+  return{
+    business:{id:bid,name:ctx.business.name,currency_code:ctx.business.currency_code||'PHP'},
+    presentation:{
+      merchant_domain:domain,
+      storefront_status:x.publication_status||'not_configured',
+      food_modules_enabled:['food','mixed'].includes(domain),
+      non_food_modules_enabled:['non_food','mixed'].includes(domain),
+      legacy_recipe_ui_allowed:['food','mixed'].includes(domain)
+    },
+    commercial:{completed_merchandise_value:money(x.completed_merchandise_value)},
+    cash_evidence:{confirmed_merchandise_received:money(x.confirmed_merchandise_received)},
+    receivables:{completed_customer_receivables:money(x.completed_receivables)},
+    ledger:{business_expenses:money(x.business_expenses)}
+  };
+}
+
+export async function loadMerchantToday(pool,ctx){
   if(ctx?.role!=='merchant'){
     const error=new Error('Merchant profile required');
     error.status=403;
     throw error;
   }
-  if(typeof financeOverview!=='function')throw new TypeError('financeOverview is required');
-
   const bid=Number(ctx.business.id);
   const [
     finance,
@@ -122,7 +176,7 @@ export async function loadMerchantToday(pool,ctx,{financeOverview}={}){
     exceptions,
     catalog
   ]=await Promise.all([
-    financeOverview(pool,ctx),
+    merchantTodayFinanceSnapshot(pool,ctx),
     pool.query(`
       SELECT
         COUNT(*) FILTER(WHERE order_status='awaiting_customer_presence')::int waiting_customer,
