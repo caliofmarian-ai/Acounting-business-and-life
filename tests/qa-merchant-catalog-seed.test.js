@@ -45,6 +45,14 @@ test('Merchant seed builds all catalog behavior fixtures and AI reference media'
   assert.match(source,/image_source_type!=='ai_generated'/);
 });
 
+test('Merchant seed replenishes QA fixture stock at its reorder threshold',()=>{
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  assert.match(source,/const currentQuantity=Number\(existing\?\.quantity\|\|0\)/);
+  assert.match(source,/const reorderLevel=Number\(existing\?\.reorder_level\|\|0\)/);
+  assert.match(source,/if\(existing&&currentQuantity>reorderLevel\)return existing/);
+  assert.match(source,/Controlled QA catalog fixture replenishment — no real purchase/);
+});
+
 test('Merchant seed keeps financial fixture stock from pretending to be real paid purchases',()=>{
   const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
   assert.match(source,/record_expense:false/);

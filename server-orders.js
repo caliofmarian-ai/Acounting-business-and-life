@@ -1,20 +1,17 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
-import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import { readOrderDetail } from './orders-read-core.js';
+import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const internalAuthPort = Number(process.env.INTERNAL_AUTH_PORT || 3207);
-const internalAccountingPort = Number(process.env.INTERNAL_ACCOUNTING_PORT || 3107);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const jsonBody = express.json({ limit: '350kb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
@@ -22,7 +19,7 @@ const ACCOUNTS = new Set(['cash', 'gcash', 'bank', 'other']);
 const FULFILMENT = new Set(['pickup', 'delivery']);
 const PAYMENT_METHODS = new Set(['cash', 'online']);
 const ORDER_STATUSES = new Set(['awaiting_payment','awaiting_customer_presence','accepted','preparing','ready','handoff_to_delivery','completed','cancelled']);
-let authChild;
+let authApp=null;
 let authReady=false;
 let shuttingDown = false;
 
@@ -37,9 +34,6 @@ function manilaDateStamp() {
   return `${x.year}${x.month}${x.day}`;
 }
 
-async function internalFetch(path, options = {}) {
-  return fetch(`http://127.0.0.1:${internalAuthPort}${path}`, options);
-}
 export function isOrdersOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
   if(pathname==='/orders.css'||pathname==='/orders-ui.js')return true;
@@ -57,7 +51,7 @@ export async function ordersFetch(path,options={}){
   if(pathname==='/health'){
     try{
       await pool.query('SELECT 1');
-      const auth=await internalFetch('/health',{headers:options.headers||{}});
+      const auth=await accountAuthFetch('/health',{headers:options.headers||{}});
       const ok=authReady&&auth.ok;
       return new Response(JSON.stringify({ok,db:true,auth:ok,version:'0.5-orders'}),{
         status:ok?200:503,headers:{'content-type':'application/json; charset=utf-8'}
@@ -69,17 +63,16 @@ export async function ordersFetch(path,options={}){
     }
   }
   if(pathname==='/'||pathname==='/index.html'){
-    const headers={...(options.headers||{}),host:`127.0.0.1:${internalAuthPort}`};
-    const r=await internalFetch(path,{...options,headers});
+    const r=await accountAuthFetch(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/orders.css" />\n</head>')
       .replace('</body>','  <script type="module" src="/orders-ui.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
-  return internalFetch(path,options);
+  return accountAuthFetch(path,options);
 }
 async function identity(req) {
-  const r = await internalFetch('/api/me', { headers: { Authorization: bearer(req) } });
+  const r = await accountAuthFetch('/api/me', { headers: { Authorization: bearer(req) } });
   if (!r.ok) { const b = await r.json().catch(()=>({})); throw Object.assign(new Error(b.error || 'Unauthorized'), { status:r.status }); }
   return r.json();
 }
@@ -337,31 +330,19 @@ app.post('/api/orders/merchant/:id/cancel',body,async(req,res,next)=>{try{const 
 app.get('/api/orders/merchant/customers/:customerId/trust',async(req,res,next)=>{try{const customerId=Number(req.params.customerId);const{business}=await requireMerchant(req,Number(req.query.business_id||1));res.json(await trustInfo(Number(business.id),customerId))}catch(e){next(e)}});
 app.put('/api/orders/merchant/customers/:customerId/trust',body,async(req,res,next)=>{try{const customerId=Number(req.params.customerId);const{business}=await requireMerchant(req,Number(req.body?.business_id||1));const info=await trustInfo(Number(business.id),customerId);const allow=Boolean(req.body?.allow_remote_cash_prep);if(allow&&!info.eligible) return res.status(409).json({error:'Customer needs 5 successful completed orders with this Merchant before remote cash preparation can be enabled.',completed_orders:info.completed_orders});await pool.query(`INSERT INTO merchant_customer_settings(business_id,customer_account_id,allow_remote_cash_prep,updated_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(business_id,customer_account_id) DO UPDATE SET allow_remote_cash_prep=EXCLUDED.allow_remote_cash_prep,updated_at=NOW()`,[business.id,customerId,allow]);res.json(await trustInfo(Number(business.id),customerId))}catch(e){next(e)}});
 
-function proxy(req,res){
-  const parsedJsonBody=req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null;
-  const headers={...req.headers,host:`127.0.0.1:${internalAuthPort}`};
-  if(payload){headers['content-length']=String(payload.length);delete headers['transfer-encoding'];}
-  const up=http.request({hostname:'127.0.0.1',port:internalAuthPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error('Auth proxy error',e);if(!res.headersSent)res.status(502).json({error:'Application service unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
+function proxy(req,res,next){
+  if(!authApp)return res.status(503).json({error:'Account/Auth runtime is not ready'});
+  return authApp(req,res,next);
 }
 app.use(proxy);
 
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;const body={error:err.status?err.message:'Unexpected server error'};if(err.shortages)body.shortages=err.shortages;res.status(err.status||500).json(body)});
 
-function startAuth(){authChild=spawn(process.execPath,['server-auth.js'],{cwd:__dirname,env:{...process.env,PORT:String(internalAuthPort),INTERNAL_ACCOUNTING_PORT:String(internalAccountingPort)},stdio:'inherit'});authChild.on('exit',code=>{if(!shuttingDown){console.error(`Auth child exited ${code}`);process.exit(code||1)}})}
-async function waitAuth(){for(let i=0;i<60;i++){try{const r=await internalFetch('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Auth child failed health check')}
 let embeddedStartPromise=null;
 export async function startEmbeddedOrders(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      startAuth();
-      await waitAuth();
+      authApp=await startEmbeddedAccountAuth();
       authReady=true;
       await initDb();
       console.log('Business & Life Orders mounted in-process');
@@ -374,7 +355,8 @@ async function stopOrders(){
   if(shuttingDown)return;
   shuttingDown=true;
   authReady=false;
-  if(authChild&&!authChild.killed)authChild.kill('SIGTERM');
+  await stopEmbeddedAccountAuth().catch(()=>{});
+  authApp=null;
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedOrders(){await stopOrders()}

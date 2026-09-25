@@ -9,6 +9,7 @@ const suppliers=read('server-suppliers.js');
 const services=read('server-services.js');
 const marketplace=read('server-marketplace.js');
 const orders=read('server-orders.js');
+const auth=read('server-auth.js');
 const notifications=read('server-notifications.js');
 const legal=read('server-legal.js');
 
@@ -76,17 +77,20 @@ test('Delivery domain ownership remains on server-delivery',()=>{
   ])assert.ok(delivery.includes(marker),`missing Delivery marker: ${marker}`);
 });
 
-test('parsed JSON remains preserved below Delivery until Orders reaches Auth',()=>{
+test('parsed JSON remains preserved below Delivery until Account/Auth reaches Accounting',()=>{
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(suppliers,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(orders,/delete headers\['transfer-encoding'\]/);
-  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
+  assert.match(auth,/const payload=rawPayload\|\|/);
+  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(auth,/delete headers\['transfer-encoding'\]/);
+  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
 });
 
 test('V9 preserves scoped Admin Legal and notification wrappers above Delivery',()=>{

@@ -6,6 +6,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const incidents=read('server-incidents.js');
 const finance=read('server-delivery-finance.js'),delivery=read('server-delivery.js'),suppliers=read('server-suppliers.js'),services=read('server-services.js'),marketplace=read('server-marketplace.js');
 const orders=read('server-orders.js');
+const auth=read('server-auth.js');
 const hardening=read('server-auth-hardening.js');
 const admin=read('server-admin-operations.js');
 const notifications=read('server-notifications.js');
@@ -56,7 +57,7 @@ test('Incident routes and assets remain owned by server-incidents',()=>{
   ])assert.ok(incidents.includes(marker),`missing Incident marker: ${marker}`);
 });
 
-test('already parsed JSON is preserved through Delivery until Orders reaches Auth',()=>{
+test('already parsed JSON is preserved through Delivery until Account/Auth reaches Accounting',()=>{
   assert.match(incidents,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(finance,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(delivery,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
@@ -64,11 +65,14 @@ test('already parsed JSON is preserved through Delivery until Orders reaches Aut
   assert.match(services,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(marketplace,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
   assert.match(orders,/const body = \(req,res,next\) => req\.body !== undefined \? next\(\) : jsonBody\(req,res,next\)/);
-  assert.match(orders,/const parsedJsonBody=req\.body!==undefined/);
-  assert.match(orders,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
-  assert.match(orders,/headers\['content-length'\]=String\(payload\.length\)/);
-  assert.match(orders,/delete headers\['transfer-encoding'\]/);
-  assert.match(orders,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.doesNotMatch(orders,/const parsedJsonBody=req\.body!==undefined/);
+  assert.match(auth,/const rawPayload=Buffer\.isBuffer\(req\.rawBody\)/);
+  assert.match(auth,/const parsedJsonBody=!rawPayload&&req\.body!==undefined/);
+  assert.match(auth,/const payload=rawPayload\|\|/);
+  assert.match(auth,/Buffer\.from\(JSON\.stringify\(req\.body\?\?\{\}\)\)/);
+  assert.match(auth,/headers\['content-length'\]=String\(payload\.length\)/);
+  assert.match(auth,/delete headers\['transfer-encoding'\]/);
+  assert.match(auth,/if\(payload\)upstream\.end\(payload\);else req\.pipe\(upstream\)/);
 });
 
 test('Admin incident creation traverses the embedded chain instead of fetch-bypassing Incidents',()=>{
