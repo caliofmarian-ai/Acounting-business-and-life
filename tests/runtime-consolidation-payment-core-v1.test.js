@@ -6,6 +6,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const publicServer=read('server-paymongo.js');
 const paymentServer=read('server-payments.js');
 const legalServer=read('server-legal.js');
+const notificationServer=read('server-notifications.js');
 
 test('public runtime mounts Payment Core in-process instead of spawning port 4607',()=>{
   assert.match(publicServer,/startEmbeddedPaymentCore/);
@@ -25,11 +26,13 @@ test('Payment Core remains standalone-capable for rollback while exposing embedd
   assert.doesNotMatch(paymentServer,/\|\|4507/);
 });
 
-test('embedded forwarding preserves original JSON bytes through the remaining Legal proxy boundary',()=>{
+test('embedded forwarding preserves original signed JSON bytes without a Legal HTTP proxy',()=>{
   assert.match(publicServer,/verify:\(req,_res,buf\)=>\{req\.rawBody=Buffer\.from\(buf\)\}/);
-  assert.match(legalServer,/Buffer\.isBuffer\(req\.rawBody\)/);
-  assert.match(legalServer,/const payload=rawPayload\|\|/);
-  assert.match(legalServer,/if\(payload\)up\.end\(payload\);else req\.pipe\(up\)/);
+  assert.match(notificationServer,/Buffer\.isBuffer\(req\.rawBody\)&&req\.rawBody\.length/);
+  assert.match(notificationServer,/verifyResendWebhook\(\{\s*rawBody,/s);
+  assert.match(legalServer,/notificationsApp\.handle\(req,res/);
+  assert.doesNotMatch(legalServer,/http\.request/);
+  assert.doesNotMatch(legalServer,/INTERNAL_NOTIFICATIONS_PORT/);
 });
 
 test('public health reflects embedded Payment Core readiness without a child process handle',()=>{
