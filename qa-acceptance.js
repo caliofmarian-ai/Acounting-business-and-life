@@ -42,7 +42,8 @@ const CUSTOMER_PERFORMANCE_BASELINE_WAVE='customer_performance_baseline_v1';
 const CUSTOMER_PERFORMANCE_RUNTIME_WAVE='customer_performance_runtime_v1';
 const MERCHANT_PERFORMANCE_BASELINE_WAVE='merchant_performance_baseline_v1';
 const MERCHANT_PERFORMANCE_RUNTIME_WAVE='merchant_performance_runtime_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE]);
+const SUPPLIER_PERFORMANCE_BASELINE_WAVE='supplier_performance_baseline_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3513,6 +3514,101 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runSupplierPerformanceBaseline({pool,base,secret}){
+  const [admin,supplier]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Supplier Performance Baseline Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:SUPPLIER_ALIAS,role:'supplier',label:'Supplier Performance Baseline Supplier QA'})
+  ]);
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  await ensureSupplierApproved({pool,base,supplier,adminToken:admin.token,territoryId});
+
+  async function timed(path,{method='GET',body}={}){
+    const headers={Accept:'application/json',Authorization:'Bearer '+supplier.token};
+    let payload;
+    if(body!==undefined){
+      headers['Content-Type']='application/json';
+      payload=JSON.stringify(body);
+    }
+    const started=performance.now();
+    const response=await fetch(base+path,{method,headers,body:payload});
+    const text=await response.text();
+    const ended=performance.now();
+    let json={};try{json=text?JSON.parse(text):{}}catch{}
+    return{
+      path,method,status:response.status,ok:response.ok,
+      duration_ms:Number((ended-started).toFixed(2)),
+      payload_bytes:Buffer.byteLength(text,'utf8'),
+      json
+    };
+  }
+
+  const switchStarted=performance.now();
+  const switchRole=await timed('/api/me/active-role',{method:'PATCH',body:{role:'supplier'}});
+  expectStatus(switchRole,200,'Supplier Performance baseline active-role switch');
+  const workspaces=await timed('/api/accounting/workspaces');
+  expectStatus(workspaces,200,'Supplier Performance baseline Accounting workspace');
+  const hubBackgroundReady=performance.now();
+
+  const todayStarted=performance.now();
+  const [me,relationships,orders,today]=await Promise.all([
+    timed('/api/supplier/me'),
+    timed('/api/procurement/relationships'),
+    timed('/api/procurement/orders'),
+    timed('/api/supplier/v5/today')
+  ]);
+  for(const [label,result] of [['Supplier profile',me],['relationships',relationships],['orders',orders],['Today',today]]){
+    expectStatus(result,200,'Supplier Performance baseline '+label);
+  }
+  const todayReady=performance.now();
+
+  const businessId=Number(today.json?.business?.id||workspaces.json?.active_business_id||0);
+  if(!businessId||Number(workspaces.json?.active_business_id)!==businessId){
+    throw new Error('Supplier Performance baseline business scope mismatch.');
+  }
+
+  const logoutSupplier=await requestJson(base,'/api/auth/logout',{method:'POST',token:supplier.token,body:{}});
+  expectStatus(logoutSupplier,200,'Supplier Performance baseline Supplier logout');
+  const logoutAdmin=await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
+  expectStatus(logoutAdmin,200,'Supplier Performance baseline Admin logout');
+
+  return{
+    status:'PASS',
+    wave:SUPPLIER_PERFORMANCE_BASELINE_WAVE,
+    profile_switch_request_count:2,
+    profile_switch_paths:['/api/me/active-role','/api/accounting/workspaces'],
+    today_request_count:4,
+    today_request_paths:[
+      '/api/supplier/me',
+      '/api/procurement/relationships',
+      '/api/procurement/orders',
+      '/api/supplier/v5/today'
+    ],
+    duplicate_request_paths:[],
+    profile_switch_ms:switchRole.duration_ms,
+    profile_switch_payload_bytes:switchRole.payload_bytes,
+    accounting_workspaces_ms:workspaces.duration_ms,
+    accounting_workspaces_payload_bytes:workspaces.payload_bytes,
+    hub_background_ready_ms:Number((hubBackgroundReady-switchStarted).toFixed(2)),
+    supplier_me_ms:me.duration_ms,
+    supplier_me_payload_bytes:me.payload_bytes,
+    relationships_ms:relationships.duration_ms,
+    relationships_payload_bytes:relationships.payload_bytes,
+    procurement_orders_ms:orders.duration_ms,
+    procurement_orders_payload_bytes:orders.payload_bytes,
+    supplier_today_ms:today.duration_ms,
+    supplier_today_payload_bytes:today.payload_bytes,
+    today_parallel_ms:Number((todayReady-todayStarted).toFixed(2)),
+    active_business_id:businessId,
+    business_count:Array.isArray(workspaces.json?.businesses)?workspaces.json.businesses.length:0,
+    today_counts:today.json?.counts||{},
+    today_money:today.json?.money||{},
+    detailed_supplier_data_loaded_on_today:true,
+    runtime_listener:8080,
+    logout:true
+  };
+}
+
+
 async function runMerchantPerformanceRuntimeAcceptance({pool,base,secret}){
   const [admin,merchant]=await Promise.all([
     qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Merchant Performance Runtime Super Admin QA'}),
@@ -4449,7 +4545,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===MERCHANT_PERFORMANCE_RUNTIME_WAVE
+    const result=config.wave===SUPPLIER_PERFORMANCE_BASELINE_WAVE
+      ?await runSupplierPerformanceBaseline({pool,base,secret:config.secret})
+      :config.wave===MERCHANT_PERFORMANCE_RUNTIME_WAVE
       ?await runMerchantPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===MERCHANT_PERFORMANCE_BASELINE_WAVE
       ?await runMerchantPerformanceBaseline({pool,base,secret:config.secret})
@@ -4535,5 +4633,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE
 };
