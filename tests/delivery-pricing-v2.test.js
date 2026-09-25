@@ -123,7 +123,7 @@ test('Motorcycle no-expressway policy rejects toll charges and hidden surge beyo
 
 test('Owner Delivery economics remains 0% promo and 10% post-promo on service fare basis',()=>{
   assert.equal(DELIVERY_PLATFORM_RATE_PCT,10);
-  assert.equal(DELIVERY_FEE_BASIS,'verified_delivery_service_fare');
+  assert.equal(DELIVERY_FEE_BASIS,'verified_delivery_price');
   const promo=deliveryPriceSplit(100,{postPromo:false});
   assert.equal(promo.business_life_delivery_fee,0);
   assert.equal(promo.courier_gross_entitlement,100);
