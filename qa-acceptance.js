@@ -3686,6 +3686,39 @@ async function runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret}){
     throw new Error('Delivery Pricing V2B post-promo 10/90 economics are incorrect.');
   }
 
+  const passThroughPreview=await requestJson(base,'/api/admin/delivery/pricing/preview',{
+    method:'POST',
+    token:admin.token,
+    body:{
+      distances_km:[10],
+      weight_kg:2,
+      volume_l:10,
+      toll_amount:88,
+      parking_amount:20,
+      vehicle_rules:[{
+        vehicle_class:'sedan',formula_type:'tiered_distance',priority:1,
+        base_fee:65,included_distance_km:0,
+        distance_bands:[{up_to_km:5,per_km:15},{up_to_km:null,per_km:13}],
+        minimum_fee:65,maximum_distance_km:40,max_weight_kg:200,max_volume_l:700,
+        extra_stop_fee:40,free_wait_minutes:30,waiting_fee_per_minute:1.5,
+        demand_adjustment_cap_pct:25,route_profile:'car_optional_tolls',
+        toll_policy:'pass_through',parking_policy:'pass_through',stacking_policy:'direct_only'
+      }]
+    }
+  });
+  expectStatus(passThroughPreview,200,'Delivery Pricing V2B toll/parking preview');
+  const passRow=Array.isArray(passThroughPreview.json?.rows)?passThroughPreview.json.rows[0]:null;
+  if(
+    Number(passRow?.service_fare)!==205||
+    Number(passRow?.pass_through_amount)!==108||
+    Number(passRow?.platform_fee_basis_amount)!==205||
+    Number(passRow?.customer_delivery_total)!==313||
+    Number(passRow?.post_promo?.business_life_fee)!==20.5||
+    Number(passRow?.post_promo?.courier_gross_entitlement)!==184.5
+  ){
+    throw new Error('Delivery Pricing V2B toll/parking pass-through economics are incorrect.');
+  }
+
   const after=await pool.query(`
     SELECT
       (SELECT COUNT(*)::int FROM delivery_pricing_rules) pricing_rules,
