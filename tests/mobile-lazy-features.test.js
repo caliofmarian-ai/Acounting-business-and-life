@@ -11,6 +11,7 @@ const incidentServer=read('server-incidents.js');
 const governanceServer=read('server-profile-governance.js');
 const accountingServer=read('server-business-accounting.js');
 const governanceUi=read('public/profile-governance-ui.js');
+const shell=read('public/shell.js');
 
 test('optional feature modules are no longer injected into startup HTML',()=>{
   assert.doesNotMatch(adminServer,/src="\/admin-operations-ui\.js"/);
@@ -54,10 +55,17 @@ test('mobile launcher preserves Help and More while Admin stays in the profile s
   assert.match(loader,/Could not load this feature/);
 });
 
-test('governance loads from account bootstrap without requiring the retired avatar menu',()=>{
+test('governance is deferred until profile-management intent while invite deep links stay immediate',()=>{
   assert.match(governanceUi,/await refreshGov\(\);decorateDrawer\(\)/);
-  assert.match(loader,/mountMerchantMobileTools\(initialRole,initialState\.surface\|\|'account'\);\n\s*loadDrawerFeatures\(\)/);
-  assert.doesNotMatch(loader,/addEventListener\('abl:drawer-rendered'/);
+  assert.match(loader,/async function ensureGovernance\(\)/);
+  assert.match(loader,/BusinessLifeFeatureLoader=Object\.freeze\(\{openSupportTicket,openSupport,openLegalCenter,ensureGovernance\}\)/);
+  assert.doesNotMatch(loader,/loadDrawerFeatures\(\)/);
+  assert.match(loader,/new URLSearchParams\(location\.search\)\.get\('invite'\)/);
+  assert.match(loader,/if\(inviteToken\)ensureGovernance\(\)/);
+  const settings=shell.slice(shell.indexOf("async function openAccountSettings"),shell.indexOf("function closeAccountSettings"));
+  assert.match(settings,/if\(view==='profiles'\)/);
+  assert.match(settings,/BusinessLifeFeatureLoader\?\.ensureGovernance/);
+  assert.match(settings,/Promise\.all\(tasks\)/);
 });
 
 test('business accounting is loaded only for relevant active profiles',()=>{
