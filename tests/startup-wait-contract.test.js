@@ -6,9 +6,11 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 
 test('production and default startup budgets remain unchanged',()=>{for(const base of [300,340,380,420]){assert.equal(startupWaitAttempts(base,{}),base);assert.equal(startupWaitAttempts(base,{APP_ENV:'production'}),base)}});
 test('isolated QA doubles bounded child-startup attempts',()=>{for(const base of [300,340,380,420]){assert.equal(startupWaitAttempts(base,{APP_ENV:'qa'}),base*2);assert.equal(startupWaitAttempts(base,{APP_ENV:'QA'}),base*2)}});
-test('remaining nested gateway waits use the shared QA-aware helper',()=>{
-  const contracts=[['server-legal.js',340]];
-  for(const [path,base] of contracts){const source=read(path);assert.match(source,/import \{startupWaitAttempts\} from '\.\/startup-wait\.js';/);assert.match(source,new RegExp('startupWaitAttempts\\('+base+'\\)'));assert.doesNotMatch(source,new RegExp('for\\(let i=0;i<'+base+';i\\+\\+\\)'))}
+test('in-process runtime retirement removes the final Notifications child-startup wait',()=>{
+  const legal=read('server-legal.js');
+  assert.doesNotMatch(legal,/startupWaitAttempts/);
+  assert.doesNotMatch(legal,/Notification child failed health check/);
+  assert.doesNotMatch(legal,/spawn\(process\.execPath,\['server-notifications\.js'\]/);
   assert.doesNotMatch(read('server-profile-governance.js'),/startupWaitAttempts/);
 });
 test('startup helper remains finite and sanitizes invalid base attempts',()=>{assert.equal(startupWaitAttempts(0,{APP_ENV:'qa'}),2);assert.equal(startupWaitAttempts('bad',{APP_ENV:'production'}),1);assert.ok(Number.isFinite(startupWaitAttempts(420,{APP_ENV:'qa'})))});
