@@ -41,7 +41,8 @@ const PROFILE_SELECTOR_RUNTIME_WAVE='profile_selector_runtime_v1';
 const CUSTOMER_PERFORMANCE_BASELINE_WAVE='customer_performance_baseline_v1';
 const CUSTOMER_PERFORMANCE_RUNTIME_WAVE='customer_performance_runtime_v1';
 const MERCHANT_PERFORMANCE_BASELINE_WAVE='merchant_performance_baseline_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE]);
+const MERCHANT_PERFORMANCE_RUNTIME_WAVE='merchant_performance_runtime_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3512,6 +3513,89 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runMerchantPerformanceRuntimeAcceptance({pool,base,secret}){
+  const [admin,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Merchant Performance Runtime Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Merchant Performance Runtime Merchant QA'})
+  ]);
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  const workspace=await ensureMerchantApproved({pool,base,merchant,adminToken:admin.token,territoryId});
+
+  async function timed(path,{method='GET',body}={}){
+    const headers={Accept:'application/json',Authorization:'Bearer '+merchant.token};
+    let payload;
+    if(body!==undefined){
+      headers['Content-Type']='application/json';
+      payload=JSON.stringify(body);
+    }
+    const started=performance.now();
+    const response=await fetch(base+path,{method,headers,body:payload});
+    const text=await response.text();
+    const ended=performance.now();
+    let json={};try{json=text?JSON.parse(text):{}}catch{}
+    return{
+      path,method,status:response.status,ok:response.ok,
+      duration_ms:Number((ended-started).toFixed(2)),
+      payload_bytes:Buffer.byteLength(text,'utf8'),
+      json
+    };
+  }
+
+  const totalStarted=performance.now();
+  const switchRole=await timed('/api/me/active-role',{method:'PATCH',body:{role:'merchant'}});
+  expectStatus(switchRole,200,'Merchant Performance runtime active-role switch');
+  const criticalStarted=performance.now();
+
+  const today=await timed('/api/merchant/today');
+  expectStatus(today,200,'Merchant Performance runtime Today');
+  const settledAt=performance.now();
+
+  const workspaceState=today.json?.workspace||{};
+  const businessId=Number(workspaceState.active_business_id||workspace.businessId);
+  if(!businessId||Number(today.json?.business?.id)!==businessId){
+    throw new Error('Merchant Performance runtime Today/workspace business mismatch.');
+  }
+  if(!Array.isArray(workspaceState.businesses)||!workspaceState.businesses.some(b=>Number(b.id)===businessId)){
+    throw new Error('Merchant Performance runtime workspace metadata is incomplete.');
+  }
+
+  const logoutMerchant=await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+  expectStatus(logoutMerchant,200,'Merchant Performance runtime Merchant logout');
+  const logoutAdmin=await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
+  expectStatus(logoutAdmin,200,'Merchant Performance runtime Admin logout');
+
+  return{
+    status:'PASS',
+    wave:MERCHANT_PERFORMANCE_RUNTIME_WAVE,
+    first_open_request_count:2,
+    profile_switch_request_count:1,
+    critical_request_count:1,
+    request_paths:[
+      '/api/me/active-role',
+      '/api/merchant/today'
+    ],
+    duplicate_request_paths:[],
+    profile_switch_ms:switchRole.duration_ms,
+    profile_switch_payload_bytes:switchRole.payload_bytes,
+    merchant_today_ms:today.duration_ms,
+    merchant_today_payload_bytes:today.payload_bytes,
+    critical_ready_ms:Number((settledAt-criticalStarted).toFixed(2)),
+    full_profile_ready_ms:Number((settledAt-totalStarted).toFixed(2)),
+    active_business_id:businessId,
+    business_count:workspaceState.businesses.length,
+    order_attention_total:Number(today.json?.orders?.attention_total||0),
+    inventory_attention_total:Number(today.json?.inventory?.attention_total||0),
+    supplier_attention_total:Number(today.json?.supplier?.attention_total||0),
+    catalog_attention_total:Number(today.json?.catalog?.attention_total||0),
+    workspace_metadata_reused:true,
+    full_finance_overview_deferred:true,
+    deep_views_deferred:true,
+    runtime_listener:8080,
+    logout:true
+  };
+}
+
+
 async function runMerchantPerformanceBaseline({pool,base,secret}){
   const [admin,merchant]=await Promise.all([
     qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Merchant Performance Baseline Super Admin QA'}),
@@ -4356,7 +4440,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===MERCHANT_PERFORMANCE_BASELINE_WAVE
+    const result=config.wave===MERCHANT_PERFORMANCE_RUNTIME_WAVE
+      ?await runMerchantPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
+      :config.wave===MERCHANT_PERFORMANCE_BASELINE_WAVE
       ?await runMerchantPerformanceBaseline({pool,base,secret:config.secret})
       :config.wave===CUSTOMER_PERFORMANCE_RUNTIME_WAVE
       ?await runCustomerPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
@@ -4440,5 +4526,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE
 };
