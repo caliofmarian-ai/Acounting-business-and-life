@@ -120,7 +120,7 @@ export function buildGoogleRoutesRequest({
     regionCode:'PH',
     units:'METRIC'
   };
-  const tolls=Boolean(includeTolls&&travelMode==='DRIVE'&&choice==='fastest_with_tolls');
+  const tolls=Boolean(includeTolls&&profile==='car_optional_tolls'&&travelMode==='DRIVE'&&choice==='fastest_with_tolls');
   if(tolls)body.extraComputations=['TOLLS'];
   const fields=[
     'routes.distanceMeters',
@@ -190,7 +190,9 @@ export async function requestGoogleDeliveryRoute({
       toll_status:toll.status,
       toll_amount:toll.amount,
       toll_currency_code:toll.currency_code,
-      toll_computation_requested:request.toll_computation_requested
+      toll_computation_requested:request.toll_computation_requested,
+      mode_warning_required:['BICYCLE','TWO_WHEELER'].includes(request.travel_mode),
+      mode_warning_code:request.travel_mode==='TWO_WHEELER'?'GOOGLE_TWO_WHEELER_BETA':request.travel_mode==='BICYCLE'?'GOOGLE_BICYCLE_BETA':null
     };
   }catch(error){
     if(error?.name==='AbortError')throw Object.assign(new Error('Routing provider timed out'),{code:'ROUTING_PROVIDER_TIMEOUT'});
