@@ -97,9 +97,8 @@ export function normalizeDistanceBands(input=[],{
   for(let index=0;index<raw.length;index++){
     const item=raw[index]||{};
     const isLast=index===raw.length-1;
-    const upper=item.up_to_km==null||item.upToKm==null&&item.up_to_km===undefined
-      ?null
-      :Number(item.up_to_km??item.upToKm);
+    const rawUpper=item.up_to_km??item.upToKm;
+    const upper=rawUpper==null?null:Number(rawUpper);
     const rate=money(nonNegative(item.per_km??item.perKm,'distance band per_km'));
     if(openEnded)throw Object.assign(new Error('No distance band may follow an open-ended band'),{status:400});
     if(upper==null){
@@ -358,7 +357,9 @@ export function selectDeliveryVehicleQuote(rules=[],shipment={}){
 
 export function courierCanServeDelivery(courier={},delivery={}){
   const required=canonicalDeliveryVehicleClass(delivery.required_vehicle_class||delivery.requiredVehicleClass);
-  const approved=canonicalDeliveryVehicleClass(courier.approved_vehicle_class||courier.vehicle_type);
+  const approvedRaw=clean(courier.approved_vehicle_class||courier.vehicle_type,40);
+  if(!approvedRaw)return{allowed:false,reason:'VEHICLE_CLASS_MISMATCH'};
+  const approved=canonicalDeliveryVehicleClass(approvedRaw);
   if(approved!==required)return{allowed:false,reason:'VEHICLE_CLASS_MISMATCH'};
   const weight=nonNegative(delivery.estimated_weight_kg??delivery.weightKg??0,'delivery weight');
   const volume=nonNegative(delivery.estimated_volume_l??delivery.volumeL??0,'delivery volume');
