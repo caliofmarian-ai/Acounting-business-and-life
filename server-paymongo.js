@@ -11,11 +11,11 @@ import { payMongoPilotReadiness,payMongoCheckoutPolicy } from './pilot-payment-r
 import { publicDeploymentEvidence } from './deployment-evidence.js';
 import { runQaAcceptanceIfRequested } from './qa-acceptance.js';
 import { startEmbeddedPaymentCore,stopEmbeddedPaymentCore } from './server-payments.js';
+import {authHardeningFetch} from './server-auth-hardening.js';
 
 const {Pool}=pg;
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_NOTIFICATIONS_PORT||4407);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb',verify:(req,_res,buf)=>{req.rawBody=Buffer.from(buf)}});
 let paymentCoreReady=false;let shuttingDown=false;
@@ -46,8 +46,7 @@ app.use((_req,res,next)=>{
   next();
 });
 
-async function upstream(path,options={}){return fetch('http://127.0.0.1:'+upstreamPort+path,options)}
-async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
+async function identity(req){const r=await authHardeningFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 
 async function notifyPaymentConfirmed(result){
   if(!result?.ok||!result?.order_id||!result?.payment_id||result.duplicate)return;
@@ -89,17 +88,12 @@ app.use(body);
 
 const railwayServiceName=clean(process.env.RAILWAY_SERVICE_NAME||'',120);
 const pwaInstallAllowed=process.env.PWA_INSTALL_ALLOWED==='1'||!railwayServiceName||railwayServiceName==='accounting-business-life';
-async function servePwaAsset(req,res,path,type){
+function allowPwaAsset(_req,res,next){
   if(!pwaInstallAllowed)return res.status(404).type('text/plain').send('PWA installation is disabled on preview services.');
-  const r=await upstream(path,{headers:{...req.headers,host:'127.0.0.1:'+upstreamPort}});
-  const body=await r.arrayBuffer();
-  res.status(r.status);
-  if(type)res.type(type);
-  if(path==='/sw.js')res.setHeader('Cache-Control','no-store, max-age=0');
-  res.send(Buffer.from(body));
+  next();
 }
-app.get('/manifest.webmanifest',(req,res,next)=>servePwaAsset(req,res,'/manifest.webmanifest','application/manifest+json').catch(next));
-app.get('/sw.js',(req,res,next)=>servePwaAsset(req,res,'/sw.js','application/javascript').catch(next));
+app.get('/manifest.webmanifest',allowPwaAsset);
+app.get('/sw.js',allowPwaAsset);
 
 app.get('/health',async(_req,res)=>{
   try{

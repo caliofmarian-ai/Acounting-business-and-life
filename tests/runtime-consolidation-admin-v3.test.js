@@ -20,6 +20,11 @@ test('Admin + Support remains standalone-capable while exposing embedded lifecyc
   assert.match(admin,/export async function startEmbeddedAdminOperations/);assert.match(admin,/export async function stopEmbeddedAdminOperations/);assert.match(admin,/directExecution/);assert.match(admin,/Business & Life scoped Admin \+ Support mounted in-process/);assert.match(admin,/Business & Life scoped Admin \+ Support gateway listening on/);assert.match(admin,/businessAccountingApp=await startEmbeddedBusinessAccounting\(\)/);
 });
 
-test('Resend raw-body verification remains owned by isolated Notifications',()=>{
-  assert.match(notifications,/app\.post\('\/api\/notifications\/webhooks\/resend',express\.raw\(\{type:'application\/json',limit:'1mb'\}\)/);assert.match(notifications,/verifyResendWebhook/);assert.match(notifications,/resendWebhookRuntime\.secret/);
+test('Resend raw-body verification remains owned by Notifications in embedded and standalone modes',()=>{
+  assert.match(notifications,/app\.post\('\/api\/notifications\/webhooks\/resend',express\.raw\(\{type:'application\/json',limit:'1mb'\}\)/);
+  assert.match(notifications,/Buffer\.isBuffer\(req\.rawBody\)&&req\.rawBody\.length/);
+  assert.match(notifications,/Buffer\.isBuffer\(req\.body\)\?req\.body:null/);
+  assert.match(notifications,/verifyResendWebhook/);
+  assert.match(notifications,/resendWebhookRuntime\.secret/);
+  assert.match(notifications,/export async function startEmbeddedNotifications/);
 });

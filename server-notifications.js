@@ -2,7 +2,7 @@ import express from 'express';
 import pg from 'pg';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { dirname,join } from 'node:path';
+import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensureNotificationSchema,emitNotificationEvent,businessNotificationRecipients,
@@ -23,7 +23,8 @@ const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
-const body=express.json({limit:'30mb'});
+const jsonBody=express.json({limit:'30mb'});
+const body=(req,res,next)=>req.body!==undefined?next():jsonBody(req,res,next);
 const CATEGORIES=['operational','security','legal','support','compliance','marketing'];
 const THREAD_ENTITY_TYPES=new Set(['support_ticket','order','delivery','purchase_order','service_job']);
 const isNotificationThreadEntity=(type,id)=>Boolean(String(id??'').trim())&&THREAD_ENTITY_TYPES.has(String(type||''));
@@ -35,6 +36,48 @@ const positiveId=v=>{const n=Number(v);return Number.isSafeInteger(n)&&n>0?n:nul
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||crypto.randomUUID(),120);
 async function upstream(path,options={}){return authHardeningFetch(path,options)}
+export function isNotificationsOwnedPath(path=''){
+  const pathname=String(path||'').split('?')[0];
+  return pathname==='/notifications.css'
+    ||pathname==='/notifications-ui.js'
+    ||pathname==='/notifications-sw.js'
+    ||pathname==='/manifest.webmanifest'
+    ||pathname==='/api/notifications'
+    ||pathname.startsWith('/api/notifications/');
+}
+export async function notificationsFetch(path,options={}){
+  const pathname=String(path||'').split('?')[0];
+  if(isNotificationsOwnedPath(pathname)){
+    throw Object.assign(new Error('Notifications-owned paths require in-process Notifications dispatch'),{
+      status:500,code:'NOTIFICATIONS_EMBEDDED_DISPATCH_REQUIRED'
+    });
+  }
+  if(pathname==='/health'){
+    try{
+      await pool.query('SELECT 1');
+      const ok=adminReady;
+      return new Response(JSON.stringify({
+        ok,db:true,admin_support:ok,notifications:true,
+        resend_webhook:resendWebhookReadiness(resendWebhookRuntime),
+        version:'0.16-notifications'
+      }),{status:ok?200:503,headers:{'content-type':'application/json; charset=utf-8'}});
+    }catch{
+      return new Response(JSON.stringify({
+        ok:false,db:false,admin_support:false,notifications:false,
+        resend_webhook:resendWebhookReadiness(resendWebhookRuntime),
+        version:'0.16-notifications'
+      }),{status:503,headers:{'content-type':'application/json; charset=utf-8'}});
+    }
+  }
+  if(pathname==='/'||pathname==='/index.html'){
+    const r=await upstream(path,options);
+    let html=await r.text();
+    html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n  <link rel="stylesheet" href="/notifications.css" />\n</head>')
+      .replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n</body>');
+    return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
+  }
+  return upstream(path,options);
+}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 const uniqueRecipients=(...groups)=>[...new Map(groups.flat().filter(Boolean).map(x=>[Number(x.accountId),x])).values()];
 async function safeEmit(spec){try{return await emitNotificationEvent(pool,spec)}catch(e){console.error('Notification event failed:',e.message);return null}}
@@ -209,8 +252,12 @@ app.post('/api/governance/admin/authorizations/:id/status',body,(req,res)=>forwa
 // Notification APIs
 app.post('/api/notifications/webhooks/resend',express.raw({type:'application/json',limit:'1mb'}),async(req,res)=>{
   try{
+    const rawBody=Buffer.isBuffer(req.rawBody)&&req.rawBody.length
+      ?req.rawBody
+      :(Buffer.isBuffer(req.body)?req.body:null);
+    if(!rawBody)throw Object.assign(new Error('Resend raw body is required'),{status:400});
     const verified=verifyResendWebhook({
-      rawBody:req.body,
+      rawBody,
       headers:req.headers,
       secret:resendWebhookRuntime.secret||process.env.RESEND_WEBHOOK_SECRET||''
     });
@@ -231,12 +278,12 @@ app.post('/api/notifications/webhooks/resend',express.raw({type:'application/jso
     res.status(status).json({error:status===503?'Resend webhook is not configured':'Invalid Resend webhook'});
   }
 });
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');res.status(adminReady?200:503).json({ok:adminReady,db:true,admin_support:adminReady,notifications:true,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}catch{res.status(503).json({ok:false,db:false,admin_support:false,notifications:false,resend_webhook:resendWebhookReadiness(resendWebhookRuntime),version:'0.11-notifications'})}});
+app.get('/health',async(req,res)=>{const r=await notificationsFetch('/health',{headers:req.headers});const payload=await r.json().catch(()=>({ok:false}));res.status(r.status).json(payload)});
 app.get('/notifications.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','notifications.css'),'utf8')));
 app.get('/notifications-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','notifications-ui.js'),'utf8')));
 app.get('/notifications-sw.js',(_q,res)=>res.type('application/javascript').set('Service-Worker-Allowed','/').send(readFileSync(join(__dirname,'public','notifications-sw.js'),'utf8')));
 app.get('/manifest.webmanifest',(_q,res)=>res.type('application/manifest+json').send(readFileSync(join(__dirname,'public','manifest.webmanifest'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n  <link rel="manifest" href="/manifest.webmanifest" />\n  <link rel="stylesheet" href="/notifications.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await notificationsFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/notifications',async(req,res,next)=>{try{
@@ -338,17 +385,38 @@ async function bootstrapResendObservability(){
   else console.log('Resend delivery webhook not ready: '+safe.status);
   return safe;
 }
-async function start(){
-  adminApp=await startEmbeddedAdminOperations();
-  adminReady=true;
+let embeddedStartPromise=null;
+export async function startEmbeddedNotifications(){
+  if(!embeddedStartPromise){
+    embeddedStartPromise=(async()=>{
+      adminApp=await startEmbeddedAdminOperations();
+      adminReady=true;
+      await ensureNotificationSchema(pool);
+      await bootstrapResendObservability();
+      workerTimer=setInterval(runWorker,8000);
+      runWorker();
+      console.log('Business & Life notification gateway mounted in-process');
+      return app;
+    })();
+  }
+  return embeddedStartPromise;
 }
-async function shutdown(sig){
-  if(shuttingDown)return;shuttingDown=true;console.log(`Received ${sig}`);
+async function stopNotifications(){
+  if(shuttingDown)return;
+  shuttingDown=true;
   if(workerTimer)clearInterval(workerTimer);
+  workerTimer=null;
   adminReady=false;
   await stopEmbeddedAdminOperations().catch(()=>{});
   await pool.end().catch(()=>{});
-  process.exit(0);
 }
-process.on('SIGTERM',()=>shutdown('SIGTERM'));process.on('SIGINT',()=>shutdown('SIGINT'));
-start().then(()=>ensureNotificationSchema(pool)).then(()=>bootstrapResendObservability()).then(()=>{workerTimer=setInterval(runWorker,8000);runWorker();app.listen(port,'0.0.0.0',()=>console.log(`Business & Life notification gateway listening on ${port}`))}).catch(e=>{console.error(e);process.exit(1)});
+export async function stopEmbeddedNotifications(){await stopNotifications()}
+async function shutdown(sig){console.log(`Received ${sig}`);await stopNotifications();process.exit(0)}
+const directExecution=Boolean(process.argv[1])&&resolve(process.argv[1])===fileURLToPath(import.meta.url);
+if(directExecution){
+  process.on('SIGTERM',()=>shutdown('SIGTERM'));
+  process.on('SIGINT',()=>shutdown('SIGINT'));
+  startEmbeddedNotifications()
+    .then(()=>app.listen(port,'0.0.0.0',()=>console.log(`Business & Life notification gateway listening on ${port}`)))
+    .catch(e=>{console.error(e);process.exit(1)});
+}

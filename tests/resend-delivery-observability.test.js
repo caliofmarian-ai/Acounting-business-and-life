@@ -71,12 +71,17 @@ test('stale signed Resend webhook is rejected to prevent replay',()=>{
   );
 });
 
-test('webhook route requires raw body and the Railway webhook secret',()=>{
+test('webhook route preserves exact raw bytes in embedded and standalone runtimes',()=>{
   assert.match(server,/\/api\/notifications\/webhooks\/resend/);
   assert.match(server,/express\.raw\(\{type:'application\/json',limit:'1mb'\}\)/);
+  assert.match(server,/Buffer\.isBuffer\(req\.rawBody\)&&req\.rawBody\.length/);
+  assert.match(server,/\?req\.rawBody/);
+  assert.match(server,/Buffer\.isBuffer\(req\.body\)\?req\.body:null/);
+  assert.match(server,/if\(!rawBody\)throw Object\.assign\(new Error\('Resend raw body is required'\)/);
+  assert.match(server,/verifyResendWebhook\(\{\s*rawBody,/s);
   assert.match(server,/RESEND_WEBHOOK_SECRET/);
-  assert.match(server,/verifyResendWebhook/);
   assert.match(server,/recordResendProviderEvent/);
+  assert.doesNotMatch(server,/JSON\.stringify\(req\.body\?\?\{\}\).*verifyResendWebhook/s);
 });
 
 test('provider evidence is idempotent and stores minimized delivery metadata only',()=>{

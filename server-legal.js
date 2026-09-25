@@ -1,9 +1,6 @@
-import {startupWaitAttempts} from './startup-wait.js';
 import express from 'express';
 import pg from 'pg';
-import http from 'node:http';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,21 +13,21 @@ import {
   requireAdminPermission,getAdminAssignments,appendAdminAudit
 } from './admin-authorization.js';
 import { emitNotificationEvent,normalizeNotificationLocale } from './notification-core.js';
+import {notificationsFetch,startEmbeddedNotifications,stopEmbeddedNotifications} from './server-notifications.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
-const upstreamPort=Number(process.env.INTERNAL_NOTIFICATIONS_PORT||4407);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb'});
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
-let child;let shuttingDown=false;
+let notificationsApp=null;let notificationsReady=false;let shuttingDown=false;
 
 const clean=(v,max=2000)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||crypto.randomUUID(),120);
-async function upstream(path,options={}){return fetch(`http://127.0.0.1:${upstreamPort}${path}`,options)}
+async function upstream(path,options={}){return notificationsFetch(path,options)}
 async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 async function preferredLocale(accountId){const q=await pool.query(`SELECT preferred_locale FROM accounts WHERE id=$1`,[accountId]);return normalizeNotificationLocale(q.rows[0]?.preferred_locale)}
 function requestIp(req){return clean((String(req.headers['x-forwarded-for']||'').split(',')[0]||req.socket?.remoteAddress||''),200)}
@@ -45,9 +42,13 @@ async function legalGateFor(req,{actionCode,role,businessId=null,territoryId=nul
   return{me,gate};
 }
 function blocked(res,gate){return res.status(428).json({error:'Current legal documents must be accepted before this action',code:'LEGAL_ACCEPTANCE_REQUIRED',legal_gate:gate})}
-async function forwardJson(req,res){
-  const r=await upstream(req.originalUrl,{method:req.method,headers:{Authorization:authHeader(req),'Content-Type':'application/json',...(req.headers['x-bl-admin-assertion']?{'x-bl-admin-assertion':String(req.headers['x-bl-admin-assertion'])}:{})},body:['GET','HEAD'].includes(req.method)?undefined:JSON.stringify(req.body??{})});
-  const text=await r.text();res.status(r.status);const ct=r.headers.get('content-type');if(ct)res.type(ct);res.send(text);
+function forwardJson(req,res,next){
+  if(!notificationsApp)return res.status(503).json({error:'Notifications runtime is not ready'});
+  return notificationsApp.handle(req,res,err=>{
+    if(res.writableEnded)return;
+    if(err)return next(err);
+    if(!res.headersSent)return res.status(404).json({error:'Notifications downstream route not found'});
+  });
 }
 async function legalGuard(req,res,next,{actionCode,role,businessId=null,territoryId=null,adminAssignmentId=null}){
   try{const{gate}=await legalGateFor(req,{actionCode,role,businessId,territoryId,adminAssignmentId});if(gate.blocked)return blocked(res,gate);next()}catch(e){next(e)}
@@ -86,10 +87,10 @@ async function initDb(){
 }
 
 // public/read APIs
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=Boolean(child&&!child.killed&&child.exitCode==null);res.status(childAlive?200:503).json({ok:childAlive,db:true,notifications:childAlive,legal:true,version:'0.12-legal-consent'})}catch{res.status(503).json({ok:false,db:false,notifications:false,legal:false,version:'0.12-legal-consent'})}});
+app.get('/health',async(req,res)=>{try{await pool.query('SELECT 1');const downstream=await notificationsFetch('/health',{headers:req.headers});const ok=notificationsReady&&downstream.ok;res.status(ok?200:503).json({ok,db:true,notifications:ok,legal:true,version:'0.16-legal-consent'})}catch{res.status(503).json({ok:false,db:false,notifications:false,legal:false,version:'0.16-legal-consent'})}});
 app.get('/legal.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','legal.css'),'utf8')));
 app.get('/legal-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','legal-ui.js'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers,host:`127.0.0.1:${upstreamPort}`}});const html=await r.text();res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await notificationsFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/legal/status',async(req,res,next)=>{try{
@@ -155,45 +156,28 @@ app.post('/api/legal/admin/versions/:id/withdraw',body,async(req,res,next)=>{try
 }catch(e){next(e)}});
 
 // protected actions. No active legally-reviewed version => review_pending only, not a false acceptance gate.
-app.post('/api/orders',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'order.create',role:'customer'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res)}catch(e){next(e)}});
-app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'order.create',role:'customer'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res)}catch(e){next(e)}});
-app.post('/api/governance/applications/:id/submit',body,async(req,res,next)=>{try{const a=await pool.query(`SELECT role,territory_id FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(!a.rowCount)return forwardJson(req,res);const out=await legalGateFor(req,{actionCode:'profile.submit',role:a.rows[0].role,territoryId:a.rows[0].territory_id});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res)}catch(e){next(e)}});
-app.post('/api/delivery/quote',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'location.share',role:'customer'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res)}catch(e){next(e)}});
-app.post('/api/courier/deliveries/:id/location',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'location.share',role:'courier'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res)}catch(e){next(e)}});
-app.put('/api/notifications/preferences',body,async(req,res,next)=>{try{if(req.body?.category==='marketing'&&(req.body?.email_enabled||req.body?.push_enabled||req.body?.in_app_enabled)){const me=await identity(req),role=clean(me.account.active_role||'*',40),out=await legalGateFor(req,{actionCode:'marketing.opt_in',role});if(out.gate.blocked)return blocked(res,out.gate)}return forwardJson(req,res)}catch(e){next(e)}});
+app.post('/api/orders',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'order.create',role:'customer'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res,next)}catch(e){next(e)}});
+app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'order.create',role:'customer'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res,next)}catch(e){next(e)}});
+app.post('/api/governance/applications/:id/submit',body,async(req,res,next)=>{try{const a=await pool.query(`SELECT role,territory_id FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(!a.rowCount)return forwardJson(req,res,next);const out=await legalGateFor(req,{actionCode:'profile.submit',role:a.rows[0].role,territoryId:a.rows[0].territory_id});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res,next)}catch(e){next(e)}});
+app.post('/api/delivery/quote',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'location.share',role:'customer'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res,next)}catch(e){next(e)}});
+app.post('/api/courier/deliveries/:id/location',body,async(req,res,next)=>{try{const out=await legalGateFor(req,{actionCode:'location.share',role:'courier'});if(out.gate.blocked)return blocked(res,out.gate);return forwardJson(req,res,next)}catch(e){next(e)}});
+app.put('/api/notifications/preferences',body,async(req,res,next)=>{try{if(req.body?.category==='marketing'&&(req.body?.email_enabled||req.body?.push_enabled||req.body?.in_app_enabled)){const me=await identity(req),role=clean(me.account.active_role||'*',40),out=await legalGateFor(req,{actionCode:'marketing.opt_in',role});if(out.gate.blocked)return blocked(res,out.gate)}return forwardJson(req,res,next)}catch(e){next(e)}});
 
 // All existing Admin actions can become gated by reviewed Admin confidentiality documents, while legal governance itself stays reachable.
 app.use('/api/admin',async(req,res,next)=>{try{const me=await identity(req),ctx=await activeAdminContext(me.account.id),out=await legalGateFor(req,{actionCode:'admin.access',role:'admin',territoryId:ctx.territoryId,adminAssignmentId:ctx.adminAssignmentId});if(out.gate.blocked)return blocked(res,out.gate);next()}catch(e){next(e)}});
 
-function proxy(req,res){
-  const rawPayload=Buffer.isBuffer(req.rawBody)&&req.rawBody.length?req.rawBody:null;
-  const parsedJsonBody=!rawPayload&&req.body!==undefined&&!['GET','HEAD'].includes(req.method)&&Boolean(req.is('application/json'));
-  const payload=rawPayload||(parsedJsonBody?Buffer.from(JSON.stringify(req.body??{})):null);
-  const headers={...req.headers,host:`127.0.0.1:${upstreamPort}`};
-  if(payload){
-    headers['content-length']=String(payload.length);
-    delete headers['transfer-encoding'];
-  }
-  const up=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.originalUrl,method:req.method,headers},ur=>{
-    res.statusCode=ur.statusCode||502;
-    for(const[k,v]of Object.entries(ur.headers))if(v!==undefined)res.setHeader(k,v);
-    ur.pipe(res);
-  });
-  up.on('error',e=>{console.error(e);if(!res.headersSent)res.status(502).json({error:'Legal gateway upstream unavailable'})});
-  if(payload)up.end(payload);else req.pipe(up);
-}
-app.use(proxy);
+app.use((req,res,next)=>{
+  if(!notificationsApp)return res.status(503).json({error:'Notifications runtime is not ready'});
+  return notificationsApp(req,res,next);
+});
 app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected legal/consent error'})});
-
-function start(){child=spawn(process.execPath,['server-notifications.js'],{cwd:__dirname,env:{...process.env,PORT:String(upstreamPort)},stdio:'inherit'});child.on('exit',code=>{if(!shuttingDown){console.error(`Notification child exited ${code}`);process.exit(code||1)}})}
-async function wait(){for(let i=0;i<startupWaitAttempts(340);i++){try{const r=await upstream('/health');if(r.ok)return}catch{}await new Promise(r=>setTimeout(r,250))}throw new Error('Notification child failed health check')}
 
 let embeddedStartPromise=null;
 export async function startEmbeddedLegal(){
   if(!embeddedStartPromise){
     embeddedStartPromise=(async()=>{
-      start();
-      await wait();
+      notificationsApp=await startEmbeddedNotifications();
+      notificationsReady=true;
       await initDb();
       console.log('Business & Life legal/consent mounted in-process');
       return app;
@@ -205,7 +189,8 @@ export async function startEmbeddedLegal(){
 async function stopLegal(){
   if(shuttingDown)return;
   shuttingDown=true;
-  if(child&&!child.killed)child.kill('SIGTERM');
+  notificationsReady=false;
+  await stopEmbeddedNotifications().catch(()=>{});
   await pool.end().catch(()=>{});
 }
 export async function stopEmbeddedLegal(){await stopLegal()}
