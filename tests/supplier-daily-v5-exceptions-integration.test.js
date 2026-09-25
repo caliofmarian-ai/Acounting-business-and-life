@@ -18,8 +18,9 @@ test('Today reads only accepted exceptions that require Supplier action',()=>{
   assert.match(daily,/b\.state='merchant_accepted'/);
   assert.match(daily,/FROM supplier_substitution_proposals s/);
   assert.match(daily,/s\.state='merchant_accepted'/);
-  assert.match(daily,/backorders:backorders\.length/);
-  assert.match(daily,/substitutions:substitutions\.length/);
+  assert.match(daily,/backorders:backorderCount/);
+  assert.match(daily,/substitutions:substitutionCount/);
+  assert.match(daily,/COUNT\(\*\) OVER\(\)::int queue_total/);
 });
 
 test('Merchant decisions are evidence-only for proposed backorder and substitution',()=>{
