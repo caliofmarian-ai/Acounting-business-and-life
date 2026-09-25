@@ -47,3 +47,150 @@
   .todayMoneyCard,.todayFoodActions,.todayUpdated{grid-column:1/-1}
   .todayMoneyGrid{grid-template-columns:repeat(4,minmax(0,1fr))}
 }
+
+
+/* Visual System V2B — Merchant Today polish — #456 */
+.merchantTodayView{
+  --merchant-ui-accent:#5c52b8;
+  --merchant-ui-accent-2:#8a7de1;
+  --merchant-ui-soft:#ebe8ff;
+  --merchant-ui-tint:#f7f5ff;
+  --merchant-ui-glow:rgba(92,82,184,.12)
+}
+.merchantTodayView .todayHeader{
+  position:relative;
+  overflow:hidden;
+  padding:19px 18px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:24px;
+  background:linear-gradient(135deg,#17233c 0%,#35366c 52%,#5c52b8 100%);
+  color:#fff;
+  box-shadow:0 15px 36px rgba(23,35,60,.18)
+}
+.merchantTodayView .todayHeader::after{
+  content:"";
+  position:absolute;
+  width:138px;
+  height:138px;
+  right:-48px;
+  bottom:-82px;
+  border-radius:50%;
+  background:rgba(255,255,255,.09);
+  pointer-events:none
+}
+.merchantTodayView .todayHeader>div,
+.merchantTodayView .todayRefresh{position:relative;z-index:1}
+.merchantTodayView .todayHeader h1{color:#fff;font-size:1.9rem;letter-spacing:-.035em}
+.merchantTodayView .todayHeader .muted{color:#dfe0f8}
+.merchantTodayView .todayEyebrow{color:#d8d4ff;letter-spacing:.075em}
+.merchantTodayView .todayRefresh{
+  border:1px solid rgba(255,255,255,.16);
+  background:rgba(255,255,255,.12);
+  color:#fff;
+  box-shadow:none;
+  backdrop-filter:blur(10px)
+}
+.merchantTodayView .todayRefresh:focus-visible{
+  outline:3px solid #fff;
+  outline-offset:2px
+}
+
+.merchantTodayView .todayState{
+  border-color:#dedbea;
+  background:linear-gradient(145deg,#fff,var(--merchant-ui-tint));
+  box-shadow:0 9px 26px rgba(23,35,60,.055)
+}
+.merchantTodayView .todayCard{
+  position:relative;
+  overflow:hidden;
+  padding:16px;
+  border-color:#dedbea;
+  border-radius:21px;
+  background:linear-gradient(150deg,#fff 0%,#fff 70%,var(--merchant-ui-tint) 100%);
+  box-shadow:0 10px 30px rgba(23,35,60,.065)
+}
+.merchantTodayView .todayCard::before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:3px;
+  background:linear-gradient(180deg,var(--merchant-ui-accent),transparent 92%)
+}
+.merchantTodayView .todayOrders{
+  border-color:#d9d6ef;
+  background:linear-gradient(150deg,#fff 0%,#fff 66%,#f1efff 100%)
+}
+.merchantTodayView .todayCardHead>div>span{
+  color:#6b649f;
+  letter-spacing:.055em
+}
+.merchantTodayView .todayCardHead h2{
+  font-size:1.03rem;
+  letter-spacing:-.012em
+}
+.merchantTodayView .todayCardHead>strong{
+  min-width:42px;
+  height:42px;
+  border-radius:14px;
+  background:var(--merchant-ui-soft);
+  color:#4e459d;
+  box-shadow:0 6px 16px var(--merchant-ui-glow)
+}
+.merchantTodayView .todayChip{
+  border:1px solid #e6e2f6;
+  background:#faf9ff;
+  color:#5f5a7e
+}
+.merchantTodayView .todayChip strong{color:#332f5e}
+.merchantTodayView .todayChip.attention{
+  border-color:#f3d9b7;
+  background:#fff8ef
+}
+.merchantTodayView .todayMiniList>div{
+  border:1px solid #ebe8f3;
+  border-radius:13px;
+  background:linear-gradient(145deg,#fff,#faf9ff)
+}
+.merchantTodayView .todayMoneyGrid>div{
+  border-color:#e4e0f1;
+  border-radius:15px;
+  background:linear-gradient(145deg,#fff,#f8f6ff);
+  box-shadow:0 5px 15px rgba(23,35,60,.03)
+}
+.merchantTodayView .todayMoneyGrid strong{font-size:1rem}
+.merchantTodayView .todayPrimaryAction{
+  border-radius:13px;
+  transition:transform .16s ease,box-shadow .16s ease
+}
+.merchantTodayView .todayPrimaryAction.primary{
+  background:linear-gradient(135deg,#5147a8,#6d61c9);
+  box-shadow:0 6px 16px rgba(81,71,168,.2)
+}
+.merchantTodayView .todayPrimaryAction.secondary{
+  background:var(--merchant-ui-soft);
+  color:#4f469c
+}
+.merchantTodayView .todayPrimaryAction:hover{transform:translateY(-1px)}
+.merchantTodayView .todayPrimaryAction:focus-visible{
+  outline:3px solid var(--merchant-ui-accent);
+  outline-offset:2px
+}
+.merchantTodayView .todayFoodActions{
+  border-color:#f0d89b;
+  border-radius:19px;
+  background:linear-gradient(145deg,#fffdf5,#fff6dc);
+  box-shadow:0 8px 22px rgba(100,77,24,.05)
+}
+
+@media(max-width:420px){
+  .merchantTodayView .todayHeader{padding:17px 15px;border-radius:21px}
+  .merchantTodayView .todayHeader h1{font-size:1.7rem}
+  .merchantTodayView .todayCard{padding:14px;border-radius:18px}
+  .merchantTodayView .todayPrimaryAction:hover{transform:none}
+}
+@media(prefers-reduced-motion:reduce){
+  .merchantTodayView .todayPrimaryAction{transition:none}
+  .merchantTodayView .todayPrimaryAction:hover{transform:none}
+}
