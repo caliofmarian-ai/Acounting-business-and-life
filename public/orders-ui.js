@@ -20,7 +20,9 @@ function statusBadge(status){return `<span class="orderStatus ${h(status)}">${h(
 function progress(status){let idx=ORDER_PROGRESS.indexOf(status);if(status==='awaiting_payment'||status==='awaiting_customer_presence')idx=-1;return `<div class="customerOrderProgress">${ORDER_PROGRESS.map((_,i)=>`<span class="progressDot ${i<=idx?'done':''}"></span>`).join('')}</div>`}
 
 async function openCustomerOrders(){
-  ordersMode='customer';ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderCustomerOrders()
+  ordersMode='customer';ensureWorkspace();
+  if(!window.BusinessLifeShell?.openFeatureWorkspace?.('ordersWorkspace')){hideBase();orderWorkspace.classList.remove('hidden')}
+  await renderCustomerOrders()
 }
 function openCustomerDeliveries(){
   const api=window.BusinessLifeDelivery;
@@ -60,7 +62,9 @@ function merchantOrdersError(error){
   orderWorkspace.querySelector('[data-orders-retry]')?.addEventListener('click',()=>renderMerchantOrders());
 }
 async function openMerchantOrders(){
-  ordersMode='merchant';merchantBusinessId=null;ensureWorkspace();hideBase();orderWorkspace.classList.remove('hidden');await renderMerchantOrders()
+  ordersMode='merchant';merchantBusinessId=null;ensureWorkspace();
+  if(!window.BusinessLifeShell?.openFeatureWorkspace?.('ordersWorkspace')){hideBase();orderWorkspace.classList.remove('hidden')}
+  await renderMerchantOrders()
 }
 async function loadProducts(businessId){
   try{
@@ -97,7 +101,7 @@ function openPaymentModal(id){const back=document.getElementById('orderModalBack
 function openCancelModal(id){const back=document.getElementById('orderModalBackdrop'),m=document.getElementById('orderModal');m.innerHTML=`<h2>Cancel order</h2><form id="orderCancelForm" class="orderModalForm"><label>Reason<textarea id="orderCancelReason" rows="3" required placeholder="Why is this order being cancelled?"></textarea></label><div class="orderModalMessage" id="orderModalMessage"></div><div class="orderModalButtons"><button class="cancelModal" type="button">Keep order</button><button class="saveModal" style="background:#c7484a">Cancel order</button></div></form>`;back.classList.remove('hidden');m.querySelector('.cancelModal').onclick=closeOrderModal;m.querySelector('#orderCancelForm').onsubmit=async e=>{e.preventDefault();try{await oapi(`/api/orders/merchant/${id}/cancel`,{method:'POST',body:JSON.stringify({reason:document.getElementById('orderCancelReason').value})});closeOrderModal();toast('Order cancelled and stock reversed if needed.');await renderMerchantOrders(false)}catch(err){document.getElementById('orderModalMessage').textContent=err.message}}}
 
 function applyOrderState(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState;if(state?.snapshot)orderMe=state.snapshot}
-async function decorate(detail){if(!ensureWorkspace()||!orderToken())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applyOrderState(state);if(!orderMe)return;const role=state?.surface==='profile'?state.activeRole:null;if(role==='merchant'){const top=document.querySelector('.shellProfileControls');if(top&&!document.getElementById('ordersQuickButton')){const b=document.createElement('button');b.id='ordersQuickButton';b.className='ordersQuickButton';b.type='button';b.textContent='Orders';b.onclick=openMerchantOrders;top.insertAdjacentElement('beforebegin',b)}}else document.getElementById('ordersQuickButton')?.remove();const hub=document.getElementById('roleHub');if(hub&&role==='customer'){const orderTile=hub.querySelector('[data-hub-feature="Orders"]');if(orderTile)orderTile.onclick=openCustomerOrders}}
+async function decorate(detail){if(!ensureWorkspace()||!orderToken())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applyOrderState(state);if(!orderMe)return;const role=state?.surface==='profile'?state.activeRole:null;if(role==='merchant'){const top=document.querySelector('.shellProfileControls');if(top&&!document.getElementById('ordersQuickButton')){const b=document.createElement('button');b.id='ordersQuickButton';b.className='merchantWorkspaceButton';b.type='button';b.textContent='Orders';b.onclick=openMerchantOrders;top.insertAdjacentElement('beforebegin',b)}}else document.getElementById('ordersQuickButton')?.remove();const hub=document.getElementById('roleHub');if(hub&&role==='customer'){const orderTile=hub.querySelector('[data-hub-feature="Orders"]');if(orderTile)orderTile.onclick=openCustomerOrders}}
 function ordersVisible(){return Boolean(orderWorkspace&&!orderWorkspace.classList.contains('hidden'))}
 function refreshVisibleOrders(){
   if(document.hidden||!ordersVisible())return;
