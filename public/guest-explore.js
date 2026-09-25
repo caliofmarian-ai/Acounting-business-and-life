@@ -175,7 +175,23 @@ async function renderStore(businessId){
       '</div>';
     guestBody.querySelector('#guestBackToStores')?.addEventListener('click',()=>renderDiscover());
     guestBody.querySelectorAll('[data-guest-order]').forEach(button=>button.addEventListener('click',openRegistration));
+    enhanceGuestStorefrontV2(store);
   }catch(error){ renderGuestError(error.message); }
+}
+
+function enhanceGuestStorefrontV2(store){
+  const hero=guestBody.querySelector('.guestStoreHero');if(!hero)return;
+  if(store.cover_image_url){const cover=document.createElement('div');cover.className='guestStoreCover';cover.innerHTML='<img src="'+gh(store.cover_image_url)+'" alt="'+gh(store.store_name||'Store')+' cover">';hero.insertAdjacentElement('beforebegin',cover)}
+  const pricing=guestBody.querySelector('[data-bl-pricing="public"]'),gallery=Array.isArray(store.gallery_images)?store.gallery_images:[];
+  if(gallery.length&&pricing){const section=document.createElement('section');section.className='guestStoreGallery';section.innerHTML='<div class="guestStoreV2Head"><strong>Store gallery</strong><span>'+gallery.length+' photo'+(gallery.length===1?'':'s')+'</span></div><div class="guestStoreGalleryGrid">'+gallery.map(function(item,index){return '<img src="'+gh(item.data_url)+'" alt="'+gh(item.alt_text||((store.store_name||'Store')+' photo '+(index+1)))+'">'}).join('')+'</div>';pricing.insertAdjacentElement('beforebegin',section)}
+  const lat=Number(store.pickup_lat),lng=Number(store.pickup_lng);
+  if(store.public_location_enabled&&Number.isFinite(lat)&&Number.isFinite(lng)&&pricing){
+    const section=document.createElement('section');section.className='guestStoreLocation';
+    const maps='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(lat+','+lng),waze='https://www.waze.com/ul?ll='+encodeURIComponent(lat+','+lng)+'&navigate=yes';
+    section.innerHTML='<div class="guestStoreV2Head"><div><strong>'+gh(store.location_label||'Visit this store')+'</strong><span>'+gh(store.pickup_address||'Pinned storefront location')+'</span></div><span>Public location</span></div><div id="guestPublicStoreMap" class="guestPublicStoreMap"></div>'+(store.opening_hours_text?'<p><b>Opening hours:</b> '+gh(store.opening_hours_text)+'</p>':'')+(store.finding_instructions?'<p><b>How to find us:</b> '+gh(store.finding_instructions)+'</p>':'')+'<div class="guestDirections"><a href="'+maps+'" target="_blank" rel="noopener">Google Maps</a><a href="'+waze+'" target="_blank" rel="noopener">Waze</a></div>';
+    pricing.insertAdjacentElement('beforebegin',section);
+    window.BusinessLifeMarketplace?.renderPublicStoreMap?.(store,'guestPublicStoreMap');
+  }
 }
 
 function renderGuide(){
