@@ -699,3 +699,34 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
 }
 @media(min-width:650px){.merchantWorkspaceButton{display:inline-flex}}
 @media(max-width:640px){.topActions{scroll-snap-type:x proximity}.topActions>*{scroll-snap-align:start}}
+
+
+/* Merchant Navbar Responsive V2 — #465
+   Primary Merchant navigation has its own row; global actions never have to carry workspace buttons. */
+.merchantWorkspaceNav{display:none;background:rgba(255,255,255,.97);border-bottom:1px solid var(--bl-border);box-shadow:0 5px 16px rgba(23,35,60,.035);padding:9px 18px}
+.merchantWorkspaceNav.hidden{display:none!important}
+.merchantWorkspaceActions{width:min(100%,820px);margin:0 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;align-items:stretch}
+.merchantWorkspaceNav .merchantWorkspaceButton{display:flex;width:100%;min-width:0;min-height:46px;padding:9px 10px;border-radius:14px;font-size:13px;overflow:hidden;text-overflow:ellipsis}
+#merchantHomeButton{order:0}
+#ordersQuickButton{order:1}
+#marketQuickButton{order:2}
+#supQuickButton{order:3}
+#deliveryQuickButton{order:4}
+
+@media(min-width:650px){
+  .merchantWorkspaceNav:not(.hidden){display:block}
+  .topbar{overflow:visible}
+  .topActions{max-width:none;overflow:visible;overscroll-behavior:auto;flex-wrap:nowrap;justify-content:flex-end}
+  .topActions>*{scroll-snap-align:none}
+}
+@media(min-width:650px) and (max-width:820px){
+  .topbar{padding-inline:12px;gap:7px}
+  .topActions{gap:6px}
+  .activeRolePill{font-size:9px;padding:6px 8px}
+  .merchantWorkspaceNav{padding-inline:12px}
+  .merchantWorkspaceActions{gap:6px}
+  .merchantWorkspaceNav .merchantWorkspaceButton{font-size:12px;padding-inline:6px}
+}
+@media(max-width:649px){
+  .merchantWorkspaceNav{display:none!important}
+}
