@@ -158,18 +158,42 @@ async function uploadStorefrontMedia(kind,file){
   const dataUrl=await prepareStoreImage(file,kind==='cover'?1600:1200,kind==='cover'?900:1200,390000);
   return mapi('/api/merchant/storefront/media',{method:'POST',body:JSON.stringify({business_id:Number(document.getElementById('storeBusinessId').value),media_kind:kind,data_url:dataUrl,alt_text:kind==='cover'?'Storefront cover':'Store presentation photo'})});
 }
+function refreshStoreMediaEditor(store){
+  const host=document.getElementById('storefrontV2Media');if(!host)return;
+  const pendingLogo=document.getElementById('storeLogoData')?.value||store.logo_data_url||'';
+  host.outerHTML=storeMediaEditorMarkup(store);
+  const logoData=document.getElementById('storeLogoData');if(logoData)logoData.value=pendingLogo;
+  if(pendingLogo){const preview=document.getElementById('storeLogoPreview');if(preview)preview.innerHTML='<img src="'+pendingLogo+'" alt="">'}
+  bindStoreMediaControls(store);
+}
+function bindStoreMediaControls(store){
+  const logoInput=document.getElementById('storeLogoInput');if(logoInput)logoInput.onchange=async function(){try{const data=await prepareStoreImage(logoInput.files?.[0],720,720,285000);document.getElementById('storeLogoData').value=data;document.getElementById('storeLogoPreview').innerHTML='<img src="'+data+'" alt="">';mtoast('Logo prepared. Save the storefront to keep it.')}catch(error){mtoast(error.message)}};
+  const coverInput=document.getElementById('storeCoverInput');if(coverInput)coverInput.onchange=async function(){try{coverInput.disabled=true;const item=await uploadStorefrontMedia('cover',coverInput.files?.[0]);store.cover_image=item;store.cover_image_url=item.data_url;mtoast('Cover image saved.');refreshStoreMediaEditor(store)}catch(error){mtoast(error.message);coverInput.disabled=false}};
+  const galleryInput=document.getElementById('storeGalleryInput');if(galleryInput)galleryInput.onchange=async function(){
+    const files=Array.from(galleryInput.files||[]),existing=Array.isArray(store.gallery_images)?store.gallery_images.length:0;
+    if(!files.length)return;if(existing+files.length>8){mtoast('Gallery supports up to 8 photos.');galleryInput.value='';return}
+    try{
+      galleryInput.disabled=true;const added=[];
+      for(const file of files)added.push(await uploadStorefrontMedia('gallery',file));
+      store.gallery_images=[...(Array.isArray(store.gallery_images)?store.gallery_images:[]),...added];
+      mtoast(files.length+' gallery photo'+(files.length===1?'':'s')+' saved.');refreshStoreMediaEditor(store);
+    }catch(error){mtoast(error.message);galleryInput.disabled=false}
+  };
+  document.querySelectorAll('#storefrontV2Media [data-delete-store-media]').forEach(function(button){button.onclick=async function(){
+    const id=Number(button.dataset.deleteStoreMedia);
+    try{
+      button.disabled=true;await mapi('/api/merchant/storefront/media/'+id+'?business_id='+encodeURIComponent(Number(store.business_id)),{method:'DELETE'});
+      if(Number(store.cover_image?.id)===id){store.cover_image=null;store.cover_image_url=''}
+      store.gallery_images=(Array.isArray(store.gallery_images)?store.gallery_images:[]).filter(function(item){return Number(item.id)!==id});
+      mtoast('Storefront image removed.');refreshStoreMediaEditor(store);
+    }catch(error){mtoast(error.message);button.disabled=false}
+  }});
+}
 function bindStorefrontV2Controls(store){
   document.getElementById('storePresence')?.addEventListener('change',syncStorePresence);
   const gps=document.getElementById('storeUseGps');if(gps)gps.onclick=async function(){const msg=document.getElementById('storeGeoResults');try{gps.disabled=true;if(msg)msg.textContent='Reading device location…';const p=await currentStorePosition();setStorePin(p.lat,p.lng,16);if(msg)msg.textContent='GPS position set. Drag the pin to the exact storefront entrance if needed.'}catch(error){if(msg)msg.textContent=error.message}finally{gps.disabled=false}};
   const search=document.getElementById('storeSearchAddress');if(search)search.onclick=searchStoreAddress;
-  const logoInput=document.getElementById('storeLogoInput');if(logoInput)logoInput.onchange=async function(){try{const data=await prepareStoreImage(logoInput.files?.[0],720,720,285000);document.getElementById('storeLogoData').value=data;document.getElementById('storeLogoPreview').innerHTML='<img src="'+data+'" alt="">';mtoast('Logo prepared. Save the storefront to keep it.')}catch(error){mtoast(error.message)}};
-  const coverInput=document.getElementById('storeCoverInput');if(coverInput)coverInput.onchange=async function(){try{coverInput.disabled=true;await uploadStorefrontMedia('cover',coverInput.files?.[0]);mtoast('Cover image saved.');await renderMerchantStore()}catch(error){mtoast(error.message);coverInput.disabled=false}};
-  const galleryInput=document.getElementById('storeGalleryInput');if(galleryInput)galleryInput.onchange=async function(){
-    const files=Array.from(galleryInput.files||[]),existing=Array.isArray(store.gallery_images)?store.gallery_images.length:0;
-    if(!files.length)return;if(existing+files.length>8){mtoast('Gallery supports up to 8 photos.');galleryInput.value='';return}
-    try{galleryInput.disabled=true;for(const file of files)await uploadStorefrontMedia('gallery',file);mtoast(files.length+' gallery photo'+(files.length===1?'':'s')+' saved.');await renderMerchantStore()}catch(error){mtoast(error.message);galleryInput.disabled=false}
-  };
-  document.querySelectorAll('[data-delete-store-media]').forEach(function(button){button.onclick=async function(){try{button.disabled=true;await mapi('/api/merchant/storefront/media/'+Number(button.dataset.deleteStoreMedia)+'?business_id='+encodeURIComponent(Number(store.business_id)),{method:'DELETE'});mtoast('Storefront image removed.');await renderMerchantStore()}catch(error){mtoast(error.message);button.disabled=false}}});
+  bindStoreMediaControls(store);
   syncStorePresence();
 }
 async function renderPublicStoreMap(store,id){
