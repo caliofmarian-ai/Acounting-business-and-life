@@ -633,6 +633,7 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
 
 app.get('/api/admin/delivery/pricing',(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
 app.put('/api/admin/delivery/pricing',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
+app.post('/api/admin/delivery/pricing/preview',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing_preview').catch(next));
 app.get('/api/admin/couriers',(req,res,next)=>forwardAdmin(req,res,'courier.verify',null,'courier').catch(next));
 app.get('/api/admin/couriers/:accountId',(req,res,next)=>forwardAdmin(req,res,'courier.verify',null,'courier',req.params.accountId).catch(next));
 app.get('/api/admin/couriers/:accountId/documents/:documentId',(req,res,next)=>forwardAdmin(req,res,'courier.verify',null,'courier_document',req.params.documentId).catch(next));

@@ -182,26 +182,43 @@ async function configureQaDeliveryPricing({base,adminToken,requestJson,expectSta
       average_speed_car_kmh:25,
       vehicle_rules:[
         {
-          vehicle_class:'bicycle',formula_type:'base_plus_km',priority:1,
-          base_fee:30,per_km:10,per_kg:0,per_liter:0,minimum_fee:30,
-          maximum_distance_km:20,max_weight_kg:5,max_volume_l:20
+          vehicle_class:'bicycle',formula_type:'tiered_distance',priority:1,
+          base_fee:30,included_distance_km:0,distance_bands:[{up_to_km:null,per_km:10}],
+          minimum_fee:30,maximum_distance_km:20,max_weight_kg:5,max_volume_l:20,
+          extra_stop_fee:30,free_wait_minutes:30,waiting_fee_per_minute:1,
+          demand_adjustment_cap_pct:0,route_profile:'bicycle_local',
+          toll_policy:'disabled',parking_policy:'pass_through',stacking_policy:'direct_only'
         },
         {
-          vehicle_class:'car',formula_type:'distance_weight_volume',priority:2,
-          base_fee:50,per_km:12,per_kg:2,per_liter:0.5,minimum_fee:50,
-          maximum_distance_km:50,max_weight_kg:100,max_volume_l:400
+          vehicle_class:'motorcycle',formula_type:'tiered_distance',priority:2,
+          base_fee:35,included_distance_km:2,distance_bands:[{up_to_km:null,per_km:8}],
+          minimum_fee:35,maximum_distance_km:40,max_weight_kg:20,max_volume_l:80,
+          extra_stop_fee:35,free_wait_minutes:30,waiting_fee_per_minute:1,
+          demand_adjustment_cap_pct:0,route_profile:'motorcycle_no_expressway',
+          toll_policy:'disabled',parking_policy:'pass_through',stacking_policy:'direct_only'
         },
         {
-          vehicle_class:'van',formula_type:'distance_weight_volume',priority:3,
-          base_fee:80,per_km:15,per_kg:1.5,per_liter:0.4,minimum_fee:80,
-          maximum_distance_km:100,max_weight_kg:1000,max_volume_l:3000
+          vehicle_class:'sedan',formula_type:'tiered_distance',priority:3,
+          base_fee:50,included_distance_km:0,distance_bands:[{up_to_km:null,per_km:12}],
+          minimum_fee:50,maximum_distance_km:50,max_weight_kg:100,max_volume_l:400,
+          extra_stop_fee:40,free_wait_minutes:30,waiting_fee_per_minute:1.5,
+          demand_adjustment_cap_pct:0,route_profile:'car_optional_tolls',
+          toll_policy:'pass_through',parking_policy:'pass_through',stacking_policy:'direct_only'
+        },
+        {
+          vehicle_class:'l300_van',formula_type:'tiered_distance',priority:4,
+          base_fee:80,included_distance_km:0,distance_bands:[{up_to_km:null,per_km:15}],
+          minimum_fee:80,maximum_distance_km:100,max_weight_kg:1000,max_volume_l:3000,
+          extra_stop_fee:90,free_wait_minutes:60,waiting_fee_per_minute:2.25,
+          demand_adjustment_cap_pct:0,route_profile:'light_commercial_optional_tolls',
+          toll_policy:'pass_through',parking_policy:'pass_through',stacking_policy:'direct_only'
         }
       ]
     }
   });
   expectStatus(configured,200,'QA Delivery V2 pricing');
   const classes=new Set((configured.json?.vehicle_rules||[]).map(x=>x.vehicle_class));
-  for(const cls of ['bicycle','car','van'])if(!classes.has(cls))throw new Error('QA Delivery pricing is missing '+cls+'.');
+  for(const cls of ['bicycle','motorcycle','sedan','l300_van'])if(!classes.has(cls))throw new Error('QA Delivery V2B pricing is missing '+cls+'.');
   return Number(configured.json?.version||0);
 }
 
