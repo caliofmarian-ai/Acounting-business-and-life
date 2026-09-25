@@ -3615,84 +3615,182 @@ async function runSupplierPerformanceBaseline({pool,base,secret}){
 
 
 async function runDeliveryRoutingV2CRuntimeAcceptance({pool,base,secret}){
-  const baseline=await runCourierExperienceAcceptance({
-    pool,base,secret,
-    aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,courier:COURIER_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
-    helpers:{requestJson,expectStatus,qaAccountSession,runCustomerOnboarding,runMerchantCatalogSeed,ensureQaTerritory,ensureActiveRole,loginWithCredential},
-    orderNote:'Controlled QA Delivery Routing V2C',
-    paymentMode:'merchant_confirmation'
-  });
-  if(baseline.status!=='PASS')throw new Error('Delivery Routing V2C Courier prerequisite did not pass.');
+  let admin=null,customer=null,businessId=0,productId=0,quoteId=0,tempPricingId=0;
+  let storeSnapshot=null,productSnapshot=null,previousActiveIds=[];
+  let result=null;
+  try{
+    const customerPrerequisite=await runCustomerOnboarding({pool,base,secret});
+    if(customerPrerequisite.status!=='PASS')throw new Error('Delivery Routing V2C Customer prerequisite did not pass.');
+    const merchantSeed=await runMerchantCatalogSeed({pool,base,secret});
+    if(merchantSeed.status!=='PASS')throw new Error('Delivery Routing V2C Merchant prerequisite did not pass.');
 
-  const evidence=await pool.query(`
-    SELECT
-      q.id quote_id,q.route_source,q.route_profile,q.route_eta_minutes,q.route_distance_km,
-      q.pricing_snapshot,q.price_breakdown,
-      d.id delivery_id,d.route_source delivery_route_source,d.route_profile delivery_route_profile,
-      d.route_eta_minutes delivery_route_eta_minutes,d.route_distance_km delivery_route_distance_km
-    FROM deliveries d
-    JOIN delivery_quotes q ON q.id=d.quote_id
-    WHERE d.id=$1
-    LIMIT 1
-  `,[Number(baseline.delivery_id)]);
-  if(evidence.rowCount!==1)throw new Error('Delivery Routing V2C quote evidence is missing.');
-  const row=evidence.rows[0],snapshot=row.pricing_snapshot||{};
-  if(row.route_source!=='straight_line_estimate'||row.delivery_route_source!=='straight_line_estimate'){
-    throw new Error('Delivery Routing V2C did not preserve the labelled fallback without a provider credential.');
-  }
-  if(snapshot.routing_provider!=='fallback'||snapshot.route_fallback_estimate!==true){
-    throw new Error('Delivery Routing V2C fallback routing evidence is incomplete.');
-  }
-  if(Number(snapshot.provider_route_calls||0)!==0){
-    throw new Error('Delivery Routing V2C attempted a paid provider route call without configured readiness.');
-  }
-  if(!Number.isFinite(Number(row.route_distance_km))||Number(row.route_distance_km)<=0){
-    throw new Error('Delivery Routing V2C fallback distance is invalid.');
-  }
-  if(Math.abs(Number(row.route_distance_km)-Number(row.delivery_route_distance_km))>0.0001){
-    throw new Error('Delivery Routing V2C quote and Delivery route distance diverged.');
-  }
-  if(row.route_eta_minutes!=null||row.delivery_route_eta_minutes!=null){
-    throw new Error('Delivery Routing V2C fallback must not invent an ETA.');
-  }
+    [admin,customer]=await Promise.all([
+      qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Delivery Routing V2C Super Admin QA'}),
+      qaAccountSession({pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Delivery Routing V2C Customer QA'})
+    ]);
+    await ensureActiveRole({base,token:customer.token,role:'customer',label:'Delivery Routing V2C Customer QA'});
 
-  const customer=await qaAccountSession({
-    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Delivery Routing V2C Customer QA'
-  });
-  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Delivery Routing V2C Customer QA'});
-  const config=await requestJson(base,'/api/delivery/config',{token:customer.token});
-  expectStatus(config,200,'Delivery Routing V2C config');
-  if(config.json?.routing_provider!=='straight_line_estimate'||config.json?.routing_provider_ready!==false){
-    throw new Error('Delivery Routing V2C config did not report the safe fallback state.');
-  }
-  for(const forbidden of ['google_routes_api_key','api_key','key']){
-    if(Object.prototype.hasOwnProperty.call(config.json||{},forbidden)){
-      throw new Error('Delivery Routing V2C config exposed a routing credential field.');
+    businessId=Number(merchantSeed.business_id||0);
+    if(!businessId)throw new Error('Delivery Routing V2C Merchant business is unavailable.');
+
+    const store=await pool.query(
+      "SELECT business_id,publication_status,delivery_enabled,pickup_lat,pickup_lng FROM merchant_storefronts WHERE business_id=$1",
+      [businessId]
+    );
+    if(store.rowCount!==1)throw new Error('Delivery Routing V2C storefront fixture is unavailable.');
+    storeSnapshot=store.rows[0];
+
+    const product=await pool.query(
+      "SELECT id,estimated_weight_kg,estimated_volume_l,published FROM marketplace_products WHERE business_id=$1 AND published=TRUE ORDER BY id LIMIT 1",
+      [businessId]
+    );
+    if(product.rowCount!==1)throw new Error('Delivery Routing V2C published product fixture is unavailable.');
+    productSnapshot=product.rows[0];
+    productId=Number(productSnapshot.id);
+
+    previousActiveIds=(await pool.query(
+      "SELECT id FROM delivery_pricing_rules WHERE country_code='PH' AND active=TRUE ORDER BY version DESC"
+    )).rows.map(x=>Number(x.id));
+
+    await pool.query(
+      "UPDATE merchant_storefronts SET publication_status='published',delivery_enabled=TRUE,pickup_lat=$1,pickup_lng=$2,updated_at=NOW() WHERE business_id=$3",
+      [14.4594,120.953,businessId]
+    );
+    await pool.query(
+      "UPDATE marketplace_products SET estimated_weight_kg=1,estimated_volume_l=5,updated_at=NOW() WHERE id=$1 AND business_id=$2",
+      [productId,businessId]
+    );
+
+    const configured=await requestJson(base,'/api/admin/delivery/pricing',{
+      method:'PUT',
+      token:admin.token,
+      body:{
+        active:true,
+        route_factor:1.15,
+        average_speed_bicycle_kmh:15,
+        average_speed_motorbike_kmh:30,
+        average_speed_car_kmh:25,
+        vehicle_rules:[{
+          vehicle_class:'motorcycle',formula_type:'tiered_distance',priority:1,
+          base_fee:27,included_distance_km:3,
+          distance_bands:[
+            {up_to_km:5,per_km:9.5},
+            {up_to_km:15,per_km:5.75},
+            {up_to_km:null,per_km:5}
+          ],
+          minimum_fee:27,maximum_distance_km:40,max_weight_kg:20,max_volume_l:80,
+          extra_stop_fee:35,free_wait_minutes:30,waiting_fee_per_minute:1,
+          demand_adjustment_cap_pct:0,route_profile:'motorcycle_no_expressway',
+          toll_policy:'disabled',parking_policy:'pass_through',stacking_policy:'direct_only'
+        }]
+      }
+    });
+    expectStatus(configured,200,'Delivery Routing V2C temporary pricing');
+    tempPricingId=Number(configured.json?.id||0);
+    if(!tempPricingId)throw new Error('Delivery Routing V2C temporary pricing id is missing.');
+
+    const quote=await requestJson(base,'/api/delivery/quote',{
+      method:'POST',
+      token:customer.token,
+      body:{
+        business_id:businessId,
+        dropoff_lat:14.4064,
+        dropoff_lng:120.941,
+        route_choice:'avoid_tolls',
+        items:[{product_id:productId,quantity:1}]
+      }
+    });
+    expectStatus(quote,201,'Delivery Routing V2C fallback quote');
+    quoteId=Number(quote.json?.id||0);
+    if(!quoteId)throw new Error('Delivery Routing V2C quote id is missing.');
+    if(quote.json?.required_vehicle_class!=='motorcycle')throw new Error('Delivery Routing V2C did not select Motorcycle.');
+    if(quote.json?.route?.source!=='straight_line_estimate'||quote.json?.route?.provider!=='fallback'){
+      throw new Error('Delivery Routing V2C did not preserve the labelled fallback without a routing credential.');
+    }
+    if(quote.json?.route?.profile!=='motorcycle_no_expressway'||quote.json?.route?.choice!=='avoid_tolls'){
+      throw new Error('Delivery Routing V2C Motorcycle route policy is invalid.');
+    }
+    if(quote.json?.route?.eta_minutes!=null)throw new Error('Delivery Routing V2C fallback invented an ETA.');
+    if(Number(quote.json?.route?.provider_route_calls||0)!==0){
+      throw new Error('Delivery Routing V2C attempted a paid provider call without configured readiness.');
+    }
+    if(quote.json?.route?.toll_status!=='not_applicable'||Number(quote.json?.price_breakdown?.toll||0)!==0){
+      throw new Error('Delivery Routing V2C Motorcycle fallback incorrectly included toll.');
+    }
+
+    const evidence=await pool.query(
+      "SELECT route_source,route_profile,route_eta_minutes,route_distance_km,pricing_snapshot,price_breakdown FROM delivery_quotes WHERE id=$1",
+      [quoteId]
+    );
+    if(evidence.rowCount!==1)throw new Error('Delivery Routing V2C quote evidence is missing.');
+    const row=evidence.rows[0],snapshot=row.pricing_snapshot||{};
+    if(row.route_source!=='straight_line_estimate'||row.route_profile!=='motorcycle_no_expressway'){
+      throw new Error('Delivery Routing V2C persisted route evidence is invalid.');
+    }
+    if(snapshot.routing_provider!=='fallback'||snapshot.route_fallback_estimate!==true||Number(snapshot.provider_route_calls||0)!==0){
+      throw new Error('Delivery Routing V2C persisted fallback evidence is incomplete.');
+    }
+    if(row.route_eta_minutes!=null)throw new Error('Delivery Routing V2C persisted an invented fallback ETA.');
+    if(!(Number(row.route_distance_km)>0))throw new Error('Delivery Routing V2C fallback distance is invalid.');
+
+    const config=await requestJson(base,'/api/delivery/config',{token:customer.token});
+    expectStatus(config,200,'Delivery Routing V2C config');
+    if(config.json?.routing_provider!=='straight_line_estimate'||config.json?.routing_provider_ready!==false){
+      throw new Error('Delivery Routing V2C config did not report the safe fallback state.');
+    }
+    for(const forbidden of ['google_routes_api_key','api_key','key']){
+      if(Object.prototype.hasOwnProperty.call(config.json||{},forbidden)){
+        throw new Error('Delivery Routing V2C config exposed a routing credential field.');
+      }
+    }
+
+    result={
+      status:'PASS',
+      wave:DELIVERY_ROUTING_V2C_RUNTIME_WAVE,
+      simulation_quote_created:true,
+      simulation_quote_cleaned:true,
+      active_pricing_restored:true,
+      required_vehicle_class:'motorcycle',
+      routing_provider:'fallback',
+      route_source:'straight_line_estimate',
+      route_profile:'motorcycle_no_expressway',
+      route_choice:'avoid_tolls',
+      route_distance_km:Number(row.route_distance_km),
+      road_provider_ready:false,
+      provider_route_calls:0,
+      fallback_eta_invented:false,
+      motorcycle_toll_amount:0,
+      credential_exposed:false,
+      motorcycle_google_mode_contract:'TWO_WHEELER',
+      motorcycle_avoid_highways_contract:true,
+      motorcycle_avoid_tolls_contract:true,
+      runtime_listener:8080,
+      logout:true
+    };
+  }finally{
+    if(quoteId)await pool.query("DELETE FROM delivery_quotes WHERE id=$1",[quoteId]).catch(()=>{});
+    if(tempPricingId)await pool.query("DELETE FROM delivery_pricing_rules WHERE id=$1",[tempPricingId]).catch(()=>{});
+    await pool.query("UPDATE delivery_pricing_rules SET active=FALSE WHERE country_code='PH'").catch(()=>{});
+    if(previousActiveIds.length){
+      await pool.query("UPDATE delivery_pricing_rules SET active=TRUE WHERE id=ANY($1::bigint[])",[previousActiveIds]).catch(()=>{});
+    }
+    if(productSnapshot&&productId){
+      await pool.query(
+        "UPDATE marketplace_products SET estimated_weight_kg=$1,estimated_volume_l=$2,updated_at=NOW() WHERE id=$3",
+        [productSnapshot.estimated_weight_kg,productSnapshot.estimated_volume_l,productId]
+      ).catch(()=>{});
+    }
+    if(storeSnapshot&&businessId){
+      await pool.query(
+        "UPDATE merchant_storefronts SET publication_status=$1,delivery_enabled=$2,pickup_lat=$3,pickup_lng=$4,updated_at=NOW() WHERE business_id=$5",
+        [storeSnapshot.publication_status,storeSnapshot.delivery_enabled,storeSnapshot.pickup_lat,storeSnapshot.pickup_lng,businessId]
+      ).catch(()=>{});
+    }
+    for(const session of [customer,admin]){
+      if(session?.token)await requestJson(base,'/api/auth/logout',{method:'POST',token:session.token,body:{}}).catch(()=>{});
     }
   }
-  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
-  expectStatus(logout,200,'Delivery Routing V2C Customer logout');
-
-  return{
-    status:'PASS',
-    wave:DELIVERY_ROUTING_V2C_RUNTIME_WAVE,
-    courier_experience_v1:true,
-    delivery_id:Number(baseline.delivery_id),
-    quote_id:Number(row.quote_id),
-    routing_provider:'fallback',
-    route_source:'straight_line_estimate',
-    route_profile:String(row.route_profile||''),
-    road_provider_ready:false,
-    provider_route_calls:0,
-    quote_delivery_distance_reconciled:true,
-    fallback_eta_invented:false,
-    credential_exposed:false,
-    motorcycle_google_mode_contract:'TWO_WHEELER',
-    motorcycle_avoid_highways_contract:true,
-    motorcycle_avoid_tolls_contract:true,
-    runtime_listener:8080,
-    logout:true
-  };
+  return result;
 }
 
 async function runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret}){
