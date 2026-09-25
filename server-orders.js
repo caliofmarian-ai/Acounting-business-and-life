@@ -312,7 +312,34 @@ app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);const{rows}=await pool.query(`SELECT p.id,p.name,p.category,p.selling_price,p.active,COALESCE(SUM(r.quantity*i.unit_cost),0) unit_cost FROM products p LEFT JOIN recipes r ON r.product_id=p.id LEFT JOIN inventory i ON i.id=r.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 AND p.active=TRUE GROUP BY p.id ORDER BY p.category,p.name`,[business.id]);res.json(rows)}catch(e){next(e)}});
 
 app.post('/api/orders',body,async(req,res,next)=>{try{const me=await requireCustomer(req);const a=me.account;const result=await createOrder({businessId:Number(req.body?.business_id),customerAccountId:Number(a.id),customerName:a.display_name,customerContact:a.email||a.phone,items:req.body?.items,fulfilmentMethod:req.body?.fulfilment_method,paymentMethod:req.body?.payment_method,deliveryAddress:req.body?.delivery_address||a.address,note:req.body?.note,preparationEtaMinutes:req.body?.preparation_eta_minutes});res.status(201).json(result)}catch(e){next(e)}});
-app.get('/api/orders/mine',async(req,res,next)=>{try{const me=await requireCustomer(req);const{rows}=await pool.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.customer_account_id=$1 ORDER BY o.created_at DESC LIMIT 100`,[me.account.id]);res.json(rows)}catch(e){next(e)}});
+app.get('/api/orders/mine',async(req,res,next)=>{try{
+  const me=await requireCustomer(req);
+  if(String(req.query.view||'')==='home'){
+    const{rows}=await pool.query(`
+      WITH home_orders AS (
+        (SELECT o.id,o.order_number,o.order_status,o.outstanding_amount,o.fulfilment_method,o.total,o.completed_at,o.updated_at,o.created_at,b.name business_name,0 AS home_rank
+           FROM orders o
+           JOIN businesses b ON b.id=o.business_id
+          WHERE o.customer_account_id=$1 AND o.order_status NOT IN ('completed','cancelled')
+          ORDER BY o.updated_at DESC
+          LIMIT 12)
+        UNION ALL
+        (SELECT o.id,o.order_number,o.order_status,o.outstanding_amount,o.fulfilment_method,o.total,o.completed_at,o.updated_at,o.created_at,b.name business_name,1 AS home_rank
+           FROM orders o
+           JOIN businesses b ON b.id=o.business_id
+          WHERE o.customer_account_id=$1 AND o.order_status='completed'
+          ORDER BY COALESCE(o.completed_at,o.updated_at,o.created_at) DESC
+          LIMIT 3)
+      )
+      SELECT id,order_number,order_status,outstanding_amount,fulfilment_method,total,completed_at,updated_at,created_at,business_name
+        FROM home_orders
+       ORDER BY home_rank,COALESCE(completed_at,updated_at,created_at) DESC
+    `,[me.account.id]);
+    return res.json(rows);
+  }
+  const{rows}=await pool.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.customer_account_id=$1 ORDER BY o.created_at DESC LIMIT 100`,[me.account.id]);
+  res.json(rows)
+}catch(e){next(e)}});
 app.get('/api/orders/:id',async(req,res,next)=>{try{const me=await identity(req);const order=await orderDetail(Number(req.params.id));if(!order)return res.status(404).json({error:'Order not found'});const merchant=businessFor(me,order.business_id);if(Number(order.customer_account_id)!==Number(me.account.id)&&!merchant)return res.status(403).json({error:'Not allowed'});res.json(order)}catch(e){next(e)}});
 app.post('/api/orders/:id/check-in',body,async(req,res,next)=>{try{const me=await requireCustomer(req);const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount) throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];if(Number(o.customer_account_id)!==Number(me.account.id)) throw Object.assign(new Error('Not allowed'),{status:403});if(o.order_status!=='awaiting_customer_presence') throw Object.assign(new Error('This order is not waiting for customer presence'),{status:409});await client.query(`UPDATE orders SET customer_checked_in_at=COALESCE(customer_checked_in_at,NOW()),updated_at=NOW() WHERE id=$1`,[id]);await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
 

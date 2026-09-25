@@ -33,33 +33,74 @@ async function netAllocations(pool,componentCode,economicPartyId){
   return allocationSummary(rows[0]);
 }
 
+async function customerMoneyHomeSummary(pool,accountId){
+  const {rows}=await pool.query(`
+    SELECT
+      (
+        SELECT COUNT(*) FILTER(WHERE order_status<>'cancelled')::int
+        FROM orders WHERE customer_account_id=$1
+      ) AS order_count,
+      (
+        SELECT COALESCE(SUM(total) FILTER(WHERE order_status<>'cancelled'),0)
+        FROM orders WHERE customer_account_id=$1
+      ) AS purchase_value,
+      (
+        SELECT COALESCE(SUM(outstanding_amount) FILTER(WHERE order_status<>'cancelled'),0)
+        FROM orders WHERE customer_account_id=$1
+      ) AS outstanding_amount,
+      (
+        SELECT COALESCE(SUM(amount) FILTER(WHERE status='succeeded'),0)
+        FROM payment_intents WHERE payer_account_id=$1
+      ) AS succeeded_amount,
+      (
+        SELECT COALESCE(SUM(amount) FILTER(WHERE status IN ('requires_provider','requires_action','processing')),0)
+        FROM payment_intents WHERE payer_account_id=$1
+      ) AS pending_amount,
+      (
+        SELECT COUNT(*) FILTER(WHERE status='failed')::int
+        FROM payment_intents WHERE payer_account_id=$1
+      ) AS failed_count,
+      (
+        SELECT COALESCE(SUM(r.amount) FILTER(WHERE r.status='succeeded'),0)
+        FROM refunds r
+        JOIN payment_intents pi ON pi.id=r.payment_intent_id
+        WHERE pi.payer_account_id=$1
+      ) AS refunded_amount,
+      (
+        SELECT COALESCE(SUM(r.amount) FILTER(WHERE r.status IN ('requested','processing','manual_review')),0)
+        FROM refunds r
+        JOIN payment_intents pi ON pi.id=r.payment_intent_id
+        WHERE pi.payer_account_id=$1
+      ) AS pending_refund_amount
+  `,[Number(accountId)]);
+  const x=rows[0]||{};
+  return{
+    role:'customer',currency_code:'PHP',
+    summary:{
+      order_count:n(x.order_count),purchase_value:money(x.purchase_value),
+      confirmed_payments:money(x.succeeded_amount),
+      outstanding_purchases:money(x.outstanding_amount),
+      refunded:money(x.refunded_amount),
+      pending_payments:money(x.pending_amount),
+      pending_refunds:money(x.pending_refund_amount),
+      failed_payment_count:n(x.failed_count)
+    },
+    authority:{
+      confirmed_payments:'payment_intents.status=succeeded',
+      outstanding:'orders.outstanding_amount',
+      refunds:'refunds.status=succeeded',
+      note:'This is personal purchase/payment flow. It is not business profit accounting.'
+    }
+  };
+}
+
+export async function customerMoneyHomeSnapshot(pool,accountId){
+  return customerMoneyHomeSummary(pool,accountId);
+}
+
 export async function customerMoneySnapshot(pool,accountId){
-  const [orders,payments,refunds,recentOrders,recentPayments]=await Promise.all([
-    pool.query(`
-      SELECT
-        COUNT(*) FILTER(WHERE order_status<>'cancelled')::int order_count,
-        COALESCE(SUM(total) FILTER(WHERE order_status<>'cancelled'),0) purchase_value,
-        COALESCE(SUM(outstanding_amount) FILTER(WHERE order_status<>'cancelled'),0) outstanding_amount,
-        COALESCE(SUM(paid_amount) FILTER(WHERE order_status<>'cancelled'),0) order_paid_recorded
-      FROM orders WHERE customer_account_id=$1
-    `,[Number(accountId)]),
-    pool.query(`
-      SELECT
-        COUNT(*)::int payment_intent_count,
-        COALESCE(SUM(amount) FILTER(WHERE status='succeeded'),0) succeeded_amount,
-        COALESCE(SUM(amount) FILTER(WHERE status IN ('requires_provider','requires_action','processing')),0) pending_amount,
-        COUNT(*) FILTER(WHERE status='failed')::int failed_count
-      FROM payment_intents WHERE payer_account_id=$1
-    `,[Number(accountId)]),
-    pool.query(`
-      SELECT
-        COUNT(*) FILTER(WHERE r.status='succeeded')::int refund_count,
-        COALESCE(SUM(r.amount) FILTER(WHERE r.status='succeeded'),0) refunded_amount,
-        COALESCE(SUM(r.amount) FILTER(WHERE r.status IN ('requested','processing','manual_review')),0) pending_refund_amount
-      FROM refunds r
-      JOIN payment_intents pi ON pi.id=r.payment_intent_id
-      WHERE pi.payer_account_id=$1
-    `,[Number(accountId)]),
+  const [home,recentOrders,recentPayments]=await Promise.all([
+    customerMoneyHomeSummary(pool,accountId),
     pool.query(`
       SELECT o.id,o.order_number,o.business_id,b.name business_name,o.total,o.paid_amount,o.outstanding_amount,
              o.payment_method,o.payment_status,o.order_status,o.currency_code,o.created_at
@@ -73,27 +114,7 @@ export async function customerMoneySnapshot(pool,accountId){
       ORDER BY created_at DESC LIMIT 30
     `,[Number(accountId)])
   ]);
-  const o=orders.rows[0]||{},p=payments.rows[0]||{},r=refunds.rows[0]||{};
-  return{
-    role:'customer',currency_code:'PHP',
-    summary:{
-      order_count:n(o.order_count),purchase_value:money(o.purchase_value),
-      confirmed_payments:money(p.succeeded_amount),
-      outstanding_purchases:money(o.outstanding_amount),
-      refunded:money(r.refunded_amount),
-      pending_payments:money(p.pending_amount),
-      pending_refunds:money(r.pending_refund_amount),
-      failed_payment_count:n(p.failed_count)
-    },
-    authority:{
-      confirmed_payments:'payment_intents.status=succeeded',
-      outstanding:'orders.outstanding_amount',
-      refunds:'refunds.status=succeeded',
-      note:'This is personal purchase/payment flow. It is not business profit accounting.'
-    },
-    recent_orders:recentOrders.rows,
-    recent_payments:recentPayments.rows
-  };
+  return{...home,recent_orders:recentOrders.rows,recent_payments:recentPayments.rows};
 }
 
 export async function courierMoneySnapshot(pool,accountId){
