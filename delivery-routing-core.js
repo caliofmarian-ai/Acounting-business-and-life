@@ -108,7 +108,8 @@ export function buildGoogleRoutesRequest({
   routeChoice:choiceValue='avoid_tolls',includeTolls=false
 }={}){
   const profile=routeProfile(profileValue);
-  const choice=routeChoice(choiceValue);
+  const requestedChoice=routeChoice(choiceValue);
+  const choice=['motorcycle_no_expressway','bicycle_local'].includes(profile)?'avoid_tolls':requestedChoice;
   const travelMode=googleTravelMode(profile);
   const routeModifiers=googleRouteModifiers(profile,choice);
   const body={
