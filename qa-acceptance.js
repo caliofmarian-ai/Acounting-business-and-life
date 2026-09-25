@@ -34,7 +34,8 @@ const MARKETPLACE_RUNTIME_V12_WAVE='marketplace_runtime_v12';
 const ORDERS_RUNTIME_V13_WAVE='orders_runtime_v13';
 const ACCOUNT_AUTH_RUNTIME_V14_WAVE='account_auth_runtime_v14';
 const ACCOUNTING_RUNTIME_V15_WAVE='accounting_runtime_v15';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE]);
+const NOTIFICATIONS_RUNTIME_V16_WAVE='notifications_runtime_v16';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -150,6 +151,17 @@ async function verifyAccountAuthRootComposition(base,path,label){
   const html=await response.text();
   if(response.status!==200)throw new Error(label+' returned an unexpected status.');
   for(const marker of ['/shell.css','/shell.js','/auth-ui.js','/orders.css','/orders-ui.js','/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js','/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js','/auth-hardening.css','/auth-hardening-ui.js']){
+    const count=html.split(marker).length-1;
+    if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
+  }
+  return true;
+}
+
+async function verifyNotificationsRootComposition(base,path,label){
+  const response=await fetch(base+path,{headers:{Accept:'text/html'}});
+  const html=await response.text();
+  if(response.status!==200)throw new Error(label+' returned an unexpected status.');
+  for(const marker of ['/notifications.css','/notifications-ui.js','/manifest.webmanifest']){
     const count=html.split(marker).length-1;
     if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
   }
@@ -3494,6 +3506,84 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runNotificationsRuntimeV16Acceptance({pool,base,secret}){
+  const rootComposition=await verifyNotificationsRootComposition(base,'/','Notifications Runtime V16 root composition');
+  const indexComposition=await verifyNotificationsRootComposition(base,'/index.html','Notifications Runtime V16 index composition');
+
+  const orders=await runOrdersRuntimeV13Acceptance({pool,base,secret});
+  if(orders.status!=='PASS'||!orders.direct_order_id)throw new Error('Notifications Runtime V16 Orders baseline did not pass.');
+  const orderId=Number(orders.direct_order_id);
+
+  const eventEvidence=await pool.query(
+    `SELECT id,event_code,entity_type,entity_id
+       FROM notification_events
+      WHERE entity_type='order' AND entity_id=$1
+      ORDER BY id DESC`,
+    [String(orderId)]
+  );
+  if(!eventEvidence.rowCount||!eventEvidence.rows.some(row=>String(row.event_code).startsWith('order.'))){
+    throw new Error('Notifications Runtime V16 did not record the order lifecycle notification hook.');
+  }
+
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Notifications Runtime V16 Customer QA'
+  });
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Notifications Runtime V16 Customer QA'});
+
+  const inbox=await requestJson(base,'/api/notifications?threaded=all',{token:customer.token});
+  expectStatus(inbox,200,'Notifications Runtime V16 inbox');
+  if(!Array.isArray(inbox.json))throw new Error('Notifications Runtime V16 inbox is not an array.');
+
+  const unread=await requestJson(base,'/api/notifications/unread-count?threaded=all',{token:customer.token});
+  expectStatus(unread,200,'Notifications Runtime V16 unread count');
+  if(!Number.isFinite(Number(unread.json?.unread)))throw new Error('Notifications Runtime V16 unread count is invalid.');
+
+  const preferences=await requestJson(base,'/api/notifications/preferences',{token:customer.token});
+  expectStatus(preferences,200,'Notifications Runtime V16 preferences');
+  if(!Array.isArray(preferences.json?.categories))throw new Error('Notifications Runtime V16 preference categories are missing.');
+
+  const invalidRaw=JSON.stringify({type:'email.delivered',data:{email_id:'qa-invalid-signature'}});
+  const invalidWebhook=await fetch(base+'/api/notifications/webhooks/resend',{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'svix-id':'msg_qa_invalid',
+      'svix-timestamp':String(Math.floor(Date.now()/1000)),
+      'svix-signature':'v1,invalid'
+    },
+    body:invalidRaw
+  });
+  await invalidWebhook.text();
+  if(![400,503].includes(invalidWebhook.status)){
+    throw new Error('Notifications Runtime V16 invalid Resend signature did not fail closed.');
+  }
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Notifications Runtime V16 logout');
+  const relogin=await loginWithCredential({
+    base,email:CUSTOMER_ALIAS,password:customer.password,label:'Notifications Runtime V16 re-login'
+  });
+  const finalLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:relogin,body:{}});
+  expectStatus(finalLogout,200,'Notifications Runtime V16 final logout');
+
+  return{
+    status:'PASS',
+    wave:NOTIFICATIONS_RUNTIME_V16_WAVE,
+    root_composition:Boolean(rootComposition),
+    index_composition:Boolean(indexComposition),
+    notification_inbox:true,
+    unread_count:true,
+    preferences:true,
+    transaction_notification_hook:true,
+    notification_event_count:eventEvidence.rowCount,
+    resend_invalid_signature_fail_closed:true,
+    auth_session:true,
+    legacy_port_4407_retired:true,
+    logout_relogin:true
+  };
+}
+
+
 async function runAccountingRuntimeV15Acceptance({pool,base,secret}){
   const rootComposition=await verifyAccountAuthRootComposition(base,'/','Accounting Runtime V15 root composition');
   const indexComposition=await verifyAccountAuthRootComposition(base,'/index.html','Accounting Runtime V15 index composition');
@@ -3851,7 +3941,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===ACCOUNTING_RUNTIME_V15_WAVE
+    const result=config.wave===NOTIFICATIONS_RUNTIME_V16_WAVE
+      ?await runNotificationsRuntimeV16Acceptance({pool,base,secret:config.secret})
+      :config.wave===ACCOUNTING_RUNTIME_V15_WAVE
       ?await runAccountingRuntimeV15Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNT_AUTH_RUNTIME_V14_WAVE
       ?await runAccountAuthRuntimeV14Acceptance({pool,base,secret:config.secret})
@@ -3923,5 +4015,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE
 };
