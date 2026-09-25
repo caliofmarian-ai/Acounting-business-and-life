@@ -1325,6 +1325,7 @@ async function refreshProfile(force=false) {
     }
     publishProfileState();
     perfMark('profile_state_published');
+    perfMark('account_home_settled');
     return snapshot;
   })();
   try{return await profileRefreshPromise}
