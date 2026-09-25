@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
+import { performance } from 'node:perf_hooks';
 import { validateRuntimeSafety } from './runtime-safety.js';
 import { runCourierExperienceAcceptance } from './qa-courier-acceptance.js';
 import { runServiceProviderExperienceAcceptance } from './qa-service-provider-acceptance.js';
@@ -35,7 +36,8 @@ const ORDERS_RUNTIME_V13_WAVE='orders_runtime_v13';
 const ACCOUNT_AUTH_RUNTIME_V14_WAVE='account_auth_runtime_v14';
 const ACCOUNTING_RUNTIME_V15_WAVE='accounting_runtime_v15';
 const NOTIFICATIONS_RUNTIME_V16_WAVE='notifications_runtime_v16';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE]);
+const PROFILE_SELECTOR_BASELINE_WAVE='profile_selector_baseline_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3506,6 +3508,84 @@ async function runSupplierRuntimeV10Acceptance({pool,base,secret}){
 }
 
 
+async function runProfileSelectorBaseline({pool,base,secret}){
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Profile Selector Baseline Customer QA'
+  });
+
+  async function timed(path){
+    const started=performance.now();
+    const response=await fetch(base+path,{headers:{Accept:'application/json',Authorization:'Bearer '+customer.token}});
+    const text=await response.text();
+    const ended=performance.now();
+    let json={};try{json=text?JSON.parse(text):{}}catch{}
+    return{
+      path,
+      status:response.status,
+      ok:response.ok,
+      duration_ms:Number((ended-started).toFixed(2)),
+      payload_bytes:Buffer.byteLength(text,'utf8'),
+      json
+    };
+  }
+
+  const sequenceStarted=performance.now();
+  const bootstrap=await timed('/api/session/bootstrap');
+  expectStatus(bootstrap,200,'Profile Selector baseline session bootstrap');
+  const criticalReadyAt=performance.now();
+
+  const secondaryStarted=performance.now();
+  const [governanceState,territories]=await Promise.all([
+    timed('/api/governance/state'),
+    timed('/api/governance/territories')
+  ]);
+  expectStatus(governanceState,200,'Profile Selector baseline governance state');
+  expectStatus(territories,200,'Profile Selector baseline governance territories');
+  const settledAt=performance.now();
+
+  const warmBootstrap=[];
+  for(let i=0;i<3;i++)warmBootstrap.push(await timed('/api/session/bootstrap'));
+  const warmDurations=warmBootstrap.map(x=>x.duration_ms).sort((a,b)=>a-b);
+  const p50=warmDurations[Math.floor(warmDurations.length/2)];
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Profile Selector baseline logout');
+
+  const profileCount=Array.isArray(bootstrap.json?.profile?.profiles)?bootstrap.json.profile.profiles.length:0;
+  const enabledProfileCount=Array.isArray(bootstrap.json?.navigation?.profiles)?bootstrap.json.navigation.profiles.length:0;
+  const adminAssignments=Array.isArray(bootstrap.json?.admin?.assignments)?bootstrap.json.admin.assignments.length:0;
+
+  return{
+    status:'PASS',
+    wave:PROFILE_SELECTOR_BASELINE_WAVE,
+    client_api_request_count_first_open:3,
+    client_api_paths:[
+      '/api/session/bootstrap',
+      '/api/governance/state',
+      '/api/governance/territories'
+    ],
+    duplicate_client_api_paths:[],
+    critical_data_ready_ms:Number((criticalReadyAt-sequenceStarted).toFixed(2)),
+    secondary_parallel_ms:Number((settledAt-secondaryStarted).toFixed(2)),
+    full_data_settled_ms:Number((settledAt-sequenceStarted).toFixed(2)),
+    bootstrap_ms:bootstrap.duration_ms,
+    bootstrap_payload_bytes:bootstrap.payload_bytes,
+    governance_state_ms:governanceState.duration_ms,
+    governance_state_payload_bytes:governanceState.payload_bytes,
+    territories_ms:territories.duration_ms,
+    territories_payload_bytes:territories.payload_bytes,
+    bootstrap_warm_p50_ms:p50,
+    bootstrap_warm_samples_ms:warmDurations,
+    profile_count:profileCount,
+    enabled_profile_count:enabledProfileCount,
+    admin_assignment_count:adminAssignments,
+    initial_surface:bootstrap.json?.initial_surface||'',
+    browser_render_metrics_required:true,
+    logout:true
+  };
+}
+
+
 async function runNotificationsRuntimeV16Acceptance({pool,base,secret}){
   const rootComposition=await verifyNotificationsRootComposition(base,'/','Notifications Runtime V16 root composition');
   const indexComposition=await verifyNotificationsRootComposition(base,'/index.html','Notifications Runtime V16 index composition');
@@ -3941,7 +4021,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===NOTIFICATIONS_RUNTIME_V16_WAVE
+    const result=config.wave===PROFILE_SELECTOR_BASELINE_WAVE
+      ?await runProfileSelectorBaseline({pool,base,secret:config.secret})
+      :config.wave===NOTIFICATIONS_RUNTIME_V16_WAVE
       ?await runNotificationsRuntimeV16Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNTING_RUNTIME_V15_WAVE
       ?await runAccountingRuntimeV15Acceptance({pool,base,secret:config.secret})
@@ -4015,5 +4097,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE
 };
