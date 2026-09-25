@@ -315,12 +315,27 @@ app.post('/api/orders',body,async(req,res,next)=>{try{const me=await requireCust
 app.get('/api/orders/mine',async(req,res,next)=>{try{
   const me=await requireCustomer(req);
   if(String(req.query.view||'')==='home'){
-    const fields=`o.id,o.order_number,o.order_status,o.outstanding_amount,o.fulfilment_method,o.total,o.completed_at,o.updated_at,o.created_at,b.name business_name`;
-    const [active,recent]=await Promise.all([
-      pool.query(`SELECT ${fields} FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.customer_account_id=$1 AND o.order_status NOT IN ('completed','cancelled') ORDER BY o.updated_at DESC LIMIT 12`,[me.account.id]),
-      pool.query(`SELECT ${fields} FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.customer_account_id=$1 AND o.order_status='completed' ORDER BY COALESCE(o.completed_at,o.updated_at,o.created_at) DESC LIMIT 3`,[me.account.id])
-    ]);
-    return res.json([...active.rows,...recent.rows]);
+    const{rows}=await pool.query(`
+      WITH home_orders AS (
+        (SELECT o.id,o.order_number,o.order_status,o.outstanding_amount,o.fulfilment_method,o.total,o.completed_at,o.updated_at,o.created_at,b.name business_name,0 AS home_rank
+           FROM orders o
+           JOIN businesses b ON b.id=o.business_id
+          WHERE o.customer_account_id=$1 AND o.order_status NOT IN ('completed','cancelled')
+          ORDER BY o.updated_at DESC
+          LIMIT 12)
+        UNION ALL
+        (SELECT o.id,o.order_number,o.order_status,o.outstanding_amount,o.fulfilment_method,o.total,o.completed_at,o.updated_at,o.created_at,b.name business_name,1 AS home_rank
+           FROM orders o
+           JOIN businesses b ON b.id=o.business_id
+          WHERE o.customer_account_id=$1 AND o.order_status='completed'
+          ORDER BY COALESCE(o.completed_at,o.updated_at,o.created_at) DESC
+          LIMIT 3)
+      )
+      SELECT id,order_number,order_status,outstanding_amount,fulfilment_method,total,completed_at,updated_at,created_at,business_name
+        FROM home_orders
+       ORDER BY home_rank,COALESCE(completed_at,updated_at,created_at) DESC
+    `,[me.account.id]);
+    return res.json(rows);
   }
   const{rows}=await pool.query(`SELECT o.*,b.name business_name FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.customer_account_id=$1 ORDER BY o.created_at DESC LIMIT 100`,[me.account.id]);
   res.json(rows)
