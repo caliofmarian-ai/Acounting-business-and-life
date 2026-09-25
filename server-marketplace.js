@@ -21,7 +21,38 @@ let shuttingDown = false;
 
 function clean(v,max=300){return String(v??'').trim().slice(0,max)}
 function n(v){return Number(v)}
+function finite(v){return Number.isFinite(n(v))}
 function positive(v){return Number.isFinite(n(v))&&n(v)>0}
+const STOREFRONT_IMAGE_RE=/^data:image\/(png|jpeg|webp);base64,/;
+const STOREFRONT_MEDIA_MAX=8;
+const GEOCODER_BASE=clean(process.env.MARKETPLACE_GEOCODER_URL||'https://nominatim.openstreetmap.org',500).replace(/\/$/,'');
+const GEOCODER_AGENT=clean(process.env.MARKETPLACE_GEOCODER_USER_AGENT||'BusinessLife/1.0 (+https://caliof.com)',240);
+const geocodeCache=new Map();
+let geocodeQueue=Promise.resolve();
+let geocodeLastAt=0;
+const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function geocodeAddress(query,countryCode=''){
+  const q=clean(query,180),country=clean(countryCode,2).toLowerCase();
+  if(q.length<3)throw Object.assign(new Error('Enter at least 3 characters to search for an address.'),{status:400});
+  const key=country+'|'+q.toLowerCase(),cached=geocodeCache.get(key);
+  if(cached&&Date.now()-cached.at<24*60*60*1000)return cached.results;
+  const run=async()=>{
+    const pause=Math.max(0,1100-(Date.now()-geocodeLastAt));if(pause)await sleep(pause);
+    geocodeLastAt=Date.now();
+    const url=new URL(GEOCODER_BASE+'/search');
+    url.searchParams.set('format','jsonv2');url.searchParams.set('limit','5');url.searchParams.set('q',q);
+    if(country)url.searchParams.set('countrycodes',country);
+    const response=await fetch(url,{headers:{Accept:'application/json','User-Agent':GEOCODER_AGENT}});
+    if(!response.ok)throw Object.assign(new Error('Address search is temporarily unavailable.'),{status:503});
+    const rows=await response.json();
+    const results=(Array.isArray(rows)?rows:[]).map(row=>({label:clean(row.display_name,400),lat:Number(row.lat),lng:Number(row.lon)}))
+      .filter(row=>row.label&&finite(row.lat)&&finite(row.lng)&&row.lat>=-90&&row.lat<=90&&row.lng>=-180&&row.lng<=180);
+    geocodeCache.set(key,{at:Date.now(),results});
+    if(geocodeCache.size>250){const oldest=[...geocodeCache.entries()].sort((a,b)=>a[1].at-b[1].at).slice(0,50);for(const [k] of oldest)geocodeCache.delete(k)}
+    return results;
+  };
+  const task=geocodeQueue.then(run,run);geocodeQueue=task.catch(()=>{});return task;
+}
 function money(v){return Math.round((n(v)+Number.EPSILON)*100)/100}
 function token(){return crypto.randomBytes(24).toString('base64url')}
 function authHeader(req){return req.headers.authorization || ''}
@@ -79,6 +110,13 @@ async function initDb(){await pool.query(`
     merchant_domain TEXT NOT NULL DEFAULT 'food',
     publication_status TEXT NOT NULL DEFAULT 'draft',
     pickup_address TEXT NOT NULL DEFAULT '',
+    presence_type TEXT NOT NULL DEFAULT 'online',
+    public_location_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    location_label TEXT NOT NULL DEFAULT '',
+    finding_instructions TEXT NOT NULL DEFAULT '',
+    opening_hours_text TEXT NOT NULL DEFAULT '',
+    pickup_lat DOUBLE PRECISION,
+    pickup_lng DOUBLE PRECISION,
     opening_status TEXT NOT NULL DEFAULT 'open',
     preparation_eta_minutes INTEGER NOT NULL DEFAULT 15,
     pickup_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -91,9 +129,31 @@ async function initDb(){await pool.query(`
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (merchant_domain IN ('food','non_food','mixed')),
+    CHECK (presence_type IN ('online','physical','both')),
     CHECK (publication_status IN ('draft','published','paused')),
     CHECK (opening_status IN ('open','busy','closed'))
   );
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS presence_type TEXT NOT NULL DEFAULT 'online' CHECK (presence_type IN ('online','physical','both'));
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS public_location_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS location_label TEXT NOT NULL DEFAULT '';
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS finding_instructions TEXT NOT NULL DEFAULT '';
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS opening_hours_text TEXT NOT NULL DEFAULT '';
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS pickup_lat DOUBLE PRECISION;
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS pickup_lng DOUBLE PRECISION;
+
+  CREATE TABLE IF NOT EXISTS merchant_storefront_media (
+    id BIGSERIAL PRIMARY KEY,
+    business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+    media_kind TEXT NOT NULL,
+    data_url TEXT NOT NULL,
+    alt_text TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (media_kind IN ('cover','gallery'))
+  );
+  CREATE INDEX IF NOT EXISTS merchant_storefront_media_business_idx ON merchant_storefront_media(business_id,media_kind,sort_order,id);
+  CREATE UNIQUE INDEX IF NOT EXISTS merchant_storefront_one_cover_idx ON merchant_storefront_media(business_id) WHERE media_kind='cover';
 
   CREATE TABLE IF NOT EXISTS marketplace_products (
     id BIGSERIAL PRIMARY KEY,
@@ -140,8 +200,30 @@ async function initDb(){await pool.query(`
     ON CONFLICT(business_id) DO NOTHING;
 `);await ensureCatalogMediaSchema(pool)}
 
-async function publicStorefronts(domain=''){const args=[];let extra='';if(['food','non_food'].includes(domain)){args.push(domain);extra=` AND (s.merchant_domain=$1 OR s.merchant_domain='mixed')`}const{rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.pickup_address,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);return rows}
-async function storefront(businessId,includePrivate=false){const q=await pool.query(`SELECT s.*,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 ${includePrivate?'':"AND s.publication_status='published'"}`,[businessId]);return q.rows[0]||null}
+async function storefrontMedia(businessId){
+  const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
+  return rows;
+}
+function attachStorefrontMedia(row,media=[]){
+  if(!row)return null;
+  const cover=media.find(x=>x.media_kind==='cover')||null;
+  const gallery=media.filter(x=>x.media_kind==='gallery').slice(0,STOREFRONT_MEDIA_MAX);
+  return{...row,cover_image_url:cover?.data_url||'',cover_image:cover,gallery_images:gallery,storefront_media:media};
+}
+function hidePrivateLocation(row){
+  if(!row||row.public_location_enabled)return row;
+  return{...row,pickup_address:'',pickup_lat:null,pickup_lng:null,location_label:'',finding_instructions:''};
+}
+async function publicStorefronts(domain=''){
+  const args=[];let extra='';if(['food','non_food'].includes(domain)){args.push(domain);extra=` AND (s.merchant_domain=$1 OR s.merchant_domain='mixed')`}
+  const{rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.presence_type,s.public_location_enabled,CASE WHEN s.public_location_enabled THEN s.pickup_address ELSE '' END pickup_address,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);return rows
+}
+async function storefront(businessId,includePrivate=false){
+  const q=await pool.query(`SELECT s.*,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 ${includePrivate?'':"AND s.publication_status='published'"}`,[businessId]);
+  const row=q.rows[0]||null;if(!row)return null;
+  const media=await storefrontMedia(businessId);
+  return attachStorefrontMedia(includePrivate?row:hidePrivateLocation(row),media);
+}
 async function attachProductMedia(rows,publicOnly=false){
   const media=await mediaForEntities(pool,{entityType:'marketplace_product',entityIds:rows.map(x=>x.id),publicOnly});
   return rows.map(row=>{
@@ -161,12 +243,20 @@ async function products(businessId,includePrivate=false){
 async function guestPublicStorefronts(domain=''){
   const args=[];let extra='';
   if(['food','non_food'].includes(domain)){args.push(domain);extra=` AND (s.merchant_domain=$1 OR s.merchant_domain='mixed')`}
-  const {rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);
+  const {rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.presence_type,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);
   return rows;
 }
 async function guestPublicStorefront(businessId){
-  const q=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 AND s.publication_status='published'`,[businessId]);
-  return q.rows[0]||null;
+  const row=await storefront(businessId,false);if(!row)return null;
+  return{
+    business_id:row.business_id,store_name:row.store_name,description:row.description,merchant_domain:row.merchant_domain,
+    presence_type:row.presence_type,public_location_enabled:row.public_location_enabled,pickup_address:row.pickup_address,
+    pickup_lat:row.pickup_lat,pickup_lng:row.pickup_lng,location_label:row.location_label,finding_instructions:row.finding_instructions,
+    opening_hours_text:row.opening_hours_text,opening_status:row.opening_status,preparation_eta_minutes:row.preparation_eta_minutes,
+    pickup_enabled:row.pickup_enabled,delivery_enabled:row.delivery_enabled,cash_enabled:row.cash_enabled,online_enabled:row.online_enabled,
+    public_reputation_enabled:row.public_reputation_enabled,logo_data_url:row.logo_data_url,cover_image_url:row.cover_image_url,
+    gallery_images:row.gallery_images,country_code:row.country_code,currency_code:row.currency_code
+  };
 }
 async function guestPublicProducts(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
@@ -340,7 +430,83 @@ app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{awa
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{res.status(201).json(await createMarketplaceOrder(req))}catch(e){next(e)}})
 
 app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}res.json({...s,products:await products(business.id,true)})}catch(e){next(e)}})
-app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));const domain=['food','non_food','mixed'].includes(req.body?.merchant_domain)?req.body.merchant_domain:'food';const status=['draft','published','paused'].includes(req.body?.publication_status)?req.body.publication_status:'draft';const open=['open','busy','closed'].includes(req.body?.opening_status)?req.body.opening_status:'open';const logo=clean(req.body?.logo_data_url,320000);if(logo&&!/^data:image\/(png|jpeg|webp);base64,/.test(logo))return res.status(400).json({error:'Logo must be PNG, JPEG or WebP'});const{rows}=await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name,description,merchant_domain,publication_status,pickup_address,opening_status,preparation_eta_minutes,pickup_enabled,delivery_enabled,cash_enabled,online_enabled,public_reputation_enabled,price_comparison_enabled,logo_data_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) ON CONFLICT(business_id) DO UPDATE SET store_name=EXCLUDED.store_name,description=EXCLUDED.description,merchant_domain=EXCLUDED.merchant_domain,publication_status=EXCLUDED.publication_status,pickup_address=EXCLUDED.pickup_address,opening_status=EXCLUDED.opening_status,preparation_eta_minutes=EXCLUDED.preparation_eta_minutes,pickup_enabled=EXCLUDED.pickup_enabled,delivery_enabled=EXCLUDED.delivery_enabled,cash_enabled=EXCLUDED.cash_enabled,online_enabled=EXCLUDED.online_enabled,public_reputation_enabled=EXCLUDED.public_reputation_enabled,price_comparison_enabled=EXCLUDED.price_comparison_enabled,logo_data_url=EXCLUDED.logo_data_url,updated_at=NOW() RETURNING *`,[business.id,clean(req.body?.store_name,120)||business.name,clean(req.body?.description,1000),domain,status,clean(req.body?.pickup_address,400),open,Math.max(1,Math.min(240,Number(req.body?.preparation_eta_minutes)||15)),req.body?.pickup_enabled!==false,Boolean(req.body?.delivery_enabled),req.body?.cash_enabled!==false,Boolean(req.body?.online_enabled),Boolean(req.body?.public_reputation_enabled),Boolean(req.body?.price_comparison_enabled),logo]);res.json(rows[0])}catch(e){next(e)}})
+app.get('/api/merchant/storefront/geocode',async(req,res,next)=>{try{
+  const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  const results=await geocodeAddress(req.query.q,business.country_code||'PH');
+  res.set('Cache-Control','private, max-age=300');
+  res.json({provider:'OpenStreetMap Nominatim',results});
+}catch(e){next(e)}})
+app.post('/api/merchant/storefront/media',body,async(req,res,next)=>{try{
+  const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+  const kind=['cover','gallery'].includes(req.body?.media_kind)?req.body.media_kind:'';
+  if(!kind)return res.status(400).json({error:'Media kind must be cover or gallery.'});
+  const dataUrl=clean(req.body?.data_url,420000);
+  if(!dataUrl||!STOREFRONT_IMAGE_RE.test(dataUrl))return res.status(400).json({error:'Storefront image must be PNG, JPEG or WebP.'});
+  const alt=clean(req.body?.alt_text,180);
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    if(kind==='cover')await client.query(`DELETE FROM merchant_storefront_media WHERE business_id=$1 AND media_kind='cover'`,[business.id]);
+    else{
+      const count=await client.query(`SELECT COUNT(*)::int count FROM merchant_storefront_media WHERE business_id=$1 AND media_kind='gallery'`,[business.id]);
+      if(Number(count.rows[0]?.count||0)>=STOREFRONT_MEDIA_MAX){await client.query('ROLLBACK');return res.status(409).json({error:`Gallery supports up to ${STOREFRONT_MEDIA_MAX} photos.`})}
+    }
+    const order=kind==='gallery'?Number((await client.query(`SELECT COALESCE(MAX(sort_order),-1)+1 next_order FROM merchant_storefront_media WHERE business_id=$1 AND media_kind='gallery'`,[business.id])).rows[0]?.next_order||0):0;
+    const inserted=await client.query(`INSERT INTO merchant_storefront_media(business_id,media_kind,data_url,alt_text,sort_order) VALUES($1,$2,$3,$4,$5) RETURNING id,business_id,media_kind,data_url,alt_text,sort_order,created_at`,[business.id,kind,dataUrl,alt,order]);
+    await client.query('COMMIT');res.status(201).json(inserted.rows[0]);
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}finally{client.release()}
+}catch(e){next(e)}})
+app.delete('/api/merchant/storefront/media/:id',async(req,res,next)=>{try{
+  const id=Number(req.params.id),{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  if(!Number.isInteger(id)||id<1)return res.status(400).json({error:'Invalid media id.'});
+  const result=await pool.query(`DELETE FROM merchant_storefront_media WHERE id=$1 AND business_id=$2 RETURNING id`,[id,business.id]);
+  if(!result.rowCount)return res.status(404).json({error:'Storefront image not found.'});
+  res.json({ok:true,id});
+}catch(e){next(e)}})
+app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
+  const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+  const current=await storefront(business.id,true);
+  const domain=['food','non_food','mixed'].includes(req.body?.merchant_domain)?req.body.merchant_domain:'food';
+  const status=['draft','published','paused'].includes(req.body?.publication_status)?req.body.publication_status:'draft';
+  const open=['open','busy','closed'].includes(req.body?.opening_status)?req.body.opening_status:'open';
+  const presence=['online','physical','both'].includes(req.body?.presence_type)?req.body.presence_type:'online';
+  const physical=presence!=='online';
+  const latRaw=req.body?.pickup_lat,lngRaw=req.body?.pickup_lng;
+  const lat=latRaw==null||latRaw===''?null:Number(latRaw),lng=lngRaw==null||lngRaw===''?null:Number(lngRaw);
+  if(lat!=null&&(!finite(lat)||lat<-90||lat>90))return res.status(400).json({error:'Latitude must be between -90 and 90.'});
+  if(lng!=null&&(!finite(lng)||lng<-180||lng>180))return res.status(400).json({error:'Longitude must be between -180 and 180.'});
+  const publicLocation=physical&&Boolean(req.body?.public_location_enabled);
+  if(publicLocation&&(lat==null||lng==null))return res.status(400).json({error:'Set a valid map pin before making the store location public.'});
+  const logoProvided=Object.prototype.hasOwnProperty.call(req.body||{},'logo_data_url');
+  const logo=logoProvided?clean(req.body?.logo_data_url,320000):clean(current?.logo_data_url,320000);
+  if(logo&&!STOREFRONT_IMAGE_RE.test(logo))return res.status(400).json({error:'Logo must be PNG, JPEG or WebP'});
+  const{rows}=await pool.query(`
+    INSERT INTO merchant_storefronts(
+      business_id,store_name,description,merchant_domain,publication_status,pickup_address,presence_type,public_location_enabled,
+      location_label,finding_instructions,opening_hours_text,pickup_lat,pickup_lng,opening_status,preparation_eta_minutes,
+      pickup_enabled,delivery_enabled,cash_enabled,online_enabled,public_reputation_enabled,price_comparison_enabled,logo_data_url
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+    ON CONFLICT(business_id) DO UPDATE SET
+      store_name=EXCLUDED.store_name,description=EXCLUDED.description,merchant_domain=EXCLUDED.merchant_domain,
+      publication_status=EXCLUDED.publication_status,pickup_address=EXCLUDED.pickup_address,presence_type=EXCLUDED.presence_type,
+      public_location_enabled=EXCLUDED.public_location_enabled,location_label=EXCLUDED.location_label,
+      finding_instructions=EXCLUDED.finding_instructions,opening_hours_text=EXCLUDED.opening_hours_text,
+      pickup_lat=EXCLUDED.pickup_lat,pickup_lng=EXCLUDED.pickup_lng,opening_status=EXCLUDED.opening_status,
+      preparation_eta_minutes=EXCLUDED.preparation_eta_minutes,pickup_enabled=EXCLUDED.pickup_enabled,
+      delivery_enabled=EXCLUDED.delivery_enabled,cash_enabled=EXCLUDED.cash_enabled,online_enabled=EXCLUDED.online_enabled,
+      public_reputation_enabled=EXCLUDED.public_reputation_enabled,price_comparison_enabled=EXCLUDED.price_comparison_enabled,
+      logo_data_url=EXCLUDED.logo_data_url,updated_at=NOW()
+    RETURNING *
+  `,[
+    business.id,clean(req.body?.store_name,120)||business.name,clean(req.body?.description,1000),domain,status,
+    clean(req.body?.pickup_address,400),presence,publicLocation,clean(req.body?.location_label,160),
+    clean(req.body?.finding_instructions,500),clean(req.body?.opening_hours_text,500),lat,lng,open,
+    Math.max(1,Math.min(240,Number(req.body?.preparation_eta_minutes)||15)),req.body?.pickup_enabled!==false,
+    Boolean(req.body?.delivery_enabled),req.body?.cash_enabled!==false,Boolean(req.body?.online_enabled),
+    Boolean(req.body?.public_reputation_enabled),Boolean(req.body?.price_comparison_enabled),logo
+  ]);
+  res.json(attachStorefrontMedia(rows[0],await storefrontMedia(business.id)));
+}catch(e){next(e)}})
 app.post('/api/merchant/storefront/import-legacy',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||1));res.json({imported_or_updated:await importLegacyProducts(business.id),products:await products(business.id,true)})}catch(e){next(e)}})
 app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
   try{
