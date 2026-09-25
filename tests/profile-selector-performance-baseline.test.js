@@ -38,6 +38,7 @@ test('QA-only selector timing trace is explicit and does not alter default UX',(
   assert.match(shell,/profile_bootstrap_end/);
   assert.match(shell,/account_home_rendered/);
   assert.match(shell,/profile_state_published/);
+  assert.match(shell,/account_home_settled/);
   assert.match(shell,/renders: \{ account_home:0, drawer:0 \}/);
 });
 
