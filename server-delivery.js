@@ -271,14 +271,8 @@ async function allowedDelivery(req,d){const me=await identity(req);const id=Numb
 function activeTracking(status){return !['delivered','failed','cancelled'].includes(status)}
 function etaMinutes(d,rule){if(!d.last_lat||!d.last_lng||!rule||!d.vehicle_class)return null;const dist=haversine(Number(d.last_lat),Number(d.last_lng),Number(d.dropoff_lat),Number(d.dropoff_lng))*Number(rule.route_factor||1);let speed=null;if(d.vehicle_class==='bicycle')speed=rule.average_speed_bicycle_kmh;else if(['motorbike','scooter'].includes(d.vehicle_class))speed=rule.average_speed_motorbike_kmh;else if(['car','van'].includes(d.vehicle_class))speed=rule.average_speed_car_kmh;if(!speed||Number(speed)<=0)return null;return Math.ceil(dist/Number(speed)*60)}
 
-async function courierHomeSnapshot(accountId){
-  const [profileResult,workResult,complianceResult]=await Promise.all([
-    pool.query(`
-      SELECT eligibility_status,eligibility_expires_at,approved_vehicle_class,vehicle_type,available
-      FROM courier_profiles
-      WHERE account_id=$1
-      LIMIT 1
-    `,[Number(accountId)]),
+async function courierHomeSnapshot(accountId,profile=null){
+  const [workResult,complianceResult]=await Promise.all([
     pool.query(`
       SELECT d.id,d.order_id,d.status,o.order_number,b.name business_name,d.created_at
       FROM deliveries d
@@ -310,7 +304,7 @@ async function courierHomeSnapshot(accountId){
   const compliance=complianceResult.rows[0]||{};
   return{
     detail_mode:'home',
-    profile:profileResult.rows[0]||null,
+    profile:profile||null,
     deliveries:workResult.rows,
     compliance:{
       blocking_count:Number(compliance.blocking_count||0),
@@ -444,7 +438,7 @@ app.put('/api/delivery/store-location',body,async(req,res,next)=>{try{const{busi
 app.get('/api/delivery/merchant',async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.query.business_id||undefined));const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,cp.display_name courier_name,cp.vehicle_type FROM deliveries d JOIN orders o ON o.id=d.order_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.business_id=$1 ORDER BY d.created_at DESC LIMIT 200`,[b.id]);res.json(rows)}catch(e){next(e)}})
 app.post('/api/delivery/:id/request-courier',body,async(req,res,next)=>{try{const id=Number(req.params.id),d=await deliveryDetail(id);if(!d)return res.status(404).json({error:'Delivery not found'});const{me}=await requireMerchant(req,d.business_id);if(d.order_status!=='ready')return res.status(409).json({error:'Order must be ready before courier dispatch'});if(d.payment_status!=='paid')return res.status(409).json({error:'Delivery order must be paid before dispatch'});if(!['quoted','requested'].includes(d.status))return res.status(409).json({error:'Delivery is already in dispatch'});await pool.query(`UPDATE deliveries SET status='awaiting_courier',requested_at=COALESCE(requested_at,NOW()),updated_at=NOW() WHERE id=$1`,[id]);res.json(await deliveryDetail(id))}catch(e){next(e)}})
 
-app.get('/api/courier/home',async(req,res,next)=>{try{const me=await requireCourier(req);res.json(await courierHomeSnapshot(me.account.id))}catch(e){next(e)}})
+app.get('/api/courier/home',async(req,res,next)=>{try{const me=await requireCourier(req);res.json(await courierHomeSnapshot(me.account.id,me.courier))}catch(e){next(e)}})
 app.get('/api/courier/delivery-profile',async(req,res,next)=>{try{const me=await requireCourier(req);const [p,docs,deliveries]=await Promise.all([pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[me.account.id]),pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM courier_documents WHERE account_id=$1 ORDER BY created_at DESC`,[me.account.id]),pool.query(`SELECT d.*,o.order_number,b.name business_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id WHERE d.courier_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id])]);res.json({profile:p.rows[0]||null,documents:docs.rows,deliveries:deliveries.rows})}catch(e){next(e)}})
 app.post('/api/courier/documents',body,async(req,res,next)=>{try{const me=await requireCourier(req),doc=evidence(req.body?.evidence_data_url);if(!doc||!clean(req.body?.document_type,80))return res.status(400).json({error:'Document type and evidence are required'});const{rows}=await pool.query(`INSERT INTO courier_documents(account_id,document_type,vehicle_class,reference_number,issue_date,expiry_date,evidence_data_url,verification_status) VALUES($1,$2,$3,$4,$5,$6,$7,'submitted') RETURNING id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,created_at`,[me.account.id,clean(req.body.document_type,80),clean(req.body?.vehicle_class,40),clean(req.body?.reference_number,120),req.body?.issue_date||null,req.body?.expiry_date||null,doc]);res.status(201).json(rows[0])}catch(e){next(e)}})
 app.put('/api/courier/availability',body,async(req,res,next)=>{try{const me=await requireCourier(req);const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();if(req.body?.available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[Boolean(req.body?.available),me.account.id]);res.json({ok:true,available:Boolean(req.body?.available)})}catch(e){next(e)}})
