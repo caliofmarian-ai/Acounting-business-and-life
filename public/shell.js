@@ -333,9 +333,10 @@ function profileManagementMarkup(){
   const account=snapshot.account;
   let emailReady=Boolean(account.email_verified_at);
   let detailsReady=accountDetailsReady(account);
-  const superAdmin=isSuperAdminAccount();
-  if(superAdmin){emailReady=true;detailsReady=true}
-  const roles=isCompanyTestAccount(account)?ROLE_ORDER.filter(role=>role===account.test_role):ROLE_ORDER;
+  const superAdmin=isSuperAdminAccount(),test=isCompanyTestAccount(account);
+  let areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
+  if(superAdmin){emailReady=true;detailsReady=true;areaReady=true}
+  const roles=test?ROLE_ORDER.filter(role=>role===account.test_role):ROLE_ORDER;
   if(!roles.length)return `<div class="companyTestRoleBoundary"><strong>${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>This company-managed account is reserved for Admin testing and does not require a personal operational profile.</p></div>`;
   return roles.map(role=>{
     const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled&&profile?.status==='active');
@@ -345,9 +346,10 @@ function profileManagementMarkup(){
     if(enabled){action=`data-profile-toggle="${role}" data-enabled="1"`;label='Disable'}
     else if(!emailReady){action=`data-verify-email="${role}"`;label='Verify email first'}
     else if(!detailsReady){action=`data-complete-personal="${role}"`;label='Complete details'}
+    else if(!areaReady){action=`data-complete-personal="${role}"`;label='Area not open'}
     else if(reactivable){action=`data-profile-reactivate="${role}"`;label='Reactivate'}
     else{action=`data-role-action="${role}"`;label=superAdmin?'Activate':inProgress?'Continue onboarding':'Start onboarding'}
-    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':'Not active';
+    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':!areaReady?(snapshot?.geography?.message||'Area not open for onboarding'):'Not active';
     return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`
   }).join('');
 }
@@ -444,8 +446,8 @@ function renderAccountSettings(view=accountSettingsView){
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
     </form></section>${accountGeographyEditor(test)}`;
   }else if(view==='profiles'){
-    const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount();
-    const activationGate=superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details and area first</strong><p>Add your name, email, primary address and official barangay before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:'';
+    const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount(),areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
+    const activationGate=superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details and area first</strong><p>Add your name, email, primary address and official barangay before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Your area is not open for onboarding</strong><p>${escapeHtml(snapshot?.geography?.message||'Business & Life is not available for operational onboarding in your barangay yet.')}</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
     workspace.innerHTML=accountSettingsHeader(test?'Assigned test role':'Manage profiles',test?`This account is reserved for ${testAccountRoleLabel(account)} testing and does not require personal contact details.`:'Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+'<div id="accountSecurityMount"></div>';
