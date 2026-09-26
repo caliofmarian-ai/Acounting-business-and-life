@@ -19,9 +19,10 @@ Example PH pilot hierarchy:
 
 - Region IV-A (CALABARZON) — planned
   - Cavite — planned
-    - City of Bacoor — onboarding
+    - City of Bacoor — planned
+      - launch barangay — onboarding
 
-Barangays or other descendants appear only when they are explicitly opened as Business & Life operating territories. The national PSGC registry remains searchable separately and is loaded on demand.
+Barangays or other descendants appear only when they are explicitly opened as Business & Life operating territories. For the initial PH pilot, structural levels remain `planned`; only the actual launch barangay moves to `onboarding`. The national PSGC registry remains searchable separately and is loaded on demand.
 
 ## UI behavior
 
