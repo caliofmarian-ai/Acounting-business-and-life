@@ -16,6 +16,7 @@ export function validateRuntimeSafety(env={}){
   const paymentMode=clean(env.PAYMONGO_MODE,20).toLowerCase();
   const livePayments=['1','true','yes','on'].includes(clean(env.PAYMONGO_LIVE_ENABLED,10).toLowerCase());
   const ownerMigrationEnabled=clean(env.OWNER_MIGRATION_ENABLED,10).toLowerCase()==='true';
+  const qaPhTestContext=['1','true','yes','on'].includes(clean(env.QA_PH_TEST_CONTEXT,10).toLowerCase());
 
   if(previewService){
     if(appEnvironment!=='qa')throw new Error('accounting-preview requires APP_ENV=qa');
@@ -27,6 +28,7 @@ export function validateRuntimeSafety(env={}){
   if(productionService){
     if(appEnvironment==='qa'||qaDatabase)throw new Error('production cannot use the QA environment or database');
     if(previewLink)throw new Error('production cannot expose preview verification links');
+    if(qaPhTestContext)throw new Error('production cannot enable QA Philippines test context');
   }
 
   if(ownerMigrationEnabled){
@@ -34,7 +36,7 @@ export function validateRuntimeSafety(env={}){
     if(!clean(env.APP_PIN,500))throw new Error('owner migration requires a temporary QA bootstrap credential');
   }
 
-  return{service,appEnvironment,databaseName,previewService,productionService,ownerMigrationEnabled};
+  return{service,appEnvironment,databaseName,previewService,productionService,ownerMigrationEnabled,qaPhTestContext};
 }
 
 export function enforceRuntimeSafety(env=process.env){return validateRuntimeSafety(env)}

@@ -131,3 +131,20 @@ Company test identities do not receive personal-address tutorial requirements an
 ## Registration reconciliation
 
 V1 also reconciles the modern registration surface with Account Geographic Assignment V1: email registration in the modern auth card includes official PSGC barangay search and submits `home_psgc_code`.
+
+
+## Figma mobile review correction
+
+Owner Android review identified three design-file presentation defects:
+
+- the coachmark frame could clip its bottom actions;
+- Mission Center rows were created with a fixed cross-axis height that compressed text;
+- mobile and desktop frames on one Figma page caused the desktop canvas to be scaled down to an unusable size on a phone.
+
+The Figma file is therefore separated into:
+
+- `Mobile QA flow` — mobile coachmark, Mission Center and mobile profile-selection frames;
+- `Desktop reference` — desktop-only reference;
+- `Archive · Initial composition` — preserved initial layout history.
+
+Mobile horizontal auto-layout rows use content-driven height, and the coachmark stays inside the 390×844 safe review frame.
