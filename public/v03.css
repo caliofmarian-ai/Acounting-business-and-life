@@ -33,7 +33,7 @@
 .todayUpdated{text-align:center;font-size:.72rem;margin:0 0 4px}
 .merchantPrimaryNav{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:2px}
 .merchantPrimaryNav button{min-width:0;min-height:52px;padding:7px 3px;font-size:.72rem;white-space:normal;line-height:1.15}
-.moneyAdvancedLinks{display:flex;gap:7px;flex-wrap:wrap}.moneyAdvancedLinks button{min-height:40px}
+.moneyAdvancedLinks{display:flex;gap:7px;flex-wrap:wrap}.moneyAdvancedLinks button{min-height:44px}
 @media(max-width:420px){
   .merchantTodayView{padding-left:10px!important;padding-right:10px!important}
   .todayHeader{align-items:center}.todayHeader h1{font-size:1.55rem}
