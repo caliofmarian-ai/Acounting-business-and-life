@@ -256,3 +256,31 @@
   .adminMain .row{transition:none}
   .adminMain .row:hover{transform:none}
 }
+
+
+/* TERRITORY TREE UX V1 — Figma-approved hierarchy */
+.territoryTreeWorkspace{display:grid;gap:12px;align-items:start}
+.territoryTreeColumn,.territoryTreeRoot{min-width:0}.territoryTreeRoot{display:grid;gap:8px}
+.territoryTreeBranch{display:grid;gap:8px;min-width:0}
+.territoryTreeChildren{display:grid;gap:8px;margin-left:14px;padding-left:10px;border-left:1px solid var(--line)}
+.territoryTreeNode{display:grid;gap:8px;min-width:0;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.territoryTreeNode.selected{background:#122838;border-color:#60d6b4cc}
+.territoryTreeNodeHead{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:8px;align-items:center;min-width:0}
+.territoryTreeToggle{width:30px;height:34px;border:0;background:transparent;color:var(--accent);font-weight:900;font-size:12px;padding:0;border-radius:8px}
+.territoryTreeToggle:disabled{color:var(--muted)}
+.territoryTreeIdentity{display:grid;gap:2px;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left}
+.territoryTreeIdentity strong{font-size:13px;line-height:1.25;overflow-wrap:anywhere}.territoryTreeIdentity span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.territoryTreeIdentity small{font-size:9px;color:var(--muted);font-weight:600}
+.territoryStatus{justify-self:end;display:inline-flex;align-items:center;border-radius:999px;padding:5px 8px;border:1px solid currentColor;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.territoryStatus-planned,.territoryStatus-active{color:var(--accent);background:#60d6b41f}.territoryStatus-onboarding,.territoryStatus-paused{color:var(--warn);background:#ffd38a1f}
+.territoryStatus-suspended,.territoryStatus-closed{color:#ff9b9b;background:#ff9b9b1f}
+.territoryTreeNodeActions,.territoryDetailsActions{display:flex;gap:8px;flex-wrap:wrap}.territoryTreeNodeActions button,.territoryDetailsActions button{min-height:38px}
+.territoryTreeScoped{display:grid;gap:8px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}
+.territoryTreeScoped>small{font-size:9px;font-weight:900;letter-spacing:.1em;color:var(--warn)}.territoryTreeScoped>p{margin:0;color:var(--muted);font-size:10px;line-height:1.45}
+.territoryDetailsPanel{display:grid;gap:10px;min-width:0;padding:16px;background:var(--panel);border:1px solid var(--line);border-radius:18px}
+.territoryDetailsPanel>small{font-size:10px;font-weight:900;letter-spacing:.1em;color:var(--accent)}.territoryDetailsPanel h3{margin:0;font-size:19px}
+.territoryDetailsMeta{margin:0;color:var(--muted);font-size:10px;line-height:1.4}.territoryDetailsStatus{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;font-weight:800}
+.territoryDetailsPanel .territoryStatusForm{padding:0;border:0;background:transparent}.territoryDetailsPanel .territoryStatusForm .primary{min-height:38px}
+.territoryIdentityBoundary{display:grid;gap:4px;padding:11px;border:1px dashed var(--line);border-radius:12px;background:#0b1625}.territoryIdentityBoundary strong{font-size:11px}.territoryIdentityBoundary span{color:var(--muted);font-size:9px;line-height:1.45}
+@media(min-width:920px){.territoryTreeWorkspace{grid-template-columns:minmax(0,1fr) 360px;gap:16px}.territoryDetailsPanel{position:sticky;top:86px}}
+@media(max-width:520px){.territoryTreeChildren{margin-left:8px;padding-left:7px}.territoryTreeNode{padding:10px}.territoryTreeNodeHead{grid-template-columns:26px minmax(0,1fr) auto;gap:6px}.territoryTreeToggle{width:26px}.territoryTreeNodeActions button,.territoryDetailsActions button{flex:1 1 120px}.territoryStatus{font-size:9px;padding:4px 6px}}
