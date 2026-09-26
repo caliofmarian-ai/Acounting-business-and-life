@@ -73,6 +73,15 @@ test('Account Settings can open the canonical notification center directly on Se
   assert.match(ui,/BusinessLifeNotifications=Object\.freeze\(\{open:openNotifications,openSettings:openNotificationSettings,close:closeNotifications\}\)/);
 });
 
+test('Support ticket handoff closes Notifications before opening the Support overlay',()=>{
+  const start=ui.indexOf("if(n?.entity_type==='support_ticket'");
+  const end=ui.indexOf("catch(err)",start);
+  const block=ui.slice(start,end);
+  assert.ok(start>=0&&end>start);
+  assert.ok(block.indexOf('closeNotifications()')>=0);
+  assert.ok(block.indexOf('closeNotifications()')<block.indexOf('openSupportTicket'));
+});
+
 test('notification center supports inbox preferences locale and Web Push opt-in',()=>{
   assert.match(ui,/notificationBell/);
   assert.match(ui,/unread-count/);
