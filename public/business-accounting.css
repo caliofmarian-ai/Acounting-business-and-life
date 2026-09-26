@@ -24,3 +24,8 @@
 
 .businessWorkspaceFeedback{margin:-4px 16px 12px;padding:10px 12px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#9f1239;font-size:.78rem;font-weight:700;line-height:1.35}
 @media(max-width:640px){.businessWorkspaceFeedback{margin:-3px 10px 10px}}
+
+.businessAccountingToast{position:fixed;left:50%;bottom:92px;z-index:121;transform:translateX(-50%) translateY(12px);background:#17233c;color:#fff;padding:11px 14px;border-radius:14px;box-shadow:0 10px 35px rgba(23,35,60,.28);font-size:12px;font-weight:700;max-width:min(92vw,440px);opacity:0;pointer-events:none;transition:.18s}.businessAccountingToast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.businessFinanceLoading{min-height:104px;display:grid;align-content:center;gap:5px;padding:12px;border:1px dashed #cbd5e1;border-radius:13px;background:#fff}.businessFinanceLoading strong{font-size:.88rem;color:#0f172a}.businessFinanceLoading span{font-size:.74rem;color:#64748b}
+.businessFinanceLoadError{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding:10px 11px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#9f1239}.businessFinanceLoadError>div{display:grid;gap:3px;min-width:0}.businessFinanceLoadError strong{font-size:.8rem}.businessFinanceLoadError span{font-size:.72rem;line-height:1.35;overflow-wrap:anywhere}.businessFinanceLoadError button{min-height:44px;border:0;border-radius:10px;padding:8px 12px;background:#9f1239;color:#fff;font:inherit;font-size:.75rem;font-weight:800;white-space:nowrap}
+@media(max-width:640px){.businessFinanceLoadError{align-items:stretch;flex-direction:column}.businessFinanceLoadError button{width:100%}}
