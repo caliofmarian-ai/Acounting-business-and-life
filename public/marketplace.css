@@ -95,3 +95,9 @@
   .storeLocationMap,.publicStoreMap,.storeMapFallback{min-height:240px}
   .storefrontCoverPublic{border-radius:18px;margin-inline:0}
 }
+
+/* Trust & Safety V1 — contextual reporting */
+.marketSafetyReportBtn{border:1px solid #d7dfe7;background:#fff;color:#536071;border-radius:999px;padding:7px 11px;font-size:10px;font-weight:800;cursor:pointer}
+.marketSafetyReportBtn:hover,.marketSafetyReportBtn:focus-visible{border-color:#9aa9b8;color:#17233c}
+.marketSafetyReportBtn.compact{padding:6px 9px;margin-left:auto}
+.storefrontHeroCopy>.marketSafetyReportBtn{margin-top:8px;justify-self:start}
