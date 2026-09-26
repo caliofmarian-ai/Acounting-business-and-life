@@ -53,6 +53,23 @@ test('Territories opens official PH geography through the permission-gated PSGC 
   assert.match(adminServer,/territory\.manage/);
 });
 
+test('Territory lifecycle status is editable without changing PSGC identity',()=>{
+  assert.match(ui,/data-territory-status-form/);
+  assert.match(ui,/TERRITORY_STATUSES=\['planned','onboarding','active','paused','suspended','closed'\]/);
+  assert.match(ui,/\/api\/governance\/admin\/territories\/'\+id\+'\/status/);
+  assert.match(governance,/app\.patch\('\/api\/governance\/admin\/territories\/:id\/status'/);
+  assert.match(governance,/territory_status_changed/);
+  assert.match(governance,/before_status:before\.status,after_status:status/);
+  assert.match(governance,/Close or re-scope child territories before closing this territory/);
+  assert.match(adminServer,/app\.patch\('\/api\/governance\/admin\/territories\/:id\/status'/);
+  assert.match(ui,/Changing status does not edit the official PSGC identity/);
+});
+
+test('territory lifecycle gates invitation acceptance when onboarding closes',()=>{
+  assert.match(governance,/t\.status IN \('onboarding','active'\).*FOR UPDATE OF i/);
+  assert.match(governance,/operating territory is no longer open for onboarding/);
+});
+
 test('Support UI uses backend-valid statuses',()=>{
   assert.match(adminServer,/SUPPORT_STATUSES=new Set\(\['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened'\]\)/);
   assert.match(ui,/\['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened'\]/);
