@@ -17,6 +17,7 @@ import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-
 import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage} from './account-geography.js';
 import {emitNotificationEvent} from './notification-core.js';
 import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboarding} from './guided-onboarding-core.js';
+import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest} from './territory-demand-core.js';
 import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-account.js';
 
 const { Pool } = pg;
@@ -309,6 +310,7 @@ async function initDb() {
   await ensureReferralAccountSchema(pool);
   await ensureAccountGeographySchema(pool);
   await ensureGuidedOnboardingSchema(pool);
+  await ensureTerritoryDemandSchema(pool);
 }
 
 async function profileSnapshot(accountId) {
@@ -732,7 +734,7 @@ app.put('/api/profiles/:role', body, auth, async (req, res, next) => {
     if(enabled){
       const classification=await pool.query(`SELECT account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
       const classified=classification.rows[0];
-      if(classified?.account_mode!=='company_test')await requireAssignedOpenBarangay(pool,req.accountId);
+      if(classified?.account_mode!=='company_test'){const geo=await accountGeographySnapshot(pool,req.accountId);if(geo.assigned&&!geo.operational_onboarding_available)await recordUnavailableProfileInterest(pool,{accountId:req.accountId,psgcCode:geo.psgc_code,role});await requireAssignedOpenBarangay(pool,req.accountId);}
       if(classified?.account_mode==='company_test'&&companyTestProfileRole(classified.test_role)!==role)return res.status(403).json({error:`This company test account is reserved for ${classified.test_role.replaceAll('_',' ')}.`});
       if(role==='customer')return res.status(409).json({error:'Use Customer activation from Account Settings.'});
       const authorization=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role=$2 AND status='active' AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`,[req.accountId,role]);
@@ -757,7 +759,7 @@ app.post('/api/profiles/customer/activate', body, auth, async (req,res,next)=>{
     if(!a||!clean(a.display_name,120)||!validEmail(a.email))return res.status(409).json({error:companyTest?'Complete the test account name and email in Account Settings first.':'Complete your name, email and primary address in Account Settings first.'});
     if(!companyTest&&!clean(a.address,300))return res.status(409).json({error:'Complete your name, email and primary address in Account Settings first.'});
     if(!a.email_verified_at)return res.status(409).json({error:'Verify your email before activating Customer.'});
-    if(!companyTest)await requireAssignedOpenBarangay(pool,req.accountId);
+    if(!companyTest){const geo=await accountGeographySnapshot(pool,req.accountId);if(geo.assigned&&!geo.operational_onboarding_available)await recordUnavailableProfileInterest(pool,{accountId:req.accountId,psgcCode:geo.psgc_code,role:'customer'});await requireAssignedOpenBarangay(pool,req.accountId);}
     const preferredAddress=companyTest?companyTestContact().address:a.address;
     const client=await pool.connect();
     try{await client.query('BEGIN');await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,'customer',TRUE,'private','active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',updated_at=NOW()`,[req.accountId]);await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET preferred_address=CASE WHEN customer_profiles.preferred_address='' THEN EXCLUDED.preferred_address ELSE customer_profiles.preferred_address END,updated_at=NOW()`,[req.accountId,preferredAddress]);await client.query(`UPDATE accounts SET active_role=COALESCE(active_role,'customer'),updated_at=NOW() WHERE id=$1`,[req.accountId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}

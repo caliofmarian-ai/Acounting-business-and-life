@@ -26,22 +26,21 @@ test('account geography is official barangay PSGC membership separate from opera
   assert.equal(normalizeHomePsgcCode('bad'),'');
 });
 
-test('barangay picker supports open-area suggestions and natural hierarchy search',()=>{
+test('barangay picker searches the full registry only after user input',()=>{
   assert.deepEqual(barangaySearchTokens('Queens Row West, Bacoor...'),['queens','row','west','bacoor']);
   assert.deepEqual(barangaySearchTokens('  0402103028  '),['0402103028']);
   const core=read('account-geography.js');
   const modern=read('public/auth-hardening-ui.js');
   const legacy=read('public/auth-ui.js');
-  assert.match(core,/if\(!q\)\{/);
-  assert.match(core,/t\.status IN \('onboarding','active'\)/);
+  assert.match(core,/if\(!q\)return\{source_version:version,items:\[\]\}/);
   assert.match(core,/clauses\.join\(' AND '\)/);
-  assert.match(core,/CASE WHEN t\.status='onboarding' THEN 0/);
-  assert.match(modern,/input\.addEventListener\('focus'/);
-  assert.match(modern,/Loading open barangays/);
-  assert.match(legacy,/input\.addEventListener\('focus'/);
-  assert.match(legacy,/Loading open barangays/);
-  assert.match(shell,/input\.onfocus=/);
-  assert.match(shell,/Loading open barangays/);
+  assert.match(core,/Math\.min\(15/);
+  assert.doesNotMatch(modern,/Loading open barangays/);
+  assert.doesNotMatch(legacy,/Loading open barangays/);
+  assert.doesNotMatch(shell,/Loading open barangays/);
+  assert.doesNotMatch(modern,/addEventListener\('focus'/);
+  assert.doesNotMatch(legacy,/addEventListener\('focus'/);
+  assert.doesNotMatch(shell,/input\.onfocus=/);
 });
 
 test('availability copy explains planned paused restricted closed and unopened areas',()=>{

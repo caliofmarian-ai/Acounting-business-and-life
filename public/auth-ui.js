@@ -55,7 +55,7 @@ async function authFetch(path, options={}){
 }
 let authGeoTimer=null;
 async function searchAuthBarangays(query=''){
-  const data=await authFetch('/api/auth/geography/search?q='+encodeURIComponent(String(query||'').trim())+'&limit=20');
+  const data=await authFetch('/api/auth/geography/search?q='+encodeURIComponent(String(query||'').trim())+'&limit=15');
   return data.items||[];
 }
 async function authGeographyStatus(code){
@@ -76,16 +76,15 @@ function bindAuthBarangayPicker(){
     });
   };
   const load=async(query='')=>{
-    results.innerHTML='<div class="authGeoStatus">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
+    results.innerHTML='<div class="authGeoStatus">'+'Searching official PSGC…'+'</div>';
     try{renderItems(await searchAuthBarangays(query))}
     catch(error){results.innerHTML='<div class="authGeoStatus warn">'+authEsc(error.message)+'</div>'}
   };
-  input.addEventListener('focus',()=>{if(!hidden.value&&!input.value.trim())load('')});
-  input.addEventListener('input',()=>{
+    input.addEventListener('input',()=>{
     hidden.value='';status.textContent='Choose an official barangay from the results.';status.className='authGeoStatus';
     clearTimeout(authGeoTimer);
     const q=input.value.trim();
-    if(q.length===0){authGeoTimer=setTimeout(()=>load(''),80);return}
+    if(q.length===0){results.innerHTML='';return}
     if(q.length<2){results.innerHTML='';return}
     authGeoTimer=setTimeout(()=>load(q),250);
   });
