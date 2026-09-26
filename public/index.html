@@ -26,7 +26,16 @@
     <section id="shell" class="hidden">
       <header class="topbar">
         <div><strong>Business & Life</strong><small>PHP • Asia/Manila</small></div>
-        <div class="topActions"><span id="onlineState" class="statusChip">Online</span><button id="refreshBtn" class="ghost">Refresh</button></div>
+        <div class="topActions">
+          <button id="lazySupportBtn" class="lazyFeatureButton" type="button">Help</button>
+          <button id="notificationBell" class="notificationBell" type="button" aria-label="Notifications"><span aria-hidden="true">🔔</span><b id="notificationBadge" class="hidden">0</b></button>
+          <span id="onlineState" class="statusChip">Online</span>
+          <div class="shellProfileControls">
+            <button id="activeRolePill" class="activeRolePill" type="button" aria-live="polite" aria-label="Open Account Home">Account</button>
+            <button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open Account Home"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>
+          </div>
+          <button id="lazyMoreBtn" class="lazyFeatureButton" type="button">More</button>
+        </div>
       </header>
 
       <section id="viewDashboard" class="view merchantTodayView">
