@@ -39,6 +39,7 @@ function ensureUi(){
   addButton();
 }
 function addButton(){
+  if(window.__ABL_LAZY_FEATURES__)return;
   var top=document.querySelector(".topActions");
   if(!top||!token())return;
   if(document.getElementById("legalCenterBtn"))return;
