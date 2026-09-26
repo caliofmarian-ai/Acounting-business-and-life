@@ -75,14 +75,106 @@ function renderVerificationResult(state){
 }
 async function verifyFromUrl(raw){try{const r=await api('/api/auth/email-verification/verify',{method:'POST',body:JSON.stringify({token:raw})});clearQuery();renderVerificationResult(r.verification_session)}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
 async function oauthHandoff(raw){try{const r=await api('/api/auth/oauth/handoff',{method:'POST',body:JSON.stringify({code:raw})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);clearQuery();location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
+function ensureSecurityDialog(){
+  let backdrop=document.getElementById('authSecurityDialogBackdrop');
+  if(backdrop)return backdrop;
+  backdrop=document.createElement('div');
+  backdrop.id='authSecurityDialogBackdrop';
+  backdrop.className='authSecurityDialogBackdrop hidden';
+  backdrop.innerHTML='<section class="authSecurityDialog" role="dialog" aria-modal="true" aria-labelledby="authSecurityDialogTitle"><div id="authSecurityDialogBody"></div></section>';
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click',event=>{if(event.target===backdrop)closeSecurityDialog()});
+  return backdrop;
+}
+function closeSecurityDialog(){
+  const backdrop=document.getElementById('authSecurityDialogBackdrop');
+  backdrop?.classList.add('hidden');
+  document.body.style.overflow='';
+}
+function openSecurityDialog(markup){
+  const backdrop=ensureSecurityDialog(),body=backdrop.querySelector('#authSecurityDialogBody');
+  body.innerHTML=markup;
+  backdrop.classList.remove('hidden');
+  document.body.style.overflow='hidden';
+  body.querySelector('[data-auth-dialog-close]')?.addEventListener('click',closeSecurityDialog);
+  requestAnimationFrame(()=>body.querySelector('input:not([readonly]),button')?.focus?.());
+  return body;
+}
+async function openPasswordDialog(account){
+  const hasPassword=Boolean(account.has_password);
+  const body=openSecurityDialog(
+    '<div class="authDialogHeader"><div><small>PASSWORD</small><h2 id="authSecurityDialogTitle">'+(hasPassword?'Change password':'Set password')+'</h2><p>'+(hasPassword?'Enter your current password, then choose a new one.':'Create a local password for this account. Recent identity confirmation is required.')+'</p></div><button type="button" data-auth-dialog-close aria-label="Close">×</button></div>'+
+    '<form id="authPasswordForm" class="modernAuthForm">'+
+      (hasPassword?'<label>Current password<input id="authCurrentPassword" type="password" autocomplete="current-password" maxlength="160" required></label>':'')+
+      '<label>New password<input id="authNewPassword" type="password" autocomplete="new-password" minlength="8" maxlength="160" required></label>'+
+      '<label>Confirm new password<input id="authConfirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="160" required></label>'+
+      '<div id="authPasswordDialogMsg" class="modernAuthMessage"></div>'+
+      '<div class="authDialogActions"><button type="button" class="modernLinkBtn" data-auth-dialog-close>Cancel</button><button type="submit" class="modernPrimary">'+(hasPassword?'Save new password':'Set password')+'</button></div>'+
+    '</form>'
+  );
+  body.querySelectorAll('[data-auth-dialog-close]').forEach(button=>button.addEventListener('click',closeSecurityDialog));
+  body.querySelector('#authPasswordForm').onsubmit=async event=>{
+    event.preventDefault();
+    const current=body.querySelector('#authCurrentPassword')?.value||'';
+    const next=body.querySelector('#authNewPassword').value;
+    const confirm=body.querySelector('#authConfirmPassword').value;
+    const out=body.querySelector('#authPasswordDialogMsg'),submit=body.querySelector('button[type="submit"]');
+    if(next.length<8){out.textContent='Password must be at least 8 characters.';out.className='modernAuthMessage error';return}
+    if(next!==confirm){out.textContent='Passwords do not match.';out.className='modernAuthMessage error';return}
+    submit.disabled=true;out.textContent=hasPassword?'Changing password…':'Setting password…';out.className='modernAuthMessage';
+    try{
+      await api('/api/auth/password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next})});
+      closeSecurityDialog();
+      await window.BusinessLifeShell?.refreshProfile?.();
+      const panel=document.getElementById('accountSecurityMount');if(panel){delete panel.dataset.authSecurityReady;panel.innerHTML=''}
+      await decorateSecurity();
+      const toast=document.getElementById('roleToast');if(toast){toast.textContent=hasPassword?'Password changed.':'Password set.';toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600)}
+    }catch(error){out.textContent=error.message;out.className='modernAuthMessage error';submit.disabled=false}
+  };
+}
+function openPasswordRecoveryDialog(account){
+  const body=openSecurityDialog(
+    '<div class="authDialogHeader"><div><small>RECOVERY</small><h2 id="authSecurityDialogTitle">Forgot password?</h2><p>Send a one-time reset link to your verified account email.</p></div><button type="button" data-auth-dialog-close aria-label="Close">×</button></div>'+
+    '<div class="modernAuthForm"><label>Email<input type="email" value="'+esc(account.email||'')+'" readonly></label><div id="authRecoveryMsg" class="modernAuthMessage"></div><div class="authDialogActions"><button type="button" class="modernLinkBtn" data-auth-dialog-close>Cancel</button><button id="authSendReset" type="button" class="modernPrimary">Send reset instructions</button></div></div>'
+  );
+  body.querySelectorAll('[data-auth-dialog-close]').forEach(button=>button.addEventListener('click',closeSecurityDialog));
+  body.querySelector('#authSendReset').onclick=async()=>{
+    const out=body.querySelector('#authRecoveryMsg'),button=body.querySelector('#authSendReset');button.disabled=true;out.textContent='Preparing reset…';
+    try{
+      const result=await api('/api/auth/forgot-password',{method:'POST',body:JSON.stringify({email:account.email})});
+      if(result.preview_reset_url)out.innerHTML=esc(result.message)+' <a href="'+esc(result.preview_reset_url)+'">Open preview reset link</a>';
+      else out.textContent=result.message||'If the account is eligible, reset instructions were sent.';
+    }catch(error){out.textContent=error.message;out.className='modernAuthMessage error'}finally{button.disabled=false}
+  };
+}
+function openStepUpDialog(account){
+  if(!account.has_password){
+    const body=openSecurityDialog('<div class="authDialogHeader"><div><small>IDENTITY CONFIRMATION</small><h2 id="authSecurityDialogTitle">Confirm your identity</h2><p>This account does not have a local password. Sign out and sign in again with your linked identity provider to refresh sensitive-action confirmation.</p></div><button type="button" data-auth-dialog-close aria-label="Close">×</button></div><div class="authDialogActions"><button type="button" class="modernLinkBtn" data-auth-dialog-close>Close</button></div>');
+    body.querySelectorAll('[data-auth-dialog-close]').forEach(button=>button.addEventListener('click',closeSecurityDialog));
+    return;
+  }
+  const body=openSecurityDialog(
+    '<div class="authDialogHeader"><div><small>IDENTITY CONFIRMATION</small><h2 id="authSecurityDialogTitle">Confirm current password</h2><p>This confirmation is session-specific and expires automatically.</p></div><button type="button" data-auth-dialog-close aria-label="Close">×</button></div>'+
+    '<form id="authStepUpDialogForm" class="modernAuthForm"><label>Current password<input id="authStepUpDialogPassword" type="password" autocomplete="current-password" maxlength="160" required></label><div id="authStepUpDialogMsg" class="modernAuthMessage"></div><div class="authDialogActions"><button type="button" class="modernLinkBtn" data-auth-dialog-close>Cancel</button><button type="submit" class="modernPrimary">Confirm identity</button></div></form>'
+  );
+  body.querySelectorAll('[data-auth-dialog-close]').forEach(button=>button.addEventListener('click',closeSecurityDialog));
+  body.querySelector('#authStepUpDialogForm').onsubmit=async event=>{
+    event.preventDefault();const input=body.querySelector('#authStepUpDialogPassword'),out=body.querySelector('#authStepUpDialogMsg'),submit=body.querySelector('button[type="submit"]');
+    submit.disabled=true;out.textContent='Confirming identity…';
+    try{
+      await api('/api/auth/step-up/password',{method:'POST',body:JSON.stringify({password:input.value})});
+      closeSecurityDialog();
+      const panel=document.getElementById('accountSecurityMount');if(panel){delete panel.dataset.authSecurityReady;panel.innerHTML=''}
+      await decorateSecurity();
+    }catch(error){input.value='';out.textContent=error.message;out.className='modernAuthMessage error';submit.disabled=false}
+  };
+}
 async function decorateSecurity(){
   if(!isV2())return;
   const panel=document.getElementById('accountSecurityMount');
-  if(!panel)return;
+  if(!panel||panel.dataset.authSecurityReady==='1')return;
   const account=window.BusinessLifeProfileState?.snapshot?.account;
   if(!account)return;
-  const existing=[...panel.querySelectorAll('.authUpgradeCard')];
-  if(existing.length){existing.slice(1).forEach(x=>x.remove());return}
   if(panel.dataset.authSecurityDecorating==='1')return;
   panel.dataset.authSecurityDecorating='1';
   try{
@@ -91,50 +183,52 @@ async function decorateSecurity(){
       api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10}))
     ]);
     if(!document.body.contains(panel))return;
-    const raced=[...panel.querySelectorAll('.authUpgradeCard')];
-    if(raced.length){raced.slice(1).forEach(x=>x.remove());return}
     const googleLinked=ids.some(x=>x.provider==='google');
-    const section=document.createElement('section');
-    section.className='accountSettingsCard authUpgradeCard';
     const deliveryNote=!account.email_verified_at&&!status.email_delivery_configured
       ?'<div class="avatarHint authDeliveryWarning">Email delivery is not configured in this environment. A preview may offer a direct verification link.</div>'
       :'';
-    const stepUpMinutes=Number(stepUp?.valid_for_minutes||10);
-    const stepUpMarkup=stepUp?.verified
-      ?'<div class="authSecurityLine"><span>Recent identity confirmation</span><strong>Active · up to '+stepUpMinutes+' min</strong></div>'
-      :account.has_password
-        ?'<form id="stepUpSecurityForm" class="authStepUpForm"><label>Confirm current password<input id="stepUpSecurityPassword" type="password" autocomplete="current-password" maxlength="160" required></label><button type="submit">Confirm identity for sensitive actions</button><div id="stepUpSecurityMsg" class="avatarHint">This confirmation is session-specific and expires automatically.</div></form>'
-        :'<div class="avatarHint authStepUpNotice">Sensitive actions require recent identity confirmation. Sign out and sign back in with Google to refresh this session.</div>';
-    section.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<h3 class="authStepUpTitle">Sensitive-action confirmation</h3>${stepUpMarkup}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;
-    panel.appendChild(section);
-    section.querySelector('#sendVerify')?.addEventListener('click',async()=>{
-      const out=section.querySelector('#authDrawerMsg');out.textContent='Preparing verification…';
+    panel.innerHTML=
+      '<div class="authSecurityStack">'+
+        '<section class="accountSettingsCard authUpgradeCard authSecurityCard"><div class="authSecurityCardHead"><div><small>ACCOUNT PROTECTION</small><h2>Email & identity</h2></div><span class="authSecurityState '+(account.email_verified_at?'ok':'warn')+'">'+(account.email_verified_at?'Verified':'Action needed')+'</span></div>'+
+          '<div class="authSecurityLine"><span>Email</span><strong>'+esc(account.email||'')+'</strong></div>'+
+          '<div class="authSecurityLine"><span>Verification</span><strong>'+(account.email_verified_at?'Verified':'Not verified')+'</strong></div>'+
+          (!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':'')+
+          deliveryNote+
+          (status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':'')+
+        '</section>'+
+        '<section class="accountSettingsCard authUpgradeCard authSecurityCard"><div class="authSecurityCardHead"><div><small>PASSWORD</small><h2>Password</h2></div><span class="authSecurityState '+(account.has_password?'ok':'neutral')+'">'+(account.has_password?'Password set':'No password set')+'</span></div>'+
+          '<p class="authSecurityCardCopy">'+(account.has_password?'Change your password only when you want to.':'You can add a local password while keeping linked sign-in methods.')+'</p>'+
+          '<div class="authSecurityActions"><button id="authChangePassword" type="button">'+(account.has_password?'Change password':'Set password')+'</button>'+(account.has_password?'<button id="authForgotPassword" type="button" class="authSecondaryAction">Forgot password?</button>':'')+'</div>'+
+        '</section>'+
+        '<section class="accountSettingsCard authUpgradeCard authSecurityCard"><div class="authSecurityCardHead"><div><small>SENSITIVE ACTIONS</small><h2>Identity confirmation</h2></div><span class="authSecurityState '+(stepUp?.verified?'ok':'neutral')+'">'+(stepUp?.verified?'Recently confirmed':'Not recently confirmed')+'</span></div>'+
+          '<p class="authSecurityCardCopy">'+(stepUp?.verified?'Sensitive actions are available for up to '+Number(stepUp.valid_for_minutes||10)+' minutes.':'Confirm your identity only when a sensitive action requires it.')+'</p>'+
+          (!stepUp?.verified?'<button id="authConfirmIdentity" type="button">Confirm identity</button>':'')+
+        '</section>'+
+        '<section class="accountSettingsCard authUpgradeCard authSecurityCard"><div class="authSecurityCardHead"><div><small>SESSIONS</small><h2>Signed-in sessions</h2></div><span class="authSecurityState neutral">Current device active</span></div>'+
+          '<p class="authSecurityCardCopy">End other sessions or sign out this device. These controls are separate from password changes.</p>'+
+          '<div class="authSecurityActions"><button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><button id="authSignOutCurrent" type="button" class="authSecondaryAction">Sign out</button></div>'+
+          '<div id="authDrawerMsg" class="avatarHint"></div>'+
+        '</section>'+
+      '</div>';
+    panel.dataset.authSecurityReady='1';
+    panel.querySelector('#sendVerify')?.addEventListener('click',async()=>{
+      const out=panel.querySelector('#authDrawerMsg');if(out)out.textContent='Preparing verification…';
       try{
         const r=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'});
+        if(!out)return;
         if(r.delivery_status==='sent')out.textContent='Verification email sent. Check your inbox and spam folder.';
-        else if(r.preview_verify_url)out.innerHTML=`Email sending is unavailable in this preview. <a href="${esc(r.preview_verify_url)}">Verify directly here</a>.`;
+        else if(r.preview_verify_url)out.innerHTML='Email sending is unavailable in this preview. <a href="'+esc(r.preview_verify_url)+'">Verify directly here</a>.';
         else if(r.delivery_status==='not_configured')out.textContent='Email delivery is not configured yet. Your verification request was not emailed.';
         else out.textContent='Verification email could not be delivered. Please try again later.';
-      }catch(e){out.textContent=e.message}
+      }catch(error){if(out)out.textContent=error.message}
     });
-    section.querySelector('#stepUpSecurityForm')?.addEventListener('submit',async e=>{
-      e.preventDefault();
-      const input=section.querySelector('#stepUpSecurityPassword'),out=section.querySelector('#stepUpSecurityMsg');
-      if(!input||!out)return;
-      const password=input.value;
-      input.value='';
-      out.textContent='Confirming identity…';
-      try{
-        await api('/api/auth/step-up/password',{method:'POST',body:JSON.stringify({password})});
-        out.textContent='Identity confirmed. Sensitive actions are available for a short period on this session.';
-        section.remove();
-        await decorateSecurity();
-      }catch(error){
-        input.value='';
-        out.textContent=error.message;
-      }
+    panel.querySelector('#authChangePassword')?.addEventListener('click',()=>openPasswordDialog(account));
+    panel.querySelector('#authForgotPassword')?.addEventListener('click',()=>openPasswordRecoveryDialog(account));
+    panel.querySelector('#authConfirmIdentity')?.addEventListener('click',()=>openStepUpDialog(account));
+    panel.querySelector('#revokeOthers')?.addEventListener('click',async()=>{
+      const out=panel.querySelector('#authDrawerMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});if(out)out.textContent='Other sessions signed out.'}catch(error){if(out)out.textContent=error.message}
     });
-    section.querySelector('#revokeOthers').onclick=async()=>{const out=section.querySelector('#authDrawerMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}};
+    panel.querySelector('#authSignOutCurrent')?.addEventListener('click',event=>window.BusinessLifeShell?.signOutCurrentAccount?.(event.currentTarget));
   }catch{}finally{delete panel.dataset.authSecurityDecorating}
 }
 
