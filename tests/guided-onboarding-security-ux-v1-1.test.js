@@ -11,7 +11,7 @@ const authServer=read('server-auth-hardening.js');
 
 test('coachmark uses contextual top/bottom placement with target separation',()=>{
   assert.match(guide,/function applyCoachGeometry\(target\)/);
-  assert.match(guide,/const targetRect=target\.getBoundingClientRect\(\),gap=14/);
+  assert.match(guide,/targetRect=target\.getBoundingClientRect\(\),gap=14/);
   assert.match(guide,/const preferred=center>=viewportCenter\?'top':'bottom'/);
   assert.match(guide,/guidedCoachTop/);
   assert.match(guide,/guidedCoachBottom/);
@@ -86,7 +86,7 @@ test('Sessions are visually and behaviorally separate from password management',
 
 test('authenticated password endpoint verifies current password or recent identity',()=>{
   const start=authServer.indexOf("app.post('/api/auth/password'");
-  const block=authServer.slice(start,authServer.indexOf("app.post('/api/auth/sessions/revoke-others'",start));
+  const block=authServer.slice(start,authServer.indexOf("app.get('/api/auth/identities'",start));
   assert.match(block,/passwordOkay\(newPassword\)/);
   assert.match(block,/Current password is required/);
   assert.match(block,/verifyPassword\(currentPassword/);
