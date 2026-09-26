@@ -302,7 +302,7 @@ async function buildAdminScopeContext(accountId,seedAssignments=null){
   if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
   else for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
   const {rows:territories}=await pool.query(
-    `SELECT id,country_code,parent_id,territory_type,name,code,status,created_at FROM territories ORDER BY id`
+    `SELECT id,country_code,parent_id,territory_type,name,code,status,psgc_code,geographic_source,geographic_source_version,created_at FROM territories ORDER BY id`
   );
   const byId=new Map(territories.map(t=>[Number(t.id),t]));
   const children=new Map();
