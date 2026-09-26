@@ -148,3 +148,67 @@ The Figma file is therefore separated into:
 - `Archive · Initial composition` — preserved initial layout history.
 
 Mobile horizontal auto-layout rows use content-driven height, and the coachmark stays inside the 390×844 safe review frame.
+
+
+## UX V1.1 — contextual coachmarks and password flow
+
+Owner Android acceptance identified two production UX defects:
+
+1. the coachmark could cover the real control it was explaining;
+2. Security & access exposed identity/password confirmation as a permanently open form.
+
+### Coachmark placement
+
+The guide now measures:
+
+- the real target bounding rect;
+- `visualViewport` size and offset;
+- safe-area top/bottom/left/right;
+- the rendered coachmark height.
+
+Placement policy:
+
+`preferred opposite side → alternate side → compact fallback`
+
+A minimum visual separation of 14 px is maintained between target and coachmark whenever placement is feasible.
+
+Targets outside the comfortable viewport are scrolled toward the center once, then geometry is remeasured. Scroll/resize/VisualViewport changes reposition the existing spotlight and coachmark only; they do not rerender the journey.
+
+On screens below 420 px, coachmark copy is compacted without shrinking text to unreadable sizes.
+
+### Security & access
+
+The default Security view contains compact cards:
+
+- Account protection;
+- Password;
+- Sensitive-action confirmation;
+- Sessions.
+
+Password state is shown as:
+
+- `Password set`; or
+- `No password set`.
+
+`Change password` / `Set password` opens:
+
+- a bottom sheet on mobile;
+- a centered modal on desktop.
+
+The form is not mounted inline until the user requests it.
+
+`Forgot password?` is a separate recovery action.
+
+`Sign out` and `Sign out other devices` live in Sessions, separate from password management.
+
+### Guided onboarding boundary
+
+Password changes are never a Getting Started requirement.
+
+`Complete your account` targets, in order:
+
+1. email verification when missing;
+2. personal details when missing;
+3. official barangay when missing.
+
+A valid authentication method is sufficient; setting/changing a local password is optional unless a later sensitive action explicitly requires reauthentication.
