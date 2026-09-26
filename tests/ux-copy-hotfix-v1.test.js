@@ -37,7 +37,7 @@ test('Supplier hub has a canonical route available before decorator rebinding fi
 
 test('Profile Settings race fallback is user-facing loading copy rather than silent no-op',()=>{
   const block=renderRoleHubBlock();
-  assert.match(block,/const open=window\.BusinessLifeProfileSettings\?\.open/);
-  assert.match(block,/typeof open==='function'/);
-  assert.match(block,/Profile Settings is still loading\. Try again in a moment\./);
+  assert.match(block,/if\(feature==='Profile Settings'\)return openProfileSettingsForRole\(role\)/);
+  assert.match(shell,/function openProfileSettingsForRole\(role\)/);
+  assert.match(shell,/Profile Settings is still loading\. Try again in a moment\./);
 });
