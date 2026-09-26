@@ -96,7 +96,7 @@ function avatarMarkup(account, extraClass = '') {
 function roleProfile(role) { return snapshot?.profiles?.find(p => p.role === role); }
 function isEnabled(role) { const profile=roleProfile(role);return Boolean(profile?.enabled&&profile?.status==='active'); }
 function isCompanyTestAccount(account=snapshot?.account){return Boolean(account?.is_test_account&&account?.account_mode==='company_test')}
-function accountDetailsReady(account=snapshot?.account){return Boolean(String(account?.display_name||'').trim()&&String(account?.email||'').trim()&&(isCompanyTestAccount(account)||String(account?.address||'').trim()))}
+function accountDetailsReady(account=snapshot?.account){return Boolean(String(account?.display_name||'').trim()&&String(account?.email||'').trim()&&(isCompanyTestAccount(account)||String(account?.address||'').trim())&&(isCompanyTestAccount(account)||Boolean(snapshot?.geography?.assigned)))}
 function accountIdentityLabel(account=snapshot?.account){return isCompanyTestAccount(account)?'Test Account ID':'Personal ID'}
 function testAccountRoleLabel(account=snapshot?.account){return account?.test_role_label||ROLE_META[account?.test_role]?.label||String(account?.test_role||'Test').replaceAll('_',' ')}
 function adminRank(assignment){ return assignment?.effective_rank || assignment?.authority_rank || assignment?.admin_role || 'admin'; }
@@ -333,9 +333,10 @@ function profileManagementMarkup(){
   const account=snapshot.account;
   let emailReady=Boolean(account.email_verified_at);
   let detailsReady=accountDetailsReady(account);
-  const superAdmin=isSuperAdminAccount();
-  if(superAdmin){emailReady=true;detailsReady=true}
-  const roles=isCompanyTestAccount(account)?ROLE_ORDER.filter(role=>role===account.test_role):ROLE_ORDER;
+  const superAdmin=isSuperAdminAccount(),test=isCompanyTestAccount(account);
+  let areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
+  if(superAdmin){emailReady=true;detailsReady=true;areaReady=true}
+  const roles=test?ROLE_ORDER.filter(role=>role===account.test_role):ROLE_ORDER;
   if(!roles.length)return `<div class="companyTestRoleBoundary"><strong>${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>This company-managed account is reserved for Admin testing and does not require a personal operational profile.</p></div>`;
   return roles.map(role=>{
     const meta=ROLE_META[role],profile=roleProfile(role),enabled=Boolean(profile?.enabled&&profile?.status==='active');
@@ -345,11 +346,74 @@ function profileManagementMarkup(){
     if(enabled){action=`data-profile-toggle="${role}" data-enabled="1"`;label='Disable'}
     else if(!emailReady){action=`data-verify-email="${role}"`;label='Verify email first'}
     else if(!detailsReady){action=`data-complete-personal="${role}"`;label='Complete details'}
+    else if(!areaReady){action=`data-complete-personal="${role}"`;label='Area not open'}
     else if(reactivable){action=`data-profile-reactivate="${role}"`;label='Reactivate'}
     else{action=`data-role-action="${role}"`;label=superAdmin?'Activate':inProgress?'Continue onboarding':'Start onboarding'}
-    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':'Not active';
+    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':!areaReady?(snapshot?.geography?.message||'Area not open for onboarding'):'Not active';
     return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`
   }).join('');
+}
+
+
+function accountGeographyStatusLabel(geo=snapshot?.geography){
+  if(!geo?.assigned)return'Area required';
+  return geo.exact_territory?.status?String(geo.exact_territory.status).replaceAll('_',' '):'Not opened';
+}
+function accountGeographyTone(geo=snapshot?.geography){
+  const status=geo?.exact_territory?.status||'not_opened';
+  if(['active','onboarding'].includes(status))return'ok';
+  if(['planned','paused','not_opened'].includes(status))return'warn';
+  return'blocked';
+}
+function accountGeographyBanner(test=false){
+  const geo=snapshot?.geography||{};
+  if(!geo.assigned){
+    if(test)return'';
+    return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Complete your Business & Life area</strong><p>Choose your official barangay before you start any operational profile.</p></div></section>';
+  }
+  return '<section class="accountGeographyNotice '+accountGeographyTone(geo)+'"><span aria-hidden="true">📍</span><div><strong>'+escapeHtml(geo.name||'Assigned barangay')+' · '+escapeHtml(accountGeographyStatusLabel(geo))+'</strong><p>'+escapeHtml(geo.message||geo.path_text||'Official PSGC area assigned.')+'</p></div></section>';
+}
+function accountGeographyEditor(test=false){
+  const geo=snapshot?.geography||{};
+  return '<section class="accountSettingsCard accountGeographyCard"><h2>'+(test?'Test operating area':'Your Business & Life area')+'</h2><p>This is your official PSGC barangay. It does not publish your private street address.</p>'
+    +(geo.assigned?'<div class="accountGeographyCurrent"><strong>'+escapeHtml(geo.name||'Assigned barangay')+'</strong><span>'+escapeHtml(geo.path_text||'')+'</span><small>PSGC '+escapeHtml(geo.psgc_code||'')+' · '+escapeHtml(accountGeographyStatusLabel(geo))+'</small></div>':'<div class="accountGeographyCurrent missing"><strong>No barangay assigned yet</strong><span>Choose your official area below.</span></div>')
+    +'<form id="accountGeographyForm" class="profileForm"><label>Search official barangay<input id="accountBarangaySearch" autocomplete="off" placeholder="Queens Row West, Bacoor…"></label><input id="accountHomePsgcCode" type="hidden"><div id="accountBarangayResults" class="accountGeoResults"></div><div id="accountBarangayStatus" class="accountGeoHint">'+escapeHtml(geo.message||'Search and select an official PSGC barangay.')+'</div><div class="formActions"><button class="primary" type="submit">Save area</button></div></form></section>';
+}
+let accountGeoSearchTimer=null;
+function bindAccountGeographyControls(workspace){
+  const form=workspace.querySelector('#accountGeographyForm'),input=workspace.querySelector('#accountBarangaySearch'),hidden=workspace.querySelector('#accountHomePsgcCode'),results=workspace.querySelector('#accountBarangayResults'),status=workspace.querySelector('#accountBarangayStatus');
+  if(!form||!input||!hidden||!results||!status)return;
+  input.oninput=()=>{
+    hidden.value='';clearTimeout(accountGeoSearchTimer);
+    const q=input.value.trim();if(q.length<2){results.innerHTML='';return}
+    accountGeoSearchTimer=setTimeout(async()=>{
+      results.innerHTML='<div class="accountGeoHint">Searching official PSGC…</div>';
+      try{
+        const data=await profileApi('/api/auth/geography/search?q='+encodeURIComponent(q)+'&limit=20');
+        const items=data.items||[];
+        results.innerHTML=items.length?items.map(x=>'<button type="button" class="accountGeoResult" data-account-geo="'+escapeHtml(x.psgc_code)+'"><strong>'+escapeHtml(x.name)+'</strong><small>'+escapeHtml(x.path_text)+' · PSGC '+escapeHtml(x.psgc_code)+'</small></button>').join(''):'<div class="accountGeoHint warn">No official barangay matched.</div>';
+        results.querySelectorAll('[data-account-geo]').forEach(button=>button.onclick=async()=>{
+          hidden.value=button.dataset.accountGeo;
+          input.value=button.querySelector('strong')?.textContent||'';
+          results.innerHTML='';
+          try{
+            const availability=await profileApi('/api/auth/geography/status?psgc_code='+encodeURIComponent(hidden.value));
+            status.textContent=availability.message||'Official barangay selected.';
+            status.className='accountGeoHint '+(availability.operational_onboarding_available?'ok':'warn');
+          }catch(error){status.textContent=error.message}
+        });
+      }catch(error){results.innerHTML='<div class="accountGeoHint warn">'+escapeHtml(error.message)+'</div>'}
+    },250);
+  };
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    if(!hidden.value)return showToast('Select an official barangay from the results.');
+    const button=form.querySelector('button[type="submit"]');button.disabled=true;
+    try{
+      snapshot=await profileApi('/api/me/geography',{method:'PUT',body:JSON.stringify({psgc_code:hidden.value})});
+      profileFetchedAt=Date.now();renderTopAccount();renderAccountSettings('personal');showToast('Business & Life area saved.');
+    }catch(error){showToast(error.message);button.disabled=false}
+  };
 }
 
 function accountSettingsHeader(title,subtitle){return `<div class="accountSettingsHeader"><button id="accountSettingsBack" type="button" aria-label="Back">‹</button><div><span>ACCOUNT SETTINGS</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p></div></div>`}
@@ -359,7 +423,7 @@ function renderAccountSettings(view=accountSettingsView){
   workspace.classList.remove('hidden');
   accountSettingsView=view;
   if(view==='home'){
-    workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
+    workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
       <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and primary address'}</small><b>›</b></button>
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
@@ -380,10 +444,10 @@ function renderAccountSettings(view=accountSettingsView){
       <label>Email${test?' · protected company alias':''}<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}" ${test?'readonly aria-readonly="true"':''}></label>
       ${test?'<div class="companyContactPolicy"><div><span>Personal phone</span><strong>Not required</strong></div><div><span>Personal address</span><strong>Not required</strong></div><div><span>Contact source</span><strong>Company / test scenario</strong></div></div>':`<label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label><label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>`}
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
-    </form></section>`;
+    </form></section>${accountGeographyEditor(test)}`;
   }else if(view==='profiles'){
-    const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount();
-    const activationGate=superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and primary address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:'';
+    const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount(),areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
+    const activationGate=superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details and area first</strong><p>Add your name, email, primary address and official barangay before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Your area is not open for onboarding</strong><p>${escapeHtml(snapshot?.geography?.message||'Business & Life is not available for operational onboarding in your barangay yet.')}</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
     workspace.innerHTML=accountSettingsHeader(test?'Assigned test role':'Manage profiles',test?`This account is reserved for ${testAccountRoleLabel(account)} testing and does not require personal contact details.`:'Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+'<div id="accountSecurityMount"></div>';
@@ -407,6 +471,7 @@ function renderAccountSettings(view=accountSettingsView){
     showToast('Support is still loading. Try again in a moment.');
   });
   workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
+  bindAccountGeographyControls(workspace);
   workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
   workspace.querySelector('#removeAvatar')?.addEventListener('click',removeAvatar);
   workspace.querySelectorAll('[data-profile-toggle]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.profileToggle,btn.dataset.enabled!=='1'));
