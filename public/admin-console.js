@@ -401,7 +401,7 @@ function territoriesPanel(){
     +'<label>Geographic level<select name="level"><option value="">All levels</option>'+['region','province','city','municipality','district','submunicipality','special_geographic_unit','barangay'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label>'
     +'</div><div class="formActions"><button class="secondary" type="submit">Search PSGC</button><button id="territoryGeoRoot" class="secondary" type="button">Browse regions</button></div></form>'
     +'<div id="territoryGeoContext" class="muted">Official national registry</div><div id="territoryGeoResults" class="opsList"><div class="adminLoading">Registry results appear here.</div></div>'
-    +'<form id="territoryCreateForm" class="adminForm" style="display:none"><input type="hidden" name="psgc_code"><div id="territoryGeoSelected" class="notice"></div><label>Business & Life status<select name="status">'+TERRITORY_STATUSES.map(x=>'<option value="'+x+'" '+(x==='onboarding'?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><button class="primary" type="submit">Open selected territory</button><div id="territoryCreateResult"></div></form>'
+    +'<form id="territoryCreateForm" class="adminForm" style="display:none"><input type="hidden" name="psgc_code"><input type="hidden" name="geographic_level"><div id="territoryGeoSelected" class="notice"></div><label>Business & Life status<select name="status">'+TERRITORY_STATUSES.map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label><div id="territoryStatusGuidance" class="muted">Structural levels default to Planned. Launch barangays default to Onboarding.</div><button class="primary" type="submit">Open selected territory</button><div id="territoryCreateResult"></div></form>'
     +'<div class="notice"><strong>Reference geography ≠ operating territory.</strong><br>Synchronizing PSGC does not open, activate, invite or approve anyone. Opening a territory is a separate audited Admin action.</div>'
     +'</div></details>'
     +'<div class="sectionTitle"><div><h3>Business & Life Territory Tree</h3><span class="muted">Opened operating scopes are nested under their official parents.</span></div><span class="muted">'+territories.length+' opened</span></div>'
@@ -447,8 +447,15 @@ async function wireTerritories(){
         +'</div></div>';
     }).join('');
     results.querySelectorAll('[data-geo-select]').forEach(button=>button.onclick=()=>{
+      const level=String(button.dataset.geoLevel||'').toLowerCase();
+      const defaultStatus=level==='barangay'?'onboarding':'planned';
       createForm.elements.psgc_code.value=button.dataset.geoSelect;
-      document.getElementById('territoryGeoSelected').innerHTML='<strong>'+esc(button.dataset.geoName)+'</strong><br>'+esc(button.dataset.geoPath)+'<br>PSGC '+esc(button.dataset.geoSelect)+' · '+esc(readableCode(button.dataset.geoLevel));
+      createForm.elements.geographic_level.value=level;
+      createForm.elements.status.value=defaultStatus;
+      document.getElementById('territoryGeoSelected').innerHTML='<strong>'+esc(button.dataset.geoName)+'</strong><br>'+esc(button.dataset.geoPath)+'<br>PSGC '+esc(button.dataset.geoSelect)+' · '+esc(readableCode(level));
+      document.getElementById('territoryStatusGuidance').textContent=level==='barangay'
+        ?'Barangay launch scope: Onboarding is suggested.'
+        :'Structural '+readableCode(level)+' scope: Planned is suggested until a launch barangay is chosen.';
       createForm.style.display='grid';
       createForm.scrollIntoView({behavior:'smooth',block:'nearest'});
     });
