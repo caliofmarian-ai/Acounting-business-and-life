@@ -112,7 +112,7 @@ async function refreshAll(){
   if(!isMerchantBaseActive())return;
   try{await Promise.all([loadSummary(),loadTransactions(),loadStock(),loadRemittances(),loadDay(),loadBudget(),loadAnalysis(7),loadAnalysis(30)]);}catch(e){console.error(e);}
 }
-$('refreshBtn').onclick=refreshAll;
+if($('refreshBtn'))$('refreshBtn').onclick=refreshAll;
 
 $('txForm').addEventListener('submit', async e=>{
   e.preventDefault(); $('txMessage').textContent='Saving…';

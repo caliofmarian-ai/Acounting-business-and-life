@@ -12,7 +12,15 @@ function ensureNotificationUi(){
 function addBell(){
   const top=document.querySelector('.topActions');if(!top||!token())return;
   let b=document.getElementById('notificationBell');
-  if(!b){b=document.createElement('button');b.id='notificationBell';b.className='notificationBell';b.type='button';b.innerHTML='<span aria-hidden="true">🔔</span><b id="notificationBadge" class="hidden">0</b>';b.setAttribute('aria-label','Notifications');b.onclick=openNotifications;top.prepend(b)}
+  if(!b){
+    b=document.createElement('button');b.id='notificationBell';b.className='notificationBell';b.type='button';
+    b.innerHTML='<span aria-hidden="true">🔔</span><b id="notificationBadge" class="hidden">0</b>';
+    b.setAttribute('aria-label','Notifications');
+    const online=document.getElementById('onlineState');
+    if(online?.parentElement===top)top.insertBefore(b,online);else top.prepend(b);
+  }
+  if(!b.querySelector('#notificationBadge'))b.insertAdjacentHTML('beforeend','<b id="notificationBadge" class="hidden">0</b>');
+  b.onclick=openNotifications;
 }
 async function refreshUnread(){if(!token())return;try{addBell();const x=await api('/api/notifications/unread-count?threaded=all');const badge=document.getElementById('notificationBadge');if(!badge)return;badge.textContent=String(x.unread||0);badge.classList.toggle('hidden',!x.unread)}catch{}}
 function closeNotifications(){document.getElementById('notificationBackdrop')?.classList.add('hidden');document.body.style.overflow=''}

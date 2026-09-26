@@ -10,7 +10,8 @@ const profileSettings=read('public/profile-settings-ui.js');
 const css=read('public/shell.css');
 
 test('avatar routes directly to the canonical Account Home instead of opening a duplicate menu',()=>{
-  assert.match(shell,/accountAvatarButton'\)\.addEventListener\('click', openAccountHome\)/);
+  assert.match(shell,/const avatarButton=controls\.querySelector\('#accountAvatarButton'\)/);
+  assert.match(shell,/avatarButton\.addEventListener\('click',openAccountHome\)/);
   assert.match(shell,/aria-label="Open Account Home"/);
   assert.match(shell,/function openAccountHome\(\)/);
   assert.doesNotMatch(shell,/accountAvatarButton'\)\.addEventListener\('click', openDrawer\)/);

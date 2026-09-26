@@ -145,13 +145,24 @@ function ensureShellChrome() {
   const shell = document.getElementById('shell');
   const topActions = document.querySelector('.topActions');
   if (!shell || !topActions) return false;
-  if (!document.getElementById('accountAvatarButton')) {
-    const controls = document.createElement('div');
+  let controls=document.querySelector('.shellProfileControls');
+  if (!controls) {
+    controls = document.createElement('div');
     controls.className = 'shellProfileControls';
-    controls.innerHTML = `<button id="activeRolePill" class="activeRolePill" type="button" aria-live="polite" aria-label="Open active workspace"></button><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open Account Home"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
-    topActions.appendChild(controls);
-    controls.querySelector('#activeRolePill').addEventListener('click',()=>{if(activeSurface==='profile'&&activeRole)showActiveWorkspace();else openAccountHome()});
-    controls.querySelector('#accountAvatarButton').addEventListener('click', openAccountHome);
+    controls.innerHTML = `<button id="activeRolePill" class="activeRolePill" type="button" aria-live="polite" aria-label="Open Account Home">Account</button><button id="accountAvatarButton" class="accountAvatarButton" type="button" aria-label="Open Account Home"><span class="accountAvatar accountAvatarLoading" aria-hidden="true"></span></button>`;
+    const more=document.getElementById('lazyMoreBtn');
+    if(more?.parentElement===topActions)topActions.insertBefore(controls,more);
+    else topActions.appendChild(controls);
+  }
+  const rolePill=controls.querySelector('#activeRolePill');
+  const avatarButton=controls.querySelector('#accountAvatarButton');
+  if(rolePill&&!rolePill.dataset.shellWired){
+    rolePill.dataset.shellWired='true';
+    rolePill.addEventListener('click',()=>{if(activeSurface==='profile'&&activeRole)showActiveWorkspace();else openAccountHome()});
+  }
+  if(avatarButton&&!avatarButton.dataset.shellWired){
+    avatarButton.dataset.shellWired='true';
+    avatarButton.addEventListener('click',openAccountHome);
   }
   if (!document.getElementById('merchantWorkspaceNav')) {
     const nav=document.createElement('nav');
