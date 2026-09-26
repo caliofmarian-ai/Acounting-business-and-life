@@ -161,7 +161,7 @@ test('runtime allocates compensation only after verified Delivery completion and
   const delivered=block.indexOf("SET status='delivered'");
   const monetization=block.indexOf("recordMonetizableCompletion(client,{serviceScope:'delivery'");
   const compensation=block.indexOf('allocateCourierCompensation(client');
-  const commit=block.indexOf("client.query('COMMIT')");
+  const commit=block.indexOf("client.query('COMMIT')",compensation);
   assert.ok(delivered>=0&&monetization>delivered&&compensation>monetization&&commit>compensation);
   assert.match(block,/deliveryPrice:Number\(x\.delivery_fee\|\|0\)/);
   assert.match(block,/feeBasis:deliveryFeeBasis/);
