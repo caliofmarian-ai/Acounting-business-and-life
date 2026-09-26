@@ -14,6 +14,9 @@ const notifications=read('notification-core.js');
 test('account geography is official barangay PSGC membership separate from operational territory',()=>{
   const core=read('account-geography.js');
   assert.match(core,/CREATE TABLE IF NOT EXISTS account_geography_assignments/);
+  assert.match(core,/CREATE TABLE IF NOT EXISTS account_geography_events/);
+  assert.match(core,/before_psgc_code/);
+  assert.match(core,/after_psgc_code/);
   assert.match(core,/CHECK\(geographic_level='barangay'\)/);
   assert.match(core,/resolveOfficialBarangay/);
   assert.match(core,/geographic_level='barangay'/);
