@@ -25,7 +25,7 @@ test('Merchant desktop navigation has a dedicated shell row with five primary de
   assert.match(css,/#deliveryQuickButton\{order:4\}/);
 });
 
-test('Merchant feature launchers are never mounted into global topActions',()=>{
+test('Merchant feature launchers are shell-owned and modules never create or remove canonical nav destinations',()=>{
   const slices={
     orders:orders.slice(orders.indexOf('async function decorate('),orders.indexOf('function ordersVisible')),
     marketplace:marketplace.slice(marketplace.indexOf('async function decorateMarket('),marketplace.indexOf('function observeMarket')),
@@ -33,9 +33,8 @@ test('Merchant feature launchers are never mounted into global topActions',()=>{
     delivery:delivery.slice(delivery.indexOf('async function decorateDelivery('),delivery.indexOf('function observeDelivery'))
   };
   for(const [name,source] of Object.entries(slices)){
-    assert.match(source,/BusinessLifeShell\?\.merchantWorkspaceHost\?\.\(\)/,name+' must use the dedicated Merchant nav host');
+    assert.doesNotMatch(source,/merchantWorkspaceHost|createElement\('button'\)|appendChild\(|\.remove\(\)/,name+' must not mutate canonical Merchant nav');
     assert.doesNotMatch(source,/document\.querySelector\('\.shellProfileControls'\)/,name+' must not mount beside avatar controls');
-    assert.doesNotMatch(source,/insertAdjacentElement\('beforebegin'/,name+' launcher must not inject into the global topbar');
   }
 });
 
