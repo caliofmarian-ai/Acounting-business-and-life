@@ -52,10 +52,18 @@ test('Service Job checkout descriptor uses Customer-owned payable job and generi
         customer_confirmed_at:'2026-09-26T10:00:00Z',provider_name:'Provider'
       }]};
     }
-    if(call===3)return{rows:[{gross_confirmed:'0',pending_amount:'1250',confirmed_count:0,pending_count:1}]};
-    if(call===4)return{rows:[{refunded_amount:'0',refund_count:0}]};
-    if(call===5)return{rows:[{allocation_count:0,pending:'0',eligible:'0',processing:'0',paid:'0',held:'0',reversed:'0'}]};
-    if(call===6)return{rows:[{id:92,public_id:'pi_service_92',provider_code:'paymongo',logical_method:'online_other',amount:'1250.00',status:'requires_provider'}]};
+    if(call===3){
+      assert.match(sql,/SELECT \* FROM service_jobs WHERE id=\$1/);
+      return{rowCount:1,rows:[{
+        id:44,customer_account_id:9,provider_account_id:15,service_label:'Aircon cleaning',
+        status:'completed',quote_amount:'1250.00',final_price:'1250.00',currency_code:'PHP',
+        customer_confirmed_at:'2026-09-26T10:00:00Z'
+      }]};
+    }
+    if(call===4)return{rows:[{gross_confirmed:'0',pending_amount:'1250',confirmed_count:0,pending_count:1}]};
+    if(call===5)return{rows:[{refunded_amount:'0',refund_count:0}]};
+    if(call===6)return{rows:[{allocation_count:0,pending:'0',eligible:'0',processing:'0',paid:'0',held:'0',reversed:'0'}]};
+    if(call===7)return{rows:[{id:92,public_id:'pi_service_92',provider_code:'paymongo',logical_method:'online_other',amount:'1250.00',status:'requires_provider'}]};
     throw new Error('Unexpected query '+sql);
   }};
   const d=await resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_service_92',accountId:9});
