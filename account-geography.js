@@ -128,6 +128,24 @@ export async function accountGeographySnapshot(pool,accountId){
   return{assigned:true,...live,message:geographyAvailabilityMessage(live)};
 }
 
+export async function accountIdsInPsgcScope(pool,psgcCode){
+  const code=normalizeHomePsgcCode(psgcCode);
+  if(!code)return[];
+  const version=await latestRegistryVersion(pool);
+  if(!version)return[];
+  const q=await pool.query(
+    "WITH RECURSIVE geo AS ("+
+      "SELECT psgc_code FROM ph_geographic_registry WHERE country_code='PH' AND source_version=$1 AND psgc_code=$2 "+
+      "UNION ALL "+
+      "SELECT child.psgc_code FROM ph_geographic_registry child JOIN geo parent ON child.parent_psgc_code=parent.psgc_code "+
+      "WHERE child.country_code='PH' AND child.source_version=$1"+
+    ") SELECT DISTINCT a.account_id FROM account_geography_assignments a JOIN geo g ON g.psgc_code=a.psgc_code "+
+    "WHERE a.country_code='PH' ORDER BY a.account_id",
+    [version,code]
+  );
+  return q.rows.map(x=>Number(x.account_id)).filter(Number.isInteger);
+}
+
 export async function requireAssignedOpenBarangay(pool,accountId){
   const snapshot=await accountGeographySnapshot(pool,accountId);
   if(!snapshot.assigned)throw Object.assign(new Error('Complete your official barangay in Account Settings before starting onboarding'),{status:409,code:'ACCOUNT_GEOGRAPHY_REQUIRED'});
