@@ -444,6 +444,44 @@ app.post('/api/auth/step-up/password', jsonBody, async (req,res,next) => {
   } catch(e){next(e)}
 });
 
+app.post('/api/auth/password', jsonBody, async (req,res,next) => {
+  try{
+    const s=await requireV2(req),currentPassword=String(req.body?.current_password||''),newPassword=String(req.body?.new_password||'');
+    if(!passwordOkay(newPassword))return res.status(400).json({error:'New password must be at least 8 characters'});
+    const q=await pool.query("SELECT password_salt,password_hash,auth_status FROM accounts WHERE id=$1",[s.accountId]);
+    const account=q.rows[0];
+    if(!account||account.auth_status!=='active')throw Object.assign(new Error('Account is not active'),{status:403});
+    const hasPassword=Boolean(account.password_hash);
+    if(hasPassword){
+      if(!currentPassword)return res.status(400).json({error:'Current password is required'});
+      const throttleKey='password-change:'+s.accountId+':'+s.sessionId;
+      if(throttled(req,throttleKey,5,15*60_000))return res.status(429).json({error:'Too many password attempts. Try again later.'});
+      if(!(await verifyPassword(currentPassword,account.password_salt,account.password_hash))){
+        await audit(s.accountId,'password_change_failed',req,{reason:'current_password_incorrect',session_id_hash:sha256(s.sessionId)});
+        return res.status(403).json({error:'Current password is incorrect'});
+      }
+      clearThrottle(req,throttleKey);
+    }else{
+      const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||'';
+      const state=await resolveV2SessionStepUp(pool,TOKEN_SECRET,raw);
+      if(!state?.stepUpValid)return res.status(409).json({error:'Confirm your identity again before setting a password',code:'RECENT_AUTH_REQUIRED'});
+    }
+    const {salt,hash}=await hashPassword(newPassword);
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query("UPDATE accounts SET password_salt=$1,password_hash=$2,updated_at=NOW() WHERE id=$3",[salt,hash,s.accountId]);
+      await client.query("UPDATE account_sessions SET revoked_at=NOW() WHERE account_id=$1 AND session_id<>$2 AND revoked_at IS NULL",[s.accountId,s.sessionId]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}finally{client.release()}
+    await markV2SessionStepUp(pool,{accountId:s.accountId,sessionId:s.sessionId});
+    await maybeRetireOwnerPin(s.accountId);
+    await audit(s.accountId,hasPassword?'password_changed':'password_set',req,{session_id_hash:sha256(s.sessionId)});
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({ok:true,has_password:true,other_sessions_revoked:true});
+  }catch(e){next(e)}
+});
+
 app.post('/api/auth/sessions/revoke-others', jsonBody, async (req, res, next) => {
   try { const s = await requireV2(req); await pool.query(`UPDATE account_sessions SET revoked_at=NOW() WHERE account_id=$1 AND session_id<>$2 AND revoked_at IS NULL`, [s.accountId, s.sessionId]); await audit(s.accountId, 'other_sessions_revoked', req); res.json({ ok: true }); } catch (e) { next(e); }
 });
