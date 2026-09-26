@@ -98,3 +98,59 @@ test('normal Withdraw flow no longer uses profile-scoped legacy movement form',(
   assert.doesNotMatch(render,/moneyMovementForm\(\)/);
   assert.match(ui,/const legacyMovement=document\.getElementById\('moneyMovementForm'\)/);
 });
+
+
+test('payout destinations have a 24-hour security cooling-off contract',()=>{
+  assert.match(core,/PAYOUT_DESTINATION_COOLING_HOURS=24/);
+  assert.match(core,/payout_security_changed_at TIMESTAMPTZ/);
+  assert.match(core,/payout_eligible_at TIMESTAMPTZ/);
+  assert.match(core,/created_at\+INTERVAL '24 hours'/);
+  assert.match(core,/payout_cooling_off:Boolean/);
+});
+
+test('new payout destinations cannot become default immediately',()=>{
+  const start=core.indexOf('export async function createAccountFinancialDestination');
+  const end=core.indexOf('export async function updateAccountFinancialDestination',start);
+  const create=core.slice(start,end);
+  assert.match(create,/CASE WHEN \$10 THEN NOW\(\)\+INTERVAL '24 hours' END/);
+  assert.match(create,/payout_destination_cooling_started/);
+  const defaultStart=core.indexOf('export async function setDefaultAccountPayoutDestination');
+  const defaultEnd=core.indexOf('export async function attachProviderFinancialDestination',defaultStart);
+  const setDefault=core.slice(defaultStart,defaultEnd);
+  assert.match(setDefault,/payout_eligible_at/);
+  assert.match(setDefault,/24-hour security hold ends/);
+  assert.match(setDefault,/eligibleAt>Date\.now\(\)/);
+});
+
+test('sensitive payout destination changes restart cooling and clear default payout',()=>{
+  const start=core.indexOf('export async function updateAccountFinancialDestination');
+  const end=core.indexOf('export async function setDefaultAccountPayoutDestination',start);
+  const update=core.slice(start,end);
+  assert.match(update,/nextInstitution!==old\.institution_name/);
+  assert.match(update,/nextAccountName!==old\.account_name/);
+  assert.match(update,/nextLast4!==old\.reference_last4/);
+  assert.match(update,/!old\.can_payout/);
+  assert.match(update,/old\.status!=='active'&&nextStatus==='active'/);
+  assert.match(update,/is_default_payout=CASE WHEN \$7='inactive' OR \$6=FALSE OR \$8 THEN FALSE/);
+  assert.match(update,/WHEN \$8 THEN NOW\(\)\+INTERVAL '24 hours'/);
+  assert.doesNotMatch(update,/nextDisplay!==old\.display_name/);
+});
+
+test('provider payout reference changes restart the security hold',()=>{
+  const start=core.indexOf('export async function attachProviderFinancialDestination');
+  const end=core.indexOf('export async function upsertProviderSavedPaymentMethod',start);
+  const attach=core.slice(start,end);
+  assert.match(attach,/old\.provider_code!==provider\|\|old\.provider_destination_ref!==ref/);
+  assert.match(attach,/is_default_payout=CASE WHEN \$4 THEN FALSE/);
+  assert.match(attach,/payout_destination_cooling_started/);
+  assert.match(attach,/reason:'provider_destination_changed'/);
+});
+
+test('Money Banking explains and enforces the payout security hold in the UI',()=>{
+  assert.match(ui,/Security hold until/);
+  assert.match(ui,/24h security hold/);
+  assert.match(ui,/New or changed payout destinations wait 24 hours/);
+  assert.match(ui,/A 24-hour security hold applies before it can become the default payout/);
+  assert.match(ui,/&&d\.can_payout&&!cooling/);
+  assert.match(ui,/const defaultPayout=dest\.find\(x=>x\.is_default_payout\)\|\|null/);
+});
