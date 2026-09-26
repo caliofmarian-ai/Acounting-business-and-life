@@ -74,7 +74,7 @@ function bindAuthBarangayPicker(){
       results.innerHTML='<div class="authGeoStatus">Searching official PSGC…</div>';
       try{
         const items=await searchAuthBarangays(q);
-        results.innerHTML=items.length?items.map(x=>'<button type="button" class="authGeoResult" data-auth-geo="'+x.psgc_code+'" data-auth-geo-name="'+String(x.name||'').replace(/"/g,'&quot;')+'" data-auth-geo-path="'+String(x.path_text||'').replace(/"/g,'&quot;')+'"><strong>'+String(x.name||'')+'</strong><small>'+String(x.path_text||'')+' · PSGC '+x.psgc_code+'</small></button>').join(''):'<div class="authGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
+        results.innerHTML=items.length?items.map(x=>'<button type="button" class="authGeoResult" data-auth-geo="'+authEsc(x.psgc_code)+'" data-auth-geo-name="'+authEsc(x.name||'')+'"><strong>'+authEsc(x.name||'')+'</strong><small>'+authEsc(x.path_text||'')+' · PSGC '+authEsc(x.psgc_code)+'</small></button>').join(''):'<div class="authGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
         results.querySelectorAll('[data-auth-geo]').forEach(btn=>btn.onclick=async()=>{
           hidden.value=btn.dataset.authGeo;input.value=btn.dataset.authGeoName;results.innerHTML='';
           try{
