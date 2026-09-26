@@ -349,13 +349,7 @@ function bindLifecycle(){
     if(guideActive()&&view==='profiles'&&guide.current_step_id==='manage_profiles')updateGuide({action:'complete_step',step_id:'manage_profiles'},{render:false}).then(()=>scheduleRefresh(80)).catch(()=>{});
     scheduleRender(100);
   });
-  document.addEventListener('abl:guided-onboarding-refresh',()=>scheduleRefresh(220));
-  document.addEventListener('submit',event=>{
-    if(event.target?.id==='govApplicationForm'&&guide?.selected_profile_role){
-      profileDraftSavedForRole.add(guide.selected_profile_role);
-      setTimeout(()=>scheduleRender(80),350);
-    }
-  },true);
+  document.addEventListener('abl:guided-onboarding-refresh',event=>{if(event.detail?.reason==='application_saved'&&event.detail?.role)profileDraftSavedForRole.add(event.detail.role);scheduleRefresh(220)});
   document.addEventListener('click',event=>{
     const roleTarget=event.target.closest?.('[data-role-action]');
     if(roleTarget)handleProfileChoice(roleTarget);
