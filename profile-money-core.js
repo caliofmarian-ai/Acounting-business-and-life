@@ -166,8 +166,8 @@ export async function courierMoneySnapshot(pool,accountId){
   return{...home,recent_deliveries:recent.rows};
 }
 
-export async function serviceProviderMoneySnapshot(pool,accountId){
-  const [jobs,allocations,recent]=await Promise.all([
+async function serviceProviderMoneyHomeSummary(pool,accountId){
+  const [jobs,allocations]=await Promise.all([
     pool.query(`
       SELECT
         COUNT(*) FILTER(WHERE status='completed' AND customer_confirmed_at IS NOT NULL)::int confirmed_completed_count,
@@ -178,13 +178,7 @@ export async function serviceProviderMoneySnapshot(pool,accountId){
           FILTER(WHERE status IN ('quoted','accepted','scheduled','in_progress')),0) open_commercial_value
       FROM service_jobs WHERE provider_account_id=$1
     `,[Number(accountId)]),
-    netAllocations(pool,'service_provider_net',accountId),
-    pool.query(`
-      SELECT id,service_label,status,quote_amount,final_price,currency_code,scheduled_at,
-             provider_completed_at,customer_confirmed_at,created_at
-      FROM service_jobs WHERE provider_account_id=$1
-      ORDER BY created_at DESC LIMIT 40
-    `,[Number(accountId)])
+    netAllocations(pool,'service_provider_net',accountId)
   ]);
   const j=jobs.rows[0]||{};
   return{
@@ -202,9 +196,25 @@ export async function serviceProviderMoneySnapshot(pool,accountId){
       note:allocations.tracked
         ?'Only recorded service_provider_net allocations are treated as settled/provider income.'
         :'Local Services payment settlement is not configured yet. Completed job value is shown separately from money received.'
-    },
-    recent_jobs:recent.rows
+    }
   };
+}
+
+export async function serviceProviderMoneyHomeSnapshot(pool,accountId){
+  return serviceProviderMoneyHomeSummary(pool,accountId);
+}
+
+export async function serviceProviderMoneySnapshot(pool,accountId){
+  const [home,recent]=await Promise.all([
+    serviceProviderMoneyHomeSummary(pool,accountId),
+    pool.query(`
+      SELECT id,service_label,status,quote_amount,final_price,currency_code,scheduled_at,
+             provider_completed_at,customer_confirmed_at,created_at
+      FROM service_jobs WHERE provider_account_id=$1
+      ORDER BY created_at DESC LIMIT 40
+    `,[Number(accountId)])
+  ]);
+  return{...home,recent_jobs:recent.rows};
 }
 
 export async function profileMoneySnapshot(pool,role,accountId){
