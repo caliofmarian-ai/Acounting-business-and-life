@@ -691,13 +691,11 @@ app.post('/api/courier/deliveries/:id/complete',body,async(req,res,next)=>{
       WHERE d.id=$1
     `,[id]);
     const x=done.rows[0],deliveryFeeBasis=Number(x.platform_fee_basis_amount||x.service_fare||x.delivery_fee||0);
-    await recordMonetizableCompletion(client,{serviceScope:'marketplace',
-      subjectType:'business',subjectId:x.business_id,
+    await recordMonetizableCompletion(client,{serviceScope:'marketplace',subjectType:'business',subjectId:x.business_id,
       sourceType:'order',sourceId:d.order_id,territoryId:x.territory_id,
       completedAt:x.completed_at,grossValue:x.subtotal,currencyCode:x.currency_code||'PHP'
     });
-    await recordMonetizableCompletion(client,{serviceScope:'delivery',
-      subjectType:'account',subjectId:x.courier_account_id,
+    await recordMonetizableCompletion(client,{serviceScope:'delivery',subjectType:'account',subjectId:x.courier_account_id,
       sourceType:'delivery',sourceId:id,territoryId:x.territory_id,
       completedAt:x.delivered_at,grossValue:deliveryFeeBasis,currencyCode:x.currency_code||'PHP'
     });
