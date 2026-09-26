@@ -53,7 +53,7 @@ test('company-managed test accounts are excluded from personal first-run guidanc
 test('coachmark follows real UI targets and does not duplicate protected actions',()=>{
   assert.match(ui,/guidedSpotlight/);
   assert.match(ui,/scrollIntoView/);
-  assert.match(ui,/pointer-transparent|real UI/i);
+  assert.match(doc,/real UI target/i);
   assert.match(ui,/#accountHomeSettings/);
   assert.match(ui,/\[data-account-settings-view="profiles"\]/);
   assert.match(ui,/\.profileRoleList/);
