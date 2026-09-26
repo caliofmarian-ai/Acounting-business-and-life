@@ -1,4 +1,5 @@
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
+let accountGeographySchemaReady=false;
 
 export function normalizeHomePsgcCode(value){
   const code=clean(value,32).replace(/\D/g,'');
@@ -6,6 +7,7 @@ export function normalizeHomePsgcCode(value){
 }
 
 export async function ensureAccountGeographySchema(pool){
+  if(accountGeographySchemaReady)return;
   await pool.query(
     "CREATE TABLE IF NOT EXISTS account_geography_assignments("+
     "account_id BIGINT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,"+
@@ -17,6 +19,7 @@ export async function ensureAccountGeographySchema(pool){
     "CREATE TABLE IF NOT EXISTS account_geography_events(id BIGSERIAL PRIMARY KEY,account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,before_psgc_code TEXT NOT NULL DEFAULT '',after_psgc_code TEXT NOT NULL,assignment_source TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"+
     "CREATE INDEX IF NOT EXISTS account_geography_events_account_idx ON account_geography_events(account_id,created_at DESC)"
   );
+  accountGeographySchemaReady=true;
 }
 
 async function latestRegistryVersion(pool){
@@ -126,15 +129,34 @@ export async function saveAccountGeography(pool,accountId,psgcCode,{source='self
 }
 
 export async function accountGeographySnapshot(pool,accountId){
-  await ensureAccountGeographySchema(pool);
   const q=await pool.query("SELECT * FROM account_geography_assignments WHERE account_id=$1",[Number(accountId)]);
   const row=q.rows[0];
   if(!row)return{assigned:false,country_code:'PH',required:true,operational_onboarding_available:false};
-  const live=await geographyAvailabilityForCode(pool,row.psgc_code);
-  if(!live)return{
+  const chain=await pool.query(
+    "WITH RECURSIVE geo AS ("+
+      "SELECT psgc_code,parent_psgc_code,name,geographic_level,path_text,0 AS depth "+
+      "FROM ph_geographic_registry WHERE country_code='PH' AND source_version=$1 AND psgc_code=$2 "+
+      "UNION ALL "+
+      "SELECT p.psgc_code,p.parent_psgc_code,p.name,p.geographic_level,p.path_text,g.depth+1 "+
+      "FROM ph_geographic_registry p JOIN geo g ON p.psgc_code=g.parent_psgc_code "+
+      "WHERE p.country_code='PH' AND p.source_version=$1 AND g.depth<8"+
+    ") SELECT g.*,t.id territory_id,t.status territory_status,t.name territory_name,t.territory_type "+
+    "FROM geo g LEFT JOIN territories t ON t.country_code='PH' AND t.psgc_code=g.psgc_code ORDER BY g.depth",
+    [row.source_version,row.psgc_code]
+  );
+  if(!chain.rowCount)return{
     assigned:true,country_code:'PH',psgc_code:row.psgc_code,source_version:row.source_version,
     geographic_level:'barangay',name:row.geographic_name,path_text:row.path_text,
     operational_onboarding_available:false,registry_resolution:'unavailable'
+  };
+  const exact=chain.rows.find(x=>Number(x.depth)===0&&x.territory_id)||null;
+  const nearest=chain.rows.find(x=>x.territory_id)||null;
+  const live={
+    country_code:'PH',psgc_code:row.psgc_code,source_version:row.source_version,
+    geographic_level:'barangay',name:row.geographic_name,path_text:row.path_text,
+    exact_territory:exact?{id:Number(exact.territory_id),name:exact.territory_name,type:exact.territory_type,status:exact.territory_status}:null,
+    nearest_opened_scope:nearest?{id:Number(nearest.territory_id),name:nearest.territory_name,type:nearest.territory_type,status:nearest.territory_status,exact:Number(nearest.depth)===0}:null,
+    operational_onboarding_available:Boolean(exact&&['onboarding','active'].includes(exact.territory_status))
   };
   return{assigned:true,...live,message:geographyAvailabilityMessage(live)};
 }
