@@ -49,22 +49,12 @@ export async function resolveOfficialBarangay(pool,psgcCode){
   return q.rows[0]||null;
 }
 
-export async function searchOfficialBarangays(pool,{query='',limit=20}={}){
+export async function searchOfficialBarangays(pool,{query='',limit=15}={}){
   const q=clean(query,120);
   const version=await latestRegistryVersion(pool);
   if(!version)return{source_version:null,items:[]};
-  const bounded=Math.max(1,Math.min(30,Number(limit)||20));
-  if(!q){
-    const rows=await pool.query(
-      "SELECT g.psgc_code,g.name,g.path_text,g.source_version,t.id operating_territory_id,t.status operating_status "+
-      "FROM ph_geographic_registry g JOIN territories t ON t.country_code='PH' AND t.psgc_code=g.psgc_code "+
-      "WHERE g.country_code='PH' AND g.source_version=$1 AND g.geographic_level='barangay' "+
-      "AND t.status IN ('onboarding','active') "+
-      "ORDER BY CASE t.status WHEN 'onboarding' THEN 0 ELSE 1 END,g.name LIMIT $2",
-      [version,bounded]
-    );
-    return{source_version:version,items:rows.rows,suggestions:true};
-  }
+  if(!q)return{source_version:version,items:[]};
+  const bounded=Math.max(1,Math.min(15,Number(limit)||15));
   const tokens=barangaySearchTokens(q);
   if(!tokens.length)return{source_version:version,items:[]};
   const params=[version];
@@ -87,7 +77,7 @@ export async function searchOfficialBarangays(pool,{query='',limit=20}={}){
     "LIMIT "+limitParam,
     params
   );
-  return{source_version:version,items:rows.rows,suggestions:false};
+  return{source_version:version,items:rows.rows};
 }
 
 export async function geographyAvailabilityForCode(pool,psgcCode){
