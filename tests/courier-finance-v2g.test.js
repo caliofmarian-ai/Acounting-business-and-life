@@ -24,7 +24,8 @@ test('Courier delivery rows derive compensation only from courier_net allocation
   const end=moneyCore.indexOf('async function serviceProviderPaymentEvidence',start);
   const block=moneyCore.slice(start,end);
   assert.match(block,/pa\.component_code='courier_net'/);
-  assert.match(block,/pa\.economic_party_id=\$1::text/);
+  assert.match(block,/pa\.economic_party_id=\$2/);
+  assert.match(block,/`,\[Number\(accountId\),String\(accountId\)\]\)/);
   assert.match(block,/pa\.rule_snapshot->>'delivery_id'=d\.id::text/);
   assert.match(block,/pi\.source_type='order'/);
   assert.match(block,/pi\.source_id=d\.order_id/);

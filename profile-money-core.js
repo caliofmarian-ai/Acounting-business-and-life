@@ -183,12 +183,12 @@ export async function courierMoneySnapshot(pool,accountId){
         WHERE pi.source_type='order'
           AND pi.source_id=d.order_id
           AND pa.component_code='courier_net'
-          AND pa.economic_party_id=$1::text
+          AND pa.economic_party_id=$2
           AND pa.rule_snapshot->>'delivery_id'=d.id::text
       ) c ON TRUE
       WHERE d.courier_account_id=$1
       ORDER BY d.created_at DESC LIMIT 40
-    `,[Number(accountId)])
+    `,[Number(accountId),String(accountId)])
   ]);
   return{...home,recent_deliveries:recent.rows};
 }
