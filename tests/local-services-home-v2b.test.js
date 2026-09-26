@@ -17,9 +17,9 @@ function serviceHomeSlice(){
 test('Local Services Home reads only canonical Provider profile Jobs and Money in parallel',()=>{
   const home=serviceHomeSlice();
   assert.match(home,/Promise\.allSettled\(\[/);
-  assert.match(home,/profileApi\('\/api\/service-provider\/me'\)/);
-  assert.match(home,/profileApi\('\/api\/services\/jobs\/mine'\)/);
-  assert.match(home,/profileApi\('\/api\/profile-money\/service_provider'\)/);
+  assert.match(home,/profileApi\('\/api\/service-provider\/me\?view=home'\)/);
+  assert.match(home,/profileApi\('\/api\/services\/jobs\/mine\?view=provider_home'\)/);
+  assert.match(home,/profileApi\('\/api\/profile-money\/service_provider\?view=home'\)/);
   assert.match(home,/Number\(job\.provider_account_id\)===accountId/);
   const loadStart=home.indexOf('async function loadServiceProviderHomeData');
   const loadEnd=home.indexOf('function serviceProviderHomeReadiness',loadStart);
