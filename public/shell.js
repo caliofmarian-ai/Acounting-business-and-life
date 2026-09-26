@@ -1171,9 +1171,9 @@ async function loadServiceProviderHomeData(force=false){
   if(serviceProviderHomeCache.promise)return serviceProviderHomeCache.promise;
   serviceProviderHomeCache.promise=(async()=>{
     const [providerResult,jobsResult,moneyResult]=await Promise.allSettled([
-      profileApi('/api/service-provider/me'),
-      profileApi('/api/services/jobs/mine'),
-      profileApi('/api/profile-money/service_provider')
+      profileApi('/api/service-provider/me?view=home'),
+      profileApi('/api/services/jobs/mine?view=provider_home'),
+      profileApi('/api/profile-money/service_provider?view=home')
     ]);
     const failures=[];
     const value=(result,label)=>{
