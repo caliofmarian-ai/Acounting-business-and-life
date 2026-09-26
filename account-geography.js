@@ -6,6 +6,10 @@ export function normalizeHomePsgcCode(value){
   return code.length===10?code:'';
 }
 
+export function barangaySearchTokens(value){
+  return clean(value,120).toLowerCase().split(/[^a-z0-9]+/).map(x=>x.trim()).filter(x=>x.length>=2).slice(0,8);
+}
+
 export async function ensureAccountGeographySchema(pool){
   if(accountGeographySchemaReady)return;
   await pool.query(
@@ -47,20 +51,43 @@ export async function resolveOfficialBarangay(pool,psgcCode){
 
 export async function searchOfficialBarangays(pool,{query='',limit=20}={}){
   const q=clean(query,120);
-  if(q.length<2)return{source_version:null,items:[]};
   const version=await latestRegistryVersion(pool);
   if(!version)return{source_version:null,items:[]};
   const bounded=Math.max(1,Math.min(30,Number(limit)||20));
-  const needle='%'+q.toLowerCase()+'%';
+  if(!q){
+    const rows=await pool.query(
+      "SELECT g.psgc_code,g.name,g.path_text,g.source_version,t.id operating_territory_id,t.status operating_status "+
+      "FROM ph_geographic_registry g JOIN territories t ON t.country_code='PH' AND t.psgc_code=g.psgc_code "+
+      "WHERE g.country_code='PH' AND g.source_version=$1 AND g.geographic_level='barangay' "+
+      "AND t.status IN ('onboarding','active') "+
+      "ORDER BY CASE t.status WHEN 'onboarding' THEN 0 ELSE 1 END,g.name LIMIT $2",
+      [version,bounded]
+    );
+    return{source_version:version,items:rows.rows,suggestions:true};
+  }
+  const tokens=barangaySearchTokens(q);
+  if(!tokens.length)return{source_version:version,items:[]};
+  const params=[version];
+  const clauses=[];
+  for(const token of tokens){
+    params.push('%'+token+'%');
+    const p='$'+params.length;
+    clauses.push("(LOWER(g.name) LIKE "+p+" OR LOWER(g.path_text) LIKE "+p+" OR g.psgc_code LIKE REPLACE("+p+",'%','')||'%')");
+  }
+  params.push(q.toLowerCase());
+  const exactParam='$'+params.length;
+  params.push(bounded);
+  const limitParam='$'+params.length;
   const rows=await pool.query(
     "SELECT g.psgc_code,g.name,g.path_text,g.source_version,t.id operating_territory_id,t.status operating_status "+
     "FROM ph_geographic_registry g LEFT JOIN territories t ON t.country_code='PH' AND t.psgc_code=g.psgc_code "+
-    "WHERE g.country_code='PH' AND g.source_version=$1 AND g.geographic_level='barangay' "+
-    "AND (LOWER(g.name) LIKE $2 OR LOWER(g.path_text) LIKE $2 OR g.psgc_code LIKE REPLACE($2,'%','')||'%') "+
-    "ORDER BY CASE WHEN LOWER(g.name)=LOWER($3) THEN 0 ELSE 1 END,g.name LIMIT $4",
-    [version,needle,q,bounded]
+    "WHERE g.country_code='PH' AND g.source_version=$1 AND g.geographic_level='barangay' AND "+clauses.join(' AND ')+" "+
+    "ORDER BY CASE WHEN LOWER(g.name)="+exactParam+" THEN 0 ELSE 1 END,"+
+      "CASE WHEN t.status='onboarding' THEN 0 WHEN t.status='active' THEN 1 WHEN t.id IS NOT NULL THEN 2 ELSE 3 END,g.name "+
+    "LIMIT "+limitParam,
+    params
   );
-  return{source_version:version,items:rows.rows};
+  return{source_version:version,items:rows.rows,suggestions:false};
 }
 
 export async function geographyAvailabilityForCode(pool,psgcCode){

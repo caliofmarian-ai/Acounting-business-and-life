@@ -11,26 +11,32 @@ let modernGeoSearchTimer=null;
 function bindModernBarangayPicker(){
   const input=document.getElementById('regBarangaySearch'),hidden=document.getElementById('regHomePsgcCode'),results=document.getElementById('regBarangayResults'),state=document.getElementById('regBarangayStatus');
   if(!input||!hidden||!results||!state)return;
+  const renderItems=items=>{
+    results.innerHTML=items.length?items.map(x=>'<button type="button" class="modernGeoResult" data-geo="'+esc(x.psgc_code)+'"><strong>'+esc(x.name)+'</strong><small>'+esc(x.path_text)+' · PSGC '+esc(x.psgc_code)+(x.operating_status?' · '+esc(String(x.operating_status).replaceAll('_',' ')):'')+'</small></button>').join(''):'<div class="modernGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
+    results.querySelectorAll('[data-geo]').forEach(button=>button.onclick=async()=>{
+      hidden.value=button.dataset.geo;input.value=button.querySelector('strong')?.textContent||'';results.innerHTML='';
+      try{
+        const availability=await api('/api/auth/geography/status?psgc_code='+encodeURIComponent(hidden.value));
+        state.textContent=availability.message||'Official barangay selected.';
+        state.className='modernGeoStatus '+(availability.operational_onboarding_available?'ok':'warn');
+      }catch(error){state.textContent=error.message;state.className='modernGeoStatus warn'}
+    });
+  };
+  const load=async(query='')=>{
+    results.innerHTML='<div class="modernGeoStatus">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
+    try{
+      const data=await api('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=20');
+      renderItems(data.items||[]);
+    }catch(error){results.innerHTML='<div class="modernGeoStatus warn">'+esc(error.message)+'</div>'}
+  };
+  input.addEventListener('focus',()=>{if(!hidden.value&&!input.value.trim())load('')});
   input.addEventListener('input',()=>{
     hidden.value='';state.textContent='Choose an official barangay from the results.';state.className='modernGeoStatus';
     clearTimeout(modernGeoSearchTimer);
-    const query=input.value.trim();if(query.length<2){results.innerHTML='';return}
-    modernGeoSearchTimer=setTimeout(async()=>{
-      results.innerHTML='<div class="modernGeoStatus">Searching official PSGC…</div>';
-      try{
-        const data=await api('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=20');
-        const items=data.items||[];
-        results.innerHTML=items.length?items.map(x=>'<button type="button" class="modernGeoResult" data-geo="'+esc(x.psgc_code)+'"><strong>'+esc(x.name)+'</strong><small>'+esc(x.path_text)+' · PSGC '+esc(x.psgc_code)+'</small></button>').join(''):'<div class="modernGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
-        results.querySelectorAll('[data-geo]').forEach(button=>button.onclick=async()=>{
-          hidden.value=button.dataset.geo;input.value=button.querySelector('strong')?.textContent||'';results.innerHTML='';
-          try{
-            const availability=await api('/api/auth/geography/status?psgc_code='+encodeURIComponent(hidden.value));
-            state.textContent=availability.message||'Official barangay selected.';
-            state.className='modernGeoStatus '+(availability.operational_onboarding_available?'ok':'warn');
-          }catch(error){state.textContent=error.message;state.className='modernGeoStatus warn'}
-        });
-      }catch(error){results.innerHTML='<div class="modernGeoStatus warn">'+esc(error.message)+'</div>'}
-    },250);
+    const query=input.value.trim();
+    if(query.length===0){modernGeoSearchTimer=setTimeout(()=>load(''),80);return}
+    if(query.length<2){results.innerHTML='';return}
+    modernGeoSearchTimer=setTimeout(()=>load(query),250);
   });
 }
 

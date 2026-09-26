@@ -383,27 +383,33 @@ let accountGeoSearchTimer=null;
 function bindAccountGeographyControls(workspace){
   const form=workspace.querySelector('#accountGeographyForm'),input=workspace.querySelector('#accountBarangaySearch'),hidden=workspace.querySelector('#accountHomePsgcCode'),results=workspace.querySelector('#accountBarangayResults'),status=workspace.querySelector('#accountBarangayStatus');
   if(!form||!input||!hidden||!results||!status)return;
+  const renderItems=items=>{
+    results.innerHTML=items.length?items.map(x=>'<button type="button" class="accountGeoResult" data-account-geo="'+escapeHtml(x.psgc_code)+'"><strong>'+escapeHtml(x.name)+'</strong><small>'+escapeHtml(x.path_text)+' · PSGC '+escapeHtml(x.psgc_code)+(x.operating_status?' · '+escapeHtml(String(x.operating_status).replaceAll('_',' ')):'')+'</small></button>').join(''):'<div class="accountGeoHint warn">No official barangay matched.</div>';
+    results.querySelectorAll('[data-account-geo]').forEach(button=>button.onclick=async()=>{
+      hidden.value=button.dataset.accountGeo;
+      input.value=button.querySelector('strong')?.textContent||'';
+      results.innerHTML='';
+      try{
+        const availability=await profileApi('/api/auth/geography/status?psgc_code='+encodeURIComponent(hidden.value));
+        status.textContent=availability.message||'Official barangay selected.';
+        status.className='accountGeoHint '+(availability.operational_onboarding_available?'ok':'warn');
+      }catch(error){status.textContent=error.message}
+    });
+  };
+  const load=async(query='')=>{
+    results.innerHTML='<div class="accountGeoHint">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
+    try{
+      const data=await profileApi('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=20');
+      renderItems(data.items||[]);
+    }catch(error){results.innerHTML='<div class="accountGeoHint warn">'+escapeHtml(error.message)+'</div>'}
+  };
+  input.onfocus=()=>{if(!hidden.value&&!input.value.trim())load('')};
   input.oninput=()=>{
     hidden.value='';clearTimeout(accountGeoSearchTimer);
-    const q=input.value.trim();if(q.length<2){results.innerHTML='';return}
-    accountGeoSearchTimer=setTimeout(async()=>{
-      results.innerHTML='<div class="accountGeoHint">Searching official PSGC…</div>';
-      try{
-        const data=await profileApi('/api/auth/geography/search?q='+encodeURIComponent(q)+'&limit=20');
-        const items=data.items||[];
-        results.innerHTML=items.length?items.map(x=>'<button type="button" class="accountGeoResult" data-account-geo="'+escapeHtml(x.psgc_code)+'"><strong>'+escapeHtml(x.name)+'</strong><small>'+escapeHtml(x.path_text)+' · PSGC '+escapeHtml(x.psgc_code)+'</small></button>').join(''):'<div class="accountGeoHint warn">No official barangay matched.</div>';
-        results.querySelectorAll('[data-account-geo]').forEach(button=>button.onclick=async()=>{
-          hidden.value=button.dataset.accountGeo;
-          input.value=button.querySelector('strong')?.textContent||'';
-          results.innerHTML='';
-          try{
-            const availability=await profileApi('/api/auth/geography/status?psgc_code='+encodeURIComponent(hidden.value));
-            status.textContent=availability.message||'Official barangay selected.';
-            status.className='accountGeoHint '+(availability.operational_onboarding_available?'ok':'warn');
-          }catch(error){status.textContent=error.message}
-        });
-      }catch(error){results.innerHTML='<div class="accountGeoHint warn">'+escapeHtml(error.message)+'</div>'}
-    },250);
+    const q=input.value.trim();
+    if(q.length===0){accountGeoSearchTimer=setTimeout(()=>load(''),80);return}
+    if(q.length<2){results.innerHTML='';return}
+    accountGeoSearchTimer=setTimeout(()=>load(q),250);
   };
   form.onsubmit=async e=>{
     e.preventDefault();
