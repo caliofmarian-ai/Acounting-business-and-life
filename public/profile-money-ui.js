@@ -4,8 +4,10 @@ const pmh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const pmnice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const pmmoney=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
 async function pmapi(path,options={}){const headers={Authorization:'Bearer '+pmtok(),...(options.headers||{})};if(options.body&&!headers['Content-Type'])headers['Content-Type']='application/json';const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
+function pmtoast(msg){let t=document.getElementById('roleToast')||document.getElementById('profileMoneyFallbackToast');if(!t){t=document.createElement('div');t.id='profileMoneyFallbackToast';t.className='roleToast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');document.body.appendChild(t)}t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);return false}
 function ensurePm(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('profileMoneyWorkspace')){pmWorkspace=document.createElement('section');pmWorkspace.id='profileMoneyWorkspace';pmWorkspace.className='profileMoneyWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',pmWorkspace)}else pmWorkspace=document.getElementById('profileMoneyWorkspace');return true}
-function hidePmBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');for(const id of ['roleHub','ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace','profileSettingsWorkspace'])document.getElementById(id)?.classList.add('hidden');for(const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg'])document.getElementById(id)?.classList.add('hidden')}
+function hidePmBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');for(const id of ['roleHub','accountSettingsWorkspace','ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace','profileSettingsWorkspace'])document.getElementById(id)?.classList.add('hidden');for(const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg'])document.getElementById(id)?.classList.add('hidden')}
+function openPmWorkspace(){if(!ensurePm())return false;if(window.BusinessLifeShell?.openFeatureWorkspace?.('profileMoneyWorkspace'))return true;hidePmBase();pmWorkspace.classList.remove('hidden');return true}
 function closePm(){pmWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function metric(label,value,detail=''){return '<div class="moneyMetric"><span>'+pmh(label)+'</span><strong>'+pmmoney(value)+'</strong>'+(detail?'<small>'+pmh(detail)+'</small>':'')+'</div>'}
 function status(v){const x=String(v||'');return '<span class="moneyStatus '+pmh(x)+'">'+pmh(pmnice(x||'unknown'))+'</span>'}
@@ -51,7 +53,7 @@ async function saveProfileMoneyEntry(e){
 async function reverseProfileMoneyEntry(id){
   const reason=window.prompt('Reason for reversal/correction?')||'Correction';
   const key='profile-money-reverse-'+id+'-'+Date.now();
-  try{await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries/'+id+'/reverse',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({note:reason})});await reloadProfileMoney()}catch(err){window.alert(err.message)}
+  try{await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries/'+id+'/reverse',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({note:reason})});await reloadProfileMoney()}catch(err){pmtoast(err.message||'This entry could not be reversed.')}
 }
 function bindProfileLedger(){
   const form=document.getElementById('profileMoneyEntryForm');if(form)form.onsubmit=saveProfileMoneyEntry;
@@ -83,13 +85,10 @@ function serviceRows(){const rows=pmData.recent_jobs||[];return '<section class=
 function openPmSettings(){
   const shell=window.BusinessLifeShell;
   if(typeof shell?.openProfileSettings==='function')return shell.openProfileSettings(pmRole);
-  const toast=document.getElementById('roleToast');
-  if(toast){toast.textContent='Profile Settings is still loading. Try again in a moment.';toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);return false}
-  window.alert?.('Profile Settings is still loading. Try again in a moment.');
-  return false;
+  return pmtoast('Profile Settings is still loading. Try again in a moment.');
 }
 function renderPm(){if(!pmData)return;const title=pmRole==='customer'?'My Money':pmRole==='courier'?'Earnings & Money':'Money';pmWorkspace.innerHTML='<div class="moneyHeader"><button id="moneyBack" class="moneyBack" type="button">‹</button><div><h1>'+title+'</h1><p>'+pmh(pmRole==='customer'?'Personal payments and purchases':pmRole==='courier'?'Courier settlement and activity':'Service-job value and settlement')+'</p></div></div>'+(pmRole==='customer'?renderCustomer():pmRole==='courier'?renderCourier():renderServices());document.getElementById('moneyBack').onclick=closePm;document.getElementById('moneyOpenSettings')?.addEventListener('click',openPmSettings);bindProfileLedger()}
-async function openPm(role){pmRole=role;if(!ensurePm()||!pmtok())return;hidePmBase();pmWorkspace.classList.remove('hidden');pmWorkspace.innerHTML='<div class="moneyEmpty">Loading Money…</div>';try{pmData=await pmapi('/api/profile-money/'+encodeURIComponent(role));renderPm()}catch(e){pmWorkspace.innerHTML='<div class="moneyHeader"><button id="moneyBack" class="moneyBack" type="button">‹</button><div><h1>Money</h1></div></div><div class="moneyEmpty">'+pmh(e.message)+'</div>';document.getElementById('moneyBack').onclick=closePm}}
+async function openPm(role){pmRole=role;if(!pmtok()||!openPmWorkspace())return;pmWorkspace.innerHTML='<div class="moneyEmpty">Loading Money…</div>';try{pmData=await pmapi('/api/profile-money/'+encodeURIComponent(role));renderPm()}catch(e){pmWorkspace.innerHTML='<div class="moneyHeader"><button id="moneyBack" class="moneyBack" type="button">‹</button><div><h1>Money</h1></div></div><div class="moneyEmpty">'+pmh(e.message)+'</div>';document.getElementById('moneyBack').onclick=closePm}}
 function decorateMoney(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState,role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(!hub||!['customer','courier','service_provider'].includes(role))return;const tile=hub.querySelector('[data-hub-feature="Money"]');if(tile)tile.onclick=()=>openPm(role)}
 window.BusinessLifeProfileMoney=Object.freeze({openCustomerMoney:()=>openPm('customer'),openProfileMoney:openPm});
 function bootPm(){ensurePm();document.addEventListener('abl:profile-state',e=>decorateMoney(e.detail),{passive:true});decorateMoney(window.BusinessLifeProfileState)}

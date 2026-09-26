@@ -581,7 +581,7 @@ function showMerchantWorkspace() {
   else document.getElementById('viewDashboard')?.classList.remove('hidden');
 }
 
-const FEATURE_WORKSPACE_IDS=['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace'];
+const FEATURE_WORKSPACE_IDS=['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace','profileMoneyWorkspace','profileSettingsWorkspace'];
 const FEATURE_LAUNCHERS={ordersWorkspace:'ordersQuickButton',marketWorkspace:'marketQuickButton',supWorkspace:'supQuickButton',deliveryWorkspace:'deliveryQuickButton'};
 function syncFeatureLauncherState(activeWorkspaceId=null){
   const home=document.getElementById('merchantHomeButton');

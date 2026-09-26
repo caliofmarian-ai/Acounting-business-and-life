@@ -12,7 +12,7 @@ const suppliers=read('public/suppliers-ui.js');
 const delivery=read('public/delivery-ui.js');
 
 test('canonical shell owns exclusive feature workspace orchestration',()=>{
-  assert.match(shell,/const FEATURE_WORKSPACE_IDS=\['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace'\]/);
+  assert.match(shell,/const FEATURE_WORKSPACE_IDS=\['ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace','profileMoneyWorkspace','profileSettingsWorkspace'\]/);
   assert.match(shell,/function hideFeatureWorkspaces\(keepWorkspaceId=null\)/);
   assert.match(shell,/function openFeatureWorkspace\(workspaceId\)/);
   assert.match(shell,/hideFeatureWorkspaces\(workspaceId\)/);
