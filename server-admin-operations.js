@@ -939,6 +939,7 @@ app.post('/api/incidents',body,async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.get('/api/governance/admin/geography/status',async(req,res,next)=>{try{return forwardAdmin(req,res,'territory.manage',null,'geographic_registry','PH')}catch(e){next(e)}});
+app.get('/api/governance/admin/territory-demand',async(req,res,next)=>{try{return forwardAdmin(req,res,'territory.manage',null,'territory_demand','PH')}catch(e){next(e)}});
 app.get('/api/governance/admin/geography/search',async(req,res,next)=>{try{return forwardAdmin(req,res,'territory.manage',null,'geographic_registry','PH')}catch(e){next(e)}});
 app.post('/api/governance/admin/geography/sync',body,async(req,res,next)=>{try{return forwardAdmin(req,res,'territory.manage',null,'geographic_registry','PH')}catch(e){next(e)}});
 app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{const parent=req.body?.parent_id?Number(req.body.parent_id):null;return forwardAdmin(req,res,'territory.manage',parent,'territory','new')}catch(e){next(e)}});
