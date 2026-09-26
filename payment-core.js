@@ -282,7 +282,7 @@ export async function createServiceJobPaymentIntent(pool,{
       INSERT INTO payment_intents(
         public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,
         provider_code,logical_method,currency_code,amount,status,provider_status,client_reference,expires_at
-      ) VALUES($1,$2,'service_job',$3,$4,NULL,NULL,$5,$6,$7,$8,'requires_provider','source_checkout_not_enabled',$9,NOW()+INTERVAL '30 minutes')
+      ) VALUES($1,$2,'service_job',$3,$4,NULL,NULL,$5,$6,$7,$8,'requires_provider','checkout_supported',$9,NOW()+INTERVAL '30 minutes')
       RETURNING *
     `,[
       'pi_'+crypto.randomBytes(16).toString('hex'),key,id,Number(payerAccountId),provider,
@@ -293,7 +293,7 @@ export async function createServiceJobPaymentIntent(pool,{
       VALUES($1,$2,'service_job_payment_intent_created',$3,$4::jsonb,$5)
     `,[
       Number(payerAccountId),ins.rows[0].id,provider,
-      JSON.stringify({service_job_id:id,payable_value:summary.commercial.payable_value,outstanding:summary.payment.outstanding,checkout_enabled:false}),
+      JSON.stringify({service_job_id:id,payable_value:summary.commercial.payable_value,outstanding:summary.payment.outstanding,checkout_supported:true}),
       'service-job-intent:'+ins.rows[0].public_id
     ]);
     await client.query('COMMIT');

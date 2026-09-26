@@ -70,17 +70,18 @@ test('Service Provider settlement remains unconfigured without service_provider_
   assert.doesNotMatch(block,/service_provider_net/);
 });
 
-test('V1 A creates provider-neutral HOLD intent and does not enable PayMongo Checkout',()=>{
+test('V1 B keeps Payment Core provider-neutral while exposing the PayMongo checkout handoff',()=>{
   const createStart=payment.indexOf('export async function createServiceJobPaymentIntent');
   const createEnd=payment.indexOf('export async function mirrorConfirmedOrderPayment',createStart);
   const block=payment.slice(createStart,createEnd);
   assert.match(block,/'service_job'/);
   assert.match(block,/'requires_provider'/);
-  assert.match(block,/'source_checkout_not_enabled'/);
-  assert.doesNotMatch(block,/checkout\.paymongo/);
+  assert.match(block,/'checkout_supported'/);
   assert.doesNotMatch(block,/createPayMongoCheckout/);
-  assert.match(server,/checkout_enabled:false/);
-  assert.match(server,/SERVICE_JOB_CHECKOUT_NOT_ENABLED_YET/);
+  assert.match(server,/checkout_supported:true/);
+  assert.match(server,/provider_adapter_ready:intent\.provider_code==='paymongo'/);
+  assert.match(server,/OPEN_PAYMONGO_CHECKOUT/);
+  assert.doesNotMatch(server,/SERVICE_JOB_CHECKOUT_NOT_ENABLED_YET/);
 });
 
 test('Service Job payment summary is readable by Customer, Provider, or scoped payment Admin only',()=>{

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { registerProviderEvent, paymentIntentDetail, sanitizeProviderPayload } from './payment-core.js';
+import { registerProviderEvent, paymentIntentDetail, serviceJobPaymentSummary, sanitizeProviderPayload } from './payment-core.js';
 
 const API_BASE='https://api.paymongo.com';
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
@@ -256,6 +256,42 @@ export async function resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,acc
     };
   }
 
+  if(i.source_type==='service_job'){
+    const jq=await pool.query(
+      "SELECT j.id,j.customer_account_id,j.provider_account_id,j.service_label,j.status,j.quote_amount,j.final_price,j.currency_code,j.customer_confirmed_at,p.display_name provider_name FROM service_jobs j JOIN accounts p ON p.id=j.provider_account_id WHERE j.id=$1",
+      [i.source_id]
+    );
+    if(!jq.rowCount)throw Object.assign(new Error('Service Job not found for payment intent'),{status:404});
+    const j=jq.rows[0];
+    if(Number(j.customer_account_id)!==Number(accountId))throw Object.assign(new Error('Payment intent belongs to another Customer'),{status:403});
+    if(j.status!=='completed'||!j.customer_confirmed_at)throw Object.assign(new Error('Service Job is not payable until completion is Customer-confirmed'),{status:409});
+    const summary=await serviceJobPaymentSummary(pool,j.id);
+    if(i.status!=='succeeded'&&Number(i.amount)>Number(summary.payment.outstanding)+0.001){
+      throw Object.assign(new Error('Service Job outstanding amount changed before checkout'),{status:409,code:'SERVICE_JOB_OUTSTANDING_CHANGED'});
+    }
+    return{
+      intent:i,
+      source_type:'service_job',
+      source_id:Number(i.source_id),
+      payer_account_id:Number(i.payer_account_id),
+      currency_code:i.currency_code||j.currency_code||'PHP',
+      amount:Number(i.amount),
+      line_item_name:clean('Service · '+(j.service_label||('Job '+j.id)),120),
+      reference_number:clean('SERVICE-'+j.id,120),
+      metadata:{
+        bl_payment_intent_public_id:String(i.public_id),
+        bl_source_type:'service_job',
+        bl_source_id:String(i.source_id)
+      },
+      context:{
+        service_job_id:Number(j.id),
+        provider_account_id:Number(j.provider_account_id),
+        provider_name:j.provider_name||'',
+        outstanding_amount:Number(summary.payment.outstanding)
+      }
+    };
+  }
+
   throw payMongoSourceNotEnabled(i.source_type,'checkout');
 }
 
@@ -398,9 +434,39 @@ async function confirmOrderPayMongoSourcePayment(client,{intent,providerPaymentI
   };
 }
 
+async function confirmServiceJobPayMongoSourcePayment(client,{intent,providerPaymentId,providerMethod}){
+  const jq=await client.query("SELECT * FROM service_jobs WHERE id=$1 FOR UPDATE",[intent.source_id]);
+  if(!jq.rowCount)throw Object.assign(new Error('Service Job not found for PayMongo payment'),{status:404});
+  const j=jq.rows[0];
+  if(Number(j.customer_account_id)!==Number(intent.payer_account_id)){
+    return{manual_review:true,reason:'service_job_payer_mismatch',source_type:'service_job',source_id:Number(j.id)};
+  }
+  if(j.status!=='completed'||!j.customer_confirmed_at){
+    return{manual_review:true,reason:'service_job_not_payable',source_type:'service_job',source_id:Number(j.id)};
+  }
+  const summary=await serviceJobPaymentSummary(client,j.id);
+  const outstanding=Number(summary.payment.outstanding);
+  if(Number(intent.amount)>outstanding+0.001){
+    return{manual_review:true,reason:'outstanding_balance_changed',source_type:'service_job',source_id:Number(j.id)};
+  }
+  const remaining=money(Math.max(0,outstanding-Number(intent.amount)));
+  return{
+    source_type:'service_job',
+    source_id:Number(j.id),
+    service_job_id:Number(j.id),
+    customer_account_id:Number(j.customer_account_id),
+    provider_account_id:Number(j.provider_account_id),
+    payment_status:remaining<=0.001?'paid':'partial',
+    outstanding_after:remaining,
+    provider_payment_id:providerPaymentId,
+    provider_method:providerMethod
+  };
+}
+
 export async function confirmPayMongoSourcePayment(client,args){
   const sourceType=clean(args?.intent?.source_type,60);
   if(sourceType==='order')return confirmOrderPayMongoSourcePayment(client,args);
+  if(sourceType==='service_job')return confirmServiceJobPayMongoSourcePayment(client,args);
   return{
     hold:true,
     manual_review:true,

@@ -35,8 +35,51 @@ test('Order checkout descriptor keeps Order behavior and adds generic source met
   assert.equal(d.metadata.bl_business_id,'3');
 });
 
+test('Service Job checkout descriptor uses Customer-owned payable job and generic metadata',async()=>{
+  let call=0;
+  const pool={query:async(sql,args)=>{
+    call++;
+    if(call===1)return{rowCount:1,rows:[{
+      id:92,public_id:'pi_service_92',source_type:'service_job',source_id:44,payer_account_id:9,
+      currency_code:'PHP',amount:'1250.00',status:'requires_provider'
+    }]};
+    if(call===2){
+      assert.match(sql,/FROM service_jobs j JOIN accounts p/);
+      assert.deepEqual(args,[44]);
+      return{rowCount:1,rows:[{
+        id:44,customer_account_id:9,provider_account_id:15,service_label:'Aircon cleaning',
+        status:'completed',quote_amount:'1250.00',final_price:'1250.00',currency_code:'PHP',
+        customer_confirmed_at:'2026-09-26T10:00:00Z',provider_name:'Provider'
+      }]};
+    }
+    if(call===3){
+      assert.match(sql,/SELECT \* FROM service_jobs WHERE id=\$1/);
+      return{rowCount:1,rows:[{
+        id:44,customer_account_id:9,provider_account_id:15,service_label:'Aircon cleaning',
+        status:'completed',quote_amount:'1250.00',final_price:'1250.00',currency_code:'PHP',
+        customer_confirmed_at:'2026-09-26T10:00:00Z'
+      }]};
+    }
+    if(call===4)return{rows:[{gross_confirmed:'0',pending_amount:'1250',confirmed_count:0,pending_count:1}]};
+    if(call===5)return{rows:[{refunded_amount:'0',refund_count:0}]};
+    if(call===6)return{rows:[{allocation_count:0,pending:'0',eligible:'0',processing:'0',paid:'0',held:'0',reversed:'0'}]};
+    if(call===7)return{rows:[{id:92,public_id:'pi_service_92',provider_code:'paymongo',logical_method:'online_other',amount:'1250.00',status:'requires_provider'}]};
+    throw new Error('Unexpected query '+sql);
+  }};
+  const d=await resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_service_92',accountId:9});
+  assert.equal(d.source_type,'service_job');
+  assert.equal(d.source_id,44);
+  assert.equal(d.line_item_name,'Service · Aircon cleaning');
+  assert.equal(d.reference_number,'SERVICE-44');
+  assert.equal(d.metadata.bl_payment_intent_public_id,'pi_service_92');
+  assert.equal(d.metadata.bl_source_type,'service_job');
+  assert.equal(d.metadata.bl_source_id,'44');
+  assert.equal('bl_order_id' in d.metadata,false);
+  assert.equal(d.context.provider_account_id,15);
+});
+
 test('unsupported checkout sources fail closed before source-domain queries',async()=>{
-  for(const source_type of ['service_job','purchase_order','external']){
+  for(const source_type of ['purchase_order','external']){
     let calls=0;
     const pool={query:async()=>{
       calls++;
@@ -54,7 +97,7 @@ test('unsupported checkout sources fail closed before source-domain queries',asy
 });
 
 test('confirmation dispatcher holds unsupported sources without touching a domain client',async()=>{
-  for(const source_type of ['service_job','purchase_order','external']){
+  for(const source_type of ['purchase_order','external']){
     let queried=false;
     const client={query:async()=>{queried=true;throw new Error('domain query must not run')}};
     const result=await confirmPayMongoSourcePayment(client,{intent:{source_type,source_id:81}});
@@ -81,8 +124,22 @@ test('unsupported verified webhook source is manual review and never succeeds',(
   const dispatchStart=adapter.indexOf('export async function confirmPayMongoSourcePayment');
   const webhookStart=adapter.indexOf('export async function processPayMongoWebhook');
   const dispatch=adapter.slice(dispatchStart,webhookStart);
-  assert.doesNotMatch(dispatch,/UPDATE service_jobs/);
+  assert.match(dispatch,/sourceType==='service_job'/);
   assert.doesNotMatch(dispatch,/INSERT INTO order_payments/);
+});
+
+test('Service Job source handler verifies payable state without creating payout evidence',()=>{
+  const start=adapter.indexOf('async function confirmServiceJobPayMongoSourcePayment');
+  const end=adapter.indexOf('export async function confirmPayMongoSourcePayment',start);
+  const block=adapter.slice(start,end);
+  assert.match(block,/SELECT \* FROM service_jobs WHERE id=\$1 FOR UPDATE/);
+  assert.match(block,/customer_account_id/);
+  assert.match(block,/customer_confirmed_at/);
+  assert.match(block,/serviceJobPaymentSummary/);
+  assert.match(block,/outstanding_balance_changed/);
+  assert.match(block,/payment_status:remaining<=0\.001\?'paid':'partial'/);
+  assert.doesNotMatch(block,/INSERT INTO order_payments/);
+  assert.doesNotMatch(block,/service_provider_net/);
 });
 
 test('Order source handler preserves existing financial and order mutations',()=>{
