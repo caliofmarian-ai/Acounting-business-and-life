@@ -410,7 +410,7 @@ function bindAccountGeographyControls(workspace){
     if(!hidden.value)return showToast('Select an official barangay from the results.');
     const button=form.querySelector('button[type="submit"]');button.disabled=true;
     try{
-      snapshot=await profileApi('/api/me/geography',{method:'PUT',body:JSON.stringify({psgc_code:hidden.value})});
+      snapshot=await profileApi('/api/me/geography',{method:'PUT',body:JSON.stringify({psgc_code:hidden.value,qa_remote_test:Boolean(snapshot?.qa_remote_test?.enabled)})});
       profileFetchedAt=Date.now();renderTopAccount();renderAccountSettings('personal');showToast('Business & Life area saved.');
     }catch(error){showToast(error.message);button.disabled=false}
   };
