@@ -26,6 +26,9 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const AUTH_FROM_EMAIL = process.env.AUTH_FROM_EMAIL || '';
 const AUTH_PUBLIC_BASE_URL = String(process.env.AUTH_PUBLIC_BASE_URL || '').replace(/\/$/, '');
 const PREVIEW_SHOW_LINK = process.env.AUTH_PREVIEW_SHOW_LINK === 'true';
+const APP_ENV = String(process.env.APP_ENV || '').trim().toLowerCase();
+const RAILWAY_SERVICE_NAME = String(process.env.RAILWAY_SERVICE_NAME || '').trim();
+const QA_PH_TEST_CONTEXT = ['1','true','yes','on'].includes(String(process.env.QA_PH_TEST_CONTEXT || '').trim().toLowerCase());
 const RESET_TTL_MIN = Math.max(10, Math.min(60, Number(process.env.AUTH_RESET_TTL_MIN || 20)));
 const VERIFY_TTL_HOURS = Math.max(1, Math.min(72, Number(process.env.AUTH_VERIFY_TTL_HOURS || 24)));
 const jsonBody = express.json({ limit: '450kb' });
@@ -272,10 +275,17 @@ app.get('/', root); app.get('/index.html', root);
 app.get('/api/auth/hardening/status', async (_req, res, next) => {
   try {
     // Public authentication capability only. Bootstrap-owner lifecycle state is intentionally not exposed.
+    const qaPreview=RAILWAY_SERVICE_NAME==='accounting-preview'&&APP_ENV==='qa'&&QA_PH_TEST_CONTEXT;
     res.json({
       google_enabled: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
       email_delivery_configured: AUTH_EMAIL_PROVIDER === 'resend' && Boolean(RESEND_API_KEY && AUTH_FROM_EMAIL),
-      preview_link_enabled: PREVIEW_SHOW_LINK
+      preview_link_enabled: PREVIEW_SHOW_LINK,
+      qa_preview_context: qaPreview?{
+        enabled:true,
+        country_code:'PH',
+        label:'Philippines QA test context',
+        device_location_authoritative:false
+      }:{enabled:false}
     });
   } catch (e) { next(e); }
 });
