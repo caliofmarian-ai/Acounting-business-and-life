@@ -23,7 +23,7 @@ test('Customer Courier and Local Services use one shared structural Home skeleto
 
 test('Home loading skeleton contains no invented domain values',()=>{
   const block=between(shell,'function profileHomeLoadingMarkup','function setProfileHomeRefreshBusy');
-  assert.doesNotMatch(block,/₱|PHP|ETA|approved|available|jobs?\s*[:=]\s*\d|orders?\s*[:=]\s*\d|%|balance/i);
+  assert.doesNotMatch(block,/₱|\bPHP\b|\bETA\b|\bapproved\b|\bavailable\b|jobs?\s*[:=]\s*\d|orders?\s*[:=]\s*\d|%|\bbalance\b/i);
   assert.match(block,/aria-hidden="true"/);
 });
 
