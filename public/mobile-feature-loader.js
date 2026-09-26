@@ -211,26 +211,27 @@ async function mountLaunchers(){
   const top=document.querySelector('.topActions');
   if(!top)return;
 
-  if(!document.getElementById('lazySupportBtn')){
-    const help=document.createElement('button');
+  let help=document.getElementById('lazySupportBtn');
+  if(!help){
+    help=document.createElement('button');
     help.id='lazySupportBtn';
     help.className='lazyFeatureButton';
     help.type='button';
     help.textContent='Help';
-    help.onclick=openSupport;
-    top.prepend(help);
+    top.insertBefore(help,top.firstChild);
   }
+  help.onclick=openSupport;
 
-  if(!document.getElementById('lazyMoreBtn')){
-    const more=document.createElement('button');
+  let more=document.getElementById('lazyMoreBtn');
+  if(!more){
+    more=document.createElement('button');
     more.id='lazyMoreBtn';
     more.className='lazyFeatureButton';
     more.type='button';
     more.textContent='More';
-    more.onclick=openMore;
     top.appendChild(more);
   }
-
+  more.onclick=openMore;
 }
 
 async function ensureGovernance(){
