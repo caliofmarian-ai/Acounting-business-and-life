@@ -35,13 +35,15 @@ test('Merchant feature modules use canonical exclusive opening instead of partia
   assert.ok(delivery.includes("openFeatureWorkspace?.('deliveryWorkspace')"));
 });
 
-test('Merchant desktop launchers share one visual class and active state contract',()=>{
-  for(const [name,source] of Object.entries({orders,marketplace,suppliers,delivery})){
-    assert.match(source,/b\.className='merchantWorkspaceButton'/,name+' launcher must use the canonical Merchant workspace class');
+test('Merchant desktop launchers are shell-owned and share one visual active-state contract',()=>{
+  for(const id of ['merchantHomeButton','ordersQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton']){
+    assert.match(shell,new RegExp('id="'+id+'"'));
   }
   assert.match(shellCss,/\.merchantWorkspaceButton\{/);
   assert.match(shellCss,/\.merchantWorkspaceButton\.active,\.merchantWorkspaceButton\[aria-current="page"\]/);
-  assert.doesNotMatch(marketplace,/b\.className='marketQuickButton'/);
+  for(const source of [orders,marketplace,suppliers,delivery]){
+    assert.doesNotMatch(source,/b\.className='merchantWorkspaceButton'/);
+  }
 });
 
 test('Merchant role indicator and mobile tools provide a real home action',()=>{
