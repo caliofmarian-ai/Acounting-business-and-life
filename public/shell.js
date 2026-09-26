@@ -141,6 +141,22 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
 }
 
+function openMerchantDestination(destination){
+  if(destination==='merchantHome')return showActiveWorkspace();
+  if(destination==='profileSettings'){
+    const open=window.BusinessLifeProfileSettings?.open;
+    if(typeof open==='function')return open('merchant');
+    return showToast('Profile Settings is still loading. Try again in a moment.');
+  }
+  const action=destination==='ordersQuickButton'?window.BusinessLifeOrders?.openMerchantOrders
+    :destination==='marketQuickButton'?window.BusinessLifeMarketplace?.openMerchantStore
+    :destination==='supQuickButton'?window.BusinessLifeSuppliers?.openMerchantProcurement
+    :destination==='deliveryQuickButton'?window.BusinessLifeDelivery?.openMerchantDelivery
+    :null;
+  if(typeof action==='function')return action();
+  showToast('This Merchant tool is still loading. Try again in a moment.');
+}
+
 function ensureShellChrome() {
   const shell = document.getElementById('shell');
   const topActions = document.querySelector('.topActions');
@@ -171,21 +187,35 @@ function ensureShellChrome() {
     nav.setAttribute('aria-label','Merchant workspace navigation');
     nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button></div>';
     shell.querySelector('.topbar')?.insertAdjacentElement('afterend',nav);
-    nav.querySelector('#merchantHomeButton')?.addEventListener('click',showActiveWorkspace);
-    const merchantRoutes={
-      ordersQuickButton:()=>window.BusinessLifeOrders?.openMerchantOrders,
-      marketQuickButton:()=>window.BusinessLifeMarketplace?.openMerchantStore,
-      supQuickButton:()=>window.BusinessLifeSuppliers?.openMerchantProcurement,
-      deliveryQuickButton:()=>window.BusinessLifeDelivery?.openMerchantDelivery
+    const merchantDesktopRoutes={
+      merchantHomeButton:'merchantHome',
+      ordersQuickButton:'ordersQuickButton',
+      marketQuickButton:'marketQuickButton',
+      supQuickButton:'supQuickButton',
+      deliveryQuickButton:'deliveryQuickButton'
     };
-    for(const [buttonId,getAction] of Object.entries(merchantRoutes)){
+    for(const [buttonId,destination] of Object.entries(merchantDesktopRoutes)){
       const button=nav.querySelector('#'+buttonId);
-      button?.addEventListener('click',()=>{
-        const action=getAction();
-        if(typeof action==='function')return action();
-        showToast('This Merchant tool is still loading. Try again in a moment.');
-      });
+      if(button&&!button.dataset.shellMerchantWired){
+        button.dataset.shellMerchantWired='true';
+        button.addEventListener('click',()=>openMerchantDestination(destination));
+      }
     }
+  }
+  if (!document.getElementById('merchantMobileTools')) {
+    const tools=document.createElement('section');
+    tools.id='merchantMobileTools';
+    tools.className='merchantMobileTools hidden';
+    tools.setAttribute('aria-label','Merchant tools');
+    tools.innerHTML='<div class="merchantMobileToolsHead"><strong>Merchant tools</strong><span>Business workspace</span></div><div class="merchantMobileToolsGrid"><button type="button" data-merchant-mobile-action="merchantHome"><span aria-hidden="true">🏠</span><strong>Today</strong></button><button type="button" data-merchant-mobile-action="ordersQuickButton"><span aria-hidden="true">🧾</span><strong>Orders</strong></button><button type="button" data-merchant-mobile-action="marketQuickButton"><span aria-hidden="true">🏪</span><strong>Storefront</strong></button><button type="button" data-merchant-mobile-action="supQuickButton"><span aria-hidden="true">📦</span><strong>Suppliers</strong></button><button type="button" data-merchant-mobile-action="deliveryQuickButton"><span aria-hidden="true">🛵</span><strong>Delivery</strong></button><button type="button" data-merchant-mobile-action="profileSettings"><span aria-hidden="true">⚙️</span><strong>Profile Settings</strong></button></div>';
+    const nav=document.getElementById('merchantWorkspaceNav');
+    if(nav)nav.insertAdjacentElement('afterend',tools);
+    else shell.querySelector('.topbar')?.insertAdjacentElement('afterend',tools);
+    tools.querySelectorAll('[data-merchant-mobile-action]').forEach(button=>{
+      if(button.dataset.shellMerchantWired)return;
+      button.dataset.shellMerchantWired='true';
+      button.addEventListener('click',()=>openMerchantDestination(button.dataset.merchantMobileAction));
+    });
   }
   if (!document.getElementById('roleHub')) {
     const hub = document.createElement('section');
@@ -217,9 +247,9 @@ function ensureShellChrome() {
 }
 
 function syncMerchantWorkspaceNavVisibility(){
-  const nav=document.getElementById('merchantWorkspaceNav');
-  if(!nav)return;
-  nav.classList.toggle('hidden',!(activeSurface==='profile'&&activeRole==='merchant'));
+  const visible=activeSurface==='profile'&&activeRole==='merchant';
+  document.getElementById('merchantWorkspaceNav')?.classList.toggle('hidden',!visible);
+  document.getElementById('merchantMobileTools')?.classList.toggle('hidden',!visible);
 }
 function syncBusinessWorkspacePlaceholder(){
   const role=activeSurface==='profile'?activeRole:null;
@@ -558,6 +588,12 @@ function syncFeatureLauncherState(activeWorkspaceId=null){
     button.classList.toggle('active',active);
     if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
   }
+  const mobileActive=activeWorkspaceId?FEATURE_LAUNCHERS[activeWorkspaceId]:'merchantHome';
+  document.querySelectorAll('#merchantMobileTools [data-merchant-mobile-action]').forEach(button=>{
+    const active=button.dataset.merchantMobileAction===mobileActive;
+    button.classList.toggle('active',active);
+    if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
+  });
 }
 function hideFeatureWorkspaces(keepWorkspaceId=null) {
   for (const id of FEATURE_WORKSPACE_IDS) {

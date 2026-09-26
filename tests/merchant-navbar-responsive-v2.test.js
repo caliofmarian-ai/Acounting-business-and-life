@@ -47,13 +47,14 @@ test('desktop global topbar no longer horizontally scrolls to reveal Merchant wo
 test('Merchant nav visibility follows active profile surface and Today is canonical home',()=>{
   assert.match(shell,/function syncMerchantWorkspaceNavVisibility\(\)/);
   assert.match(shell,/activeSurface==='profile'&&activeRole==='merchant'/);
-  assert.match(shell,/merchantHomeButton[^\n]*addEventListener\('click',showActiveWorkspace\)/);
+  assert.match(shell,/if\(destination==='merchantHome'\)return showActiveWorkspace\(\)/);
   assert.match(shell,/const home=document\.getElementById\('merchantHomeButton'\)/);
   assert.match(shell,/const active=!activeWorkspaceId/);
 });
 
-test('narrow screens keep the existing six-button Merchant mobile tools instead of desktop nav',()=>{
-  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(mobile,new RegExp(label));
-  assert.match(mobile,/merchantMobileTools/);
+test('narrow screens keep six shell-owned Merchant mobile destinations instead of desktop nav',()=>{
+  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>|>'+label+'<\\/button>'));
+  assert.match(shell,/id='merchantMobileTools'/);
+  assert.doesNotMatch(mobile,/mountMerchantMobileTools|MERCHANT_MOBILE_ACTIONS/);
   assert.match(css,/@media\(max-width:649px\)/);
 });

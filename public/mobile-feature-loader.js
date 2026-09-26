@@ -145,67 +145,6 @@ function closeMore(){
   document.body.classList.remove('lazyModalOpen');
 }
 
-const MERCHANT_MOBILE_ACTIONS=[
-  ['merchantHome','🏠','Today'],
-  ['ordersQuickButton','🧾','Orders'],
-  ['marketQuickButton','🏪','Storefront'],
-  ['supQuickButton','📦','Suppliers'],
-  ['deliveryQuickButton','🛵','Delivery'],
-  ['profileSettings','⚙️','Profile Settings']
-];
-
-function syncMerchantMobileTools(workspaceId=null){
-  const tools=document.getElementById('merchantMobileTools');if(!tools)return;
-  const map={ordersWorkspace:'ordersQuickButton',marketWorkspace:'marketQuickButton',supWorkspace:'supQuickButton',deliveryWorkspace:'deliveryQuickButton'};
-  const activeAction=map[workspaceId]||'merchantHome';
-  tools.querySelectorAll('[data-merchant-mobile-action]').forEach(button=>{
-    const active=button.dataset.merchantMobileAction===activeAction;
-    button.classList.toggle('active',active);
-    if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
-  });
-}
-
-async function openMerchantMobileAction(id){
-  if(id==='merchantHome'){
-    window.BusinessLifeShell?.showActiveWorkspace?.();
-    return;
-  }
-  if(id==='profileSettings'){
-    const settings=window.BusinessLifeProfileSettings;
-    if(!settings?.open)return toast('Profile Settings is still loading. Try again in a moment.');
-    settings.open('merchant');
-    return;
-  }
-  const button=await waitFor(id,2200);
-  if(!button)return toast('This Merchant tool is still loading. Try again in a moment.');
-  button.click();
-}
-
-function mountMerchantMobileTools(role,surface='account'){
-  let tools=document.getElementById('merchantMobileTools');
-  if(surface!=='profile'||String(role||'')!=='merchant'){
-    tools?.remove();
-    return;
-  }
-  const shell=document.getElementById('shell');
-  const topbar=shell?.querySelector('.topbar');
-  if(!shell||!topbar)return;
-  if(!tools){
-    tools=document.createElement('section');
-    tools.id='merchantMobileTools';
-    tools.className='merchantMobileTools';
-    tools.setAttribute('aria-label','Merchant tools');
-    tools.innerHTML='<div class="merchantMobileToolsHead"><strong>Merchant tools</strong><span>Business workspace</span></div><div class="merchantMobileToolsGrid"></div>';
-  }
-  const grid=tools.querySelector('.merchantMobileToolsGrid');
-  grid.innerHTML=MERCHANT_MOBILE_ACTIONS.map(([id,icon,label])=>`<button type="button" data-merchant-mobile-action="${id}"><span aria-hidden="true">${icon}</span><strong>${label}</strong></button>`).join('');
-  grid.querySelectorAll('[data-merchant-mobile-action]').forEach(button=>button.onclick=()=>openMerchantMobileAction(button.dataset.merchantMobileAction));
-  syncMerchantMobileTools();
-  const workspace=document.getElementById('businessWorkspaceBar');
-  if(workspace)workspace.insertAdjacentElement('afterend',tools);
-  else topbar.insertAdjacentElement('afterend',tools);
-}
-
 async function mountLaunchers(){
   if(!token())return;
   const top=document.querySelector('.topActions');
@@ -245,10 +184,9 @@ async function ensureGovernance(){
 }
 
 async function loadAccountingForRole(role,surface='account'){
-  if(surface!=='profile'||!['merchant','supplier'].includes(String(role||''))){mountMerchantMobileTools(role,surface);return}
+  if(surface!=='profile'||!['merchant','supplier'].includes(String(role||'')))return;
   try{
     await loadFeature('accounting');
-    mountMerchantMobileTools(role,surface);
   }catch(error){console.warn('Accounting lazy-load:',error.message)}
 }
 
@@ -257,7 +195,6 @@ function boot(){
   mountLaunchers();
   const initialState=window.BusinessLifeProfileState||{};
   const initialRole=initialState.activeRole||'';
-  mountMerchantMobileTools(initialRole,initialState.surface||'account');
   const inviteToken=new URLSearchParams(location.search).get('invite');
   if(inviteToken)ensureGovernance().catch(error=>console.warn('Governance invite load:',error.message));
   if(initialState.surface==='profile')loadAccountingForRole(initialRole,initialState.surface);
@@ -265,12 +202,9 @@ function boot(){
     const role=event.detail?.activeRole||'';
     const surface=event.detail?.surface||'account';
     mountLaunchers();
-    mountMerchantMobileTools(role,surface);
     if(surface==='profile')loadAccountingForRole(role,surface);
   });
-  document.addEventListener('abl:feature-workspace',event=>syncMerchantMobileTools(event.detail?.workspaceId||null));
-  document.addEventListener('abl:business-workspace-changed',()=>{const state=window.BusinessLifeProfileState||{};mountMerchantMobileTools(state.activeRole||'',state.surface||'account')});
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden){const state=window.BusinessLifeProfileState||{};mountLaunchers();mountMerchantMobileTools(state.activeRole||'',state.surface||'account')}});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)mountLaunchers()});
 }
 
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});
