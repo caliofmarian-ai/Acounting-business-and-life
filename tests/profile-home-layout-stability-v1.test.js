@@ -49,7 +49,7 @@ test('manual refresh keeps ready content in place and uses the toolbar button as
 test('parallel Home data loading contracts remain unchanged',()=>{
   const customer=between(shell,'async function loadCustomerHomeData','function customerHomeActivities');
   assert.match(customer,/Promise\.allSettled\(\[/);
-  const courier=between(shell,'async function loadCourierHomeData','function courierHomeSettlementStatus');
+  const courier=between(shell,'async function loadCourierHomeData','function openCourierHubFeature');
   assert.match(courier,/Promise\.allSettled\(\[/);
   const services=between(shell,'async function loadServiceProviderHomeData','function serviceProviderHomeReadiness');
   assert.match(services,/Promise\.allSettled\(\[/);
