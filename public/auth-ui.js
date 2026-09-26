@@ -54,10 +54,8 @@ async function authFetch(path, options={}){
   return body;
 }
 let authGeoTimer=null;
-async function searchAuthBarangays(query){
-  const q=String(query||'').trim();
-  if(q.length<2)return[];
-  const data=await authFetch('/api/auth/geography/search?q='+encodeURIComponent(q)+'&limit=20');
+async function searchAuthBarangays(query=''){
+  const data=await authFetch('/api/auth/geography/search?q='+encodeURIComponent(String(query||'').trim())+'&limit=20');
   return data.items||[];
 }
 async function authGeographyStatus(code){
@@ -66,27 +64,33 @@ async function authGeographyStatus(code){
 function bindAuthBarangayPicker(){
   const input=document.getElementById('authBarangaySearch'),hidden=document.getElementById('authHomePsgcCode'),results=document.getElementById('authBarangayResults'),status=document.getElementById('authBarangayStatus');
   if(!input||!hidden||!results||!status)return;
+  const renderItems=items=>{
+    results.innerHTML=items.length?items.map(x=>'<button type="button" class="authGeoResult" data-auth-geo="'+authEsc(x.psgc_code)+'" data-auth-geo-name="'+authEsc(x.name||'')+'"><strong>'+authEsc(x.name||'')+'</strong><small>'+authEsc(x.path_text||'')+' · PSGC '+authEsc(x.psgc_code)+(x.operating_status?' · '+authEsc(String(x.operating_status).replaceAll('_',' ')):'')+'</small></button>').join(''):'<div class="authGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
+    results.querySelectorAll('[data-auth-geo]').forEach(btn=>btn.onclick=async()=>{
+      hidden.value=btn.dataset.authGeo;input.value=btn.dataset.authGeoName;results.innerHTML='';
+      try{
+        const availability=await authGeographyStatus(btn.dataset.authGeo);
+        status.textContent=availability.message||'Official barangay selected.';
+        status.className='authGeoStatus '+(availability.operational_onboarding_available?'ok':'warn');
+      }catch{status.textContent='Official barangay selected.';status.className='authGeoStatus'}
+    });
+  };
+  const load=async(query='')=>{
+    results.innerHTML='<div class="authGeoStatus">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
+    try{renderItems(await searchAuthBarangays(query))}
+    catch(error){results.innerHTML='<div class="authGeoStatus warn">'+authEsc(error.message)+'</div>'}
+  };
+  input.addEventListener('focus',()=>{if(!hidden.value&&!input.value.trim())load('')});
   input.addEventListener('input',()=>{
     hidden.value='';status.textContent='Choose an official barangay from the results.';status.className='authGeoStatus';
     clearTimeout(authGeoTimer);
-    authGeoTimer=setTimeout(async()=>{
-      const q=input.value.trim();if(q.length<2){results.innerHTML='';return}
-      results.innerHTML='<div class="authGeoStatus">Searching official PSGC…</div>';
-      try{
-        const items=await searchAuthBarangays(q);
-        results.innerHTML=items.length?items.map(x=>'<button type="button" class="authGeoResult" data-auth-geo="'+authEsc(x.psgc_code)+'" data-auth-geo-name="'+authEsc(x.name||'')+'"><strong>'+authEsc(x.name||'')+'</strong><small>'+authEsc(x.path_text||'')+' · PSGC '+authEsc(x.psgc_code)+'</small></button>').join(''):'<div class="authGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
-        results.querySelectorAll('[data-auth-geo]').forEach(btn=>btn.onclick=async()=>{
-          hidden.value=btn.dataset.authGeo;input.value=btn.dataset.authGeoName;results.innerHTML='';
-          try{
-            const availability=await authGeographyStatus(btn.dataset.authGeo);
-            status.textContent=availability.message||'Official barangay selected.';
-            status.className='authGeoStatus '+(availability.operational_onboarding_available?'ok':'warn');
-          }catch{status.textContent='Official barangay selected.';status.className='authGeoStatus'}
-        });
-      }catch(error){results.innerHTML='<div class="authGeoStatus warn">'+error.message+'</div>'}
-    },250);
+    const q=input.value.trim();
+    if(q.length===0){authGeoTimer=setTimeout(()=>load(''),80);return}
+    if(q.length<2){results.innerHTML='';return}
+    authGeoTimer=setTimeout(()=>load(q),250);
   });
 }
+
 function ensureAuthChoices(){
   const login=document.getElementById('login'); const form=document.getElementById('loginForm'); if(!login||!form||document.getElementById('accountAuthChoices'))return;
   const box=document.createElement('div');box.id='accountAuthChoices';box.className='accountAuthChoices';box.innerHTML=`<div class="accountAuthDivider"><span>or use your personal account</span></div><button id="emailLoginBtn" class="accountAuthBtn" type="button">Sign in with email</button><button id="createAccountBtn" class="accountAuthBtn primaryAlt" type="button">Create account</button><div class="accountAuthHint">One account can later use Customer, Merchant, Supplier, Delivery and Local Services profiles.</div>`;form.insertAdjacentElement('afterend',box);box.querySelector('#emailLoginBtn').onclick=()=>openAuth('login');box.querySelector('#createAccountBtn').onclick=()=>openAuth('register');
