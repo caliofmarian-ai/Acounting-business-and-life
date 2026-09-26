@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
-import {createV2Session,isLegacyBearerToken,resolveV2SessionToken} from './auth-session-core.js';
+import {AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,resolveV2SessionStepUp,resolveV2SessionToken} from './auth-session-core.js';
 import {incidentsFetch,startEmbeddedIncidents,stopEmbeddedIncidents} from './server-incidents.js';
 
 const { Pool } = pg;
@@ -48,13 +48,15 @@ function safeHexEqual(a, b) {
   try { const aa = Buffer.from(String(a), 'hex'); const bb = Buffer.from(String(b), 'hex'); return aa.length === bb.length && crypto.timingSafeEqual(aa, bb); } catch { return false; }
 }
 function requestIpHash(req) { return sha256(req.ip || req.headers['x-forwarded-for'] || 'unknown'); }
+function throttleId(req,key){return `${requestIpHash(req)}:${sha256(key)}`;}
 function throttled(req, key, max = 6, windowMs = 15 * 60_000) {
-  const id = `${requestIpHash(req)}:${sha256(key)}`; const now = Date.now();
+  const id = throttleId(req,key); const now = Date.now();
   const state = attempts.get(id) || { count: 0, first: now };
   if (now - state.first > windowMs) { state.count = 0; state.first = now; }
   if (state.count >= max) return true;
   state.count += 1; attempts.set(id, state); return false;
 }
+function clearThrottle(req,key){attempts.delete(throttleId(req,key));}
 function publicBase(req) {
   if (AUTH_PUBLIC_BASE_URL) return AUTH_PUBLIC_BASE_URL;
   const proto = clean(req.headers['x-forwarded-proto'] || req.protocol || 'https', 12).split(',')[0];
@@ -66,10 +68,16 @@ async function hashPassword(password) {
   const derived = await scryptAsync(password, salt, 64);
   return { salt, hash: Buffer.from(derived).toString('hex') };
 }
+async function verifyPassword(password,salt,expectedHash){
+  if(!salt||!expectedHash)return false;
+  const derived=await scryptAsync(password,salt,64);
+  return safeHexEqual(Buffer.from(derived).toString('hex'),expectedHash);
+}
 async function createSession(accountId, req) {
   return createV2Session(pool,TOKEN_SECRET,accountId,{
     userAgent:clean(req.headers['user-agent'],400),
-    ipHash:requestIpHash(req)
+    ipHash:requestIpHash(req),
+    stepUpVerified:true
   });
 }
 async function optionalV2(req) {
@@ -88,6 +96,7 @@ async function audit(accountId, eventCode, req, detail = {}) {
 async function initDb() {
   await pool.query(`
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS legacy_pin_retired_at TIMESTAMPTZ;
+    ALTER TABLE account_sessions ADD COLUMN IF NOT EXISTS step_up_verified_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS auth_action_tokens (
       id BIGSERIAL PRIMARY KEY,
       account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -374,6 +383,53 @@ app.post('/api/auth/owner-migrate', jsonBody, async (req, res, next) => {
     await audit(1, 'owner_migration_password_set', req);
     const result = { ok: true, message: 'Owner email/password configured. Verify the email to permanently retire the legacy PIN.' }; if (PREVIEW_SHOW_LINK) result.preview_verify_url = verifyLink; res.json(result);
   } catch (e) { next(e); }
+});
+
+app.get('/api/auth/step-up/status', async (req,res,next) => {
+  try {
+    const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||'';
+    const state=await resolveV2SessionStepUp(pool,TOKEN_SECRET,raw);
+    if(!state)throw Object.assign(new Error('Sign in again to continue'),{status:401});
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({
+      ok:true,
+      verified:Boolean(state.stepUpValid),
+      verified_at:state.stepUpVerifiedAt||null,
+      valid_for_minutes:Math.round(AUTH_STEP_UP_TTL_MS/60_000)
+    });
+  } catch(e){next(e)}
+});
+
+app.post('/api/auth/step-up/password', jsonBody, async (req,res,next) => {
+  try {
+    const s=await requireV2(req),password=String(req.body?.password||'');
+    if(!password)return res.status(400).json({error:'Current password is required'});
+    const throttleKey=`step-up:${s.accountId}:${s.sessionId}`;
+    if(throttled(req,throttleKey,5,15*60_000)){
+      await audit(s.accountId,'step_up_rate_limited',req,{session_id_hash:sha256(s.sessionId)});
+      return res.status(429).json({error:'Too many reauthentication attempts. Try again later.'});
+    }
+    const q=await pool.query(`SELECT password_salt,password_hash,auth_status FROM accounts WHERE id=$1`,[s.accountId]);
+    const account=q.rows[0];
+    if(!account||account.auth_status!=='active')throw Object.assign(new Error('Account is not active'),{status:403});
+    if(!account.password_hash){
+      await audit(s.accountId,'step_up_password_unavailable',req,{session_id_hash:sha256(s.sessionId)});
+      return res.status(409).json({
+        error:'Password reauthentication is not available for this account. Sign in again with your identity provider.',
+        code:'STEP_UP_PASSWORD_UNAVAILABLE'
+      });
+    }
+    if(!(await verifyPassword(password,account.password_salt,account.password_hash))){
+      await audit(s.accountId,'step_up_failed',req,{method:'password',session_id_hash:sha256(s.sessionId)});
+      return res.status(403).json({error:'Current password is incorrect'});
+    }
+    const verifiedAt=await markV2SessionStepUp(pool,{accountId:s.accountId,sessionId:s.sessionId});
+    if(!verifiedAt)throw Object.assign(new Error('Sign in again to continue'),{status:401});
+    clearThrottle(req,throttleKey);
+    await audit(s.accountId,'step_up_succeeded',req,{method:'password',session_id_hash:sha256(s.sessionId)});
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({ok:true,verified:true,verified_at:verifiedAt,valid_for_minutes:Math.round(AUTH_STEP_UP_TTL_MS/60_000)});
+  } catch(e){next(e)}
 });
 
 app.post('/api/auth/sessions/revoke-others', jsonBody, async (req, res, next) => {

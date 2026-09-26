@@ -41,12 +41,14 @@ import {
 import { startEmbeddedLegal,stopEmbeddedLegal } from './server-legal.js';
 import {notificationsFetch} from './server-notifications.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
+import {resolveV2SessionStepUp} from './auth-session-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
+const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const body=express.json({limit:'30mb'});
 let legalReady=false;let shuttingDown=false;
 
@@ -54,6 +56,13 @@ const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||crypto.randomUUID(),120);
 async function identity(req){const r=await authHardeningFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
+async function requireMoneyStepUp(req){
+  const raw=authHeader(req).replace(/^Bearer\s+/i,'');
+  const state=await resolveV2SessionStepUp(pool,TOKEN_SECRET,raw);
+  if(!state)throw Object.assign(new Error('Sign in again to continue'),{status:401});
+  if(!state.stepUpValid)throw Object.assign(new Error('Confirm your identity again before changing payout settings'),{status:428,code:'STEP_UP_REQUIRED'});
+  return state;
+}
 async function forwardJson(req,res,after){
   if(!legalApp)return res.status(503).json({error:'Legal runtime is not ready'});
   const paymentParams={...req.params};
@@ -422,9 +431,9 @@ app.put('/api/settings/account-money/identity',body,async(req,res,next)=>{try{
 
 app.post('/api/settings/account-money/destinations',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
-  const me=await identity(req);
+  const stepUp=await requireMoneyStepUp(req);
   const row=await createAccountFinancialDestination(pool,{
-    publicId:'afd_'+crypto.randomUUID().replaceAll('-',''),accountId:me.account.id,
+    publicId:'afd_'+crypto.randomUUID().replaceAll('-',''),accountId:stepUp.accountId,
     destinationKind:req.body?.destination_kind,displayName:req.body?.display_name,
     institutionName:req.body?.institution_name,accountName:req.body?.account_name,
     referenceLast4:req.body?.reference_last4,currencyCode:req.body?.currency_code||'PHP',
@@ -435,9 +444,9 @@ app.post('/api/settings/account-money/destinations',body,async(req,res,next)=>{t
 
 app.patch('/api/settings/account-money/destinations/:id',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
-  const me=await identity(req);
+  const stepUp=await requireMoneyStepUp(req);
   const row=await updateAccountFinancialDestination(pool,{
-    accountId:me.account.id,id:Number(req.params.id),displayName:req.body?.display_name,
+    accountId:stepUp.accountId,id:Number(req.params.id),displayName:req.body?.display_name,
     institutionName:req.body?.institution_name,accountName:req.body?.account_name,
     referenceLast4:req.body?.reference_last4,canReceive:req.body?.can_receive,
     canPayout:req.body?.can_payout,status:req.body?.status
@@ -446,8 +455,8 @@ app.patch('/api/settings/account-money/destinations/:id',body,async(req,res,next
 }catch(e){next(e)}});
 
 app.post('/api/settings/account-money/destinations/:id/default-payout',body,async(req,res,next)=>{try{
-  const me=await identity(req);
-  res.json(await setDefaultAccountPayoutDestination(pool,{accountId:me.account.id,id:Number(req.params.id)}));
+  const stepUp=await requireMoneyStepUp(req);
+  res.json(await setDefaultAccountPayoutDestination(pool,{accountId:stepUp.accountId,id:Number(req.params.id)}));
 }catch(e){next(e)}});
 
 app.post('/api/settings/financial-accounts',body,async(req,res,next)=>{try{

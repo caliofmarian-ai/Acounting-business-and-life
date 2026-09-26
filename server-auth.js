@@ -157,7 +157,7 @@ async function auth(req, res, next) {
   } catch (err) { next(err); }
 }
 async function createSession(accountId) {
-  return createV2Session(pool,TOKEN_SECRET,accountId);
+  return createV2Session(pool,TOKEN_SECRET,accountId,{stepUpVerified:true});
 }
 
 async function initDb() {
@@ -189,8 +189,10 @@ async function initDb() {
       expires_at TIMESTAMPTZ NOT NULL,
       revoked_at TIMESTAMPTZ,
       user_agent TEXT NOT NULL DEFAULT '',
-      ip_hash TEXT NOT NULL DEFAULT ''
+      ip_hash TEXT NOT NULL DEFAULT '',
+      step_up_verified_at TIMESTAMPTZ
     );
+    ALTER TABLE account_sessions ADD COLUMN IF NOT EXISTS step_up_verified_at TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS account_sessions_account_idx ON account_sessions(account_id, expires_at DESC);
 
     CREATE TABLE IF NOT EXISTS profiles (

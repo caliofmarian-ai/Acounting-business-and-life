@@ -52,7 +52,10 @@ async function decorateSecurity(){
   if(panel.dataset.authSecurityDecorating==='1')return;
   panel.dataset.authSecurityDecorating='1';
   try{
-    const ids=await api('/api/auth/identities');
+    const [ids,stepUp]=await Promise.all([
+      api('/api/auth/identities'),
+      api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10}))
+    ]);
     if(!document.body.contains(panel))return;
     const raced=[...panel.querySelectorAll('.authUpgradeCard')];
     if(raced.length){raced.slice(1).forEach(x=>x.remove());return}
@@ -62,7 +65,13 @@ async function decorateSecurity(){
     const deliveryNote=!account.email_verified_at&&!status.email_delivery_configured
       ?'<div class="avatarHint authDeliveryWarning">Email delivery is not configured in this environment. A preview may offer a direct verification link.</div>'
       :'';
-    section.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;
+    const stepUpMinutes=Number(stepUp?.valid_for_minutes||10);
+    const stepUpMarkup=stepUp?.verified
+      ?'<div class="authSecurityLine"><span>Recent identity confirmation</span><strong>Active · up to '+stepUpMinutes+' min</strong></div>'
+      :account.has_password
+        ?'<form id="stepUpSecurityForm" class="authStepUpForm"><label>Confirm current password<input id="stepUpSecurityPassword" type="password" autocomplete="current-password" maxlength="160" required></label><button type="submit">Confirm identity for sensitive actions</button><div id="stepUpSecurityMsg" class="avatarHint">This confirmation is session-specific and expires automatically.</div></form>'
+        :'<div class="avatarHint authStepUpNotice">Sensitive actions require recent identity confirmation. Sign out and sign back in with Google to refresh this session.</div>';
+    section.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<h3 class="authStepUpTitle">Sensitive-action confirmation</h3>${stepUpMarkup}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;
     panel.appendChild(section);
     section.querySelector('#sendVerify')?.addEventListener('click',async()=>{
       const out=section.querySelector('#authDrawerMsg');out.textContent='Preparing verification…';
@@ -73,6 +82,23 @@ async function decorateSecurity(){
         else if(r.delivery_status==='not_configured')out.textContent='Email delivery is not configured yet. Your verification request was not emailed.';
         else out.textContent='Verification email could not be delivered. Please try again later.';
       }catch(e){out.textContent=e.message}
+    });
+    section.querySelector('#stepUpSecurityForm')?.addEventListener('submit',async e=>{
+      e.preventDefault();
+      const input=section.querySelector('#stepUpSecurityPassword'),out=section.querySelector('#stepUpSecurityMsg');
+      if(!input||!out)return;
+      const password=input.value;
+      input.value='';
+      out.textContent='Confirming identity…';
+      try{
+        await api('/api/auth/step-up/password',{method:'POST',body:JSON.stringify({password})});
+        out.textContent='Identity confirmed. Sensitive actions are available for a short period on this session.';
+        section.remove();
+        await decorateSecurity();
+      }catch(error){
+        input.value='';
+        out.textContent=error.message;
+      }
     });
     section.querySelector('#revokeOthers').onclick=async()=>{const out=section.querySelector('#authDrawerMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}};
   }catch{}finally{delete panel.dataset.authSecurityDecorating}
