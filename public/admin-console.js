@@ -343,7 +343,8 @@ async function wireTerritories(){
       +Number(counts.region||0)+' regions · '+Number(counts.province||0)+' provinces · '
       +Number(counts.city||0)+' cities · '+Number(counts.municipality||0)+' municipalities · '
       +Number(counts.barangay||0).toLocaleString('en-PH')+' barangays'
-      +'<br><span class="muted">Source: Philippine Statistics Authority · '+esc(status.source?.registry||'PSGC')+'</span>';
+      +'<br><span class="muted">Authority: Philippine Statistics Authority · '+esc(status.source?.registry||'PSGC')+'</span>'
+      +(latest.source_transport?'<br><span class="muted">Import transport: '+esc(latest.source_transport==='bundled_q2_2026_snapshot'?'validated offline Q2 2026 snapshot':'direct PSA publication')+'</span>':'');
   };
   const loadStatus=async()=>{
     const status=await api('/api/governance/admin/geography/status');
