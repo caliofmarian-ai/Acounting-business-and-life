@@ -58,13 +58,15 @@ test('Home separates Provider action states from states waiting on the Customer'
   assert.match(home,/data-service-provider-home-section/);
 });
 
-test('Home Money keeps commercial value separate from service_provider_net evidence',()=>{
+test('Home Money separates Customer payment receivable from service_provider_net settlement',()=>{
   const home=serviceHomeSlice();
   assert.match(home,/summary\.confirmed_job_value/);
-  assert.match(home,/summary\.open_commercial_value/);
-  assert.match(home,/income\.tracked\?serviceProviderHomeMoney\(income\.paid\):'Not tracked'/);
-  assert.match(home,/No service_provider_net settlement evidence/);
-  assert.match(home,/Commercial value is not cash received/);
+  assert.match(home,/summary\.payments/);
+  assert.match(home,/payments\.confirmed_customer_payments/);
+  assert.match(home,/payments\.outstanding_receivables/);
+  assert.match(home,/receivable_job_count/);
+  assert.match(home,/Separate service_provider_net allocation evidence/);
+  assert.match(moneyCore,/serviceProviderPaymentEvidence\(pool,accountId\)/);
   assert.match(moneyCore,/netAllocations\(pool,'service_provider_net',accountId\)/);
   assert.match(moneyCore,/Completed job value is a commercial amount, not proof that money was received/);
 });
