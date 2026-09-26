@@ -25,12 +25,12 @@ test('all five Merchant desktop destinations exist in shell before feature modul
 });
 
 test('shell routes reserved Merchant destinations without eager domain data requests',()=>{
-  const chrome=slice(shell,'function ensureShellChrome','function syncMerchantWorkspaceNavVisibility');
-  assert.match(chrome,/ordersQuickButton:\(\)=>window\.BusinessLifeOrders\?\.openMerchantOrders/);
-  assert.match(chrome,/marketQuickButton:\(\)=>window\.BusinessLifeMarketplace\?\.openMerchantStore/);
-  assert.match(chrome,/supQuickButton:\(\)=>window\.BusinessLifeSuppliers\?\.openMerchantProcurement/);
-  assert.match(chrome,/deliveryQuickButton:\(\)=>window\.BusinessLifeDelivery\?\.openMerchantDelivery/);
-  assert.doesNotMatch(chrome,/\/api\/|fetch\(|\.api\(/);
+  const route=slice(shell,'function openMerchantDestination','function ensureShellChrome');
+  assert.match(route,/destination==='ordersQuickButton'\?window\.BusinessLifeOrders\?\.openMerchantOrders/);
+  assert.match(route,/destination==='marketQuickButton'\?window\.BusinessLifeMarketplace\?\.openMerchantStore/);
+  assert.match(route,/destination==='supQuickButton'\?window\.BusinessLifeSuppliers\?\.openMerchantProcurement/);
+  assert.match(route,/destination==='deliveryQuickButton'\?window\.BusinessLifeDelivery\?\.openMerchantDelivery/);
+  assert.doesNotMatch(route,/\/api\/|fetch\(|\.api\(/);
 });
 
 test('feature decorators never append remove or recreate canonical Merchant nav buttons',()=>{
@@ -59,7 +59,8 @@ test('active workspace synchronization still targets the reserved shell buttons'
   assert.match(shell,/button\.setAttribute\('aria-current','page'\)/);
 });
 
-test('mobile Merchant navigation remains separate and complete',()=>{
-  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(mobile,new RegExp(label));
-  assert.match(mobile,/MERCHANT_MOBILE_ACTIONS/);
+test('mobile Merchant navigation remains separate complete and shell-owned',()=>{
+  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>|>'+label+'<\\/button>'));
+  assert.match(shell,/id='merchantMobileTools'/);
+  assert.doesNotMatch(mobile,/MERCHANT_MOBILE_ACTIONS|mountMerchantMobileTools/);
 });
