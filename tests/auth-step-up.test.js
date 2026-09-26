@@ -28,7 +28,7 @@ test('fresh primary and Google sessions start with recent authentication evidenc
 
 test('password step-up is rate limited, audited and never returns the password',()=>{
   const start=hardening.indexOf("app.post('/api/auth/step-up/password'");
-  const end=hardening.indexOf("app.post('/api/auth/sessions/revoke-others'",start);
+  const end=hardening.indexOf("app.post('/api/auth/password'",start);
   const block=hardening.slice(start,end);
   assert.ok(start>=0&&end>start);
   assert.match(block,/throttled\(req,throttleKey,5,15\*60_000\)/);
@@ -69,14 +69,18 @@ test('Money Banking never collects a password and routes confirmation to Securit
   assert.match(settings,/openAccountSettings\?\.\('security'\)/);
 });
 
-test('Security access owns password step-up and does not persist the password',()=>{
-  assert.match(hardeningUi,/id="stepUpSecurityForm"/);
-  assert.match(hardeningUi,/id="stepUpSecurityPassword" type="password" autocomplete="current-password"/);
+test('Security access owns password step-up on demand and does not persist the password',()=>{
+  assert.match(hardeningUi,/function openStepUpDialog\(account\)/);
+  assert.match(hardeningUi,/id="authStepUpDialogForm"/);
+  assert.match(hardeningUi,/id="authStepUpDialogPassword" type="password" autocomplete="current-password"/);
   assert.match(hardeningUi,/\/api\/auth\/step-up\/password/);
-  const start=hardeningUi.indexOf("section.querySelector('#stepUpSecurityForm')");
-  const end=hardeningUi.indexOf("section.querySelector('#revokeOthers')",start);
+  const start=hardeningUi.indexOf("function openStepUpDialog(account)");
+  const end=hardeningUi.indexOf("async function decorateSecurity()",start);
   const block=hardeningUi.slice(start,end);
   assert.ok(start>=0&&end>start);
   assert.match(block,/input\.value=''/);
   assert.doesNotMatch(block,/localStorage\.setItem|sessionStorage\.setItem/);
+  const securityStart=hardeningUi.indexOf("async function decorateSecurity()");
+  const securityBlock=hardeningUi.slice(securityStart,hardeningUi.indexOf("function watchDrawer()",securityStart));
+  assert.doesNotMatch(securityBlock,/type="password"/);
 });
