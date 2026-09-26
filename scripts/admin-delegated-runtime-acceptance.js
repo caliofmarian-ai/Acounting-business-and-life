@@ -78,6 +78,25 @@ async function main(){
     body:{country_code:'PH',territory_type:'city',name:'CI Admin Territory B '+suffix,code:'CI-ADM-B-'+suffix,status:'onboarding'}
   });
 
+  const planned=await request('/api/governance/admin/territories/'+Number(t1.id)+'/status',{
+    token:ownerToken,method:'PATCH',
+    body:{status:'planned',reason:'CI verify territory lifecycle control'}
+  });
+  assert(planned.status==='planned','Owner could not move territory to planned');
+  const onboardingAfterPlanned=await request('/api/governance/territories',{token:ownerToken});
+  assert(!onboardingAfterPlanned.some(x=>Number(x.id)===Number(t1.id)),'Planned territory leaked into onboarding territory list');
+  const reopened=await request('/api/governance/admin/territories/'+Number(t1.id)+'/status',{
+    token:ownerToken,method:'PATCH',
+    body:{status:'onboarding',reason:'CI restore delegated Admin fixture'}
+  });
+  assert(reopened.status==='onboarding','Owner could not restore territory onboarding status');
+  const lifecycleAudit=await pool.query(
+    "SELECT detail_json FROM profile_governance_events WHERE territory_id=$1 AND event_code='territory_status_changed' ORDER BY id DESC LIMIT 1",
+    [Number(t1.id)]
+  );
+  assert(lifecycleAudit.rowCount===1,'Territory lifecycle audit event missing');
+  assert(lifecycleAudit.rows[0].detail_json?.before_status==='planned'&&lifecycleAudit.rows[0].detail_json?.after_status==='onboarding','Territory lifecycle audit before/after evidence incorrect');
+
   const country=await createAccount('country-'+suffix);
   const territory=await createAccount('territory-'+suffix);
   const specialist=await createAccount('specialist-'+suffix);
@@ -127,6 +146,10 @@ async function main(){
   await request('/api/governance/admin/territories',{
     token:countryToken,method:'POST',expected:403,
     body:{territory_type:'city',name:'Forbidden Country Admin Territory',status:'planned'}
+  });
+  await request('/api/governance/admin/territories/'+Number(t2.id)+'/status',{
+    token:countryToken,method:'PATCH',expected:403,
+    body:{status:'planned',reason:'Country Admin must not receive territory.manage implicitly'}
   });
   await request('/api/governance/admin/invitations',{
     token:countryToken,method:'POST',expected:201,
@@ -184,6 +207,8 @@ async function main(){
     territory_admin:'PASS',
     specialist:'PASS',
     sibling_territory_denial:'PASS',
+    territory_status_lifecycle:'PASS',
+    territory_status_audit:'PASS',
     specialist_finance_function_scope:'PASS'
   }));
 }
