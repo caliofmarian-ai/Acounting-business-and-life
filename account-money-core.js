@@ -5,6 +5,7 @@ export const ACCOUNT_MONEY_IDENTITY_KINDS=Object.freeze(['unknown','individual',
 export const ACCOUNT_DESTINATION_KINDS=Object.freeze(['bank','e_wallet','paymongo_wallet','other']);
 export const ACCOUNT_PAYMENT_METHOD_KINDS=Object.freeze(['card','e_wallet','bank','other']);
 export const ACCOUNT_MONEY_VERIFICATION_STATUSES=Object.freeze(['unverified','pending','verified','rejected']);
+export const PAYOUT_DESTINATION_COOLING_HOURS=24;
 
 const IDENTITY_SET=new Set(ACCOUNT_MONEY_IDENTITY_KINDS);
 const DESTINATION_SET=new Set(ACCOUNT_DESTINATION_KINDS);
@@ -46,6 +47,9 @@ function publicDestination(row){
     verification_status:row.verification_status,status:row.status,
     provider_destination_configured:Boolean(row.provider_destination_ref),
     is_default_payout:Boolean(row.is_default_payout),
+    payout_security_changed_at:row.payout_security_changed_at||null,
+    payout_eligible_at:row.payout_eligible_at||null,
+    payout_cooling_off:Boolean(row.can_payout&&row.payout_eligible_at&&new Date(row.payout_eligible_at).getTime()>Date.now()),
     created_at:row.created_at,updated_at:row.updated_at
   };
 }
@@ -96,6 +100,8 @@ export async function ensureAccountMoneySchema(pool){
       verification_status TEXT NOT NULL DEFAULT 'unverified',
       status TEXT NOT NULL DEFAULT 'active',
       is_default_payout BOOLEAN NOT NULL DEFAULT FALSE,
+      payout_security_changed_at TIMESTAMPTZ,
+      payout_eligible_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK(destination_kind IN ('bank','e_wallet','paymongo_wallet','other')),
@@ -106,6 +112,12 @@ export async function ensureAccountMoneySchema(pool){
       ON account_financial_destinations(account_id,status,created_at DESC)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS account_financial_destinations_default_unique
       ON account_financial_destinations(account_id) WHERE is_default_payout=TRUE AND status='active'`,
+    `ALTER TABLE account_financial_destinations ADD COLUMN IF NOT EXISTS payout_security_changed_at TIMESTAMPTZ`,
+    `ALTER TABLE account_financial_destinations ADD COLUMN IF NOT EXISTS payout_eligible_at TIMESTAMPTZ`,
+    `UPDATE account_financial_destinations
+       SET payout_security_changed_at=COALESCE(payout_security_changed_at,created_at),
+           payout_eligible_at=COALESCE(payout_eligible_at,created_at+INTERVAL '24 hours')
+     WHERE can_payout=TRUE`,
     `CREATE TABLE IF NOT EXISTS account_saved_payment_methods(
       id BIGSERIAL PRIMARY KEY,
       public_id TEXT NOT NULL UNIQUE,
@@ -216,21 +228,35 @@ export async function createAccountFinancialDestination(pool,{
   currencyCode='PHP',canReceive=true,canPayout=true
 }){
   const kind=normalizeDestinationKind(destinationKind),currency=normalizeCurrency(currencyCode),last4=normalizeLast4(referenceLast4);
-  const label=clean(displayName,120);
+  const label=clean(displayName,120),payoutEnabled=Boolean(canPayout);
   if(!label)fail('Destination label is required');
   const q=await pool.query(`
     INSERT INTO account_financial_destinations(
       public_id,account_id,destination_kind,display_name,institution_name,account_name,reference_last4,
-      currency_code,can_receive,can_payout,verification_status
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'unverified') RETURNING *
+      currency_code,can_receive,can_payout,verification_status,payout_security_changed_at,payout_eligible_at
+    ) VALUES(
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'unverified',
+      CASE WHEN $10 THEN NOW() END,
+      CASE WHEN $10 THEN NOW()+INTERVAL '24 hours' END
+    ) RETURNING *
   `,[
     clean(publicId,120),Number(accountId),kind,label,clean(institutionName,120),clean(accountName,160),last4,
-    currency,Boolean(canReceive),Boolean(canPayout)
+    currency,Boolean(canReceive),payoutEnabled
   ]);
   await pool.query(`
     INSERT INTO account_money_audit_events(account_id,event_code,entity_type,entity_id,detail_json)
     VALUES($1,'account_financial_destination_created','account_financial_destination',$2,$3::jsonb)
-  `,[Number(accountId),String(q.rows[0].id),JSON.stringify({destination_kind:kind,currency_code:currency,provider_linked:false})]);
+  `,[Number(accountId),String(q.rows[0].id),JSON.stringify({
+    destination_kind:kind,currency_code:currency,provider_linked:false,
+    payout_cooling_off:payoutEnabled,payout_cooling_hours:payoutEnabled?PAYOUT_DESTINATION_COOLING_HOURS:0
+  })]);
+  if(payoutEnabled)await pool.query(`
+    INSERT INTO account_money_audit_events(account_id,event_code,entity_type,entity_id,detail_json)
+    VALUES($1,'payout_destination_cooling_started','account_financial_destination',$2,$3::jsonb)
+  `,[Number(accountId),String(q.rows[0].id),JSON.stringify({
+    reason:'destination_created',payout_eligible_at:q.rows[0].payout_eligible_at,
+    cooling_hours:PAYOUT_DESTINATION_COOLING_HOURS
+  })]);
   return publicDestination(q.rows[0]);
 }
 
@@ -241,29 +267,55 @@ export async function updateAccountFinancialDestination(pool,{
   if(!cur.rowCount)fail('Account financial destination not found',404);
   const old=cur.rows[0],nextStatus=status===undefined?old.status:clean(status,20);
   if(!['active','inactive'].includes(nextStatus))fail('Unsupported destination status');
+  const nextDisplay=displayName===undefined?old.display_name:clean(displayName,120);
+  const nextInstitution=institutionName===undefined?old.institution_name:clean(institutionName,120);
+  const nextAccountName=accountName===undefined?old.account_name:clean(accountName,160);
+  const nextLast4=referenceLast4===undefined?old.reference_last4:normalizeLast4(referenceLast4);
+  const nextCanReceive=canReceive===undefined?old.can_receive:Boolean(canReceive);
+  const nextCanPayout=canPayout===undefined?old.can_payout:Boolean(canPayout);
+  const payoutSecurityChanged=Boolean(nextCanPayout&&(
+    nextInstitution!==old.institution_name||
+    nextAccountName!==old.account_name||
+    nextLast4!==old.reference_last4||
+    !old.can_payout||
+    (old.status!=='active'&&nextStatus==='active')
+  ));
   const q=await pool.query(`
     UPDATE account_financial_destinations SET
       display_name=$1,institution_name=$2,account_name=$3,reference_last4=$4,
       can_receive=$5,can_payout=$6,status=$7,
-      is_default_payout=CASE WHEN $7='inactive' THEN FALSE ELSE is_default_payout END,
+      is_default_payout=CASE WHEN $7='inactive' OR $6=FALSE OR $8 THEN FALSE ELSE is_default_payout END,
+      payout_security_changed_at=CASE
+        WHEN $8 THEN NOW()
+        WHEN $6=FALSE THEN NULL
+        ELSE payout_security_changed_at END,
+      payout_eligible_at=CASE
+        WHEN $8 THEN NOW()+INTERVAL '24 hours'
+        WHEN $6=FALSE THEN NULL
+        ELSE payout_eligible_at END,
       verification_status=CASE
         WHEN display_name<>$1 OR institution_name<>$2 OR account_name<>$3 OR reference_last4<>$4 THEN 'unverified'
         ELSE verification_status END,
       updated_at=NOW()
-    WHERE id=$8 AND account_id=$9 RETURNING *
+    WHERE id=$9 AND account_id=$10 RETURNING *
   `,[
-    displayName===undefined?old.display_name:clean(displayName,120),
-    institutionName===undefined?old.institution_name:clean(institutionName,120),
-    accountName===undefined?old.account_name:clean(accountName,160),
-    referenceLast4===undefined?old.reference_last4:normalizeLast4(referenceLast4),
-    canReceive===undefined?old.can_receive:Boolean(canReceive),
-    canPayout===undefined?old.can_payout:Boolean(canPayout),
-    nextStatus,Number(id),Number(accountId)
+    nextDisplay,nextInstitution,nextAccountName,nextLast4,nextCanReceive,nextCanPayout,nextStatus,
+    payoutSecurityChanged,Number(id),Number(accountId)
   ]);
   await pool.query(`
     INSERT INTO account_money_audit_events(account_id,event_code,entity_type,entity_id,detail_json)
     VALUES($1,'account_financial_destination_updated','account_financial_destination',$2,$3::jsonb)
-  `,[Number(accountId),String(id),JSON.stringify({status:nextStatus,verification_status:q.rows[0].verification_status})]);
+  `,[Number(accountId),String(id),JSON.stringify({
+    status:nextStatus,verification_status:q.rows[0].verification_status,
+    payout_security_reset:payoutSecurityChanged,payout_eligible_at:q.rows[0].payout_eligible_at||null
+  })]);
+  if(payoutSecurityChanged)await pool.query(`
+    INSERT INTO account_money_audit_events(account_id,event_code,entity_type,entity_id,detail_json)
+    VALUES($1,'payout_destination_cooling_started','account_financial_destination',$2,$3::jsonb)
+  `,[Number(accountId),String(id),JSON.stringify({
+    reason:'sensitive_destination_changed',payout_eligible_at:q.rows[0].payout_eligible_at,
+    cooling_hours:PAYOUT_DESTINATION_COOLING_HOURS
+  })]);
   return publicDestination(q.rows[0]);
 }
 
@@ -274,6 +326,8 @@ export async function setDefaultAccountPayoutDestination(pool,{accountId,id}){
     const q=await client.query("SELECT * FROM account_financial_destinations WHERE id=$1 AND account_id=$2 AND status='active' FOR UPDATE",[Number(id),Number(accountId)]);
     if(!q.rowCount)fail('Active account payout destination not found',404);
     if(!q.rows[0].can_payout)fail('Destination is not enabled for payout',409);
+    const eligibleAt=q.rows[0].payout_eligible_at?new Date(q.rows[0].payout_eligible_at).getTime():NaN;
+    if(!Number.isFinite(eligibleAt)||eligibleAt>Date.now())fail('For your security, this payout destination can become default only after the 24-hour security hold ends',409);
     await client.query("UPDATE account_financial_destinations SET is_default_payout=FALSE,updated_at=NOW() WHERE account_id=$1 AND is_default_payout=TRUE",[Number(accountId)]);
     await client.query("UPDATE account_financial_destinations SET is_default_payout=TRUE,updated_at=NOW() WHERE id=$1",[Number(id)]);
     await client.query(`
@@ -291,12 +345,27 @@ export async function attachProviderFinancialDestination(pool,{
 }){
   const provider=clean(providerCode,80),ref=clean(providerDestinationRef,240),status=normalizeVerification(verificationStatus);
   if(!provider||!ref)fail('Provider destination reference is required');
+  const cur=await pool.query("SELECT * FROM account_financial_destinations WHERE id=$1 AND account_id=$2",[Number(id),Number(accountId)]);
+  if(!cur.rowCount)fail('Account financial destination not found',404);
+  const old=cur.rows[0],payoutSecurityChanged=Boolean(
+    old.can_payout&&(old.provider_code!==provider||old.provider_destination_ref!==ref)
+  );
   const q=await pool.query(`
     UPDATE account_financial_destinations SET provider_code=$1,provider_destination_ref=$2,
-      verification_status=$3,updated_at=NOW()
-    WHERE id=$4 AND account_id=$5 RETURNING *
-  `,[provider,ref,status,Number(id),Number(accountId)]);
-  if(!q.rowCount)fail('Account financial destination not found',404);
+      verification_status=$3,
+      is_default_payout=CASE WHEN $4 THEN FALSE ELSE is_default_payout END,
+      payout_security_changed_at=CASE WHEN $4 THEN NOW() ELSE payout_security_changed_at END,
+      payout_eligible_at=CASE WHEN $4 THEN NOW()+INTERVAL '24 hours' ELSE payout_eligible_at END,
+      updated_at=NOW()
+    WHERE id=$5 AND account_id=$6 RETURNING *
+  `,[provider,ref,status,payoutSecurityChanged,Number(id),Number(accountId)]);
+  if(payoutSecurityChanged)await pool.query(`
+    INSERT INTO account_money_audit_events(account_id,event_code,entity_type,entity_id,detail_json)
+    VALUES($1,'payout_destination_cooling_started','account_financial_destination',$2,$3::jsonb)
+  `,[Number(accountId),String(id),JSON.stringify({
+    reason:'provider_destination_changed',payout_eligible_at:q.rows[0].payout_eligible_at,
+    cooling_hours:PAYOUT_DESTINATION_COOLING_HOURS
+  })]);
   return publicDestination(q.rows[0]);
 }
 
