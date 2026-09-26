@@ -11,7 +11,7 @@ const STEP_LABELS={
   profile_onboarding:'Follow profile onboarding'
 };
 const ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
-let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false;
+let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null;
 const profileDraftSavedForRole=new Set();
 const token=()=>localStorage.getItem(TOKEN_KEY)||'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -91,13 +91,12 @@ function overlayShell(){
   document.body.appendChild(root);overlay=root;document.documentElement.classList.add('guidedOnboardingOpen');
   return root;
 }
-function positionSpotlight(target){
+function positionSpotlight(target,{scroll=true}={}){
   const spot=overlay?.querySelector('.guidedSpotlight');
   if(!spot)return;
-  if(!target){
-    spot.classList.add('hidden');return;
-  }
-  target.scrollIntoView({block:'center',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  currentSpotlightTarget=target||null;
+  if(!target){spot.classList.add('hidden');return}
+  if(scroll)target.scrollIntoView({block:'center',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
   requestAnimationFrame(()=>{
     const rect=target.getBoundingClientRect(),pad=7;
     spot.classList.remove('hidden');
@@ -356,8 +355,8 @@ function bindLifecycle(){
     if(event.target.closest?.('#notificationBell,#lazySupportBtn'))scheduleRender(100);
   },true);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&token())scheduleRefresh(150)});
-  window.addEventListener('resize',()=>scheduleRender(80),{passive:true});
-  window.addEventListener('scroll',()=>{if(overlay&&!missionCenterOpen)scheduleRender(40)},{passive:true});
+  window.addEventListener('resize',()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)positionSpotlight(currentSpotlightTarget,{scroll:false})},{passive:true});
+  window.addEventListener('scroll',()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)positionSpotlight(currentSpotlightTarget,{scroll:false})},{passive:true});
 }
 async function boot(){
   ensureLauncher();bindLifecycle();
