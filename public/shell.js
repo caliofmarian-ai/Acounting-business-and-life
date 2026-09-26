@@ -399,15 +399,14 @@ function bindAccountGeographyControls(workspace){
   const load=async(query='')=>{
     results.innerHTML='<div class="accountGeoHint">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
     try{
-      const data=await profileApi('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=20');
+      const data=await profileApi('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=15');
       renderItems(data.items||[]);
     }catch(error){results.innerHTML='<div class="accountGeoHint warn">'+escapeHtml(error.message)+'</div>'}
   };
-  input.onfocus=()=>{if(!hidden.value&&!input.value.trim())load('')};
   input.oninput=()=>{
     hidden.value='';clearTimeout(accountGeoSearchTimer);
     const q=input.value.trim();
-    if(q.length===0){accountGeoSearchTimer=setTimeout(()=>load(''),80);return}
+    if(q.length===0){results.innerHTML='';return}
     if(q.length<2){results.innerHTML='';return}
     accountGeoSearchTimer=setTimeout(()=>load(q),250);
   };
