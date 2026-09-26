@@ -46,13 +46,14 @@ test('Merchant desktop launchers are shell-owned and share one visual active-sta
   }
 });
 
-test('Merchant role indicator and mobile tools provide a real home action',()=>{
+test('Merchant role indicator and shell-owned mobile tools provide a real home action',()=>{
   assert.match(shell,/<button id="activeRolePill" class="activeRolePill" type="button"/);
   assert.match(shell,/activeSurface==='profile'&&activeRole\)showActiveWorkspace\(\)/);
-  assert.match(mobile,/\['merchantHome','🏠','Today'\]/);
-  assert.match(mobile,/if\(id==='merchantHome'\)[\s\S]*showActiveWorkspace/);
-  assert.match(mobile,/function syncMerchantMobileTools\(workspaceId=null\)/);
-  assert.match(mobile,/abl:feature-workspace/);
+  assert.match(shell,/data-merchant-mobile-action="merchantHome"/);
+  assert.match(shell,/function openMerchantDestination\(destination\)/);
+  assert.match(shell,/if\(destination==='merchantHome'\)return showActiveWorkspace\(\)/);
+  assert.match(shell,/querySelectorAll\('#merchantMobileTools \[data-merchant-mobile-action\]'\)/);
+  assert.doesNotMatch(mobile,/syncMerchantMobileTools|openMerchantMobileAction/);
 });
 
 test('Merchant performance intent remains deferred to explicit feature opening',()=>{
