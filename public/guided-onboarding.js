@@ -91,23 +91,96 @@ function overlayShell(){
   document.body.appendChild(root);overlay=root;document.documentElement.classList.add('guidedOnboardingOpen');
   return root;
 }
-function positionSpotlight(target,{scroll=true}={}){
-  const spot=overlay?.querySelector('.guidedSpotlight');
-  if(!spot)return;
+function safeAreaInsets(){
+  let probe=document.getElementById('guidedSafeAreaProbe');
+  if(!probe){
+    probe=document.createElement('div');probe.id='guidedSafeAreaProbe';
+    probe.style.cssText='position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)';
+    document.body.appendChild(probe);
+  }
+  const style=getComputedStyle(probe),number=value=>Number.parseFloat(value)||0;
+  return{top:number(style.paddingTop),bottom:number(style.paddingBottom),left:number(style.paddingLeft),right:number(style.paddingRight)};
+}
+function guideViewport(){
+  const vv=window.visualViewport,insets=safeAreaInsets();
+  const left=vv?.offsetLeft||0,top=vv?.offsetTop||0,width=vv?.width||innerWidth,height=vv?.height||innerHeight;
+  return{left,top,width,height,right:left+width,bottom:top+height,insets};
+}
+function targetIsComfortablyVisible(rect,viewport){
+  const margin=18;
+  return rect.top>=viewport.top+viewport.insets.top+margin&&rect.bottom<=viewport.bottom-viewport.insets.bottom-margin;
+}
+function applySpotlightGeometry(target){
+  const spot=overlay?.querySelector('.guidedSpotlight');if(!spot)return;
   currentSpotlightTarget=target||null;
   if(!target){spot.classList.add('hidden');return}
-  if(scroll)target.scrollIntoView({block:'center',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
-  requestAnimationFrame(()=>{
-    const rect=target.getBoundingClientRect(),pad=7;
-    spot.classList.remove('hidden');
-    spot.style.left=Math.max(6,rect.left-pad)+'px';
-    spot.style.top=Math.max(6,rect.top-pad)+'px';
-    spot.style.width=Math.min(innerWidth-12,rect.width+pad*2)+'px';
-    spot.style.height=Math.min(innerHeight-12,rect.height+pad*2)+'px';
-    spot.style.borderRadius=Math.min(22,Math.max(12,parseFloat(getComputedStyle(target).borderRadius)||14))+'px';
-    target.dataset.guidedElevated='true';
-  });
+  const rect=target.getBoundingClientRect(),viewport=guideViewport(),pad=7;
+  spot.classList.remove('hidden');
+  spot.style.left=Math.max(viewport.left+6,rect.left-pad)+'px';
+  spot.style.top=Math.max(viewport.top+6,rect.top-pad)+'px';
+  spot.style.width=Math.min(viewport.width-12,rect.width+pad*2)+'px';
+  spot.style.height=Math.min(viewport.height-12,rect.height+pad*2)+'px';
+  spot.style.borderRadius=Math.min(22,Math.max(12,parseFloat(getComputedStyle(target).borderRadius)||14))+'px';
+  target.dataset.guidedElevated='true';
 }
+function applyCoachGeometry(target){
+  const coach=overlay?.querySelector('.guidedCoach');if(!coach)return;
+  coach.classList.remove('guidedCoachTop','guidedCoachBottom','guidedCoachCompact');
+  coach.style.left='';coach.style.right='';coach.style.top='';coach.style.bottom='';coach.style.width='';coach.style.maxHeight='';
+  if(!target){
+    coach.classList.add('guidedCoachBottom');return;
+  }
+  const viewport=guideViewport(),targetRect=target.getBoundingClientRect(),gap=14;
+  const desktop=viewport.width>=820;
+  const width=Math.min(desktop?390:viewport.width-20,viewport.width-viewport.insets.left-viewport.insets.right-20);
+  coach.style.width=Math.max(280,width)+'px';
+  coach.style.left=(desktop?Math.max(viewport.left+10,viewport.right-viewport.insets.right-width-28):viewport.left+viewport.insets.left+10)+'px';
+  coach.style.right='auto';coach.style.bottom='auto';
+  let coachRect=coach.getBoundingClientRect();
+  const center=targetRect.top+targetRect.height/2;
+  const viewportCenter=viewport.top+viewport.height/2;
+  const preferred=center>=viewportCenter?'top':'bottom';
+  const topSpace=targetRect.top-(viewport.top+viewport.insets.top)-gap;
+  const bottomSpace=(viewport.bottom-viewport.insets.bottom)-targetRect.bottom-gap;
+  let placement=preferred;
+  if(placement==='top'&&coachRect.height>topSpace&&coachRect.height<=bottomSpace)placement='bottom';
+  if(placement==='bottom'&&coachRect.height>bottomSpace&&coachRect.height<=topSpace)placement='top';
+  if(coachRect.height>Math.max(topSpace,bottomSpace)){
+    coach.classList.add('guidedCoachCompact');
+    coachRect=coach.getBoundingClientRect();
+    placement=topSpace>=bottomSpace?'top':'bottom';
+  }
+  const topMin=viewport.top+viewport.insets.top+10;
+  const bottomMax=viewport.bottom-viewport.insets.bottom-10;
+  let y=placement==='top'?targetRect.top-gap-coachRect.height:targetRect.bottom+gap;
+  y=Math.max(topMin,Math.min(y,bottomMax-coachRect.height));
+  const wouldOverlap=!(y+coachRect.height+gap<=targetRect.top||y-gap>=targetRect.bottom);
+  if(wouldOverlap){
+    const alternate=placement==='top'?'bottom':'top';
+    const altY=alternate==='top'?targetRect.top-gap-coachRect.height:targetRect.bottom+gap;
+    const altClamped=Math.max(topMin,Math.min(altY,bottomMax-coachRect.height));
+    const altOverlap=!(altClamped+coachRect.height+gap<=targetRect.top||altClamped-gap>=targetRect.bottom);
+    if(!altOverlap){placement=alternate;y=altClamped}
+  }
+  coach.classList.add(placement==='top'?'guidedCoachTop':'guidedCoachBottom');
+  coach.dataset.placement=placement;
+  coach.style.top=y+'px';
+  coach.style.maxHeight=Math.max(150,viewport.height-viewport.insets.top-viewport.insets.bottom-20)+'px';
+}
+function positionGuide(target,{scroll=true}={}){
+  const viewport=guideViewport();
+  currentSpotlightTarget=target||null;
+  if(!target){applySpotlightGeometry(null);applyCoachGeometry(null);return}
+  const rect=target.getBoundingClientRect();
+  if(scroll&&!targetIsComfortablyVisible(rect,viewport)){
+    target.scrollIntoView({block:'center',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{applySpotlightGeometry(target);applyCoachGeometry(target)}));
+    return;
+  }
+  applySpotlightGeometry(target);
+  applyCoachGeometry(target);
+}
+
 function coachMarkup(step,title,body,{primary='Continue',secondary='Skip for now',back=false,waiting=false}={}){
   const index=Math.max(1,STEP_ORDER.indexOf(step)+1),pct=Math.round(index/STEP_ORDER.length*100);
   return '<div class="guidedCoachHead"><div><small>GETTING STARTED · '+index+' OF '+STEP_ORDER.length+'</small><h2>'+esc(title)+'</h2></div><span class="guidedProgressChip">'+pct+'%</span></div>'+
@@ -131,7 +204,7 @@ function renderCoach({step,title,body,target=null,primary,secondary,back=false,w
   const root=overlayShell(),coach=root.querySelector('.guidedCoach');
   coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting});
   bindCoachActions(step,{next});
-  positionSpotlight(target);
+  positionGuide(target);
   coach.focus?.({preventScroll:true});
 }
 function missingAccountTarget(){
@@ -355,8 +428,11 @@ function bindLifecycle(){
     if(event.target.closest?.('#notificationBell,#lazySupportBtn'))scheduleRender(100);
   },true);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&token())scheduleRefresh(150)});
-  window.addEventListener('resize',()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)positionSpotlight(currentSpotlightTarget,{scroll:false})},{passive:true});
-  window.addEventListener('scroll',()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)positionSpotlight(currentSpotlightTarget,{scroll:false})},{passive:true});
+  const reposition=()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)positionGuide(currentSpotlightTarget,{scroll:false})};
+  window.addEventListener('resize',reposition,{passive:true});
+  window.addEventListener('scroll',reposition,{passive:true});
+  window.visualViewport?.addEventListener('resize',reposition,{passive:true});
+  window.visualViewport?.addEventListener('scroll',reposition,{passive:true});
 }
 async function boot(){
   ensureLauncher();bindLifecycle();
