@@ -607,9 +607,9 @@ app.post('/api/payments/intents/service-job/:id',body,async(req,res,next)=>{try{
   });
   res.status(201).json({
     ...intent,
-    provider_ready:false,
-    checkout_enabled:false,
-    next_action:'SERVICE_JOB_CHECKOUT_NOT_ENABLED_YET'
+    provider_adapter_ready:intent.provider_code==='paymongo',
+    checkout_supported:true,
+    next_action:intent.provider_code==='paymongo'?'OPEN_PAYMONGO_CHECKOUT':'CONNECT_REAL_PAYMENT_PROVIDER'
   });
 }catch(e){next(e)}});
 
