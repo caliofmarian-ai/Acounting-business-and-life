@@ -63,7 +63,7 @@ test('Customer Home activity cards open canonical workspaces',()=>{
   assert.match(block,/BusinessLifeServices\?\.openCustomerJobs/);
   assert.match(block,/BusinessLifeProfileMoney\?\.openCustomerMoney/);
   assert.match(orders,/window\.BusinessLifeOrders=Object\.freeze\(\{openMerchantOrders,openCustomerOrders,closeOrders\}\)/);
-  assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery,openCourierWorkspace\}\)/);
+  assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery,openCourierWorkspace,openMerchantDelivery\}\)/);
   assert.match(services,/window\.BusinessLifeServices=Object\.freeze\(\{openDirectory,openCustomerJobs(?:,openProviderWorkspace)?\}\)/);
   assert.match(money,/window\.BusinessLifeProfileMoney=Object\.freeze\(\{openCustomerMoney:\(\)=>openPm\('customer'\),openProfileMoney:openPm\}\)/);
 });
