@@ -13,7 +13,9 @@ export async function ensureAccountGeographySchema(pool){
     "geographic_level TEXT NOT NULL,geographic_name TEXT NOT NULL,path_text TEXT NOT NULL DEFAULT '',"+
     "assignment_source TEXT NOT NULL DEFAULT 'self_selected_psgc',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"+
     "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),CHECK(geographic_level='barangay'));"+
-    "CREATE INDEX IF NOT EXISTS account_geography_psgc_idx ON account_geography_assignments(country_code,psgc_code)"
+    "CREATE INDEX IF NOT EXISTS account_geography_psgc_idx ON account_geography_assignments(country_code,psgc_code);"+
+    "CREATE TABLE IF NOT EXISTS account_geography_events(id BIGSERIAL PRIMARY KEY,account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,before_psgc_code TEXT NOT NULL DEFAULT '',after_psgc_code TEXT NOT NULL,assignment_source TEXT NOT NULL DEFAULT '',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"+
+    "CREATE INDEX IF NOT EXISTS account_geography_events_account_idx ON account_geography_events(account_id,created_at DESC)"
   );
 }
 
@@ -103,14 +105,23 @@ export async function saveAccountGeography(pool,accountId,psgcCode,{source='self
   await ensureAccountGeographySchema(pool);
   const unit=await resolveOfficialBarangay(pool,psgcCode);
   if(!unit)throw Object.assign(new Error('Choose an official Philippine barangay from the PSGC list'),{status:400});
+  const before=await pool.query("SELECT psgc_code FROM account_geography_assignments WHERE account_id=$1",[Number(accountId)]);
+  const beforeCode=clean(before.rows[0]?.psgc_code,20);
+  const assignmentSource=clean(source,80)||'self_selected_psgc';
   await pool.query(
     "INSERT INTO account_geography_assignments(account_id,country_code,psgc_code,source_version,geographic_level,geographic_name,path_text,assignment_source) "+
     "VALUES($1,'PH',$2,$3,'barangay',$4,$5,$6) "+
     "ON CONFLICT(account_id) DO UPDATE SET psgc_code=EXCLUDED.psgc_code,source_version=EXCLUDED.source_version,"+
     "geographic_level='barangay',geographic_name=EXCLUDED.geographic_name,path_text=EXCLUDED.path_text,"+
     "assignment_source=EXCLUDED.assignment_source,updated_at=NOW()",
-    [Number(accountId),unit.psgc_code,unit.source_version,unit.name,unit.path_text,clean(source,80)||'self_selected_psgc']
+    [Number(accountId),unit.psgc_code,unit.source_version,unit.name,unit.path_text,assignmentSource]
   );
+  if(beforeCode!==unit.psgc_code){
+    await pool.query(
+      "INSERT INTO account_geography_events(account_id,before_psgc_code,after_psgc_code,assignment_source) VALUES($1,$2,$3,$4)",
+      [Number(accountId),beforeCode,unit.psgc_code,assignmentSource]
+    );
+  }
   return geographyAvailabilityForCode(pool,unit.psgc_code);
 }
 
