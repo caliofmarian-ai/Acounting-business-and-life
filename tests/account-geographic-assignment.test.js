@@ -54,6 +54,8 @@ test('Google-created personal accounts can complete geography in Account Setting
   assert.match(shell,/\/api\/me\/geography/);
   assert.match(shell,/official barangay before activating a profile/);
   assert.match(shell,/snapshot\?\.geography\?\.assigned/);
+  assert.match(shell,/Your area is not open for onboarding/);
+  assert.match(shell,/Area not open/);
 });
 
 test('personal onboarding is automatically scoped to the assigned open barangay',()=>{
