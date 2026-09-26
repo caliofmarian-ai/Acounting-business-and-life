@@ -39,7 +39,8 @@ test('provider workspace uses the selected canonical section instead of creating
   assert.match(ui,/normalized==='Services'/);
   assert.match(ui,/normalized==='Qualifications'/);
   assert.match(ui,/normalized==='Reviews'/);
-  assert.match(ui,/providerJobsPanel\(mine,normalized\)/);
+  assert.match(ui,/normalized==='Jobs'\?await enrichJobPayments\(mine\):mine/);
+  assert.match(ui,/providerJobsPanel\(enriched,normalized\)/);
   assert.doesNotMatch(ui,/profileEditor\(data\)\+servicesEditor\(data\)\+credentialsEditor\(data\)/);
 });
 
