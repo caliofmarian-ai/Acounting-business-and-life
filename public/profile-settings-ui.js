@@ -65,9 +65,13 @@ function accountMoneyIdentity(){return settingsData?.account_money?.identity||{}
 function accountMoneyDestinations(){return settingsData?.account_money?.destinations||[]}
 function accountSavedMethods(){return settingsData?.account_money?.saved_payment_methods||[]}
 function accountMoneyDestinationCard(d){
+  const cooling=Boolean(d.payout_cooling_off),eligible=d.payout_eligible_at?new Date(d.payout_eligible_at):null;
+  const security=cooling&&eligible&&!Number.isNaN(eligible.getTime())
+    ?'<span>Security hold until '+sh(eligible.toLocaleString())+'</span>'
+    :d.can_payout?'<span>Payout security ready</span>':'';
   return '<article class="financialAccountCard"><div class="financialAccountTop"><div><strong>'+sh(d.display_name||snice(d.destination_kind))+'</strong><div>'+sh(d.institution_name||snice(d.destination_kind))+(d.reference_last4?' •••• '+sh(d.reference_last4):'')+'</div></div><span class="'+(d.verification_status==='verified'?'verified':d.verification_status==='rejected'?'rejected':'pending')+'">'+sh(snice(d.verification_status))+'</span></div>'
-    +'<div class="financialAccountMeta"><span>'+sh(snice(d.destination_kind))+'</span><span>'+(d.is_default_payout?'Default payout':'')+'</span><span>'+sh(d.currency_code||'PHP')+'</span></div>'
-    +'<div class="financialAccountActions">'+(!d.is_default_payout&&d.status==='active'&&d.can_payout?'<button type="button" data-account-payout-default="'+d.id+'">Set default payout</button>':'')+(d.status==='active'?'<button type="button" data-account-destination-disable="'+d.id+'">Disable</button>':'')+'</div></article>';
+    +'<div class="financialAccountMeta"><span>'+sh(snice(d.destination_kind))+'</span><span>'+(d.is_default_payout?'Default payout':cooling?'24h security hold':'')+'</span><span>'+sh(d.currency_code||'PHP')+'</span>'+security+'</div>'
+    +'<div class="financialAccountActions">'+(!d.is_default_payout&&d.status==='active'&&d.can_payout&&!cooling?'<button type="button" data-account-payout-default="'+d.id+'">Set default payout</button>':'')+(d.status==='active'?'<button type="button" data-account-destination-disable="'+d.id+'">Disable</button>':'')+'</div></article>';
 }
 function savedPaymentMethodCard(m){
   const label=m.display_label||[m.brand,m.last4?'•••• '+m.last4:''].filter(Boolean).join(' ')||snice(m.method_kind);
@@ -75,7 +79,7 @@ function savedPaymentMethodCard(m){
 }
 function accountMoneySettingsCard(){return simpleMoneyBankingCard()}
 async function saveAccountMoneyIdentity(e){e.preventDefault();const out=document.getElementById('accountMoneyIdentityStatus');out.textContent='Saving…';try{await sapi('/api/settings/account-money/identity',{method:'PUT',body:JSON.stringify({identity_kind:document.getElementById('accountIdentityKind').value,legal_name:document.getElementById('accountLegalName').value})});stoast('Financial identity saved.');await refreshSettings()}catch(err){out.textContent=err.message}}
-async function saveAccountDestination(e){e.preventDefault();const out=document.getElementById('accountDestinationStatus');out.textContent='Saving…';try{await sapi('/api/settings/account-money/destinations',{method:'POST',body:JSON.stringify({destination_kind:document.getElementById('accountDestinationKind').value,display_name:document.getElementById('accountDestinationLabel').value,institution_name:document.getElementById('accountDestinationInstitution').value,account_name:document.getElementById('accountDestinationAccountName').value,reference_last4:document.getElementById('accountDestinationLast4').value,currency_code:'PHP',can_receive:true,can_payout:true})});stoast('Destination added. Provider verification is still required.');await refreshSettings()}catch(err){out.textContent=err.message}}
+async function saveAccountDestination(e){e.preventDefault();const out=document.getElementById('accountDestinationStatus');out.textContent='Saving…';try{await sapi('/api/settings/account-money/destinations',{method:'POST',body:JSON.stringify({destination_kind:document.getElementById('accountDestinationKind').value,display_name:document.getElementById('accountDestinationLabel').value,institution_name:document.getElementById('accountDestinationInstitution').value,account_name:document.getElementById('accountDestinationAccountName').value,reference_last4:document.getElementById('accountDestinationLast4').value,currency_code:'PHP',can_receive:true,can_payout:true})});stoast('Destination added. A 24-hour security hold applies before it can become the default payout.');await refreshSettings()}catch(err){out.textContent=err.message}}
 async function disableAccountDestination(id){try{await sapi('/api/settings/account-money/destinations/'+id,{method:'PATCH',body:JSON.stringify({status:'inactive'})});stoast('Destination disabled.');await refreshSettings()}catch(err){stoast(err.message)}}
 async function setDefaultAccountPayout(id){try{await sapi('/api/settings/account-money/destinations/'+id+'/default-payout',{method:'POST',body:'{}'});stoast('Default payout destination updated.');await refreshSettings()}catch(err){stoast(err.message)}}
 
@@ -128,7 +132,7 @@ function settingsRoleIntro(){
 }
 function simpleMoneyBankingCard(){
   const dest=accountMoneyDestinations().filter(x=>x.status==='active'),methods=accountSavedMethods().filter(x=>x.status==='active');
-  const defaultPayout=dest.find(x=>x.is_default_payout)||dest[0]||null;
+  const defaultPayout=dest.find(x=>x.is_default_payout)||null;
   if(selectedSettingsRole==='customer'){
     return '<section class="settingsCard settingsSimpleCard"><div class="settingsSimpleHead"><span class="settingsSimpleIcon">💳</span><div><h2>Payments</h2><p>Your purchases and refunds. No business accounting here.</p></div></div>'
       +'<div class="settingsSimpleRows"><div><span>Saved payment methods</span><strong>'+(methods.length?methods.length+' saved':'None saved')+'</strong></div><div><span>Online checkout</span><strong>GCash / Maya / QR Ph / Card when available</strong></div><div><span>Refunds</span><strong>Tracked with the original payment</strong></div></div>'
@@ -136,7 +140,7 @@ function simpleMoneyBankingCard(){
       +'<details class="settingsAdvanced"><summary>Optional banking & identity</summary>'+accountMoneyAdvancedContent()+'</details></section>';
   }
   return '<section class="settingsCard settingsSimpleCard"><div class="settingsSimpleHead"><span class="settingsSimpleIcon">🏦</span><div><h2>Banking & payouts</h2><p>One external banking setup is shared across your profiles. This does not mix their accounting.</p></div></div>'
-    +'<div class="settingsSimpleRows"><div><span>Default payout</span><strong>'+sh(defaultPayout?.display_name||'Not set')+'</strong></div><div><span>Verification</span><strong>'+sh(snice(defaultPayout?.verification_status||'not configured'))+'</strong></div><div><span>Provider balance</span><strong>Shown only when provider evidence exists</strong></div></div>'
+    +'<div class="settingsSimpleRows"><div><span>Default payout</span><strong>'+sh(defaultPayout?.display_name||'Not set')+'</strong></div><div><span>Verification</span><strong>'+sh(snice(defaultPayout?.verification_status||'not configured'))+'</strong></div><div><span>Security</span><strong>New or changed payout destinations wait 24 hours</strong></div><div><span>Provider balance</span><strong>Shown only when provider evidence exists</strong></div></div>'
     +(dest.length?'<div class="settingsAccounts">'+dest.map(accountMoneyDestinationCard).join('')+'</div>':'<div class="settingsEmpty">No payout destination configured yet.</div>')
     +'<details class="settingsAdvanced"><summary>Manage banking details</summary>'+accountMoneyAdvancedContent()+'</details></section>';
 }
