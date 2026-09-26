@@ -195,7 +195,7 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
       if(cached)applyWorkspaceState(cached);
       return;
     }
-    accountingState={...accountingState,role:'supplier'};
+    accountingState={role:'supplier',activeBusinessId:null,businesses:[]};
     wireSupplierAccountingTile();
     const workspaceState=await api('/api/accounting/workspaces');
     applyWorkspaceState(workspaceState);
