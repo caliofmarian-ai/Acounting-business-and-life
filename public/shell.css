@@ -761,3 +761,26 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
   .businessWorkspaceBar select{max-width:130px}
   .workspaceIsolated{font-size:.66rem}
 }
+
+
+/* Profile Home Layout Stability V1 — #492
+   Loading state reserves representative Home geometry without inventing domain values. */
+.profileHomeLoadingState{padding:0!important;border:0!important;background:transparent!important;gap:10px!important}
+.profileHomeLoadingCopy{display:grid;gap:5px;padding:14px;border:1px solid var(--bl-border);border-radius:16px;background:#fff}
+.profileHomeLoadingCopy strong{font-size:14px}.profileHomeLoadingCopy span{font-size:12px;line-height:1.4;color:var(--bl-text-secondary)}
+.profileHomeSkeleton{display:grid;gap:10px}
+.profileHomeSkeletonCard{min-height:86px;padding:13px;border:1px solid var(--bl-border);border-radius:18px;background:#fff;box-shadow:0 7px 22px rgba(23,35,60,.04);display:grid;align-content:center;gap:9px;overflow:hidden}
+.profileHomeSkeletonCardTall{min-height:110px}
+.profileHomeSkeletonTitle,.profileHomeSkeletonLine,.profileHomeSkeletonMiniGrid i{display:block;border-radius:999px;background:#edf2f0;background-image:linear-gradient(105deg,transparent 25%,rgba(255,255,255,.78) 42%,transparent 60%);background-size:220% 100%;animation:profileHomeSkeletonShimmer 1.15s linear infinite}
+.profileHomeSkeletonTitle{width:42%;height:10px}.profileHomeSkeletonTitle.short{width:30%}
+.profileHomeSkeletonLine{width:62%;height:8px}.profileHomeSkeletonLine.wide{width:88%}.profileHomeSkeletonLine.short{width:44%}
+.profileHomeSkeletonMiniGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.profileHomeSkeletonMiniGrid i{height:48px;border-radius:13px}
+.customerHomeToolbar button:disabled,.courierHomeToolbar button:disabled,.serviceProviderHomeToolbar button:disabled{cursor:wait;opacity:.72}
+@keyframes profileHomeSkeletonShimmer{to{background-position-x:-220%}}
+@media(prefers-reduced-motion:reduce){.profileHomeSkeletonTitle,.profileHomeSkeletonLine,.profileHomeSkeletonMiniGrid i{animation:none}}
+@media(max-width:420px){
+  .profileHomeSkeletonCard{min-height:82px}
+  .profileHomeSkeletonCardTall{min-height:104px}
+  .profileHomeSkeletonMiniGrid{gap:6px}
+}
