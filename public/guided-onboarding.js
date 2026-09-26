@@ -12,6 +12,7 @@ const STEP_LABELS={
 };
 const ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
 let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false;
+const profileDraftSavedForRole=new Set();
 const token=()=>localStorage.getItem(TOKEN_KEY)||'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
@@ -147,6 +148,37 @@ function missingAccountTarget(){
   }
   return firstVisible('#accountHomeSettings','#openFirstAccountSettings');
 }
+
+function profileOnboardingSubstep(role){
+  const modal=firstVisible('#govModal','.govModal');
+  if(!modal)return null;
+  if(['merchant','supplier'].includes(role)){
+    const business=document.getElementById('appBusiness');
+    if(visible(business)&&!String(business.value||'').trim())return{title:'Add your business name',body:'Enter the business or store name used for this profile, then continue through the real application.',target:business,waiting:true};
+  }
+  if(role==='service_provider'){
+    const headline=document.getElementById('appHeadline');
+    if(visible(headline)&&!String(headline.value||'').trim())return{title:'Add your professional headline',body:'Describe the service identity people should understand first, for example your trade or main skill.',target:headline,waiting:true};
+    const about=document.getElementById('appAbout');
+    if(visible(about)&&!String(about.value||'').trim())return{title:'Describe your experience',body:'Add the relevant experience customers and reviewers need to understand your Local Services profile.',target:about,waiting:true};
+    const cats=[...document.querySelectorAll('[data-req-cat]')];
+    if(cats.length&&!cats.some(x=>x.checked))return{title:'Choose the services you want to offer',body:'Select the service categories that actually match your work. Admin approval remains category-specific.',target:firstVisible('.govCategoryGrid','[data-req-cat]'),waiting:true};
+  }
+  if(role==='courier'){
+    const vehicle=document.getElementById('courierVehicleType');
+    if(visible(vehicle)&&!profileDraftSavedForRole.has(role))return{title:'Confirm your delivery vehicle',body:'Choose the vehicle you will use. The evidence guide changes to match that vehicle type.',target:vehicle,waiting:true};
+  }
+  const ack=document.getElementById('appAck');
+  if(visible(ack)&&!ack.checked)return{title:'Review the responsibility declaration',body:'Read the declaration and confirm it only when you understand that platform approval does not replace licences, permits, insurance or other legal duties.',target:ack.closest('label')||ack,waiting:true};
+  const save=document.querySelector('#govApplicationForm button[type="submit"]');
+  if(visible(save)&&!profileDraftSavedForRole.has(role))return{title:'Save your application',body:'Save the information you entered before submitting it for review.',target:save,waiting:true};
+  const submit=document.getElementById('submitGovApp');
+  if(visible(submit))return{title:'Submit for review',body:'When the application is accurate, submit it. The tutorial will then wait for the real review or activation state.',target:submit,waiting:true};
+  const status=firstVisible('.govStatusLine','.govCard');
+  if(status)return{title:'Application in progress',body:'Your '+(ROLE_LABELS[role]||'profile')+' onboarding is now in its real workflow. The guide will complete this mission when the application reaches review/submitted status or the profile becomes active.',target:status,waiting:true};
+  return{title:'Follow '+(ROLE_LABELS[role]||'profile')+' onboarding',body:'Continue through the real onboarding shown here.',target:modal,waiting:true};
+}
+
 function stepDefinition(step){
   const facts=guide?.facts||{},geo=facts.geography||{},state=shellState();
   if(step==='welcome'){
@@ -223,16 +255,24 @@ function stepDefinition(step){
       waiting:true
     };
   }
-  const selected=roleLabel(),areaReady=Boolean(geo.operational_onboarding_available||facts.company_test);
+  const selected=roleLabel(),role=guide?.selected_profile_role||facts.started_profile_role||'',areaReady=Boolean(geo.operational_onboarding_available||facts.company_test);
+  if(!areaReady)return{
+    title:'Your area is not open yet',
+    body:geo.message||'Your barangay is not open for operational onboarding yet. The guide will resume from here when availability changes.',
+    target:firstVisible('.accountGeographyNotice','.profileActivationGate','.profileRoleList'),
+    secondary:'Pause tutorial',
+    waiting:true
+  };
+  const sub=profileOnboardingSubstep(role);
+  if(sub)return{...sub,secondary:'Pause tutorial'};
   let body='Follow the real '+selected+' onboarding shown on screen. The tutorial finishes when the profile reaches a meaningful submitted, review or active state.';
-  if(!areaReady)body=geo.message||'Your area is not open for operational onboarding yet. The guide will resume from here when availability changes.';
-  if(guide?.selected_profile_role&&['merchant','supplier','courier'].includes(guide.selected_profile_role)&&!facts.started_profile_role){
+  if(role&&['merchant','supplier','courier'].includes(role)&&!facts.started_profile_role){
     body=selected+' is governed during the controlled launch. If an invitation is required, the guide will remain here until one is available.';
   }
   return{
     title:'Follow '+selected+' onboarding',
     body,
-    target:firstVisible('#govModal','.govModal','.profileRoleList','.profileActivationGate'),
+    target:firstVisible('.profileRoleList','.profileActivationGate'),
     secondary:'Pause tutorial',
     waiting:true
   };
@@ -310,6 +350,12 @@ function bindLifecycle(){
     scheduleRender(100);
   });
   document.addEventListener('abl:guided-onboarding-refresh',()=>scheduleRefresh(220));
+  document.addEventListener('submit',event=>{
+    if(event.target?.id==='govApplicationForm'&&guide?.selected_profile_role){
+      profileDraftSavedForRole.add(guide.selected_profile_role);
+      setTimeout(()=>scheduleRender(80),350);
+    }
+  },true);
   document.addEventListener('click',event=>{
     const roleTarget=event.target.closest?.('[data-role-action]');
     if(roleTarget)handleProfileChoice(roleTarget);
