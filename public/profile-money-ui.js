@@ -1,14 +1,67 @@
-let pmWorkspace=null,pmRole='',pmData=null;
+let pmWorkspace=null,pmRole='',pmData=null,pmReversalEntryId=null;
 const pmtok=()=>localStorage.getItem('abl_token')||'';
 const pmh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const pmnice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const pmmoney=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
 async function pmapi(path,options={}){const headers={Authorization:'Bearer '+pmtok(),...(options.headers||{})};if(options.body&&!headers['Content-Type'])headers['Content-Type']='application/json';const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
 function pmtoast(msg){let t=document.getElementById('roleToast')||document.getElementById('profileMoneyFallbackToast');if(!t){t=document.createElement('div');t.id='profileMoneyFallbackToast';t.className='roleToast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');document.body.appendChild(t)}t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);return false}
+function ensurePmReversalDialog(){
+  let backdrop=document.getElementById('profileMoneyReversalBackdrop');
+  if(backdrop)return backdrop;
+  backdrop=document.createElement('div');
+  backdrop.id='profileMoneyReversalBackdrop';
+  backdrop.className='moneyReversalBackdrop hidden';
+  backdrop.innerHTML='<section class="moneyReversalDialog" role="dialog" aria-modal="true" aria-labelledby="moneyReversalTitle"><header><div><small>ACCOUNTING CORRECTION</small><h2 id="moneyReversalTitle">Reverse this entry?</h2></div><button id="moneyReversalClose" type="button" aria-label="Close">×</button></header><form id="moneyReversalForm"><p>The original entry stays in the audit history. A reversal records the correction instead of deleting history.</p><label>Reason for reversal<textarea id="moneyReversalReason" rows="3" maxlength="700" required placeholder="Explain why this entry is being corrected"></textarea></label><div class="moneyReversalActions"><button id="moneyReversalCancel" type="button">Cancel</button><button id="moneyReversalSubmit" class="danger" type="submit">Reverse entry</button></div><div id="moneyReversalStatus" class="moneyFormStatus" role="status" aria-live="polite"></div></form></section>';
+  document.body.appendChild(backdrop);
+  backdrop.addEventListener('click',event=>{if(event.target===backdrop)closePmReversalDialog()});
+  backdrop.querySelector('#moneyReversalClose').onclick=closePmReversalDialog;
+  backdrop.querySelector('#moneyReversalCancel').onclick=closePmReversalDialog;
+  backdrop.querySelector('#moneyReversalForm').onsubmit=submitProfileMoneyReversal;
+  return backdrop;
+}
+function closePmReversalDialog(){
+  const backdrop=document.getElementById('profileMoneyReversalBackdrop');
+  backdrop?.classList.add('hidden');
+  pmReversalEntryId=null;
+  document.body.style.overflow='';
+}
+function openPmReversalDialog(id){
+  const entryId=Number(id);
+  if(!Number.isInteger(entryId)||entryId<=0)return pmtoast('This entry is not available for reversal.');
+  const backdrop=ensurePmReversalDialog();
+  pmReversalEntryId=entryId;
+  const form=backdrop.querySelector('#moneyReversalForm');
+  form?.reset();
+  const status=backdrop.querySelector('#moneyReversalStatus');if(status)status.textContent='';
+  const submit=backdrop.querySelector('#moneyReversalSubmit');if(submit){submit.disabled=false;submit.removeAttribute('aria-busy');submit.textContent='Reverse entry'}
+  backdrop.classList.remove('hidden');
+  document.body.style.overflow='hidden';
+  setTimeout(()=>backdrop.querySelector('#moneyReversalReason')?.focus(),0);
+}
+async function submitProfileMoneyReversal(event){
+  event.preventDefault();
+  const id=pmReversalEntryId;
+  const backdrop=document.getElementById('profileMoneyReversalBackdrop');
+  const reason=String(backdrop?.querySelector('#moneyReversalReason')?.value||'').trim();
+  const status=backdrop?.querySelector('#moneyReversalStatus');
+  const submit=backdrop?.querySelector('#moneyReversalSubmit');
+  if(!id)return closePmReversalDialog();
+  if(!reason){if(status)status.textContent='Add a reason before reversing this entry.';return}
+  if(submit){submit.disabled=true;submit.setAttribute('aria-busy','true');submit.textContent='Reversing…'}
+  const key='profile-money-reverse-'+id+'-'+Date.now();
+  try{
+    await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries/'+id+'/reverse',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({note:reason})});
+    closePmReversalDialog();
+    await reloadProfileMoney();
+  }catch(err){
+    if(status)status.textContent=err.message||'This entry could not be reversed.';
+    if(submit){submit.disabled=false;submit.removeAttribute('aria-busy');submit.textContent='Reverse entry'}
+  }
+}
 function ensurePm(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('profileMoneyWorkspace')){pmWorkspace=document.createElement('section');pmWorkspace.id='profileMoneyWorkspace';pmWorkspace.className='profileMoneyWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',pmWorkspace)}else pmWorkspace=document.getElementById('profileMoneyWorkspace');return true}
 function hidePmBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');for(const id of ['roleHub','accountSettingsWorkspace','ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace','profileSettingsWorkspace'])document.getElementById(id)?.classList.add('hidden');for(const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg'])document.getElementById(id)?.classList.add('hidden')}
 function openPmWorkspace(){if(!ensurePm())return false;if(window.BusinessLifeShell?.openFeatureWorkspace?.('profileMoneyWorkspace'))return true;hidePmBase();pmWorkspace.classList.remove('hidden');return true}
-function closePm(){pmWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closePm(){closePmReversalDialog();pmWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function metric(label,value,detail=''){return '<div class="moneyMetric"><span>'+pmh(label)+'</span><strong>'+pmmoney(value)+'</strong>'+(detail?'<small>'+pmh(detail)+'</small>':'')+'</div>'}
 function status(v){const x=String(v||'');return '<span class="moneyStatus '+pmh(x)+'">'+pmh(pmnice(x||'unknown'))+'</span>'}
 function budgetSummary(){const rows=pmData?.budgets||[];return '<section class="moneyCard"><h2>Profile budget</h2><p>These amounts are planned allocations for this profile only. They are not bank/e-wallet balances.</p>'+(rows.length?'<div class="moneyList">'+rows.map(b=>'<div class="moneyRow"><div><strong>'+pmh(b.label)+'</strong><small>'+pmh(pmnice(b.purpose))+(b.linked_account_display_name?' • linked to '+pmh(b.linked_account_display_name):'')+'</small><span class="moneyStatus pending">Planning only</span></div><div class="moneyRowAmount"><strong>'+pmmoney(b.allocated_budget)+'</strong><small>allocated budget</small></div></div>').join('')+'</div>':'<div class="moneyEmpty">No budget envelope for this profile yet. Create one in Settings.</div>')+'</section>'}
@@ -50,11 +103,7 @@ async function saveProfileMoneyEntry(e){
   const key='profile-money-'+Date.now()+'-'+Math.random().toString(16).slice(2);
   try{await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});await reloadProfileMoney()}catch(err){out.textContent=err.message}
 }
-async function reverseProfileMoneyEntry(id){
-  const reason=window.prompt('Reason for reversal/correction?')||'Correction';
-  const key='profile-money-reverse-'+id+'-'+Date.now();
-  try{await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries/'+id+'/reverse',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({note:reason})});await reloadProfileMoney()}catch(err){pmtoast(err.message||'This entry could not be reversed.')}
-}
+function reverseProfileMoneyEntry(id){openPmReversalDialog(id)}
 function bindProfileLedger(){
   const form=document.getElementById('profileMoneyEntryForm');if(form)form.onsubmit=saveProfileMoneyEntry;
   const type=document.getElementById('profileMoneyEntryType');if(type){type.onchange=syncProfileMoneyForm;syncProfileMoneyForm()}
