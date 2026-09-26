@@ -137,7 +137,8 @@ test('Merchant Today replaces the legacy finance-heavy dashboard while Money pre
 
 test('Money Settings remains the single financial-account and budget configuration surface',()=>{
   assert.match(ui,/Money Settings/);
-  assert.match(ui,/BusinessLifeProfileSettings/);
+  assert.match(ui,/BusinessLifeShell/);
+  assert.match(ui,/openProfileSettings/);
   assert.doesNotMatch(core,/provider_destination_ref TEXT/);
 });
 

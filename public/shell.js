@@ -141,13 +141,21 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
 }
 
+function openProfileSettingsForRole(role){
+  const open=window.BusinessLifeProfileSettings?.open;
+  if(typeof open==='function')return open(role);
+  showToast('Profile Settings is still loading. Try again in a moment.');
+  return false;
+}
+function openAccountMoneySettings(){
+  const open=window.BusinessLifeProfileSettings?.openAccountMoney;
+  if(typeof open==='function')return open();
+  showToast('Money & Banking is still loading. Try again in a moment.');
+  return false;
+}
 function openMerchantDestination(destination){
   if(destination==='merchantHome')return showActiveWorkspace();
-  if(destination==='profileSettings'){
-    const open=window.BusinessLifeProfileSettings?.open;
-    if(typeof open==='function')return open('merchant');
-    return showToast('Profile Settings is still loading. Try again in a moment.');
-  }
+  if(destination==='profileSettings')return openProfileSettingsForRole('merchant');
   const action=destination==='ordersQuickButton'?window.BusinessLifeOrders?.openMerchantOrders
     :destination==='marketQuickButton'?window.BusinessLifeMarketplace?.openMerchantStore
     :destination==='supQuickButton'?window.BusinessLifeSuppliers?.openMerchantProcurement
@@ -382,7 +390,7 @@ function renderAccountSettings(view=accountSettingsView){
   }
   workspace.querySelector('#accountSettingsBack').onclick=()=>view==='home'?closeAccountSettings():renderAccountSettings('home');
   workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>button.dataset.accountSettingsView==='profiles'?openAccountSettings('profiles'):renderAccountSettings(button.dataset.accountSettingsView));
-  workspace.querySelector('#accountMoneyBanking')?.addEventListener('click',()=>window.BusinessLifeProfileSettings?.openAccountMoney?.());
+  workspace.querySelector('#accountMoneyBanking')?.addEventListener('click',openAccountMoneySettings);
   workspace.querySelector('#accountNotifications')?.addEventListener('click',()=>{
     const api=window.BusinessLifeNotifications;
     if(api?.openSettings)return api.openSettings();
@@ -632,6 +640,8 @@ function showActiveWorkspace() {
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
   openFeatureWorkspace,
+  openProfileSettings:openProfileSettingsForRole,
+  openAccountMoneySettings,
   openAccountHome,
   openAccountSettings,
   signOutCurrentAccount,
@@ -920,7 +930,7 @@ function renderCustomerHub(){
     '</nav>';
   hub.querySelectorAll('[data-hub-feature]').forEach(button=>{
     button.onclick=()=>button.dataset.hubFeature==='Profile Settings'
-      ?window.BusinessLifeProfileSettings?.open?.('customer')
+      ?openProfileSettingsForRole('customer')
       :showToast(button.dataset.hubFeature+' is still loading. Try again in a moment.');
   });
   hub.querySelectorAll('[data-customer-nav-target]').forEach(button=>button.onclick=()=>setCustomerHubPanel(hub,button.dataset.customerNavTarget));
@@ -1121,7 +1131,7 @@ function renderCourierHub(){
       '<button type="button" data-courier-nav="deliveries"><span>📋</span><strong>Deliveries</strong></button>'+
       '<button type="button" data-courier-nav="money"><span>💰</span><strong>Money</strong></button>'+
     '</nav>';
-  hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>window.BusinessLifeProfileSettings?.open?.('courier');
+  hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>openProfileSettingsForRole('courier');
   hub.querySelectorAll('[data-courier-nav]').forEach(button=>button.onclick=()=>{
     const destination=button.dataset.courierNav;
     if(destination==='home'){
@@ -1391,7 +1401,7 @@ function renderServiceProviderHub(){
     '</nav>';
   hub.querySelectorAll('[data-service-provider-nav]').forEach(button=>button.onclick=()=>openServiceProviderHubDestination(hub,button.dataset.serviceProviderNav));
   hub.querySelectorAll('[data-service-provider-section]').forEach(button=>button.onclick=()=>openServiceProviderSection(button.dataset.serviceProviderSection));
-  hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>window.BusinessLifeProfileSettings?.open?.('service_provider');
+  hub.querySelector('[data-hub-feature="Profile Settings"]').onclick=()=>openProfileSettingsForRole('service_provider');
   hub.querySelector('#serviceProviderHomeRefresh')?.addEventListener('click',()=>loadServiceProviderHome(hub,{force:true}));
   hub.querySelectorAll('[data-service-provider-home-retry]').forEach(button=>button.onclick=()=>loadServiceProviderHome(hub,{force:true}));
   setServiceProviderHubPanel(hub,serviceProviderHubPanel,{scroll:false});
@@ -1415,11 +1425,7 @@ function renderRoleHub(role) {
   hub.innerHTML = `<div class="hubHero"><div class="hubEyebrow">${escapeHtml(meta.label)} profile</div><h1>${escapeHtml(meta.hero)}</h1><p>One identity, a dedicated workspace, and only the information this role needs.</p><span class="hubStatus">Profile selected</span></div><div class="hubSectionTitle"><h2>Your ${escapeHtml(meta.label)} workspace</h2><span>Philippines Edition</span></div><div class="hubGrid">${tiles}</div>`;
   hub.querySelectorAll('[data-hub-feature]').forEach(btn => btn.onclick = () => {
     const feature=btn.dataset.hubFeature;
-    if(feature==='Profile Settings'){
-      const open=window.BusinessLifeProfileSettings?.open;
-      if(typeof open==='function')return open(role);
-      return showToast('Profile Settings is still loading. Try again in a moment.');
-    }
+    if(feature==='Profile Settings')return openProfileSettingsForRole(role);
     if(role==='supplier'&&feature==='Finance & Accounting'){
       if(window.BusinessLifeAccounting?.openSupplierAccounting)return window.BusinessLifeAccounting.openSupplierAccounting();
       return showToast('Finance & Accounting is still loading. Try again in a moment.');

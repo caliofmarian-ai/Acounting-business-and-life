@@ -12,7 +12,7 @@ test('Merchant tools expose Profile Settings as a first-class shell-owned mobile
   assert.match(shell,/data-merchant-mobile-action="profileSettings"/);
   assert.match(shell,/>Profile Settings<\/strong>/);
   assert.match(shell,/if\(destination==='profileSettings'\)/);
-  assert.match(shell,/return open\('merchant'\)/);
+  assert.match(shell,/destination==='profileSettings'\)return openProfileSettingsForRole\('merchant'\)/);
   assert.doesNotMatch(mobile,/merchantMobileTools|profileSettings','⚙️'/);
 });
 

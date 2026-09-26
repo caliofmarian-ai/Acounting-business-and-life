@@ -67,7 +67,9 @@ test('Money workspace uses shared account-level Money & Banking while preserving
   assert.match(server,/legacy_profile_financial_accounts:profileAccounts/);
   assert.match(ui,/External banking and saved payment methods belong to your Avatar\/Account and are shared across your profiles/);
   assert.match(ui,/Open Money & Banking/);
-  assert.match(ui,/BusinessLifeProfileSettings\?\.open\?\.\(pmRole\)/);
+  assert.match(ui,/BusinessLifeShell/);
+  assert.match(ui,/openProfileSettings/);
+  assert.match(ui,/openPmSettings/);
 });
 
 test('Money workspace does not invent untracked settlement as zero earnings',()=>{

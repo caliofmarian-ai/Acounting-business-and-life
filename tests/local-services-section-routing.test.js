@@ -87,7 +87,7 @@ test('Local Services Money reuses the canonical evidence-based profile Money wor
 
 test('Profile Settings stays separate from the four daily Local Services destinations',()=>{
   assert.match(shell,/serviceProviderSettingsLink/);
-  assert.match(shell,/BusinessLifeProfileSettings\?\.open\?\.\('service_provider'\)/);
+  assert.match(shell,/openProfileSettingsForRole\('service_provider'\)/);
   const start=shell.indexOf('<nav class="serviceProviderPrimaryNav"');
   const end=shell.indexOf('</nav>',start);
   assert.doesNotMatch(shell.slice(start,end),/Profile Settings/);

@@ -58,7 +58,7 @@ test('Courier Home fallback cannot recursively click its own feature button',()=
 test('Courier Settings remains non-primary and opens the Courier profile settings',()=>{
   const block=courierBlock();
   assert.match(block,/Delivery settings/);
-  assert.match(block,/BusinessLifeProfileSettings\?\.open\?\.\('courier'\)/);
+  assert.match(block,/openProfileSettingsForRole\('courier'\)/);
   const start=block.indexOf('<nav class="courierPrimaryNav"');
   const end=block.indexOf('</nav>',start);
   assert.doesNotMatch(block.slice(start,end),/Settings/);
