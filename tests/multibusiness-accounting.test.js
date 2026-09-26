@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const server = readFileSync(new URL('../server-business-accounting.js', import.meta.url), 'utf8');
 const ui = readFileSync(new URL('../public/business-accounting-ui.js', import.meta.url), 'utf8');
+const shell = readFileSync(new URL('../public/shell.js', import.meta.url), 'utf8');
 
 test('legacy accounting domains are migrated to a business_id boundary', () => {
   for (const table of ['transactions','inventory','daily_openings','daily_closings','remittances','budgets','audit_events','products','product_sales']) {
@@ -51,5 +52,8 @@ test('workspace UI exposes Supplier finances and an explicit workspace selector'
   assert.match(ui, /Supplier finances/);
   assert.match(ui, /businessWorkspaceSelect/);
   assert.match(ui, /\/api\/accounting\/active-workspace/);
-  assert.match(ui, /Finance & Accounting<\/strong>/);
+  assert.match(shell, /Finance & Accounting/);
+  assert.match(shell, /data-business-accounting-tile="true"/);
+  assert.match(ui, /wireSupplierAccountingTile/);
+  assert.doesNotMatch(ui, /grid\.prepend\(tile\)/);
 });
