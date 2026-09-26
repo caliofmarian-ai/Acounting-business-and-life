@@ -181,27 +181,86 @@ async function openSupplierAccounting() {
   await mountEconomicSummary();
 }
 
+function accountingToast(message){
+  let toast=document.getElementById('roleToast');
+  if(!toast){
+    toast=document.getElementById('businessAccountingToast');
+    if(!toast){
+      toast=document.createElement('div');
+      toast.id='businessAccountingToast';
+      toast.className='businessAccountingToast';
+      toast.setAttribute('role','status');
+      toast.setAttribute('aria-live','polite');
+      document.body.appendChild(toast);
+    }
+  }
+  toast.textContent=message;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'),2600);
+  return false;
+}
 function openFinanceProfileSettings(role){
   const shell=window.BusinessLifeShell;
   if(typeof shell?.openProfileSettings==='function')return shell.openProfileSettings(role);
-  const toast=document.getElementById('roleToast');
-  if(toast){toast.textContent='Profile Settings is still loading. Try again in a moment.';toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);return false}
-  window.alert?.('Profile Settings is still loading. Try again in a moment.');
-  return false;
+  return accountingToast('Profile Settings is still loading. Try again in a moment.');
+}
+function currentFinanceContextKey(){
+  return String(accountingState.role||'')+':'+String(accountingState.activeBusinessId||'');
+}
+function ensureFinancePanel(targetId=null){
+  const resolvedTargetId=targetId||(accountingState.role==='merchant'?'viewMoney':'viewDashboard');
+  const destination=document.getElementById(resolvedTargetId);
+  if(!destination)return {panel:null,targetId:resolvedTargetId};
+  let panel=document.getElementById('economicWorkspaceSummary');
+  if(!panel){panel=document.createElement('section');panel.id='economicWorkspaceSummary'}
+  if(panel.parentElement!==destination)destination.prepend(panel);
+  panel.className='economicWorkspaceSummary businessFinanceOverview';
+  return {panel,targetId:resolvedTargetId};
+}
+function beginFinanceLoad(panel,contextKey){
+  const preserve=panel.dataset.financeReady==='true'&&panel.dataset.financeContext===contextKey;
+  panel.querySelector('.businessFinanceLoadError')?.remove();
+  panel.setAttribute('aria-busy','true');
+  if(!preserve){
+    delete panel.dataset.financeReady;
+    panel.dataset.financeContext=contextKey;
+    panel.innerHTML='<div class="businessFinanceLoading" role="status"><strong>Loading business finances…</strong><span>Checking recorded financial evidence for this business.</span></div>';
+  }
+  return preserve;
+}
+function showFinanceLoadError(panel,targetId,contextKey,error,preserve){
+  panel.removeAttribute('aria-busy');
+  if(currentFinanceContextKey()!==contextKey)return;
+  panel.querySelector('.businessFinanceLoading')?.remove();
+  panel.querySelector('.businessFinanceLoadError')?.remove();
+  const failure=document.createElement('div');
+  failure.className='businessFinanceLoadError';
+  failure.setAttribute('role','alert');
+  failure.innerHTML='<div><strong>Business finances could not be loaded.</strong><span>'+escapeHtml(error?.message||'Check your connection and try again.')+'</span></div><button type="button" data-finance-retry>Try again</button>';
+  if(preserve)panel.prepend(failure);else panel.replaceChildren(failure);
+  const retry=failure.querySelector('[data-finance-retry]');
+  if(retry)retry.onclick=()=>mountEconomicSummary(targetId);
 }
 async function mountEconomicSummary(targetId=null) {
+  const mounted=ensureFinancePanel(targetId);
+  if(!mounted.panel)return null;
+  const {panel,targetId:resolvedTargetId}=mounted;
+  const contextKey=currentFinanceContextKey();
+  const preserve=beginFinanceLoad(panel,contextKey);
   try{
     const overview=await api('/api/accounting/finance-overview');
-    const destination=document.getElementById(targetId||(overview.role==='merchant'?'viewMoney':'viewDashboard'));
-    if(!destination)return;
-    let panel=document.getElementById('economicWorkspaceSummary');
-    if(!panel){panel=document.createElement('section');panel.id='economicWorkspaceSummary'}
-    if(panel.parentElement!==destination)destination.prepend(panel);
-    panel.className='economicWorkspaceSummary businessFinanceOverview';
+    if(currentFinanceContextKey()!==contextKey)return null;
+    panel.removeAttribute('aria-busy');
+    panel.dataset.financeReady='true';
+    panel.dataset.financeContext=contextKey;
     panel.innerHTML=roleFinanceHtml(overview);
     applyFinancePresentation(overview);
     panel.querySelectorAll('#openBusinessFinanceSettings,[data-open-finance-settings]').forEach(settings=>settings.onclick=()=>openFinanceProfileSettings(overview.role));
-  }catch(err){console.warn('Business Finance overview:',err.message)}
+    return overview;
+  }catch(err){
+    showFinanceLoadError(panel,resolvedTargetId,contextKey,err,preserve);
+    return null;
+  }
 }
 async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
   if(!ablToken()) return;
