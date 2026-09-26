@@ -14,7 +14,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process
 const jsonBody = express.json({ limit: '14mb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 const INCIDENT_STATUSES = new Set(['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated']);
-const RELATED_TYPES = new Set(['order','delivery','merchant','courier','service_job','service_provider','supplier','payment','other']);
+const RELATED_TYPES = new Set(['order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other']);
 const IMAGE_MIMES = new Set(['image/jpeg','image/png','image/webp']);
 const PDF_MIME = 'application/pdf';
 const MAX_IMAGE_BYTES = 1_500_000;
@@ -107,8 +107,21 @@ async function initDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       resolved_at TIMESTAMPTZ,
       CHECK(status IN ('submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated')),
-      CHECK(related_type IN ('order','delivery','merchant','courier','service_job','service_provider','supplier','payment','other'))
+      CHECK(related_type IN ('order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other'))
     );
+    DO $
+    DECLARE current_definition TEXT;
+    BEGIN
+      SELECT pg_get_constraintdef(oid) INTO current_definition
+      FROM pg_constraint
+      WHERE conrelid='incident_reports'::regclass
+        AND conname='incident_reports_related_type_check';
+      IF current_definition IS NULL OR POSITION('marketplace_product' IN current_definition)=0 THEN
+        ALTER TABLE incident_reports DROP CONSTRAINT IF EXISTS incident_reports_related_type_check;
+        ALTER TABLE incident_reports ADD CONSTRAINT incident_reports_related_type_check
+          CHECK(related_type IN ('order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other'));
+      END IF;
+    END $;
     CREATE INDEX IF NOT EXISTS incident_reports_reporter_idx ON incident_reports(reporter_account_id,submitted_at DESC);
     CREATE INDEX IF NOT EXISTS incident_reports_status_idx ON incident_reports(status,submitted_at DESC);
 
@@ -148,6 +161,16 @@ async function authorizeIncident(req,id){
   if(Number(incident.reporter_account_id)!==Number(me.account.id)&&!isAdmin(me)) throw Object.assign(new Error('Not allowed to view this incident'),{status:403});
   return {me,incident};
 }
+async function validateRelatedReference(client,relatedType,relatedId){
+  if(relatedId==null)return;
+  let query=null,params=[Number(relatedId)];
+  if(relatedType==='merchant')query='SELECT 1 FROM businesses WHERE id=$1';
+  else if(relatedType==='marketplace_product')query='SELECT 1 FROM marketplace_products WHERE id=$1';
+  else if(relatedType==='service_provider')query="SELECT 1 FROM profiles WHERE account_id=$1 AND role='service_provider'";
+  if(!query)return;
+  const result=await client.query(query,params);
+  if(!result.rowCount)throw Object.assign(new Error('The reported item is no longer available'),{status:404,code:'INCIDENT_RELATED_OBJECT_NOT_FOUND'});
+}
 
 app.get('/health',async(req,res)=>{
   const r=await incidentsFetch('/health',{headers:req.headers});
@@ -173,6 +196,7 @@ app.post('/api/incidents',body,async(req,res,next)=>{
     if(relatedId!=null&&(!Number.isInteger(relatedId)||relatedId<1)) throw Object.assign(new Error('Related record ID must be a positive integer'),{status:400});
     const attachments=validateAttachments(req.body?.attachments);
     await client.query('BEGIN');
+    await validateRelatedReference(client,relatedType,relatedId);
     const q=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status) VALUES($1,$2,$3,$4,$5,'submitted') RETURNING *`,[me.account.id,relatedType,relatedId,category,description]);
     const incident=q.rows[0];
     for(const f of attachments) await client.query(`INSERT INTO incident_attachments(incident_id,kind,mime_type,file_name,byte_size,evidence_data_url) VALUES($1,$2,$3,$4,$5,$6)`,[incident.id,f.kind,f.mime,f.file_name,f.byte_size,f.data_url]);
