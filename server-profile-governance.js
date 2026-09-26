@@ -8,7 +8,7 @@ import { getAdminAssignments, verifyAdminAssertion } from './admin-authorization
 import { companyTestAccountForEmail, companyTestProfileRole } from './company-test-accounts.js';
 import {authHardeningFetch,startEmbeddedAuthHardening,stopEmbeddedAuthHardening} from './server-auth-hardening.js';
 import {ensurePhGeographicRegistrySchema,phGeographicRegistryStatus,syncPhGeographicRegistry,searchPhGeographicRegistry,resolvePhGeographicUnit,findNearestOpenedPhAncestor,territoryTypeForPsgcLevel,normalizePsgcCode,PH_PSGC_SOURCE} from './ph-geographic-registry.js';
-import {requireAssignedOpenBarangay,accountGeographySnapshot,geographyAvailabilityMessage} from './account-geography.js';
+import {requireAssignedOpenBarangay,accountGeographySnapshot,accountIdsInPsgcScope} from './account-geography.js';
 import {emitNotificationEvent} from './notification-core.js';
 
 const { Pool } = pg;
@@ -243,6 +243,7 @@ app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{
       [parent,type,unit.name,unit.psgc_code,status,me.account.id,unit.psgc_code,unit.source_version]
     );
     await audit(me.account.id,'territory_created_from_psgc',null,'',rows[0].id,{name:unit.name,type,status,psgc_code:unit.psgc_code,source_version:unit.source_version,parent_territory_id:parent});
+    try{const memberIds=await accountIdsInPsgcScope(pool,unit.psgc_code);if(memberIds.length)await emitNotificationEvent(pool,{eventKey:'territory:'+rows[0].id+':opened:'+status,eventCode:['onboarding','active'].includes(status)?'territory.area_available':'territory.area_status',sourceService:'governance',entityType:'territory',entityId:String(rows[0].id),category:'operational',priority:['suspended','closed'].includes(status)?'high':'normal',mandatory:true,emailDefault:false,pushDefault:true,data:{area_name:unit.name,area_status:status,area_message:'Business & Life opened '+unit.name+' with status '+status+'.'},recipients:memberIds.map(accountId=>({accountId,roleHint:''}))})}catch(error){console.warn('Territory opening member notification suppressed:',error.message)}
     return res.status(201).json(rows[0]);
   }
   const type=clean(req.body?.territory_type,40),name=clean(req.body?.name,180);
@@ -274,7 +275,7 @@ app.patch('/api/governance/admin/territories/:id/status',body,async(req,res,next
   const updated=await client.query("UPDATE territories SET status=$1,updated_at=NOW() WHERE id=$2 RETURNING *",[status,id]);
   await client.query('COMMIT');
   await audit(me.account.id,'territory_status_changed',null,'',id,{name:before.name,psgc_code:before.psgc_code||null,before_status:before.status,after_status:status,reason});
-  if(before.psgc_code){try{const members=await pool.query(`SELECT account_id FROM account_geography_assignments WHERE country_code='PH' AND psgc_code=$1`,[before.psgc_code]);if(members.rowCount){const eventKey='territory:'+id+':status:'+status+':'+String(updated.rows[0].updated_at||Date.now());await emitNotificationEvent(pool,{eventKey,eventCode:['onboarding','active'].includes(status)?'territory.area_available':'territory.area_status',sourceService:'governance',entityType:'territory',entityId:String(id),category:'operational',priority:['suspended','closed'].includes(status)?'high':'normal',mandatory:true,emailDefault:false,pushDefault:true,data:{area_name:before.name,area_status:status,area_message:'Business & Life status for '+before.name+' is now '+status+'.'},recipients:members.rows.map(x=>({accountId:Number(x.account_id),roleHint:''}))})}}catch(error){console.warn('Territory member notification suppressed:',error.message)}}
+  if(before.psgc_code){try{const memberIds=await accountIdsInPsgcScope(pool,before.psgc_code);if(memberIds.length){const eventKey='territory:'+id+':status:'+status+':'+String(updated.rows[0].updated_at||Date.now());await emitNotificationEvent(pool,{eventKey,eventCode:['onboarding','active'].includes(status)?'territory.area_available':'territory.area_status',sourceService:'governance',entityType:'territory',entityId:String(id),category:'operational',priority:['suspended','closed'].includes(status)?'high':'normal',mandatory:true,emailDefault:false,pushDefault:true,data:{area_name:before.name,area_status:status,area_message:'Business & Life status for '+before.name+' is now '+status+'.'},recipients:memberIds.map(accountId=>({accountId,roleHint:''}))})}}catch(error){console.warn('Territory member notification suppressed:',error.message)}}
   res.json(updated.rows[0]);
 }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}})
 
