@@ -121,6 +121,187 @@ export async function createOrderPaymentIntent(pool,{orderId,payerAccountId,idem
 }
 
 
+async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={}){
+  const id=Number(jobId);
+  if(!Number.isInteger(id)||id<=0)throw Object.assign(new Error('Service Job id is invalid'),{status:400});
+  let job=jobRow;
+  if(!job){
+    const q=await db.query(
+      "SELECT * FROM service_jobs WHERE id=$1"+(lockJob?" FOR UPDATE":""),
+      [id]
+    );
+    if(!q.rowCount)throw Object.assign(new Error('Service Job not found'),{status:404});
+    job=q.rows[0];
+  }
+
+  const [activity,refunds,settlement,latest]=await Promise.all([
+    db.query(`
+      SELECT
+        COALESCE(SUM(amount) FILTER(
+          WHERE status IN ('succeeded','partially_refunded','refunded')
+        ),0) gross_confirmed,
+        COALESCE(SUM(amount) FILTER(
+          WHERE status IN ('requires_provider','requires_action','processing')
+            AND (expires_at IS NULL OR expires_at>NOW())
+        ),0) pending_amount,
+        COUNT(*) FILTER(WHERE status IN ('succeeded','partially_refunded','refunded'))::int confirmed_count,
+        COUNT(*) FILTER(
+          WHERE status IN ('requires_provider','requires_action','processing')
+            AND (expires_at IS NULL OR expires_at>NOW())
+        )::int pending_count
+      FROM payment_intents
+      WHERE source_type='service_job' AND source_id=$1
+    `,[id]),
+    db.query(`
+      SELECT COALESCE(SUM(r.amount) FILTER(WHERE r.status='succeeded'),0) refunded_amount,
+        COUNT(*) FILTER(WHERE r.status='succeeded')::int refund_count
+      FROM refunds r
+      JOIN payment_intents pi ON pi.id=r.payment_intent_id
+      WHERE pi.source_type='service_job' AND pi.source_id=$1
+    `,[id]),
+    db.query(`
+      SELECT COUNT(*)::int allocation_count,
+        COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='pending'),0) pending,
+        COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='eligible'),0) eligible,
+        COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='processing'),0) processing,
+        COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='paid'),0) paid,
+        COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='held'),0) held,
+        COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='reversed'),0) reversed
+      FROM payment_allocations pa
+      JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+      WHERE pi.source_type='service_job' AND pi.source_id=$1
+        AND pa.component_code='service_provider_net'
+    `,[id]),
+    db.query(`
+      SELECT id,public_id,provider_code,logical_method,amount,status,provider_status,
+        provider_payment_id,created_at,updated_at,succeeded_at
+      FROM payment_intents
+      WHERE source_type='service_job' AND source_id=$1
+      ORDER BY created_at DESC,id DESC LIMIT 1
+    `,[id])
+  ]);
+
+  const payable=money(job.final_price??job.quote_amount??0);
+  const gross=money(activity.rows[0]?.gross_confirmed||0);
+  const refunded=money(refunds.rows[0]?.refunded_amount||0);
+  const effectivePaid=money(Math.max(0,gross-refunded));
+  const outstanding=money(Math.max(0,payable-effectivePaid));
+  const pending=money(activity.rows[0]?.pending_amount||0);
+  const settlementRow=settlement.rows[0]||{};
+  const allocationCount=Number(settlementRow.allocation_count||0);
+  const payableState=
+    job.status!=='completed'?'NOT_COMPLETED':
+    !job.customer_confirmed_at?'AWAITING_CUSTOMER_CONFIRMATION':
+    payable<=0?'NO_PAYABLE_AMOUNT':
+    outstanding<=0?'PAID':'PAYABLE';
+
+  return{
+    service_job_id:id,
+    customer_account_id:Number(job.customer_account_id),
+    provider_account_id:Number(job.provider_account_id),
+    currency_code:job.currency_code||'PHP',
+    commercial:{
+      status:job.status,
+      customer_confirmed_at:job.customer_confirmed_at,
+      quote_amount:job.quote_amount==null?null:money(job.quote_amount),
+      final_price:job.final_price==null?null:money(job.final_price),
+      payable_value:payable,
+      payable_state:payableState
+    },
+    payment:{
+      gross_confirmed:gross,
+      refunded,
+      effective_paid:effectivePaid,
+      outstanding,
+      pending_amount:pending,
+      confirmed_count:Number(activity.rows[0]?.confirmed_count||0),
+      pending_count:Number(activity.rows[0]?.pending_count||0),
+      latest_intent:latest.rows[0]||null,
+      authority:'payment_intents + succeeded refunds'
+    },
+    settlement:{
+      status:allocationCount>0?'TRACKED':'NOT_CONFIGURED',
+      allocation_count:allocationCount,
+      pending:money(settlementRow.pending||0),
+      eligible:money(settlementRow.eligible||0),
+      held:money(settlementRow.held||0),
+      processing:money(settlementRow.processing||0),
+      paid:money(settlementRow.paid||0),
+      reversed:money(settlementRow.reversed||0),
+      authority:allocationCount>0?'payment_allocations.service_provider_net':'not_configured'
+    },
+    evidence_boundary:'Completed job value is commercial value. Only provider-backed payment evidence is treated as paid.'
+  };
+}
+
+export async function serviceJobPaymentSummary(pool,serviceJobId){
+  return serviceJobPaymentSummaryDb(pool,serviceJobId);
+}
+
+export async function createServiceJobPaymentIntent(pool,{
+  serviceJobId,payerAccountId,idempotencyKey,logicalMethod='online_other',providerCode='',clientReference=''
+}){
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const id=Number(serviceJobId);
+    const q=await client.query("SELECT * FROM service_jobs WHERE id=$1 FOR UPDATE",[id]);
+    if(!q.rowCount)throw Object.assign(new Error('Service Job not found'),{status:404});
+    const job=q.rows[0];
+    if(Number(job.customer_account_id)!==Number(payerAccountId))throw Object.assign(new Error('This Service Job belongs to another Customer'),{status:403});
+    if(job.status!=='completed')throw Object.assign(new Error('Service Job is not completed yet'),{status:409});
+    if(!job.customer_confirmed_at)throw Object.assign(new Error('Confirm Service Job completion before payment'),{status:409});
+    const payable=money(job.final_price??job.quote_amount??0);
+    if(payable<=0)throw Object.assign(new Error('Service Job has no payable amount'),{status:409});
+
+    const key=clean(idempotencyKey,220);
+    if(!key)throw Object.assign(new Error('Idempotency key is required'),{status:400});
+    const existing=await client.query("SELECT * FROM payment_intents WHERE idempotency_key=$1",[key]);
+    if(existing.rowCount){
+      const old=existing.rows[0];
+      if(old.source_type!=='service_job'||Number(old.source_id)!==id||Number(old.payer_account_id)!==Number(payerAccountId)){
+        throw Object.assign(new Error('Idempotency key belongs to another payment scope'),{status:409});
+      }
+      await client.query('COMMIT');
+      return old;
+    }
+
+    await client.query(`
+      UPDATE payment_intents SET status='cancelled',cancelled_at=NOW(),updated_at=NOW()
+      WHERE source_type='service_job' AND source_id=$1
+        AND status IN ('requires_provider','requires_action','processing')
+        AND expires_at IS NOT NULL AND expires_at<=NOW()
+    `,[id]);
+
+    const summary=await serviceJobPaymentSummaryDb(client,id,{jobRow:job});
+    if(summary.payment.outstanding<=0)throw Object.assign(new Error('Service Job is already paid'),{status:409});
+    if(summary.payment.pending_amount>0)throw Object.assign(new Error('A Service Job payment is already pending'),{status:409});
+
+    const provider=clean(providerCode,80);
+    const ins=await client.query(`
+      INSERT INTO payment_intents(
+        public_id,idempotency_key,source_type,source_id,payer_account_id,business_id,territory_id,
+        provider_code,logical_method,currency_code,amount,status,provider_status,client_reference,expires_at
+      ) VALUES($1,$2,'service_job',$3,$4,NULL,NULL,$5,$6,$7,$8,'requires_provider','source_checkout_not_enabled',$9,NOW()+INTERVAL '30 minutes')
+      RETURNING *
+    `,[
+      'pi_'+crypto.randomBytes(16).toString('hex'),key,id,Number(payerAccountId),provider,
+      normalizeMethod(logicalMethod),job.currency_code||'PHP',summary.payment.outstanding,clean(clientReference,200)
+    ]);
+    await client.query(`
+      INSERT INTO payment_audit_events(actor_account_id,payment_intent_id,event_code,provider_code,after_json,correlation_id)
+      VALUES($1,$2,'service_job_payment_intent_created',$3,$4::jsonb,$5)
+    `,[
+      Number(payerAccountId),ins.rows[0].id,provider,
+      JSON.stringify({service_job_id:id,payable_value:summary.commercial.payable_value,outstanding:summary.payment.outstanding,checkout_enabled:false}),
+      'service-job-intent:'+ins.rows[0].public_id
+    ]);
+    await client.query('COMMIT');
+    return ins.rows[0];
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+}
+
 export async function mirrorConfirmedOrderPayment(pool,orderPaymentId){
   const q=await pool.query("SELECT p.id legacy_payment_id,p.payment_intent_id,p.order_id,p.amount,p.merchandise_amount,p.delivery_amount,p.account,p.method_code,p.provider_code,p.provider_reference,p.status,p.created_at,o.customer_account_id,o.business_id,o.currency_code,b.territory_id FROM order_payments p JOIN orders o ON o.id=p.order_id JOIN businesses b ON b.id=o.business_id WHERE p.id=$1 AND p.status='confirmed'",[Number(orderPaymentId)]);
   if(!q.rowCount)return null;
