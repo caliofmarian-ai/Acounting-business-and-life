@@ -2,19 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  AUTH_SESSION_TTL_MS,createV2Session,isLegacyBearerToken,resolveV2SessionToken,signV2SessionToken
+  AUTH_SESSION_TTL_MS,AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,
+  resolveV2SessionStepUp,resolveV2SessionToken,signV2SessionToken
 } from '../auth-session-core.js';
 
 const SECRET='test-secret';
 const ISSUED=1_700_000_000_000;
 const SESSION='session-123';
 
-function poolFor({active=true}={}){
+function poolFor({active=true,stepUpAt=null}={}){
   return{
     calls:[],
     async query(sql,args){
       this.calls.push({sql,args});
       if(sql.includes('SELECT account_id FROM account_sessions'))return{rowCount:active?1:0,rows:active?[{account_id:7}]:[]};
+      if(sql.includes('SELECT step_up_verified_at'))return{rowCount:active?1:0,rows:active?[{step_up_verified_at:stepUpAt}]:[]};
+      if(sql.includes('UPDATE account_sessions')&&sql.includes('RETURNING step_up_verified_at'))return{rowCount:active?1:0,rows:active?[{step_up_verified_at:stepUpAt||new Date(ISSUED).toISOString()}]:[]};
       return{rowCount:1,rows:[]};
     }
   };
@@ -43,9 +46,40 @@ test('session creation persists metadata and returns a canonical V2 token',async
   const result=await createV2Session(pool,SECRET,7,{sessionId:SESSION,issued:ISSUED,userAgent:'Android QA',ipHash:'hash'});
   assert.equal(result.sessionId,SESSION);
   assert.match(result.token,/^v2\./);
-  assert.deepEqual(pool.calls[0].args,[SESSION,7,'Android QA','hash']);
+  assert.deepEqual(pool.calls[0].args,[SESSION,7,'Android QA','hash',false]);
   const resolved=await resolveV2SessionToken(pool,SECRET,result.token,{now:ISSUED+1000});
   assert.equal(resolved.accountId,7);
+});
+
+test('fresh step-up state is session-scoped and expires after the configured window',async()=>{
+  const now=ISSUED+120_000;
+  const freshAt=new Date(now-60_000).toISOString();
+  const fresh=await resolveV2SessionStepUp(
+    poolFor({stepUpAt:freshAt}),SECRET,signV2SessionToken(SECRET,7,SESSION,{issued:ISSUED}),{now}
+  );
+  assert.equal(fresh.stepUpValid,true);
+  assert.equal(fresh.stepUpVerifiedAt,freshAt);
+  const staleAt=new Date(now-AUTH_STEP_UP_TTL_MS-1).toISOString();
+  const stale=await resolveV2SessionStepUp(
+    poolFor({stepUpAt:staleAt}),SECRET,signV2SessionToken(SECRET,7,SESSION,{issued:ISSUED}),{now}
+  );
+  assert.equal(stale.stepUpValid,false);
+});
+
+test('step-up can be marked only on the current active session',async()=>{
+  const verifiedAt=new Date(ISSUED).toISOString();
+  const pool=poolFor({stepUpAt:verifiedAt});
+  const result=await markV2SessionStepUp(pool,{accountId:7,sessionId:SESSION});
+  assert.equal(result,verifiedAt);
+  assert.deepEqual(pool.calls[0].args,[SESSION,7]);
+});
+
+test('fresh login can mark the newly created session as step-up verified',async()=>{
+  const pool=poolFor();
+  await createV2Session(pool,SECRET,7,{sessionId:SESSION,issued:ISSUED,userAgent:'Android QA',ipHash:'hash',stepUpVerified:true});
+  assert.equal(pool.calls[0].args[4],true);
+  assert.match(pool.calls[0].sql,/step_up_verified_at/);
+  assert.match(pool.calls[0].sql,/CASE WHEN \$5 THEN NOW\(\) END/);
 });
 
 test('legacy bearer detection is explicit and cannot confuse V2 sessions',()=>{
