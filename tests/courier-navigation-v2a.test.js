@@ -41,7 +41,7 @@ test('Courier Home keeps eligibility availability route and assigned work as con
 
 test('Courier shell reuses the canonical Delivery workspace launcher',()=>{
   const block=courierBlock();
-  assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery,openCourierWorkspace\}\)/);
+  assert.match(delivery,/window\.BusinessLifeDelivery=Object\.freeze\(\{openCustomerDelivery,openCourierWorkspace,openMerchantDelivery\}\)/);
   assert.match(block,/BusinessLifeDelivery\?\.openCourierWorkspace/);
   assert.match(block,/openCourierWorkspace\(feature\)/);
   assert.match(shell,/profileApi\('\/api\/courier\/home'\)/);
