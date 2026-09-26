@@ -308,22 +308,92 @@ async function openAdminSupportTicket(id){
 }
 function bindSupportQueue(){document.querySelectorAll('[data-support-ticket]').forEach(button=>button.onclick=()=>openAdminSupportTicket(Number(button.dataset.supportTicket)))}
 const TERRITORY_STATUSES=['planned','onboarding','active','paused','suspended','closed'];
+const territoryTreeCollapsed=new Set();
+let territoryTreeSelectedId=null;
+
+function territoryStatusClass(status){
+  return 'territoryStatus territoryStatus-'+String(status||'planned').replace(/[^a-z_]/g,'');
+}
 function territoryLifecycleControl(x){
   return '<form class="adminForm territoryStatusForm" data-territory-status-form="'+Number(x.id)+'">'
-    +'<div class="financeFormGrid"><label>Operating status<select name="status">'
+    +'<label>Operating status<select name="status">'
     +TERRITORY_STATUSES.map(status=>'<option value="'+status+'" '+(status===x.status?'selected':'')+'>'+readableCode(status)+'</option>').join('')
-    +'</select></label><label>Reason / note<input name="reason" maxlength="800" placeholder="Optional for normal changes; required for suspended or closed"></label></div>'
-    +'<div class="formActions"><button class="secondary" type="submit">Save status</button></div>'
+    +'</select></label>'
+    +'<label>Reason / note<input name="reason" maxlength="800" placeholder="Optional for normal changes; required for suspended or closed"></label>'
+    +'<button class="primary" type="submit">Save status</button>'
     +'<div data-territory-status-result="'+Number(x.id)+'"></div>'
     +'</form>';
+}
+function territoryTreeModel(territories){
+  const items=Array.isArray(territories)?territories:[],byId=new Map(),children=new Map();
+  items.forEach(x=>byId.set(Number(x.id),x));
+  items.forEach(x=>children.set(Number(x.id),[]));
+  const roots=[],scopedRoots=[];
+  items.forEach(x=>{
+    const id=Number(x.id),parentId=x.parent_id==null?null:Number(x.parent_id);
+    if(parentId&&byId.has(parentId))children.get(parentId).push(x);
+    else if(parentId)scopedRoots.push(x);
+    else roots.push(x);
+  });
+  const sortNodes=list=>list.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''),'en'));
+  sortNodes(roots);sortNodes(scopedRoots);children.forEach(sortNodes);
+  return{byId,children,roots,scopedRoots};
+}
+function territoryNodeHtml(x,model){
+  const id=Number(x.id),kids=model.children.get(id)||[],collapsed=territoryTreeCollapsed.has(id),selected=Number(territoryTreeSelectedId)===id;
+  const official=Boolean(x.psgc_code),canBrowse=official&&x.territory_type!=='barangay';
+  return '<div class="territoryTreeBranch" data-territory-branch="'+id+'">'
+    +'<div class="territoryTreeNode '+(selected?'selected':'')+'">'
+      +'<div class="territoryTreeNodeHead">'
+        +'<button type="button" class="territoryTreeToggle" '+(kids.length?'data-territory-toggle="'+id+'"':'disabled')+' aria-label="'+(kids.length?(collapsed?'Expand':'Collapse'):'No opened children')+'">'+(kids.length?(collapsed?'▶':'▼'):'•')+'</button>'
+        +'<button type="button" class="territoryTreeIdentity" data-territory-manage="'+id+'"><strong>'+esc(x.name)+'</strong><span>'+esc(readableCode(x.territory_type))+' · '+(official?'PSGC '+esc(x.psgc_code):esc(x.code||'Custom / legacy territory'))+'</span>'+(kids.length?'<small>'+kids.length+' opened child'+(kids.length===1?'':'ren')+'</small>':'')+'</button>'
+        +'<span class="'+territoryStatusClass(x.status)+'">'+esc(readableCode(x.status))+'</span>'
+      +'</div>'
+      +'<div class="territoryTreeNodeActions">'
+        +(canBrowse?'<button type="button" class="secondary" data-territory-browse="'+id+'">Browse children</button>':'')
+        +'<button type="button" class="secondary" data-territory-manage="'+id+'">Manage</button>'
+      +'</div>'
+    +'</div>'
+    +(!collapsed&&kids.length?'<div class="territoryTreeChildren">'+kids.map(child=>territoryNodeHtml(child,model)).join('')+'</div>':'')
+  +'</div>';
+}
+function territoryTreeHtml(territories){
+  const model=territoryTreeModel(territories);
+  const main=model.roots.map(x=>territoryNodeHtml(x,model)).join('');
+  const scoped=model.scopedRoots.length
+    ?'<div class="territoryTreeScoped"><small>SCOPED / UNLINKED ROOTS</small><p>These territories are visible in this Admin scope but their parent is outside the current view.</p>'+model.scopedRoots.map(x=>territoryNodeHtml(x,model)).join('')+'</div>'
+    :'';
+  return(main||'<div class="empty">No Business & Life operating territories have been opened yet.</div>')+scoped;
+}
+function selectedTerritory(territories){
+  const items=Array.isArray(territories)?territories:[];
+  let selected=items.find(x=>Number(x.id)===Number(territoryTreeSelectedId));
+  if(!selected)selected=items[0]||null;
+  territoryTreeSelectedId=selected?Number(selected.id):null;
+  return selected;
+}
+function territoryDetailsPanel(x,territories){
+  if(!x)return '<aside class="territoryDetailsPanel"><div class="empty">Select a territory to manage its lifecycle.</div></aside>';
+  const byId=new Map((territories||[]).map(t=>[Number(t.id),t])),parent=x.parent_id?byId.get(Number(x.parent_id)):null;
+  const canBrowse=Boolean(x.psgc_code)&&x.territory_type!=='barangay';
+  return '<aside class="territoryDetailsPanel" id="territoryDetailsPanel">'
+    +'<small>TERRITORY DETAILS</small>'
+    +'<h3>'+esc(x.name)+'</h3>'
+    +'<p class="territoryDetailsMeta">'+esc(readableCode(x.territory_type))+' · '+(x.psgc_code?'PSGC '+esc(x.psgc_code):esc(x.code||'Custom / legacy territory'))+'</p>'
+    +(parent?'<p class="territoryDetailsMeta">Parent · '+esc(parent.name)+'</p>':'<p class="territoryDetailsMeta">Top-level operating scope</p>')
+    +'<div class="territoryDetailsStatus"><span>Operating status</span><b class="'+territoryStatusClass(x.status)+'">'+esc(readableCode(x.status))+'</b></div>'
+    +territoryLifecycleControl(x)
+    +'<div class="territoryIdentityBoundary"><strong>Official identity is read-only.</strong><span>Changing status does not edit the official PSGC identity, parent geography or historical records.</span></div>'
+    +(canBrowse?'<div class="territoryDetailsActions"><button type="button" class="secondary" data-territory-browse="'+Number(x.id)+'">Browse official children</button><button type="button" class="primary" data-territory-open-child="'+Number(x.id)+'">Open child territory</button></div>':'')
+  +'</aside>';
 }
 function territoriesPanel(){
   const territories=state.overview?.territories||[];
   const top=highestAssignment(),rank=top?.effective_rank||top?.authority_rank||top?.admin_role||'';
-  const canSync=rank==='super_admin';
+  const canSync=rank==='super_admin',selected=selectedTerritory(territories);
   return hero()
     +'<p class="moduleIntro">Official Philippine geography comes from the PSA Philippine Standard Geographic Code (PSGC). The registry is reference data; only the places you explicitly open below become Business & Life operating territories.</p>'
-    +'<details class="adminDisclosure" open><summary><span class="adminDisclosureCopy"><small>PH GEOGRAPHIC REGISTRY</small><strong>Open an official operating territory</strong><span>Search or browse PSA geography, then choose the Business & Life operating status</span></span></summary><div class="adminDisclosureBody">'
+    +'<details class="adminDisclosure" id="phGeoDisclosure" open><summary><span class="adminDisclosureCopy"><small>PH GEOGRAPHIC REGISTRY</small><strong>Open an official operating territory</strong><span>Search or browse PSA geography, then choose the Business & Life operating status</span></span></summary><div class="adminDisclosureBody">'
     +'<div id="phGeoRegistryStatus" class="notice">Checking the official PSGC registry…</div>'
     +(canSync?'<button id="phGeoSync" class="secondary" type="button">Synchronize official PSGC</button>':'')
     +'<form id="territoryGeoSearchForm" class="adminForm"><div class="financeFormGrid">'
@@ -331,10 +401,11 @@ function territoriesPanel(){
     +'<label>Geographic level<select name="level"><option value="">All levels</option>'+['region','province','city','municipality','district','submunicipality','special_geographic_unit','barangay'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label>'
     +'</div><div class="formActions"><button class="secondary" type="submit">Search PSGC</button><button id="territoryGeoRoot" class="secondary" type="button">Browse regions</button></div></form>'
     +'<div id="territoryGeoContext" class="muted">Official national registry</div><div id="territoryGeoResults" class="opsList"><div class="adminLoading">Registry results appear here.</div></div>'
-    +'<form id="territoryCreateForm" class="adminForm" style="display:none"><input type="hidden" name="psgc_code"><div id="territoryGeoSelected" class="notice"></div><label>Business & Life status<select name="status">'+['planned','onboarding','active','paused','suspended','closed'].map(x=>'<option value="'+x+'" '+(x==='onboarding'?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><button class="primary" type="submit">Open selected territory</button><div id="territoryCreateResult"></div></form>'
+    +'<form id="territoryCreateForm" class="adminForm" style="display:none"><input type="hidden" name="psgc_code"><div id="territoryGeoSelected" class="notice"></div><label>Business & Life status<select name="status">'+TERRITORY_STATUSES.map(x=>'<option value="'+x+'" '+(x==='onboarding'?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><button class="primary" type="submit">Open selected territory</button><div id="territoryCreateResult"></div></form>'
     +'<div class="notice"><strong>Reference geography ≠ operating territory.</strong><br>Synchronizing PSGC does not open, activate, invite or approve anyone. Opening a territory is a separate audited Admin action.</div>'
-    +'</div></details><div class="sectionTitle"><h3>Business & Life territories</h3><span class="muted">'+territories.length+' opened</span></div>'
-    +rows(territories,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(readableCode(x.territory_type))+' · '+(x.psgc_code?'PSGC '+esc(x.psgc_code)+' · '+esc(x.geographic_source_version||'source version pending'):esc(x.code||'Custom / legacy territory'))+'</span><div class="notice"><strong>Lifecycle only.</strong><br>Changing status does not edit the official PSGC identity, parent geography or historical records.</div>'+territoryLifecycleControl(x)+'</div>');
+    +'</div></details>'
+    +'<div class="sectionTitle"><div><h3>Business & Life Territory Tree</h3><span class="muted">Opened operating scopes are nested under their official parents.</span></div><span class="muted">'+territories.length+' opened</span></div>'
+    +'<div class="territoryTreeWorkspace"><section class="territoryTreeColumn"><div id="territoryTreeRoot" class="territoryTreeRoot">'+territoryTreeHtml(territories)+'</div></section><div id="territoryDetailsRoot">'+territoryDetailsPanel(selected,territories)+'</div></div>';
 }
 async function wireTerritories(){
   const createForm=document.getElementById('territoryCreateForm');
@@ -345,6 +416,7 @@ async function wireTerritories(){
   if(!createForm||!searchForm||!results||!statusBox)return;
   let registryReady=false;
 
+  const currentTerritories=()=>state.overview?.territories||[];
   const statusText=status=>{
     if(!status?.ready)return '<strong>PSGC registry not synchronized yet.</strong><br>Super Admin must synchronize the pinned official PSA publication before an official territory can be opened.';
     const latest=status.latest||{},counts=latest.level_counts||{};
@@ -399,6 +471,49 @@ async function wireTerritories(){
     const payload=await api('/api/governance/admin/geography/search?'+params.toString());
     renderGeoItems(payload);
   };
+  const showOfficialChildren=async(id,intent='browse')=>{
+    const territory=currentTerritories().find(x=>Number(x.id)===Number(id));
+    if(!territory?.psgc_code)return;
+    const disclosure=document.getElementById('phGeoDisclosure');if(disclosure)disclosure.open=true;
+    searchForm.reset();
+    context.textContent=(intent==='open'?'Choose an unopened official child of ':'Official children of ')+territory.name+' · PSGC '+territory.psgc_code;
+    await loadGeo({parent:territory.psgc_code,q:''});
+    results.scrollIntoView({behavior:'smooth',block:'start'});
+  };
+  const bindTreeControls=()=>{
+    document.querySelectorAll('[data-territory-toggle]').forEach(button=>button.onclick=()=>{
+      const id=Number(button.dataset.territoryToggle);
+      if(territoryTreeCollapsed.has(id))territoryTreeCollapsed.delete(id);else territoryTreeCollapsed.add(id);
+      renderTreeViews();
+    });
+    document.querySelectorAll('[data-territory-manage]').forEach(button=>button.onclick=()=>{
+      territoryTreeSelectedId=Number(button.dataset.territoryManage);
+      renderTreeViews();
+      if(window.innerWidth<920)document.getElementById('territoryDetailsPanel')?.scrollIntoView({behavior:'smooth',block:'nearest'});
+    });
+    document.querySelectorAll('[data-territory-browse]').forEach(button=>button.onclick=()=>showOfficialChildren(Number(button.dataset.territoryBrowse),'browse').catch(showError));
+    document.querySelectorAll('[data-territory-open-child]').forEach(button=>button.onclick=()=>showOfficialChildren(Number(button.dataset.territoryOpenChild),'open').catch(showError));
+    const form=document.querySelector('[data-territory-status-form]');
+    if(form)form.onsubmit=async e=>{
+      e.preventDefault();
+      const id=Number(form.dataset.territoryStatusForm),status=form.elements.status.value,reason=form.elements.reason.value.trim();
+      const out=document.querySelector('[data-territory-status-result="'+id+'"]'),button=form.querySelector('button[type="submit"]');
+      if(['suspended','closed'].includes(status)&&!reason){out.innerHTML='<div class="error">Add a reason before '+esc(status)+' status.</div>';return}
+      button.disabled=true;
+      try{
+        await api('/api/governance/admin/territories/'+id+'/status',{method:'PATCH',body:JSON.stringify({status,reason})});
+        await loadBase();renderTreeViews();
+      }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+    };
+  };
+  const renderTreeViews=()=>{
+    const territories=currentTerritories(),root=document.getElementById('territoryTreeRoot'),details=document.getElementById('territoryDetailsRoot');
+    if(!root||!details)return;
+    const selected=selectedTerritory(territories);
+    root.innerHTML=territoryTreeHtml(territories);
+    details.innerHTML=territoryDetailsPanel(selected,territories);
+    bindTreeControls();
+  };
 
   try{
     await loadStatus();
@@ -425,21 +540,13 @@ async function wireTerritories(){
     if(!psgcCode)return;
     button.disabled=true;
     try{
-      await api('/api/governance/admin/territories',{method:'POST',body:JSON.stringify({psgc_code:psgcCode,status:fd.get('status')})});
+      const created=await api('/api/governance/admin/territories',{method:'POST',body:JSON.stringify({psgc_code:psgcCode,status:fd.get('status')})});
+      territoryTreeSelectedId=Number(created.id);
+      if(created.parent_id)territoryTreeCollapsed.delete(Number(created.parent_id));
       await loadBase();state.active='territories';shell();await renderActive();
     }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
   };
-  document.querySelectorAll('[data-territory-status-form]').forEach(form=>form.onsubmit=async e=>{
-    e.preventDefault();
-    const id=Number(form.dataset.territoryStatusForm),status=form.elements.status.value,reason=form.elements.reason.value.trim();
-    const out=document.querySelector('[data-territory-status-result="'+id+'"]'),button=form.querySelector('button[type="submit"]');
-    if(['suspended','closed'].includes(status)&&!reason){out.innerHTML='<div class="error">Add a reason before '+esc(status)+' status.</div>';return}
-    button.disabled=true;
-    try{
-      await api('/api/governance/admin/territories/'+id+'/status',{method:'PATCH',body:JSON.stringify({status,reason})});
-      await loadBase();state.active='territories';shell();await renderActive();
-    }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
-  });
+  bindTreeControls();
 }
 function renderPricingScenario(s){
   const p=s?.portfolio||{},services=s?.services||[],g=s?.guardrails||{};

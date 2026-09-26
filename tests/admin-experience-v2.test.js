@@ -70,6 +70,38 @@ test('territory lifecycle gates invitation acceptance when onboarding closes',()
   assert.match(governance,/operating territory is no longer open for onboarding/);
 });
 
+test('Territory Tree UX renders opened scopes by parent_id instead of a flat list',()=>{
+  assert.match(ui,/function territoryTreeModel\(territories\)/);
+  assert.match(ui,/if\(parentId&&byId\.has\(parentId\)\)children\.get\(parentId\)\.push\(x\)/);
+  assert.match(ui,/function territoryNodeHtml\(x,model\)/);
+  assert.match(ui,/territoryTreeChildren/);
+  assert.match(ui,/Business & Life Territory Tree/);
+  assert.doesNotMatch(ui,/rows\(territories,x=>'<div class="row"/);
+});
+
+test('Territory Tree UX keeps lifecycle editing in a separate details panel',()=>{
+  assert.match(ui,/function territoryDetailsPanel\(x,territories\)/);
+  assert.match(ui,/id="territoryDetailsPanel"/);
+  assert.match(ui,/data-territory-manage/);
+  assert.match(ui,/data-territory-open-child/);
+  assert.match(ui,/Browse official children/);
+  assert.match(ui,/Official identity is read-only/);
+  assert.match(ui,/data-territory-status-form/);
+});
+
+test('Territory Tree UX is mobile-first and bounded on deeper PSGC branches',()=>{
+  assert.match(css,/\.territoryTreeChildren\{[^}]*margin-left:14px[^}]*border-left:1px solid var\(--line\)/);
+  assert.match(css,/@media\(max-width:520px\)\{\.territoryTreeChildren\{[^}]*margin-left:8px/);
+  assert.match(css,/@media\(min-width:920px\)\{\.territoryTreeWorkspace\{grid-template-columns:minmax\(0,1fr\) 360px/);
+  assert.match(css,/\.territoryTreeNode\.selected\{background:#122838;border-color:#60d6b4cc\}/);
+});
+
+test('Territory Tree UX keeps scoped or legacy children visible when their parent is outside the Admin view',()=>{
+  assert.match(ui,/scopedRoots\.push\(x\)/);
+  assert.match(ui,/SCOPED \/ UNLINKED ROOTS/);
+  assert.match(ui,/parent is outside the current view/);
+});
+
 test('Support UI uses backend-valid statuses',()=>{
   assert.match(adminServer,/SUPPORT_STATUSES=new Set\(\['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened'\]\)/);
   assert.match(ui,/\['new','triaged','assigned','waiting_user','waiting_internal','resolved','closed','reopened'\]/);
