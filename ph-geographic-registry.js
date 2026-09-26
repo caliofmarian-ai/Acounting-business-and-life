@@ -16,6 +16,14 @@ export const PH_PSGC_EXPECTED_COUNTS=Object.freeze({
   barangay:42010
 });
 
+export const PH_PSGC_SNAPSHOT=Object.freeze({
+  package:'@ianlabicani/geoph-lite',
+  package_version:'2.0.0',
+  repository:'https://github.com/ianlabicani/geoph-lite',
+  commit:'31358288c0fd3b5758e8e29f7df11f997fa374d7',
+  source_version:PH_PSGC_SOURCE.version
+});
+
 const clean=(value,max=1000)=>String(value??'').trim().replace(/\s+/g,' ').slice(0,max);
 const headerKey=value=>clean(value,240).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'');
 
@@ -173,6 +181,62 @@ export async function parsePhPsgcWorkbook(buffer){
   return deriveParents([...unique.values()]);
 }
 
+export async function loadBundledPhPsgcRows(){
+  const geo=await import('@ianlabicani/geoph-lite');
+  const rows=[];
+  const base=(node,level,parent='',path='')=>({
+    psgc_code:normalizePsgcCode(node.psgc_code,10),
+    correspondence_code:'',
+    name:clean(node.name,240),
+    raw_geographic_level:level==='region'?'Reg':level==='province'?'Prov':level==='city'?'City':level==='municipality'?'Mun':'Bgy',
+    geographic_level:level,
+    parent_psgc_code:parent,
+    path_text:path,
+    old_name:'',
+    city_class:'',
+    income_classification:'',
+    urban_rural:'',
+    population:'',
+    source_sheet:'bundled_q2_2026',
+    source_row:null
+  });
+  for(const regionSummary of geo.regions){
+    const region=await geo.loadRegion(regionSummary.psgc_code);
+    const regionCode=normalizePsgcCode(region.psgc_code,10);
+    const regionPath=clean(region.name,240);
+    rows.push(base(region,'region','',regionPath));
+    for(const province of Array.isArray(region.provinces)?region.provinces:[]){
+      const provinceCode=normalizePsgcCode(province.psgc_code,10);
+      const provincePath=regionPath+' › '+clean(province.name,240);
+      rows.push(base(province,'province',regionCode,provincePath));
+      for(const locality of Array.isArray(province.localities)?province.localities:[]){
+        const localityCode=normalizePsgcCode(locality.psgc_code,10);
+        const localityLevel=locality.type==='city'?'city':'municipality';
+        const localityPath=provincePath+' › '+clean(locality.name,240);
+        rows.push(base(locality,localityLevel,provinceCode,localityPath));
+        for(const barangay of Array.isArray(locality.barangays)?locality.barangays:[]){
+          rows.push(base(barangay,'barangay',localityCode,localityPath+' › '+clean(barangay.name,240)));
+        }
+      }
+    }
+    for(const locality of Array.isArray(region.localities)?region.localities:[]){
+      const localityCode=normalizePsgcCode(locality.psgc_code,10);
+      const localityLevel=locality.type==='city'?'city':'municipality';
+      const localityPath=regionPath+' › '+clean(locality.name,240);
+      rows.push(base(locality,localityLevel,regionCode,localityPath));
+      for(const barangay of Array.isArray(locality.barangays)?locality.barangays:[]){
+        rows.push(base(barangay,'barangay',localityCode,localityPath+' › '+clean(barangay.name,240)));
+      }
+    }
+  }
+  const unique=[...new Map(rows.map(row=>[row.psgc_code,row])).values()];
+  const sawata=unique.find(row=>row.psgc_code==='1102324000');
+  if(!sawata||sawata.name!=='Sawata')throw new Error('Bundled PSGC snapshot failed Q2 2026 Sawata integrity check');
+  const bacoor=unique.find(row=>row.psgc_code==='0402103000');
+  if(!bacoor||bacoor.name!=='City of Bacoor')throw new Error('Bundled PSGC snapshot failed Bacoor integrity check');
+  return unique;
+}
+
 export function summarizePhPsgcRows(rows){
   const counts={total:0,region:0,province:0,city:0,municipality:0,barangay:0,district:0,submunicipality:0,special_geographic_unit:0,other:0};
   for(const row of Array.isArray(rows)?rows:[]){
@@ -203,7 +267,9 @@ export function validatePhPsgcRows(rows,{strictVersion=true}={}){
 
 export async function ensurePhGeographicRegistrySchema(pool){
   await pool.query([
-    "CREATE TABLE IF NOT EXISTS ph_geographic_registry_imports (id BIGSERIAL PRIMARY KEY,country_code TEXT NOT NULL DEFAULT 'PH',source_authority TEXT NOT NULL,source_version TEXT NOT NULL,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,row_count INTEGER NOT NULL DEFAULT 0,level_counts JSONB NOT NULL DEFAULT '{}'::jsonb,imported_by_account_id BIGINT REFERENCES accounts(id),started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),completed_at TIMESTAMPTZ,error_message TEXT NOT NULL DEFAULT '',CHECK(status IN ('running','success','failed')))",
+    "CREATE TABLE IF NOT EXISTS ph_geographic_registry_imports (id BIGSERIAL PRIMARY KEY,country_code TEXT NOT NULL DEFAULT 'PH',source_authority TEXT NOT NULL,source_version TEXT NOT NULL,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL DEFAULT '',source_transport TEXT NOT NULL DEFAULT '',transport_reference TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,row_count INTEGER NOT NULL DEFAULT 0,level_counts JSONB NOT NULL DEFAULT '{}'::jsonb,imported_by_account_id BIGINT REFERENCES accounts(id),started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),completed_at TIMESTAMPTZ,error_message TEXT NOT NULL DEFAULT '',CHECK(status IN ('running','success','failed')))",
+    "ALTER TABLE ph_geographic_registry_imports ADD COLUMN IF NOT EXISTS source_transport TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE ph_geographic_registry_imports ADD COLUMN IF NOT EXISTS transport_reference TEXT NOT NULL DEFAULT ''",
     "CREATE INDEX IF NOT EXISTS ph_geo_imports_status_idx ON ph_geographic_registry_imports(country_code,status,completed_at DESC,id DESC)",
     "CREATE TABLE IF NOT EXISTS ph_geographic_registry (country_code TEXT NOT NULL DEFAULT 'PH',psgc_code TEXT NOT NULL,source_version TEXT NOT NULL,name TEXT NOT NULL,correspondence_code TEXT NOT NULL DEFAULT '',raw_geographic_level TEXT NOT NULL,geographic_level TEXT NOT NULL,parent_psgc_code TEXT NOT NULL DEFAULT '',path_text TEXT NOT NULL DEFAULT '',old_name TEXT NOT NULL DEFAULT '',city_class TEXT NOT NULL DEFAULT '',income_classification TEXT NOT NULL DEFAULT '',urban_rural TEXT NOT NULL DEFAULT '',population TEXT NOT NULL DEFAULT '',source_url TEXT NOT NULL,raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(country_code,psgc_code,source_version),CHECK(geographic_level IN ('region','province','city','municipality','district','submunicipality','special_geographic_unit','barangay','other')))",
     "CREATE INDEX IF NOT EXISTS ph_geo_registry_search_idx ON ph_geographic_registry(country_code,source_version,geographic_level,name)",
@@ -222,7 +288,7 @@ async function latestSuccessfulImport(pool){
 
 export async function phGeographicRegistryStatus(pool){
   const latest=await latestSuccessfulImport(pool);
-  const recent=await pool.query("SELECT id,source_version,status,row_count,level_counts,started_at,completed_at,error_message FROM ph_geographic_registry_imports WHERE country_code='PH' ORDER BY id DESC LIMIT 5");
+  const recent=await pool.query("SELECT id,source_version,source_transport,transport_reference,status,row_count,level_counts,started_at,completed_at,error_message FROM ph_geographic_registry_imports WHERE country_code='PH' ORDER BY id DESC LIMIT 5");
   return{
     country_code:'PH',
     source:PH_PSGC_SOURCE,
@@ -233,13 +299,15 @@ export async function phGeographicRegistryStatus(pool){
       row_count:Number(latest.row_count||0),
       level_counts:latest.level_counts||{},
       source_sha256:latest.source_sha256,
+      source_transport:latest.source_transport||'',
+      transport_reference:latest.transport_reference||'',
       completed_at:latest.completed_at
     }:null,
     recent_imports:recent.rows
   };
 }
 
-async function insertRegistryRows(client,rows,sourceSha){
+async function insertRegistryRows(client,rows,sourceSha,sourceTransport='psa_direct_xlsx',transportReference=PH_PSGC_SOURCE.publication_url){
   const fields=['country_code','psgc_code','source_version','name','correspondence_code','raw_geographic_level','geographic_level','parent_psgc_code','path_text','old_name','city_class','income_classification','urban_rural','population','source_url','raw_json'];
   const chunkSize=800;
   for(let start=0;start<rows.length;start+=chunkSize){
@@ -252,7 +320,7 @@ async function insertRegistryRows(client,rows,sourceSha){
         row.raw_geographic_level,row.geographic_level,row.parent_psgc_code||'',row.path_text||'',
         row.old_name||'',row.city_class||'',row.income_classification||'',row.urban_rural||'',row.population||'',
         PH_PSGC_SOURCE.publication_url,
-        JSON.stringify({source_sheet:row.source_sheet,source_row:row.source_row,source_sha256:sourceSha})
+        JSON.stringify({source_sheet:row.source_sheet,source_row:row.source_row,source_sha256:sourceSha,source_transport:sourceTransport,transport_reference:transportReference})
       );
       return '('+fields.map((_,i)=>'$'+(base+i+1)).join(',')+')';
     }).join(',');
@@ -273,27 +341,39 @@ export async function syncPhGeographicRegistry(pool,{importedByAccountId=null,fe
   );
   const attemptId=Number(attempt.rows[0].id);
   try{
-    const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),30000);
-    let response;
-    try{response=await fetchImpl(PH_PSGC_SOURCE.publication_url,{signal:controller.signal,headers:{'User-Agent':'Business-Life-PSGC-Sync/1.0'}})}
-    finally{clearTimeout(timer)}
-    if(!response?.ok)throw new Error('PSA PSGC publication download failed with HTTP '+Number(response?.status||0));
-    const advertised=Number(response.headers?.get?.('content-length')||0);
-    if(advertised>15_000_000)throw new Error('PSA PSGC workbook exceeds the 15 MB safety limit');
-    const buffer=Buffer.from(await response.arrayBuffer());
-    if(buffer.length<1000||buffer.length>15_000_000)throw new Error('PSA PSGC workbook size is outside the accepted safety range');
-    if(buffer[0]!==0x50||buffer[1]!==0x4b)throw new Error('PSA PSGC publication is not a valid XLSX/ZIP payload');
-    const sourceSha=crypto.createHash('sha256').update(buffer).digest('hex');
-    const rows=await parsePhPsgcWorkbook(buffer);
+    let rows=null,sourceSha='',sourceTransport='',transportReference='',directError='';
+    try{
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),12000);
+      let response;
+      try{response=await fetchImpl(PH_PSGC_SOURCE.publication_url,{signal:controller.signal,headers:{'User-Agent':'Business-Life-PSGC-Sync/1.1','Accept':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*','Referer':PH_PSGC_SOURCE.landing_url}})}
+      finally{clearTimeout(timer)}
+      if(!response?.ok)throw new Error('PSA PSGC publication download failed with HTTP '+Number(response?.status||0));
+      const advertised=Number(response.headers?.get?.('content-length')||0);
+      if(advertised>15_000_000)throw new Error('PSA PSGC workbook exceeds the 15 MB safety limit');
+      const buffer=Buffer.from(await response.arrayBuffer());
+      if(buffer.length<1000||buffer.length>15_000_000)throw new Error('PSA PSGC workbook size is outside the accepted safety range');
+      if(buffer[0]!==0x50||buffer[1]!==0x4b)throw new Error('PSA PSGC publication is not a valid XLSX/ZIP payload');
+      sourceSha=crypto.createHash('sha256').update(buffer).digest('hex');
+      rows=await parsePhPsgcWorkbook(buffer);
+      sourceTransport='psa_direct_xlsx';
+      transportReference=PH_PSGC_SOURCE.publication_url;
+    }catch(error){
+      directError=clean(error?.message||error,500);
+      rows=await loadBundledPhPsgcRows();
+      const snapshotBytes=Buffer.from(JSON.stringify(rows.map(row=>[row.psgc_code,row.name,row.geographic_level,row.parent_psgc_code])));
+      sourceSha=crypto.createHash('sha256').update(snapshotBytes).digest('hex');
+      sourceTransport='bundled_q2_2026_snapshot';
+      transportReference=PH_PSGC_SNAPSHOT.package+'@'+PH_PSGC_SNAPSHOT.package_version+'#'+PH_PSGC_SNAPSHOT.commit;
+    }
     const counts=validatePhPsgcRows(rows,{strictVersion:true});
     const client=await pool.connect();
     try{
       await client.query('BEGIN');
-      await insertRegistryRows(client,rows,sourceSha);
+      await insertRegistryRows(client,rows,sourceSha,sourceTransport,transportReference);
       await client.query(
-        "UPDATE ph_geographic_registry_imports SET status='success',source_sha256=$1,row_count=$2,level_counts=$3::jsonb,completed_at=NOW(),error_message='' WHERE id=$4",
-        [sourceSha,rows.length,JSON.stringify(counts),attemptId]
+        "UPDATE ph_geographic_registry_imports SET status='success',source_sha256=$1,source_transport=$2,transport_reference=$3,row_count=$4,level_counts=$5::jsonb,completed_at=NOW(),error_message=$6 WHERE id=$7",
+        [sourceSha,sourceTransport,transportReference,rows.length,JSON.stringify(counts),directError?('Direct PSA transport unavailable; validated fallback used: '+directError):'',attemptId]
       );
       await client.query('COMMIT');
     }catch(error){

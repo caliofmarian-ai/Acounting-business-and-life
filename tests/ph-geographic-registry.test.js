@@ -4,6 +4,10 @@ import fs from 'node:fs';
 import ExcelJS from 'exceljs';
 import {
   PH_PSGC_SOURCE,
+  PH_PSGC_SNAPSHOT,
+  PH_PSGC_EXPECTED_COUNTS,
+  loadBundledPhPsgcRows,
+  validatePhPsgcRows,
   normalizePsgcCode,
   normalizePsgcLevel,
   territoryTypeForPsgcLevel,
@@ -16,6 +20,17 @@ test('PH PSGC source is pinned to the official 2Q 2026 publication',()=>{
   assert.equal(PH_PSGC_SOURCE.authority,'Philippine Statistics Authority (PSA)');
   assert.match(PH_PSGC_SOURCE.landing_url,/psa\.gov\.ph\/classification\/psgc/);
   assert.match(PH_PSGC_SOURCE.publication_url,/PSGC-2Q-2026-Publication-Datafile\.xlsx/);
+});
+
+test('bundled Q2 2026 snapshot is pinned and validates against PSA release totals',async()=>{
+  assert.equal(PH_PSGC_SNAPSHOT.package,'@ianlabicani/geoph-lite');
+  assert.equal(PH_PSGC_SNAPSHOT.package_version,'2.0.0');
+  assert.equal(PH_PSGC_SNAPSHOT.source_version,'2026-06-30');
+  const rows=await loadBundledPhPsgcRows();
+  const counts=validatePhPsgcRows(rows,{strictVersion:true});
+  for(const [level,expected] of Object.entries(PH_PSGC_EXPECTED_COUNTS))assert.equal(counts[level],expected,level);
+  assert.equal(rows.find(x=>x.psgc_code==='0402103000')?.name,'City of Bacoor');
+  assert.equal(rows.find(x=>x.psgc_code==='1102324000')?.name,'Sawata');
 });
 
 test('PSGC code and geographic-level normalization preserve official identifiers',()=>{
