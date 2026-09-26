@@ -415,6 +415,60 @@ function adminCatalogPayload(ctx){
   const delegable_roles=catalog.ranks.filter(r=>canDelegateRank(actorRank,r.code)).map(r=>r.code);
   return{...catalog,functions,delegable_roles,actor_rank:actorRank};
 }
+async function adminHomeSummaryFromContext(ctx){
+  const supportPromise=ctx.permissions.has('support.manage')?(async()=>{
+    const scope=scopeFromContext(ctx,'support.manage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed'))::int open,
+              COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed') AND priority='urgent')::int urgent
+         FROM support_tickets
+        WHERE ${scope.countryWide?"country_code='PH'":"territory_id=ANY($1::bigint[])"}`,
+      scope.countryWide?[]:[ids]
+    );
+    return q.rows[0];
+  })():Promise.resolve(null);
+  const incidentPromise=ctx.permissions.has('incident.triage')?(async()=>{
+    const scope=scopeFromContext(ctx,'incident.triage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT COUNT(*) FILTER(WHERE status NOT IN ('resolved','dismissed'))::int open
+         FROM incident_reports
+        WHERE ${scope.countryWide?"(territory_id IS NULL OR territory_id IN (SELECT id FROM territories WHERE country_code='PH'))":"territory_id=ANY($1::bigint[])"}`,
+      scope.countryWide?[]:[ids]
+    );
+    return q.rows[0];
+  })():Promise.resolve(null);
+  const profilePermissions=[
+    ['merchant','merchant.approve'],['supplier','supplier.approve'],['courier','courier.verify'],['service_provider','profiles.review_service_provider']
+  ];
+  const pendingTasks=profilePermissions.filter(([,permission])=>ctx.permissions.has(permission)).map(async([role,permission])=>{
+    const scope=scopeFromContext(ctx,permission,'pa.territory_id'),ids=scope.ids.length?scope.ids:[-1];
+    const q=await pool.query(
+      `SELECT COUNT(*)::int n FROM profile_applications pa JOIN territories t ON t.id=pa.territory_id
+        WHERE pa.role=$1 AND pa.status IN ('submitted','under_review')
+          AND ${scope.countryWide?"t.country_code='PH'":"pa.territory_id=ANY($2::bigint[])"}`,
+      scope.countryWide?[role]:[role,ids]
+    );
+    return{role,count:Number(q.rows[0]?.n||0)};
+  });
+  const [support,incidents,pendingRows]=await Promise.all([supportPromise,incidentPromise,Promise.all(pendingTasks)]);
+  const pendingByRole=Object.fromEntries(pendingRows.map(x=>[x.role,x.count]));
+  return{
+    support,incidents,
+    pending_applications:pendingRows.reduce((sum,x)=>sum+x.count,0),
+    pending_applications_by_role:pendingByRole,
+    orders:null,deliveries:null,service_jobs:null
+  };
+}
+async function adminHomeOverview(accountId,seedContext=null){
+  const ctx=seedContext||await buildAdminScopeContext(accountId);
+  const consoleScope=scopeFromContext(ctx,'admin.console','territory_id'),ids=new Set(consoleScope.ids);
+  const territories=(consoleScope.countryWide
+    ?ctx.territories.filter(t=>t.country_code==='PH')
+    :ctx.territories.filter(t=>ids.has(Number(t.id))))
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  const summary=await adminHomeSummaryFromContext(ctx);
+  return{detail_mode:'home',assignments:ctx.assignments,territories,summary};
+}
 async function adminSummaryFromContext(ctx){
   const supportPromise=ctx.permissions.has('support.manage')?(async()=>{
     const scope=scopeFromContext(ctx,'support.manage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
@@ -617,7 +671,7 @@ app.get('/api/admin/catalog',async(req,res,next)=>{try{
 app.get('/api/admin/bootstrap',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
   requirePermissionFromContext(ctx,'admin.console');
-  const overview=await adminOverview(me.account.id,ctx);
+  const overview=await adminHomeOverview(me.account.id,ctx);
   res.json({me:adminMePayload(ctx,me.account),catalog:adminCatalogPayload(ctx),overview});
 }catch(e){next(e)}});
 app.get('/api/admin/overview',async(req,res,next)=>{try{
