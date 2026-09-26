@@ -43,7 +43,7 @@ function panel(){
 }
 function setTab(mode){document.querySelectorAll('[data-auth-mode]').forEach(b=>b.classList.toggle('active',b.dataset.authMode===mode))}
 function googleButton(){return status.google_enabled?`<a class="googleAuthBtn" href="/api/auth/google/start"><span>G</span> Continue with Google</a>`:''}
-function qaPreviewBanner(){const qa=status.qa_preview_context;if(!qa?.enabled)return'';return '<div class="modernQaContext"><strong>🧪 '+esc(qa.label||'QA test context')+'</strong><span>Testing country: Philippines. Your physical device location is not used as the Business & Life test territory. Choose the official PH barangay you want to test.</span></div>'}
+function qaPreviewBanner(){const qa=status.qa_preview_context;if(!qa?.enabled)return'';return '<div class="modernQaContext"><strong>🧪 '+esc(qa.label||'QA test context')+'</strong><span>Standard location rules remain active. A remote Philippines test override is available only to the designated QA test account; all other accounts follow normal location controls.</span></div>'}
 function render(mode){
   const body=document.getElementById('modernAuthBody');if(!body)return;setTab(mode);msg('');
   if(mode==='login')body.innerHTML=qaPreviewBanner()+`<form id="modernLogin" class="modernAuthForm"><label>Email<input id="modernEmail" type="email" autocomplete="email" required></label><label>Password<input id="modernPassword" type="password" autocomplete="current-password" required></label><button class="modernPrimary">Sign in</button><button id="forgotBtn" class="modernLinkBtn" type="button">Forgot password?</button></form>${googleButton()}`;
