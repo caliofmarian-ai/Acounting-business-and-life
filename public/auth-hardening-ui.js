@@ -23,7 +23,7 @@ function bindModernBarangayPicker(){
     });
   };
   const load=async(query='')=>{
-    results.innerHTML='<div class="modernGeoStatus">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
+    results.innerHTML='<div class="modernGeoStatus">'+'Searching official PSGC…'+'</div>';
     try{
       const data=await api('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=15');
       renderItems(data.items||[]);
