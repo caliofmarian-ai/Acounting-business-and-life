@@ -25,3 +25,18 @@ test('Android modal close controls meet the 44px touch target contract',()=>{
   assert.match(notifications,/\.notificationClose\{[^}]*width:44px;height:44px/);
   assert.match(legal,/\.legalClose\{[^}]*width:44px;height:44px/);
 });
+
+test('Android modal actions meet the 44px touch target contract',()=>{
+  assert.match(support,/\.opsTabs button\{[^}]*min-height:44px/);
+  assert.match(support,/\.voiceActions button\{[^}]*min-height:44px/);
+  assert.match(support,/\.supportComposerTools button\{[^}]*min-height:44px/);
+  assert.match(notifications,/\.notificationTabs button,\.notificationToolbar button\{[^}]*min-height:44px/);
+  assert.match(notifications,/\.notificationDismiss\{[^}]*min-width:44px;min-height:44px/);
+  assert.match(notifications,/\.soundPreviewButton\{[^}]*min-height:44px/);
+  assert.match(notifications,/\.webPushCompact button\{[^}]*min-height:44px/);
+  assert.match(notifications,/\.notificationModeChoices button\{min-height:44px/);
+  assert.match(legal,/\.legalTabs button\{[^}]*min-height:44px/);
+  assert.match(legal,/\.legalCard button\{[^}]*min-height:44px/);
+  assert.match(legal,/\.legalPrimary,\.legalSecondary,\.legalDanger\{[^}]*min-height:44px/);
+  assert.match(legal,/\.legalAdminDoc>button\{[^}]*min-height:44px/);
+});
