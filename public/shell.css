@@ -730,3 +730,34 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
 @media(max-width:649px){
   .merchantWorkspaceNav{display:none!important}
 }
+
+
+/* Profile First Paint V1 — #467
+   Shell-owned business context and Supplier Finance card reserve final geometry before lazy accounting loads. */
+.businessWorkspaceBar{
+  margin:0 16px 12px;
+  min-height:58px;
+  padding:12px 14px;
+  border:1px solid rgba(15,118,110,.18);
+  border-radius:16px;
+  background:linear-gradient(135deg,rgba(236,253,245,.98),rgba(240,249,255,.98));
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  box-shadow:0 8px 24px rgba(15,23,42,.06)
+}
+.businessWorkspaceBar>div{display:grid;gap:2px;min-width:0}
+.businessWorkspaceBar strong{font-size:.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.workspaceEyebrow{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#0f766e}
+.businessWorkspaceBar label{display:grid;gap:3px;font-size:.68rem;color:#475569}
+.businessWorkspaceBar select{max-width:180px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;padding:7px 9px;font:inherit;color:#0f172a}
+.workspaceIsolated{font-size:.72rem;font-weight:800;color:#047857;background:#d1fae5;padding:6px 9px;border-radius:999px;white-space:nowrap}
+.businessWorkspaceBarPending strong,.businessWorkspaceBarPending .workspaceIsolated{color:#64748b}
+.businessWorkspaceBarPending .workspaceIsolated{background:#edf2f0}
+.businessAccountingTile{border-color:rgba(13,148,136,.28)!important;background:linear-gradient(145deg,#f0fdfa,#ecfeff)!important}
+@media(max-width:640px){
+  .businessWorkspaceBar{margin:0 10px 10px;padding:10px 11px;min-height:56px}
+  .businessWorkspaceBar select{max-width:130px}
+  .workspaceIsolated{font-size:.66rem}
+}
