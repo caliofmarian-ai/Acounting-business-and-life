@@ -8,6 +8,7 @@ const auth=read('server-auth.js');
 const governance=read('server-profile-governance.js');
 const adminProxy=read('server-admin-operations.js');
 const adminUi=read('public/admin-console.js');
+const notificationsUi=read('public/notifications-ui.js');
 
 test('registration remains allowed for any official barangay regardless of operating status',()=>{
   const start=auth.indexOf("app.post('/api/auth/register'");
@@ -54,6 +55,8 @@ test('area-opening notification carries a Manage profiles action but no marketin
   assert.match(governance,/action:'manage_profiles'/);
   assert.match(governance,/emailDefault:false/);
   assert.match(governance,/territory\.area_available/);
+  assert.match(notificationsUi,/data_json\?\.action==='manage_profiles'/);
+  assert.match(notificationsUi,/openAccountSettings\?\.\('profiles'\)/);
 });
 
 test('typed barangay search does not preload onboarding territories',()=>{
