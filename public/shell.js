@@ -397,7 +397,7 @@ function bindAccountGeographyControls(workspace){
     });
   };
   const load=async(query='')=>{
-    results.innerHTML='<div class="accountGeoHint">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
+    results.innerHTML='<div class="accountGeoHint">'+'Searching official PSGC…'+'</div>';
     try{
       const data=await profileApi('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=15');
       renderItems(data.items||[]);
