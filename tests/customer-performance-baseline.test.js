@@ -33,7 +33,7 @@ test('Customer Home has bounded cache and in-flight request deduplication',()=>{
 });
 
 test('Customer Home renders stable loading partial-failure retry states',()=>{
-  assert.match(shell,/id="customerHomeLoading"/);
+  assert.match(shell,/profileHomeLoadingMarkup\('customerHomeLoading','customerHomeState'/);
   assert.match(shell,/id="customerHomeError"/);
   assert.match(shell,/id="customerHomeDynamic"/);
   assert.match(shell,/Some Home information is unavailable/);
