@@ -30,11 +30,15 @@ test('Avatar hydration never fabricates a Business owner B before account identi
   assert.match(shellCss,/accountAvatarHydrate/);
 });
 
-test('Account protection rendering is race-safe and cannot append duplicate cards',()=>{
+test('Account protection rendering is race-safe and replaces each dedicated Security slot',()=>{
   assert.match(authUi,/authSecurityDecorating/);
-  assert.match(authUi,/panel\.querySelectorAll\('\.authUpgradeCard'\)/);
-  assert.match(authUi,/raced\.length/);
-  assert.match(authUi,/raced\.slice\(1\)\.forEach\(x=>x\.remove\(\)\)/);
+  assert.match(authUi,/accountProtectionMount/);
+  assert.match(authUi,/accountSensitiveActionMount/);
+  assert.match(authUi,/accountSessionsMount/);
+  assert.match(authUi,/protectionMount\.replaceChildren\(protection\)/);
+  assert.match(authUi,/sensitiveMount\.replaceChildren\(sensitive\)/);
+  assert.match(authUi,/sessionsMount\.replaceChildren\(sessions\)/);
+  assert.doesNotMatch(authUi,/panel\.appendChild\(section\)/);
 });
 
 test('email verification reports real external delivery state',()=>{

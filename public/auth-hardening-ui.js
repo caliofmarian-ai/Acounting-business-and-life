@@ -58,7 +58,13 @@ function render(mode){
 }
 async function login(e){e.preventDefault();msg('Signing in…');try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:document.getElementById('modernEmail').value,password:document.getElementById('modernPassword').value})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);location.reload()}catch(e){msg(e.message,'error')}}
 async function register(e){e.preventDefault();msg('Creating account…');try{const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({display_name:document.getElementById('regName').value,email:document.getElementById('regEmail').value,password:document.getElementById('regPassword').value,phone:document.getElementById('regPhone').value,address:document.getElementById('regAddress').value,home_psgc_code:document.getElementById('regHomePsgcCode').value,qa_remote_test:Boolean(document.getElementById('regQaRemoteTest')?.checked)})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);const v=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);if(v?.preview_verify_url){document.getElementById('modernAuthBody').innerHTML=`<div class="modernSuccess"><h2>Account created</h2><p>For this preview you can open the verification link directly.</p><a href="${esc(v.preview_verify_url)}">Verify email</a><button id="continueApp" class="modernPrimary">Continue to app</button></div>`;document.getElementById('continueApp').onclick=()=>location.reload()}else location.reload()}catch(e){msg(e.message,'error')}}
-function renderForgot(){const body=document.getElementById('modernAuthBody');setTab('none');body.innerHTML=`<div class="modernBackRow"><button id="backLogin" class="modernBack">‹</button><div><h2>Reset password</h2><p>Enter the email used for your account.</p></div></div><form id="forgotForm" class="modernAuthForm"><label>Email<input id="forgotEmail" type="email" autocomplete="email" required></label><button class="modernPrimary">Send reset instructions</button></form>`;document.getElementById('backLogin').onclick=()=>render('login');document.getElementById('forgotForm').onsubmit=async e=>{e.preventDefault();msg('Preparing reset…');try{const r=await api('/api/auth/forgot-password',{method:'POST',body:JSON.stringify({email:document.getElementById('forgotEmail').value})});if(r.preview_reset_url){body.innerHTML=`<div class="modernSuccess"><h2>Reset prepared</h2><p>${esc(r.message)}</p><a href="${esc(r.preview_reset_url)}">Open preview reset link</a></div>`}else{body.innerHTML=`<div class="modernSuccess"><h2>Check your email</h2><p>${esc(r.message)}</p></div>`}msg('')}catch(e){msg(e.message,'error')}}}
+function renderForgot({email='',returnToApp=false}={}){const body=document.getElementById('modernAuthBody');setTab('none');body.innerHTML=`<div class="modernBackRow"><button id="backLogin" class="modernBack">‹</button><div><h2>Reset password</h2><p>Enter the email used for your account.</p></div></div><form id="forgotForm" class="modernAuthForm"><label>Email<input id="forgotEmail" type="email" autocomplete="email" value="${esc(email)}" required></label><button class="modernPrimary">Send reset instructions</button></form>`;document.getElementById('backLogin').onclick=()=>returnToApp?location.reload():render('login');document.getElementById('forgotForm').onsubmit=async e=>{e.preventDefault();msg('Preparing reset…');try{const r=await api('/api/auth/forgot-password',{method:'POST',body:JSON.stringify({email:document.getElementById('forgotEmail').value})});if(r.preview_reset_url){body.innerHTML=`<div class="modernSuccess"><h2>Reset prepared</h2><p>${esc(r.message)}</p><a href="${esc(r.preview_reset_url)}">Open preview reset link</a></div>`}else{body.innerHTML=`<div class="modernSuccess"><h2>Check your email</h2><p>${esc(r.message)}</p></div>`}msg('')}catch(e){msg(e.message,'error')}}}
+function openPasswordRecovery(email=''){
+  document.getElementById('shell')?.classList.add('hidden');
+  document.getElementById('login')?.classList.remove('hidden');
+  panel();renderForgot({email,returnToApp:true});
+  requestAnimationFrame(()=>document.getElementById('forgotEmail')?.focus({preventScroll:true}));
+}
 function renderReset(raw){const root=document.getElementById('modernAuthRoot');if(!root)return;root.innerHTML=`<section class="modernAuthCard"><div class="modernBackRow"><div><h2>Choose a new password</h2><p>This link can be used once.</p></div></div><form id="resetForm" class="modernAuthForm"><label>New password<input id="resetPassword" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirm password<input id="resetConfirm" type="password" minlength="8" autocomplete="new-password" required></label><button class="modernPrimary">Reset password</button></form><div id="modernAuthMessage" class="modernAuthMessage"></div></section>`;document.getElementById('resetForm').onsubmit=async e=>{e.preventDefault();const p=document.getElementById('resetPassword').value;if(p!==document.getElementById('resetConfirm').value)return msg('Passwords do not match','error');msg('Resetting…');try{await api('/api/auth/reset-password',{method:'POST',body:JSON.stringify({token:raw,new_password:p})});clearQuery();document.getElementById('modernAuthRoot').innerHTML=`<section class="modernAuthCard"><div class="modernSuccess"><h2>Password updated</h2><p>All previous sessions were revoked. Sign in again with your new password.</p><button id="backAfterReset" class="modernPrimary">Sign in</button></div></section>`;document.getElementById('backAfterReset').onclick=()=>location.reload()}catch(e){msg(e.message,'error')}}}
 function renderVerificationResult(state){
   const root=document.getElementById('modernAuthRoot');if(!root)return;
@@ -77,38 +83,35 @@ async function verifyFromUrl(raw){try{const r=await api('/api/auth/email-verific
 async function oauthHandoff(raw){try{const r=await api('/api/auth/oauth/handoff',{method:'POST',body:JSON.stringify({code:raw})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);clearQuery();location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
 async function decorateSecurity(){
   if(!isV2())return;
-  const panel=document.getElementById('accountSecurityMount');
-  if(!panel)return;
-  const account=window.BusinessLifeProfileState?.snapshot?.account;
-  if(!account)return;
-  const existing=[...panel.querySelectorAll('.authUpgradeCard')];
-  if(existing.length){existing.slice(1).forEach(x=>x.remove());return}
+  const panel=document.getElementById('accountSecurityMount');if(!panel)return;
+  const account=window.BusinessLifeProfileState?.snapshot?.account;if(!account)return;
+  const protectionMount=document.getElementById('accountProtectionMount')||panel;
+  const sensitiveMount=document.getElementById('accountSensitiveActionMount')||panel;
+  const sessionsMount=document.getElementById('accountSessionsMount')||panel;
   if(panel.dataset.authSecurityDecorating==='1')return;
   panel.dataset.authSecurityDecorating='1';
   try{
-    const [ids,stepUp]=await Promise.all([
-      api('/api/auth/identities'),
-      api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10}))
-    ]);
+    const [ids,stepUp]=await Promise.all([api('/api/auth/identities'),api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10}))]);
     if(!document.body.contains(panel))return;
-    const raced=[...panel.querySelectorAll('.authUpgradeCard')];
-    if(raced.length){raced.slice(1).forEach(x=>x.remove());return}
     const googleLinked=ids.some(x=>x.provider==='google');
-    const section=document.createElement('section');
-    section.className='accountSettingsCard authUpgradeCard';
-    const deliveryNote=!account.email_verified_at&&!status.email_delivery_configured
-      ?'<div class="avatarHint authDeliveryWarning">Email delivery is not configured in this environment. A preview may offer a direct verification link.</div>'
-      :'';
+    const deliveryNote=!account.email_verified_at&&!status.email_delivery_configured?'<div class="avatarHint authDeliveryWarning">Email delivery is not configured in this environment. A preview may offer a direct verification link.</div>':'';
     const stepUpMinutes=Number(stepUp?.valid_for_minutes||10);
     const stepUpMarkup=stepUp?.verified
       ?'<div class="authSecurityLine"><span>Recent identity confirmation</span><strong>Active · up to '+stepUpMinutes+' min</strong></div>'
       :account.has_password
         ?'<form id="stepUpSecurityForm" class="authStepUpForm"><label>Confirm current password<input id="stepUpSecurityPassword" type="password" autocomplete="current-password" maxlength="160" required></label><button type="submit">Confirm identity for sensitive actions</button><div id="stepUpSecurityMsg" class="avatarHint">This confirmation is session-specific and expires automatically.</div></form>'
         :'<div class="avatarHint authStepUpNotice">Sensitive actions require recent identity confirmation. Sign out and sign back in with Google to refresh this session.</div>';
-    section.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<h3 class="authStepUpTitle">Sensitive-action confirmation</h3>${stepUpMarkup}<button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><div id="authDrawerMsg" class="avatarHint"></div>`;
-    panel.appendChild(section);
-    section.querySelector('#sendVerify')?.addEventListener('click',async()=>{
-      const out=section.querySelector('#authDrawerMsg');out.textContent='Preparing verification…';
+
+    const protection=document.createElement('section');protection.className='accountSettingsCard authUpgradeCard authProtectionCard';
+    protection.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<div id="accountProtectionMsg" class="avatarHint"></div>`;
+    const sensitive=document.createElement('section');sensitive.className='accountSettingsCard authUpgradeCard authSensitiveCard';
+    sensitive.innerHTML=`<h2>Sensitive-action confirmation</h2><p class="authSectionIntro">Confirm your identity only when a protected action requires it. This is separate from changing your password.</p>${stepUpMarkup}`;
+    const sessions=document.createElement('section');sessions.className='accountSettingsCard authUpgradeCard authSessionsCard';
+    sessions.innerHTML='<h2>Sessions</h2><div class="authSecurityLine"><span>Current session</span><strong>This device · Active</strong></div><p class="authSectionIntro">Manage signed-in access separately from your password.</p><button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><button id="signOutCurrent" type="button" class="dangerStrong">Sign out</button><div id="authSessionMsg" class="avatarHint"></div>';
+    protectionMount.replaceChildren(protection);sensitiveMount.replaceChildren(sensitive);sessionsMount.replaceChildren(sessions);
+
+    protection.querySelector('#sendVerify')?.addEventListener('click',async()=>{
+      const out=protection.querySelector('#accountProtectionMsg');out.textContent='Preparing verification…';
       try{
         const r=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'});
         if(r.delivery_status==='sent')out.textContent='Verification email sent. Check your inbox and spam folder.';
@@ -117,28 +120,17 @@ async function decorateSecurity(){
         else out.textContent='Verification email could not be delivered. Please try again later.';
       }catch(e){out.textContent=e.message}
     });
-    section.querySelector('#stepUpSecurityForm')?.addEventListener('submit',async e=>{
-      e.preventDefault();
-      const input=section.querySelector('#stepUpSecurityPassword'),out=section.querySelector('#stepUpSecurityMsg');
-      if(!input||!out)return;
-      const password=input.value;
-      input.value='';
-      out.textContent='Confirming identity…';
-      try{
-        await api('/api/auth/step-up/password',{method:'POST',body:JSON.stringify({password})});
-        out.textContent='Identity confirmed. Sensitive actions are available for a short period on this session.';
-        section.remove();
-        await decorateSecurity();
-      }catch(error){
-        input.value='';
-        out.textContent=error.message;
-      }
+    sensitive.querySelector('#stepUpSecurityForm')?.addEventListener('submit',async e=>{
+      e.preventDefault();const input=sensitive.querySelector('#stepUpSecurityPassword'),out=sensitive.querySelector('#stepUpSecurityMsg');if(!input||!out)return;
+      const password=input.value;input.value='';out.textContent='Confirming identity…';
+      try{await api('/api/auth/step-up/password',{method:'POST',body:JSON.stringify({password})});out.textContent='Identity confirmed. Sensitive actions are available for a short period on this session.';const button=sensitive.querySelector('button[type="submit"]');if(button)button.disabled=true;input.disabled=true}catch(error){input.value='';out.textContent=error.message}
     });
-    section.querySelector('#revokeOthers').onclick=async()=>{const out=section.querySelector('#authDrawerMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}};
+    sessions.querySelector('#revokeOthers').onclick=async()=>{const out=sessions.querySelector('#authSessionMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}};
+    sessions.querySelector('#signOutCurrent').onclick=async event=>{event.currentTarget.disabled=true;try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}localStorage.removeItem(ABL_AUTH_TOKEN);location.reload()};
   }catch{}finally{delete panel.dataset.authSecurityDecorating}
 }
 
-function watchDrawer(){document.addEventListener('abl:account-settings-rendered',event=>{if(event.detail?.view==='security')decorateSecurity().catch(()=>{})})}
+function watchDrawer(){document.addEventListener('abl:account-settings-rendered',event=>{if(event.detail?.view==='security')decorateSecurity().catch(()=>{})});document.addEventListener('abl:open-password-recovery',event=>openPasswordRecovery(event.detail?.email||''))}
 async function boot(){
   if(token()&&!isV2())localStorage.removeItem(ABL_AUTH_TOKEN);
   const params=new URLSearchParams(location.search);
@@ -158,4 +150,5 @@ async function boot(){
   const flash=sessionStorage.getItem('abl_flash');if(flash){sessionStorage.removeItem('abl_flash');setTimeout(()=>{const t=document.getElementById('roleToast');if(t){t.textContent=flash;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3500)}},500)}
   watchDrawer();
 }
+window.BusinessLifeAuthHardening=Object.freeze({openPasswordRecovery});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();

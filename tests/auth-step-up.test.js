@@ -73,10 +73,11 @@ test('Security access owns password step-up and does not persist the password',(
   assert.match(hardeningUi,/id="stepUpSecurityForm"/);
   assert.match(hardeningUi,/id="stepUpSecurityPassword" type="password" autocomplete="current-password"/);
   assert.match(hardeningUi,/\/api\/auth\/step-up\/password/);
-  const start=hardeningUi.indexOf("section.querySelector('#stepUpSecurityForm')");
-  const end=hardeningUi.indexOf("section.querySelector('#revokeOthers')",start);
+  const start=hardeningUi.indexOf("sensitive.querySelector('#stepUpSecurityForm')");
+  const end=hardeningUi.indexOf("sessions.querySelector('#revokeOthers')",start);
   const block=hardeningUi.slice(start,end);
   assert.ok(start>=0&&end>start);
   assert.match(block,/input\.value=''/);
+  assert.match(hardeningUi,/id="signOutCurrent"/);
   assert.doesNotMatch(block,/localStorage\.setItem|sessionStorage\.setItem/);
 });
