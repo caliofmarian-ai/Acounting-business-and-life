@@ -58,6 +58,7 @@ The intended first hierarchy is:
 
 - Region IV-A (CALABARZON) — `planned`;
 - Cavite — `planned`;
-- City of Bacoor — `onboarding`.
+- City of Bacoor — `planned`;
+- the actual launch barangay — `onboarding`.
 
-This keeps the official administrative hierarchy visible while limiting launch onboarding to the actual pilot city.
+This keeps the official administrative hierarchy visible while limiting onboarding to the smallest real launch scope.
