@@ -38,8 +38,10 @@ test('profile Settings is opened from the active profile and stays out of the av
   assert.doesNotMatch(shell,/activeProfileSettingsButton/);
   assert.match(shell,/profileSettingsTile/);
   assert.match(shell,/BusinessLifeProfileSettings\?\.open/);
-  assert.match(loader,/\['profileSettings','⚙️','Profile Settings'\]/);
-  assert.match(loader,/settings\.open\('merchant'\)/);
+  assert.match(shell,/data-merchant-mobile-action="profileSettings"/);
+  assert.match(shell,/if\(destination==='profileSettings'\)/);
+  assert.match(shell,/return open\('merchant'\)/);
+  assert.doesNotMatch(loader,/MERCHANT_MOBILE_ACTIONS|openMerchantMobileAction/);
   assert.doesNotMatch(ui,/document\.addEventListener\('abl:drawer-rendered',injectSettingsEntry/);
   for(const role of ['customer','merchant','supplier','courier','service_provider'])assert.match(ui,new RegExp(role));
   assert.match(ui,/Account & profile settings/);
