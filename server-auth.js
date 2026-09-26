@@ -16,6 +16,7 @@ import { companyTestAccountForEmail, companyTestContact, companyTestProfileRole 
 import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-session-core.js';
 import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage} from './account-geography.js';
 import {emitNotificationEvent} from './notification-core.js';
+import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboarding} from './guided-onboarding-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -48,9 +49,10 @@ function responseJson(status,payload){
 }
 export function isAccountAuthOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
-  if(['/shell.css','/shell.js','/auth-ui.js'].includes(pathname))return true;
+  if(['/shell.css','/shell.js','/auth-ui.js','/guided-onboarding.css','/guided-onboarding.js'].includes(pathname))return true;
   if(pathname==='/api/me'||pathname.startsWith('/api/me/'))return true;
   if(pathname.startsWith('/api/auth/'))return true;
+  if(pathname.startsWith('/api/onboarding/'))return true;
   if(pathname.startsWith('/api/profiles/'))return true;
   if(pathname==='/api/courier'||pathname.startsWith('/api/context/'))return true;
   if(pathname==='/api/growth/referral'||pathname.startsWith('/api/growth/referral-'))return true;
@@ -305,6 +307,7 @@ async function initDb() {
   await ensurePersonIdentitySchema(pool);
   await ensureReferralAccountSchema(pool);
   await ensureAccountGeographySchema(pool);
+  await ensureGuidedOnboardingSchema(pool);
 }
 
 async function profileSnapshot(accountId) {
@@ -333,8 +336,8 @@ async function profileSnapshot(accountId) {
 function injectedIndex() {
   const html = readFileSync(join(publicDir, 'index.html'), 'utf8');
   return html
-    .replace('</head>', '  <link rel="stylesheet" href="/shell.css" />\n</head>')
-    .replace('</body>', '  <script type="module" src="/shell.js"></script>\n  <script type="module" src="/auth-ui.js"></script>\n</body>');
+    .replace('</head>', '  <link rel="stylesheet" href="/shell.css" />\n  <link rel="stylesheet" href="/guided-onboarding.css" />\n</head>')
+    .replace('</body>', '  <script type="module" src="/shell.js"></script>\n  <script type="module" src="/auth-ui.js"></script>\n  <script type="module" src="/guided-onboarding.js"></script>\n</body>');
 }
 
 app.get('/', (_req, res) => res.type('html').send(injectedIndex()));
@@ -537,6 +540,17 @@ app.post('/api/auth/password', body, auth, async (req, res, next) => {
 });
 
 app.get('/api/me', auth, async (req, res, next) => { try { res.json(await profileSnapshot(req.accountId)); } catch (err) { next(err); } });
+
+app.get('/api/onboarding/guide',auth,async(req,res,next)=>{try{
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(await guidedOnboardingSnapshot(pool,req.accountId));
+}catch(err){next(err)}});
+
+app.put('/api/onboarding/guide',body,auth,async(req,res,next)=>{try{
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(await updateGuidedOnboarding(pool,req.accountId,req.body||{}));
+}catch(err){next(err)}});
+
 
 app.get('/api/growth/referral', auth, async (req, res, next) => {
   try {
