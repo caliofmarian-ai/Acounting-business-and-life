@@ -59,7 +59,7 @@ test('Service Provider Money Home preserves allocation authority and defers deep
   const routeEnd=payments.indexOf("app.post('/api/profile-money/",routeStart);
   const route=payments.slice(routeStart,routeEnd);
   const fast=route.indexOf("role==='service_provider'&&String(req.query.view||'')==='home'");
-  const deep=route.indexOf('const [snapshot,accounts,preferences,budgets,profileLedger,accountMoney]');
+  const deep=route.indexOf('const [snapshot,accounts,preferences,budgets,profileLedger,accountMoney,movements]');
   assert.ok(fast>=0&&deep>fast);
 });
 

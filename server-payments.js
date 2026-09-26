@@ -345,18 +345,22 @@ app.get('/api/profile-money/:role',async(req,res,next)=>{try{
   if(role==='customer'&&String(req.query.view||'')==='home')return res.json(await customerMoneyHomeSnapshot(pool,me.account.id));
   if(role==='courier'&&String(req.query.view||'')==='home')return res.json(await courierMoneyHomeSnapshot(pool,me.account.id));
   if(role==='service_provider'&&String(req.query.view||'')==='home')return res.json(await serviceProviderMoneyHomeSnapshot(pool,me.account.id));
-  const [snapshot,accounts,preferences,budgets,profileLedger,accountMoney]=await Promise.all([
+  const [snapshot,accounts,preferences,budgets,profileLedger,accountMoney,movements]=await Promise.all([
     profileMoneySnapshot(pool,role,me.account.id),
     listProfileFinancialAccounts(pool,me.account.id),
     listMoneyPreferences(pool,me.account.id),
     listProfileBudgetEnvelopes(pool,me.account.id),
     listProfileMoneyEntries(pool,{accountId:me.account.id,profileRole:role}),
-    accountMoneySettings(pool,{accountId:me.account.id,legalName:me.account.display_name||''})
+    accountMoneySettings(pool,{accountId:me.account.id,legalName:me.account.display_name||''}),
+    listProfileMoneyMovements(pool,me.account.id)
   ]);
   const profileAccounts=accounts.filter(a=>a.profile_role===role&&a.owner_scope==='account');
   const preference=preferences.find(p=>p.profile_role===role&&p.business_id==null)||null;
   const profileBudgets=budgets.filter(b=>b.profile_role===role&&b.business_id==null);
-  res.json({...snapshot,financial_accounts:profileAccounts,legacy_profile_financial_accounts:profileAccounts,money_preference:preference,budgets:profileBudgets,profile_ledger:profileLedger,account_money:accountMoney});
+  const payoutHistory=role==='courier'
+    ?movements.filter(m=>m.source_profile_role==='courier'&&['payout','withdrawal'].includes(m.movement_type)).slice(0,40)
+    :[];
+  res.json({...snapshot,financial_accounts:profileAccounts,legacy_profile_financial_accounts:profileAccounts,money_preference:preference,budgets:profileBudgets,profile_ledger:profileLedger,account_money:accountMoney,payout_history:payoutHistory});
 }catch(e){next(e)}});
 
 app.post('/api/profile-money/:role/entries',body,async(req,res,next)=>{try{

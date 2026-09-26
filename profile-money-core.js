@@ -154,11 +154,38 @@ export async function courierMoneySnapshot(pool,accountId){
   const [home,recent]=await Promise.all([
     courierMoneyHomeSummary(pool,accountId),
     pool.query(`
-      SELECT d.id,d.order_id,o.order_number,d.status,d.delivery_fee,d.currency_code,d.route_distance_km,
-             d.assigned_at,d.delivered_at,d.created_at,b.name business_name
+      SELECT d.id,d.order_id,o.order_number,d.status,d.delivery_fee,d.service_fare,d.platform_fee_basis_amount,
+             d.pass_through_amount,d.currency_code,d.route_distance_km,d.assigned_at,d.delivered_at,d.created_at,
+             b.name business_name,
+             COALESCE(c.courier_compensation,0)::numeric courier_compensation,
+             COALESCE(c.paid,0)::numeric courier_paid,
+             COALESCE(c.eligible,0)::numeric courier_eligible,
+             COALESCE(c.pending,0)::numeric courier_pending,
+             COALESCE(c.processing,0)::numeric courier_processing,
+             COALESCE(c.held,0)::numeric courier_held,
+             COALESCE(c.failed,0)::numeric courier_failed,
+             COALESCE(c.allocation_count,0)::int courier_allocation_count
       FROM deliveries d
       JOIN orders o ON o.id=d.order_id
       JOIN businesses b ON b.id=d.business_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status<>'reversed'),0) courier_compensation,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='paid'),0) paid,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='eligible'),0) eligible,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='pending'),0) pending,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='processing'),0) processing,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='held'),0) held,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='failed'),0) failed,
+          COUNT(*) FILTER(WHERE pa.settlement_status<>'reversed')::int allocation_count
+        FROM payment_allocations pa
+        JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+        WHERE pi.source_type='order'
+          AND pi.source_id=d.order_id
+          AND pa.component_code='courier_net'
+          AND pa.economic_party_id=$1::text
+          AND pa.rule_snapshot->>'delivery_id'=d.id::text
+      ) c ON TRUE
       WHERE d.courier_account_id=$1
       ORDER BY d.created_at DESC LIMIT 40
     `,[Number(accountId)])
