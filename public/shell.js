@@ -169,9 +169,23 @@ function ensureShellChrome() {
     nav.id='merchantWorkspaceNav';
     nav.className='merchantWorkspaceNav hidden';
     nav.setAttribute('aria-label','Merchant workspace navigation');
-    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button></div>';
+    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button></div>';
     shell.querySelector('.topbar')?.insertAdjacentElement('afterend',nav);
     nav.querySelector('#merchantHomeButton')?.addEventListener('click',showActiveWorkspace);
+    const merchantRoutes={
+      ordersQuickButton:()=>window.BusinessLifeOrders?.openMerchantOrders,
+      marketQuickButton:()=>window.BusinessLifeMarketplace?.openMerchantStore,
+      supQuickButton:()=>window.BusinessLifeSuppliers?.openMerchantProcurement,
+      deliveryQuickButton:()=>window.BusinessLifeDelivery?.openMerchantDelivery
+    };
+    for(const [buttonId,getAction] of Object.entries(merchantRoutes)){
+      const button=nav.querySelector('#'+buttonId);
+      button?.addEventListener('click',()=>{
+        const action=getAction();
+        if(typeof action==='function')return action();
+        showToast('This Merchant tool is still loading. Try again in a moment.');
+      });
+    }
   }
   if (!document.getElementById('roleHub')) {
     const hub = document.createElement('section');
