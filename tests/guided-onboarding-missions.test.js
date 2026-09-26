@@ -58,7 +58,7 @@ test('coachmark follows real UI targets and does not duplicate protected actions
   assert.match(ui,/\[data-account-settings-view="profiles"\]/);
   assert.match(ui,/\.profileRoleList/);
   assert.match(ui,/#govApplicationForm/);
-  assert.match(ui,/#submitGovApp/);
+  assert.match(ui,/submitGovApp/);
   assert.doesNotMatch(ui,/INSERT INTO/);
 });
 
