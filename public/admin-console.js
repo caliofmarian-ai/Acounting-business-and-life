@@ -307,6 +307,16 @@ async function openAdminSupportTicket(id){
   }catch(e){showError(e)}
 }
 function bindSupportQueue(){document.querySelectorAll('[data-support-ticket]').forEach(button=>button.onclick=()=>openAdminSupportTicket(Number(button.dataset.supportTicket)))}
+const TERRITORY_STATUSES=['planned','onboarding','active','paused','suspended','closed'];
+function territoryLifecycleControl(x){
+  return '<form class="adminForm territoryStatusForm" data-territory-status-form="'+Number(x.id)+'">'
+    +'<div class="financeFormGrid"><label>Operating status<select name="status">'
+    +TERRITORY_STATUSES.map(status=>'<option value="'+status+'" '+(status===x.status?'selected':'')+'>'+readableCode(status)+'</option>').join('')
+    +'</select></label><label>Reason / note<input name="reason" maxlength="800" placeholder="Optional for normal changes; required for suspended or closed"></label></div>'
+    +'<div class="formActions"><button class="secondary" type="submit">Save status</button></div>'
+    +'<div data-territory-status-result="'+Number(x.id)+'"></div>'
+    +'</form>';
+}
 function territoriesPanel(){
   const territories=state.overview?.territories||[];
   const top=highestAssignment(),rank=top?.effective_rank||top?.authority_rank||top?.admin_role||'';
@@ -324,7 +334,7 @@ function territoriesPanel(){
     +'<form id="territoryCreateForm" class="adminForm" style="display:none"><input type="hidden" name="psgc_code"><div id="territoryGeoSelected" class="notice"></div><label>Business & Life status<select name="status">'+['planned','onboarding','active','paused','suspended','closed'].map(x=>'<option value="'+x+'" '+(x==='onboarding'?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><button class="primary" type="submit">Open selected territory</button><div id="territoryCreateResult"></div></form>'
     +'<div class="notice"><strong>Reference geography ≠ operating territory.</strong><br>Synchronizing PSGC does not open, activate, invite or approve anyone. Opening a territory is a separate audited Admin action.</div>'
     +'</div></details><div class="sectionTitle"><h3>Business & Life territories</h3><span class="muted">'+territories.length+' opened</span></div>'
-    +rows(territories,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(readableCode(x.territory_type))+' · '+(x.psgc_code?'PSGC '+esc(x.psgc_code)+' · '+esc(x.geographic_source_version||'source version pending'):esc(x.code||'Custom / legacy territory'))+'</span></div>');
+    +rows(territories,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(readableCode(x.territory_type))+' · '+(x.psgc_code?'PSGC '+esc(x.psgc_code)+' · '+esc(x.geographic_source_version||'source version pending'):esc(x.code||'Custom / legacy territory'))+'</span><div class="notice"><strong>Lifecycle only.</strong><br>Changing status does not edit the official PSGC identity, parent geography or historical records.</div>'+territoryLifecycleControl(x)+'</div>');
 }
 async function wireTerritories(){
   const createForm=document.getElementById('territoryCreateForm');
@@ -419,6 +429,17 @@ async function wireTerritories(){
       await loadBase();state.active='territories';shell();await renderActive();
     }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
   };
+  document.querySelectorAll('[data-territory-status-form]').forEach(form=>form.onsubmit=async e=>{
+    e.preventDefault();
+    const id=Number(form.dataset.territoryStatusForm),status=form.elements.status.value,reason=form.elements.reason.value.trim();
+    const out=document.querySelector('[data-territory-status-result="'+id+'"]'),button=form.querySelector('button[type="submit"]');
+    if(['suspended','closed'].includes(status)&&!reason){out.innerHTML='<div class="error">Add a reason before '+esc(status)+' status.</div>';return}
+    button.disabled=true;
+    try{
+      await api('/api/governance/admin/territories/'+id+'/status',{method:'PATCH',body:JSON.stringify({status,reason})});
+      await loadBase();state.active='territories';shell();await renderActive();
+    }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+  });
 }
 function renderPricingScenario(s){
   const p=s?.portfolio||{},services=s?.services||[],g=s?.guardrails||{};
