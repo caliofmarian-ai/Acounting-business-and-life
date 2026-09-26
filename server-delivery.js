@@ -10,6 +10,7 @@ import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
 import {readOrderDetail} from './orders-read-core.js';
+import {handoffLockActive,nextHandoffFailureState} from './delivery-handoff-security.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -261,6 +262,23 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   CREATE INDEX IF NOT EXISTS deliveries_business_idx ON deliveries(business_id,status,created_at DESC);
   CREATE INDEX IF NOT EXISTS deliveries_customer_idx ON deliveries(customer_account_id,status,created_at DESC);
   CREATE INDEX IF NOT EXISTS deliveries_courier_idx ON deliveries(courier_account_id,status,created_at DESC);
+
+  ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS handoff_failed_attempts INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS handoff_locked_until TIMESTAMPTZ;
+  ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS handoff_last_failed_at TIMESTAMPTZ;
+
+  CREATE TABLE IF NOT EXISTS delivery_security_events (
+    id BIGSERIAL PRIMARY KEY,
+    delivery_id BIGINT NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+    actor_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+    event_code TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count>=0),
+    locked_until TIMESTAMPTZ,
+    detail_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS delivery_security_events_delivery_idx
+    ON delivery_security_events(delivery_id,created_at DESC);
 
   CREATE TABLE IF NOT EXISTS delivery_financial_events (
     id BIGSERIAL PRIMARY KEY,
@@ -565,7 +583,133 @@ app.post('/api/courier/documents',body,async(req,res,next)=>{try{const me=await 
 app.put('/api/courier/availability',body,async(req,res,next)=>{try{const me=await requireCourier(req);const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();if(req.body?.available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[Boolean(req.body?.available),me.account.id]);res.json({ok:true,available:Boolean(req.body?.available)})}catch(e){next(e)}})
 app.post('/api/courier/deliveries/:id/status',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),nextStatus=clean(req.body?.status,60);const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});const flow={courier_assigned:['courier_en_route_to_merchant'],courier_en_route_to_merchant:['courier_arrived_at_merchant'],courier_arrived_at_merchant:['picked_up'],picked_up:['in_transit'],in_transit:['courier_arrived_at_customer']}[d.status]||[];if(!flow.includes(nextStatus))return res.status(409).json({error:`Cannot move delivery from ${d.status} to ${nextStatus}`});const stamp={courier_en_route_to_merchant:'en_route_to_merchant_at',courier_arrived_at_merchant:'arrived_merchant_at',picked_up:'picked_up_at',in_transit:'in_transit_at',courier_arrived_at_customer:'arrived_customer_at'}[nextStatus];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE deliveries SET status=$1,${stamp}=NOW(),updated_at=NOW() WHERE id=$2`,[nextStatus,id]);if(nextStatus==='picked_up'){await client.query(`UPDATE orders SET order_status='handoff_to_delivery',handoff_at=COALESCE(handoff_at,NOW()),updated_at=NOW() WHERE id=$1 AND order_status='ready'`,[d.order_id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) SELECT id,'ready','handoff_to_delivery',$1,'Courier picked up order' FROM orders WHERE id=$2`,[me.account.id,d.order_id])}await client.query('COMMIT');res.json(await deliveryDetail(id))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 app.post('/api/courier/deliveries/:id/location',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),lat=Number(req.body?.lat),lng=Number(req.body?.lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid coordinates required'});const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});if(!activeTracking(d.status))return res.status(409).json({error:'Tracking is closed for this delivery'});await pool.query(`UPDATE deliveries SET last_lat=$1,last_lng=$2,last_location_at=NOW(),updated_at=NOW() WHERE id=$3`,[lat,lng,id]);res.json({ok:true,at:new Date().toISOString()})}catch(e){next(e)}})
-app.post('/api/courier/deliveries/:id/complete',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});if(d.status!=='courier_arrived_at_customer')return res.status(409).json({error:'Courier must arrive at customer before completion'});if(clean(req.body?.completion_code,20)!==completionCode(id))return res.status(403).json({error:'Customer delivery code is incorrect'});const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE deliveries SET status='delivered',delivered_at=NOW(),last_lat=NULL,last_lng=NULL,last_location_at=NULL,updated_at=NOW() WHERE id=$1`,[id]);await client.query(`UPDATE orders SET order_status='completed',completed_at=COALESCE(completed_at,NOW()),updated_at=NOW() WHERE id=$1`,[d.order_id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'completed',$3,'Delivery completed with customer code')`,[d.order_id,d.order_status,me.account.id]);const done=await client.query(`SELECT d.delivered_at,d.delivery_fee,d.service_fare,d.platform_fee_basis_amount,d.pass_through_amount,d.currency_code,d.courier_account_id,o.completed_at,o.subtotal,o.business_id,b.territory_id FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id WHERE d.id=$1`,[id]);const x=done.rows[0],deliveryFeeBasis=Number(x.platform_fee_basis_amount||x.service_fare||x.delivery_fee||0);await recordMonetizableCompletion(client,{serviceScope:'marketplace',subjectType:'business',subjectId:x.business_id,sourceType:'order',sourceId:d.order_id,territoryId:x.territory_id,completedAt:x.completed_at,grossValue:x.subtotal,currencyCode:x.currency_code||'PHP'});await recordMonetizableCompletion(client,{serviceScope:'delivery',subjectType:'account',subjectId:x.courier_account_id,sourceType:'delivery',sourceId:id,territoryId:x.territory_id,completedAt:x.delivered_at,grossValue:deliveryFeeBasis,currencyCode:x.currency_code||'PHP'});await client.query('COMMIT');res.json(await deliveryDetail(id))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
+app.post('/api/courier/deliveries/:id/complete',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireCourier(req),id=Number(req.params.id);
+    await client.query('BEGIN');
+    const locked=await client.query(`
+      SELECT d.*,o.order_status
+      FROM deliveries d
+      JOIN orders o ON o.id=d.order_id
+      WHERE d.id=$1
+      FOR UPDATE OF d
+    `,[id]);
+    if(!locked.rowCount||Number(locked.rows[0].courier_account_id)!==Number(me.account.id)){
+      await client.query('ROLLBACK');
+      return res.status(404).json({error:'Assigned delivery not found'});
+    }
+    const d=locked.rows[0];
+    if(d.status!=='courier_arrived_at_customer'){
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Courier must arrive at customer before completion'});
+    }
+
+    const now=Date.now();
+    if(handoffLockActive(d.handoff_locked_until,now)){
+      await client.query(`
+        INSERT INTO delivery_security_events(
+          delivery_id,actor_account_id,event_code,attempt_count,locked_until,detail_json
+        ) VALUES($1,$2,'handoff_code_locked_attempt',$3,$4,$5::jsonb)
+      `,[id,me.account.id,Number(d.handoff_failed_attempts||0),d.handoff_locked_until,JSON.stringify({status:d.status})]);
+      await client.query('COMMIT');
+      return res.status(429).json({
+        error:'Too many incorrect handoff-code attempts. Try again later.',
+        code:'HANDOFF_CODE_LOCKED',
+        attempts_remaining:0,
+        retry_at:new Date(d.handoff_locked_until).toISOString()
+      });
+    }
+
+    if(clean(req.body?.completion_code,20)!==completionCode(id)){
+      const state=nextHandoffFailureState({
+        failedAttempts:d.handoff_failed_attempts,
+        lockedUntil:d.handoff_locked_until,
+        now
+      });
+      await client.query(`
+        UPDATE deliveries
+        SET handoff_failed_attempts=$1,
+            handoff_locked_until=$2,
+            handoff_last_failed_at=NOW(),
+            updated_at=NOW()
+        WHERE id=$3
+      `,[state.failedAttempts,state.lockedUntil,id]);
+      await client.query(`
+        INSERT INTO delivery_security_events(
+          delivery_id,actor_account_id,event_code,attempt_count,locked_until,detail_json
+        ) VALUES($1,$2,$3,$4,$5,$6::jsonb)
+      `,[
+        id,me.account.id,
+        state.locked?'handoff_code_lockout':'handoff_code_failed',
+        state.failedAttempts,state.lockedUntil,
+        JSON.stringify({status:d.status,attempts_remaining:state.attemptsRemaining})
+      ]);
+      await client.query('COMMIT');
+      return res.status(state.locked?429:403).json({
+        error:state.locked
+          ?'Too many incorrect handoff-code attempts. Try again later.'
+          :'Customer delivery code is incorrect',
+        code:state.locked?'HANDOFF_CODE_LOCKED':'HANDOFF_CODE_INCORRECT',
+        attempts_remaining:state.attemptsRemaining,
+        retry_at:state.lockedUntil
+      });
+    }
+
+    await client.query(`
+      UPDATE deliveries
+      SET status='delivered',
+          delivered_at=NOW(),
+          last_lat=NULL,last_lng=NULL,last_location_at=NULL,
+          handoff_failed_attempts=0,
+          handoff_locked_until=NULL,
+          handoff_last_failed_at=NULL,
+          updated_at=NOW()
+      WHERE id=$1
+    `,[id]);
+    await client.query(`
+      INSERT INTO delivery_security_events(
+        delivery_id,actor_account_id,event_code,attempt_count,detail_json
+      ) VALUES($1,$2,'handoff_code_verified',$3,$4::jsonb)
+    `,[id,me.account.id,Number(d.handoff_failed_attempts||0),JSON.stringify({status:d.status})]);
+    await client.query(`
+      UPDATE orders
+      SET order_status='completed',completed_at=COALESCE(completed_at,NOW()),updated_at=NOW()
+      WHERE id=$1
+    `,[d.order_id]);
+    await client.query(`
+      INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note)
+      VALUES($1,$2,'completed',$3,'Delivery completed with customer code')
+    `,[d.order_id,d.order_status,me.account.id]);
+    const done=await client.query(`
+      SELECT d.delivered_at,d.delivery_fee,d.service_fare,d.platform_fee_basis_amount,
+             d.pass_through_amount,d.currency_code,d.courier_account_id,
+             o.completed_at,o.subtotal,o.business_id,b.territory_id
+      FROM deliveries d
+      JOIN orders o ON o.id=d.order_id
+      JOIN businesses b ON b.id=d.business_id
+      WHERE d.id=$1
+    `,[id]);
+    const x=done.rows[0],deliveryFeeBasis=Number(x.platform_fee_basis_amount||x.service_fare||x.delivery_fee||0);
+    await recordMonetizableCompletion(client,{serviceScope:'marketplace',
+      subjectType:'business',subjectId:x.business_id,
+      sourceType:'order',sourceId:d.order_id,territoryId:x.territory_id,
+      completedAt:x.completed_at,grossValue:x.subtotal,currencyCode:x.currency_code||'PHP'
+    });
+    await recordMonetizableCompletion(client,{serviceScope:'delivery',
+      subjectType:'account',subjectId:x.courier_account_id,
+      sourceType:'delivery',sourceId:id,territoryId:x.territory_id,
+      completedAt:x.delivered_at,grossValue:deliveryFeeBasis,currencyCode:x.currency_code||'PHP'
+    });
+    await client.query('COMMIT');
+    res.json(await deliveryDetail(id));
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    next(e);
+  }finally{
+    client.release();
+  }
+})
 
 app.get('/api/delivery/mine',async(req,res,next)=>{try{
   const me=await requireCustomer(req);
