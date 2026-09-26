@@ -607,7 +607,7 @@ function hideFeatureWorkspaces(keepWorkspaceId=null) {
   for (const id of FEATURE_WORKSPACE_IDS) {
     if(id!==keepWorkspaceId)document.getElementById(id)?.classList.add('hidden');
   }
-  for (const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg']) {
+  for (const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg','profileMoneyReversalBackdrop']) {
     document.getElementById(id)?.classList.add('hidden');
   }
   syncFeatureLauncherState(keepWorkspaceId);

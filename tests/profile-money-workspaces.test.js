@@ -94,3 +94,32 @@ test('personal Money UI keeps profile budget distinct from financial destination
   assert.match(ui,/Planning only/);
   assert.match(ui,/Create one in Settings/);
 });
+
+test('Profile Money reversal uses an explicit app dialog and Cancel cannot mutate money',()=>{
+  assert.doesNotMatch(ui,/window\.prompt|\bprompt\s*\(/);
+  assert.match(ui,/function openPmReversalDialog\(id\)/);
+  assert.match(ui,/function closePmReversalDialog\(\)/);
+  assert.match(ui,/moneyReversalCancel'\)\.onclick=closePmReversalDialog/);
+  assert.match(ui,/moneyReversalClose'\)\.onclick=closePmReversalDialog/);
+  assert.match(ui,/moneyReversalForm'\)\.onsubmit=submitProfileMoneyReversal/);
+  const closeStart=ui.indexOf('function closePmReversalDialog');
+  const closeEnd=ui.indexOf('function openPmReversalDialog',closeStart);
+  const closeBlock=ui.slice(closeStart,closeEnd);
+  assert.doesNotMatch(closeBlock,/\/api\/profile-money|pmapi\(/);
+  const submitStart=ui.indexOf('async function submitProfileMoneyReversal');
+  const submitEnd=ui.indexOf('function ensurePm',submitStart);
+  const submitBlock=ui.slice(submitStart,submitEnd);
+  assert.match(submitBlock,/entries\/'\+id\+'\/reverse/);
+  assert.match(submitBlock,/if\(!reason\)/);
+  assert.match(submitBlock,/submit\.disabled=true/);
+  assert.match(submitBlock,/Idempotency-Key/);
+});
+
+test('Profile Money reversal dialog is Android-safe and uses 44px actions',()=>{
+  const css=read('public/profile-money.css');
+  assert.match(css,/\.moneyReversalDialog\{[^}]*max-height:92vh;max-height:92dvh/);
+  assert.match(css,/env\(safe-area-inset-bottom\)/);
+  assert.match(css,/\.moneyReversalDialog header button\{width:44px;height:44px/);
+  assert.match(css,/\.moneyReversalActions button\{[^}]*min-height:44px/);
+  assert.match(css,/\.moneyReverse\{min-height:44px/);
+});

@@ -41,5 +41,5 @@ test('Services and Profile Money never fall back to browser-native alerts',()=>{
   assert.doesNotMatch(money,/window\.alert|\balert\s*\(/);
   assert.match(services,/servicesFallbackToast/);
   assert.match(money,/profileMoneyFallbackToast/);
-  assert.match(money,/catch\(err\)\{pmtoast\(err\.message\|\|'This entry could not be reversed\.'\)\}/);
+  assert.doesNotMatch(money,/window\.prompt|\bprompt\s*\(/);
 });
