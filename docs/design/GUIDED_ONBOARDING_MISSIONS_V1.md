@@ -212,3 +212,15 @@ Password changes are never a Getting Started requirement.
 3. official barangay when missing.
 
 A valid authentication method is sufficient; setting/changing a local password is optional unless a later sensitive action explicitly requires reauthentication.
+
+
+### Hotfix V1.1 Figma nodes
+
+Mobile QA flow:
+- `13:2` — Security & access with coachmark placed above the highlighted Verify email target;
+- `13:58` — Password card with explicit mobile bottom sheet.
+
+Desktop reference:
+- `13:94` — Security & access with centered Change password modal.
+
+These frames are the visual acceptance references for Issue #547.
