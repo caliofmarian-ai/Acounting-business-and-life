@@ -69,7 +69,7 @@ function metrics(){
   if(s.service_jobs!=null)items.push(['Service jobs',s.service_jobs]);
   if(s.support!=null)items.push(['Open support',s.support.open||0]);
   if(s.incidents!=null)items.push(['Open incidents',s.incidents.open||0]);
-  if(hasAny(['merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider','profile.suspend']))items.push(['Applications',(state.overview?.applications||[]).filter(x=>!['active','approved','rejected'].includes(x.status)).length]);
+  if(hasAny(['merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider','profile.suspend']))items.push(['Applications',Number(state.overview?.summary?.pending_applications??(state.overview?.applications||[]).filter(x=>!['active','approved','rejected'].includes(x.status)).length)]);
   if(!items.length)return '<div class="empty">No operational metrics are delegated to this account.</div>';
   return '<div class="grid">'+items.map(x=>'<div class="metric"><strong>'+esc(x[1])+'</strong><span>'+esc(x[0])+'</span></div>').join('')+'</div>';
 }
@@ -936,6 +936,12 @@ async function wireTeam(){
   };
   document.querySelectorAll('[data-admin-assignment]').forEach(button=>button.onclick=()=>openAdminAssignment(Number(button.dataset.adminAssignment)));
 }
+async function ensureAdminOverviewDetail(){
+  if(state.overview?.detail_mode!=='home'&&Array.isArray(state.overview?.applications))return state.overview;
+  const detail=await api('/api/admin/overview');
+  state.overview=detail||{};
+  return state.overview;
+}
 async function renderActive(){
   const p=document.getElementById('adminPanel');if(!p)return;
   const active=state.active,request=++state.renderRequest;
@@ -944,7 +950,7 @@ async function renderActive(){
   try{
     let html='',wire=null;
     if(active==='overview'){html=overviewPanel();wire=wireOverview}
-    else if(active==='profiles'){html=profilesPanel();wire=wireProfiles}
+    else if(active==='profiles'){await ensureAdminOverviewDetail();html=profilesPanel();wire=wireProfiles}
     else if(active==='delivery'){html=await deliveryPanel();wire=wireDelivery}
     else if(active==='support'){html=await queuePanel('support');wire=bindSupportQueue}
     else if(active==='safety'){html=await queuePanel('safety');wire=bindSafetyQueue}
