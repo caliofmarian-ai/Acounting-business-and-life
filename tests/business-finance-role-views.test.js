@@ -142,6 +142,19 @@ test('Money Settings remains the single financial-account and budget configurati
   assert.doesNotMatch(core,/provider_destination_ref TEXT/);
 });
 
+test('Finance overview has visible loading, failure and retry without stale cross-business facts',()=>{
+  assert.match(ui,/function ensureFinancePanel/);
+  assert.match(ui,/Loading business finances…/);
+  assert.match(ui,/Business finances could not be loaded\./);
+  assert.match(ui,/failure\.setAttribute\('role','alert'\)/);
+  assert.match(ui,/data-finance-retry/);
+  assert.match(ui,/retry\.onclick=\(\)=>mountEconomicSummary\(targetId\)/);
+  assert.match(ui,/panel\.dataset\.financeReady==='true'&&panel\.dataset\.financeContext===contextKey/);
+  assert.match(ui,/if\(currentFinanceContextKey\(\)!==contextKey\)return null/);
+  assert.doesNotMatch(ui,/Business Finance overview:',err\.message/);
+  assert.match(css,/\.businessFinanceLoadError\{/);
+});
+
 test('new finance read model is syntax checked by the project contract',()=>{
   assert.match(pkg,/node --check business-finance-view-core\.js/);
 });
