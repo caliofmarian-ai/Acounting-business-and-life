@@ -405,7 +405,11 @@ function territoriesPanel(){
     +'<div class="notice"><strong>Reference geography ≠ operating territory.</strong><br>Synchronizing PSGC does not open, activate, invite or approve anyone. Opening a territory is a separate audited Admin action.</div>'
     +'</div></details>'
     +'<div class="sectionTitle"><div><h3>Business & Life Territory Tree</h3><span class="muted">Opened operating scopes are nested under their official parents.</span></div><span class="muted">'+territories.length+' opened</span></div>'
-    +'<div class="territoryTreeWorkspace"><section class="territoryTreeColumn"><div id="territoryTreeRoot" class="territoryTreeRoot">'+territoryTreeHtml(territories)+'</div></section><div id="territoryDetailsRoot">'+territoryDetailsPanel(selected,territories)+'</div></div>';
+    +'<div class="territoryTreeWorkspace"><section class="territoryTreeColumn"><div id="territoryTreeRoot" class="territoryTreeRoot">'+territoryTreeHtml(territories)+'</div></section><div id="territoryDetailsRoot">'+territoryDetailsPanel(selected,territories)+'</div></div>'
+    +'<details class="adminDisclosure territoryDemandDisclosure" open><summary><span class="adminDisclosureCopy"><small>EXPANSION SIGNAL</small><strong>Territory Demand</strong><span>Registered accounts and profile interest, aggregated by official geography</span></span></summary><div class="adminDisclosureBody">'
+    +'<div class="territoryDemandToolbar"><label>View demand by<select id="territoryDemandLevel">'+['barangay','city','municipality','province','region'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label><span class="muted">Demand informs expansion. It never opens a territory automatically.</span></div>'
+    +'<div id="territoryDemandResults"><div class="adminLoading">Loading demand…</div></div>'
+    +'</div></details>';
 }
 async function wireTerritories(){
   const createForm=document.getElementById('territoryCreateForm');
@@ -417,6 +421,27 @@ async function wireTerritories(){
   let registryReady=false;
 
   const currentTerritories=()=>state.overview?.territories||[];
+  const demandRoles={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
+  const renderDemand=payload=>{
+    const host=document.getElementById('territoryDemandResults'),items=payload?.items||[];
+    if(!host)return;
+    if(!items.length){host.innerHTML='<div class="opsEmpty">No registered demand yet for this geographic level.</div>';return}
+    host.innerHTML='<div class="territoryDemandList">'+items.map(x=>{
+      const roles=Object.entries(x.role_interest||{}).filter(([,count])=>Number(count)>0).map(([role,count])=>'<span>'+esc(demandRoles[role]||readableCode(role))+' '+Number(count)+'</span>').join('');
+      return '<article class="territoryDemandCard"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(readableCode(x.operating_status||'not_opened'))+'</span></div>'
+        +'<p>'+esc(x.path_text||'')+'</p>'
+        +'<div class="territoryDemandMetrics"><span><b>'+Number(x.registered_accounts||0)+'</b> accounts</span><span><b>'+Number(x.new_accounts_7d||0)+'</b> new 7d</span><span><b>'+Number(x.new_accounts_30d||0)+'</b> new 30d</span><span><b>'+Number(x.profile_interest_accounts||0)+'</b> profile interest</span></div>'
+        +(roles?'<div class="territoryDemandRoles">'+roles+'</div>':'')
+        +'<small>PSGC '+esc(x.psgc_code)+'</small></article>';
+    }).join('')+'</div>';
+  };
+  const loadDemand=async()=>{
+    const host=document.getElementById('territoryDemandResults'),level=document.getElementById('territoryDemandLevel')?.value||'barangay';
+    if(!host)return;
+    host.innerHTML='<div class="adminLoading">Loading aggregate demand…</div>';
+    try{renderDemand(await api('/api/governance/admin/territory-demand?level='+encodeURIComponent(level)+'&limit=60'))}
+    catch(error){host.innerHTML='<div class="error">'+esc(error.message)+'</div>'}
+  };
   const statusText=status=>{
     if(!status?.ready)return '<strong>PSGC registry not synchronized yet.</strong><br>Super Admin must synchronize the pinned official PSA publication before an official territory can be opened.';
     const latest=status.latest||{},counts=latest.level_counts||{};
@@ -554,6 +579,8 @@ async function wireTerritories(){
     }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
   };
   bindTreeControls();
+  const demandLevel=document.getElementById('territoryDemandLevel');if(demandLevel)demandLevel.onchange=loadDemand;
+  await loadDemand();
 }
 function renderPricingScenario(s){
   const p=s?.portfolio||{},services=s?.services||[],g=s?.guardrails||{};
