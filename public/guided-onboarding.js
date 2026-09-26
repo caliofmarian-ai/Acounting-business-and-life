@@ -11,7 +11,8 @@ const STEP_LABELS={
   profile_onboarding:'Follow profile onboarding'
 };
 const ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
-let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null;
+const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
+let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0;
 const profileDraftSavedForRole=new Set();
 const token=()=>localStorage.getItem(TOKEN_KEY)||'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -87,31 +88,102 @@ function overlayShell(){
   const root=document.createElement('div');
   root.id='guidedOnboardingOverlay';
   root.className='guidedOnboardingOverlay';
-  root.innerHTML='<div class="guidedSpotlight"></div><section class="guidedCoach" role="dialog" aria-modal="false" aria-live="polite"></section>';
+  root.innerHTML='<div class="guidedSafeAreaProbe" aria-hidden="true"></div><div class="guidedSpotlight"></div><section class="guidedCoach" role="dialog" aria-modal="false" aria-live="polite" tabindex="-1"></section>';
   document.body.appendChild(root);overlay=root;document.documentElement.classList.add('guidedOnboardingOpen');
   return root;
 }
-function positionSpotlight(target,{scroll=true}={}){
-  const spot=overlay?.querySelector('.guidedSpotlight');
-  if(!spot)return;
-  currentSpotlightTarget=target||null;
+const nextAnimationFrame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+function reducedMotion(){return matchMedia('(prefers-reduced-motion: reduce)').matches}
+function viewportMetrics(){
+  const vv=window.visualViewport,width=Math.max(1,Number(vv?.width||document.documentElement.clientWidth||innerWidth)),height=Math.max(1,Number(vv?.height||document.documentElement.clientHeight||innerHeight));
+  const left=Number(vv?.offsetLeft||0),top=Number(vv?.offsetTop||0),probe=overlay?.querySelector('.guidedSafeAreaProbe'),probeStyle=probe?getComputedStyle(probe):null;
+  const safeTop=parseFloat(probeStyle?.paddingTop||'0')||0,safeBottom=parseFloat(probeStyle?.paddingBottom||'0')||0;
+  return{left,top,width,height,right:left+width,bottom:top+height,safeTop,safeBottom,keyboardOpen:Boolean(vv&&innerHeight-height>120)};
+}
+function targetSufficientlyVisible(rect,metrics){
+  if(!rect||rect.width<=0||rect.height<=0)return false;
+  const left=Math.max(rect.left,metrics.left+COACH_EDGE_GAP),right=Math.min(rect.right,metrics.right-COACH_EDGE_GAP),top=Math.max(rect.top,metrics.top+metrics.safeTop+COACH_EDGE_GAP),bottom=Math.min(rect.bottom,metrics.bottom-metrics.safeBottom-COACH_EDGE_GAP);
+  const visibleArea=Math.max(0,right-left)*Math.max(0,bottom-top),targetArea=Math.max(1,rect.width*rect.height);
+  return visibleArea/targetArea>=.72;
+}
+function maxCoachRoom(rect,metrics){
+  const safeTop=metrics.top+metrics.safeTop+COACH_EDGE_GAP,safeBottom=metrics.bottom-metrics.safeBottom-COACH_EDGE_GAP;
+  return Math.max(0,rect.top-COACH_TARGET_GAP-safeTop, safeBottom-rect.bottom-COACH_TARGET_GAP);
+}
+function rectsOverlapWithGap(a,b,gap=COACH_TARGET_GAP){
+  return !(a.right<=b.left-gap||a.left>=b.right+gap||a.bottom<=b.top-gap||a.top>=b.bottom+gap);
+}
+function placeSpotlight(target,metrics){
+  const spot=overlay?.querySelector('.guidedSpotlight');if(!spot)return;
   if(!target){spot.classList.add('hidden');return}
-  if(scroll)target.scrollIntoView({block:'center',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
-  requestAnimationFrame(()=>{
-    const rect=target.getBoundingClientRect(),pad=7;
-    spot.classList.remove('hidden');
-    spot.style.left=Math.max(6,rect.left-pad)+'px';
-    spot.style.top=Math.max(6,rect.top-pad)+'px';
-    spot.style.width=Math.min(innerWidth-12,rect.width+pad*2)+'px';
-    spot.style.height=Math.min(innerHeight-12,rect.height+pad*2)+'px';
-    spot.style.borderRadius=Math.min(22,Math.max(12,parseFloat(getComputedStyle(target).borderRadius)||14))+'px';
-    target.dataset.guidedElevated='true';
-  });
+  const rect=target.getBoundingClientRect(),pad=7,left=Math.max(metrics.left+6,rect.left-pad),top=Math.max(metrics.top+metrics.safeTop+6,rect.top-pad),right=Math.min(metrics.right-6,rect.right+pad),bottom=Math.min(metrics.bottom-metrics.safeBottom-6,rect.bottom+pad);
+  spot.classList.remove('hidden');spot.style.left=left+'px';spot.style.top=top+'px';spot.style.width=Math.max(0,right-left)+'px';spot.style.height=Math.max(0,bottom-top)+'px';spot.style.borderRadius=Math.min(22,Math.max(12,parseFloat(getComputedStyle(target).borderRadius)||14))+'px';
+  target.dataset.guidedElevated='true';
+}
+function syncCompactMore(coach){
+  const more=coach.querySelector('[data-guide-more]');if(!more)return;
+  more.hidden=!(coach.classList.contains('compact')&&coach.dataset.bodyLong==='true');
+}
+function placeCoach(target,metrics){
+  const coach=overlay?.querySelector('.guidedCoach');if(!coach||!target)return;
+  const targetRect=target.getBoundingClientRect(),safeTop=metrics.top+metrics.safeTop+COACH_EDGE_GAP,safeBottom=metrics.bottom-metrics.safeBottom-COACH_EDGE_GAP;
+  const narrow=metrics.width<COMPACT_BREAKPOINT||metrics.keyboardOpen;
+  coach.classList.toggle('compact',narrow);coach.classList.remove('guidedCoachScroll');coach.style.maxHeight='';coach.style.right='auto';coach.style.bottom='auto';
+  const width=Math.max(220,Math.min(metrics.width-COACH_EDGE_GAP*2,metrics.width>=820?390:520));coach.style.width=width+'px';
+  let rect=coach.getBoundingClientRect();
+  const roomAbove=()=>Math.max(0,targetRect.top-COACH_TARGET_GAP-safeTop),roomBelow=()=>Math.max(0,safeBottom-targetRect.bottom-COACH_TARGET_GAP);
+  const preferred=targetRect.top+targetRect.height/2>metrics.top+metrics.height/2?'top':'bottom';
+  let order=preferred==='top'?['top','bottom']:['bottom','top'];
+  const fits=side=>(side==='top'?roomAbove():roomBelow())>=rect.height;
+  let placement=order.find(fits)||'';
+  if(!placement&&!coach.classList.contains('compact')){
+    coach.classList.add('compact');rect=coach.getBoundingClientRect();placement=order.find(fits)||'';
+  }
+  if(!placement){
+    placement=roomBelow()>=roomAbove()?'bottom':'top';
+    coach.classList.add('compact','guidedCoachScroll');
+    coach.style.maxHeight=Math.max(1,placement==='bottom'?roomBelow():roomAbove())+'px';
+    rect=coach.getBoundingClientRect();
+  }
+  syncCompactMore(coach);
+  rect=coach.getBoundingClientRect();
+  const minLeft=metrics.left+COACH_EDGE_GAP,maxLeft=Math.max(minLeft,metrics.right-COACH_EDGE_GAP-rect.width),centered=targetRect.left+targetRect.width/2-rect.width/2;
+  let left=Math.max(minLeft,Math.min(maxLeft,centered));
+  let top=placement==='bottom'?targetRect.bottom+COACH_TARGET_GAP:targetRect.top-COACH_TARGET_GAP-rect.height;
+  if(placement==='bottom')top=Math.min(top,safeBottom-rect.height);else top=Math.max(top,safeTop);
+  coach.style.left=left+'px';coach.style.top=top+'px';coach.dataset.placement=placement;
+  let finalRect=coach.getBoundingClientRect();
+  if(rectsOverlapWithGap(finalRect,targetRect)){
+    const alternative=placement==='bottom'?'top':'bottom',room=alternative==='top'?roomAbove():roomBelow();
+    if(room>0){
+      coach.classList.add('compact','guidedCoachScroll');coach.style.maxHeight=Math.max(1,room)+'px';rect=coach.getBoundingClientRect();
+      top=alternative==='bottom'?targetRect.bottom+COACH_TARGET_GAP:targetRect.top-COACH_TARGET_GAP-rect.height;
+      coach.style.top=top+'px';coach.dataset.placement=alternative;placement=alternative;finalRect=coach.getBoundingClientRect();
+    }
+  }
+  coach.dataset.noOverlap=String(!rectsOverlapWithGap(finalRect,targetRect));
+}
+function repositionGuidanceNow(){
+  if(!overlay||missionCenterOpen||!currentSpotlightTarget)return;
+  const metrics=viewportMetrics();placeSpotlight(currentSpotlightTarget,metrics);placeCoach(currentSpotlightTarget,metrics);
+}
+function scheduleCoachReposition(){
+  if(placementFrame)return;placementFrame=requestAnimationFrame(()=>{placementFrame=0;repositionGuidanceNow()});
+}
+async function positionGuidance(target,{scroll=true}={}){
+  const spot=overlay?.querySelector('.guidedSpotlight');currentSpotlightTarget=target||null;
+  if(!target){spot?.classList.add('hidden');return}
+  const run=++placementRun,metrics=viewportMetrics(),rect=target.getBoundingClientRect();
+  if(scroll&&(!targetSufficientlyVisible(rect,metrics)||maxCoachRoom(rect,metrics)<150)){
+    target.scrollIntoView({block:'center',inline:'nearest',behavior:reducedMotion()?'auto':'smooth'});
+    await nextAnimationFrame();await nextAnimationFrame();if(run!==placementRun||!overlay)return;
+  }
+  repositionGuidanceNow();
 }
 function coachMarkup(step,title,body,{primary='Continue',secondary='Skip for now',back=false,waiting=false}={}){
   const index=Math.max(1,STEP_ORDER.indexOf(step)+1),pct=Math.round(index/STEP_ORDER.length*100);
   return '<div class="guidedCoachHead"><div><small>GETTING STARTED · '+index+' OF '+STEP_ORDER.length+'</small><h2>'+esc(title)+'</h2></div><span class="guidedProgressChip">'+pct+'%</span></div>'+
-    '<p>'+esc(body)+'</p><div class="guidedProgress"><i style="width:'+pct+'%"></i></div>'+
+    '<p class="guidedCoachBody">'+esc(body)+'</p><button type="button" data-guide-more class="guidedMore" hidden>More</button><div class="guidedProgress"><i style="width:'+pct+'%"></i></div>'+
     '<div class="guidedCoachActions">'+
       (back?'<button type="button" data-guide-back class="guidedSecondary">Back</button>':'')+
       '<button type="button" data-guide-pause class="guidedSecondary">'+esc(secondary)+'</button>'+
@@ -129,9 +201,10 @@ function bindCoachActions(step,actions={}){
 }
 function renderCoach({step,title,body,target=null,primary,secondary,back=false,waiting=false,next}){
   const root=overlayShell(),coach=root.querySelector('.guidedCoach');
-  coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting});
+  coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting});coach.dataset.bodyLong=String(String(body||'').length>118);
   bindCoachActions(step,{next});
-  positionSpotlight(target);
+  coach.querySelector('[data-guide-more]')?.addEventListener('click',event=>{coach.classList.toggle('expanded');event.currentTarget.textContent=coach.classList.contains('expanded')?'Less':'More';scheduleCoachReposition()});
+  positionGuidance(target,{scroll:true}).catch(()=>{});
   coach.focus?.({preventScroll:true});
 }
 function missingAccountTarget(){
@@ -355,8 +428,9 @@ function bindLifecycle(){
     if(event.target.closest?.('#notificationBell,#lazySupportBtn'))scheduleRender(100);
   },true);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden&&token())scheduleRefresh(150)});
-  window.addEventListener('resize',()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)positionSpotlight(currentSpotlightTarget,{scroll:false})},{passive:true});
-  window.addEventListener('scroll',()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)positionSpotlight(currentSpotlightTarget,{scroll:false})},{passive:true});
+  const reposition=()=>{if(overlay&&!missionCenterOpen&&currentSpotlightTarget)scheduleCoachReposition()};
+  window.addEventListener('resize',reposition,{passive:true});window.addEventListener('scroll',reposition,{passive:true});
+  window.visualViewport?.addEventListener('resize',reposition,{passive:true});window.visualViewport?.addEventListener('scroll',reposition,{passive:true});
 }
 async function boot(){
   ensureLauncher();bindLifecycle();
