@@ -165,6 +165,14 @@ async function openSupplierAccounting() {
   await mountEconomicSummary();
 }
 
+function openFinanceProfileSettings(role){
+  const shell=window.BusinessLifeShell;
+  if(typeof shell?.openProfileSettings==='function')return shell.openProfileSettings(role);
+  const toast=document.getElementById('roleToast');
+  if(toast){toast.textContent='Profile Settings is still loading. Try again in a moment.';toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);return false}
+  window.alert?.('Profile Settings is still loading. Try again in a moment.');
+  return false;
+}
 async function mountEconomicSummary(targetId=null) {
   try{
     const overview=await api('/api/accounting/finance-overview');
@@ -176,7 +184,7 @@ async function mountEconomicSummary(targetId=null) {
     panel.className='economicWorkspaceSummary businessFinanceOverview';
     panel.innerHTML=roleFinanceHtml(overview);
     applyFinancePresentation(overview);
-    panel.querySelectorAll('#openBusinessFinanceSettings,[data-open-finance-settings]').forEach(settings=>settings.onclick=()=>window.BusinessLifeProfileSettings?.open?.(overview.role));
+    panel.querySelectorAll('#openBusinessFinanceSettings,[data-open-finance-settings]').forEach(settings=>settings.onclick=()=>openFinanceProfileSettings(overview.role));
   }catch(err){console.warn('Business Finance overview:',err.message)}
 }
 async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
