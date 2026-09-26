@@ -16,7 +16,7 @@ test('Merchant desktop navigation has a dedicated shell row with five primary de
   assert.match(shell,/id="merchantWorkspaceActions"/);
   assert.match(shell,/id="merchantHomeButton"/);
   assert.match(shell,/>Today<\/button>/);
-  assert.match(shell,/merchantWorkspaceHost:\(\)=>document\.getElementById\('merchantWorkspaceActions'\)/);
+  assert.doesNotMatch(shell,/merchantWorkspaceHost/);
   assert.match(css,/\.merchantWorkspaceActions\{[^}]*grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
   assert.match(css,/#merchantHomeButton\{order:0\}/);
   assert.match(css,/#ordersQuickButton\{order:1\}/);
