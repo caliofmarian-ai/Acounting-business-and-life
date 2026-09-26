@@ -26,7 +26,7 @@ test('QA Philippines test context is isolated to accounting-preview QA data',()=
   assert.equal(config.enabled,true);
   assert.equal(config.country_code,'PH');
   assert.equal(config.runtime.databaseName,'accounting_qa');
-  assert.throws(()=>qaPhTestContextConfig({...safe,RAILWAY_SERVICE_NAME:'accounting-business-life',APP_ENV:'production',DATABASE_URL:'postgresql://user:secret@example.test/accounting'}),/only on isolated accounting-preview QA data/);
+  assert.throws(()=>qaPhTestContextConfig({...safe,RAILWAY_SERVICE_NAME:'accounting-business-life',APP_ENV:'production',DATABASE_URL:'postgresql://user:secret@example.test/accounting',AUTH_PREVIEW_SHOW_LINK:'false'}),/production cannot enable QA Philippines test context/);
 });
 
 test('production runtime fails closed if QA Philippines test context is accidentally enabled',()=>{
@@ -66,7 +66,8 @@ test('QA PH test context is initialized only after the embedded application chai
 test('preview authentication explicitly explains remote Philippines test geography',()=>{
   assert.match(hardening,/qa_preview_context/);
   assert.match(hardening,/device_location_authoritative:false/);
-  assert.match(ui,/Philippines QA test context/);
+  assert.match(hardening,/label:'Philippines QA test context'/);
+  assert.match(ui,/qa\.label\|\|'QA test context'/);
   assert.match(ui,/physical device location is not used as the Business & Life test territory/);
   assert.match(css,/\.modernQaContext/);
 });
