@@ -7,6 +7,7 @@ const auth=readFileSync(new URL('../server-auth.js',import.meta.url),'utf8');
 const hardening=readFileSync(new URL('../server-auth-hardening.js',import.meta.url),'utf8');
 const payments=readFileSync(new URL('../server-payments.js',import.meta.url),'utf8');
 const settings=readFileSync(new URL('../public/profile-settings-ui.js',import.meta.url),'utf8');
+const hardeningUi=readFileSync(new URL('../public/auth-hardening-ui.js',import.meta.url),'utf8');
 
 test('step-up state is stored per revocable session with a short validity window',()=>{
   assert.match(core,/AUTH_STEP_UP_TTL_MS=10\*60\*1000/);
@@ -60,13 +61,22 @@ test('account payout destination writes require a recently verified session',()=
   }
 });
 
-test('Money Banking reauthentication UI does not persist the current password',()=>{
-  assert.match(settings,/id="accountStepUpPassword" type="password" autocomplete="current-password"/);
-  assert.match(settings,/\/api\/auth\/step-up\/password/);
-  assert.match(settings,/input\.value=''/);
-  assert.match(settings,/Identity confirmed for sensitive banking changes/);
-  const stepStart=settings.indexOf('async function saveAccountStepUp');
-  const stepEnd=settings.indexOf('async function refreshAccountStepUp',stepStart);
-  const block=settings.slice(stepStart,stepEnd);
+test('Money Banking never collects a password and routes confirmation to Security access',()=>{
+  assert.doesNotMatch(settings,/type=["']password["']/i);
+  assert.doesNotMatch(settings,/accountStepUpPassword|stepUpSecurityPassword/);
+  assert.match(settings,/Sensitive payout changes require recent identity confirmation/);
+  assert.match(settings,/openPayoutSecurity/);
+  assert.match(settings,/openAccountSettings\?\.\('security'\)/);
+});
+
+test('Security access owns password step-up and does not persist the password',()=>{
+  assert.match(hardeningUi,/id="stepUpSecurityForm"/);
+  assert.match(hardeningUi,/id="stepUpSecurityPassword" type="password" autocomplete="current-password"/);
+  assert.match(hardeningUi,/\/api\/auth\/step-up\/password/);
+  const start=hardeningUi.indexOf("section.querySelector('#stepUpSecurityForm')");
+  const end=hardeningUi.indexOf("section.querySelector('#revokeOthers')",start);
+  const block=hardeningUi.slice(start,end);
+  assert.ok(start>=0&&end>start);
+  assert.match(block,/input\.value=''/);
   assert.doesNotMatch(block,/localStorage\.setItem|sessionStorage\.setItem/);
 });
