@@ -902,5 +902,5 @@ function applySupplierState(detail){const state=detail?.snapshot?detail:window.B
 async function decorateSupplier(detail){if(!ensureSup()||!ptok())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applySupplierState(state);if(!supMe)return;const role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(hub&&role==='supplier')hub.querySelectorAll('[data-hub-feature]').forEach(b=>{if(SUPPLIER_SECTION_META[b.dataset.hubFeature])b.onclick=()=>openSupplierWorkspace(b.dataset.hubFeature)})}
 function observeSupplier(){document.addEventListener('abl:profile-state',e=>decorateSupplier(e.detail).catch(()=>{}),{passive:true})}
 async function boot(){ensureSup();observeSupplier();await decorateSupplier(window.BusinessLifeProfileState)}
-window.BusinessLifeSuppliers=Object.freeze({openMerchantProcurement});
+window.BusinessLifeSuppliers=Object.freeze({openMerchantProcurement,openSupplierWorkspace});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
