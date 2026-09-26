@@ -52,8 +52,9 @@ test('Merchant nav visibility follows active profile surface and Today is canoni
   assert.match(shell,/const active=!activeWorkspaceId/);
 });
 
-test('narrow screens keep the existing six-button Merchant mobile tools instead of desktop nav',()=>{
-  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(mobile,new RegExp(label));
-  assert.match(mobile,/merchantMobileTools/);
+test('narrow screens keep six shell-owned Merchant mobile destinations instead of desktop nav',()=>{
+  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>|>'+label+'<\\/button>'));
+  assert.match(shell,/id='merchantMobileTools'/);
+  assert.doesNotMatch(mobile,/mountMerchantMobileTools|MERCHANT_MOBILE_ACTIONS/);
   assert.match(css,/@media\(max-width:649px\)/);
 });
