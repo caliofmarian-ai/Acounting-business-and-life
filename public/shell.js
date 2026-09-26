@@ -857,6 +857,7 @@ async function loadCustomerHome(hub,{force=false}={}){
     renderCustomerHomeData(hub,data);
   }catch(err){
     loading?.classList.add('hidden');
+    if(!force)dynamic?.classList.add('hidden');
     const message=hub.querySelector('#customerHomeErrorMessage');
     if(message)message.textContent=err.message||'Customer Home could not be loaded.';
     error?.classList.remove('hidden');
@@ -1089,7 +1090,7 @@ async function loadCourierHome(hub,{force=false}={}){
     renderCourierHomeData(hub,data);
   }catch(err){
     loading?.classList.add('hidden');
-    if(dynamic?.classList.contains('hidden'))dynamic?.classList.add('hidden');
+    if(!force)dynamic?.classList.add('hidden');
     const message=hub.querySelector('#courierHomeErrorMessage');
     if(message)message.textContent=err.message||'Courier Home could not be loaded.';
     error?.classList.remove('hidden');
@@ -1320,7 +1321,7 @@ async function loadServiceProviderHome(hub,{force=false}={}){
     renderServiceProviderHomeData(hub,data);
   }catch(err){
     loading?.classList.add('hidden');
-    if(dynamic?.classList.contains('hidden'))dynamic?.classList.add('hidden');
+    if(!force)dynamic?.classList.add('hidden');
     const message=hub.querySelector('#serviceProviderHomeErrorMessage');
     if(message)message.textContent=err.message||'Local Services Home could not be loaded.';
     error?.classList.remove('hidden');
