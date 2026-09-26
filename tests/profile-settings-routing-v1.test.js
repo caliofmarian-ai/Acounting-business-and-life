@@ -48,6 +48,8 @@ test('Business Finance delegates Settings routing to shell and has a user-visibl
   assert.match(accounting,/Profile Settings is still loading\. Try again in a moment\./);
   assert.match(accounting,/settings\.onclick=\(\)=>openFinanceProfileSettings\(overview\.role\)/);
   assert.doesNotMatch(accounting,/BusinessLifeProfileSettings\?\.open\?\./);
+  assert.match(accounting,/function accountingToast\(message\)/);
+  assert.doesNotMatch(accounting,/window\.alert/);
 });
 
 test('Profile Settings module keeps canonical active-profile boundary checks',()=>{
