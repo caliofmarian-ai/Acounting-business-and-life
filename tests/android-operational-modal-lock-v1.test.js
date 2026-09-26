@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
+const orders=read('public/orders-ui.js');
 const marketplace=read('public/marketplace-ui.js');
 const services=read('public/services-ui.js');
+const suppliers=read('public/suppliers-ui.js');
 const delivery=read('public/delivery-ui.js');
 const shell=read('public/shell.js');
 
@@ -13,6 +15,20 @@ function between(source,start,end){
   assert.ok(a>=0&&b>a,'missing block '+start);
   return source.slice(a,b);
 }
+
+test('Orders modal owns background scroll until cancel or workspace close',()=>{
+  assert.match(orders,/function openOrderModal\(\)\{[^}]*document\.body\.style\.overflow='hidden'/);
+  assert.match(orders,/function closeOrderModal\(\)\{[^}]*document\.body\.style\.overflow=''/);
+  assert.match(orders,/function closeOrders\(\)\{[^}]*closeOrderModal\(\)/);
+  assert.doesNotMatch(orders,/back\.classList\.remove\('hidden'\)/);
+});
+
+test('Supplier modal helper owns background scroll for all procurement dialogs',()=>{
+  assert.match(suppliers,/function openSupModal\(html\)\{[^}]*document\.body\.style\.overflow='hidden'/);
+  assert.match(suppliers,/function closeSupModal\(\)\{[^}]*document\.body\.style\.overflow=''/);
+  assert.match(suppliers,/function closeSupWorkspace\(\)\{closeSupModal\(\)/);
+  assert.match(suppliers,/function hideSupBase\(\)\{closeSupModal\(\)/);
+});
 
 test('Marketplace Checkout owns background scroll lock until close',()=>{
   const open=between(marketplace,'function openCheckout','async function submitCheckout');
