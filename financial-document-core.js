@@ -342,7 +342,8 @@ async function syncCustomerPayments(pool,{accountId}){
         });
       }
     }else{
-      lines.push({lineCode:'payment_amount',lineKind:'purchase_value',impactClass:'purchase',economicOwner:'merchant/provider',amount:i.amount});
+      const lineKind=i.source_type==='service_job'?'service_value':'purchase_value';
+      lines.push({lineCode:'payment_amount',lineKind,impactClass:'purchase',economicOwner:'merchant/provider',amount:i.amount});
     }
     for(const a of alloc.rows.filter(a=>!['merchandise','delivery'].includes(a.component_code))){
       const impact=a.component_code==='tax'?'neutral':'neutral';
@@ -620,17 +621,34 @@ export async function financialStatementForScope(pool,{accountId,profileRole,bus
     GROUP BY l.impact_class
     ORDER BY l.impact_class
   `,params);
+  const lineKinds=await pool.query(`
+    SELECT l.line_kind,l.impact_class,COUNT(*)::int line_count,COALESCE(SUM(l.amount),0) amount
+    FROM financial_documents d
+    JOIN financial_document_lines l ON l.document_id=d.id
+    WHERE ${scope.sql}
+      AND d.document_status='active'
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= ${startParam}::date
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < ${endParam}::date
+    GROUP BY l.line_kind,l.impact_class
+    ORDER BY l.line_kind,l.impact_class
+  `,params);
   const docCount=await pool.query(`
     SELECT COUNT(*)::int count
     FROM financial_documents d
     WHERE ${scope.sql}
       AND d.document_status='active'
-      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= $${startParam}::date
-      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < $${endParam}::date
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= ${startParam}::date
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < ${endParam}::date
   `,params);
   const byImpact={};
   for(const row of totals.rows)byImpact[row.impact_class]={amount:money(row.amount),line_count:Number(row.line_count)};
   for(const key of FINANCIAL_IMPACT_CLASSES)if(!byImpact[key])byImpact[key]={amount:0,line_count:0};
+  const lineKindTotals=lineKinds.rows.map(row=>({
+    line_kind:row.line_kind,
+    impact_class:row.impact_class,
+    amount:money(row.amount),
+    line_count:Number(row.line_count)
+  }));
   const revenue=byImpact.revenue.amount;
   const expenses=money(byImpact.expense.amount+byImpact.fee_expense.amount+byImpact.tax_expense.amount);
   return{
@@ -644,6 +662,7 @@ export async function financialStatementForScope(pool,{accountId,profileRole,bus
     currency_code:'PHP',
     document_count:Number(docCount.rows[0]?.count||0),
     totals:byImpact,
+    line_kinds:lineKindTotals,
     derived:{
       operating_result:money(revenue-expenses),
       documented_purchases:byImpact.purchase.amount,
