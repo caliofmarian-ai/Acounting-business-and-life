@@ -53,7 +53,7 @@ async function saveProfileMoneyEntry(e){
 async function reverseProfileMoneyEntry(id){
   const reason=window.prompt('Reason for reversal/correction?')||'Correction';
   const key='profile-money-reverse-'+id+'-'+Date.now();
-  try{await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries/'+id+'/reverse',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({note:reason})});await reloadProfileMoney()}catch(err){window.alert(err.message)}
+  try{await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries/'+id+'/reverse',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({note:reason})});await reloadProfileMoney()}catch(err){pmtoast(err.message||'This entry could not be reversed.')}
 }
 function bindProfileLedger(){
   const form=document.getElementById('profileMoneyEntryForm');if(form)form.onsubmit=saveProfileMoneyEntry;
