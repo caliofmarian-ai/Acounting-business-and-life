@@ -117,12 +117,37 @@ function customerSimpleBanking(){
     +'<button id="moneyOpenSettings" class="moneySettingsButton" type="button">Payment settings</button></section>';
 }
 function customerOptionalTracking(){return '<details class="moneyAdvanced"><summary>Optional personal money tracking</summary><div class="moneyAdvancedBody">'+profileLedgerSection()+'</div></details>'}
+function customerStatementAmount(statement,lineKind){return (statement?.line_kinds||[]).filter(x=>x.line_kind===lineKind).reduce((sum,x)=>sum+Number(x.amount||0),0)}
+function customerStatementSection(){return '<section class="moneyCard moneyPersonalStatement"><div class="moneySectionLabel"><strong>Monthly personal cash-flow statement</strong><span>Derived from your Customer records</span></div><p>Combines verified Business & Life spending/refunds with your optional personal entries without copying platform purchases into the manual ledger.</p><button id="customerLoadStatement" class="moneySettingsButton" type="button">Load this month</button><div id="customerStatementResult" class="moneyStatementResult"><div class="moneyEmpty">Statement loads only when you ask for it.</div></div></section>'}
+function customerStatementMarkup(statement){
+  const marketplace=customerStatementAmount(statement,'purchase_value');
+  const services=customerStatementAmount(statement,'service_value');
+  const delivery=customerStatementAmount(statement,'delivery_value');
+  const personalIn=customerStatementAmount(statement,'profile_money_in');
+  const personalExpenses=customerStatementAmount(statement,'profile_expense');
+  const transferIn=customerStatementAmount(statement,'profile_transfer_in');
+  const transferOut=customerStatementAmount(statement,'profile_transfer_out');
+  const refunds=customerStatementAmount(statement,'refund');
+  const recordedNet=personalIn+transferIn+refunds-personalExpenses-marketplace-services-delivery-transferOut;
+  const period=statement?.period||{};
+  return '<div class="moneyNotice ok"><strong>'+pmh(period.start_date||'Month')+' → '+pmh(period.end_date_exclusive||'')+'</strong><br>Derived statement. Source Orders, Payment Core and your personal entries remain authoritative.</div>'
+    +'<div class="moneyMetrics">'+metric('Personal money in',personalIn,'Optional entries')+metric('Manual personal expenses',personalExpenses,'Optional entries')+metric('Marketplace spending',marketplace,'Verified commerce')+metric('Local Services spending',services,'Verified service payments')+metric('Delivery spending',delivery,'Verified delivery allocation')+metric('Refunds / credits',refunds,'Succeeded refunds')+metric('Transfers in',transferIn,'Recorded profile transfers')+metric('Transfers out',transferOut,'Recorded profile transfers')+metric('Recorded cash-flow context',recordedNet,'Not a bank or provider balance')+'</div>';
+}
+async function loadCustomerStatement(){
+  const button=document.getElementById('customerLoadStatement'),host=document.getElementById('customerStatementResult');
+  if(!button||!host)return;
+  button.disabled=true;button.setAttribute('aria-busy','true');host.innerHTML='<div class="moneyEmpty">Building statement from verified records…</div>';
+  try{const statement=await pmapi('/api/financial-statements/month?profile_role=customer');host.innerHTML=customerStatementMarkup(statement);button.textContent='Refresh this month'}
+  catch(err){host.innerHTML='<div class="moneyEmpty">'+pmh(err.message)+'</div>'}
+  finally{button.disabled=false;button.removeAttribute('aria-busy')}
+}
+function bindCustomerStatement(){document.getElementById('customerLoadStatement')?.addEventListener('click',loadCustomerStatement)}
 function renderCustomer(){
   const s=pmData.summary||{};
   return '<section class="moneyHero moneyHeroCustomer"><small>MY MONEY</small><h2>Purchases and payments.</h2><p>Personal purchase activity only — no business accounting. Only what you bought, what you paid, what is still due and what was refunded.</p></section>'
     +'<div class="moneyMetrics moneyMetricsPrimary">'+metric('Confirmed payments',s.confirmed_payments,'Paid successfully')+metric('Outstanding purchases',s.outstanding_purchases,'Still due')+metric('Refunded',s.refunded,'Completed refunds')+metric('Purchases',s.purchase_value,(s.order_count||0)+' orders')+'</div>'
     +(Number(s.pending_payments||0)>0||Number(s.pending_refunds||0)>0?'<section class="moneyCard"><h2>In progress</h2><div class="moneyMetrics">'+metric('Pending payment',s.pending_payments)+metric('Pending refund',s.pending_refunds)+'</div></section>':'')
-    +customerOrders()+customerPayments()+customerSimpleBanking()+customerOptionalTracking();
+    +customerOrders()+customerPayments()+customerSimpleBanking()+customerStatementSection()+customerOptionalTracking();
 }
 function customerOrders(){const rows=pmData.recent_orders||[];return '<section class="moneyCard"><h2>Recent purchases</h2><p>Order value and outstanding amount are kept separate from confirmed payments.</p>'+(rows.length?'<div class="moneyList">'+rows.map(o=>'<div class="moneyRow"><div><strong>'+pmh(o.order_number||('Order '+o.id))+' • '+pmh(o.business_name||'Merchant')+'</strong><small>'+new Date(o.created_at).toLocaleDateString()+' • '+pmh(pmnice(o.payment_method))+'</small>'+status(o.payment_status)+'</div><div class="moneyRowAmount"><strong>'+pmmoney(o.total)+'</strong><small>'+pmmoney(o.outstanding_amount)+' due</small></div></div>').join('')+'</div>':'<div class="moneyEmpty">No purchases yet.</div>')+'</section>'}
 function customerPayments(){const rows=pmData.recent_payments||[];return '<section class="moneyCard"><h2>Payment activity</h2>'+(rows.length?'<div class="moneyList">'+rows.map(p=>'<div class="moneyRow"><div><strong>'+pmh(pmnice(p.logical_method))+'</strong><small>'+pmh(p.provider_code||'No provider')+' • '+new Date(p.created_at).toLocaleDateString()+'</small>'+status(p.status)+'</div><div class="moneyRowAmount"><strong>'+pmmoney(p.amount)+'</strong></div></div>').join('')+'</div>':'<div class="moneyEmpty">No payment intents recorded yet.</div>')+'</section>'}
@@ -148,7 +173,7 @@ function openPmSettings(){
   if(typeof shell?.openProfileSettings==='function')return shell.openProfileSettings(pmRole);
   return pmtoast('Profile Settings is still loading. Try again in a moment.');
 }
-function renderPm(){if(!pmData)return;const title=pmRole==='customer'?'My Money':pmRole==='courier'?'Earnings & Money':'Money';pmWorkspace.innerHTML='<div class="moneyHeader"><button id="moneyBack" class="moneyBack" type="button">‹</button><div><h1>'+title+'</h1><p>'+pmh(pmRole==='customer'?'Personal payments and purchases':pmRole==='courier'?'Courier settlement and activity':'Service-job value and settlement')+'</p></div></div>'+(pmRole==='customer'?renderCustomer():pmRole==='courier'?renderCourier():renderServices());document.getElementById('moneyBack').onclick=closePm;document.getElementById('moneyOpenSettings')?.addEventListener('click',openPmSettings);bindProfileLedger()}
+function renderPm(){if(!pmData)return;const title=pmRole==='customer'?'My Money':pmRole==='courier'?'Earnings & Money':'Money';pmWorkspace.innerHTML='<div class="moneyHeader"><button id="moneyBack" class="moneyBack" type="button">‹</button><div><h1>'+title+'</h1><p>'+pmh(pmRole==='customer'?'Personal payments and purchases':pmRole==='courier'?'Courier settlement and activity':'Service-job value and settlement')+'</p></div></div>'+(pmRole==='customer'?renderCustomer():pmRole==='courier'?renderCourier():renderServices());document.getElementById('moneyBack').onclick=closePm;document.getElementById('moneyOpenSettings')?.addEventListener('click',openPmSettings);bindProfileLedger();if(pmRole==='customer')bindCustomerStatement()}
 async function openPm(role){pmRole=role;if(!pmtok()||!openPmWorkspace())return;pmWorkspace.innerHTML='<div class="moneyEmpty">Loading Money…</div>';try{pmData=await pmapi('/api/profile-money/'+encodeURIComponent(role));renderPm()}catch(e){pmWorkspace.innerHTML='<div class="moneyHeader"><button id="moneyBack" class="moneyBack" type="button">‹</button><div><h1>Money</h1></div></div><div class="moneyEmpty">'+pmh(e.message)+'</div>';document.getElementById('moneyBack').onclick=closePm}}
 function decorateMoney(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState,role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(!hub||!['customer','courier','service_provider'].includes(role))return;const tile=hub.querySelector('[data-hub-feature="Money"]');if(tile)tile.onclick=()=>openPm(role)}
 window.BusinessLifeProfileMoney=Object.freeze({openCustomerMoney:()=>openPm('customer'),openProfileMoney:openPm});
