@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { marketplaceFetch,startEmbeddedMarketplace,stopEmbeddedMarketplace } from './server-marketplace.js';
+import {decodeVerifiedDataUrl} from './file-signature-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -69,8 +70,8 @@ async function identity(req){const r=await servicesFetch('/api/me',{headers:{Aut
 function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)}
 async function requireProvider(req){const me=await identity(req);if(!enabled(me,'service_provider'))throw Object.assign(new Error('Service Provider profile required'),{status:403});return me}
 async function requireCustomer(req){const me=await identity(req);if(!enabled(me,'customer'))throw Object.assign(new Error('Customer profile required'),{status:403});return me}
-function validateEvidence(data){const x=String(data||'');if(!x)return '';if(x.length>1_900_000)throw Object.assign(new Error('Document is too large for this preview. Keep it under about 1.4 MB.'),{status:413});if(!/^data:(application\/pdf|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Evidence must be PDF, PNG, JPEG or WebP'),{status:400});return x}
-function validateImage(data){const x=String(data||'');if(!x)return '';if(x.length>450_000)throw Object.assign(new Error('Image is too large'),{status:413});if(!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Image must be PNG, JPEG or WebP'),{status:400});return x}
+function validateEvidence(data){const x=String(data||'');if(!x)return '';if(x.length>1_900_000)throw Object.assign(new Error('Document is too large for this preview. Keep it under about 1.4 MB.'),{status:413});if(!/^data:(application\/pdf|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Evidence must be PDF, PNG, JPEG or WebP'),{status:400});decodeVerifiedDataUrl(x,{allowedMimes:['application/pdf','image/png','image/jpeg','image/webp'],label:'Evidence'});return x}
+function validateImage(data){const x=String(data||'');if(!x)return '';if(x.length>450_000)throw Object.assign(new Error('Image is too large'),{status:413});if(!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Image must be PNG, JPEG or WebP'),{status:400});decodeVerifiedDataUrl(x,{allowedMimes:['image/png','image/jpeg','image/webp'],label:'Image'});return x}
 
 async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS profile_image_data_url TEXT NOT NULL DEFAULT '';
