@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {geographyAvailabilityMessage,normalizeHomePsgcCode} from '../account-geography.js';
+import {geographyAvailabilityMessage,normalizeHomePsgcCode,barangaySearchTokens} from '../account-geography.js';
 
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const auth=read('server-auth.js');
@@ -24,6 +24,24 @@ test('account geography is official barangay PSGC membership separate from opera
   assert.match(core,/nearest_opened_scope/);
   assert.equal(normalizeHomePsgcCode('0402103028'),'0402103028');
   assert.equal(normalizeHomePsgcCode('bad'),'');
+});
+
+test('barangay picker supports open-area suggestions and natural hierarchy search',()=>{
+  assert.deepEqual(barangaySearchTokens('Queens Row West, Bacoor...'),['queens','row','west','bacoor']);
+  assert.deepEqual(barangaySearchTokens('  0402103028  '),['0402103028']);
+  const core=read('account-geography.js');
+  const modern=read('public/auth-hardening-ui.js');
+  const legacy=read('public/auth-ui.js');
+  assert.match(core,/if\(!q\)\{/);
+  assert.match(core,/t\.status IN \('onboarding','active'\)/);
+  assert.match(core,/clauses\.join\(' AND '\)/);
+  assert.match(core,/CASE WHEN t\.status='onboarding' THEN 0/);
+  assert.match(modern,/input\.addEventListener\('focus'/);
+  assert.match(modern,/Loading open barangays/);
+  assert.match(legacy,/input\.addEventListener\('focus'/);
+  assert.match(legacy,/Loading open barangays/);
+  assert.match(shell,/input\.onfocus=/);
+  assert.match(shell,/Loading open barangays/);
 });
 
 test('availability copy explains planned paused restricted closed and unopened areas',()=>{
