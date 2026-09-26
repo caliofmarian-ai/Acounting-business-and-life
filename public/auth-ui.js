@@ -76,7 +76,7 @@ function bindAuthBarangayPicker(){
     });
   };
   const load=async(query='')=>{
-    results.innerHTML='<div class="authGeoStatus">'+(query?'Searching official PSGC…':'Loading open barangays…')+'</div>';
+    results.innerHTML='<div class="authGeoStatus">'+'Searching official PSGC…'+'</div>';
     try{renderItems(await searchAuthBarangays(query))}
     catch(error){results.innerHTML='<div class="authGeoStatus warn">'+authEsc(error.message)+'</div>'}
   };
