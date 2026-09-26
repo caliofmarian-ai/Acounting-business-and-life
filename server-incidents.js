@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {deliveryFinanceFetch,startEmbeddedDeliveryFinance,stopEmbeddedDeliveryFinance} from './server-delivery-finance.js';
+import {decodeVerifiedDataUrl} from './file-signature-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -70,11 +71,10 @@ async function identity(req){
 async function requireAdmin(req){ const me=await identity(req); if(Number(me.account.id)!==1) throw Object.assign(new Error('Admin access required'),{status:403}); return me; }
 function isAdmin(me){ return Number(me?.account?.id)===1; }
 function decodeDataUrl(dataUrl){
-  const m=String(dataUrl||'').match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
-  if(!m) throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
-  let bytes;
-  try{ bytes=Buffer.from(m[2],'base64'); }catch{ throw Object.assign(new Error('Attachment could not be decoded'),{status:400}); }
-  return {mime:m[1].toLowerCase(),bytes};
+  return decodeVerifiedDataUrl(dataUrl,{
+    allowedMimes:[...IMAGE_MIMES,PDF_MIME],
+    label:'Attachment'
+  });
 }
 function validateAttachments(raw){
   const files=Array.isArray(raw)?raw:[];
