@@ -70,6 +70,13 @@ test('territory lifecycle gates invitation acceptance when onboarding closes',()
   assert.match(governance,/operating territory is no longer open for onboarding/);
 });
 
+test('PH pilot opening defaults structural geography to planned and barangays to onboarding',()=>{
+  assert.match(ui,/const defaultStatus=level==='barangay'\?'onboarding':'planned'/);
+  assert.match(ui,/Structural levels default to Planned\. Launch barangays default to Onboarding\./);
+  assert.match(ui,/Barangay launch scope: Onboarding is suggested\./);
+  assert.match(ui,/Structural '\+readableCode\(level\)\+' scope: Planned is suggested until a launch barangay is chosen\./);
+});
+
 test('Territory Tree UX renders opened scopes by parent_id instead of a flat list',()=>{
   assert.match(ui,/function territoryTreeModel\(territories\)/);
   assert.match(ui,/if\(parentId&&byId\.has\(parentId\)\)children\.get\(parentId\)\.push\(x\)/);
