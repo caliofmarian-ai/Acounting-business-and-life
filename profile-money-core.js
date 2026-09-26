@@ -166,8 +166,73 @@ export async function courierMoneySnapshot(pool,accountId){
   return{...home,recent_deliveries:recent.rows};
 }
 
+async function serviceProviderPaymentEvidence(pool,accountId){
+  const {rows}=await pool.query(`
+    WITH completed_jobs AS (
+      SELECT id,COALESCE(final_price,quote_amount,0)::numeric payable
+      FROM service_jobs
+      WHERE provider_account_id=$1
+        AND status='completed'
+        AND customer_confirmed_at IS NOT NULL
+    ),
+    confirmed AS (
+      SELECT pi.source_id job_id,COALESCE(SUM(pi.amount),0)::numeric gross_confirmed
+      FROM payment_intents pi
+      JOIN completed_jobs j ON j.id=pi.source_id
+      WHERE pi.source_type='service_job'
+        AND pi.status IN ('succeeded','partially_refunded','refunded')
+      GROUP BY pi.source_id
+    ),
+    pending AS (
+      SELECT pi.source_id job_id,COALESCE(SUM(pi.amount),0)::numeric pending_amount
+      FROM payment_intents pi
+      JOIN completed_jobs j ON j.id=pi.source_id
+      WHERE pi.source_type='service_job'
+        AND pi.status IN ('requires_provider','requires_action','processing')
+        AND (pi.expires_at IS NULL OR pi.expires_at>NOW())
+      GROUP BY pi.source_id
+    ),
+    refunded AS (
+      SELECT pi.source_id job_id,COALESCE(SUM(r.amount),0)::numeric refunded_amount
+      FROM refunds r
+      JOIN payment_intents pi ON pi.id=r.payment_intent_id
+      JOIN completed_jobs j ON j.id=pi.source_id
+      WHERE pi.source_type='service_job' AND r.status='succeeded'
+      GROUP BY pi.source_id
+    ),
+    per_job AS (
+      SELECT j.id,j.payable,
+        GREATEST(COALESCE(c.gross_confirmed,0)-COALESCE(r.refunded_amount,0),0)::numeric effective_paid,
+        COALESCE(p.pending_amount,0)::numeric pending_amount,
+        COALESCE(r.refunded_amount,0)::numeric refunded_amount
+      FROM completed_jobs j
+      LEFT JOIN confirmed c ON c.job_id=j.id
+      LEFT JOIN pending p ON p.job_id=j.id
+      LEFT JOIN refunded r ON r.job_id=j.id
+    )
+    SELECT
+      COUNT(*) FILTER(WHERE effective_paid>0)::int paid_job_count,
+      COUNT(*) FILTER(WHERE GREATEST(payable-effective_paid,0)>0)::int receivable_job_count,
+      COALESCE(SUM(effective_paid),0)::numeric confirmed_customer_payments,
+      COALESCE(SUM(pending_amount),0)::numeric pending_customer_payments,
+      COALESCE(SUM(refunded_amount),0)::numeric refunded_customer_payments,
+      COALESCE(SUM(GREATEST(payable-effective_paid,0)),0)::numeric outstanding_receivables
+    FROM per_job
+  `,[Number(accountId)]);
+  const row=rows[0]||{};
+  return{
+    paid_job_count:n(row.paid_job_count),
+    receivable_job_count:n(row.receivable_job_count),
+    confirmed_customer_payments:money(row.confirmed_customer_payments),
+    pending_customer_payments:money(row.pending_customer_payments),
+    refunded_customer_payments:money(row.refunded_customer_payments),
+    outstanding_receivables:money(row.outstanding_receivables),
+    authority:'payment_intents + succeeded refunds'
+  };
+}
+
 async function serviceProviderMoneyHomeSummary(pool,accountId){
-  const [jobs,allocations]=await Promise.all([
+  const [jobs,payments,allocations]=await Promise.all([
     pool.query(`
       SELECT
         COUNT(*) FILTER(WHERE status='completed' AND customer_confirmed_at IS NOT NULL)::int confirmed_completed_count,
@@ -178,6 +243,7 @@ async function serviceProviderMoneyHomeSummary(pool,accountId){
           FILTER(WHERE status IN ('quoted','accepted','scheduled','in_progress')),0) open_commercial_value
       FROM service_jobs WHERE provider_account_id=$1
     `,[Number(accountId)]),
+    serviceProviderPaymentEvidence(pool,accountId),
     netAllocations(pool,'service_provider_net',accountId)
   ]);
   const j=jobs.rows[0]||{};
@@ -188,14 +254,19 @@ async function serviceProviderMoneyHomeSummary(pool,accountId){
       confirmed_job_value:money(j.confirmed_job_value),
       open_commercial_jobs:n(j.open_commercial_jobs),
       open_commercial_value:money(j.open_commercial_value),
+      payments,
       income:allocations
     },
     authority:{
+      payment_tracking:'payment_intents + succeeded refunds',
+      settlement_tracking:allocations.tracked?'payment_allocations.service_provider_net':'not_configured',
       income_tracking:allocations.tracked?'payment_allocations.service_provider_net':'not_configured',
       commercial_value_rule:'Completed job value is a commercial amount, not proof that money was received.',
+      payment_rule:'Customer payment evidence is verified Payment Intent success minus succeeded refunds.',
+      settlement_rule:'Customer payment success and Service Provider payout/settlement are separate facts.',
       note:allocations.tracked
-        ?'Only recorded service_provider_net allocations are treated as settled/provider income.'
-        :'Local Services payment settlement is not configured yet. Completed job value is shown separately from money received.'
+        ?'Customer payments are shown separately from service_provider_net settlement allocations.'
+        :'Customer payments and receivables are tracked. Service Provider payout settlement remains NOT_CONFIGURED until service_provider_net allocations exist.'
     }
   };
 }
@@ -208,10 +279,51 @@ export async function serviceProviderMoneySnapshot(pool,accountId){
   const [home,recent]=await Promise.all([
     serviceProviderMoneyHomeSummary(pool,accountId),
     pool.query(`
-      SELECT id,service_label,status,quote_amount,final_price,currency_code,scheduled_at,
-             provider_completed_at,customer_confirmed_at,created_at
-      FROM service_jobs WHERE provider_account_id=$1
-      ORDER BY created_at DESC LIMIT 40
+      WITH recent AS (
+        SELECT id,service_label,status,quote_amount,final_price,currency_code,scheduled_at,
+               provider_completed_at,customer_confirmed_at,created_at
+        FROM service_jobs
+        WHERE provider_account_id=$1
+        ORDER BY created_at DESC LIMIT 40
+      ),
+      confirmed AS (
+        SELECT pi.source_id job_id,COALESCE(SUM(pi.amount),0)::numeric gross_confirmed
+        FROM payment_intents pi
+        JOIN recent j ON j.id=pi.source_id
+        WHERE pi.source_type='service_job'
+          AND pi.status IN ('succeeded','partially_refunded','refunded')
+        GROUP BY pi.source_id
+      ),
+      pending AS (
+        SELECT pi.source_id job_id,COALESCE(SUM(pi.amount),0)::numeric pending_amount
+        FROM payment_intents pi
+        JOIN recent j ON j.id=pi.source_id
+        WHERE pi.source_type='service_job'
+          AND pi.status IN ('requires_provider','requires_action','processing')
+          AND (pi.expires_at IS NULL OR pi.expires_at>NOW())
+        GROUP BY pi.source_id
+      ),
+      refunded AS (
+        SELECT pi.source_id job_id,COALESCE(SUM(r.amount),0)::numeric refunded_amount
+        FROM refunds r
+        JOIN payment_intents pi ON pi.id=r.payment_intent_id
+        JOIN recent j ON j.id=pi.source_id
+        WHERE pi.source_type='service_job' AND r.status='succeeded'
+        GROUP BY pi.source_id
+      )
+      SELECT r.*,
+        GREATEST(COALESCE(c.gross_confirmed,0)-COALESCE(f.refunded_amount,0),0)::numeric payment_received,
+        COALESCE(p.pending_amount,0)::numeric payment_pending,
+        COALESCE(f.refunded_amount,0)::numeric payment_refunded,
+        CASE WHEN r.status='completed' AND r.customer_confirmed_at IS NOT NULL
+          THEN GREATEST(COALESCE(r.final_price,r.quote_amount,0)
+            - GREATEST(COALESCE(c.gross_confirmed,0)-COALESCE(f.refunded_amount,0),0),0)
+          ELSE 0 END::numeric outstanding_receivable
+      FROM recent r
+      LEFT JOIN confirmed c ON c.job_id=r.id
+      LEFT JOIN pending p ON p.job_id=r.id
+      LEFT JOIN refunded f ON f.job_id=r.id
+      ORDER BY r.created_at DESC
     `,[Number(accountId)])
   ]);
   return{...home,recent_jobs:recent.rows};

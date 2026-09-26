@@ -83,7 +83,8 @@ test('Local Services Money reuses the canonical evidence-based profile Money wor
   assert.match(shell,/openProfileMoney\('service_provider'\)/);
   assert.match(shell,/data-service-provider-nav="money"/);
   assert.match(read('profile-money-core.js'),/netAllocations\(pool,'service_provider_net',accountId\)/);
-  assert.match(read('public/profile-money-ui.js'),/Completed job value is shown separately from provider-confirmed income/);
+  assert.match(read('public/profile-money-ui.js'),/Customer payment evidence comes from verified Payment Intents/);
+  assert.match(read('public/profile-money-ui.js'),/Service Provider payout remains a separate settlement state/);
 });
 
 test('Profile Settings stays separate from the four daily Local Services destinations',()=>{

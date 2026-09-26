@@ -27,12 +27,20 @@ test('Courier delivery fee is explicitly not treated as Courier earnings',()=>{
   assert.doesNotMatch(core,/earnings:money\(d\.delivered_fee_context\)/);
 });
 
-test('Local Services commercial job value stays separate from received income',()=>{
+test('Local Services separates commercial value Customer payment receivable expenses and settlement',()=>{
   assert.match(core,/COALESCE\(final_price,quote_amount,0\)/);
+  assert.match(core,/serviceProviderPaymentEvidence\(pool,accountId\)/);
+  assert.match(core,/pi\.source_type='service_job'/);
+  assert.match(core,/pi\.status IN \('succeeded','partially_refunded','refunded'\)/);
+  assert.match(core,/r\.status='succeeded'/);
+  assert.match(core,/outstanding_receivables/);
   assert.match(core,/netAllocations\(pool,'service_provider_net',accountId\)/);
   assert.match(core,/Completed job value is a commercial amount, not proof that money was received/);
-  assert.match(ui,/Completed job value is shown separately from provider-confirmed income/);
-  assert.match(ui,/No service-provider settlement yet/);
+  assert.match(core,/Customer payment success and Service Provider payout\/settlement are separate facts/);
+  assert.match(ui,/Customer payment evidence comes from verified Payment Intents/);
+  assert.match(ui,/Customer paid/);
+  assert.match(ui,/Still to collect/);
+  assert.match(ui,/Work expenses/);
 });
 
 test('only Customer Courier and Local Services use this personal/profile Money endpoint',()=>{
@@ -74,8 +82,9 @@ test('Money workspace uses shared account-level Money & Banking while preserving
 
 test('Money workspace does not invent untracked settlement as zero earnings',()=>{
   assert.match(ui,/Recorded earnings<\/span><strong>Not tracked/);
-  assert.match(ui,/Money received<\/span><strong>Not tracked/);
   assert.match(ui,/Settlement amount is not configured yet/);
+  assert.match(ui,/Service Provider payout remains a separate settlement state/);
+  assert.doesNotMatch(ui,/Customer paid<\/span><strong>Not tracked/);
 });
 
 

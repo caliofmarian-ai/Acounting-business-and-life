@@ -1295,15 +1295,14 @@ function renderServiceProviderHomeData(hub,data){
     if(!summary){
       moneyBox.innerHTML='<div class="serviceProviderMoneyUnavailable"><strong>Money summary unavailable</strong><span>Open Money to retry. No amount has been assumed.</span></div>';
     }else{
+      const payments=summary.payments||{};
       const income=summary.income||{};
-      const paid=income.tracked?serviceProviderHomeMoney(income.paid):'Not tracked';
-      const paidNote=income.tracked?'Recorded service_provider_net paid evidence':'No service_provider_net settlement evidence';
       const settlement=income.tracked?serviceProviderHomeMoney(serviceProviderHomeSettlementPending(income)):'Not configured';
       moneyBox.innerHTML=
-        '<div><span>Confirmed job value</span><strong>'+serviceProviderHomeMoney(summary.confirmed_job_value)+'</strong><small>'+Number(summary.confirmed_completed_count||0)+' Customer-confirmed completed</small></div>'+
-        '<div><span>Open work value</span><strong>'+serviceProviderHomeMoney(summary.open_commercial_value)+'</strong><small>'+Number(summary.open_commercial_jobs||0)+' quoted / active</small></div>'+
-        '<div><span>Money received</span><strong>'+escapeHtml(paid)+'</strong><small>'+escapeHtml(paidNote)+'</small></div>'+
-        '<div><span>In settlement</span><strong>'+escapeHtml(settlement)+'</strong><small>Only recorded provider allocation evidence</small></div>';
+        '<div><span>Completed job value</span><strong>'+serviceProviderHomeMoney(summary.confirmed_job_value)+'</strong><small>'+Number(summary.confirmed_completed_count||0)+' Customer-confirmed completed</small></div>'+
+        '<div><span>Customer paid</span><strong>'+serviceProviderHomeMoney(payments.confirmed_customer_payments)+'</strong><small>Verified Payment Intent evidence</small></div>'+
+        '<div><span>Still to collect</span><strong>'+serviceProviderHomeMoney(payments.outstanding_receivables)+'</strong><small>'+Number(payments.receivable_job_count||0)+' receivable jobs</small></div>'+
+        '<div><span>In settlement</span><strong>'+escapeHtml(settlement)+'</strong><small>Separate service_provider_net allocation evidence</small></div>';
     }
   }
 
