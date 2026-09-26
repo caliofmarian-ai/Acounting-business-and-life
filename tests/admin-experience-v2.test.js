@@ -43,10 +43,13 @@ test('Trust & Safety opens incident evidence and writes only valid incident stat
   assert.match(ui,/data-incident-attachment/);
 });
 
-test('Territories exposes the existing permission-gated creation route without inventing a pilot location',()=>{
+test('Territories opens official PH geography through the permission-gated PSGC registry flow',()=>{
   assert.match(ui,/id="territoryCreateForm"/);
+  assert.match(ui,/id="territoryGeoSearchForm"/);
+  assert.match(ui,/\/api\/governance\/admin\/geography\/search/);
   assert.match(ui,/\/api\/governance\/admin\/territories/);
-  assert.match(ui,/Do not invent a pilot location/);
+  assert.match(ui,/Reference geography ≠ operating territory/);
+  assert.doesNotMatch(ui,/Do not invent a pilot location/);
   assert.match(adminServer,/territory\.manage/);
 });
 

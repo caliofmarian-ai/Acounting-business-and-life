@@ -309,17 +309,112 @@ async function openAdminSupportTicket(id){
 function bindSupportQueue(){document.querySelectorAll('[data-support-ticket]').forEach(button=>button.onclick=()=>openAdminSupportTicket(Number(button.dataset.supportTicket)))}
 function territoriesPanel(){
   const territories=state.overview?.territories||[];
-  return hero()+'<p class="moduleIntro">Operating cells visible to your assignment. Create a territory only when the real operating scope is known.</p><details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>TERRITORY ACTION</small><strong>Create operating territory</strong><span>Country, region, province, city, municipality, district, barangay or controlled custom cell</span></span></summary><div class="adminDisclosureBody"><form id="territoryCreateForm" class="adminForm"><div class="financeFormGrid"><label>Name<input name="name" required maxlength="180" placeholder="Actual territory name"></label><label>Type<select name="territory_type" required><option value="">Choose type</option>'+['country','region','province','city','municipality','district','barangay','custom_cell'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label><label>Parent territory<select name="parent_id"><option value="">No parent / top level</option>'+territories.map(t=>'<option value="'+Number(t.id)+'">'+esc(t.name)+' · '+esc(readableCode(t.territory_type))+'</option>').join('')+'</select></label><label>Status<select name="status">'+['planned','onboarding','active','paused','suspended','closed'].map(x=>'<option value="'+x+'" '+(x==='onboarding'?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Code (optional)<input name="code" maxlength="80" placeholder="Internal territory code"></label></div><div class="notice">Do not invent a pilot location. Create only a real operating territory confirmed for Business & Life.</div><button class="primary" type="submit">Create territory</button><div id="territoryCreateResult"></div></form></div></details><div class="sectionTitle"><h3>Territories</h3></div>'+rows(territories,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(readableCode(x.territory_type))+' · '+esc(x.code||'No internal code')+'</span></div>');
+  const top=highestAssignment(),rank=top?.effective_rank||top?.authority_rank||top?.admin_role||'';
+  const canSync=rank==='super_admin';
+  return hero()
+    +'<p class="moduleIntro">Official Philippine geography comes from the PSA Philippine Standard Geographic Code (PSGC). The registry is reference data; only the places you explicitly open below become Business & Life operating territories.</p>'
+    +'<details class="adminDisclosure" open><summary><span class="adminDisclosureCopy"><small>PH GEOGRAPHIC REGISTRY</small><strong>Open an official operating territory</strong><span>Search or browse PSA geography, then choose the Business & Life operating status</span></span></summary><div class="adminDisclosureBody">'
+    +'<div id="phGeoRegistryStatus" class="notice">Checking the official PSGC registry…</div>'
+    +(canSync?'<button id="phGeoSync" class="secondary" type="button">Synchronize official PSGC</button>':'')
+    +'<form id="territoryGeoSearchForm" class="adminForm"><div class="financeFormGrid">'
+    +'<label>Search official geography<input name="q" maxlength="120" autocomplete="off" placeholder="Bacoor, Cavite or PSGC code"></label>'
+    +'<label>Geographic level<select name="level"><option value="">All levels</option>'+['region','province','city','municipality','district','submunicipality','special_geographic_unit','barangay'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label>'
+    +'</div><div class="formActions"><button class="secondary" type="submit">Search PSGC</button><button id="territoryGeoRoot" class="secondary" type="button">Browse regions</button></div></form>'
+    +'<div id="territoryGeoContext" class="muted">Official national registry</div><div id="territoryGeoResults" class="opsList"><div class="adminLoading">Registry results appear here.</div></div>'
+    +'<form id="territoryCreateForm" class="adminForm" style="display:none"><input type="hidden" name="psgc_code"><div id="territoryGeoSelected" class="notice"></div><label>Business & Life status<select name="status">'+['planned','onboarding','active','paused','suspended','closed'].map(x=>'<option value="'+x+'" '+(x==='onboarding'?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><button class="primary" type="submit">Open selected territory</button><div id="territoryCreateResult"></div></form>'
+    +'<div class="notice"><strong>Reference geography ≠ operating territory.</strong><br>Synchronizing PSGC does not open, activate, invite or approve anyone. Opening a territory is a separate audited Admin action.</div>'
+    +'</div></details><div class="sectionTitle"><h3>Business & Life territories</h3><span class="muted">'+territories.length+' opened</span></div>'
+    +rows(territories,x=>'<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(readableCode(x.territory_type))+' · '+(x.psgc_code?'PSGC '+esc(x.psgc_code)+' · '+esc(x.geographic_source_version||'source version pending'):esc(x.code||'Custom / legacy territory'))+'</span></div>');
 }
-function wireTerritories(){
-  const form=document.getElementById('territoryCreateForm');if(!form)return;
-  const type=form.elements.territory_type,parent=form.elements.parent_id;
-  type.onchange=()=>{if(type.value==='country'){parent.value='';parent.disabled=true}else parent.disabled=false};
-  form.onsubmit=async e=>{
-    e.preventDefault();const out=document.getElementById('territoryCreateResult'),button=form.querySelector('button[type="submit"]'),fd=new FormData(form);
+async function wireTerritories(){
+  const createForm=document.getElementById('territoryCreateForm');
+  const searchForm=document.getElementById('territoryGeoSearchForm');
+  const results=document.getElementById('territoryGeoResults');
+  const context=document.getElementById('territoryGeoContext');
+  const statusBox=document.getElementById('phGeoRegistryStatus');
+  if(!createForm||!searchForm||!results||!statusBox)return;
+  let registryReady=false;
+
+  const statusText=status=>{
+    if(!status?.ready)return '<strong>PSGC registry not synchronized yet.</strong><br>Super Admin must synchronize the pinned official PSA publication before an official territory can be opened.';
+    const latest=status.latest||{},counts=latest.level_counts||{};
+    return '<strong>Official PSGC ready · '+esc(latest.source_version||status.source?.version||'')+'</strong><br>'
+      +Number(latest.row_count||0).toLocaleString('en-PH')+' geographic records · '
+      +Number(counts.region||0)+' regions · '+Number(counts.province||0)+' provinces · '
+      +Number(counts.city||0)+' cities · '+Number(counts.municipality||0)+' municipalities · '
+      +Number(counts.barangay||0).toLocaleString('en-PH')+' barangays'
+      +'<br><span class="muted">Source: Philippine Statistics Authority · '+esc(status.source?.registry||'PSGC')+'</span>';
+  };
+  const loadStatus=async()=>{
+    const status=await api('/api/governance/admin/geography/status');
+    registryReady=Boolean(status.ready);statusBox.innerHTML=statusText(status);
+    return status;
+  };
+  const renderGeoItems=payload=>{
+    const items=payload?.items||[];
+    if(!items.length){results.innerHTML='<div class="opsEmpty">'+(registryReady?'No PSGC geography matched this selection.':'Synchronize PSGC first.')+'</div>';return}
+    results.innerHTML=items.map(x=>{
+      const opened=Number(x.opened_territory_id)>0;
+      const browse=x.geographic_level!=='barangay';
+      return '<div class="row"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(readableCode(x.geographic_level))+'</span></div>'
+        +'<span class="muted">'+esc(x.path_text||x.name)+'</span><span class="muted">PSGC '+esc(x.psgc_code)+' · source '+esc(x.source_version)+'</span>'
+        +'<div class="formActions">'
+        +(browse?'<button type="button" class="secondary" data-geo-browse="'+esc(x.psgc_code)+'" data-geo-name="'+esc(x.name)+'">Browse children</button>':'')
+        +(opened?'<button type="button" class="secondary" disabled>Already '+esc(x.opened_status||'opened')+'</button>':'<button type="button" class="primary" data-geo-select="'+esc(x.psgc_code)+'" data-geo-name="'+esc(x.name)+'" data-geo-level="'+esc(x.geographic_level)+'" data-geo-path="'+esc(x.path_text||x.name)+'">Select</button>')
+        +'</div></div>';
+    }).join('');
+    results.querySelectorAll('[data-geo-select]').forEach(button=>button.onclick=()=>{
+      createForm.elements.psgc_code.value=button.dataset.geoSelect;
+      document.getElementById('territoryGeoSelected').innerHTML='<strong>'+esc(button.dataset.geoName)+'</strong><br>'+esc(button.dataset.geoPath)+'<br>PSGC '+esc(button.dataset.geoSelect)+' · '+esc(readableCode(button.dataset.geoLevel));
+      createForm.style.display='grid';
+      createForm.scrollIntoView({behavior:'smooth',block:'nearest'});
+    });
+    results.querySelectorAll('[data-geo-browse]').forEach(button=>button.onclick=async()=>{
+      searchForm.elements.q.value='';searchForm.elements.level.value='';
+      context.textContent='Children of '+button.dataset.geoName+' · PSGC '+button.dataset.geoBrowse;
+      await loadGeo({parent:button.dataset.geoBrowse});
+    });
+  };
+  const loadGeo=async({parent='',q=null}={})=>{
+    if(!registryReady){renderGeoItems({items:[]});return}
+    results.innerHTML='<div class="adminLoading">Loading official PSGC geography…</div>';
+    const params=new URLSearchParams();
+    const query=q==null?searchForm.elements.q.value.trim():q;
+    const level=searchForm.elements.level.value;
+    if(query)params.set('q',query);
+    if(level)params.set('level',level);
+    if(parent)params.set('parent_psgc_code',parent);
+    params.set('limit','60');
+    const payload=await api('/api/governance/admin/geography/search?'+params.toString());
+    renderGeoItems(payload);
+  };
+
+  try{
+    await loadStatus();
+    if(registryReady)await loadGeo({q:''});
+    else renderGeoItems({items:[]});
+  }catch(error){statusBox.innerHTML='<div class="error">'+esc(error.message)+'</div>'}
+
+  const sync=document.getElementById('phGeoSync');
+  if(sync)sync.onclick=async()=>{
+    const original=sync.textContent;sync.disabled=true;sync.textContent='Synchronizing PSA PSGC…';
+    statusBox.innerHTML='<strong>Synchronizing official PSGC…</strong><br>The current operating territories are not modified by this import.';
+    try{
+      const status=await api('/api/governance/admin/geography/sync',{method:'POST',body:'{}'});
+      registryReady=Boolean(status.ready);statusBox.innerHTML=statusText(status);await loadGeo({q:''});
+    }catch(error){statusBox.innerHTML='<div class="error">'+esc(error.message)+'</div>'}
+    finally{sync.disabled=false;sync.textContent=original}
+  };
+  searchForm.onsubmit=async e=>{e.preventDefault();context.textContent='Search results from official PSGC';try{await loadGeo()}catch(error){results.innerHTML='<div class="error">'+esc(error.message)+'</div>'}};
+  document.getElementById('territoryGeoRoot').onclick=async()=>{searchForm.reset();context.textContent='Official national registry · regions';try{await loadGeo({q:''})}catch(error){results.innerHTML='<div class="error">'+esc(error.message)+'</div>'}};
+
+  createForm.onsubmit=async e=>{
+    e.preventDefault();const out=document.getElementById('territoryCreateResult'),button=createForm.querySelector('button[type="submit"]'),fd=new FormData(createForm);
+    const psgcCode=String(fd.get('psgc_code')||'');
+    if(!psgcCode)return;
     button.disabled=true;
     try{
-      await api('/api/governance/admin/territories',{method:'POST',body:JSON.stringify({name:fd.get('name'),territory_type:fd.get('territory_type'),parent_id:fd.get('parent_id')||null,status:fd.get('status'),code:fd.get('code')||null})});
+      await api('/api/governance/admin/territories',{method:'POST',body:JSON.stringify({psgc_code:psgcCode,status:fd.get('status')})});
       await loadBase();state.active='territories';shell();await renderActive();
     }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
   };

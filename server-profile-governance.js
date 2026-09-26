@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { getAdminAssignments, verifyAdminAssertion } from './admin-authorization.js';
 import { companyTestAccountForEmail, companyTestProfileRole } from './company-test-accounts.js';
 import {authHardeningFetch,startEmbeddedAuthHardening,stopEmbeddedAuthHardening} from './server-auth-hardening.js';
+import {ensurePhGeographicRegistrySchema,phGeographicRegistryStatus,syncPhGeographicRegistry,searchPhGeographicRegistry,resolvePhGeographicUnit,findNearestOpenedPhAncestor,territoryTypeForPsgcLevel,normalizePsgcCode,PH_PSGC_SOURCE} from './ph-geographic-registry.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -175,7 +176,7 @@ async function initDb(){await pool.query(`
   UPDATE profiles p SET enabled=FALSE,status='requirements_pending',visibility='private',updated_at=NOW()
   WHERE p.account_id<>1 AND p.role IN ('merchant','supplier','courier','service_provider')
     AND NOT EXISTS(SELECT 1 FROM profile_authorizations a WHERE a.account_id=p.account_id AND a.role=p.role AND a.status='active');
-`)}
+`);await ensurePhGeographicRegistrySchema(pool)}
 
 async function profileState(me){const id=Number(me.account.id);const [apps,auths,invites,cats]=await Promise.all([
   pool.query(`SELECT pa.id,pa.role,pa.territory_id,t.name territory_name,pa.status,pa.proposed_business_name,pa.applicant_note,pa.responsibility_acknowledged,pa.application_data,pa.submitted_at,pa.reviewed_at,pa.decision_reason,pa.created_at FROM profile_applications pa JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 ORDER BY pa.created_at DESC`,[id]),
@@ -213,6 +214,10 @@ app.post('/api/governance/applications/:id/documents',body,async(req,res,next)=>
 
 app.post('/api/governance/applications/:id/submit',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id);const a=await pool.query(`SELECT * FROM profile_applications WHERE id=$1 AND account_id=$2`,[id,me.account.id]);if(!a.rowCount)return res.status(404).json({error:'Application not found'});const x=a.rows[0];if(!x.responsibility_acknowledged)return res.status(409).json({error:'Acknowledge the role responsibility declaration before submitting'});if(x.role==='merchant'&&!clean(x.proposed_business_name,180))return res.status(409).json({error:'Merchant application needs a business/store name'});if(x.role==='service_provider'){const ids=Array.isArray(x.application_data?.requested_category_ids)?x.application_data.requested_category_ids.map(Number).filter(Number.isInteger):[];if(!ids.length)return res.status(409).json({error:'Choose at least one Local Services category'});}const{rows}=await pool.query(`UPDATE profile_applications SET status='submitted',submitted_at=NOW(),decision_reason='',updated_at=NOW() WHERE id=$1 AND status IN ('application_started','requirements_pending','rejected') RETURNING *`,[id]);if(!rows.length)return res.status(409).json({error:'Application cannot be submitted from its current state'});await audit(me.account.id,'application_submitted',me.account.id,x.role,x.territory_id,{application_id:id});res.json(rows[0])}catch(e){next(e)}})
 
+app.get('/api/governance/admin/geography/status',async(req,res,next)=>{try{await requireAdmin(req);res.json(await phGeographicRegistryStatus(pool))}catch(e){next(e)}})
+app.get('/api/governance/admin/geography/search',async(req,res,next)=>{try{await requireAdmin(req);res.json(await searchPhGeographicRegistry(pool,{query:req.query.q,level:req.query.level,parentPsgcCode:req.query.parent_psgc_code,limit:req.query.limit}))}catch(e){next(e)}})
+app.post('/api/governance/admin/geography/sync',body,async(req,res,next)=>{try{const me=await requireAdmin(req);if(!(await isActiveSuperAdmin(me.account.id)))return res.status(403).json({error:'Active Super Admin assignment required to synchronize the national PSGC registry'});const result=await syncPhGeographicRegistry(pool,{importedByAccountId:Number(me.account.id)});await audit(me.account.id,'ph_psgc_registry_synchronized',null,'',null,{source_version:PH_PSGC_SOURCE.version,row_count:result.latest?.row_count||0});res.json(result)}catch(e){console.error(e);res.status(502).json({error:'PSGC synchronization failed safely. Existing geography was not replaced.',detail:clean(e?.message||e,500)})}})
+
 app.get('/api/governance/admin/overview',async(req,res,next)=>{try{await requireAdmin(req);const[territories,apps,invites,auths]=await Promise.all([
   pool.query(`SELECT t.*,p.name parent_name FROM territories t LEFT JOIN territories p ON p.id=t.parent_id WHERE t.country_code='PH' ORDER BY t.created_at DESC`),
   pool.query(`SELECT pa.*,a.display_name,a.email,t.name territory_name,(SELECT COUNT(*)::int FROM profile_application_documents d WHERE d.application_id=pa.id) document_count FROM profile_applications pa JOIN accounts a ON a.id=pa.account_id JOIN territories t ON t.id=pa.territory_id ORDER BY CASE pa.status WHEN 'submitted' THEN 1 WHEN 'under_review' THEN 2 ELSE 9 END,pa.updated_at DESC LIMIT 250`),
@@ -220,7 +225,34 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{await require
   pool.query(`SELECT a.id,a.account_id,ac.display_name,ac.email,a.role,a.status,a.territory_id,t.name territory_name,a.approved_at,a.reason FROM profile_authorizations a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id ORDER BY a.updated_at DESC LIMIT 250`)
 ]);res.json({territories:territories.rows,applications:apps.rows,invitations:invites.rows,authorizations:auths.rows})}catch(e){next(e)}})
 
-app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{const me=await requireAdmin(req),type=clean(req.body?.territory_type,40),status=clean(req.body?.status,30)||'onboarding',name=clean(req.body?.name,180);if(!name||!validTerritoryType(type)||!validTerritoryStatus(status))return res.status(400).json({error:'Valid territory name, type and status are required'});const parent=req.body?.parent_id?Number(req.body.parent_id):null;if(parent){const p=await pool.query(`SELECT 1 FROM territories WHERE id=$1 AND country_code='PH'`,[parent]);if(!p.rowCount)return res.status(404).json({error:'Parent territory not found'})}const code=clean(req.body?.code,80)||null;const{rows}=await pool.query(`INSERT INTO territories(country_code,parent_id,territory_type,name,code,status,created_by_account_id) VALUES('PH',$1,$2,$3,$4,$5,$6) RETURNING *`,[parent,type,name,code,status,me.account.id]);await audit(me.account.id,'territory_created',null,'',rows[0].id,{name,type,status});res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'Territory code already exists'});next(e)}})
+app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{
+  const me=await requireAdmin(req),status=clean(req.body?.status,30)||'onboarding';
+  if(!validTerritoryStatus(status))return res.status(400).json({error:'Valid territory status is required'});
+  const psgcCode=normalizePsgcCode(req.body?.psgc_code,10);
+  if(psgcCode){
+    const unit=await resolvePhGeographicUnit(pool,psgcCode);
+    if(!unit)return res.status(409).json({error:'Select a geography record from the synchronized official PSGC registry'});
+    const type=territoryTypeForPsgcLevel(unit.geographic_level);
+    if(!type)return res.status(409).json({error:'This PSGC geographic level cannot be opened as an operating territory'});
+    const parent=await findNearestOpenedPhAncestor(pool,unit);
+    const{rows}=await pool.query(
+      "INSERT INTO territories(country_code,parent_id,territory_type,name,code,status,created_by_account_id,psgc_code,geographic_source,geographic_source_version) VALUES('PH',$1,$2,$3,$4,$5,$6,$7,'PSA_PSGC',$8) RETURNING *",
+      [parent,type,unit.name,unit.psgc_code,status,me.account.id,unit.psgc_code,unit.source_version]
+    );
+    await audit(me.account.id,'territory_created_from_psgc',null,'',rows[0].id,{name:unit.name,type,status,psgc_code:unit.psgc_code,source_version:unit.source_version,parent_territory_id:parent});
+    return res.status(201).json(rows[0]);
+  }
+  const type=clean(req.body?.territory_type,40),name=clean(req.body?.name,180);
+  const manualAllowed=type==='custom_cell'||process.env.APP_ENV==='qa'||process.env.NODE_ENV==='test';
+  if(!manualAllowed)return res.status(409).json({error:'Official PH administrative territories must be selected from the PSGC registry'});
+  if(!name||!validTerritoryType(type))return res.status(400).json({error:'Valid territory name and type are required'});
+  const parent=req.body?.parent_id?Number(req.body.parent_id):null;
+  if(parent){const p=await pool.query("SELECT 1 FROM territories WHERE id=$1 AND country_code='PH'",[parent]);if(!p.rowCount)return res.status(404).json({error:'Parent territory not found'})}
+  const code=clean(req.body?.code,80)||null;
+  const{rows}=await pool.query("INSERT INTO territories(country_code,parent_id,territory_type,name,code,status,created_by_account_id) VALUES('PH',$1,$2,$3,$4,$5,$6) RETURNING *",[parent,type,name,code,status,me.account.id]);
+  await audit(me.account.id,'territory_created_manual_compatibility',null,'',rows[0].id,{name,type,status});
+  res.status(201).json(rows[0]);
+}catch(e){if(e.code==='23505')return res.status(409).json({error:'This PSGC geography is already opened as a Business & Life territory'});next(e)}})
 
 app.post('/api/governance/admin/invitations',body,async(req,res,next)=>{try{const me=await requireAdmin(req),role=clean(req.body?.role,40),target=email(req.body?.target_email),territoryId=Number(req.body?.territory_id);if(!INVITE_ROLES.has(role)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target))return res.status(400).json({error:'Valid invite role and email are required'});const t=await pool.query(`SELECT id,name,status FROM territories WHERE id=$1 AND country_code='PH' AND status IN ('onboarding','active')`,[territoryId]);if(!t.rowCount)return res.status(409).json({error:'Invitation requires an onboarding or active PH territory'});await pool.query(`UPDATE profile_invitations SET status='revoked',revoked_at=NOW() WHERE LOWER(target_email)=$1 AND role=$2 AND territory_id=$3 AND status='invited'`,[target,role,territoryId]);const raw=randomToken();const days=Math.max(1,Math.min(30,Number(req.body?.expires_days)||7));const{rows}=await pool.query(`INSERT INTO profile_invitations(target_email,role,territory_id,token_hash,status,invited_by_account_id,note,expires_at) VALUES($1,$2,$3,$4,'invited',$5,$6,NOW()+($7*INTERVAL '1 day')) RETURNING id,target_email,role,territory_id,status,note,expires_at,created_at`,[target,role,territoryId,hash(raw),me.account.id,clean(req.body?.note,700),days]);await audit(me.account.id,'invitation_created',null,role,territoryId,{invitation_id:rows[0].id,target_email_hash:hash(target)});res.status(201).json({...rows[0],invite_token:raw})}catch(e){next(e)}})
 
