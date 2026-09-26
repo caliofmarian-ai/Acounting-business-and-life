@@ -12,6 +12,7 @@ import { publicDeploymentEvidence } from './deployment-evidence.js';
 import { runQaAcceptanceIfRequested } from './qa-acceptance.js';
 import { startEmbeddedPaymentCore,stopEmbeddedPaymentCore } from './server-payments.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
+import {ensureQaPhTestContext} from './qa-ph-test-context.js';
 
 const {Pool}=pg;
 const app=express();
@@ -215,6 +216,8 @@ async function initDb(){
   const state=await ensurePayMongoWebhook(pool);
   if(state.ready)console.log('PayMongo webhook ready: '+state.status+' via '+state.source);
   else console.log('PayMongo webhook not ready: '+state.status+(state.error?' ('+state.error+')':''));
+  const qaContext=await ensureQaPhTestContext(pool);
+  if(qaContext.enabled)console.log('QA_PH_TEST_CONTEXT_READY '+JSON.stringify(qaContext));
 }
 async function shutdown(sig){
   if(shuttingDown)return;shuttingDown=true;console.log('Received '+sig);

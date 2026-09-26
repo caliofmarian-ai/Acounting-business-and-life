@@ -117,28 +117,32 @@ function customerSimpleBanking(){
     +'<button id="moneyOpenSettings" class="moneySettingsButton" type="button">Payment settings</button></section>';
 }
 function customerOptionalTracking(){return '<details class="moneyAdvanced"><summary>Optional personal money tracking</summary><div class="moneyAdvancedBody">'+profileLedgerSection()+'</div></details>'}
-function customerStatementAmount(statement,lineKind){return (statement?.line_kinds||[]).filter(x=>x.line_kind===lineKind).reduce((sum,x)=>sum+Number(x.amount||0),0)}
-function customerStatementSection(){return '<section class="moneyCard moneyPersonalStatement"><div class="moneySectionLabel"><strong>Monthly personal cash-flow statement</strong><span>Derived from your Customer records</span></div><p>Combines verified Business & Life spending/refunds with your optional personal entries without copying platform purchases into the manual ledger.</p><button id="customerLoadStatement" class="moneySettingsButton" type="button">Load this month</button><div id="customerStatementResult" class="moneyStatementResult"><div class="moneyEmpty">Statement loads only when you ask for it.</div></div></section>'}
+function customerStatementAmount(statement,lineKind,impactClass){return (statement?.line_kinds||[]).filter(x=>x.line_kind===lineKind&&(!impactClass||x.impact_class===impactClass)).reduce((sum,x)=>sum+Number(x.amount||0),0)}
+function customerStatementSection(){return '<section class="moneyCard moneyPersonalStatement"><div class="moneySectionLabel"><strong>Monthly personal cash-flow statement</strong><span>Derived from your Customer records</span></div><p>Combines verified Business & Life spending/refunds with your optional personal entries without copying platform purchases into the manual ledger.</p><button id="customerLoadStatement" class="moneySettingsButton" type="button">Load this month</button><div id="customerStatementResult" class="moneyStatementResult" aria-live="polite"><div class="moneyEmpty">Statement loads only when you ask for it.</div></div></section>'}
 function customerStatementMarkup(statement){
-  const marketplace=customerStatementAmount(statement,'purchase_value');
-  const services=customerStatementAmount(statement,'service_value');
-  const delivery=customerStatementAmount(statement,'delivery_value');
-  const personalIn=customerStatementAmount(statement,'profile_money_in');
-  const personalExpenses=customerStatementAmount(statement,'profile_expense');
-  const transferIn=customerStatementAmount(statement,'profile_transfer_in');
-  const transferOut=customerStatementAmount(statement,'profile_transfer_out');
-  const refunds=customerStatementAmount(statement,'refund');
-  const recordedNet=personalIn+transferIn+refunds-personalExpenses-marketplace-services-delivery-transferOut;
+  const marketplace=customerStatementAmount(statement,'purchase_value','purchase');
+  const services=customerStatementAmount(statement,'service_value','purchase');
+  const delivery=customerStatementAmount(statement,'delivery_value','purchase');
+  const personalIn=customerStatementAmount(statement,'profile_money_in','cash_in');
+  const personalExpenses=customerStatementAmount(statement,'profile_expense','expense');
+  const transferIn=customerStatementAmount(statement,'profile_transfer_in','transfer_in');
+  const transferOut=customerStatementAmount(statement,'profile_transfer_out','transfer_out');
+  const refunds=customerStatementAmount(statement,'refund','refund_in');
+  const corrections=['profile_adjustment','reversal'].reduce((sum,kind)=>sum+customerStatementAmount(statement,kind,'cash_in')-customerStatementAmount(statement,kind,'cash_out'),0);
+  const recordedNet=Math.round((personalIn+transferIn+refunds+corrections-personalExpenses-marketplace-services-delivery-transferOut+Number.EPSILON)*100)/100;
   const period=statement?.period||{};
-  return '<div class="moneyNotice ok"><strong>'+pmh(period.start_date||'Month')+' → '+pmh(period.end_date_exclusive||'')+'</strong><br>Derived statement. Source Orders, Payment Core and your personal entries remain authoritative.</div>'
-    +'<div class="moneyMetrics">'+metric('Personal money in',personalIn,'Optional entries')+metric('Manual personal expenses',personalExpenses,'Optional entries')+metric('Marketplace spending',marketplace,'Verified commerce')+metric('Local Services spending',services,'Verified service payments')+metric('Delivery spending',delivery,'Verified delivery allocation')+metric('Refunds / credits',refunds,'Succeeded refunds')+metric('Transfers in',transferIn,'Recorded profile transfers')+metric('Transfers out',transferOut,'Recorded profile transfers')+metric('Recorded cash-flow context',recordedNet,'Not a bank or provider balance')+'</div>';
+  return '<div class="moneyNotice ok"><strong>'+pmh(period.start_date||'Month')+' → '+pmh(period.end_date_exclusive||'')+' (end exclusive)</strong><br>Derived statement. Source Orders, Payment Core and your personal entries remain authoritative.</div>'
+    +'<div class="moneyMetrics">'+metric('Personal money in',personalIn,'Optional entries')+metric('Manual personal expenses',personalExpenses,'Original recorded expenses; reversals appear in corrections')+metric('Marketplace spending',marketplace,'Verified commerce')+metric('Local Services spending',services,'Verified service payments')+metric('Delivery spending',delivery,'Verified delivery allocation')+metric('Refunds / credits',refunds,'Succeeded refunds only; allocation context excluded')+metric('Transfers in',transferIn,'Recorded profile transfers')+metric('Transfers out',transferOut,'Recorded profile transfers')+metric('Adjustments / reversals',corrections,'Signed correction activity')+metric('Recorded cash-flow context',recordedNet,'Not a bank or provider balance')+'</div>';
 }
 async function loadCustomerStatement(){
   const button=document.getElementById('customerLoadStatement'),host=document.getElementById('customerStatementResult');
-  if(!button||!host)return;
+  if(!button||!host||pmRole!=='customer')return;
   button.disabled=true;button.setAttribute('aria-busy','true');host.innerHTML='<div class="moneyEmpty">Building statement from verified records…</div>';
-  try{const statement=await pmapi('/api/financial-statements/month?profile_role=customer');host.innerHTML=customerStatementMarkup(statement);button.textContent='Refresh this month'}
-  catch(err){host.innerHTML='<div class="moneyEmpty">'+pmh(err.message)+'</div>'}
+  const anchor=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  try{
+    const statement=await pmapi('/api/financial-statements/month?profile_role=customer&anchor='+encodeURIComponent(anchor));
+    if(pmRole==='customer'&&host.isConnected){host.innerHTML=customerStatementMarkup(statement);button.textContent='Refresh this month'}
+  }catch(err){if(pmRole==='customer'&&host.isConnected)host.innerHTML='<div class="moneyEmpty">'+pmh(err.message)+'</div>'}
   finally{button.disabled=false;button.removeAttribute('aria-busy')}
 }
 function bindCustomerStatement(){document.getElementById('customerLoadStatement')?.addEventListener('click',loadCustomerStatement)}

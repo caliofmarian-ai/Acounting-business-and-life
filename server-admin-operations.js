@@ -302,7 +302,7 @@ async function buildAdminScopeContext(accountId,seedAssignments=null){
   if(superAdmin)ADMIN_PERMISSIONS.forEach(p=>permissions.add(p));
   else for(const a of assignments)(Array.isArray(a.permissions)?a.permissions:[]).forEach(p=>permissions.add(p));
   const {rows:territories}=await pool.query(
-    `SELECT id,country_code,parent_id,territory_type,name,code,status,created_at FROM territories ORDER BY id`
+    `SELECT id,country_code,parent_id,territory_type,name,code,status,psgc_code,geographic_source,geographic_source_version,created_at FROM territories ORDER BY id`
   );
   const byId=new Map(territories.map(t=>[Number(t.id),t]));
   const children=new Map();
@@ -938,7 +938,11 @@ app.post('/api/incidents',body,async(req,res,next)=>{try{
   });
 }catch(e){next(e)}});
 
+app.get('/api/governance/admin/geography/status',async(req,res,next)=>{try{return forwardAdmin(req,res,'territory.manage',null,'geographic_registry','PH')}catch(e){next(e)}});
+app.get('/api/governance/admin/geography/search',async(req,res,next)=>{try{return forwardAdmin(req,res,'territory.manage',null,'geographic_registry','PH')}catch(e){next(e)}});
+app.post('/api/governance/admin/geography/sync',body,async(req,res,next)=>{try{return forwardAdmin(req,res,'territory.manage',null,'geographic_registry','PH')}catch(e){next(e)}});
 app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{const parent=req.body?.parent_id?Number(req.body.parent_id):null;return forwardAdmin(req,res,'territory.manage',parent,'territory','new')}catch(e){next(e)}});
+app.patch('/api/governance/admin/territories/:id/status',body,async(req,res,next)=>{try{const id=Number(req.params.id),q=await pool.query("SELECT id FROM territories WHERE id=$1 AND country_code='PH'",[id]);if(!q.rowCount)return res.status(404).json({error:'Territory not found'});return forwardAdmin(req,res,'territory.manage',id,'territory',String(id))}catch(e){next(e)}});
 app.post('/api/governance/admin/invitations',body,async(req,res,next)=>{try{const role=clean(req.body?.role,40),perm=role==='merchant'?'profiles.invite_merchant':role==='supplier'?'profiles.invite_supplier':'profiles.invite_courier';return forwardAdmin(req,res,perm,Number(req.body?.territory_id)||null,'profile_invitation',role)}catch(e){next(e)}});
 app.get('/api/governance/admin/applications/:id',async(req,res,next)=>{try{const q=await pool.query(`SELECT role,territory_id FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Application not found'});return forwardAdmin(req,res,rolePermission(q.rows[0].role),q.rows[0].territory_id,'profile_application',req.params.id)}catch(e){next(e)}});
 app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{try{const q=await pool.query(`SELECT pa.role,pa.territory_id FROM profile_application_documents d JOIN profile_applications pa ON pa.id=d.application_id WHERE d.id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Document not found'});return forwardAdmin(req,res,rolePermission(q.rows[0].role),q.rows[0].territory_id,'application_document',req.params.id)}catch(e){next(e)}});
