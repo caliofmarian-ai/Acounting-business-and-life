@@ -653,6 +653,25 @@ const HUBS = {
 const CUSTOMER_HOME_CACHE_MS=30000;
 let customerHomeCache={accountId:null,data:null,loadedAt:0,promise:null};
 
+function profileHomeLoadingMarkup(id,stateClass,title,detail){
+  return '<div id="'+id+'" class="'+stateClass+' profileHomeLoadingState" role="status" aria-live="polite">'+
+    '<div class="profileHomeLoadingCopy"><strong>'+escapeHtml(title)+'</strong><span>'+escapeHtml(detail)+'</span></div>'+
+    '<div class="profileHomeSkeleton" aria-hidden="true">'+
+      '<div class="profileHomeSkeletonCard"><i class="profileHomeSkeletonTitle"></i><i class="profileHomeSkeletonLine wide"></i><i class="profileHomeSkeletonLine"></i></div>'+
+      '<div class="profileHomeSkeletonCard profileHomeSkeletonCardTall"><i class="profileHomeSkeletonTitle short"></i><div class="profileHomeSkeletonMiniGrid"><i></i><i></i><i></i></div></div>'+
+      '<div class="profileHomeSkeletonCard"><i class="profileHomeSkeletonTitle"></i><i class="profileHomeSkeletonLine wide"></i><i class="profileHomeSkeletonLine short"></i></div>'+
+    '</div></div>';
+}
+function setProfileHomeRefreshBusy(hub,id,busy){
+  const button=hub?.querySelector('#'+id);if(!button)return;
+  if(busy){
+    if(!button.dataset.idleLabel)button.dataset.idleLabel=button.textContent||'Refresh';
+    button.disabled=true;button.setAttribute('aria-busy','true');button.textContent='Refreshing…';
+  }else{
+    button.disabled=false;button.removeAttribute('aria-busy');
+    button.textContent=button.dataset.idleLabel||'Refresh';delete button.dataset.idleLabel;
+  }
+}
 function customerNice(value){return String(value||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}
 function customerMoney(value){return new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(value)||0)}
 function customerDate(value){if(!value)return'';try{return new Date(value).toLocaleDateString('en-PH')}catch{return''}}
@@ -826,9 +845,11 @@ function renderCustomerHomeData(hub,data){
 async function loadCustomerHome(hub,{force=false}={}){
   const loading=hub.querySelector('#customerHomeLoading');
   const error=hub.querySelector('#customerHomeError');
+  const dynamic=hub.querySelector('#customerHomeDynamic');
   if(force){
-    loading?.classList.remove('hidden');
+    if(dynamic?.classList.contains('hidden'))loading?.classList.remove('hidden');
     error?.classList.add('hidden');
+    setProfileHomeRefreshBusy(hub,'customerHomeRefresh',true);
   }
   try{
     const data=await loadCustomerHomeData(force);
@@ -839,6 +860,8 @@ async function loadCustomerHome(hub,{force=false}={}){
     const message=hub.querySelector('#customerHomeErrorMessage');
     if(message)message.textContent=err.message||'Customer Home could not be loaded.';
     error?.classList.remove('hidden');
+  }finally{
+    if(force)setProfileHomeRefreshBusy(hub,'customerHomeRefresh',false);
   }
 }
 function setCustomerHubPanel(hub,panel){
@@ -860,7 +883,7 @@ function renderCustomerHub(){
     '<div class="hubHero customerHomeHero"><div class="hubEyebrow">Customer profile</div><h1>What would you like to do?</h1><p>Shop local, book trusted help, or continue something already in progress.</p><span class="hubStatus">Philippines Edition</span></div>'+
     '<section class="customerHomePanel" data-customer-panel="home">'+
       '<div class="customerHomeToolbar"><div><strong>Home</strong><small>Your current activity and personal purchase snapshot</small></div><button id="customerHomeRefresh" type="button">Refresh</button></div>'+
-      '<div id="customerHomeLoading" class="customerHomeState"><strong>Checking your activity…</strong><span>Orders, Delivery, Local Services and confirmed personal money.</span></div>'+
+      profileHomeLoadingMarkup('customerHomeLoading','customerHomeState','Checking your activity…','Orders, Delivery, Local Services and confirmed personal money.')+
       '<div id="customerHomeError" class="customerHomeState customerHomeError hidden" role="alert"><strong>Home could not be loaded.</strong><span id="customerHomeErrorMessage">Check your connection and try again.</span><button type="button" data-customer-home-retry>Try again</button></div>'+
       '<div id="customerHomePartial" class="customerHomePartial hidden"></div>'+
       '<div id="customerHomeDynamic" class="customerHomeDynamic hidden">'+
@@ -1054,9 +1077,11 @@ function renderCourierHomeData(hub,data){
 async function loadCourierHome(hub,{force=false}={}){
   const loading=hub.querySelector('#courierHomeLoading');
   const error=hub.querySelector('#courierHomeError');
+  const dynamic=hub.querySelector('#courierHomeDynamic');
   if(force){
-    loading?.classList.remove('hidden');
+    if(dynamic?.classList.contains('hidden'))loading?.classList.remove('hidden');
     error?.classList.add('hidden');
+    setProfileHomeRefreshBusy(hub,'courierHomeRefresh',true);
   }
   try{
     const data=await loadCourierHomeData(force);
@@ -1064,10 +1089,12 @@ async function loadCourierHome(hub,{force=false}={}){
     renderCourierHomeData(hub,data);
   }catch(err){
     loading?.classList.add('hidden');
-    hub.querySelector('#courierHomeDynamic')?.classList.add('hidden');
+    if(dynamic?.classList.contains('hidden'))dynamic?.classList.add('hidden');
     const message=hub.querySelector('#courierHomeErrorMessage');
     if(message)message.textContent=err.message||'Courier Home could not be loaded.';
     error?.classList.remove('hidden');
+  }finally{
+    if(force)setProfileHomeRefreshBusy(hub,'courierHomeRefresh',false);
   }
 }
 function renderCourierHub(){
@@ -1078,7 +1105,7 @@ function renderCourierHub(){
     '<div class="hubHero courierHomeHero"><div class="hubEyebrow">Delivery profile</div><h1>Ready for your next delivery?</h1><p>See whether you can work, whether you are available, what is assigned now and what Money evidence is recorded.</p><span class="hubStatus">Courier workspace</span></div>'+
     '<section class="courierHomePanel">'+
       '<div class="courierHomeToolbar"><div><strong>Home</strong><small>Your current work status</small></div><button id="courierHomeRefresh" type="button">Refresh</button></div>'+
-      '<div id="courierHomeLoading" class="courierHomeState"><strong>Checking your delivery status…</strong><span>Eligibility, availability, assigned work and Money evidence.</span></div>'+
+      profileHomeLoadingMarkup('courierHomeLoading','courierHomeState','Checking your delivery status…','Eligibility, availability, assigned work and Money evidence.')+
       '<div id="courierHomeError" class="courierHomeState courierHomeError hidden" role="alert"><strong>Courier Home could not be loaded.</strong><span id="courierHomeErrorMessage">Check your connection and try again.</span><button type="button" data-courier-home-retry>Try again</button></div>'+
       '<div id="courierHomePartial" class="courierHomePartial hidden"></div>'+
       '<div id="courierHomeDynamic" class="courierHomeDynamic hidden">'+
@@ -1281,9 +1308,11 @@ function renderServiceProviderHomeData(hub,data){
 async function loadServiceProviderHome(hub,{force=false}={}){
   const loading=hub.querySelector('#serviceProviderHomeLoading');
   const error=hub.querySelector('#serviceProviderHomeError');
+  const dynamic=hub.querySelector('#serviceProviderHomeDynamic');
   if(force){
-    loading?.classList.remove('hidden');
+    if(dynamic?.classList.contains('hidden'))loading?.classList.remove('hidden');
     error?.classList.add('hidden');
+    setProfileHomeRefreshBusy(hub,'serviceProviderHomeRefresh',true);
   }
   try{
     const data=await loadServiceProviderHomeData(force);
@@ -1291,10 +1320,12 @@ async function loadServiceProviderHome(hub,{force=false}={}){
     renderServiceProviderHomeData(hub,data);
   }catch(err){
     loading?.classList.add('hidden');
-    hub.querySelector('#serviceProviderHomeDynamic')?.classList.add('hidden');
+    if(dynamic?.classList.contains('hidden'))dynamic?.classList.add('hidden');
     const message=hub.querySelector('#serviceProviderHomeErrorMessage');
     if(message)message.textContent=err.message||'Local Services Home could not be loaded.';
     error?.classList.remove('hidden');
+  }finally{
+    if(force)setProfileHomeRefreshBusy(hub,'serviceProviderHomeRefresh',false);
   }
 }
 function openServiceProviderSection(section){
@@ -1324,7 +1355,7 @@ function renderServiceProviderHub(){
     '<div class="hubHero serviceProviderHero"><div class="hubEyebrow">Local Services profile</div><h1>What needs your attention today?</h1><p>See whether customers can hire you, what work needs action, what is waiting on the Customer and what Money evidence is recorded.</p><span class="hubStatus">Service Provider workspace</span></div>'+
     '<section class="serviceProviderPanel" data-service-provider-panel="home">'+
       '<div class="serviceProviderHomeToolbar"><div><strong>Home</strong><small>Your live Service Provider summary</small></div><button id="serviceProviderHomeRefresh" type="button">Refresh</button></div>'+
-      '<div id="serviceProviderHomeLoading" class="serviceProviderHomeState"><strong>Checking your service work…</strong><span>Profile visibility, jobs and evidence-based Money.</span></div>'+
+      profileHomeLoadingMarkup('serviceProviderHomeLoading','serviceProviderHomeState','Checking your service work…','Profile visibility, jobs and evidence-based Money.')+
       '<div id="serviceProviderHomeError" class="serviceProviderHomeState serviceProviderHomeError hidden" role="alert"><strong>Home could not be loaded.</strong><span id="serviceProviderHomeErrorMessage">Check your connection and try again.</span><button type="button" data-service-provider-home-retry>Try again</button></div>'+
       '<div id="serviceProviderHomePartial" class="serviceProviderHomePartial hidden"></div>'+
       '<div id="serviceProviderHomeDynamic" class="serviceProviderHomeDynamic hidden">'+
