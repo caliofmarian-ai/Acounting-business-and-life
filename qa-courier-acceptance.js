@@ -687,12 +687,28 @@ export async function runCourierExperienceAcceptance({
   }
 
   const courierNet=await pool.query(
-    "SELECT COUNT(*)::int n,COALESCE(SUM(amount) FILTER(WHERE settlement_status<>'reversed'),0) amount FROM payment_allocations WHERE component_code='courier_net' AND economic_party_id=$1",
-    [String(courier.accountId)]
+    `SELECT COUNT(*)::int n,
+            COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status<>'reversed'),0) amount,
+            COUNT(*) FILTER(WHERE pa.settlement_status='eligible')::int eligible_count
+       FROM payment_allocations pa
+       JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+      WHERE pi.source_type='order' AND pi.source_id=$1
+        AND pa.component_code='courier_net'
+        AND pa.economic_party_id=$2
+        AND pa.rule_snapshot->>'delivery_id'=$3`,
+    [orderId,String(courier.accountId),String(deliveryId)]
   );
   const courierNetCount=Number(courierNet.rows[0]?.n||0);
-  if(Boolean(finance.json?.summary?.earnings?.tracked)!==(courierNetCount>0)){
-    throw new Error('Courier Money earnings tracking does not match courier_net allocation evidence.');
+  const courierNetAmount=Number(courierNet.rows[0]?.amount||0);
+  const expectedPromoCompensation=Number(delivery.platform_fee_basis_amount||delivery.service_fare||delivery.delivery_fee||0);
+  if(courierNetCount<1||Math.abs(courierNetAmount-expectedPromoCompensation)>0.011){
+    throw new Error('Courier promo compensation does not equal the verified Delivery fee basis.');
+  }
+  if(Number(courierNet.rows[0]?.eligible_count||0)<1){
+    throw new Error('Courier promo compensation is not eligible for later payout settlement.');
+  }
+  if(finance.json?.summary?.earnings?.tracked!==true){
+    throw new Error('Courier Money does not expose recorded courier_net allocation evidence.');
   }
 
   const settings=await requestJson(base,'/api/settings/finance',{token:courier.token});
@@ -766,7 +782,8 @@ export async function runCourierExperienceAcceptance({
     order_completed:true,
     finance_delivery_context:true,
     courier_net_allocations:courierNetCount,
-    courier_compensation_runtime:courierNetCount>0?'TRACKED':'HOLD_NO_COURIER_NET',
+    courier_net_amount:courierNetAmount,
+    courier_compensation_runtime:'TRACKED',
     promotional_days:30,
     notification_lifecycle:true,
     notification_events:notificationEvidence,

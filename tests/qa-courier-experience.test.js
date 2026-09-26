@@ -61,7 +61,7 @@ test('Courier finance preserves 30-day promo and settlement boundaries',()=>{
   assert.match(courier,/promo_duration_days!==30/);
   assert.match(courier,/promotional_days:30/);
   assert.match(courier,/component_code='courier_net'/);
-  assert.match(courier,/HOLD_NO_COURIER_NET/);
+  assert.match(courier,/courier_compensation_runtime:'TRACKED'/);
   assert.match(courier,/HOLD_FOR_CONTROLLED_LIVE_PILOT/);
   assert.match(courier,/HOLD_FOR_PROVIDER_EVIDENCE/);
 });

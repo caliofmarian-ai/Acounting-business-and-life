@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePricingRule,deliveryVehicleRuleEligible,calculateDeliveryQuoteTotal,deliveryPriceSplit,canonicalDeliveryVehicleClass} from './delivery-pricing-v2-core.js';
+import {allocateCourierCompensation} from './courier-compensation-core.js';
 import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
@@ -717,10 +718,25 @@ app.post('/api/courier/deliveries/:id/complete',body,async(req,res,next)=>{
       sourceType:'order',sourceId:d.order_id,territoryId:x.territory_id,
       completedAt:x.completed_at,grossValue:x.subtotal,currencyCode:x.currency_code||'PHP'
     });
-    await recordMonetizableCompletion(client,{serviceScope:'delivery',subjectType:'account',subjectId:x.courier_account_id,
+    const deliveryMonetization=await recordMonetizableCompletion(client,{serviceScope:'delivery',subjectType:'account',subjectId:x.courier_account_id,
       sourceType:'delivery',sourceId:id,territoryId:x.territory_id,
       completedAt:x.delivered_at,grossValue:deliveryFeeBasis,currencyCode:x.currency_code||'PHP'
     });
+    const courierCompensation=await allocateCourierCompensation(client,{
+      deliveryId:id,
+      orderId:d.order_id,
+      courierAccountId:x.courier_account_id,
+      territoryId:x.territory_id,
+      deliveryPrice:Number(x.delivery_fee||0),
+      feeBasis:deliveryFeeBasis,
+      passThrough:Number(x.pass_through_amount||0),
+      currencyCode:x.currency_code||'PHP',
+      completedAt:x.delivered_at,
+      phase:deliveryMonetization.phase
+    });
+    if(courierCompensation.status==='HOLD'){
+      console.warn('Courier compensation HOLD',courierCompensation.reason,'delivery',id);
+    }
     await client.query('COMMIT');
     res.json(deliveryPrivacyView(await deliveryDetail(id),'courier'));
   }catch(e){
