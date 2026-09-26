@@ -1382,12 +1382,20 @@ function renderRoleHub(role) {
   }).join('');
   hub.innerHTML = `<div class="hubHero"><div class="hubEyebrow">${escapeHtml(meta.label)} profile</div><h1>${escapeHtml(meta.hero)}</h1><p>One identity, a dedicated workspace, and only the information this role needs.</p><span class="hubStatus">Profile selected</span></div><div class="hubSectionTitle"><h2>Your ${escapeHtml(meta.label)} workspace</h2><span>Philippines Edition</span></div><div class="hubGrid">${tiles}</div>`;
   hub.querySelectorAll('[data-hub-feature]').forEach(btn => btn.onclick = () => {
-    if(btn.dataset.hubFeature==='Profile Settings')return window.BusinessLifeProfileSettings?.open?.(role);
-    if(role==='supplier'&&btn.dataset.hubFeature==='Finance & Accounting'){
+    const feature=btn.dataset.hubFeature;
+    if(feature==='Profile Settings'){
+      const open=window.BusinessLifeProfileSettings?.open;
+      if(typeof open==='function')return open(role);
+      return showToast('Profile Settings is still loading. Try again in a moment.');
+    }
+    if(role==='supplier'&&feature==='Finance & Accounting'){
       if(window.BusinessLifeAccounting?.openSupplierAccounting)return window.BusinessLifeAccounting.openSupplierAccounting();
       return showToast('Finance & Accounting is still loading. Try again in a moment.');
     }
-    showToast(`${btn.dataset.hubFeature}: implementation continues in the next marketplace/service slice.`);
+    if(role==='supplier'&&window.BusinessLifeSuppliers?.openSupplierWorkspace){
+      return window.BusinessLifeSuppliers.openSupplierWorkspace(feature);
+    }
+    showToast(`${feature} is still loading. Try again in a moment.`);
   });
   hub.classList.remove('hidden');
 }
