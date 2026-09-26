@@ -24,7 +24,7 @@ function stockPurchasePreview(){
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cacheKey = (key) => `abl_cache_${key}`;
 
-function setOnline(ok){const el=$('onlineState');if(!el)return;el.textContent=ok?'Online':'Offline copy';el.classList.toggle('offline',!ok)}
+function setOnline(ok){const el=$('onlineState');if(!el)return;el.textContent=ok?'Online':'Offline';el.classList.toggle('offline',!ok)}
 async function api(path,options={}){
   const headers={'Content-Type':'application/json',...(options.headers||{})};if(token)headers.Authorization=`Bearer ${token}`;
   try{
