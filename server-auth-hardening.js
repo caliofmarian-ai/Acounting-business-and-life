@@ -29,6 +29,7 @@ const PREVIEW_SHOW_LINK = process.env.AUTH_PREVIEW_SHOW_LINK === 'true';
 const APP_ENV = String(process.env.APP_ENV || '').trim().toLowerCase();
 const RAILWAY_SERVICE_NAME = String(process.env.RAILWAY_SERVICE_NAME || '').trim();
 const QA_PH_TEST_CONTEXT = ['1','true','yes','on'].includes(String(process.env.QA_PH_TEST_CONTEXT || '').trim().toLowerCase());
+const QA_REMOTE_TEST_EMAIL = String(process.env.QA_REMOTE_TEST_EMAIL || '').trim().toLowerCase();
 const RESET_TTL_MIN = Math.max(10, Math.min(60, Number(process.env.AUTH_RESET_TTL_MIN || 20)));
 const VERIFY_TTL_HOURS = Math.max(1, Math.min(72, Number(process.env.AUTH_VERIFY_TTL_HOURS || 24)));
 const jsonBody = express.json({ limit: '450kb' });
@@ -284,7 +285,8 @@ app.get('/api/auth/hardening/status', async (_req, res, next) => {
         enabled:true,
         country_code:'PH',
         label:'Philippines QA test context',
-        device_location_authoritative:false
+        remote_override_scope:'designated_account_only',
+        remote_override_configured:Boolean(QA_REMOTE_TEST_EMAIL)
       }:{enabled:false}
     });
   } catch (e) { next(e); }
