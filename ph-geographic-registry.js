@@ -22,7 +22,7 @@ const clean=(value,max=1000)=>String(value??'').trim().replace(/\s+/g,' ').slice
 const headerKey=value=>clean(value,240).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'');
 
 const HEADER_ALIASES=Object.freeze({
-  psgc_code:['10digitpsgccode','10digitcode','psgccode','psgc'],
+  psgc_code:['10digitpsgc','10digitpsgccode','psgc10digitcode','10digitcode','psgccode','psgc'],
   name:['name','areaname','geographicname','locationname'],
   correspondence_code:['correspondencecode','9digitpsgccode','oldpsgccode'],
   geographic_level:['geographiclevel','geolevel','level'],
@@ -30,7 +30,7 @@ const HEADER_ALIASES=Object.freeze({
   city_class:['cityclass','cityclassification'],
   income_classification:['incomeclassification','incomeclass'],
   urban_rural:['urbanruralclassification','urbanrural','urbanruralclassificationbasedon2020cph'],
-  population:['population2020cph','population','2020cphpopulation']
+  population:['population2024popcen','2024popcenpopulation','2024population','population2020cph','2020cphpopulation','population']
 });
 
 function cellText(cell){
@@ -64,13 +64,14 @@ export function normalizePsgcLevel(value){
   if(['bgy','brgy','barangay'].includes(k))return'barangay';
   if(['dist','district'].includes(k))return'district';
   if(['submun','submunicipality','submunicipal'].includes(k))return'submunicipality';
+  if(['sgu','specialgeographicunit','specialgovernmentunit','municipaldistrict'].includes(k))return'special_geographic_unit';
   return'other';
 }
 
 export function territoryTypeForPsgcLevel(level){
   const value=normalizePsgcLevel(level);
   if(['region','province','city','municipality','barangay','district'].includes(value))return value;
-  if(value==='submunicipality')return'district';
+  if(value==='submunicipality'||value==='special_geographic_unit')return'district';
   return null;
 }
 
@@ -100,15 +101,15 @@ function deriveParents(rows){
   for(const row of rows){
     if(row.geographic_level==='region')regionBy2.set(prefix(row.psgc_code,2),row.psgc_code);
     else if(row.geographic_level==='province')provinceBy5.set(prefix(row.psgc_code,5),row.psgc_code);
-    else if(['city','municipality','submunicipality'].includes(row.geographic_level))localBy7.set(prefix(row.psgc_code,7),row.psgc_code);
+    else if(['city','municipality','submunicipality','special_geographic_unit'].includes(row.geographic_level))localBy7.set(prefix(row.psgc_code,7),row.psgc_code);
   }
   for(const row of rows){
     let parent='';
     if(row.geographic_level==='province')parent=regionBy2.get(prefix(row.psgc_code,2))||'';
     else if(['city','municipality','submunicipality'].includes(row.geographic_level)){
       parent=provinceBy5.get(prefix(row.psgc_code,5))||regionBy2.get(prefix(row.psgc_code,2))||'';
-    }else if(row.geographic_level==='district'){
-      parent=regionBy2.get(prefix(row.psgc_code,2))||'';
+    }else if(['district','special_geographic_unit'].includes(row.geographic_level)){
+      parent=provinceBy5.get(prefix(row.psgc_code,5))||regionBy2.get(prefix(row.psgc_code,2))||'';
     }else if(row.geographic_level==='barangay'){
       parent=localBy7.get(prefix(row.psgc_code,7))
         ||provinceBy5.get(prefix(row.psgc_code,5))
@@ -174,7 +175,7 @@ export async function parsePhPsgcWorkbook(buffer){
 }
 
 export function summarizePhPsgcRows(rows){
-  const counts={total:0,region:0,province:0,city:0,municipality:0,barangay:0,district:0,submunicipality:0,other:0};
+  const counts={total:0,region:0,province:0,city:0,municipality:0,barangay:0,district:0,submunicipality:0,special_geographic_unit:0,other:0};
   for(const row of Array.isArray(rows)?rows:[]){
     counts.total++;
     const key=Object.hasOwn(counts,row.geographic_level)?row.geographic_level:'other';
@@ -205,7 +206,7 @@ export async function ensurePhGeographicRegistrySchema(pool){
   await pool.query([
     "CREATE TABLE IF NOT EXISTS ph_geographic_registry_imports (id BIGSERIAL PRIMARY KEY,country_code TEXT NOT NULL DEFAULT 'PH',source_authority TEXT NOT NULL,source_version TEXT NOT NULL,source_url TEXT NOT NULL,source_sha256 TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,row_count INTEGER NOT NULL DEFAULT 0,level_counts JSONB NOT NULL DEFAULT '{}'::jsonb,imported_by_account_id BIGINT REFERENCES accounts(id),started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),completed_at TIMESTAMPTZ,error_message TEXT NOT NULL DEFAULT '',CHECK(status IN ('running','success','failed')))",
     "CREATE INDEX IF NOT EXISTS ph_geo_imports_status_idx ON ph_geographic_registry_imports(country_code,status,completed_at DESC,id DESC)",
-    "CREATE TABLE IF NOT EXISTS ph_geographic_registry (country_code TEXT NOT NULL DEFAULT 'PH',psgc_code TEXT NOT NULL,source_version TEXT NOT NULL,name TEXT NOT NULL,correspondence_code TEXT NOT NULL DEFAULT '',raw_geographic_level TEXT NOT NULL,geographic_level TEXT NOT NULL,parent_psgc_code TEXT NOT NULL DEFAULT '',path_text TEXT NOT NULL DEFAULT '',old_name TEXT NOT NULL DEFAULT '',city_class TEXT NOT NULL DEFAULT '',income_classification TEXT NOT NULL DEFAULT '',urban_rural TEXT NOT NULL DEFAULT '',population TEXT NOT NULL DEFAULT '',source_url TEXT NOT NULL,raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(country_code,psgc_code,source_version),CHECK(geographic_level IN ('region','province','city','municipality','district','submunicipality','barangay','other')))",
+    "CREATE TABLE IF NOT EXISTS ph_geographic_registry (country_code TEXT NOT NULL DEFAULT 'PH',psgc_code TEXT NOT NULL,source_version TEXT NOT NULL,name TEXT NOT NULL,correspondence_code TEXT NOT NULL DEFAULT '',raw_geographic_level TEXT NOT NULL,geographic_level TEXT NOT NULL,parent_psgc_code TEXT NOT NULL DEFAULT '',path_text TEXT NOT NULL DEFAULT '',old_name TEXT NOT NULL DEFAULT '',city_class TEXT NOT NULL DEFAULT '',income_classification TEXT NOT NULL DEFAULT '',urban_rural TEXT NOT NULL DEFAULT '',population TEXT NOT NULL DEFAULT '',source_url TEXT NOT NULL,raw_json JSONB NOT NULL DEFAULT '{}'::jsonb,imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(country_code,psgc_code,source_version),CHECK(geographic_level IN ('region','province','city','municipality','district','submunicipality','special_geographic_unit','barangay','other')))",
     "CREATE INDEX IF NOT EXISTS ph_geo_registry_search_idx ON ph_geographic_registry(country_code,source_version,geographic_level,name)",
     "CREATE INDEX IF NOT EXISTS ph_geo_registry_parent_idx ON ph_geographic_registry(country_code,source_version,parent_psgc_code,name)",
     "ALTER TABLE territories ADD COLUMN IF NOT EXISTS psgc_code TEXT",
