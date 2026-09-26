@@ -31,8 +31,12 @@ test('accounting workspace requires canonical Profile surface and never refetche
   assert.doesNotMatch(accounting,/api\(['"]\/api\/me['"]\)/);
 });
 
-test('failed workspace switch restores the previous client context',()=>{
+test('failed workspace switch restores context and reports non-blocking feedback',()=>{
   assert.match(accounting,/const previous=accountingState\.activeBusinessId/);
   assert.match(accounting,/accountingState\.activeBusinessId=previous/);
-  assert.match(accounting,/mountWorkspaceBar\(\);\s*alert\(err\.message\)/);
+  assert.match(accounting,/function showWorkspaceSwitchError/);
+  assert.match(accounting,/feedback\.setAttribute\('role','alert'\)/);
+  assert.match(accounting,/showWorkspaceSwitchError\(err\?\.message\)/);
+  assert.match(accounting,/clearWorkspaceSwitchError\(\);\s*const previous=/);
+  assert.doesNotMatch(accounting,/\balert\s*\(/);
 });

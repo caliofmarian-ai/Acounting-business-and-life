@@ -47,6 +47,21 @@ window.fetch = async function businessAwareFetch(input, init={}) {
 
 function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 
+function clearWorkspaceSwitchError(){
+  document.getElementById('businessWorkspaceFeedback')?.remove();
+}
+function showWorkspaceSwitchError(message){
+  clearWorkspaceSwitchError();
+  const bar=document.getElementById('businessWorkspaceBar');
+  if(!bar)return;
+  const feedback=document.createElement('div');
+  feedback.id='businessWorkspaceFeedback';
+  feedback.className='businessWorkspaceFeedback';
+  feedback.setAttribute('role','alert');
+  feedback.textContent='Could not switch business. '+(message||'Try again.');
+  bar.insertAdjacentElement('afterend',feedback);
+}
+
 function financeMoney(v){return new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0)}
 function financeMetric(label,value,detail=''){return '<div class="businessFinanceMetric"><span>'+escapeHtml(label)+'</span><strong>'+(typeof value==='number'?financeMoney(value):escapeHtml(value))+'</strong>'+(detail?'<small>'+escapeHtml(detail)+'</small>':'')+'</div>'}
 function financeStatusMetric(label,summary){if(!summary?.tracked)return financeMetric(label,'Setup needed','Choose where this profile should receive its money');return financeMetric(label,financeMoney(summary.paid),'Paid · '+financeMoney(summary.eligible)+' ready · '+financeMoney(summary.pending)+' pending')}
@@ -129,6 +144,7 @@ function mountWorkspaceBar() {
   bar.innerHTML=`<div><span class="workspaceEyebrow">${accountingState.role==='supplier'?'Supplier finances':'Current business'}</span><strong>${escapeHtml(accountingState.businesses.find(b=>Number(b.id)===Number(accountingState.activeBusinessId))?.name||'Business')}</strong></div>${accountingState.businesses.length>1?`<label>Business<select id="businessWorkspaceSelect">${options}</select></label>`:'<span class="workspaceIsolated">This business only</span>'}`;
   const select=bar.querySelector('#businessWorkspaceSelect');
   if(select) select.onchange=async()=>{
+    clearWorkspaceSwitchError();
     const previous=accountingState.activeBusinessId;
     select.disabled=true;
     try{
@@ -142,7 +158,7 @@ function mountWorkspaceBar() {
     }catch(err){
       accountingState.activeBusinessId=previous;
       mountWorkspaceBar();
-      alert(err.message);
+      showWorkspaceSwitchError(err?.message);
     }
   };
 }
