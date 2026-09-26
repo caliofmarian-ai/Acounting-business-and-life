@@ -10,6 +10,7 @@ import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
 import {readOrderDetail} from './orders-read-core.js';
+import {decodeVerifiedDataUrl} from './file-signature-core.js';
 import {handoffLockActive,nextHandoffFailureState} from './delivery-handoff-security.js';
 
 const { Pool } = pg;
@@ -85,7 +86,7 @@ async function requireMerchant(req,businessId=null){const me=await identity(req)
 async function requireCustomer(req){const me=await identity(req);if(!enabled(me,'customer'))throw Object.assign(new Error('Customer profile required'),{status:403});return me}
 async function requireCourier(req){const me=await identity(req);if(!enabled(me,'courier'))throw Object.assign(new Error('Delivery profile required'),{status:403});return me}
 async function requireAdmin(req,permission){const me=await identity(req);const assertion=verifyAdminAssertion(TOKEN_SECRET,req.headers['x-bl-admin-assertion'],me.account.id);if(!assertion||assertion.permission!==permission)throw Object.assign(new Error('Scoped Admin assertion required'),{status:403});me.admin_assertion=assertion;return me}
-function evidence(v){const x=String(v||'');if(!x)return'';if(x.length>1_900_000)throw Object.assign(new Error('Document is too large for this preview'),{status:413});if(!/^data:(application\/pdf|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Document must be PDF, PNG, JPEG or WebP'),{status:400});return x}
+function evidence(v){const x=String(v||'');if(!x)return'';if(x.length>1_900_000)throw Object.assign(new Error('Document is too large for this preview'),{status:413});if(!/^data:(application\/pdf|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Document must be PDF, PNG, JPEG or WebP'),{status:400});decodeVerifiedDataUrl(x,{allowedMimes:['application/pdf','image/png','image/jpeg','image/webp'],label:'Document'});return x}
 function haversine(lat1,lon1,lat2,lon2){const R=6371,dLat=(lat2-lat1)*Math.PI/180,dLon=(lon2-lon1)*Math.PI/180;const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))}
 function completionCode(deliveryId){if(!TOKEN_SECRET)return null;const hex=crypto.createHmac('sha256',TOKEN_SECRET).update(`delivery:${deliveryId}`).digest('hex');return String(parseInt(hex.slice(0,12),16)%1_000_000).padStart(6,'0')}
 
