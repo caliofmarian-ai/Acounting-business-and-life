@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {courierMoneySnapshot} from '../profile-money-core.js';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const core=read('profile-money-core.js');
@@ -25,6 +26,27 @@ test('Courier delivery fee is explicitly not treated as Courier earnings',()=>{
   assert.match(ui,/Customer charges — not earnings/);
   assert.match(ui,/No courier_net allocation yet/);
   assert.doesNotMatch(core,/earnings:money\(d\.delivered_fee_context\)/);
+});
+
+test('Courier Money keeps bigint account identity separate from text economic-party identity',async()=>{
+  const calls=[];
+  const pool={
+    query:async(sql,args=[])=>{
+      calls.push({sql,args});
+      if(sql.includes('LEFT JOIN LATERAL'))return{rows:[]};
+      if(sql.includes('FROM deliveries WHERE courier_account_id=$1'))return{rows:[{}]};
+      if(sql.includes('FROM payment_allocations'))return{rows:[{}]};
+      throw new Error('Unexpected Courier Money query');
+    }
+  };
+  const snapshot=await courierMoneySnapshot(pool,91);
+  const detail=calls.find(x=>x.sql.includes('LEFT JOIN LATERAL'));
+  assert.ok(detail);
+  assert.deepEqual(detail.args,[91,'91']);
+  assert.match(detail.sql,/pa\.economic_party_id=\$2/);
+  assert.match(detail.sql,/WHERE d\.courier_account_id=\$1/);
+  assert.doesNotMatch(detail.sql,/pa\.economic_party_id=\$1::text/);
+  assert.equal(snapshot.role,'courier');
 });
 
 test('Local Services separates commercial value Customer payment receivable expenses and settlement',()=>{
