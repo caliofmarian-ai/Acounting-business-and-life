@@ -26,14 +26,22 @@ function blPublicCard(data){
   const r=data?.profiles?.merchant?.post_promo_transaction_rate_pct;
   return'<section class="blFeeCard public"><div class="blFeeEyebrow">PRICING PRINCIPLE</div><div class="blFeeHeadline"><strong>Low, transparent platform fee — '+blPct(r)+'</strong><span>Business & Life is designed to be sustainable, not extractive.</span></div><div class="blFeeNote">The '+data.profiles.merchant.promo_days+'-day promotion means 0% Business & Life transaction fee. Third-party payment processing remains separate.</div></section>';
 }
+function blPricingSkeleton(node){
+  if(!node||node.dataset.blPricingReady)return;
+  node.dataset.blPricingReady='loading';
+  node.setAttribute('aria-busy','true');
+  node.innerHTML='<section class="blFeeCard compact blFeeLoading" role="status" aria-live="polite"><div class="blFeeLoadingEyebrow"></div><div class="blFeeLoadingLine wide"></div><div class="blFeeLoadingLine"></div><span class="blFeeLoadingCopy">Loading pricing details…</span></section>';
+}
 async function blFillPricing(root=document){
   const nodes=[...root.querySelectorAll?.('[data-bl-pricing]')||[]].filter(n=>!n.dataset.blPricingReady);
   if(!nodes.length)return;
-  let data;try{data=await blPricingGet()}catch(e){nodes.forEach(n=>{n.innerHTML='<div class="blFeeCard compact"><span>Pricing details could not be loaded.</span></div>';n.dataset.blPricingReady='error'});return}
+  nodes.forEach(blPricingSkeleton);
+  let data;try{data=await blPricingGet()}catch(e){nodes.forEach(n=>{n.innerHTML='<div class="blFeeCard compact blFeeLoadError"><span>Pricing details could not be loaded.</span></div>';n.dataset.blPricingReady='error';n.removeAttribute('aria-busy')});return}
   for(const n of nodes){
     const scope=n.dataset.blPricing||'public';
     n.innerHTML=scope==='customer_checkout'?blCheckoutCard(data):scope==='public'?blPublicCard(data):blRoleCard(scope,data);
     n.dataset.blPricingReady='1';
+    n.removeAttribute('aria-busy');
   }
 }
 const blPricingObserver=new MutationObserver(records=>{for(const r of records)for(const n of r.addedNodes)if(n.nodeType===1)blFillPricing(n).catch(()=>{})});
