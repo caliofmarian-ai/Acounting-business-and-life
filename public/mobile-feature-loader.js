@@ -91,7 +91,17 @@ async function openSupportTicket(ticketId){
   const api=await loadAdminOps();
   return api.openTicket(id);
 }
-window.BusinessLifeFeatureLoader=Object.freeze({openSupportTicket,openSupport,openLegalCenter,ensureGovernance});
+async function openIncidentReport(context){
+  try{
+    closeMore();
+    if(!token())throw new Error('Sign in to submit a private safety report.');
+    await loadFeature('incidents');
+    const api=window.BusinessLifeIncidents;
+    if(!api?.openReport)throw new Error('Safety reporting could not finish loading.');
+    return await api.openReport(context);
+  }catch(error){toast(error.message||'Could not open private safety reporting.')}
+}
+window.BusinessLifeFeatureLoader=Object.freeze({openSupportTicket,openSupport,openLegalCenter,openIncidentReport,ensureGovernance});
 
 async function openSupport(){
   try{
