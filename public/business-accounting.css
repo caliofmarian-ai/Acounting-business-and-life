@@ -21,3 +21,6 @@
 .ledgerRowActions{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}.voidLedgerEntry{color:#9a3412!important;border-color:#fed7aa!important;background:#fff7ed!important}
 @media(min-width:760px){.businessFinancePrimary{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:640px){.businessFinancePrimary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.businessWorkspaceFeedback{margin:-4px 16px 12px;padding:10px 12px;border:1px solid #fecaca;border-radius:12px;background:#fff1f2;color:#9f1239;font-size:.78rem;font-weight:700;line-height:1.35}
+@media(max-width:640px){.businessWorkspaceFeedback{margin:-3px 10px 10px}}
