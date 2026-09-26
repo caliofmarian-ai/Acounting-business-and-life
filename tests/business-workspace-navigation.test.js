@@ -16,7 +16,7 @@ test('business workspace selector switches context in-app without hard reload',(
 
 test('workspace switch refreshes only the visible role surface without rebuilding the app',()=>{
   assert.match(accounting,/mountWorkspaceBar\(\)/);
-  assert.match(accounting,/mountSupplierAccountingTile\(\)/);
+  assert.match(accounting,/wireSupplierAccountingTile\(\)/);
   assert.match(accounting,/supplierAccountingMode/);
   assert.match(accounting,/mountEconomicSummary\('viewDashboard'\)/);
   assert.match(production,/abl:business-workspace-changed/);

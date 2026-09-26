@@ -196,6 +196,27 @@ function syncMerchantWorkspaceNavVisibility(){
   if(!nav)return;
   nav.classList.toggle('hidden',!(activeSurface==='profile'&&activeRole==='merchant'));
 }
+function syncBusinessWorkspacePlaceholder(){
+  const role=activeSurface==='profile'?activeRole:null;
+  let bar=document.getElementById('businessWorkspaceBar');
+  if(!['merchant','supplier'].includes(role)){
+    bar?.remove();
+    return;
+  }
+  if(!bar){
+    bar=document.createElement('div');
+    bar.id='businessWorkspaceBar';
+    bar.className='businessWorkspaceBar businessWorkspaceBarPending';
+    bar.setAttribute('aria-busy','true');
+  }
+  if(bar.classList.contains('businessWorkspaceBarPending')){
+    bar.innerHTML='<div><span class="workspaceEyebrow">'+(role==='supplier'?'Supplier finances':'Current business')+'</span><strong>Preparing workspace…</strong></div><span class="workspaceIsolated">Loading</span>';
+  }
+  const nav=document.getElementById('merchantWorkspaceNav');
+  const topbar=document.querySelector('.topbar');
+  if(role==='merchant'&&nav)nav.insertAdjacentElement('afterend',bar);
+  else if(topbar)topbar.insertAdjacentElement('afterend',bar);
+}
 function renderTopAccount() {
   if (!snapshot?.account) return;
   const button = document.getElementById('accountAvatarButton');
@@ -207,6 +228,7 @@ function renderTopAccount() {
     pill.setAttribute('aria-label',activeSurface==='profile'&&activeRole?`Open ${ROLE_META[activeRole]?.label||activeRole} home`:'Open Account Home');
   }
   syncMerchantWorkspaceNavVisibility();
+  syncBusinessWorkspacePlaceholder();
 }
 
 function renderDrawer() {
@@ -559,6 +581,7 @@ window.BusinessLifeShell=Object.freeze({
 
 const HUBS = {
   supplier: [
+    ['💼','Finance & Accounting','PO income, actual receipts, receivables, costs, budgets and payout status','Finance & Accounting'],
     ['☀️','Today','What needs your attention now','Today'],
     ['📦','Catalog','Products, pricing and availability','Catalog'],
     ['📥','Orders','New, preparing and fulfilment orders','Orders'],
@@ -1293,9 +1316,19 @@ function renderRoleHub(role) {
   if (!hub || !meta) return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   const items=[...(HUBS[role]||[]),['⚙️','Profile Settings','Preferences, banking and tools for this profile','Profile Settings']];
-  const tiles = items.map((item, index) => `<button class="hubTile ${item[3]==='Profile Settings'?'profileSettingsTile':index === 3 && role === 'customer' ? 'accent' : ''}" type="button" data-hub-feature="${escapeHtml(item[3])}"><span class="hubTileIcon">${item[0]}</span><strong>${escapeHtml(item[1])}</strong><small>${escapeHtml(item[2])}</small>${role === 'courier' && item[1] === 'Eligibility' ? `<span class="miniBadge ${snapshot?.courier?.eligibility_status === 'approved' ? '' : 'pending'}">${escapeHtml(snapshot?.courier?.eligibility_status || 'not requested')}</span>` : ''}</button>`).join('');
+  const tiles = items.map((item, index) => {
+    const finance=role==='supplier'&&item[3]==='Finance & Accounting';
+    return `<button class="hubTile ${item[3]==='Profile Settings'?'profileSettingsTile':finance?'businessAccountingTile':index === 3 && role === 'customer' ? 'accent' : ''}" type="button" data-hub-feature="${escapeHtml(item[3])}"${finance?' data-business-accounting-tile="true"':''}><span class="hubTileIcon">${item[0]}</span><strong>${escapeHtml(item[1])}</strong><small>${escapeHtml(item[2])}</small>${finance?'<span class="miniBadge">Business-scoped</span>':''}${role === 'courier' && item[1] === 'Eligibility' ? `<span class="miniBadge ${snapshot?.courier?.eligibility_status === 'approved' ? '' : 'pending'}">${escapeHtml(snapshot?.courier?.eligibility_status || 'not requested')}</span>` : ''}</button>`;
+  }).join('');
   hub.innerHTML = `<div class="hubHero"><div class="hubEyebrow">${escapeHtml(meta.label)} profile</div><h1>${escapeHtml(meta.hero)}</h1><p>One identity, a dedicated workspace, and only the information this role needs.</p><span class="hubStatus">Profile selected</span></div><div class="hubSectionTitle"><h2>Your ${escapeHtml(meta.label)} workspace</h2><span>Philippines Edition</span></div><div class="hubGrid">${tiles}</div>`;
-  hub.querySelectorAll('[data-hub-feature]').forEach(btn => btn.onclick = () => btn.dataset.hubFeature==='Profile Settings'?window.BusinessLifeProfileSettings?.open?.(role):showToast(`${btn.dataset.hubFeature}: implementation continues in the next marketplace/service slice.`));
+  hub.querySelectorAll('[data-hub-feature]').forEach(btn => btn.onclick = () => {
+    if(btn.dataset.hubFeature==='Profile Settings')return window.BusinessLifeProfileSettings?.open?.(role);
+    if(role==='supplier'&&btn.dataset.hubFeature==='Finance & Accounting'){
+      if(window.BusinessLifeAccounting?.openSupplierAccounting)return window.BusinessLifeAccounting.openSupplierAccounting();
+      return showToast('Finance & Accounting is still loading. Try again in a moment.');
+    }
+    showToast(`${btn.dataset.hubFeature}: implementation continues in the next marketplace/service slice.`);
+  });
   hub.classList.remove('hidden');
 }
 

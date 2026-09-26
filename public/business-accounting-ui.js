@@ -114,7 +114,7 @@ function applyWorkspaceState(workspaceState){
   if(!activeBusinessId||!businesses.some(b=>Number(b.id)===activeBusinessId))return false;
   accountingState={role:workspaceState.role,activeBusinessId,businesses};
   mountWorkspaceBar();
-  mountSupplierAccountingTile();
+  wireSupplierAccountingTile();
   return true;
 }
 
@@ -122,7 +122,9 @@ function mountWorkspaceBar() {
   const topbar=document.querySelector('.topbar');
   if(!topbar || !accountingState.activeBusinessId) return;
   let bar=document.getElementById('businessWorkspaceBar');
-  if(!bar){bar=document.createElement('div');bar.id='businessWorkspaceBar';bar.className='businessWorkspaceBar';topbar.insertAdjacentElement('afterend',bar);}
+  if(!bar){bar=document.createElement('div');bar.id='businessWorkspaceBar';topbar.insertAdjacentElement('afterend',bar);}
+  bar.className='businessWorkspaceBar';
+  bar.removeAttribute('aria-busy');
   const options=accountingState.businesses.map(b=>`<option value="${b.id}" ${Number(b.id)===Number(accountingState.activeBusinessId)?'selected':''}>${escapeHtml(b.name)}</option>`).join('');
   bar.innerHTML=`<div><span class="workspaceEyebrow">${accountingState.role==='supplier'?'Supplier finances':'Current business'}</span><strong>${escapeHtml(accountingState.businesses.find(b=>Number(b.id)===Number(accountingState.activeBusinessId))?.name||'Business')}</strong></div>${accountingState.businesses.length>1?`<label>Business<select id="businessWorkspaceSelect">${options}</select></label>`:'<span class="workspaceIsolated">This business only</span>'}`;
   const select=bar.querySelector('#businessWorkspaceSelect');
@@ -134,7 +136,7 @@ function mountWorkspaceBar() {
       const state=await api('/api/accounting/workspaces');
       accountingState={role:state.role,activeBusinessId:Number(state.active_business_id),businesses:state.businesses||[]};
       mountWorkspaceBar();
-      mountSupplierAccountingTile();
+      wireSupplierAccountingTile();
       if(accountingState.role==='supplier'&&document.body.classList.contains('supplierAccountingMode'))await mountEconomicSummary('viewDashboard');
       document.dispatchEvent(new CustomEvent('abl:business-workspace-changed',{detail:{role:accountingState.role,activeBusinessId:accountingState.activeBusinessId}}));
     }catch(err){
@@ -145,15 +147,12 @@ function mountWorkspaceBar() {
   };
 }
 
-function mountSupplierAccountingTile() {
+function wireSupplierAccountingTile() {
   if(accountingState.role!=='supplier') return;
-  const grid=document.querySelector('#roleHub .hubGrid');
-  if(!grid || grid.querySelector('[data-business-accounting-tile]')) return;
-  const tile=document.createElement('button');
-  tile.type='button';tile.className='hubTile businessAccountingTile';tile.dataset.businessAccountingTile='true';
-  tile.innerHTML='<span class="hubTileIcon">💼</span><strong>Finance & Accounting</strong><small>PO income, actual receipts, receivables, costs, budgets and payout status</small><span class="miniBadge">Business-scoped</span>';
+  const tile=document.querySelector('#roleHub [data-business-accounting-tile]');
+  if(!tile)return;
   tile.onclick=openSupplierAccounting;
-  grid.prepend(tile);
+  tile.removeAttribute('aria-disabled');
 }
 
 async function openSupplierAccounting() {
@@ -187,7 +186,6 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     const me=state?.snapshot,role=state?.surface==='profile'?state.activeRole:null;
     if(!me||!['merchant','supplier'].includes(role)){
       document.getElementById('businessWorkspaceBar')?.remove();
-      document.getElementById('supplierAccountingTile')?.remove();
       return;
     }
     const profile=me.profiles?.find(p=>p.role===role);
@@ -197,6 +195,8 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
       if(cached)applyWorkspaceState(cached);
       return;
     }
+    accountingState={role:'supplier',activeBusinessId:null,businesses:[]};
+    wireSupplierAccountingTile();
     const workspaceState=await api('/api/accounting/workspaces');
     applyWorkspaceState(workspaceState);
   }catch(err){console.warn('Accounting workspace:',err.message)}
@@ -210,6 +210,9 @@ document.addEventListener('abl:merchant-today-data',event=>{
   if(event.detail?.workspace)applyWorkspaceState(event.detail.workspace);
   if(accountingState.role==='merchant')applyFinancePresentation({role:'merchant',presentation:event.detail?.presentation||{}});
 },{passive:true});
-window.BusinessLifeAccounting=Object.freeze({getState:()=>({role:accountingState.role,activeBusinessId:accountingState.activeBusinessId,businesses:[...accountingState.businesses]})});
+window.BusinessLifeAccounting=Object.freeze({
+  getState:()=>({role:accountingState.role,activeBusinessId:accountingState.activeBusinessId,businesses:[...accountingState.businesses]}),
+  openSupplierAccounting
+});
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>bootAccountingWorkspace(),120));
 else setTimeout(()=>bootAccountingWorkspace(),120);
