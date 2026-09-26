@@ -28,7 +28,7 @@ PH Geographic Registry V1 is pinned to:
 - official PSA publication landing page: https://psa.gov.ph/classification/psgc;
 - official publication workbook: PSGC-2Q-2026-Publication-Datafile.xlsx.
 
-The importer records the source URL, source version and SHA-256 of the downloaded workbook.
+The importer records the authoritative PSA source URL and version. When PSA permits the server-to-server XLSX download, the workbook SHA-256 is recorded. When PSA blocks Railway with HTTP 403, V1.1 falls back to the pinned `@ianlabicani/geoph-lite@2.0.0` Q2 2026 snapshot, generated from the same PSA 30 June 2026 release; the package/commit reference and a deterministic snapshot SHA-256 are recorded as transport provenance.
 
 ## Data model
 
@@ -36,7 +36,8 @@ ph_geographic_registry_imports records each synchronization attempt and its evid
 
 - source version;
 - source URL;
-- workbook SHA-256;
+- source/snapshot SHA-256;
+- source transport and pinned transport reference;
 - row and level counts;
 - actor;
 - success/failure;
@@ -65,7 +66,7 @@ Only opened Business & Life territories belong in territories.
 
 ## Import safety
 
-The sync endpoint downloads the pinned official workbook only on an explicit Super Admin action.
+The sync endpoint runs only on an explicit Super Admin action. It first attempts the pinned official PSA workbook. If that transport is blocked or unavailable, it uses the pinned offline Q2 2026 snapshot rather than failing solely because of the transport layer.
 
 Before committing reference rows, the importer verifies the XLSX/ZIP payload and validates the pinned 2Q 2026 counts:
 
@@ -75,7 +76,7 @@ Before committing reference rows, the importer verifies the XLSX/ZIP payload and
 - 1,493 municipalities;
 - 42,010 barangays.
 
-A failed download, parse or count validation records a failed import attempt and does not replace an existing successful registry.
+A transport failure alone may trigger the validated offline fallback. A failed parse, integrity check or count validation records a failed import attempt and does not replace an existing successful registry. The fallback additionally verifies the Q2 2026 `Sawata` change (`1102324000`) and `City of Bacoor` (`0402103000`) before import.
 
 ## Admin workflow
 
