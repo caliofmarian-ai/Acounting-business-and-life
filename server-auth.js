@@ -14,6 +14,8 @@ import { bindReferralSignupConversion } from './growth/referral-conversion-bindi
 import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
 import { companyTestAccountForEmail, companyTestContact, companyTestProfileRole } from './company-test-accounts.js';
 import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-session-core.js';
+import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage} from './account-geography.js';
+import {emitNotificationEvent} from './notification-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -302,6 +304,7 @@ async function initDb() {
   `);
   await ensurePersonIdentitySchema(pool);
   await ensureReferralAccountSchema(pool);
+  await ensureAccountGeographySchema(pool);
 }
 
 async function profileSnapshot(accountId) {
@@ -321,7 +324,10 @@ async function profileSnapshot(accountId) {
     await pool.query(`UPDATE accounts SET active_role=NULL,updated_at=NOW() WHERE id=$1 AND active_role=$2`,[accountId,activeRole]);
     account.rows[0].active_role=null;
   }
-  return withPublicProfileIds({ account: account.rows[0], profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
+  const geography=await accountGeographySnapshot(pool,accountId);
+  const accountRow=account.rows[0];
+  geography.required=accountRow.account_mode!=='company_test';
+  return withPublicProfileIds({ account: accountRow, geography, profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
 }
 
 function injectedIndex() {
@@ -400,6 +406,43 @@ async function sendReferralAnalytics(res, input) {
   }
 }
 
+async function emitAccountGeographyNotice(accountId,geography){
+  if(!geography?.psgc_code)return null;
+  const status=geography.exact_territory?.status||'not_opened';
+  const eventCode=geography.operational_onboarding_available?'territory.area_available':'territory.area_status';
+  try{
+    return await emitNotificationEvent(pool,{
+      eventKey:'account:'+Number(accountId)+':geography:'+geography.psgc_code+':'+status,
+      eventCode,sourceService:'auth',entityType:'account',entityId:String(accountId),
+      category:'operational',priority:geography.operational_onboarding_available?'normal':'high',
+      mandatory:true,emailDefault:false,pushDefault:false,
+      data:{
+        area_name:geography.name||'',
+        area_status:status,
+        area_message:geographyAvailabilityMessage(geography),
+        parent_scope:geography.nearest_opened_scope?.name||''
+      },
+      recipients:[{accountId:Number(accountId),roleHint:''}]
+    });
+  }catch(error){
+    console.warn('Account geography notification suppressed:',error.message);
+    return null;
+  }
+}
+
+app.get('/api/auth/geography/search',async(req,res,next)=>{try{
+  const result=await searchOfficialBarangays(pool,{query:req.query.q,limit:req.query.limit});
+  res.set('Cache-Control','public, max-age=60');
+  res.json(result);
+}catch(e){next(e)}});
+
+app.get('/api/auth/geography/status',async(req,res,next)=>{try{
+  const result=await geographyAvailabilityForCode(pool,req.query.psgc_code);
+  if(!result)return res.status(404).json({error:'Official barangay not found'});
+  res.set('Cache-Control','public, max-age=60');
+  res.json({...result,message:geographyAvailabilityMessage(result)});
+}catch(e){next(e)}});
+
 app.post('/api/auth/register', body, async (req, res, next) => {
   const email = normalizeEmail(req.body?.email);
   const name = clean(req.body?.display_name, 120);
@@ -407,9 +450,13 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   const companyTest = companyTestAccountForEmail(email);
   const phone = companyTest ? '' : clean(req.body?.phone, 40);
   const address = companyTest ? '' : clean(req.body?.address, 300);
+  const homePsgcCode=clean(req.body?.home_psgc_code,32);
   if (!name) return res.status(400).json({ error: 'Name is required' });
   if (!validEmail(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!passwordOkay(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  let geography=null;
+  if(homePsgcCode){geography=await geographyAvailabilityForCode(pool,homePsgcCode);if(!geography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});}
+  if(!companyTest&&!geography)return res.status(400).json({error:'Choose your official barangay before creating your account'});
   if (throttled(req, email)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
   const client = await pool.connect();
   try {
@@ -419,6 +466,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
     await client.query('BEGIN');
     const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,'active',$7,$8) RETURNING id`, [name, phone, email, address, salt, hash, companyTest?'company_test':'personal', companyTest?.role||null]);
     const accountId = Number(account.rows[0].id);
+    if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':'registration_selected_psgc'});
     await client.query('COMMIT');
     clearThrottle(req, email);
 
@@ -447,6 +495,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
       }
     }
 
+    if(geography)await emitAccountGeographyNotice(accountId,await geographyAvailabilityForCode(pool,geography.psgc_code));
     const session = await createSession(accountId);
     res.status(201).json({ token: session.token, expires_in_hours: 24, profile: await profileSnapshot(accountId) });
   } catch (err) { await client.query('ROLLBACK').catch(() => {}); next(err); } finally { client.release(); }
@@ -632,6 +681,14 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+app.put('/api/me/geography',body,auth,async(req,res,next)=>{try{
+  const current=await pool.query("SELECT account_mode FROM accounts WHERE id=$1",[req.accountId]);
+  if(!current.rowCount)return res.status(404).json({error:'Account not found'});
+  const geography=await saveAccountGeography(pool,req.accountId,req.body?.psgc_code,{source:current.rows[0].account_mode==='company_test'?'company_test_selected_psgc':'account_settings_selected_psgc'});
+  await emitAccountGeographyNotice(req.accountId,geography);
+  res.json(await profileSnapshot(req.accountId));
+}catch(e){next(e)}});
+
 app.patch('/api/me/active-role', body, auth, async (req, res, next) => {
   const role = clean(req.body?.role, 40);
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
@@ -655,6 +712,7 @@ app.put('/api/profiles/:role', body, auth, async (req, res, next) => {
     if(enabled){
       const classification=await pool.query(`SELECT account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
       const classified=classification.rows[0];
+      if(classified?.account_mode!=='company_test')await requireAssignedOpenBarangay(pool,req.accountId);
       if(classified?.account_mode==='company_test'&&companyTestProfileRole(classified.test_role)!==role)return res.status(403).json({error:`This company test account is reserved for ${classified.test_role.replaceAll('_',' ')}.`});
       if(role==='customer')return res.status(409).json({error:'Use Customer activation from Account Settings.'});
       const authorization=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role=$2 AND status='active' AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1`,[req.accountId,role]);
@@ -679,6 +737,7 @@ app.post('/api/profiles/customer/activate', body, auth, async (req,res,next)=>{
     if(!a||!clean(a.display_name,120)||!validEmail(a.email))return res.status(409).json({error:companyTest?'Complete the test account name and email in Account Settings first.':'Complete your name, email and primary address in Account Settings first.'});
     if(!companyTest&&!clean(a.address,300))return res.status(409).json({error:'Complete your name, email and primary address in Account Settings first.'});
     if(!a.email_verified_at)return res.status(409).json({error:'Verify your email before activating Customer.'});
+    if(!companyTest)await requireAssignedOpenBarangay(pool,req.accountId);
     const preferredAddress=companyTest?companyTestContact().address:a.address;
     const client=await pool.connect();
     try{await client.query('BEGIN');await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,'customer',TRUE,'private','active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',updated_at=NOW()`,[req.accountId]);await client.query(`INSERT INTO customer_profiles(account_id,preferred_address) VALUES($1,$2) ON CONFLICT(account_id) DO UPDATE SET preferred_address=CASE WHEN customer_profiles.preferred_address='' THEN EXCLUDED.preferred_address ELSE customer_profiles.preferred_address END,updated_at=NOW()`,[req.accountId,preferredAddress]);await client.query(`UPDATE accounts SET active_role=COALESCE(active_role,'customer'),updated_at=NOW() WHERE id=$1`,[req.accountId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
