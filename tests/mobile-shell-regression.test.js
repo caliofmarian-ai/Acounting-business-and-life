@@ -6,6 +6,7 @@ const shellCss=readFileSync(new URL('../public/shell.css',import.meta.url),'utf8
 const baseCss=readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
 const governanceUi=readFileSync(new URL('../public/profile-governance-ui.js',import.meta.url),'utf8');
 const adminUi=readFileSync(new URL('../public/admin-operations-ui.js',import.meta.url),'utf8');
+const shell=readFileSync(new URL('../public/shell.js',import.meta.url),'utf8');
 const loader=readFileSync(new URL('../public/mobile-feature-loader.js',import.meta.url),'utf8');
 const loaderCss=readFileSync(new URL('../public/mobile-feature-loader.css',import.meta.url),'utf8');
 
@@ -31,16 +32,15 @@ test('legacy governance does not inject a second Admin entry into the avatar dra
 });
 
 
-test('Merchant mobile navigation exposes the same core workspace tools as desktop',()=>{
-  assert.match(loader,/merchantMobileTools/);
+test('Merchant mobile navigation is shell-owned and exposes the same core workspace tools as desktop',()=>{
+  assert.match(shell,/id='merchantMobileTools'/);
   for(const id of ['ordersQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton','profileSettings']){
-    assert.match(loader,new RegExp(id));
+    assert.match(shell,new RegExp('data-merchant-mobile-action="'+id+'"'));
   }
   for(const label of ['Orders','Storefront','Suppliers','Delivery','Profile Settings']){
-    assert.match(loader,new RegExp(label));
+    assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>'));
   }
-  assert.doesNotMatch(loader,/\['accountAvatarButton','👤','Merchant'\]/);
-  assert.match(loader,/businessWorkspaceBar/);
+  assert.doesNotMatch(loader,/merchantMobileToolsGrid|mountMerchantMobileTools|MERCHANT_MOBILE_ACTIONS/);
   assert.match(loaderCss,/@media\(max-width:649px\)/);
   assert.match(loaderCss,/merchantMobileToolsGrid/);
   assert.match(loaderCss,/grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
