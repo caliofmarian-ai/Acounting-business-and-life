@@ -26,7 +26,9 @@ test('PSGC code and geographic-level normalization preserve official identifiers
   assert.equal(normalizePsgcLevel('Mun'),'municipality');
   assert.equal(normalizePsgcLevel('Bgy'),'barangay');
   assert.equal(normalizePsgcLevel('SubMun'),'submunicipality');
+  assert.equal(normalizePsgcLevel('SGU'),'special_geographic_unit');
   assert.equal(territoryTypeForPsgcLevel('SubMun'),'district');
+  assert.equal(territoryTypeForPsgcLevel('SGU'),'district');
 });
 
 test('workbook parser finds headers, preserves leading zeroes and derives PH hierarchy',async()=>{
@@ -34,7 +36,7 @@ test('workbook parser finds headers, preserves leading zeroes and derives PH hie
   const ws=wb.addWorksheet('PSGC');
   ws.addRow(['Philippine Standard Geographic Code']);
   ws.addRow([]);
-  ws.addRow(['10-digit PSGC Code','Name','Correspondence Code','Geographic Level','Old Name','City Class','Income Classification']);
+  ws.addRow(['10-digit PSGC','Name','Correspondence Code','Geographic Level','Old Name','City Class','Income Classification']);
   ws.addRow(['0400000000','CALABARZON','040000000','Reg','','','']);
   ws.addRow(['0402100000','Cavite','042100000','Prov','','','']);
   ws.addRow(['0402103000','City of Bacoor','042103000','City','','Component City','1st Class']);
