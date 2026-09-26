@@ -632,7 +632,6 @@ function showActiveWorkspace() {
 window.BusinessLifeShell=Object.freeze({
   showActiveWorkspace,
   openFeatureWorkspace,
-  merchantWorkspaceHost:()=>document.getElementById('merchantWorkspaceActions'),
   openAccountHome,
   openAccountSettings,
   signOutCurrentAccount,
