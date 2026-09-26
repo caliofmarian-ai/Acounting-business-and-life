@@ -65,10 +65,12 @@ test('QA PH test context is initialized only after the embedded application chai
 
 test('preview authentication explicitly explains remote Philippines test geography',()=>{
   assert.match(hardening,/qa_preview_context/);
-  assert.match(hardening,/device_location_authoritative:false/);
+  assert.doesNotMatch(hardening,/device_location_authoritative:false/);
+  assert.match(hardening,/remote_override_scope:'designated_account_only'/);
   assert.match(hardening,/label:'Philippines QA test context'/);
   assert.match(ui,/qa\.label\|\|'QA test context'/);
-  assert.match(ui,/physical device location is not used as the Business & Life test territory/);
+  assert.match(ui,/Standard location rules remain active/);
+  assert.match(ui,/designated QA test account/);
   assert.match(css,/\.modernQaContext/);
 });
 

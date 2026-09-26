@@ -17,6 +17,7 @@ import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-
 import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage} from './account-geography.js';
 import {emitNotificationEvent} from './notification-core.js';
 import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboarding} from './guided-onboarding-core.js';
+import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-account.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -330,7 +331,8 @@ async function profileSnapshot(accountId) {
   }
   const accountRow=account.rows[0];
   geography.required=accountRow.account_mode!=='company_test';
-  return withPublicProfileIds({ account: accountRow, geography, profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
+  const qa_remote_test=qaRemoteTestAccountState(accountRow);
+  return withPublicProfileIds({ account: accountRow, geography, qa_remote_test, profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
 }
 
 function injectedIndex() {
@@ -454,12 +456,14 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   const phone = companyTest ? '' : clean(req.body?.phone, 40);
   const address = companyTest ? '' : clean(req.body?.address, 300);
   const homePsgcCode=clean(req.body?.home_psgc_code,32);
+  const qaRemoteRequested=Boolean(req.body?.qa_remote_test);
   if (!name) return res.status(400).json({ error: 'Name is required' });
   if (!validEmail(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!passwordOkay(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   let geography=null;
   if(homePsgcCode){geography=await geographyAvailabilityForCode(pool,homePsgcCode);if(!geography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});}
   if(!companyTest&&!geography)return res.status(400).json({error:'Choose your official barangay before creating your account'});
+  if(qaRemoteRequested&&!isQaRemoteTestEmail(email))return res.status(403).json({error:'Remote PH testing is available only to the designated QA test account'});
   if (throttled(req, email)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
   const client = await pool.connect();
   try {
@@ -469,7 +473,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
     await client.query('BEGIN');
     const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,'active',$7,$8) RETURNING id`, [name, phone, email, address, salt, hash, companyTest?'company_test':'personal', companyTest?.role||null]);
     const accountId = Number(account.rows[0].id);
-    if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':'registration_selected_psgc'});
+    if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':qaRemoteRequested&&isQaRemoteTestEmail(email)?'qa_remote_ph_test':'registration_selected_psgc'});
     await client.query('COMMIT');
     clearThrottle(req, email);
 
@@ -696,9 +700,11 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
 });
 
 app.put('/api/me/geography',body,auth,async(req,res,next)=>{try{
-  const current=await pool.query("SELECT account_mode FROM accounts WHERE id=$1",[req.accountId]);
+  const current=await pool.query("SELECT account_mode,email FROM accounts WHERE id=$1",[req.accountId]);
   if(!current.rowCount)return res.status(404).json({error:'Account not found'});
-  const geography=await saveAccountGeography(pool,req.accountId,req.body?.psgc_code,{source:current.rows[0].account_mode==='company_test'?'company_test_selected_psgc':'account_settings_selected_psgc'});
+  const qaRemoteRequested=Boolean(req.body?.qa_remote_test);
+  if(qaRemoteRequested&&!isQaRemoteTestEmail(current.rows[0].email))return res.status(403).json({error:'Remote PH testing is available only to the designated QA test account'});
+  const geography=await saveAccountGeography(pool,req.accountId,req.body?.psgc_code,{source:current.rows[0].account_mode==='company_test'?'company_test_selected_psgc':qaRemoteRequested&&isQaRemoteTestEmail(current.rows[0].email)?'qa_remote_ph_test':'account_settings_selected_psgc'});
   await emitAccountGeographyNotice(req.accountId,geography);
   res.json(await profileSnapshot(req.accountId));
 }catch(e){next(e)}});
