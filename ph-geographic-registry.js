@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import ExcelJS from 'exceljs';
-
 export const PH_PSGC_SOURCE=Object.freeze({
   country_code:'PH',
   authority:'Philippine Statistics Authority (PSA)',
@@ -134,6 +132,7 @@ function deriveParents(rows){
 }
 
 export async function parsePhPsgcWorkbook(buffer){
+  const {default:ExcelJS}=await import('exceljs');
   const workbook=new ExcelJS.Workbook();
   await workbook.xlsx.load(Buffer.isBuffer(buffer)?buffer:Buffer.from(buffer));
   let worksheet=null,header=null;
@@ -242,7 +241,7 @@ export async function phGeographicRegistryStatus(pool){
 
 async function insertRegistryRows(client,rows,sourceSha){
   const fields=['country_code','psgc_code','source_version','name','correspondence_code','raw_geographic_level','geographic_level','parent_psgc_code','path_text','old_name','city_class','income_classification','urban_rural','population','source_url','raw_json'];
-  const chunkSize=300;
+  const chunkSize=800;
   for(let start=0;start<rows.length;start+=chunkSize){
     const chunk=rows.slice(start,start+chunkSize);
     const params=[];
@@ -252,7 +251,7 @@ async function insertRegistryRows(client,rows,sourceSha){
         'PH',row.psgc_code,PH_PSGC_SOURCE.version,row.name,row.correspondence_code||'',
         row.raw_geographic_level,row.geographic_level,row.parent_psgc_code||'',row.path_text||'',
         row.old_name||'',row.city_class||'',row.income_classification||'',row.urban_rural||'',row.population||'',
-        PH_PSGC_SOURCE.landing_url,
+        PH_PSGC_SOURCE.publication_url,
         JSON.stringify({source_sheet:row.source_sheet,source_row:row.source_row,source_sha256:sourceSha})
       );
       return '('+fields.map((_,i)=>'$'+(base+i+1)).join(',')+')';
