@@ -342,15 +342,16 @@ async function syncCustomerPayments(pool,{accountId}){
         });
       }
     }else{
-      lines.push({lineCode:'payment_amount',lineKind:'purchase_value',impactClass:'purchase',economicOwner:'merchant/provider',amount:i.amount});
+      const lineKind=i.source_type==='service_job'?'service_value':'purchase_value';
+      lines.push({lineCode:'payment_amount',lineKind,impactClass:'purchase',economicOwner:'merchant/provider',amount:i.amount});
     }
     for(const a of alloc.rows.filter(a=>!['merchandise','delivery'].includes(a.component_code))){
       const impact=a.component_code==='tax'?'neutral':'neutral';
       lines.push({
         lineCode:`allocation_context_${a.id}`,lineKind:a.component_code,impactClass:impact,
-        economicOwner:a.economic_party_type||'',amount:a.amount,
+        economicOwner:a.economic_party_type||'',amount:Math.abs(Number(a.amount)),
         note:'Separate payment allocation; not automatically a Customer surcharge.',
-        metadata:{allocation_id:Number(a.id),settlement_status:a.settlement_status,rule_snapshot:a.rule_snapshot||{}}
+        metadata:{allocation_id:Number(a.id),settlement_status:a.settlement_status,rule_snapshot:a.rule_snapshot||{},signed_amount:Number(a.amount)}
       });
     }
     await upsertDocument(pool,{
@@ -406,7 +407,7 @@ async function syncBusinessFees(pool,{accountId,profileRole,businessId}){
     WHERE ${ownerWhere}
       AND i.status IN ('succeeded','partially_refunded','refunded')
       AND a.settlement_status<>'reversed'
-      AND a.component_code IN ('processor_fee','platform_fee','country_operator_fee','territory_operator_fee','tax','withholding')
+      AND a.component_code IN ('processor_fee','platform_fee','country_operator_fee','territory_operator_fee','processor_fee','tax','withholding')
     ORDER BY a.created_at,a.id
   `,args);
   for(const a of rows){
@@ -609,28 +610,54 @@ export async function financialStatementForScope(pool,{accountId,profileRole,bus
   const scope=scopeWhere({accountId,profileRole,businessId},1);
   const params=[...scope.params,range.start_date,range.end_date_exclusive];
   const startParam=params.length-1,endParam=params.length;
+  const startDateBind='$'+startParam,endDateBind='$'+endParam;
   const totals=await pool.query(`
     SELECT l.impact_class,COUNT(*)::int line_count,COALESCE(SUM(l.amount),0) amount
     FROM financial_documents d
     JOIN financial_document_lines l ON l.document_id=d.id
     WHERE ${scope.sql}
       AND d.document_status='active'
-      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= $${startParam}::date
-      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < $${endParam}::date
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= ${startDateBind}::date
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < ${endDateBind}::date
     GROUP BY l.impact_class
     ORDER BY l.impact_class
+  `,params);
+  const lineKinds=await pool.query(`
+    WITH classified AS (
+      SELECT CASE
+        WHEN d.profile_role='customer' AND d.source_type='payment_intent'
+          AND d.source_snapshot->>'source_type'='service_job' AND l.impact_class='purchase'
+        THEN 'service_value' ELSE l.line_kind END AS line_kind,
+        l.impact_class,l.amount
+      FROM financial_documents d
+      JOIN financial_document_lines l ON l.document_id=d.id
+      WHERE ${scope.sql}
+        AND d.document_status='active'
+        AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= ${startDateBind}::date
+        AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < ${endDateBind}::date
+    )
+    SELECT l.line_kind,l.impact_class,COUNT(*)::int line_count,COALESCE(SUM(l.amount),0) amount
+    FROM classified l
+    GROUP BY l.line_kind,l.impact_class
+    ORDER BY l.line_kind,l.impact_class
   `,params);
   const docCount=await pool.query(`
     SELECT COUNT(*)::int count
     FROM financial_documents d
     WHERE ${scope.sql}
       AND d.document_status='active'
-      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= $${startParam}::date
-      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < $${endParam}::date
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date >= ${startDateBind}::date
+      AND (d.occurred_at AT TIME ZONE 'Asia/Manila')::date < ${endDateBind}::date
   `,params);
   const byImpact={};
   for(const row of totals.rows)byImpact[row.impact_class]={amount:money(row.amount),line_count:Number(row.line_count)};
   for(const key of FINANCIAL_IMPACT_CLASSES)if(!byImpact[key])byImpact[key]={amount:0,line_count:0};
+  const lineKindTotals=lineKinds.rows.map(row=>({
+    line_kind:row.line_kind,
+    impact_class:row.impact_class,
+    amount:money(row.amount),
+    line_count:Number(row.line_count)
+  }));
   const revenue=byImpact.revenue.amount;
   const expenses=money(byImpact.expense.amount+byImpact.fee_expense.amount+byImpact.tax_expense.amount);
   return{
@@ -644,6 +671,7 @@ export async function financialStatementForScope(pool,{accountId,profileRole,bus
     currency_code:'PHP',
     document_count:Number(docCount.rows[0]?.count||0),
     totals:byImpact,
+    line_kinds:lineKindTotals,
     derived:{
       operating_result:money(revenue-expenses),
       documented_purchases:byImpact.purchase.amount,
