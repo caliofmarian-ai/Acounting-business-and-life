@@ -230,6 +230,10 @@ function memberAdminRoles(items){
   if(!(items||[]).length)return '<p class="muted">No Admin authority.</p>';
   return '<div class="memberDetailList">'+items.map(a=>'<article class="memberDetailItem"><div class="rowHeader"><strong>'+esc(rankLabel(a.admin_rank))+'</strong><span class="status">'+esc(a.status||'unknown')+'</span></div><span class="muted">'+esc(a.territory_name||a.country_code||'Platform')+'</span><span class="memberMeta">Assigned '+esc(memberDate(a.created_at))+'</span></article>').join('')+'</div>';
 }
+function memberBusinesses(items){
+  if(!(items||[]).length)return '<p class="muted">No business memberships.</p>';
+  return '<div class="memberDetailList">'+items.map(b=>'<article class="memberDetailItem"><div class="rowHeader"><strong>'+esc(b.name||('Business '+b.business_id))+'</strong><span class="status">'+(b.active?'active':'inactive')+'</span></div><span class="muted">#'+Number(b.business_id)+' · '+esc(b.membership_role||'member')+' · '+esc(b.country_code||'')+(b.currency_code?' · '+esc(b.currency_code):'')+'</span>'+(b.territory_name?'<span class="muted">'+esc(b.territory_name)+'</span>':'')+((b.profile_bindings||[]).length?'<div class="memberProfiles">'+b.profile_bindings.map(x=>'<span>'+esc(profileRoleLabel(x.role))+' · '+esc(x.status||'unknown')+(x.is_primary?' · primary':'')+'</span>').join('')+'</div>':'<span class="muted">No active profile binding recorded.</span>')+'</article>').join('')+'</div>';
+}
 function memberTimeline(items){
   if(!(items||[]).length)return '<p class="muted">No recorded activity.</p>';
   return '<div class="memberTimeline">'+items.map(e=>'<article class="memberTimelineItem"><div><strong>'+esc(e.label||readableCode(e.code||'activity'))+'</strong><span>'+esc(memberDate(e.created_at))+'</span></div><p class="muted">'+[e.role?profileRoleLabel(e.role):'',e.status||'',e.territory_name||'',e.actor_name?('by '+e.actor_name):''].filter(Boolean).map(esc).join(' · ')+'</p>'+(e.reason?'<p>'+esc(e.reason)+'</p>':'')+'</article>').join('')+'</div>';
@@ -254,6 +258,7 @@ async function memberDetailPanel(accountId){
     +'<section class="memberDetailSection"><h3>Profiles</h3>'+memberDetailProfiles(data.profiles)+'</section>'
     +'<section class="memberDetailSection"><h3>Applications</h3>'+memberDetailApplications(data.applications)+'</section>'
     +'<section class="memberDetailSection"><h3>Authorizations</h3>'+memberDetailAuthorizations(data.authorizations)+'</section>'
+    +'<section class="memberDetailSection"><h3>Businesses & memberships</h3><p class="muted">Shows economic workspaces this member belongs to and their profile bindings. Financial balances and payment credentials are not exposed here.</p>'+memberBusinesses(data.businesses)+'</section>'
     +'<section class="memberDetailSection"><h3>Admin authority</h3><p class="muted">Admin authority is shown separately from marketplace profiles.</p>'+memberAdminRoles(data.admin_roles)+'</section>'
     +'<section class="memberDetailSection"><h3>Activity timeline</h3><p class="muted">Security entries show event type and time only. Raw session IDs, IP data and evidence are never exposed.</p>'+memberTimeline(data.timeline)+'</section>'
     +actions;
