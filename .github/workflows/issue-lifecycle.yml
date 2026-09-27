@@ -9,7 +9,7 @@ on:
       - "AGENTS.md"
       - "docs/operations/ISSUE_LIFECYCLE.md"
   issues:
-    types: [opened, reopened, closed, labeled]
+    types: [opened, reopened, closed, labeled, unlabeled, demilestoned]
   create:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, closed]
@@ -215,6 +215,37 @@ jobs:
                 if (statusNames.has(added)) {
                   await setStatus(issue.number, added, milestoneNumber);
                 }
+                return;
+              }
+
+              if (action === 'unlabeled') {
+                const removed = context.payload.label?.name;
+                if (statusNames.has(removed)) {
+                  const refreshed = await github.rest.issues.get({
+                    owner,
+                    repo,
+                    issue_number: issue.number
+                  });
+                  const remaining = labelNames(refreshed.data).filter((name) => statusNames.has(name));
+                  const target = refreshed.data.state === 'closed'
+                    ? 'status:done'
+                    : (remaining[0] || 'status:open');
+                  await setStatus(issue.number, target, milestoneNumber);
+                }
+                return;
+              }
+
+              if (action === 'demilestoned') {
+                const refreshed = await github.rest.issues.get({
+                  owner,
+                  repo,
+                  issue_number: issue.number
+                });
+                const current = labelNames(refreshed.data).filter((name) => statusNames.has(name));
+                const target = refreshed.data.state === 'closed'
+                  ? 'status:done'
+                  : (current[0] || 'status:open');
+                await setStatus(issue.number, target, milestoneNumber);
               }
               return;
             }
