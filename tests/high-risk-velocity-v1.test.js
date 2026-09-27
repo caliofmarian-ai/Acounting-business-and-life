@@ -82,7 +82,7 @@ test('registry covers every P0 mutation family with burst and sustained limits',
     {windowSeconds:86400,maxAttempts:40}
   ]);
   for(const action of [
-    'order_cancel','service_job_create','service_job_cancel','refund_request',
+    'order_cancel','service_job_create','service_job_cancel','service_exact_location_access','refund_request',
     'payout_destination_change','upload_private','upload_public','incident_note',
     'review_submit','invitation_create','referral_event_account','referral_event_public',
     'account_location_change','store_location_change','courier_location_update'
@@ -136,7 +136,7 @@ test('high-risk routes use the shared limiter and return Retry-After',()=>{
     auth:['referral_event_account','referral_event_public','account_location_change','upload_public'],
     orders:['order_create','order_cancel'],
     marketplace:['order_create','order_cancel','store_location_change','upload_public'],
-    services:['service_job_create','service_job_cancel','review_submit','upload_private','upload_public'],
+    services:['service_job_create','service_job_cancel','service_exact_location_access','review_submit','upload_private','upload_public'],
     payments:['refund_request','payout_destination_change'],
     governance:['invitation_create','upload_private'],
     delivery:['store_location_change','courier_location_update','upload_private'],

@@ -1,5 +1,6 @@
 import express from 'express';
 import pg from 'pg';
+import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,13 @@ import { marketplaceFetch,startEmbeddedMarketplace,stopEmbeddedMarketplace } fro
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
 import {accountsBlocked,blockAccount,ensureTrustSafetySchema,hasActiveBlock,listBlockedAccounts,unblockAccount} from './trust-safety-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {accountGeographySnapshot} from './account-geography.js';
+import {
+  coarseServiceAreaFromGeography,
+  ensureServiceLocationPrivacySchema,
+  redactProviderServiceJob,
+  requireProviderExactLocation
+} from './service-location-privacy-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,6 +35,7 @@ let shuttingDown = false;
 function clean(v,max=600){return String(v??'').trim().slice(0,max)}
 function authHeader(req){return req.headers.authorization||''}
 function numberOrNull(v){if(v===''||v==null)return null;const x=Number(v);return Number.isFinite(x)?x:null}
+const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||crypto.randomUUID(),120);
 export function isServicesOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
   if(pathname==='/services.css'||pathname==='/services-ui.js')return true;
@@ -145,6 +154,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
     service_label TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL,
     service_location TEXT NOT NULL DEFAULT '',
+    coarse_location TEXT NOT NULL DEFAULT '',
     requested_window TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'requested',
     quote_amount NUMERIC(12,2),
@@ -189,7 +199,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
     ('tailoring','Tailoring',FALSE,130),('computer_repair','Computer repair',FALSE,140),('phone_repair','Phone repair',FALSE,150),
     ('handyman','General handyman',FALSE,160)
   ON CONFLICT(code) DO UPDATE SET name=EXCLUDED.name,credential_gate=EXCLUDED.credential_gate,sort_order=EXCLUDED.sort_order;
-`)}
+`);await ensureServiceLocationPrivacySchema(pool)}
 
 async function rating(accountId){const r=await pool.query(`SELECT COUNT(*)::int review_count,ROUND(AVG(overall)::numeric,2) rating FROM service_reviews WHERE provider_account_id=$1 AND moderation_status='published'`,[accountId]);return{review_count:Number(r.rows[0]?.review_count||0),rating:r.rows[0]?.rating==null?null:Number(r.rows[0].rating)}}
 async function publicProvider(accountId){const q=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url,pr.visibility FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE WHERE a.id=$1 AND pr.visibility='public'`,[accountId]);if(!q.rowCount)return null;const [services,credentials,portfolio,rate]=await Promise.all([pool.query(`SELECT c.code,c.name,s.service_label FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name,s.service_label`,[accountId]),pool.query(`SELECT credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status FROM profile_credentials WHERE account_id=$1 AND verification_status IN ('verified','submitted','unverified','expired') ORDER BY verification_status='verified' DESC,created_at DESC`,[accountId]),pool.query(`SELECT p.id,p.title,p.description,p.image_data_url,p.approximate_date,p.linked_job_id,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 AND (p.linked_job_id IS NULL OR p.customer_publication_consent=TRUE) ORDER BY p.created_at DESC LIMIT 20`,[accountId]),rating(accountId)]);const base=q.rows[0];return{...base,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,...(base.public_reputation_enabled?rate:{rating:null,review_count:0})}}
@@ -222,15 +232,35 @@ app.put('/api/service-provider/services',body,async(req,res,next)=>{try{const me
 app.post('/api/service-provider/credentials',body,async(req,res,next)=>{try{const me=await requireProvider(req),type=clean(req.body?.credential_type,60);if(!['prc_license','tesda_nc_coc','diploma_vocational','training_certificate','experience_certificate','other'].includes(type))return res.status(400).json({error:'Choose a credential type'});if(!clean(req.body?.title,200))return res.status(400).json({error:'Credential title is required'});const evidence=validateEvidence(req.body?.evidence_data_url);await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'service_credential',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO profile_credentials(account_id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,evidence_data_url,verification_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'submitted') RETURNING id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,created_at`,[me.account.id,type,clean(req.body.title,200),clean(req.body?.issuing_body,200),clean(req.body?.reference_number,120),req.body?.issue_date||null,req.body?.expiry_date||null,evidence]);res.status(201).json(rows[0])}catch(e){next(e)}})
 app.post('/api/service-provider/portfolio',body,async(req,res,next)=>{try{const me=await requireProvider(req);const image=validateImage(req.body?.image_data_url);if(!image||!clean(req.body?.title,160))return res.status(400).json({error:'Portfolio title and image are required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_public',subjectType:'service_portfolio',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO service_portfolio(account_id,title,description,category_id,image_data_url,approximate_date,customer_publication_consent) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[me.account.id,clean(req.body.title,160),clean(req.body?.description,800),req.body?.category_id?Number(req.body.category_id):null,image,req.body?.approximate_date||null,Boolean(req.body?.customer_publication_consent)]);res.status(201).json(rows[0])}catch(e){next(e)}})
 
-app.post('/api/services/jobs',body,async(req,res,next)=>{try{const me=await requireCustomer(req),providerId=Number(req.body?.provider_account_id),categoryId=Number(req.body?.category_id);if(providerId===Number(me.account.id))return res.status(409).json({error:'You cannot request your own service'});const provider=await publicProvider(providerId);if(!provider)return res.status(404).json({error:'Service Provider is not available'});if(await accountsBlocked(pool,me.account.id,providerId,'local_services'))return res.status(409).json({error:'New Local Services requests are unavailable between these accounts. Existing jobs and history remain available.'});if(!clean(req.body?.description,1500))return res.status(400).json({error:'Describe the work you need'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'service_job_create',subjectType:'service_provider',subjectId:providerId});const{rows}=await pool.query(`INSERT INTO service_jobs(customer_account_id,provider_account_id,category_id,service_label,description,service_location,requested_window,status) VALUES($1,$2,$3,$4,$5,$6,$7,'requested') RETURNING *`,[me.account.id,providerId,Number.isInteger(categoryId)?categoryId:null,clean(req.body?.service_label,120),clean(req.body.description,1500),clean(req.body?.service_location||me.account.address,400),clean(req.body?.requested_window,300)]);res.status(201).json(rows[0])}catch(e){next(e)}})
+app.post('/api/services/jobs',body,async(req,res,next)=>{try{
+  const me=await requireCustomer(req),providerId=Number(req.body?.provider_account_id),categoryId=Number(req.body?.category_id);
+  if(providerId===Number(me.account.id))return res.status(409).json({error:'You cannot request your own service'});
+  const provider=await publicProvider(providerId);
+  if(!provider)return res.status(404).json({error:'Service Provider is not available'});
+  if(await accountsBlocked(pool,me.account.id,providerId,'local_services'))return res.status(409).json({error:'New Local Services requests are unavailable between these accounts. Existing jobs and history remain available.'});
+  const description=clean(req.body?.description,1500),exactLocation=clean(req.body?.service_location,400);
+  if(!description)return res.status(400).json({error:'Describe the work you need'});
+  if(!exactLocation)return res.status(400).json({error:'Enter the exact service address. It stays private until you accept a quote.'});
+  const geography=await accountGeographySnapshot(pool,me.account.id);
+  const coarseLocation=coarseServiceAreaFromGeography(geography,{companyTest:me.account.account_mode==='company_test'});
+  await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'service_job_create',subjectType:'service_provider',subjectId:providerId});
+  const{rows}=await pool.query(`
+    INSERT INTO service_jobs(
+      customer_account_id,provider_account_id,category_id,service_label,description,
+      service_location,coarse_location,requested_window,status
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'requested') RETURNING *
+  `,[me.account.id,providerId,Number.isInteger(categoryId)?categoryId:null,clean(req.body?.service_label,120),description,exactLocation,coarseLocation,clean(req.body?.requested_window,300)]);
+  res.status(201).json(rows[0]);
+}catch(e){next(e)}})
 app.get('/api/services/jobs/mine',async(req,res,next)=>{try{
   const me=await identity(req),id=Number(me.account.id);
   if(String(req.query.view||'')==='provider_home'){
     if(!enabled(me,'service_provider'))return res.status(403).json({error:'Service Provider profile required'});
     const{rows}=await pool.query(`
-      SELECT j.id,j.customer_account_id,j.provider_account_id,j.service_label,j.status,j.quote_amount,j.final_price,j.currency_code,
+      SELECT j.id,j.customer_account_id,j.provider_account_id,j.service_label,j.coarse_location,j.status,j.quote_amount,j.final_price,j.currency_code,
              j.scheduled_at,j.customer_confirmed_at,j.provider_completed_at AS completed_at,j.updated_at,j.created_at,
-             c.name category,cu.display_name customer_name
+             c.name category,cu.display_name customer_name,
+             (j.status IN ('accepted','scheduled','in_progress') AND BTRIM(j.service_location)<>'') exact_location_available
         FROM service_jobs j
         LEFT JOIN service_categories c ON c.id=j.category_id
         JOIN accounts cu ON cu.id=j.customer_account_id
@@ -273,12 +303,69 @@ app.get('/api/services/jobs/mine',async(req,res,next)=>{try{
     `,[id]);
     return res.json(rows);
   }
-  const{rows}=await pool.query(`SELECT j.*,c.name category,a.display_name provider_name,cu.display_name customer_name FROM service_jobs j LEFT JOIN service_categories c ON c.id=j.category_id JOIN accounts a ON a.id=j.provider_account_id JOIN accounts cu ON cu.id=j.customer_account_id WHERE j.customer_account_id=$1 OR j.provider_account_id=$1 ORDER BY j.created_at DESC LIMIT 200`,[id]);
-  res.json(rows)
+  const[customerJobs,providerJobs]=await Promise.all([
+    pool.query(`SELECT j.*,c.name category,a.display_name provider_name,cu.display_name customer_name FROM service_jobs j LEFT JOIN service_categories c ON c.id=j.category_id JOIN accounts a ON a.id=j.provider_account_id JOIN accounts cu ON cu.id=j.customer_account_id WHERE j.customer_account_id=$1 ORDER BY j.created_at DESC LIMIT 200`,[id]),
+    pool.query(`
+      SELECT to_jsonb(j)-'service_location' job,c.name category,a.display_name provider_name,cu.display_name customer_name,
+             (j.status IN ('accepted','scheduled','in_progress') AND BTRIM(j.service_location)<>'') exact_location_available
+        FROM service_jobs j
+        LEFT JOIN service_categories c ON c.id=j.category_id
+        JOIN accounts a ON a.id=j.provider_account_id
+        JOIN accounts cu ON cu.id=j.customer_account_id
+       WHERE j.provider_account_id=$1
+       ORDER BY j.created_at DESC
+       LIMIT 200
+    `,[id])
+  ]);
+  const providerRows=providerJobs.rows.map(row=>({...row.job,category:row.category,provider_name:row.provider_name,customer_name:row.customer_name,service_location:null,exact_location_available:Boolean(row.exact_location_available)}));
+  res.json([...customerJobs.rows,...providerRows].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,200))
 }catch(e){next(e)}})
-app.post('/api/service-provider/jobs/:id/quote',body,async(req,res,next)=>{try{const me=await requireProvider(req),id=Number(req.params.id),amount=Number(req.body?.quote_amount);if(!Number.isFinite(amount)||amount<0)return res.status(400).json({error:'Valid quote amount required'});const r=await pool.query(`UPDATE service_jobs SET status='quoted',quote_amount=$1,quote_note=$2,updated_at=NOW() WHERE id=$3 AND provider_account_id=$4 AND status IN ('requested','provider_reviewing','quoted') RETURNING *`,[amount,clean(req.body?.quote_note,800),id,me.account.id]);if(!r.rowCount)return res.status(409).json({error:'Job cannot be quoted from its current state'});res.json(r.rows[0])}catch(e){next(e)}})
+app.post('/api/service-provider/jobs/:id/quote',body,async(req,res,next)=>{try{
+  const me=await requireProvider(req),id=Number(req.params.id),amount=Number(req.body?.quote_amount);
+  if(!Number.isFinite(amount)||amount<0)return res.status(400).json({error:'Valid quote amount required'});
+  const r=await pool.query(`UPDATE service_jobs SET status='quoted',quote_amount=$1,quote_note=$2,updated_at=NOW() WHERE id=$3 AND provider_account_id=$4 AND status IN ('requested','provider_reviewing','quoted') RETURNING *`,[amount,clean(req.body?.quote_note,800),id,me.account.id]);
+  if(!r.rowCount)return res.status(409).json({error:'Job cannot be quoted from its current state'});
+  res.json(redactProviderServiceJob(r.rows[0]));
+}catch(e){next(e)}})
+app.get('/api/service-provider/jobs/:id/exact-location',async(req,res,next)=>{try{
+  const me=await requireProvider(req),jobId=Number(req.params.id);
+  if(!Number.isInteger(jobId)||jobId<1)return res.status(400).json({error:'Service job id is invalid'});
+  await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'service_exact_location_access',subjectType:'service_job',subjectId:jobId});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const job=await client.query(`SELECT id,customer_account_id,provider_account_id,status,service_location,coarse_location FROM service_jobs WHERE id=$1 AND provider_account_id=$2 FOR SHARE`,[jobId,me.account.id]);
+    const row=job.rows[0],exactLocation=requireProviderExactLocation(row,me.account.id);
+    const audit=await client.query(`
+      INSERT INTO service_job_sensitive_access_events(
+        job_id,actor_account_id,subject_account_id,actor_context,event_code,
+        job_status,purpose_code,request_correlation_id
+      ) VALUES($1,$2,$3,'service_provider','exact_service_location_viewed',$4,'active_job_fulfilment',$5)
+      RETURNING id,created_at
+    `,[row.id,me.account.id,row.customer_account_id,row.status,correlation(req)]);
+    await client.query('COMMIT');
+    res.json({
+      job_id:Number(row.id),service_location:exactLocation,coarse_location:row.coarse_location,
+      job_status:row.status,purpose_code:'active_job_fulfilment',
+      access_event_id:Number(audit.rows[0].id),accessed_at:audit.rows[0].created_at,
+      access_expires_when:'job_leaves_accepted_scheduled_or_in_progress'
+    });
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+}catch(e){next(e)}})
 app.post('/api/services/jobs/:id/accept-quote',body,async(req,res,next)=>{try{const me=await requireCustomer(req);const r=await pool.query(`UPDATE service_jobs SET status='accepted',updated_at=NOW() WHERE id=$1 AND customer_account_id=$2 AND status='quoted' RETURNING *`,[Number(req.params.id),me.account.id]);if(!r.rowCount)return res.status(409).json({error:'Quote is not available for acceptance'});res.json(r.rows[0])}catch(e){next(e)}})
-app.post('/api/service-provider/jobs/:id/status',body,async(req,res,next)=>{try{const me=await requireProvider(req),status=clean(req.body?.status,40);if(!['provider_reviewing','scheduled','in_progress','completed','cancelled','disputed'].includes(status))return res.status(400).json({error:'Unsupported job status'});const job=await pool.query(`SELECT * FROM service_jobs WHERE id=$1 AND provider_account_id=$2`,[Number(req.params.id),me.account.id]);if(!job.rowCount)return res.status(404).json({error:'Job not found'});const current=job.rows[0];const allowed={requested:['provider_reviewing','cancelled'],provider_reviewing:['scheduled','cancelled'],accepted:['scheduled','in_progress','cancelled'],scheduled:['in_progress','cancelled'],in_progress:['completed','disputed'],quoted:['cancelled']}[current.status]||[];if(!allowed.includes(status))return res.status(409).json({error:`Cannot move job from ${current.status} to ${status}`});if(status==='cancelled')await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'service_job_cancel',subjectType:'service_job',subjectId:current.id});const finalPrice=status==='completed'?(numberOrNull(req.body?.final_price)??numberOrNull(current.quote_amount)):current.final_price;const{rows}=await pool.query(`UPDATE service_jobs SET status=$1,scheduled_at=CASE WHEN $1='scheduled' THEN COALESCE($2::timestamptz,scheduled_at) ELSE scheduled_at END,final_price=$3,provider_completed_at=CASE WHEN $1='completed' THEN NOW() ELSE provider_completed_at END,cancelled_at=CASE WHEN $1='cancelled' THEN NOW() ELSE cancelled_at END,cancellation_reason=CASE WHEN $1='cancelled' THEN $4 ELSE cancellation_reason END,updated_at=NOW() WHERE id=$5 RETURNING *`,[status,req.body?.scheduled_at||null,finalPrice,clean(req.body?.reason,500),current.id]);res.json(rows[0])}catch(e){next(e)}})
+app.post('/api/service-provider/jobs/:id/status',body,async(req,res,next)=>{try{
+  const me=await requireProvider(req),status=clean(req.body?.status,40);
+  if(!['provider_reviewing','scheduled','in_progress','completed','cancelled','disputed'].includes(status))return res.status(400).json({error:'Unsupported job status'});
+  const job=await pool.query(`SELECT * FROM service_jobs WHERE id=$1 AND provider_account_id=$2`,[Number(req.params.id),me.account.id]);
+  if(!job.rowCount)return res.status(404).json({error:'Job not found'});
+  const current=job.rows[0];
+  const allowed={requested:['provider_reviewing','cancelled'],provider_reviewing:['cancelled'],accepted:['scheduled','in_progress','cancelled'],scheduled:['in_progress','cancelled'],in_progress:['completed','disputed'],quoted:['cancelled']}[current.status]||[];
+  if(!allowed.includes(status))return res.status(409).json({error:`Cannot move job from ${current.status} to ${status}`});
+  if(status==='cancelled')await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'service_job_cancel',subjectType:'service_job',subjectId:current.id});
+  const finalPrice=status==='completed'?(numberOrNull(req.body?.final_price)??numberOrNull(current.quote_amount)):current.final_price;
+  const{rows}=await pool.query(`UPDATE service_jobs SET status=$1,scheduled_at=CASE WHEN $1='scheduled' THEN COALESCE($2::timestamptz,scheduled_at) ELSE scheduled_at END,final_price=$3,provider_completed_at=CASE WHEN $1='completed' THEN NOW() ELSE provider_completed_at END,cancelled_at=CASE WHEN $1='cancelled' THEN NOW() ELSE cancelled_at END,cancellation_reason=CASE WHEN $1='cancelled' THEN $4 ELSE cancellation_reason END,updated_at=NOW() WHERE id=$5 RETURNING *`,[status,req.body?.scheduled_at||null,finalPrice,clean(req.body?.reason,500),current.id]);
+  res.json(redactProviderServiceJob(rows[0]));
+}catch(e){next(e)}})
 app.post('/api/services/jobs/:id/confirm-completion',body,async(req,res,next)=>{try{const me=await requireCustomer(req),id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`UPDATE service_jobs SET customer_confirmed_at=COALESCE(customer_confirmed_at,NOW()),updated_at=NOW() WHERE id=$1 AND customer_account_id=$2 AND status='completed' RETURNING *`,[id,me.account.id]);if(!r.rowCount)throw Object.assign(new Error('Completed job not available for confirmation'),{status:409});const j=r.rows[0];await recordMonetizableCompletion(client,{serviceScope:'local_services',subjectType:'account',subjectId:j.provider_account_id,sourceType:'service_job',sourceId:j.id,completedAt:j.customer_confirmed_at,grossValue:j.final_price??j.quote_amount??0,currencyCode:j.currency_code||'PHP'});await client.query('COMMIT');res.json(j)}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 app.post('/api/services/jobs/:id/review',body,async(req,res,next)=>{try{const me=await requireCustomer(req),jobId=Number(req.params.id);const j=await pool.query(`SELECT * FROM service_jobs WHERE id=$1 AND customer_account_id=$2 AND status='completed' AND customer_confirmed_at IS NOT NULL`,[jobId,me.account.id]);if(!j.rowCount)return res.status(409).json({error:'Review is available only after a completed, confirmed service job'});const vals=['workmanship','reliability','communication','professionalism','property_care','price_transparency','overall'].map(k=>Number(req.body?.[k]));if(vals.some(x=>!Number.isInteger(x)||x<1||x>5))return res.status(400).json({error:'Every rating must be from 1 to 5'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'review_submit',subjectType:'service_job',subjectId:jobId});const{rows}=await pool.query(`INSERT INTO service_reviews(job_id,reviewer_account_id,provider_account_id,workmanship,reliability,communication,professionalism,property_care,price_transparency,overall,review_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(job_id) DO NOTHING RETURNING *`,[jobId,me.account.id,j.rows[0].provider_account_id,...vals,clean(req.body?.review_text,1200)]);if(!rows.length)return res.status(409).json({error:'This job has already been reviewed'});res.status(201).json(rows[0])}catch(e){next(e)}})
 

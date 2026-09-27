@@ -39,7 +39,7 @@ Applies to current public Service Provider discovery and service-job workflow.
 ## Inputs / evidence
 
 - Provider profile/services.
-- Service request description/location/window.
+- Service request description, official coarse area, private exact address and window.
 - Quote amount/note.
 - Schedule/status.
 - Final price.
@@ -49,23 +49,29 @@ Applies to current public Service Provider discovery and service-job workflow.
 ## Procedure
 
 1. Customer discovers a public Service Provider/category and reviews public profile information.
-2. Customer submits a service request with enough information to understand the work.
-3. Provider reviews request and may move into review/quote flow.
-4. Provider sends a clear quote amount and note.
-5. Customer accepts the quote before work proceeds through accepted/scheduled/in-progress states.
-6. Provider schedules/starts work using allowed state transitions.
-7. Provider performs the work within accepted scope and records final price when completing if applicable.
-8. Provider marks job Completed only after the work is actually completed.
-9. Customer separately confirms completion.
-10. Only after Completed + Customer confirmed may Customer submit one verified review.
-11. Public reputation contributes only according to provider's public-reputation setting and moderation rules.
-12. Handle disputes/safety/privacy problems through Incident/support rather than manipulating review/status history.
+2. Customer submits a service request with enough information to understand the work. The work description must not contain an address or private contact details.
+3. Before quote acceptance, the Provider receives only the Customer's official coarse barangay/area. The exact address remains private.
+4. Provider reviews request and may move into review/quote flow.
+5. Provider sends a clear quote amount and note.
+6. Customer accepts the quote before work proceeds through accepted/scheduled/in-progress states.
+7. The assigned Provider intentionally requests the exact address only for fulfilment. Each successful access is independently logged.
+8. Provider schedules/starts work using allowed state transitions.
+9. Provider performs the work within accepted scope and records final price when completing if applicable.
+10. Provider marks job Completed only after the work is actually completed. Exact-address access expires immediately when the job leaves accepted/scheduled/in-progress status.
+11. Customer separately confirms completion.
+12. Only after Completed + Customer confirmed may Customer submit one verified review.
+13. Public reputation contributes only according to provider's public-reputation setting and moderation rules.
+14. Handle disputes/safety/privacy problems through Incident/support rather than manipulating review/status history.
 
 ## Control points
 
 - Provider cannot request own service.
 - Quote amount must be valid.
 - Invalid job-state jumps are blocked.
+- `provider_reviewing` cannot bypass Customer quote acceptance and move directly to `scheduled`.
+- Provider list, quote and status payloads never contain the exact address.
+- Exact-address access is assignment-, purpose- and state-scoped, rate-limited and audited.
+- Completed, cancelled, disputed, requested, provider-reviewing and quoted jobs cannot release the exact address.
 - Review requires completed + customer_confirmed.
 - One review per job.
 - Profile visibility and public reputation are separate controls.
@@ -93,6 +99,8 @@ Applies to current public Service Provider discovery and service-job workflow.
 - Services/categories.
 - Credentials/evidence/status.
 - Job/request/quote/status.
+- Privacy-safe coarse area and Customer-owned exact address.
+- Provider exact-address access event, actor, Customer subject, job-status snapshot, purpose and correlation identifier; the audit record does not duplicate the address.
 - Customer confirmation.
 - Review.
 - Portfolio consent.
