@@ -40,7 +40,7 @@ test('Members directory V4 keeps search filters paging and clear member hierarch
   assert.match(ui,/data-member-page="next"/);
   assert.match(ui,/memberAvatarSmall/);
   assert.match(ui,/Open member/);
-  assert.match(ui,/Private addresses, passwords, raw sessions, IP data and uploaded evidence stay hidden/);
+  assert.match(ui,/Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here/);
 });
 
 test('Members UX V4 preserves V1-V3 sensitive action and permission-gated UI hooks',()=>{
