@@ -15,6 +15,9 @@ Minimum coordination rules:
 7. If blocked, use `status:blocked` and record the concrete blocker in the issue.
 8. A merged PR does not automatically mean a parent/program issue is complete. Parent issues remain open until all acceptance criteria are satisfied.
 9. After merge, verify the exact deployed revision and production smoke evidence when the change affects runtime. Close only after acceptance is complete.
-10. Never store secrets, private evidence, raw credentials or personal sensitive data in GitHub issues, PRs, comments, logs or repository files.
+10. Preview is a temporary validation surface, not a second release branch. An exact-head Preview divergence is allowed only for an open PR time-slice; after merge/close, reconcile the shared Preview pointer back to current `main`.
+11. Never claim Preview success as production success. Record both the exact Preview SHA/deployment and the exact production `main` SHA/deployment for runtime changes.
+12. Keep intentional QA-only differences (isolated QA database, QA geography context, test credentials/providers) separate from code parity; never copy QA secrets or bypasses into production to make the environments look identical.
+13. Never store secrets, private evidence, raw credentials or personal sensitive data in GitHub issues, PRs, comments, logs or repository files.
 
 The common milestone `Business & Life — Active Work` is the repository-native active-work grouping. The lifecycle labels are the canonical workflow state even if a visual GitHub Projects board is later added as a mirror.
