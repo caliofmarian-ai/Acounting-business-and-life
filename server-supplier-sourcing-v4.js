@@ -222,25 +222,33 @@ export async function ensureSupplierSourcingV4Schema(pool){
        AND q.source_type='connected_supplier'
        AND q.supplier_business_id IS NOT NULL
        AND q.supplier_account_id=p.supplier_account_id;
-
-    WITH deterministic_supplier_binding AS (
-      SELECT pb.account_id,MIN(pb.business_id) business_id
-        FROM profile_business_bindings pb
-        JOIN business_memberships bm
-          ON bm.business_id=pb.business_id
-         AND bm.account_id=pb.account_id
-         AND bm.active=TRUE
-       WHERE pb.role='supplier'
-         AND pb.status='active'
-       GROUP BY pb.account_id
-      HAVING COUNT(*)=1
-    )
-    UPDATE purchase_orders p
-       SET supplier_business_id=d.business_id,updated_at=NOW()
-      FROM deterministic_supplier_binding d
-     WHERE p.supplier_business_id IS NULL
-       AND p.supplier_account_id=d.account_id;
   `);
+
+  const tenancy=await pool.query(
+    `SELECT to_regclass('public.profile_business_bindings') profile_business_bindings,
+            to_regclass('public.business_memberships') business_memberships`
+  );
+  if(tenancy.rows[0]?.profile_business_bindings&&tenancy.rows[0]?.business_memberships){
+    await pool.query(`
+      WITH deterministic_supplier_binding AS (
+        SELECT pb.account_id,MIN(pb.business_id) business_id
+          FROM profile_business_bindings pb
+          JOIN business_memberships bm
+            ON bm.business_id=pb.business_id
+           AND bm.account_id=pb.account_id
+           AND bm.active=TRUE
+         WHERE pb.role='supplier'
+           AND pb.status='active'
+         GROUP BY pb.account_id
+        HAVING COUNT(*)=1
+      )
+      UPDATE purchase_orders p
+         SET supplier_business_id=d.business_id,updated_at=NOW()
+        FROM deterministic_supplier_binding d
+       WHERE p.supplier_business_id IS NULL
+         AND p.supplier_account_id=d.account_id;
+    `);
+  }
 }
 
 export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
