@@ -159,6 +159,10 @@ test('critical scope survives territory inference and follows Incident links',()
   assert.match(admin,/triageTerritory=await effectiveIncidentTriageTerritory/);
   assert.match(admin,/FOR SHARE OF c/);
   assert.match(admin,/Country-level Trust & Safety authority is required for an unscoped case/);
+  const caseDetail=admin.slice(admin.indexOf("app.get('/api/admin/trust-cases/:id'"),admin.indexOf("app.patch('/api/admin/trust-cases/:id'"));
+  assert.doesNotMatch(caseDetail,/Promise\.all/);
+  assert.match(caseDetail,/A pg Client permits one in-flight query/);
+  assert.match(incidents,/if\(status>=500\)console\.error\(err\)/);
 });
 
 test('user and Admin UI state the emergency and external-reporting boundaries',()=>{

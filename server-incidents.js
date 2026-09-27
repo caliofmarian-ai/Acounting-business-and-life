@@ -275,7 +275,7 @@ function proxy(req,res,next){
   return deliveryFinanceApp(req,res,next);
 }
 app.use(proxy);
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:err.status?err.message:'Unexpected server error'};res.status(err.status||500).json(payload)});
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:status<500?err.message:'Unexpected server error'};res.status(status).json(payload)});
 
 let embeddedStartPromise=null;
 export async function startEmbeddedIncidents(){
