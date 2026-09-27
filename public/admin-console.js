@@ -263,6 +263,27 @@ function memberInternalContextMarkup(context,controls){
     +(notes.length?'<div class="memberTimeline memberNoteTimeline">'+notes.map(n=>'<article class="memberTimelineItem"><div><strong>'+esc(n.created_by_name||'Admin')+'</strong><span>'+esc(memberDate(n.created_at))+'</span></div><p>'+esc(n.note_text||'')+'</p></article>').join('')+'</div>':'<p class="muted">No internal notes yet.</p>')
     +'</section>';
 }
+
+function memberInitials(name){
+  const parts=String(name||'').trim().split(/\s+/).filter(Boolean);
+  return (parts.slice(0,2).map(x=>x[0]||'').join('')||'M').toUpperCase();
+}
+function memberDisclosure({id,title,summary='',count='',body='',open=false,tone=''}) {
+  return '<details class="memberDisclosure '+esc(tone||'')+'" id="'+esc(id)+'" '+(open?'open':'')+'>'
+    +'<summary><div class="memberDisclosureCopy"><span class="memberEyebrow">'+esc(open?'OVERVIEW':'DETAIL')+'</span><strong>'+esc(title)+'</strong>'+(summary?'<span>'+esc(summary)+'</span>':'')+'</div>'
+    +(count?'<span class="memberDisclosureCount">'+esc(count)+'</span>':'')+'</summary>'
+    +'<div class="memberDisclosureBody">'+body+'</div></details>';
+}
+function memberCompactContextSummary(data){
+  const support=data.context?.support?.available?Number(data.context.support.total||0):null;
+  const safety=data.context?.safety?.available?Number(data.context.safety.total||0):null;
+  const legal=data.context?.legal?.available?Number(data.context.legal.total||0):null;
+  const parts=[];
+  if(support!==null)parts.push(support+' Support ticket'+(support===1?'':'s'));
+  if(safety!==null)parts.push(safety+' safety case'+(safety===1?'':'s'));
+  if(legal!==null)parts.push(legal+' legal record'+(legal===1?'':'s'));
+  return parts.join(' · ')||'No additional operational context available';
+}
 async function memberDetailPanel(accountId){
   const data=await api('/api/admin/members/'+Number(accountId));
   state.memberDetail=data;
@@ -270,28 +291,47 @@ async function memberDetailPanel(accountId){
   const statusTarget=m.auth_status==='active'?'suspended':'active';
   const statusLabel=statusTarget==='suspended'?'Suspend account':'Reactivate account';
   const actions=(controls.manage_status||controls.revoke_sessions)
-    ?'<section class="memberDangerZone"><h3>Admin account controls</h3><p class="muted">Every action requires a reason, explicit confirmation and is written to Admin audit. Hard-delete is intentionally not available here.</p>'
+    ?'<details class="memberDangerZone memberControlDisclosure"><summary><div><span class="memberEyebrow">HIGH-IMPACT ACTIONS</span><strong>Account controls</strong><span>Reason + confirmation + audit are required.</span></div></summary><div class="memberControlBody"><p class="muted memberControlBoundary">Hard-delete is intentionally not available here.</p>'
       +(controls.manage_status?'<form id="memberStatusForm" class="adminForm memberControlForm" data-member-status="'+esc(statusTarget)+'"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why is this account action necessary?"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm this '+esc(statusLabel.toLowerCase())+' action for the selected member.</span></label><button class="'+(statusTarget==='suspended'?'danger':'primary')+'" type="submit">'+esc(statusLabel)+'</button><div data-member-control-result></div></form>':'')
       +(controls.revoke_sessions?'<form id="memberSessionsForm" class="adminForm memberControlForm"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why must active sessions be revoked?"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm signing this member out of all active sessions.</span></label><button class="secondary" type="submit">Sign out all active sessions</button><div data-member-control-result></div></form>':'')
-      +'</section>'
-    :'<section class="memberDangerZone"><h3>Admin account controls</h3><p class="muted">Your delegated Admin function is read-only for this member.</p></section>';
-  return hero()
+      +'</div></details>'
+    :'<section class="memberDangerZone memberReadOnlyControls"><span class="memberEyebrow">ACCOUNT CONTROLS</span><strong>Read-only access</strong><p class="muted">Your delegated Admin function cannot change this member account.</p></section>';
+
+  const identity='<div class="memberFacts"><span><b>Registered</b>'+esc(memberDate(m.created_at))+'</span><span><b>Last sign-in</b>'+esc(memberDate(s.last_session_at))+'</span><span><b>Country</b>'+esc(m.country_code||'Unknown')+'</span><span><b>Area</b>'+esc(m.path_text||m.geographic_name||'Not assigned')+'</span>'
+    +(m.account_mode==='company_test'?'<span><b>Account type</b>Company test'+(m.test_role?' · '+esc(profileRoleLabel(m.test_role)):'')+'</span>':'')+'</div>';
+  const adminAuthority='<div class="memberSubsection"><h4>Admin authority</h4><p class="muted">Admin authority stays separate from marketplace profiles.</p>'+memberAdminRoles(data.admin_roles)+'</div>';
+  const profileBody='<div class="memberSectionGrid"><div><h4>Profiles</h4>'+memberDetailProfiles(data.profiles)+'</div><div><h4>Businesses & memberships</h4><p class="muted">Financial balances and payment credentials are not exposed here.</p>'+memberBusinesses(data.businesses)+'</div></div>'
+    +'<div class="memberSectionGrid memberGovernanceGrid"><div><h4>Applications</h4>'+memberDetailApplications(data.applications)+'</div><div><h4>Authorizations</h4>'+memberDetailAuthorizations(data.authorizations)+'</div></div>';
+  const contextBody=memberSupportContextMarkup(data.context?.support)+memberSafetyContextMarkup(data.context?.safety)+memberLegalContextMarkup(data.context?.legal);
+  const notesBody=memberInternalContextMarkup(data.context?.internal,controls);
+  const activityBody='<p class="muted">Security entries show event type and time only. Raw session IDs, IP data and evidence are never exposed.</p>'+memberTimeline(data.timeline);
+
+  const detailNav='<nav class="memberDetailNav" aria-label="Member sections">'
+    +'<button type="button" data-member-jump="memberOverviewSection">Overview</button>'
+    +'<button type="button" data-member-jump="memberProfilesSection">Profiles & business</button>'
+    +(contextBody?'<button type="button" data-member-jump="memberContextSection">Support & safety</button>':'')
+    +(notesBody?'<button type="button" data-member-jump="memberNotesSection">Notes</button>':'')
+    +'<button type="button" data-member-jump="memberActivitySection">Activity</button></nav>';
+
+  const mainSections=
+    memberDisclosure({id:'memberOverviewSection',title:'Overview',summary:'Identity, area and Admin relationship',body:identity+adminAuthority,open:true})
+    +memberDisclosure({id:'memberProfilesSection',title:'Profiles & business',summary:(data.profiles||[]).length+' profile record(s) · '+(data.businesses||[]).length+' business membership(s)',count:String((data.profiles||[]).length+(data.businesses||[]).length),body:profileBody})
+    +(contextBody?memberDisclosure({id:'memberContextSection',title:'Support & safety',summary:memberCompactContextSummary(data),body:contextBody}):'')
+    +(notesBody?memberDisclosure({id:'memberNotesSection',title:'Internal notes & tags',summary:(data.context?.internal?.notes||[]).length+' note(s) · '+(data.context?.internal?.tags||[]).length+' tag(s)',count:String((data.context?.internal?.notes||[]).length+(data.context?.internal?.tags||[]).length),body:notesBody}):'')
+    +memberDisclosure({id:'memberActivitySection',title:'Activity timeline',summary:(data.timeline||[]).length+' recent event(s)',count:String((data.timeline||[]).length),body:activityBody});
+
+  const securityCard='<aside class="memberSecurityCard"><div><span class="memberEyebrow">SECURITY SNAPSHOT</span><h3>Account security</h3></div>'
+    +'<div class="memberSecurityFacts"><span><b>'+(m.email_verified_at?'Verified':'Not verified')+'</b>Email</span><span><b>'+(m.phone_verified_at?'Verified':'Not verified')+'</b>Phone</span><span><b>'+Number(s.active_session_count||0)+'</b>Active sessions</span><span><b>'+(s.password_configured?'Configured':'Not configured')+'</b>Password</span></div>'
+    +'<p class="muted">Last sign-in '+esc(memberDate(s.last_session_at))+'</p></aside>';
+
+  return '<div class="memberV4">'
     +'<button class="secondary memberBack" id="memberBack" type="button">← Back to Members</button>'
-    +'<section class="memberDetailHero"><div><span class="memberEyebrow">MEMBER DETAILS</span><h2>'+esc(m.display_name||('Account '+m.account_id))+'</h2><p>'+esc(m.email||'No email')+'</p><p class="muted">Account #'+Number(m.account_id||0)+' · '+esc(m.personal_id||'Personal ID unavailable')+'</p></div><span class="status">'+esc(m.auth_status||'unknown')+'</span></section>'
-    +'<div class="grid memberDetailMetrics"><div class="metric"><strong>'+(m.email_verified_at?'Verified':'Not verified')+'</strong><span>Email</span></div><div class="metric"><strong>'+(m.phone_verified_at?'Verified':'Not verified')+'</strong><span>Phone</span></div><div class="metric"><strong>'+Number(s.active_session_count||0)+'</strong><span>Active sessions</span></div><div class="metric"><strong>'+(s.password_configured?'Configured':'Not configured')+'</strong><span>Password</span></div></div>'
-    +'<section class="memberDetailSection"><h3>Identity & area</h3><div class="memberFacts"><span><b>Registered</b>'+esc(memberDate(m.created_at))+'</span><span><b>Last sign-in</b>'+esc(memberDate(s.last_session_at))+'</span><span><b>Country</b>'+esc(m.country_code||'Unknown')+'</span><span><b>Area</b>'+esc(m.path_text||m.geographic_name||'Not assigned')+'</span>'+(m.account_mode==='company_test'?'<span><b>Account type</b>Company test'+(m.test_role?' · '+esc(profileRoleLabel(m.test_role)):'')+'</span>':'')+'</div></section>'
-    +'<section class="memberDetailSection"><h3>Profiles</h3>'+memberDetailProfiles(data.profiles)+'</section>'
-    +'<section class="memberDetailSection"><h3>Applications</h3>'+memberDetailApplications(data.applications)+'</section>'
-    +'<section class="memberDetailSection"><h3>Authorizations</h3>'+memberDetailAuthorizations(data.authorizations)+'</section>'
-    +'<section class="memberDetailSection"><h3>Businesses & memberships</h3><p class="muted">Shows economic workspaces this member belongs to and their profile bindings. Financial balances and payment credentials are not exposed here.</p>'+memberBusinesses(data.businesses)+'</section>'
-    +'<section class="memberDetailSection"><h3>Admin authority</h3><p class="muted">Admin authority is shown separately from marketplace profiles.</p>'+memberAdminRoles(data.admin_roles)+'</section>'
-    +memberSupportContextMarkup(data.context?.support)
-    +memberSafetyContextMarkup(data.context?.safety)
-    +memberLegalContextMarkup(data.context?.legal)
-    +memberInternalContextMarkup(data.context?.internal,controls)
-    +'<section class="memberDetailSection"><h3>Activity timeline</h3><p class="muted">Security entries show event type and time only. Raw session IDs, IP data and evidence are never exposed.</p>'+memberTimeline(data.timeline)+'</section>'
-    +actions;
+    +'<section class="memberDetailHero memberDetailHeroV4"><div class="memberAvatar" aria-hidden="true">'+esc(memberInitials(m.display_name))+'</div><div class="memberHeroCopy"><span class="memberEyebrow">MEMBER DETAILS</span><h2>'+esc(m.display_name||('Account '+m.account_id))+'</h2><p>'+esc(m.email||'No email')+'</p><p class="muted">Account #'+Number(m.account_id||0)+' · '+esc(m.personal_id||'Personal ID unavailable')+'</p></div><span class="status memberHeroStatus">'+esc(m.auth_status||'unknown')+'</span></section>'
+    +detailNav
+    +'<div class="memberDetailWorkspace"><main class="memberDetailPrimary">'+mainSections+'</main><aside class="memberDetailRail">'+securityCard+actions+'</aside></div>'
+    +'</div>';
 }
+
 async function membersPanel(){
   if(state.memberDetailId)return memberDetailPanel(state.memberDetailId);
   const filters=state.memberFilters||{q:'',status:'',verification:'',profile:'',offset:0};
@@ -304,18 +344,32 @@ async function membersPanel(){
   const data=await api('/api/admin/members?'+params.toString());
   state.members=data;
   const scopeLabel=data.scope?.platform_wide?'Platform-wide':data.scope?.country_wide?'Philippines scope':((data.scope?.territory_ids||[]).length+' delegated territor'+((data.scope?.territory_ids||[]).length===1?'y':'ies'));
-  const form='<form id="memberSearchForm" class="adminForm memberSearchForm"><div class="memberFilterGrid">'
-    +'<label>Search<input name="q" value="'+esc(filters.q||'')+'" placeholder="Name, email, Account ID or Personal ID"></label>'
+  const activeFilterCount=[filters.status,filters.verification,filters.profile].filter(Boolean).length;
+  const form='<form id="memberSearchForm" class="adminForm memberSearchForm memberSearchFormV4">'
+    +'<div class="memberSearchPrimary"><label><span>Search members</span><input name="q" value="'+esc(filters.q||'')+'" placeholder="Name, email, Account ID or Personal ID"></label><button class="primary" type="submit">Search</button></div>'
+    +'<div class="memberFilterGrid memberFilterGridV4">'
     +'<label>Account status<select name="status"><option value="">All statuses</option><option value="active" '+(filters.status==='active'?'selected':'')+'>Active</option><option value="inactive" '+(filters.status==='inactive'?'selected':'')+'>Not active</option></select></label>'
     +'<label>Email<select name="verification"><option value="">All verification states</option><option value="verified" '+(filters.verification==='verified'?'selected':'')+'>Verified</option><option value="unverified" '+(filters.verification==='unverified'?'selected':'')+'>Not verified</option></select></label>'
     +'<label>Active profile<select name="profile"><option value="">All profiles</option>'+['customer','merchant','supplier','courier','service_provider'].map(role=>'<option value="'+role+'" '+(filters.profile===role?'selected':'')+'>'+esc(profileRoleLabel(role))+'</option>').join('')+'</select></label>'
-    +'</div><div class="memberSearchActions"><button class="primary" type="submit">Search members</button><button class="secondary" id="memberClearFilters" type="button">Clear</button></div></form>';
-  const list=rows(data.items,x=>'<article class="row memberRow"><div class="rowHeader"><div><strong>'+esc(x.display_name||('Account '+x.account_id))+'</strong><span class="memberId">#'+Number(x.account_id)+' · '+esc(x.personal_id||'Personal ID unavailable')+'</span></div><span class="status">'+esc(x.auth_status||'unknown')+'</span></div><span class="memberEmail">'+esc(x.email||'No email')+(x.email_verified_at?' · verified':' · not verified')+'</span><span class="muted">'+esc(x.path_text||x.geographic_name||'Area not assigned')+'</span>'+memberProfilesMarkup(x.profiles)+'<div class="memberMeta"><span>Registered '+esc(memberDate(x.created_at))+'</span><span>Last sign-in '+esc(memberDate(x.last_session_at))+'</span>'+(x.account_mode==='company_test'?'<span class="memberTestBadge">Company test account'+(x.test_role?' · '+esc(profileRoleLabel(x.test_role)):'')+'</span>':'')+'</div><div class="memberRowActions"><button class="secondary" type="button" data-member-open="'+Number(x.account_id)+'">View member</button></div></article>');
+    +'<div class="memberFilterClear"><span class="muted">'+(activeFilterCount?activeFilterCount+' active filter(s)':'No extra filters')+'</span><button class="secondary" id="memberClearFilters" type="button">Clear</button></div></div></form>';
+
+  const list=rows(data.items,x=>{
+    const name=x.display_name||('Account '+x.account_id);
+    return '<article class="row memberRow memberRowV4">'
+      +'<div class="memberAvatar memberAvatarSmall" aria-hidden="true">'+esc(memberInitials(name))+'</div>'
+      +'<div class="memberRowIdentity"><strong>'+esc(name)+'</strong><span class="memberEmail">'+esc(x.email||'No email')+(x.email_verified_at?' · verified':' · not verified')+'</span><span class="memberId">#'+Number(x.account_id)+' · '+esc(x.personal_id||'Personal ID unavailable')+'</span></div>'
+      +'<div class="memberRowContext"><span class="muted">'+esc(x.path_text||x.geographic_name||'Area not assigned')+'</span>'+memberProfilesMarkup(x.profiles)+'<div class="memberMeta"><span>Registered '+esc(memberDate(x.created_at))+'</span><span>Last sign-in '+esc(memberDate(x.last_session_at))+'</span>'+(x.account_mode==='company_test'?'<span class="memberTestBadge">Company test'+(x.test_role?' · '+esc(profileRoleLabel(x.test_role)):'')+'</span>':'')+'</div></div>'
+      +'<div class="memberRowEnd"><span class="status">'+esc(x.auth_status||'unknown')+'</span><button class="secondary" type="button" data-member-open="'+Number(x.account_id)+'">Open member</button></div>'
+      +'</article>';
+  });
   const start=Number(data.offset||0),end=Math.min(start+Number(data.items?.length||0),Number(data.total||0));
-  const paging='<div class="memberPaging"><span>'+esc(data.total||0)+' registered · showing '+(data.total?start+1:0)+'–'+end+' · '+esc(scopeLabel)+'</span><div><button class="secondary" type="button" data-member-page="prev" '+(start<=0?'disabled':'')+'>Previous</button><button class="secondary" type="button" data-member-page="next" '+(end>=Number(data.total||0)?'disabled':'')+'>Next</button></div></div>';
-  return hero()+'<p class="moduleIntro">Registered people visible inside your delegated Admin scope. Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here.</p>'
-    +'<div class="grid memberSummary"><div class="metric"><strong>'+esc(data.total||0)+'</strong><span>Registered members in scope</span></div><div class="metric"><strong>'+esc(scopeLabel)+'</strong><span>Directory scope</span></div></div>'
-    +form+paging+list+paging;
+  const paging='<div class="memberPaging memberPagingV4"><span>'+esc(data.total||0)+' registered · showing '+(data.total?start+1:0)+'–'+end+'</span><div><button class="secondary" type="button" data-member-page="prev" '+(start<=0?'disabled':'')+'>Previous</button><button class="secondary" type="button" data-member-page="next" '+(end>=Number(data.total||0)?'disabled':'')+'>Next</button></div></div>';
+
+  return '<div class="memberV4"><header class="memberDirectoryHeader"><div><span class="memberEyebrow">ADMIN DIRECTORY</span><h2>Members</h2><p>Find people, understand their platform relationship and open only the detail you need.</p></div><span class="memberScopePill">'+esc(scopeLabel)+'</span></header>'
+    +'<div class="memberSummaryV4"><div class="metric"><strong>'+esc(data.total||0)+'</strong><span>Registered in scope</span></div><div class="metric"><strong>'+Number(data.items?.length||0)+'</strong><span>Shown on this page</span></div><div class="metric memberScopeMetric"><strong>'+esc(scopeLabel)+'</strong><span>Directory scope</span></div></div>'
+    +form
+    +'<div class="memberListHeader"><strong>'+esc(data.total||0)+' members</strong><span class="muted">Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here.</span></div>'
+    +paging+list+paging+'</div>';
 }
 async function wireMembers(){
   if(state.memberDetailId){
@@ -331,6 +385,12 @@ async function wireMembers(){
     const tagForm=document.getElementById('memberTagForm');
     if(tagForm)tagForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(tagForm),out=tagForm.querySelector('[data-member-tag-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/tags',{method:'POST',body:JSON.stringify({tag:String(fd.get('tag')||'').trim()})});if(out)out.innerHTML='<div class="notice">Tag saved and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     document.querySelectorAll('[data-member-remove-tag]').forEach(button=>button.onclick=async()=>{try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/tags/'+encodeURIComponent(button.dataset.memberRemoveTag),{method:'DELETE'});await renderActive()}catch(err){showError(err)}});
+    document.querySelectorAll('[data-member-jump]').forEach(button=>button.onclick=()=>{
+      const target=document.getElementById(button.dataset.memberJump);
+      if(!target)return;
+      if(target.tagName==='DETAILS')target.open=true;
+      target.scrollIntoView({behavior:'smooth',block:'start'});
+    });
     return;
   }
   const form=document.getElementById('memberSearchForm');
