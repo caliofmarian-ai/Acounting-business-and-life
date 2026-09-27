@@ -34,6 +34,8 @@ test('Member detail reuses delegated scope and returns only safe security summar
   assert.match(block,/password_configured/);
   assert.match(block,/active_session_count/);
   assert.match(block,/SELECT event_code,created_at FROM auth_security_events/);
+  assert.match(block,/business_memberships/);
+  assert.match(block,/profile_business_bindings/);
   assert.doesNotMatch(block,/SELECT[^\n]*ip_hash/);
   assert.doesNotMatch(block,/SELECT[^\n]*session_id/);
   assert.doesNotMatch(block,/evidence_data_url/);
@@ -63,6 +65,8 @@ test('Members V2 UI provides a mobile detail workspace without destructive delet
   assert.match(ui,/Profiles/);
   assert.match(ui,/Applications/);
   assert.match(ui,/Authorizations/);
+  assert.match(ui,/Businesses & memberships/);
+  assert.match(ui,/Financial balances and payment credentials are not exposed here/);
   assert.match(ui,/Admin authority/);
   assert.match(ui,/Activity timeline/);
   assert.match(ui,/Sign out all active sessions/);
