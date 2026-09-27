@@ -320,3 +320,16 @@
 .memberControlForm{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 @media(min-width:700px){.memberFacts{grid-template-columns:repeat(2,minmax(0,1fr))}.memberDetailMetrics{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:520px){.memberDetailHero{flex-direction:column}.memberDetailHero .status{align-self:flex-start}.memberTimelineItem>div{display:grid;gap:3px}.memberTimelineItem>div span{white-space:normal}.memberRowActions button{width:100%}}
+
+
+/* ADMIN MEMBERS V3 */
+.memberContextSection .rowHeader,.memberInternalSection .rowHeader{align-items:flex-start}
+.memberContextSection .memberDetailItem button{justify-self:start}
+.memberTagList{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
+.memberTag{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:5px 8px;background:var(--panel2);font-size:10px}
+.memberTag button{border:0;background:transparent;color:var(--muted);font:inherit;line-height:1;cursor:pointer;padding:0}
+.memberCompactForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end;margin:10px 0}
+.memberCompactForm label{min-width:0}
+.memberNoteTimeline{margin-top:14px}
+.memberNoteTimeline .memberTimelineItem p{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:520px){.memberContextSection .memberDetailItem button{width:100%}.memberCompactForm{grid-template-columns:1fr}.memberCompactForm button{width:100%}}
