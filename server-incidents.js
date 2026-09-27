@@ -20,6 +20,8 @@ const IMAGE_MIMES = new Set(['image/jpeg','image/png','image/webp']);
 const PDF_MIME = 'application/pdf';
 const MAX_IMAGE_BYTES = 1_500_000;
 const MAX_PDF_BYTES = 3_000_000;
+const INCIDENT_HOURLY_LIMIT = 12;
+const INCIDENT_DAILY_LIMIT = 40;
 let deliveryFinanceApp=null;
 let deliveryFinanceReady=false;
 let shuttingDown = false;
@@ -101,6 +103,18 @@ async function validateIncidentRelation(db,relatedType,relatedId){
   };
   const q=await db.query(queries[relatedType],[relatedId]);
   if(!q.rowCount)throw Object.assign(new Error('The reported profile or listing no longer exists'),{status:404});
+}
+
+async function assertIncidentSubmissionAllowed(db,accountId){
+  const q=await db.query(`
+    SELECT COUNT(*) FILTER(WHERE submitted_at>=NOW()-INTERVAL '1 hour')::int hourly,
+           COUNT(*)::int daily
+      FROM incident_reports
+     WHERE reporter_account_id=$1 AND submitted_at>=NOW()-INTERVAL '24 hours'
+  `,[accountId]);
+  if(Number(q.rows[0]?.hourly||0)>=INCIDENT_HOURLY_LIMIT||Number(q.rows[0]?.daily||0)>=INCIDENT_DAILY_LIMIT){
+    throw Object.assign(new Error('Too many recent reports. Try again later or add information to an existing report.'),{status:429});
+  }
 }
 
 async function initDb(){
@@ -186,6 +200,7 @@ app.post('/api/incidents',body,async(req,res,next)=>{
     if(!category||description.length<10) throw Object.assign(new Error('Category and a clear description are required'),{status:400});
     if(!RELATED_TYPES.has(relatedType)) throw Object.assign(new Error('Unknown related incident type'),{status:400});
     if(relatedId!=null&&(!Number.isInteger(relatedId)||relatedId<1)) throw Object.assign(new Error('Related record ID must be a positive integer'),{status:400});
+    await assertIncidentSubmissionAllowed(client,me.account.id);
     await validateIncidentRelation(client,relatedType,relatedId);
     const attachments=validateAttachments(req.body?.attachments);
     await client.query('BEGIN');
