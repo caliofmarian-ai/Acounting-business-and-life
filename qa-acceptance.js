@@ -5357,7 +5357,11 @@ async function runSessionSecurityV2Acceptance({pool,base,secret}){
 
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
-  if(!config.enabled)return{status:'SKIPPED',wave:''};
+  if(!config.enabled){
+    console.log('QA_ACCEPTANCE_SKIPPED no_wave');
+    return{status:'SKIPPED',wave:''};
+  }
+  console.log('QA_ACCEPTANCE_START '+config.wave);
 
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
