@@ -238,6 +238,31 @@ function memberTimeline(items){
   if(!(items||[]).length)return '<p class="muted">No recorded activity.</p>';
   return '<div class="memberTimeline">'+items.map(e=>'<article class="memberTimelineItem"><div><strong>'+esc(e.label||readableCode(e.code||'activity'))+'</strong><span>'+esc(memberDate(e.created_at))+'</span></div><p class="muted">'+[e.role?profileRoleLabel(e.role):'',e.status||'',e.territory_name||'',e.actor_name?('by '+e.actor_name):''].filter(Boolean).map(esc).join(' · ')+'</p>'+(e.reason?'<p>'+esc(e.reason)+'</p>':'')+'</article>').join('')+'</div>';
 }
+function memberSupportContextMarkup(context){
+  if(!context?.available)return'';
+  const items=context.items||[];
+  return '<section class="memberDetailSection memberContextSection"><div class="rowHeader"><div><span class="memberEyebrow">PERMISSION-GATED</span><h3>Support history</h3></div><span class="status">'+Number(context.total||0)+' ticket(s)</span></div><p class="muted">Only tickets inside your Support scope are shown. Attachments and private message bodies stay inside Support.</p>'+(items.length?'<div class="memberDetailList">'+items.map(x=>'<article class="memberDetailItem"><div class="rowHeader"><strong>'+esc(x.subject||('Ticket #'+x.id))+'</strong><span class="status">'+esc(x.status||'unknown')+'</span></div><span class="muted">#'+Number(x.id)+' · '+esc(x.category||'support')+' · '+esc(x.priority||'normal')+(x.territory_name?' · '+esc(x.territory_name):'')+'</span><span class="memberMeta">Updated '+esc(memberDate(x.updated_at))+'</span><button class="secondary" type="button" data-member-support-ticket="'+Number(x.id)+'">Open in Support</button></article>').join('')+'</div>':'<p class="muted">No Support tickets in your delegated scope.</p>')+'</section>';
+}
+function memberSafetyContextMarkup(context){
+  if(!context?.available)return'';
+  const items=context.items||[];
+  return '<section class="memberDetailSection memberContextSection"><div class="rowHeader"><div><span class="memberEyebrow">PERMISSION-GATED</span><h3>Trust & Safety cases</h3></div><span class="status">'+Number(context.total||0)+' case(s)</span></div><p class="muted">Only case summaries inside your Trust & Safety scope are shown. Evidence and risk details stay inside Trust & Safety.</p>'+(items.length?'<div class="memberDetailList">'+items.map(x=>'<article class="memberDetailItem"><div class="rowHeader"><strong>'+esc(x.public_id||('Case #'+x.id))+' · '+esc(x.title||readableCode(x.case_type||'case'))+'</strong><span class="status">'+esc(x.severity||'moderate')+' · '+esc(x.status||'open')+'</span></div><span class="muted">'+esc((x.relation_types||[]).map(readableCode).join(', ')||'related account')+(x.territory_name?' · '+esc(x.territory_name):'')+'</span><span class="memberMeta">Last activity '+esc(memberDate(x.last_event_at))+'</span><button class="secondary" type="button" data-member-trust-case="'+Number(x.id)+'">Open in Trust & Safety</button></article>').join('')+'</div>':'<p class="muted">No Trust & Safety cases in your delegated scope.</p>')+'</section>';
+}
+function memberLegalContextMarkup(context){
+  if(!context?.available)return'';
+  const items=context.items||[];
+  return '<section class="memberDetailSection memberContextSection"><div class="rowHeader"><div><span class="memberEyebrow">PERMISSION-GATED</span><h3>Legal & consent history</h3></div><span class="status">'+Number(context.total||0)+' record(s)</span></div><p class="muted">This is a sanitized history. IP/device hashes, correlation IDs and document evidence are not exposed here.</p>'+(items.length?'<div class="memberDetailList">'+items.map(x=>'<article class="memberDetailItem"><div class="rowHeader"><strong>'+esc(x.title||readableCode(x.document_code||'legal document'))+'</strong><span class="status">'+esc(x.state||'unknown')+'</span></div><span class="muted">'+esc(x.version_label||'version unavailable')+' · '+esc(x.locale||'')+(x.role_context?' · '+esc(profileRoleLabel(x.role_context)):'')+'</span>'+(x.action_code?'<span class="muted">Action: '+esc(readableCode(x.action_code))+'</span>':'')+(x.purpose?'<span class="muted">Purpose: '+esc(x.purpose)+'</span>':'')+'<span class="memberMeta">'+(x.accepted_at?'Accepted '+esc(memberDate(x.accepted_at)):x.revoked_at?'Withdrawn '+esc(memberDate(x.revoked_at)):'Recorded '+esc(memberDate(x.created_at)))+'</span></article>').join('')+'</div>':'<p class="muted">No legal/consent history recorded.</p>')+'</section>';
+}
+function memberInternalContextMarkup(context,controls){
+  if(!controls?.manage_notes||!context?.available)return'';
+  const notes=context.notes||[],tags=context.tags||[];
+  return '<section class="memberDetailSection memberInternalSection"><div class="rowHeader"><div><span class="memberEyebrow">INTERNAL ADMIN ONLY</span><h3>Internal notes & tags</h3></div><span class="status">'+notes.length+' note(s)</span></div><p class="muted">Do not paste passwords, payment credentials, raw identity documents or private evidence here. Notes are append-only and every change is audited.</p>'
+    +'<div class="memberTagList">'+(tags.length?tags.map(t=>'<span class="memberTag">'+esc(t.tag)+' <button type="button" aria-label="Remove '+esc(t.tag)+'" data-member-remove-tag="'+esc(t.tag)+'">×</button></span>').join(''):'<span class="muted">No tags</span>')+'</div>'
+    +'<form id="memberTagForm" class="adminForm memberCompactForm"><label>Add tag<input name="tag" maxlength="40" required placeholder="e.g. pilot user"></label><button class="secondary" type="submit">Add tag</button><div data-member-tag-result></div></form>'
+    +'<form id="memberNoteForm" class="adminForm memberControlForm"><label>Add internal note<textarea name="note" minlength="3" maxlength="1200" required placeholder="Operational context only — no secrets or raw evidence"></textarea></label><button class="primary" type="submit">Add note</button><div data-member-note-result></div></form>'
+    +(notes.length?'<div class="memberTimeline memberNoteTimeline">'+notes.map(n=>'<article class="memberTimelineItem"><div><strong>'+esc(n.created_by_name||'Admin')+'</strong><span>'+esc(memberDate(n.created_at))+'</span></div><p>'+esc(n.note_text||'')+'</p></article>').join('')+'</div>':'<p class="muted">No internal notes yet.</p>')
+    +'</section>';
+}
 async function memberDetailPanel(accountId){
   const data=await api('/api/admin/members/'+Number(accountId));
   state.memberDetail=data;
@@ -260,6 +285,10 @@ async function memberDetailPanel(accountId){
     +'<section class="memberDetailSection"><h3>Authorizations</h3>'+memberDetailAuthorizations(data.authorizations)+'</section>'
     +'<section class="memberDetailSection"><h3>Businesses & memberships</h3><p class="muted">Shows economic workspaces this member belongs to and their profile bindings. Financial balances and payment credentials are not exposed here.</p>'+memberBusinesses(data.businesses)+'</section>'
     +'<section class="memberDetailSection"><h3>Admin authority</h3><p class="muted">Admin authority is shown separately from marketplace profiles.</p>'+memberAdminRoles(data.admin_roles)+'</section>'
+    +memberSupportContextMarkup(data.context?.support)
+    +memberSafetyContextMarkup(data.context?.safety)
+    +memberLegalContextMarkup(data.context?.legal)
+    +memberInternalContextMarkup(data.context?.internal,controls)
     +'<section class="memberDetailSection"><h3>Activity timeline</h3><p class="muted">Security entries show event type and time only. Raw session IDs, IP data and evidence are never exposed.</p>'+memberTimeline(data.timeline)+'</section>'
     +actions;
 }
@@ -295,6 +324,13 @@ async function wireMembers(){
     if(statusForm)statusForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(statusForm),out=statusForm.querySelector('[data-member-control-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/status',{method:'PATCH',body:JSON.stringify({status:statusForm.dataset.memberStatus,reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">Account status updated and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     const sessionsForm=document.getElementById('memberSessionsForm');
     if(sessionsForm)sessionsForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(sessionsForm),out=sessionsForm.querySelector('[data-member-control-result]');try{const result=await api('/api/admin/members/'+Number(state.memberDetailId)+'/sessions/revoke',{method:'POST',body:JSON.stringify({reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">'+Number(result.sessions_revoked||0)+' active session(s) revoked and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+    document.querySelectorAll('[data-member-support-ticket]').forEach(button=>button.onclick=()=>window.BusinessLifeAdminConsole?.openSupportTicket(Number(button.dataset.memberSupportTicket)));
+    document.querySelectorAll('[data-member-trust-case]').forEach(button=>button.onclick=()=>window.BusinessLifeAdminConsole?.openCase(Number(button.dataset.memberTrustCase)));
+    const noteForm=document.getElementById('memberNoteForm');
+    if(noteForm)noteForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(noteForm),out=noteForm.querySelector('[data-member-note-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/notes',{method:'POST',body:JSON.stringify({note:String(fd.get('note')||'').trim()})});if(out)out.innerHTML='<div class="notice">Internal note added and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+    const tagForm=document.getElementById('memberTagForm');
+    if(tagForm)tagForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(tagForm),out=tagForm.querySelector('[data-member-tag-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/tags',{method:'POST',body:JSON.stringify({tag:String(fd.get('tag')||'').trim()})});if(out)out.innerHTML='<div class="notice">Tag saved and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+    document.querySelectorAll('[data-member-remove-tag]').forEach(button=>button.onclick=async()=>{try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/tags/'+encodeURIComponent(button.dataset.memberRemoveTag),{method:'DELETE'});await renderActive()}catch(err){showError(err)}});
     return;
   }
   const form=document.getElementById('memberSearchForm');
