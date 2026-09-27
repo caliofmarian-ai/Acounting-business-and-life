@@ -207,8 +207,8 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
     requestJson(base,"/api/supplier/v5/today?business_id="+businessB+"&view=money",{token:supplier.token}),
     requestJson(base,"/api/procurement/orders/"+poA+"?business_id="+businessB,{token:supplier.token}),
     pool.query(
-      "SELECT business_id,amount FROM transactions WHERE source='supplier_receipt' AND note=$1 ORDER BY id DESC LIMIT 1",
-      ["Receipt for "+poB.po_number]
+      "SELECT business_id,amount,note,source_id FROM transactions WHERE source='supplier_receipt' AND source_id=$1 ORDER BY id DESC LIMIT 1",
+      [poBId*1000000+Math.round(Number(poB.paid_amount||0)*100)]
     )
   ]);
 
@@ -228,6 +228,9 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
   if(financeA.json?.commercial?.attribution_status!=="SUPPLIER_BUSINESS_ATTRIBUTED"
     ||financeB.json?.commercial?.attribution_status!=="SUPPLIER_BUSINESS_ATTRIBUTED"){
     throw new Error("Supplier Finance did not report exact business attribution.");
+  }
+  if(!receiptB.rowCount){
+    throw new Error("Supplier payment receipt evidence is missing for PO B.");
   }
   if(Number(receiptB.rows[0]?.business_id)!==businessB){
     throw new Error("Supplier payment receipt was posted outside business B.");
