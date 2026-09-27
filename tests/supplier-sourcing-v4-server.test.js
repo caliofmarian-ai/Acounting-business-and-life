@@ -42,6 +42,8 @@ test('quote to PO requires explicit Merchant call and snapshots source quote',()
   assert.match(source,/\/api\/procurement\/sourcing\/quotes\/:quoteId\/create-po/);
   assert.match(source,/Accepted Supplier relationship required before creating a PO/);
   assert.match(source,/source_quote_id/);
+  assert.match(source,/supplier_business_id/);
+  assert.match(source,/Quoted Supplier business is no longer active/);
   assert.match(source,/price_per_pack_snapshot/);
   assert.match(source,/handling_mode_snapshot/);
   assert.match(source,/status='converted'/);
