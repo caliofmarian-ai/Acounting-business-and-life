@@ -23,10 +23,15 @@ function allocationSummary(row={}){
     status:count>0?'TRACKED':'NOT_CONFIGURED'
   };
 }
-async function allocationStatus(pool,{componentCode,economicPartyId,businessId=null}){
+async function allocationStatus(pool,{componentCode,economicPartyId,businessId=null,supplierBusinessId=null}){
   const args=[componentCode,String(economicPartyId)];
-  let extra='';
+  let extra='',sourceJoin='';
   if(businessId!=null){args.push(Number(businessId));extra=' AND pi.business_id=$3'}
+  else if(supplierBusinessId!=null){
+    args.push(Number(supplierBusinessId));
+    sourceJoin=" JOIN purchase_orders po ON pi.source_type='purchase_order' AND po.id=pi.source_id";
+    extra=' AND po.supplier_business_id=$3';
+  }
   const q=await optionalQuery(pool,`
     SELECT COUNT(*)::int allocation_count,
       COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='pending'),0) pending_amount,
@@ -37,16 +42,16 @@ async function allocationStatus(pool,{componentCode,economicPartyId,businessId=n
       COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='failed'),0) failed_amount,
       COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='reversed'),0) reversed_amount
     FROM payment_allocations pa
-    JOIN payment_intents pi ON pi.id=pa.payment_intent_id
+    JOIN payment_intents pi ON pi.id=pa.payment_intent_id${sourceJoin}
     WHERE pa.component_code=$1 AND pa.economic_party_id=$2${extra}
   `,args,[{}]);
   return allocationSummary(q.rows[0]);
 }
-async function chargedFeeSummary(pool,{businessId=null,supplierAccountId=null,chargedTo}){
+async function chargedFeeSummary(pool,{businessId=null,supplierBusinessId=null,chargedTo}){
   const args=[chargedTo];
   let owner='',supplierJoin='';
   if(businessId!=null){args.push(Number(businessId));owner=' AND pi.business_id=$2'}
-  else if(supplierAccountId!=null){args.push(Number(supplierAccountId));supplierJoin=" JOIN purchase_orders po ON pi.source_type='purchase_order' AND po.id=pi.source_id";owner=' AND po.supplier_account_id=$2'}
+  else if(supplierBusinessId!=null){args.push(Number(supplierBusinessId));supplierJoin=" JOIN purchase_orders po ON pi.source_type='purchase_order' AND po.id=pi.source_id";owner=' AND po.supplier_business_id=$2'}
   const q=await optionalQuery(pool,`
     SELECT COUNT(DISTINCT pa.id)::int fee_count,COALESCE(SUM(pa.amount),0) total
     FROM payment_allocations pa
@@ -316,7 +321,7 @@ async function merchantPayables(pool,businessId){
 }
 async function supplierOverview(pool,ctx){
   const bid=Number(ctx.business.id),accountId=Number(ctx.me.account.id),bindingCount=(ctx.businesses||[]).length;
-  const [po,ledger,financeContext,supplierNet,fees,upstream,receiptLedger]=await Promise.all([
+  const [po,unassigned,ledger,financeContext,supplierNet,fees,upstream,receiptLedger]=await Promise.all([
     optionalQuery(pool,`
       SELECT
         COUNT(*) FILTER(WHERE p.status NOT IN ('cancelled','rejected'))::int po_count,
@@ -347,20 +352,31 @@ async function supplierOverview(pool,ctx){
         FROM purchase_returns GROUP BY purchase_order_id
       ) cr ON cr.purchase_order_id=p.id
       WHERE p.supplier_account_id=$1
+        AND p.supplier_business_id=$2
+    `,[accountId,bid],[{}]),
+    optionalQuery(pool,`
+      SELECT COUNT(*)::int unassigned_po_count,
+             COALESCE(SUM(actual_received_total),0) unassigned_fulfilled_value,
+             COALESCE(SUM(paid_amount),0) unassigned_paid_amount
+        FROM purchase_orders
+       WHERE supplier_account_id=$1
+         AND supplier_business_id IS NULL
+         AND status NOT IN ('cancelled','rejected')
     `,[accountId],[{}]),
     ledgerMetrics(pool,bid),
     profileFinanceContext(pool,{accountId,role:'supplier',businessId:bid}),
-    allocationStatus(pool,{componentCode:'supplier_net',economicPartyId:accountId}),
-    chargedFeeSummary(pool,{supplierAccountId:accountId,chargedTo:'supplier_deduction'}),
+    allocationStatus(pool,{componentCode:'supplier_net',economicPartyId:accountId,supplierBusinessId:bid}),
+    chargedFeeSummary(pool,{supplierBusinessId:bid,chargedTo:'supplier_deduction'}),
     merchantPayables(pool,bid),
     pool.query(`
       SELECT COUNT(*)::int receipt_count,COALESCE(SUM(amount),0) received_amount
       FROM transactions WHERE business_id=$1 AND source='supplier_receipt' AND type='sale'
     `,[bid])
   ]);
-  const p=po.rows[0]||{};
-  const attribution=bindingCount===1?'SINGLE_SUPPLIER_BUSINESS_BINDING':'ACCOUNT_LEVEL_UNATTRIBUTED';
+  const p=po.rows[0]||{},legacy=unassigned.rows[0]||{};
+  const attribution='SUPPLIER_BUSINESS_ATTRIBUTED';
   const recordedReceipts=money(receiptLedger.rows[0]?.received_amount);
+  const unassignedCount=n(legacy.unassigned_po_count);
   return{
     role:'supplier',
     business:{id:bid,name:ctx.business.name,currency_code:ctx.business.currency_code||'PHP'},
@@ -373,28 +389,34 @@ async function supplierOverview(pool,ctx){
     commercial:{
       attribution_status:attribution,
       po_count:n(p.po_count),received_po_count:n(p.received_po_count),
-      fulfilled_po_value:attribution==='SINGLE_SUPPLIER_BUSINESS_BINDING'?money(p.fulfilled_value):null,
-      open_commercial_value:attribution==='SINGLE_SUPPLIER_BUSINESS_BINDING'?money(p.open_commercial_value):null,
-      account_level_supplier_activity:{
+      fulfilled_po_value:money(p.fulfilled_value),
+      open_commercial_value:money(p.open_commercial_value),
+      business_activity:{
         fulfilled_po_value:money(p.fulfilled_value),
         open_commercial_value:money(p.open_commercial_value),
         po_count:n(p.po_count)
       },
-      authority:'purchase_orders by supplier_account_id; receivables use invoice evidence when present, otherwise received value, minus confirmed credits and payments',
-      note:attribution==='ACCOUNT_LEVEL_UNATTRIBUTED'
-        ?'POs are linked to Supplier account, not supplier_business_id. Account-wide figures are not assigned to this business.'
-        :'Single Supplier business binding allows account-level PO activity to be shown for this workspace.'
+      historical_unassigned:{
+        po_count:unassignedCount,
+        fulfilled_value:money(legacy.unassigned_fulfilled_value),
+        paid_amount:money(legacy.unassigned_paid_amount),
+        review_required:unassignedCount>0
+      },
+      authority:'purchase_orders.supplier_business_id; receivables use invoice evidence when present, otherwise received value, minus confirmed credits and payments',
+      note:unassignedCount>0
+        ?'Historical purchase orders without deterministic Supplier-business evidence remain unassigned and are excluded from this workspace.'
+        :'Purchase-order commercial values are scoped to this exact Supplier business.'
     },
     cash_evidence:{
       business_ledger_recorded_receipts:recordedReceipts,
       business_ledger_receipt_count:n(receiptLedger.rows[0]?.receipt_count),
-      account_level_po_paid_amount:money(p.money_received_recorded),
+      business_scoped_po_paid_amount:money(p.money_received_recorded),
+      account_level_po_paid_amount:bindingCount===1?money(p.money_received_recorded):null,
       attribution_status:attribution,
-      rule:'PO paid_amount / supplier_receipt is recorded payment evidence; it is not bank payout evidence.'
+      rule:'PO paid_amount / supplier_receipt is recorded payment evidence for this Supplier business; it is not bank payout evidence.'
     },
     receivables:{
-      merchant_receivables:attribution==='SINGLE_SUPPLIER_BUSINESS_BINDING'?money(p.merchant_receivables):null,
-      account_level_merchant_receivables:money(p.merchant_receivables),
+      merchant_receivables:money(p.merchant_receivables),
       attribution_status:attribution
     },
     payables:{
@@ -416,15 +438,15 @@ async function supplierOverview(pool,ctx){
     settlement:{
       supplier_net:supplierNet,
       status:supplierNet.tracked?'TRACKED':'NOT_CONFIGURED',
-      scope:bindingCount===1?'single_business_account':'supplier_account',
+      scope:'supplier_business',
       note:supplierNet.tracked
-        ?'supplier_net allocations are settlement evidence.'
+        ?'supplier_net allocations are filtered to payment intents backed by this Supplier business purchase orders.'
         :'PO paid_amount is not treated as provider payout/settlement.'
     },
     ...ledger,
     profile_finance:financeContext,
     warnings:[
-      ...(bindingCount>1?['MULTI_BUSINESS_SUPPLIER_PO_ATTRIBUTION_PENDING']:[]),
+      ...(unassignedCount>0?['SUPPLIER_HISTORICAL_PO_ATTRIBUTION_REVIEW_REQUIRED']:[]),
       ...(!supplierNet.tracked?['SUPPLIER_PAYOUT_ALLOCATION_NOT_CONFIGURED']:[])
     ]
   };
