@@ -390,11 +390,11 @@ async function syncBusinessFees(pool,{accountId,profileRole,businessId}){
   const role=normalizeFinancialProfileRole(profileRole);
   if(!['merchant','supplier'].includes(role))return 0;
   const chargedTo=role==='merchant'?'merchant_deduction':'supplier_deduction';
-  const args=role==='merchant'?[Number(businessId)]:[Number(accountId)];
+  const args=[Number(businessId)];
   const ownerJoin=role==='merchant'
     ?''
     :" JOIN purchase_orders po ON i.source_type='purchase_order' AND po.id=i.source_id";
-  const ownerWhere=role==='merchant'?'i.business_id=$1':'po.supplier_account_id=$1';
+  const ownerWhere=role==='merchant'?'i.business_id=$1':'po.supplier_business_id=$1';
   const {rows}=await pool.query(`
     SELECT a.*,i.source_type,i.source_id,i.succeeded_at,i.created_at intent_created_at,
       r.charged_to,r.beneficiary_type
