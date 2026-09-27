@@ -34,6 +34,7 @@
 <div class="notice"><strong>Privacy:</strong> assets contain only your public referral identity, referral URL and QR. They do not include recipient email, phone, contacts or private documents. Figma/Canva remain editable design sources; this runtime export is generated locally in the app from the canonical field contract.</div>
 </section>
 </main>
+<script src="/session-security.js"></script>
 <script type="module">
 import { RUNTIME_MARKETING_TEMPLATES, RUNTIME_MARKETING_COPY, SUPPORTED_MARKETING_LOCALES, deriveReferrerName, generateMarketingKitSvg, marketingKitFileName } from '/referral/marketing-kit-runtime.js';
 
@@ -73,7 +74,7 @@ function syncVariantOptions(){
 }
 syncVariantOptions();
 
-function token(){return localStorage.getItem('abl_token')||''}
+function token(){return window.ABLSession?.authenticated()?'cookie-session':''}
 function setStatus(message){status.textContent=message}
 function syncBackLink(){backLink.href='/referral/promotion-center.html?profile='+encodeURIComponent(role.value)}
 function setEnabled(enabled){exportButton.disabled=!enabled;shareButton.disabled=!enabled}
@@ -117,7 +118,7 @@ async function load(){
   if(!auth){current=null;signin.classList.remove('hidden');setEnabled(false);setStatus('Sign in required.');return}
   signin.classList.add('hidden');setEnabled(false);setStatus('Loading your live referral identity…');
   try{
-    const response=await fetch('/api/growth/referral?profile='+encodeURIComponent(role.value),{headers:{Authorization:'Bearer '+auth}});
+    const response=await fetch('/api/growth/referral?profile='+encodeURIComponent(role.value));
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(data.error||'Could not load referral identity');
     current={

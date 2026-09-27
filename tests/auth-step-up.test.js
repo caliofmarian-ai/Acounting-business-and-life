@@ -19,7 +19,8 @@ test('step-up state is stored per revocable session with a short validity window
 });
 
 test('fresh primary and Google sessions start with recent authentication evidence',()=>{
-  assert.match(auth,/createV2Session\(pool,TOKEN_SECRET,accountId,\{stepUpVerified:true\}\)/);
+  assert.match(auth,/async function createSession\(accountId,\{stepUpVerified=true,db=pool\}=\{\}\)/);
+  assert.match(auth,/createV2Session\(db,TOKEN_SECRET,accountId,\{stepUpVerified\}\)/);
   const start=hardening.indexOf('async function createSession');
   const end=hardening.indexOf('async function optionalV2',start);
   const block=hardening.slice(start,end);

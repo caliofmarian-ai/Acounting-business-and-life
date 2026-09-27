@@ -40,7 +40,8 @@ test('sign out is permanently reachable and ends the current server and browser 
   assert.match(shell,/id="drawerSignOutButton"/);
   assert.match(shell,/function signOutCurrentAccount\(button\)/);
   assert.match(shell,/profileApi\('\/api\/auth\/logout',\{method:'POST',body:'\{\}'\}\)/);
-  assert.match(shell,/localStorage\.removeItem\('abl_token'\)/);
+  assert.match(shell,/window\.ABLSession\?\.clearReadableSession\(\)/);
+  assert.doesNotMatch(shell,/localStorage\.(?:getItem|setItem|removeItem)\('abl_token'\)/);
   assert.match(shell,/window\.location\.replace\('\/'\)/);
   assert.match(css,/\.accountSignOutEntry/);
   assert.match(css,/\.accountSignOutAction/);

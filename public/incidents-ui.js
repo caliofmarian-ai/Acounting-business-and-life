@@ -1,5 +1,5 @@
 let incMe=null,incWorkspace=null,incAdminFilter='';
-const incTok=()=>localStorage.getItem('abl_token')||'';
+const incTok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const ih=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const inice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const idate=v=>v?new Intl.DateTimeFormat('en-PH',{dateStyle:'medium',timeStyle:'short'}).format(new Date(v)):'';
@@ -14,7 +14,7 @@ const INCIDENT_URGENCY_OPTIONS=Object.freeze([
   ['severe_illegal_or_exploitative_content','Severe illegal or exploitative content']
 ]);
 const CONTEXTUAL_REPORT_TYPES=Object.freeze(new Set(['merchant','marketplace_product','service_provider']));
-async function iapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(incTok())headers.Authorization=`Bearer ${incTok()}`;const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}catch(e){if(e?.name==='AbortError')throw new Error('The server is taking too long to respond. Try again.');throw e}finally{if(timer)clearTimeout(timer)}}
+async function iapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}catch(e){if(e?.name==='AbortError')throw new Error('The server is taking too long to respond. Try again.');throw e}finally{if(timer)clearTimeout(timer)}}
 function itoast(msg){const t=document.getElementById('roleToast');if(t){t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800)}else alert(msg)}
 async function ime(){if(!incTok())return null;try{incMe=await iapi('/api/me');return incMe}catch{return null}}
 function ensureIncidents(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('incidentWorkspace')){incWorkspace=document.createElement('section');incWorkspace.id='incidentWorkspace';incWorkspace.className='incidentWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',incWorkspace)}else incWorkspace=document.getElementById('incidentWorkspace');if(!document.getElementById('incidentModalBg')){const b=document.createElement('div');b.id='incidentModalBg';b.className='incidentModalBg hidden';b.innerHTML='<section id="incidentModal" class="incidentModal"></section>';document.body.appendChild(b);b.onclick=e=>{if(e.target===b)closeIncidentModal()}}return true}

@@ -1,6 +1,6 @@
-const token=()=>localStorage.getItem('abl_token')||'';
+const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token())headers.Authorization='Bearer '+token();const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||('Request failed ('+r.status+')')),{status:r.status,data});return data}
+async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(data.error||('Request failed ('+r.status+')')),{status:r.status,data});return data}
 let pctx={me:null,admin:null,config:null,paymongo:null};
 function money(v,c='PHP'){try{return new Intl.NumberFormat('en-PH',{style:'currency',currency:c}).format(Number(v||0))}catch{return '₱'+Number(v||0).toFixed(2)}}
 function toast(msg){let n=document.getElementById('paymentToast');if(!n){n=document.createElement('div');n.id='paymentToast';n.className='paymentToast';document.body.appendChild(n)}n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),2800)}

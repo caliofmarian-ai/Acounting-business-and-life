@@ -48,7 +48,8 @@ const COURIER_PERFORMANCE_BASELINE_WAVE='courier_performance_baseline_v1';
 const COURIER_PERFORMANCE_RUNTIME_WAVE='courier_performance_runtime_v1';
 const DELIVERY_PRICING_V2B_RUNTIME_WAVE='delivery_pricing_v2b_runtime';
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE]);
+const SESSION_SECURITY_V2_WAVE='session_security_v2';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -163,7 +164,7 @@ async function verifyAccountAuthRootComposition(base,path,label){
   const response=await fetch(base+path,{headers:{Accept:'text/html'}});
   const html=await response.text();
   if(response.status!==200)throw new Error(label+' returned an unexpected status.');
-  for(const marker of ['/shell.css','/shell.js','/auth-ui.js','/orders.css','/orders-ui.js','/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js','/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js','/auth-hardening.css','/auth-hardening-ui.js']){
+  for(const marker of ['/session-security.js','/shell.css','/shell.js','/auth-ui.js','/orders.css','/orders-ui.js','/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js','/services.css','/services-ui.js','/suppliers.css','/suppliers-ui.js','/delivery.css','/delivery-ui.js','/auth-hardening.css','/auth-hardening-ui.js']){
     const count=html.split(marker).length-1;
     if(count!==1)throw new Error(label+' expected exactly one '+marker+' composition marker.');
   }
@@ -191,7 +192,7 @@ async function requestJson(base,path,{method='GET',token='',body,headers:extraHe
   }
   const response=await fetch(base+path,{method,headers,body:payload});
   const json=await response.json().catch(()=>({}));
-  return{status:response.status,ok:response.ok,json};
+  return{status:response.status,ok:response.ok,json,headers:response.headers};
 }
 
 function expectStatus(result,expected,label){
@@ -202,6 +203,7 @@ function expectStatus(result,expected,label){
 async function loginWithCredential({base,email,password,label}){
   const login=await requestJson(base,'/api/auth/login',{
     method:'POST',
+    headers:{'X-BL-Auth-Mode':'bearer','X-BL-QA-Automation':String(process.env.QA_AUTOMATION_SECRET||'')},
     body:{email,password}
   });
   expectStatus(login,200,label+' login');
@@ -5150,6 +5152,7 @@ async function runAdultEligibilityRuntimeAcceptance({pool,base,secret}){
 
     const registered=await requestJson(base,'/api/auth/register',{
       method:'POST',
+      headers:{'X-BL-Auth-Mode':'bearer','X-BL-QA-Automation':secret},
       body:{...baseRegistration,adult_eligibility_attested:true,adult_eligibility_policy_version:'ph-adult-eligibility-v1'}
     });
     expectStatus(registered,201,'Adult eligibility registration');
@@ -5258,6 +5261,97 @@ async function runAdultEligibilityRuntimeAcceptance({pool,base,secret}){
   }
 }
 
+function cookieEvidence(result){
+  const values=typeof result?.headers?.getSetCookie==='function'
+    ?result.headers.getSetCookie()
+    :[result?.headers?.get?.('set-cookie')||''].filter(Boolean);
+  const cookies=new Map();
+  for(const value of values){
+    const match=String(value).match(/^([^=;]+)=([^;]*)/);
+    if(match)cookies.set(match[1],decodeURIComponent(match[2]));
+  }
+  return{values,cookies,header:[...cookies].map(([name,value])=>`${name}=${encodeURIComponent(value)}`).join('; ')};
+}
+
+async function runSessionSecurityV2Acceptance({pool,base,secret}){
+  const rootResponse=await fetch(base+'/',{headers:{Accept:'text/html'}});
+  const rootHtml=await rootResponse.text();
+  if(rootResponse.status!==200||rootHtml.split('/session-security.js').length-1!==1||rootHtml.indexOf('/session-security.js')>rootHtml.indexOf('/v03.js')){
+    throw new Error('Session Security V2 browser runtime is missing or loaded too late.');
+  }
+  const runtimeAsset=await fetch(base+'/session-security.js');
+  if(runtimeAsset.status!==200||!String(runtimeAsset.headers.get('content-type')||'').includes('javascript')){
+    throw new Error('Session Security V2 browser runtime asset is unavailable.');
+  }
+  const credential=await installAutomationCredential(pool,{secret,email:CUSTOMER_ALIAS,role:'customer'});
+  const browserLogin=await requestJson(base,'/api/auth/login',{
+    method:'POST',body:{email:CUSTOMER_ALIAS,password:credential.password}
+  });
+  expectStatus(browserLogin,200,'Session Security V2 browser login');
+  if(browserLogin.json?.token||browserLogin.json?.auth_transport!=='cookie')throw new Error('Browser login exposed bearer material.');
+  const browserCookies=cookieEvidence(browserLogin);
+  const sessionCookie=browserCookies.cookies.get('__Host-abl_session')||'';
+  const csrfCookie=browserCookies.cookies.get('__Host-abl_csrf')||'';
+  if(!sessionCookie||!csrfCookie)throw new Error('Browser login did not issue both session and CSRF cookies.');
+  const sessionSetCookie=browserCookies.values.find(value=>String(value).startsWith('__Host-abl_session='))||'';
+  const csrfSetCookie=browserCookies.values.find(value=>String(value).startsWith('__Host-abl_csrf='))||'';
+  if(!/; HttpOnly/i.test(sessionSetCookie)||!/; Secure/i.test(sessionSetCookie)||!/; SameSite=Lax/i.test(sessionSetCookie)||/; Domain=/i.test(sessionSetCookie)){
+    throw new Error('Browser session cookie attributes are unsafe.');
+  }
+  if(/; HttpOnly/i.test(csrfSetCookie)||!/; Secure/i.test(csrfSetCookie)||!/; SameSite=Lax/i.test(csrfSetCookie)||/; Domain=/i.test(csrfSetCookie)){
+    throw new Error('Browser CSRF cookie attributes are invalid.');
+  }
+
+  const me=await requestJson(base,'/api/me',{headers:{Cookie:browserCookies.header}});
+  expectStatus(me,200,'Session Security V2 cookie-authenticated account');
+  if(Number(me.json?.account?.id)!==credential.accountId)throw new Error('Cookie session resolved the wrong account.');
+
+  const deniedStepUp=await requestJson(base,'/api/auth/step-up/password',{
+    method:'POST',headers:{Cookie:browserCookies.header},body:{password:credential.password}
+  });
+  expectStatus(deniedStepUp,403,'Session Security V2 missing CSRF denial');
+  if(deniedStepUp.json?.code!=='CSRF_VALIDATION_FAILED')throw new Error('Cookie mutation did not fail with the CSRF contract.');
+
+  const allowedStepUp=await requestJson(base,'/api/auth/step-up/password',{
+    method:'POST',headers:{Cookie:browserCookies.header,'X-CSRF-Token':csrfCookie},body:{password:credential.password}
+  });
+  expectStatus(allowedStepUp,200,'Session Security V2 CSRF-authorized mutation');
+
+  const browserLogout=await requestJson(base,'/api/auth/logout',{
+    method:'POST',headers:{Cookie:browserCookies.header},body:{}
+  });
+  expectStatus(browserLogout,200,'Session Security V2 browser logout');
+  const cleared=cookieEvidence(browserLogout).values.join('\n');
+  if(!cleared.includes('__Host-abl_session=')||!cleared.includes('__Host-abl_csrf=')||!cleared.includes('Max-Age=0')){
+    throw new Error('Browser logout did not clear both session cookies.');
+  }
+  const afterLogout=await requestJson(base,'/api/me',{headers:{Cookie:browserCookies.header}});
+  expectStatus(afterLogout,401,'Session Security V2 revoked browser session');
+
+  const legacyBearer=await loginWithCredential({base,email:CUSTOMER_ALIAS,password:credential.password,label:'Session Security V2 migration'});
+  const migrated=await requestJson(base,'/api/auth/session/migrate',{method:'POST',token:legacyBearer,body:{}});
+  expectStatus(migrated,200,'Session Security V2 one-time migration');
+  if(migrated.json?.token||migrated.json?.auth_transport!=='cookie'||migrated.json?.rotated!==true){
+    throw new Error('Session migration did not rotate into cookie transport.');
+  }
+  const migratedCookies=cookieEvidence(migrated);
+  if(!migratedCookies.cookies.get('__Host-abl_session')||!migratedCookies.cookies.get('__Host-abl_csrf')){
+    throw new Error('Session migration did not issue both browser cookies.');
+  }
+  const replay=await requestJson(base,'/api/auth/session/migrate',{method:'POST',token:legacyBearer,body:{}});
+  expectStatus(replay,401,'Session Security V2 migration replay denial');
+  const migratedMe=await requestJson(base,'/api/me',{headers:{Cookie:migratedCookies.header}});
+  expectStatus(migratedMe,200,'Session Security V2 migrated cookie session');
+  const migratedLogout=await requestJson(base,'/api/auth/logout',{method:'POST',headers:{Cookie:migratedCookies.header},body:{}});
+  expectStatus(migratedLogout,200,'Session Security V2 migrated logout');
+
+  return{
+    status:'PASS',wave:SESSION_SECURITY_V2_WAVE,
+    browser_runtime_loaded:true,browser_login_cookie_only:true,http_only_session_cookie:true,csrf_enforced:true,
+    logout_revocation:true,legacy_rotation:true,migration_replay_denied:true
+  };
+}
+
 
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
@@ -5266,7 +5360,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===ADULT_ELIGIBILITY_RUNTIME_WAVE
+    const result=config.wave===SESSION_SECURITY_V2_WAVE
+      ?await runSessionSecurityV2Acceptance({pool,base,secret:config.secret})
+      :config.wave===ADULT_ELIGIBILITY_RUNTIME_WAVE
       ?await runAdultEligibilityRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===DELIVERY_PRICING_V2B_RUNTIME_WAVE
       ?await runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret:config.secret})
@@ -5364,5 +5460,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
 };

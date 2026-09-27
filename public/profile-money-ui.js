@@ -1,9 +1,9 @@
 let pmWorkspace=null,pmRole='',pmData=null,pmReversalEntryId=null;
-const pmtok=()=>localStorage.getItem('abl_token')||'';
+const pmtok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const pmh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const pmnice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const pmmoney=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
-async function pmapi(path,options={}){const headers={Authorization:'Bearer '+pmtok(),...(options.headers||{})};if(options.body&&!headers['Content-Type'])headers['Content-Type']='application/json';const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
+async function pmapi(path,options={}){const headers={...(options.headers||{})};if(options.body&&!headers['Content-Type'])headers['Content-Type']='application/json';const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
 function pmtoast(msg){let t=document.getElementById('roleToast')||document.getElementById('profileMoneyFallbackToast');if(!t){t=document.createElement('div');t.id='profileMoneyFallbackToast';t.className='roleToast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');document.body.appendChild(t)}t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);return false}
 function ensurePmReversalDialog(){
   let backdrop=document.getElementById('profileMoneyReversalBackdrop');

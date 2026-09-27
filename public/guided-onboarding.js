@@ -1,4 +1,3 @@
-const TOKEN_KEY='abl_token';
 const JOURNEY='first_account_first_profile_v1';
 const STEP_ORDER=['welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile','profile_onboarding'];
 const STEP_LABELS={
@@ -14,12 +13,12 @@ const ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',c
 const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
 let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0;
 const profileDraftSavedForRole=new Set();
-const token=()=>localStorage.getItem(TOKEN_KEY)||'';
+const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
 async function api(path,options={}){
   const headers={'Content-Type':'application/json',...(options.headers||{})};
-  if(token())headers.Authorization='Bearer '+token();
+
   const response=await fetch(path,{...options,headers});
   const body=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(body.error||'Onboarding request failed');

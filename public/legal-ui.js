@@ -1,10 +1,9 @@
-const token=function(){return localStorage.getItem("abl_token")||"";};
+const token=function(){return window.ABLSession?.authenticated()?'cookie-session':'';};
 const rawFetch=window.fetch.bind(window);
 function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 async function api(path,options){
   options=options||{};
   var headers=Object.assign({"Content-Type":"application/json"},options.headers||{});
-  if(token())headers.Authorization="Bearer "+token();
   var r=await rawFetch(path,Object.assign({},options,{headers:headers}));
   var data={};try{data=await r.json();}catch(_e){}
   if(!r.ok){var err=new Error(data.error||("Request failed ("+r.status+")"));err.status=r.status;err.data=data;throw err;}

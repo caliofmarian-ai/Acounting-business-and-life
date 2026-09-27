@@ -28,15 +28,13 @@ export async function captureReferralEvent({
   event,
   properties = {},
   referralCode = '',
-  authenticated = false,
-  token = ''
+  authenticated = false
 } = {}) {
   const correlation_id = referralCorrelationId();
   const endpoint = authenticated
     ? '/api/growth/referral-analytics/account'
     : '/api/growth/referral-analytics/public';
   const headers = { 'Content-Type': 'application/json' };
-  if (authenticated && token) headers.Authorization = 'Bearer ' + token;
 
   const body = {
     event,

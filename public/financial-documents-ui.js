@@ -1,9 +1,9 @@
 let fdWorkspace=null,fdMode='scope',fdPeriod='month',fdAnchor=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'}),fdContext=null;
-const fdToken=()=>localStorage.getItem('abl_token')||'';
+const fdToken=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const fdEsc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fdNice=v=>String(v??'').replaceAll('_',' ').replace(/\b\w/g,m=>m.toUpperCase());
 const fdMoney=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
-async function fdApi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(fdToken())headers.Authorization='Bearer '+fdToken();const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||('Request failed ('+r.status+')'));return b}
+async function fdApi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||('Request failed ('+r.status+')'));return b}
 function ensureFd(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('financialDocumentsWorkspace')){fdWorkspace=document.createElement('section');fdWorkspace.id='financialDocumentsWorkspace';fdWorkspace.className='financialDocumentsWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',fdWorkspace)}else fdWorkspace=document.getElementById('financialDocumentsWorkspace');return true}
 function hideFdBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');for(const id of ['roleHub','ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace','profileSettingsWorkspace','profileMoneyWorkspace'])document.getElementById(id)?.classList.add('hidden');for(const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg'])document.getElementById(id)?.classList.add('hidden')}
 function closeFd(){fdWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}

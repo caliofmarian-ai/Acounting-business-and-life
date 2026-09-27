@@ -2,10 +2,10 @@ let govMe=null,govState=null,govTerritories=[],govCategories=[],govOverview=null
 const GOV_CACHE_MS=30000;
 const GOV_ROLES=['merchant','supplier','courier','service_provider'];
 const GOV_META={merchant:{label:'Merchant',icon:'🏪',invite:true},supplier:{label:'Supplier',icon:'📦',invite:true},courier:{label:'Delivery',icon:'🛵',invite:true},service_provider:{label:'Local Services',icon:'🛠️',invite:false}};
-const gtok=()=>localStorage.getItem('abl_token')||'';
+const gtok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const gh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const gn=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
-async function gapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(gtok())headers.Authorization=`Bearer ${gtok()}`;const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}catch(e){if(e?.name==='AbortError')throw new Error('The app is taking too long to respond. Try again.');throw e}finally{if(timer)clearTimeout(timer)}}
+async function gapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}catch(e){if(e?.name==='AbortError')throw new Error('The app is taking too long to respond. Try again.');throw e}finally{if(timer)clearTimeout(timer)}}
 function gtoast(text){const t=document.getElementById('roleToast');if(t){t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200)}else alert(text)}
 function ensureGovModal(){if(document.getElementById('govModalBg'))return;const bg=document.createElement('div');bg.id='govModalBg';bg.className='govModalBg hidden';bg.innerHTML='<section id="govModal" class="govModal"><div class="govHandle"></div></section>';document.body.appendChild(bg);bg.onclick=e=>{if(e.target===bg)closeGov()}}
 function closeGov(){document.getElementById('govModalBg')?.classList.add('hidden');document.body.style.overflow=''}

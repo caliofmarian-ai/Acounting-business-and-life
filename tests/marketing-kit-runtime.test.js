@@ -82,7 +82,9 @@ test('Filipino creative uses canonical localized headline and CTA without changi
 
 test('Marketing Kit page uses authenticated live referral data and user-initiated export/share', () => {
   assert.match(page, /\/api\/growth\/referral\?profile=/);
-  assert.match(page, /Authorization:'Bearer '\+auth/);
+  assert.match(page, /<script src="\/session-security\.js"><\/script>/);
+  assert.match(page, /window\.ABLSession\?\.authenticated\(\)/);
+  assert.doesNotMatch(page, /Authorization:'Bearer '|localStorage\.getItem\('abl_token'\)/);
   assert.match(page, /Export SVG/);
   assert.match(page, /navigator\.share/);
   assert.match(page, /navigator\.canShare/);

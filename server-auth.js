@@ -21,6 +21,7 @@ import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest} from './te
 import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-account.js';
 import {ensureHighRiskVelocitySchema,enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {ADULT_ELIGIBILITY_POLICY_VERSION,ensureAccountSafetyEligibilitySchema,accountAdultEligibilitySnapshot,recordAdultEligibilityAttestation,recordCompanyTestEligibilityExemption,requireAdultEligibility} from './account-safety-eligibility-core.js';
+import {clearBrowserSessionCookies,issueBrowserSessionCookies,sessionCredentialFromHeaders,sessionSecurityMiddleware} from './session-cookie-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -30,6 +31,8 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
+const QA_AUTOMATION_SECRET = process.env.QA_AUTOMATION_SECRET || '';
+const QA_BEARER_ENABLED = process.env.RAILWAY_SERVICE_NAME==='accounting-preview'&&String(process.env.APP_ENV||'').toLowerCase()==='qa';
 const TOKEN_TTL_MS = AUTH_SESSION_TTL_MS;
 const ROLES = new Set(['merchant', 'customer', 'supplier', 'courier', 'service_provider']);
 const jsonBody = express.json({ limit: '450kb' });
@@ -38,6 +41,8 @@ const loginAttempts = new Map();
 const ACCOUNT_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_link_created','referral_shared']);
 const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_qr_opened','referral_landing_viewed','referral_shared','referral_signup_started']);
 let shuttingDown = false;
+
+app.use(sessionSecurityMiddleware);
 
 function clean(value, max = 250) { return String(value ?? '').trim().slice(0, max); }
 function normalizeEmail(value) { return clean(value, 160).toLowerCase(); }
@@ -52,7 +57,7 @@ function responseJson(status,payload){
 }
 export function isAccountAuthOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
-  if(['/shell.css','/shell.js','/auth-ui.js','/guided-onboarding.css','/guided-onboarding.js'].includes(pathname))return true;
+  if(['/shell.css','/shell.js','/auth-ui.js','/session-security.js','/guided-onboarding.css','/guided-onboarding.js'].includes(pathname))return true;
   if(pathname==='/api/me'||pathname.startsWith('/api/me/'))return true;
   if(pathname.startsWith('/api/auth/'))return true;
   if(pathname.startsWith('/api/onboarding/'))return true;
@@ -77,8 +82,7 @@ export async function accountAuthFetch(path,options={}){
   }
   if(pathname==='/api/me'&&method==='GET'){
     try{
-      const authorization=new Headers(options.headers||{}).get('authorization')||'';
-      const token=authorization.replace(/^Bearer\s+/i,'');
+      const token=sessionCredentialFromHeaders(options.headers||{}).token;
       const resolved=await resolveAccountToken(token);
       if(!resolved)return responseJson(401,{error:'Unauthorized'});
       return responseJson(200,await profileSnapshot(resolved.accountId));
@@ -155,7 +159,7 @@ async function resolveAccountToken(token = '') {
 }
 async function auth(req, res, next) {
   try {
-    const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || '';
+    const token = req.ablSessionToken || sessionCredentialFromHeaders(req.headers||{}).token;
     const resolved = await resolveAccountToken(token);
     if (!resolved) return res.status(401).json({ error: 'Unauthorized' });
     req.accountId = resolved.accountId;
@@ -163,8 +167,23 @@ async function auth(req, res, next) {
     next();
   } catch (err) { next(err); }
 }
-async function createSession(accountId) {
-  return createV2Session(pool,TOKEN_SECRET,accountId,{stepUpVerified:true});
+async function createSession(accountId,{stepUpVerified=true,db=pool}={}) {
+  return createV2Session(db,TOKEN_SECRET,accountId,{stepUpVerified});
+}
+
+function safeTextEqual(a,b){
+  const aa=Buffer.from(String(a||'')),bb=Buffer.from(String(b||''));
+  return aa.length===bb.length&&crypto.timingSafeEqual(aa,bb);
+}
+function qaBearerRequested(req){
+  const requested=String(req.headers['x-bl-auth-mode']||'').toLowerCase()==='bearer';
+  const supplied=String(req.headers['x-bl-qa-automation']||'');
+  return QA_BEARER_ENABLED&&requested&&QA_AUTOMATION_SECRET.length>=32&&safeTextEqual(supplied,QA_AUTOMATION_SECRET);
+}
+function sendEstablishedSession(req,res,status,session,payload={}){
+  issueBrowserSessionCookies(res,session.token);
+  const bearer=qaBearerRequested(req);
+  res.status(status).json({...payload,auth_transport:bearer?'bearer':'cookie',expires_in_hours:24,...(bearer?{token:session.token}:{})});
 }
 
 async function initDb() {
@@ -498,7 +517,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
 
     if(geography)await emitAccountGeographyNotice(accountId,await geographyAvailabilityForCode(pool,geography.psgc_code));
     const session = await createSession(accountId);
-    res.status(201).json({ token: session.token, expires_in_hours: 24, profile: await profileSnapshot(accountId) });
+    sendEstablishedSession(req,res,201,session,{profile:await profileSnapshot(accountId)});
   } catch (err) { await client.query('ROLLBACK').catch(() => {}); next(err); } finally { client.release(); }
 });
 
@@ -514,13 +533,33 @@ app.post('/api/auth/login', body, async (req, res, next) => {
     clearThrottle(req, email);
     const accountId = Number(account.id);
     const session = await createSession(accountId);
-    res.json({ token: session.token, expires_in_hours: 24, profile: await profileSnapshot(accountId) });
+    sendEstablishedSession(req,res,200,session,{profile:await profileSnapshot(accountId)});
   } catch (err) { next(err); }
 });
 
-app.post('/api/auth/logout', body, auth, async (req, res) => {
-  if (!req.authSession.legacy && req.authSession.sessionId) await pool.query(`UPDATE account_sessions SET revoked_at=NOW() WHERE session_id=$1 AND account_id=$2`, [req.authSession.sessionId, req.accountId]);
-  res.json({ ok: true });
+app.post('/api/auth/session/migrate',body,auth,async(req,res,next)=>{
+  if(req.authSession.legacy||!req.authSession.sessionId)return res.status(409).json({error:'Only an active V2 browser session can be migrated'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const retired=await client.query(`UPDATE account_sessions SET revoked_at=NOW() WHERE session_id=$1 AND account_id=$2 AND revoked_at IS NULL RETURNING session_id`,[req.authSession.sessionId,req.accountId]);
+    if(retired.rowCount!==1)throw Object.assign(new Error('This browser session has already been migrated'),{status:401});
+    const rotated=await createSession(req.accountId,{stepUpVerified:false,db:client});
+    await client.query('COMMIT');
+    issueBrowserSessionCookies(res,rotated.token);
+    await pool.query(`INSERT INTO auth_security_events(account_id,event_code,ip_hash,user_agent,detail_json) VALUES($1,'browser_session_cookie_migrated','',$2,$3::jsonb)`,[req.accountId,clean(req.headers['user-agent'],400),JSON.stringify({previous_session_id_hash:crypto.createHash('sha256').update(req.authSession.sessionId).digest('hex')})]).catch(()=>{});
+    res.json({ok:true,auth_transport:'cookie',rotated:true,step_up_required:true,expires_in_hours:24});
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});next(error)}finally{client.release()}
+});
+
+app.post('/api/auth/logout', body, async (req, res, next) => {
+  try{
+    const token=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
+    const session=await resolveAccountToken(token);
+    if(session&&!session.legacy&&session.sessionId)await pool.query(`UPDATE account_sessions SET revoked_at=NOW() WHERE session_id=$1 AND account_id=$2`,[session.sessionId,session.accountId]);
+    clearBrowserSessionCookies(res);
+    res.json({ok:true});
+  }catch(error){next(error)}
 });
 
 app.post('/api/auth/password', body, auth, async (req, res, next) => {

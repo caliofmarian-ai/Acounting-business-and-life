@@ -18,7 +18,9 @@ test('Promotion Center exposes all five public profile sources', () => {
 
 test('Promotion Center loads authenticated account identity instead of embedding demo identity', () => {
   assert.match(html, /\/api\/growth\/referral\?profile=/);
-  assert.match(html, /localStorage\.getItem\('abl_token'\)/);
+  assert.match(html, /<script src="\/session-security\.js"><\/script>/);
+  assert.match(html, /window\.ABLSession\?\.authenticated\(\)/);
+  assert.doesNotMatch(html, /localStorage\.getItem\('abl_token'\)|Authorization:'Bearer '/);
   assert.match(html, /Sign in required/);
   assert.doesNotMatch(html, /r1_DemoReferral2026/);
 });
