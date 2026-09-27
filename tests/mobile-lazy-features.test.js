@@ -58,7 +58,7 @@ test('mobile launcher preserves Help and More while Admin stays in the profile s
 test('governance is deferred until profile-management intent while invite deep links stay immediate',()=>{
   assert.match(governanceUi,/await refreshGov\(\);decorateDrawer\(\)/);
   assert.match(loader,/async function ensureGovernance\(\)/);
-  assert.match(loader,/BusinessLifeFeatureLoader=Object\.freeze\(\{openSupportTicket,openSupport,openLegalCenter,ensureGovernance\}\)/);
+  assert.match(loader,/BusinessLifeFeatureLoader=Object\.freeze\(\{openSupportTicket,openSupport,openLegalCenter,openSafetyReport,ensureGovernance\}\)/);
   assert.doesNotMatch(loader,/loadDrawerFeatures\(\)/);
   assert.match(loader,/new URLSearchParams\(location\.search\)\.get\('invite'\)/);
   assert.match(loader,/if\(inviteToken\)ensureGovernance\(\)/);
