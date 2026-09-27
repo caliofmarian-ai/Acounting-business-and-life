@@ -12,6 +12,7 @@ import {authHardeningFetch} from './server-auth-hardening.js';
 import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
 import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
 import {buildSessionBootstrap} from './session-bootstrap-core.js';
+import {accountIdsInPsgcScope} from './account-geography.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {
   ensureIncidentTrustCase,ensureTrustSafetyCaseSchema,linkIncidentToTrustCase,recordTrustAction,
@@ -36,6 +37,7 @@ const SUPPORT_PRIORITIES=new Set(['low','normal','high','urgent']);
 const PRIVACY_SUPPORT_CATEGORIES=new Set(['privacy_objection','privacy_access','privacy_correction','privacy_erasure_blocking','privacy_other_request']);
 const SUPPORT_CATEGORIES=new Set(['auth','marketplace_order','payment','merchant_onboarding','supplier_onboarding','delivery','service_provider','accounting','tax_documents','technical_bug','other',...PRIVACY_SUPPORT_CATEGORIES]);
 const SUPPORT_DESTINATIONS=new Set(['support','territory_admin','country_admin','platform_admin']);
+const MEMBER_PROFILE_ROLES=new Set(['customer','merchant','supplier','courier','service_provider']);
 const SUPPORT_IMAGE_MIMES=new Set(['image/jpeg','image/png','image/webp']);
 const SUPPORT_DOC_MIMES=new Set([
   'application/pdf',
@@ -641,6 +643,59 @@ async function adminOverview(accountId,seedContext=null){
   };
 }
 
+async function memberDirectoryScope(ctx){
+  const scope=scopeFromContext(ctx,'members.view','territory_id');
+  if(ctx.superAdmin)return{platformWide:true,countryWide:true,territoryIds:scope.ids,accountIds:[]};
+  if(scope.countryWide)return{platformWide:false,countryWide:true,territoryIds:scope.ids,accountIds:[]};
+  const territoryIds=scope.ids.length?scope.ids:[-1],accountIds=new Set();
+  const direct=await pool.query(
+    "SELECT DISTINCT account_id FROM ("+
+      "SELECT pa.account_id FROM profile_authorizations pa WHERE pa.territory_id=ANY($1::bigint[]) AND pa.status<>'revoked' "+
+      "UNION SELECT app.account_id FROM profile_applications app WHERE app.territory_id=ANY($1::bigint[]) AND app.status<>'revoked' "+
+      "UNION SELECT bm.account_id FROM business_memberships bm JOIN businesses b ON b.id=bm.business_id WHERE bm.active=TRUE AND b.territory_id=ANY($1::bigint[])"+
+    ") scoped_accounts",[territoryIds]
+  ).catch(error=>{if(error?.code==='42P01'||error?.code==='42703')return{rows:[]};throw error});
+  direct.rows.forEach(row=>accountIds.add(Number(row.account_id)));
+  const rootIds=new Set();
+  for(const assignment of ctx.assignments){
+    const perms=new Set(Array.isArray(assignment.permissions)?assignment.permissions:[]);
+    if(perms.has('members.view')&&assignment.territory_id)rootIds.add(Number(assignment.territory_id));
+  }
+  for(const id of rootIds){
+    const territory=ctx.byId.get(Number(id)),psgc=String(territory?.psgc_code||'').replace(/\D/g,'');
+    if(psgc.length!==10)continue;
+    for(const accountId of await accountIdsInPsgcScope(pool,psgc))accountIds.add(Number(accountId));
+  }
+  return{platformWide:false,countryWide:false,territoryIds:scope.ids,accountIds:[...accountIds].filter(Number.isInteger)};
+}
+
+async function adminMembers(req,ctx){
+  requirePermissionFromContext(ctx,'members.view');
+  const scope=await memberDirectoryScope(ctx),search=clean(req.query.q,120).toLowerCase(),status=clean(req.query.status,30).toLowerCase(),verification=clean(req.query.verification,20).toLowerCase(),profile=clean(req.query.profile,40).toLowerCase();
+  const limit=Math.max(1,Math.min(100,Number(req.query.limit)||50)),offset=Math.max(0,Math.min(5000,Number(req.query.offset)||0));
+  if(status&&!['active','inactive'].includes(status))throw Object.assign(new Error('Choose active, inactive or all account statuses'),{status:400});
+  if(verification&&!['verified','unverified'].includes(verification))throw Object.assign(new Error('Choose verified, unverified or all email states'),{status:400});
+  if(profile&&!MEMBER_PROFILE_ROLES.has(profile))throw Object.assign(new Error('Unknown profile filter'),{status:400});
+  const params=[],where=[];
+  if(scope.platformWide)where.push('TRUE');
+  else if(scope.countryWide)where.push("COALESCE(NULLIF(ag.country_code,''),NULLIF(a.identity_country_code,''),'PH')='PH'");
+  else{params.push(scope.accountIds.length?scope.accountIds:[-1]);where.push('a.id=ANY($'+params.length+'::bigint[])')}
+  if(search){params.push('%'+search+'%');const p='$'+params.length;where.push("(LOWER(a.display_name) LIKE "+p+" OR LOWER(a.email) LIKE "+p+" OR LOWER(COALESCE(a.personal_public_id,'')) LIKE "+p+" OR a.id::text LIKE REPLACE("+p+",'%',''))")}
+  if(status==='active')where.push("a.auth_status='active'");
+  if(status==='inactive')where.push("a.auth_status<>'active'");
+  if(verification==='verified')where.push('a.email_verified_at IS NOT NULL');
+  if(verification==='unverified')where.push('a.email_verified_at IS NULL');
+  if(profile){params.push(profile);where.push("EXISTS(SELECT 1 FROM profiles pf WHERE pf.account_id=a.id AND pf.role=$"+params.length+" AND pf.enabled=TRUE AND pf.status='active')")}
+  params.push(limit);const limitParam='$'+params.length;params.push(offset);const offsetParam='$'+params.length;
+  const result=await pool.query(
+    "SELECT a.id account_id,a.personal_public_id personal_id,a.display_name,a.email,a.auth_status,a.account_mode,a.test_role,a.email_verified_at,a.created_at,a.updated_at,"+
+    "ag.geographic_name,ag.path_text,ag.psgc_code,"+
+    "COALESCE((SELECT jsonb_agg(jsonb_build_object('role',pf.role,'status',pf.status,'enabled',pf.enabled) ORDER BY pf.role) FROM profiles pf WHERE pf.account_id=a.id),'[]'::jsonb) profiles,"+
+    "(SELECT MAX(s.created_at) FROM account_sessions s WHERE s.account_id=a.id) last_session_at,COUNT(*) OVER()::int total_count "+
+    "FROM accounts a LEFT JOIN account_geography_assignments ag ON ag.account_id=a.id WHERE "+where.join(' AND ')+" ORDER BY a.created_at DESC,a.id DESC LIMIT "+limitParam+" OFFSET "+offsetParam,params);
+  const total=Number(result.rows[0]?.total_count||0);
+  return{scope:{country_code:scope.platformWide?null:'PH',platform_wide:scope.platformWide,country_wide:scope.countryWide,territory_ids:scope.territoryIds},total,limit,offset,items:result.rows.map(({total_count,...row})=>row)};
+}
 function dispatchBusinessAccounting(req,res,{headers={},afterSuccess=null}={}){
   if(!businessAccountingApp)return Promise.reject(Object.assign(new Error('Multi-business Accounting runtime is not ready'),{status:503}));
   const previousHeaders=new Map();
@@ -733,6 +788,8 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
   res.json(await adminOverview(me.account.id,ctx));
 }catch(e){next(e)}});
 
+app.get('/api/admin/members',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await adminMembers(req,ctx))}catch(e){next(e)}});
+
 app.get('/api/admin/delivery/pricing',(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
 app.put('/api/admin/delivery/pricing',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
 app.post('/api/admin/delivery/pricing/preview',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing_preview').catch(next));
@@ -773,7 +830,8 @@ app.post('/api/admin/assignments',body,async(req,res,next)=>{try{
   if(role==='country_admin'&&territoryId)return res.status(400).json({error:'Country Admin is country-scoped and must not use a territory id'});
   for(const code of functionCodes)if(!isFunctionAssignableToRole(code,role))return res.status(400).json({error:'Function is not assignable to this Admin rank: '+code});
   const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
-  const requested=[...new Set([...explicit,...expandAdminFunctions(functionCodes,role)])];
+  const rankBaseline=['country_admin','territory_admin'].includes(role)?['members.view']:[];
+  const requested=[...new Set([...rankBaseline,...explicit,...expandAdminFunctions(functionCodes,role)])];
   if(role==='specialist'&&requested.some(p=>p==='admin.assign_limited'||p==='admin.delegate'))return res.status(400).json({error:'Specialist cannot receive Admin delegation authority'});
   if(role!=='super_admin'&&requested.includes('finance.owner_distribution.manage'))return res.status(400).json({error:'Owner distribution authority is reserved for Super Admin'});
   if(role==='specialist'&&!requested.length)return res.status(400).json({error:'Specialist requires at least one delegated function or permission'});
@@ -821,7 +879,8 @@ app.put('/api/admin/assignments/:id/permissions',body,async(req,res,next)=>{try{
   const functionCodes=[...new Set((hasFunctions?req.body.function_codes:[]).map(x=>clean(x,100)).filter(Boolean))];
   for(const code of functionCodes)if(!isFunctionAssignableToRole(code,targetRank))return res.status(400).json({error:'Function is not assignable to this Admin rank: '+code});
   const explicit=(Array.isArray(req.body?.permissions)?req.body.permissions:[]).map(x=>clean(x,100)).filter(x=>ADMIN_PERMISSIONS.includes(x));
-  const requested=[...new Set([...explicit,...(hasFunctions?expandAdminFunctions(functionCodes,targetRank):[])])];
+  const rankBaseline=['country_admin','territory_admin'].includes(targetRank)?['members.view']:[];
+  const requested=[...new Set([...rankBaseline,...explicit,...(hasFunctions?expandAdminFunctions(functionCodes,targetRank):[])])];
   if(targetRank==='specialist'&&requested.some(p=>p==='admin.assign_limited'||p==='admin.delegate'))return res.status(400).json({error:'Specialist cannot receive Admin delegation authority'});
   if(targetRank!=='super_admin'&&requested.includes('finance.owner_distribution.manage'))return res.status(400).json({error:'Owner distribution authority is reserved for Super Admin'});
   for(const p of requested){if(actorRank!=='super_admin'){const x=await hasAdminPermission(pool,me.account.id,p,target.territory_id);if(!x.allowed)return res.status(403).json({error:'You cannot delegate permission: '+p})}}

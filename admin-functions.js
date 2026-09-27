@@ -12,6 +12,12 @@ export const ADMIN_FUNCTION_BUNDLES = Object.freeze({
     assignable_to:['country_admin','territory_admin','specialist'],
     permissions:['admin.console','support.manage']
   }),
+  member_directory:Object.freeze({
+    code:'member_directory',label:'Member Directory',
+    description:'Scoped registered-member visibility for support, onboarding and local administration.',
+    assignable_to:['country_admin','territory_admin','specialist'],
+    permissions:['admin.console','members.view']
+  }),
   profile_onboarding:Object.freeze({
     code:'profile_onboarding',label:'Profile Onboarding',
     description:'Invitations, application review, approvals and profile suspension.',
