@@ -16,6 +16,7 @@ const RULES=Object.freeze({
   invitation_create:[{windowSeconds:3600,maxAttempts:20},{windowSeconds:86400,maxAttempts:80}],
   referral_event_account:[{windowSeconds:60,maxAttempts:120},{windowSeconds:86400,maxAttempts:1500}],
   referral_event_public:[{windowSeconds:60,maxAttempts:60},{windowSeconds:86400,maxAttempts:1000}],
+  adult_eligibility_attestation:[{windowSeconds:3600,maxAttempts:5},{windowSeconds:86400,maxAttempts:12}],
   account_location_change:[{windowSeconds:3600,maxAttempts:10},{windowSeconds:86400,maxAttempts:30}],
   store_location_change:[{windowSeconds:3600,maxAttempts:10},{windowSeconds:86400,maxAttempts:30}],
   courier_location_update:[{windowSeconds:60,maxAttempts:120},{windowSeconds:3600,maxAttempts:1500}]

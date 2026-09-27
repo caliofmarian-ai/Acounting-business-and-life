@@ -32,6 +32,8 @@ on:
       - 'server-marketplace.js'
       - 'orders-read-core.js'
       - 'server-auth.js'
+      - 'account-safety-eligibility-core.js'
+      - 'tests/adult-eligibility-v1.test.js'
       - 'accounting-base-schema.js'
       - 'server-business-accounting.js'
       - 'server-orders.js'
@@ -94,6 +96,8 @@ on:
       - 'server-marketplace.js'
       - 'orders-read-core.js'
       - 'server-auth.js'
+      - 'account-safety-eligibility-core.js'
+      - 'tests/adult-eligibility-v1.test.js'
       - 'accounting-base-schema.js'
       - 'server-business-accounting.js'
       - 'server-orders.js'
@@ -204,6 +208,13 @@ jobs:
           SELECT job_id,actor_account_id,subject_account_id,actor_context,event_code,job_status,
             purpose_code,request_correlation_id,created_at
             FROM service_job_sensitive_access_events LIMIT 0;
+          SELECT safety_eligibility_status,safety_eligibility_policy_version,
+            safety_eligibility_attested_at,safety_eligibility_reviewed_at,
+            safety_eligibility_reviewed_by_account_id,safety_eligibility_source
+            FROM accounts LIMIT 0;
+          SELECT account_id,actor_account_id,event_code,status_before,status_after,
+            policy_version,source,detail_json,created_at
+            FROM account_safety_eligibility_events LIMIT 0;
           DO $trust_safety_runtime$
           BEGIN
             IF (
@@ -229,6 +240,13 @@ jobs:
                 AND contype='c'
             ) <> 4 THEN
               RAISE EXCEPTION 'Local Services sensitive-access constraints are incomplete';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conrelid='accounts'::regclass
+                AND conname='accounts_safety_eligibility_status_check'
+            ) THEN
+              RAISE EXCEPTION 'Adult eligibility state constraint is missing';
             END IF;
           END
           $trust_safety_runtime$;

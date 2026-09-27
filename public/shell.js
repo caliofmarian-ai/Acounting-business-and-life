@@ -20,6 +20,7 @@ let accountSettingsView = 'home';
 let toastTimer;
 const PROFILE_CACHE_MS = 30000;
 const ADMIN_CONTEXT_CACHE_MS = 60000;
+const ADULT_ELIGIBILITY_POLICY_VERSION='ph-adult-eligibility-v1';
 
 const PERF_TRACE_ENABLED = new URLSearchParams(location.search).get('perf') === '1';
 const PERF_TRACE_STARTED_AT = performance.now();
@@ -334,6 +335,7 @@ function profileManagementMarkup(){
   let emailReady=Boolean(account.email_verified_at);
   let detailsReady=accountDetailsReady(account);
   const superAdmin=isSuperAdminAccount(),test=isCompanyTestAccount(account);
+  const adultReady=Boolean(snapshot?.adult_eligibility?.eligible);
   let areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
   if(superAdmin){emailReady=true;detailsReady=true;areaReady=true}
   const roles=test?ROLE_ORDER.filter(role=>role===account.test_role):ROLE_ORDER;
@@ -344,12 +346,13 @@ function profileManagementMarkup(){
     const inProgress=['application_started','requirements_pending','submitted','under_review','rejected'].includes(state);
     let action,label;
     if(enabled){action=`data-profile-toggle="${role}" data-enabled="1"`;label='Disable'}
+    else if(!adultReady){action=`data-adult-eligibility="${role}"`;label='Confirm 18+ first'}
     else if(!emailReady){action=`data-verify-email="${role}"`;label='Verify email first'}
     else if(!detailsReady){action=`data-complete-personal="${role}"`;label='Complete details'}
     else if(!areaReady){action=`data-complete-personal="${role}"`;label='Area not open'}
     else if(reactivable){action=`data-profile-reactivate="${role}"`;label='Reactivate'}
     else{action=`data-role-action="${role}"`;label=superAdmin?'Activate':inProgress?'Continue onboarding':'Start onboarding'}
-    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':!areaReady?(snapshot?.geography?.message||'Area not open for onboarding'):'Not active';
+    const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':!adultReady?'Adult eligibility confirmation required':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':!areaReady?(snapshot?.geography?.message||'Area not open for onboarding'):'Not active';
     return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`
   }).join('');
 }
@@ -372,6 +375,21 @@ function accountGeographyBanner(test=false){
     return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Complete your Business & Life area</strong><p>Choose your official barangay before you start any operational profile.</p></div></section>';
   }
   return '<section class="accountGeographyNotice '+accountGeographyTone(geo)+'"><span aria-hidden="true">📍</span><div><strong>'+escapeHtml(geo.name||'Assigned barangay')+' · '+escapeHtml(accountGeographyStatusLabel(geo))+'</strong><p>'+escapeHtml(geo.message||geo.path_text||'Official PSGC area assigned.')+'</p></div></section>';
+}
+function accountAdultEligibilityBanner(test=false){
+  const state=snapshot?.adult_eligibility||{};
+  if(state.eligible){
+    const label=state.company_test_exempt?'Controlled QA exemption':state.admin_reviewed?'Adult eligibility reviewed':'18+ declaration recorded';
+    return '<section class="accountGeographyNotice ok"><span aria-hidden="true">🛡️</span><div><strong>'+escapeHtml(label)+'</strong><p>'+(state.company_test_exempt?'This company-managed identity is exempt only for controlled testing.':'The adult-only Philippines pilot gate is complete. No date of birth was collected for this declaration.')+'</p></div></section>';
+  }
+  if(test)return'';
+  return '<section class="accountGeographyNotice warn"><span aria-hidden="true">🛡️</span><div><strong>Adult eligibility confirmation required</strong><p>Confirm that you are 18 or older before activating, entering or onboarding a profile.</p></div></section>';
+}
+function accountAdultEligibilityCard(test=false){
+  const state=snapshot?.adult_eligibility||{};
+  if(test||state.company_test_exempt)return'';
+  if(state.eligible)return '<section class="accountSettingsCard"><h2>Philippines pilot eligibility</h2><p><strong>18+ declaration recorded.</strong> No date of birth was collected. Governed work profiles still require their normal Admin review.</p></section>';
+  return '<section class="accountSettingsCard"><h2>Philippines pilot eligibility</h2><p>This controlled pilot is adult-only because it includes commerce, payments, Delivery and Local Services. Business &amp; Life does not collect your date of birth for this declaration.</p><form id="adultEligibilityForm" class="profileForm"><label><span><input id="adultEligibilityConfirm" type="checkbox" required> I confirm that I am 18 or older.</span></label><div class="formActions"><button class="primary" type="submit">Record 18+ declaration</button></div><div id="adultEligibilityResult" class="avatarHint">This declaration is versioned and audited. It does not replace additional review for governed profiles.</div></form></section>';
 }
 function accountGeographyEditor(test=false){
   const geo=snapshot?.geography||{};
@@ -428,7 +446,7 @@ function renderAccountSettings(view=accountSettingsView){
   workspace.classList.remove('hidden');
   accountSettingsView=view;
   if(view==='home'){
-    workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
+    workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountAdultEligibilityBanner(test)+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
       <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and primary address'}</small><b>›</b></button>
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
@@ -449,10 +467,10 @@ function renderAccountSettings(view=accountSettingsView){
       <label>Email${test?' · protected company alias':''}<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}" ${test?'readonly aria-readonly="true"':''}></label>
       ${test?'<div class="companyContactPolicy"><div><span>Personal phone</span><strong>Not required</strong></div><div><span>Personal address</span><strong>Not required</strong></div><div><span>Contact source</span><strong>Company / test scenario</strong></div></div>':`<label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label><label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>`}
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
-    </form></section>${accountGeographyEditor(test)}`;
+    </form></section>${accountAdultEligibilityCard(test)}${accountGeographyEditor(test)}`;
   }else if(view==='profiles'){
-    const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount(),areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
-    const activationGate=superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details and area first</strong><p>Add your name, email, primary address and official barangay before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Your area is not open for onboarding</strong><p>${escapeHtml(snapshot?.geography?.message||'Business & Life is not available for operational onboarding in your barangay yet.')}</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
+    const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount(),adultReady=Boolean(snapshot?.adult_eligibility?.eligible),areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
+    const activationGate=!adultReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Confirm adult eligibility first</strong><p>The Philippines pilot is adult-only. Confirm that you are 18 or older before activating, entering or onboarding a profile.</p></div><button id="completeAdultEligibility" type="button">Open eligibility declaration</button></section>`:superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details and area first</strong><p>Add your name, email, primary address and official barangay before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Your area is not open for onboarding</strong><p>${escapeHtml(snapshot?.geography?.message||'Business & Life is not available for operational onboarding in your barangay yet.')}</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
     workspace.innerHTML=accountSettingsHeader(test?'Assigned test role':'Manage profiles',test?`This account is reserved for ${testAccountRoleLabel(account)} testing and does not require personal contact details.`:'Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+`<div id="accountSecurityMount" class="accountSecurityStack">
@@ -481,6 +499,16 @@ function renderAccountSettings(view=accountSettingsView){
     showToast('Support is still loading. Try again in a moment.');
   });
   workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
+  workspace.querySelector('#adultEligibilityForm')?.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),out=form.querySelector('#adultEligibilityResult');
+    if(!form.querySelector('#adultEligibilityConfirm')?.checked)return showToast('Confirm that you are 18 or older first.');
+    button.disabled=true;if(out)out.textContent='Recording declaration…';
+    try{
+      const result=await profileApi('/api/me/adult-eligibility/attest',{method:'POST',body:JSON.stringify({adult_eligibility_attested:true,adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION})});
+      snapshot=result.profile;profileFetchedAt=Date.now();renderTopAccount();renderAccountSettings('personal');publishProfileState();showToast('Adult eligibility declaration recorded.');
+    }catch(error){if(out)out.textContent=error.message;button.disabled=false}
+  });
   bindAccountGeographyControls(workspace);
   workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
   workspace.querySelector('#removeAvatar')?.addEventListener('click',removeAvatar);
@@ -488,9 +516,11 @@ function renderAccountSettings(view=accountSettingsView){
   workspace.querySelectorAll('[data-profile-reactivate]').forEach(btn=>btn.onclick=()=>reactivateProfile(btn.dataset.profileReactivate));
   workspace.querySelectorAll('[data-role-action]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.roleAction,true));
   workspace.querySelectorAll('[data-verify-email]').forEach(btn=>btn.onclick=()=>openAccountSettings('security'));
+  workspace.querySelectorAll('[data-adult-eligibility]').forEach(btn=>btn.onclick=()=>openAccountSettings('personal'));
   workspace.querySelectorAll('[data-complete-personal]').forEach(btn=>btn.onclick=()=>openAccountSettings('personal'));
   workspace.querySelector('#verifyProfilesEmail')?.addEventListener('click',()=>openAccountSettings('security'));
   workspace.querySelector('#completeProfilesIdentity')?.addEventListener('click',()=>openAccountSettings('personal'));
+  workspace.querySelector('#completeAdultEligibility')?.addEventListener('click',()=>openAccountSettings('personal'));
   bindCopyIds(workspace);
   document.dispatchEvent(new CustomEvent('abl:account-settings-rendered',{detail:{view,activeRole,accountId:Number(account.id)||null}}));
 }
