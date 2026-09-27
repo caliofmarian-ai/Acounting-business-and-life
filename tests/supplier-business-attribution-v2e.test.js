@@ -62,6 +62,13 @@ test('Supplier Finance, summaries and financial fee evidence are scoped by suppl
   assert.match(finance,/SUPPLIER_BUSINESS_ATTRIBUTED/);
 });
 
+test('general Supplier order operations are isolated to the active Supplier business',()=>{
+  assert.match(suppliers,/WHERE p\.supplier_account_id=\$1 AND p\.supplier_business_id=\$2 ORDER BY p\.created_at DESC/);
+  assert.match(suppliers,/supplier_business_id=\$3 FOR UPDATE/);
+  assert.match(suppliers,/supplier_business_id=\$5 AND status NOT IN/);
+  assert.match(suppliers,/Number\(po\.supplier_business_id\)===Number\(supplierBusinessId\)/);
+});
+
 test('Supplier Today and exception workflows use the selected Supplier business',()=>{
   assert.match(daily,/supplierTodayOrders\(pool,scope\)/);
   assert.match(daily,/supplierTodayMoney\(pool,scope\)/);
