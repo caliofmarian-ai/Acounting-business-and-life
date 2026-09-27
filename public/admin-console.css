@@ -501,3 +501,42 @@
   .memberGovernanceIntro h3{font-size:16px}
   .memberGovernanceIntro p{font-size:11px}
 }
+
+
+/* ADMIN MEMBERS INSIGHTS V6 */
+.memberInsightsV6{display:grid;gap:10px}
+.memberInsightMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.memberInsightMetrics .metric{min-height:78px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--panel);align-content:center}
+.memberInsightMetrics .metric strong{font-size:20px;line-height:1.1}
+.memberInsightMetrics .metric span{font-size:10px;color:var(--muted)}
+.memberInsightChips{display:flex;gap:7px;flex-wrap:wrap}
+.memberInsightChips>span{display:inline-flex;align-items:center;gap:7px;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel2)}
+.memberInsightChips small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.memberInsightChips strong{font-size:11px}
+.memberProfileDistribution{border:1px solid var(--line);border-radius:15px;background:var(--panel);overflow:hidden}
+.memberProfileDistribution>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;cursor:pointer}
+.memberProfileDistribution>summary::-webkit-details-marker{display:none}
+.memberProfileDistribution>summary>span:first-child{display:grid;gap:2px}
+.memberProfileDistribution>summary b{font-size:12px}
+.memberProfileDistribution>summary small{font-size:9px;color:var(--muted)}
+.memberDistributionToggle{font-size:10px;font-weight:700;color:var(--accent)}
+.memberProfileDistribution[open] .memberDistributionToggle{font-size:0}
+.memberProfileDistribution[open] .memberDistributionToggle:after{content:"Hide";font-size:10px}
+.memberProfileDistributionBody{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px;padding:0 14px 14px;border-top:1px solid var(--line)}
+.memberProfileInsight{display:grid;gap:5px;padding-top:10px}
+.memberProfileInsight>div{display:flex;justify-content:space-between;gap:8px;font-size:10px}
+.memberProfileInsight>div span{color:var(--muted)}
+.memberProfileInsight>div strong{font-size:10px}
+.memberProfileTrack{display:block;height:7px;border-radius:999px;background:var(--panel2);overflow:hidden}
+.memberProfileTrack i{display:block;height:100%;min-width:5px;border-radius:inherit;background:var(--accent)}
+@media(max-width:760px){
+  .memberInsightMetrics{grid-template-columns:1fr 1fr}
+}
+@media(max-width:520px){
+  .memberInsightMetrics{gap:7px}
+  .memberInsightMetrics .metric{min-height:70px;padding:10px}
+  .memberInsightMetrics .metric strong{font-size:17px}
+  .memberInsightChips{gap:5px}
+  .memberInsightChips>span{padding:6px 8px}
+  .memberProfileDistributionBody{grid-template-columns:1fr}
+}

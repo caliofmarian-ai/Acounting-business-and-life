@@ -9,7 +9,7 @@ async function api(path,options={}){
   return data;
 }
 const root=document.getElementById('adminRoot');
-let state={me:null,catalog:null,overview:null,active:'overview',assignments:null,renderRequest:0,memberHubTab:null};
+let state={me:null,catalog:null,overview:null,active:'overview',assignments:null,renderRequest:0,memberHubTab:null,memberSummary:null};
 
 const MEMBER_PROFILE_REVIEW_PERMISSIONS=['merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider'];
 const MEMBER_PROFILE_GOVERNANCE_PERMISSIONS=['profiles.invite_merchant','profiles.invite_supplier','profiles.invite_courier',...MEMBER_PROFILE_REVIEW_PERMISSIONS,'profile.suspend'];
@@ -381,6 +381,35 @@ async function memberGovernancePanel(tab,tabs){
   }
   throw new Error('This Members section is not available for the current Admin permission set.');
 }
+
+function memberInsightsMarkup(summary){
+  const s=summary||{},profiles=s.active_profiles||{};
+  const roles=['customer','merchant','supplier','courier','service_provider'];
+  const max=Math.max(1,...roles.map(role=>Number(profiles[role]||0)));
+  const profileRows=roles.map(role=>{
+    const count=Number(profiles[role]||0),pct=Math.max(0,Math.min(100,Math.round((count/max)*100)));
+    return '<div class="memberProfileInsight"><div><span>'+esc(profileRoleLabel(role))+'</span><strong>'+count+'</strong></div><span class="memberProfileTrack"><i style="width:'+pct+'%"></i></span></div>';
+  }).join('');
+  const metrics=[
+    ['Registered',Number(s.total||0)],
+    ['New · 30 days',Number(s.new_30d||0)],
+    ['Email verified',Number(s.verified_email||0)],
+    ['No active profile',Number(s.no_active_profile||0)]
+  ];
+  const chips=[
+    ['New 7d',Number(s.new_7d||0)],
+    ['Personal',Number(s.personal||0)],
+    ['Company test',Number(s.company_test||0)],
+    ['Suspended',Number(s.suspended||0)],
+    ['Unverified',Number(s.unverified_email||0)]
+  ];
+  return '<section class="memberInsightsV6" aria-label="Member directory summary">'
+    +'<div class="memberInsightMetrics">'+metrics.map(([label,value])=>'<div class="metric"><strong>'+value+'</strong><span>'+esc(label)+'</span></div>').join('')+'</div>'
+    +'<div class="memberInsightChips">'+chips.map(([label,value])=>'<span><small>'+esc(label)+'</small><strong>'+value+'</strong></span>').join('')+'</div>'
+    +'<details class="memberProfileDistribution"><summary><span><b>Active profile distribution</b><small>Enabled + active profiles only</small></span><span class="memberDistributionToggle">View</span></summary><div class="memberProfileDistributionBody">'+profileRows+'</div></details>'
+    +'</section>';
+}
+
 async function membersPanel(){
   const hub=activeMemberHubTab();
   if(!hub.active)return '<div class="notice">No Members function is delegated to this Admin account.</div>';
@@ -397,7 +426,10 @@ async function membersPanel(){
   if(filters.verification)params.set('verification',filters.verification);
   if(filters.profile)params.set('profile',filters.profile);
   params.set('limit','50');params.set('offset',String(filters.offset||0));
-  const data=await api('/api/admin/members?'+params.toString());
+  const [data,summary]=await Promise.all([
+    api('/api/admin/members?'+params.toString()),
+    state.memberSummary?Promise.resolve(state.memberSummary):api('/api/admin/members/summary').then(value=>(state.memberSummary=value))
+  ]);
   state.members=data;
   const scopeLabel=data.scope?.platform_wide?'Platform-wide':data.scope?.country_wide?'Philippines scope':((data.scope?.territory_ids||[]).length+' delegated territor'+((data.scope?.territory_ids||[]).length===1?'y':'ies'));
   const activeFilterCount=[filters.status,filters.verification,filters.profile].filter(Boolean).length;
@@ -423,7 +455,7 @@ async function membersPanel(){
 
   return '<div class="memberV4 memberHubV5">'+memberHubHeader(hub.tabs,{},'Find people, understand their platform relationship and open only the detail you need.')
     +'<div class="memberDirectoryScopeLine"><span class="memberScopePill">'+esc(scopeLabel)+'</span></div>'
-    +'<div class="memberSummaryV4"><div class="metric"><strong>'+esc(data.total||0)+'</strong><span>Registered in scope</span></div><div class="metric"><strong>'+Number(data.items?.length||0)+'</strong><span>Shown on this page</span></div><div class="metric memberScopeMetric"><strong>'+esc(scopeLabel)+'</strong><span>Directory scope</span></div></div>'
+    +memberInsightsMarkup(summary)
     +form
     +'<div class="memberListHeader"><strong>'+esc(data.total||0)+' members</strong><span class="muted">Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here.</span></div>'
     +paging+list+paging+'</div>';
@@ -441,7 +473,7 @@ async function wireMembers(){
   if(state.memberDetailId){
     document.getElementById('memberBack')?.addEventListener('click',async()=>{state.memberDetailId=null;state.memberDetail=null;await renderActive()});
     const statusForm=document.getElementById('memberStatusForm');
-    if(statusForm)statusForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(statusForm),out=statusForm.querySelector('[data-member-control-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/status',{method:'PATCH',body:JSON.stringify({status:statusForm.dataset.memberStatus,reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">Account status updated and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+    if(statusForm)statusForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(statusForm),out=statusForm.querySelector('[data-member-control-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/status',{method:'PATCH',body:JSON.stringify({status:statusForm.dataset.memberStatus,reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">Account status updated and audited.</div>';state.memberSummary=null;await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     const sessionsForm=document.getElementById('memberSessionsForm');
     if(sessionsForm)sessionsForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(sessionsForm),out=sessionsForm.querySelector('[data-member-control-result]');try{const result=await api('/api/admin/members/'+Number(state.memberDetailId)+'/sessions/revoke',{method:'POST',body:JSON.stringify({reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">'+Number(result.sessions_revoked||0)+' active session(s) revoked and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     document.querySelectorAll('[data-member-support-ticket]').forEach(button=>button.onclick=()=>window.BusinessLifeAdminConsole?.openSupportTicket(Number(button.dataset.memberSupportTicket)));
@@ -1534,7 +1566,7 @@ async function loadBase(){
   const bootstrap=await api('/api/admin/bootstrap');
   const me=bootstrap.me||{};
   if(!me.is_admin)throw Object.assign(new Error('No delegated Admin workspace is available for this account.'),{code:'NOT_ADMIN'});
-  state.me=me;state.catalog=bootstrap.catalog||{};state.overview=bootstrap.overview||{};
+  state.me=me;state.catalog=bootstrap.catalog||{};state.overview=bootstrap.overview||{};state.memberSummary=null;
 }
 async function boot(){
   if(!token()){root.className='adminDenied';root.innerHTML='<h2>Admin sign-in required</h2><p>Open the main app and sign in with the account that received delegated Admin authority.</p><a class="adminButton" href="/">Return to app</a>';return}

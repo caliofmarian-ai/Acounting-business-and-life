@@ -697,6 +697,55 @@ async function adminMembers(req,ctx){
   return{scope:{country_code:scope.platformWide?null:'PH',platform_wide:scope.platformWide,country_wide:scope.countryWide,territory_ids:scope.territoryIds},total,limit,offset,items:result.rows.map(({total_count,...row})=>row)};
 }
 
+
+async function adminMembersSummary(ctx){
+  requirePermissionFromContext(ctx,'members.view');
+  const scope=await memberDirectoryScope(ctx);
+  const params=[],where=[];
+  if(scope.platformWide)where.push('TRUE');
+  else if(scope.countryWide)where.push("COALESCE(NULLIF(ag.country_code,''),NULLIF(a.identity_country_code,''),'PH')='PH'");
+  else{params.push(scope.accountIds.length?scope.accountIds:[-1]);where.push('a.id=ANY($'+params.length+'::bigint[])')}
+  const predicate=where.join(' AND ');
+  const [totalsQ,profilesQ]=await Promise.all([
+    pool.query(
+      "SELECT COUNT(DISTINCT a.id)::int total,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE a.created_at>=NOW()-INTERVAL '7 days')::int new_7d,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE a.created_at>=NOW()-INTERVAL '30 days')::int new_30d,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE a.email_verified_at IS NOT NULL)::int verified_email,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE a.email_verified_at IS NULL)::int unverified_email,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE a.auth_status='suspended')::int suspended,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE COALESCE(a.account_mode,'personal')='company_test')::int company_test,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE COALESCE(a.account_mode,'personal')<>'company_test')::int personal,"+
+      "COUNT(DISTINCT a.id) FILTER(WHERE NOT EXISTS(SELECT 1 FROM profiles pf WHERE pf.account_id=a.id AND pf.enabled=TRUE AND pf.status='active'))::int no_active_profile "+
+      "FROM accounts a LEFT JOIN account_geography_assignments ag ON ag.account_id=a.id WHERE "+predicate,
+      params
+    ),
+    pool.query(
+      "SELECT pf.role,COUNT(DISTINCT a.id)::int count "+
+      "FROM accounts a LEFT JOIN account_geography_assignments ag ON ag.account_id=a.id "+
+      "JOIN profiles pf ON pf.account_id=a.id AND pf.enabled=TRUE AND pf.status='active' "+
+      "WHERE "+predicate+" GROUP BY pf.role ORDER BY pf.role",
+      params
+    )
+  ]);
+  const t=totalsQ.rows[0]||{};
+  const profileCounts=Object.fromEntries([...MEMBER_PROFILE_ROLES].map(role=>[role,0]));
+  for(const row of profilesQ.rows)if(MEMBER_PROFILE_ROLES.has(row.role))profileCounts[row.role]=Number(row.count||0);
+  return{
+    scope:{country_code:scope.platformWide?null:'PH',platform_wide:scope.platformWide,country_wide:scope.countryWide,territory_ids:scope.territoryIds},
+    total:Number(t.total||0),
+    new_7d:Number(t.new_7d||0),
+    new_30d:Number(t.new_30d||0),
+    verified_email:Number(t.verified_email||0),
+    unverified_email:Number(t.unverified_email||0),
+    suspended:Number(t.suspended||0),
+    personal:Number(t.personal||0),
+    company_test:Number(t.company_test||0),
+    no_active_profile:Number(t.no_active_profile||0),
+    active_profiles:profileCounts
+  };
+}
+
 async function optionalMemberRows(sql,args=[]){
   try{return (await pool.query(sql,args)).rows}
   catch(error){if(error?.code==='42P01'||error?.code==='42703')return[];throw error}
@@ -1066,6 +1115,7 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.get('/api/admin/members',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await adminMembers(req,ctx))}catch(e){next(e)}});
+app.get('/api/admin/members/summary',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await adminMembersSummary(ctx))}catch(e){next(e)}});
 
 app.get('/api/admin/members/:accountId',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await adminMemberDetails(req.params.accountId,ctx))}catch(e){next(e)}});
 app.patch('/api/admin/members/:accountId/status',body,async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await updateMemberAccountStatus(req,ctx,req.params.accountId))}catch(e){next(e)}});

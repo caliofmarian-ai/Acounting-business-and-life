@@ -32,7 +32,7 @@ test('Members UX V4 provides compact section navigation and opens a target discl
 test('Members directory V4 keeps search filters paging and clear member hierarchy',()=>{
   assert.match(ui,/memberDirectoryHeader/);
   assert.match(ui,/memberScopePill/);
-  assert.match(ui,/memberSummaryV4/);
+  assert.match(ui,/memberInsightsV6/);
   assert.match(ui,/memberSearchPrimary/);
   assert.match(ui,/memberFilterGridV4/);
   assert.match(ui,/Name, email, Account ID or Personal ID/);

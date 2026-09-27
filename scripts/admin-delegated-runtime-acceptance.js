@@ -119,6 +119,18 @@ async function main(){
      VALUES($1,'service_provider',$2,'active',1,NOW(),'CI Members sibling scope fixture')`,
     [Number(memberB.id),Number(t2.id)]
   );
+  await pool.query(
+    `INSERT INTO profiles(account_id,role,enabled,visibility,status)
+     VALUES($1,'customer',TRUE,'private','active')
+     ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',updated_at=NOW()`,
+    [Number(memberA.id)]
+  );
+  await pool.query(
+    `INSERT INTO profiles(account_id,role,enabled,visibility,status)
+     VALUES($1,'supplier',TRUE,'private','active')
+     ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',updated_at=NOW()`,
+    [Number(memberB.id)]
+  );
   const memberBusiness=await pool.query(
     `INSERT INTO businesses(name,country_code,currency_code,territory_id)
      VALUES($1,'PH','PHP',$2) RETURNING id,name`,
@@ -231,6 +243,11 @@ async function main(){
   await request('/api/admin/audit',{token:countryToken});
   const countryMembers=await request('/api/admin/members?limit=100',{token:countryToken});
   assert(countryMembers.scope?.country_wide===true&&countryMembers.scope?.platform_wide===false,'Country Admin Members scope must remain country-wide, not platform-wide');
+  const countryMemberSummary=await request('/api/admin/members/summary',{token:countryToken});
+  assert(countryMemberSummary.scope?.country_wide===true&&countryMemberSummary.scope?.platform_wide===false,'Country Admin Members summary scope must remain PH country-wide');
+  assert(Number(countryMemberSummary.total||0)>=2,'Country Admin Members summary omitted fixture accounts');
+  assert(Number(countryMemberSummary.active_profiles?.customer||0)>=1,'Country Admin Members summary missing Customer profile');
+  assert(Number(countryMemberSummary.active_profiles?.supplier||0)>=1,'Country Admin Members summary missing sibling-territory Supplier profile from country scope');
   assert((countryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberA.id)),'Country Admin cannot see member in territory A');
   assert((countryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberB.id)),'Country Admin cannot see member in territory B');
   const countryMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:countryToken});
@@ -245,6 +262,9 @@ async function main(){
     token:countryToken,method:'PATCH',expected:403,
     body:{status:'suspended',reason:'Country Admin fixture is read-only',confirm:true}
   });
+  const ownerMemberSummary=await request('/api/admin/members/summary',{token:ownerToken});
+  assert(ownerMemberSummary.scope?.platform_wide===true,'Super Admin Members summary must remain platform-wide');
+  assert(Number(ownerMemberSummary.total||0)>=Number(countryMemberSummary.total||0),'Super Admin Members summary cannot be smaller than country scope');
   const ownerMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:ownerToken});
   assert(ownerMemberDetail.context?.legal?.available===true,'Super Admin legal context missing');
   const legalItem=(ownerMemberDetail.context?.legal?.items||[]).find(x=>x.purpose==='CI Members V3 sanitized legal history');
@@ -282,6 +302,10 @@ async function main(){
   await request('/api/admin/couriers',{token:territoryToken});
   const territoryMembers=await request('/api/admin/members?limit=100',{token:territoryToken});
   assert(territoryMembers.scope?.country_wide===false,'Territory Admin Members escaped into country scope');
+  const territoryMemberSummary=await request('/api/admin/members/summary',{token:territoryToken});
+  assert(territoryMemberSummary.scope?.country_wide===false&&territoryMemberSummary.scope?.platform_wide===false,'Territory Admin Members summary escaped delegated scope');
+  assert(Number(territoryMemberSummary.active_profiles?.customer||0)>=1,'Territory Admin Members summary missing in-scope Customer profile');
+  assert(Number(territoryMemberSummary.active_profiles?.supplier||0)===0,'Territory Admin Members summary leaked sibling-territory Supplier profile');
   assert((territoryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberA.id)),'Territory Admin cannot see in-scope member');
   assert(!(territoryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberB.id)),'Territory Admin leaked sibling-territory member');
   await sessionFor(memberA.id,'member-a-target');
@@ -357,6 +381,8 @@ async function main(){
   const memberSupportBoot=await request('/api/admin/bootstrap',{token:memberSupportSpecialistToken});
   assert(hasPermission(memberSupportBoot,'members.view')&&hasPermission(memberSupportBoot,'support.manage'),'Members V3 Support specialist permissions missing');
   assert(!hasPermission(memberSupportBoot,'incident.triage')&&!hasPermission(memberSupportBoot,'legal.view')&&!hasPermission(memberSupportBoot,'members.notes.manage'),'Members V3 Support specialist received sensitive extra authority');
+  const memberSupportSummary=await request('/api/admin/members/summary',{token:memberSupportSpecialistToken});
+  assert(memberSupportSummary.scope?.country_wide===false,'Member Directory Specialist summary escaped delegated territory');
   const memberSupportDetail=await request('/api/admin/members/'+Number(memberA.id),{token:memberSupportSpecialistToken});
   assert(memberSupportDetail.context?.support?.available===true,'Members V3 Support specialist cannot see allowed Support context');
   assert(memberSupportDetail.context?.safety?.available===false&&memberSupportDetail.context?.legal?.available===false&&memberSupportDetail.context?.internal?.available===false,'Members V3 Support specialist context isolation failed');
@@ -378,6 +404,7 @@ async function main(){
     body:{target_email:'ci-profile-hub-'+suffix+'@example.test',role:'merchant',territory_id:Number(t1.id),expires_days:2,note:'Members Hub governance-only acceptance'}
   });
   await request('/api/admin/members',{token:profileSpecialistToken,expected:403});
+  await request('/api/admin/members/summary',{token:profileSpecialistToken,expected:403});
   await request('/api/admin/members/'+Number(memberA.id),{token:profileSpecialistToken,expected:403});
 
   // Specialist: support-only operational authority. Finance remains available but is function-scoped.
@@ -432,6 +459,10 @@ async function main(){
     members_notes_tags_audit:'PASS',
     members_support_specialist_isolation:'PASS',
     members_hub_governance_without_directory:'PASS',
+    members_insights_platform_scope:'PASS',
+    members_insights_country_scope:'PASS',
+    members_insights_territory_isolation:'PASS',
+    members_insights_governance_deny:'PASS',
     members_specialist_deny:'PASS'
   }));
 }
