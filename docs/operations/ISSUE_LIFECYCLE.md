@@ -77,7 +77,17 @@ For runtime/product changes, the normal sequence is:
 6. when the required evidence passes, set `status:ready-to-merge`;
 7. merge using the exact reviewed head;
 8. verify the exact production revision when runtime is affected;
-9. close the issue only when its acceptance criteria are complete.
+9. run the required production smoke journey/log check against that exact deployed revision;
+10. reconcile the shared Preview pointer back to current `main` after the PR time-slice ends, unless another open PR has explicitly taken the Preview slot;
+11. close the issue only when its acceptance criteria are complete.
+
+A Preview pass is evidence for the tested PR head only. It is not evidence that production has the same code or runtime behavior.
+
+The canonical promotion invariant for runtime/product work is:
+
+`exact PR head on Preview → acceptance PASS → merge reviewed head → exact main deployment on production → production smoke PASS → Preview pointer reconciled`.
+
+Intentional environment differences are not parity bugs. The isolated QA database, QA Philippines context, designated remote QA identity, sandbox/test provider credentials and other QA-only safety controls remain separate from production. Code parity must never be achieved by copying QA secrets, test data or bypasses into production.
 
 Repository-only documentation/coordination changes do not need an application runtime Preview if they cannot affect the deployed application, but their GitHub CI/syntax checks must still pass.
 

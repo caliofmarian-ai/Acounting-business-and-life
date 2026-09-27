@@ -1,0 +1,105 @@
+name: Preview Production Parity Guard
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - closed
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: preview-production-parity-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: ${{ github.repository == 'caliofmarian-ai/Acounting-business-and-life' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reconcile shared Preview pointer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const previewBranch = 'delivery-routing-v2c';
+
+            async function refSha(branch) {
+              const response = await github.rest.git.getRef({
+                owner,
+                repo,
+                ref: 'heads/' + branch
+              });
+              return response.data.object.sha;
+            }
+
+            const mainSha = await refSha('main');
+            const previewSha = await refSha(previewBranch);
+
+            if (previewSha === mainSha) {
+              core.notice('Preview pointer already matches main: ' + mainSha);
+              return;
+            }
+
+            const openPulls = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100
+            });
+            const activePreviewPr = openPulls.find((pr) => pr.head?.sha === previewSha);
+
+            if (activePreviewPr) {
+              const issueMatch = String(activePreviewPr.head?.ref || '').match(/-(\d+)$/);
+              let lifecycle = [];
+              if (issueMatch) {
+                try {
+                  const issue = await github.rest.issues.get({
+                    owner,
+                    repo,
+                    issue_number: Number(issueMatch[1])
+                  });
+                  lifecycle = (issue.data.labels || [])
+                    .map((label) => typeof label === 'string' ? label : label.name)
+                    .filter((name) => name.startsWith('status:'));
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+              }
+              core.notice(
+                'Intentional Preview divergence preserved for open PR #' +
+                activePreviewPr.number + ' at ' + previewSha +
+                (lifecycle.length ? ' (' + lifecycle.join(', ') + ')' : '')
+              );
+              return;
+            }
+
+            if (
+              context.eventName === 'pull_request' &&
+              context.payload.action === 'closed' &&
+              context.payload.pull_request?.head?.sha !== previewSha
+            ) {
+              core.notice(
+                'Closed PR did not own the current Preview pointer; leaving pointer unchanged for reconciliation by the owning flow.'
+              );
+              return;
+            }
+
+            await github.rest.git.updateRef({
+              owner,
+              repo,
+              ref: 'heads/' + previewBranch,
+              sha: mainSha,
+              force: true
+            });
+            core.notice(
+              'Reconciled stale Preview pointer from ' + previewSha +
+              ' to current main ' + mainSha
+            );
