@@ -51,8 +51,10 @@ test('Members API supports bounded search filters and avoids sensitive account/s
   assert.doesNotMatch(block,/session_id/);
 });
 
-test('Admin UI exposes Members only to members.view and provides search filters',()=>{
-  assert.match(ui,/\{id:'members',label:'Members',any:\['members\.view'\]\}/);
+test('Admin UI keeps Member Directory behind members.view while the unified Members parent can host governed profile work',()=>{
+  assert.match(ui,/\{id:'members',label:'Members',any:\['members\.view',\.\.\.MEMBER_PROFILE_GOVERNANCE_PERMISSIONS\]\}/);
+  assert.match(ui,/if\(hasAny\(\['members\.view'\]\)\)tabs\.push\(\{id:'directory'/);
+  assert.match(ui,/if\(!hasAny\(\['members\.view'\]\)\)throw new Error\('Member Directory access is not delegated/);
   assert.match(ui,/async function membersPanel/);
   assert.match(ui,/\/api\/admin\/members\?/);
   assert.match(ui,/Account ID or Personal ID/);
