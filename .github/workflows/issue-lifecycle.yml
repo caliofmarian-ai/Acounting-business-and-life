@@ -1,0 +1,278 @@
+name: Issue Lifecycle Control Tower
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/issue-lifecycle.yml"
+      - "AGENTS.md"
+      - "docs/operations/ISSUE_LIFECYCLE.md"
+  issues:
+    types: [opened, reopened, closed, labeled]
+  create:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  lifecycle:
+    if: ${{ github.repository == 'caliofmarian-ai/Acounting-business-and-life' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reconcile issue lifecycle
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const statuses = [
+              { name: 'status:open', color: 'D0D7DE', description: 'Open and not currently claimed for implementation' },
+              { name: 'status:in-progress', color: 'FBCA04', description: 'Actively claimed and being implemented or reconciled' },
+              { name: 'status:review', color: '1D76DB', description: 'Implementation has a linked pull request under review' },
+              { name: 'status:preview-qa', color: '5319E7', description: 'Exact-head Preview QA and acceptance are in progress' },
+              { name: 'status:ready-to-merge', color: '0E8A16', description: 'Required checks and Preview evidence passed; ready to merge' },
+              { name: 'status:blocked', color: 'B60205', description: 'Blocked by an explicit dependency, decision, credential or external gate' },
+              { name: 'status:done', color: '8250DF', description: 'Issue is closed with completed acceptance evidence' }
+            ];
+            const statusNames = new Set(statuses.map((s) => s.name));
+            const milestoneTitle = 'Business & Life — Active Work';
+
+            async function ensureLabels() {
+              const existing = await github.paginate(github.rest.issues.listLabelsForRepo, {
+                owner,
+                repo,
+                per_page: 100
+              });
+              const names = new Set(existing.map((label) => label.name));
+              for (const status of statuses) {
+                if (!names.has(status.name)) {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: status.name,
+                    color: status.color,
+                    description: status.description
+                  });
+                }
+              }
+            }
+
+            async function ensureMilestone() {
+              const milestones = await github.paginate(github.rest.issues.listMilestones, {
+                owner,
+                repo,
+                state: 'all',
+                per_page: 100
+              });
+              let milestone = milestones.find((item) => item.title === milestoneTitle);
+              if (!milestone) {
+                const created = await github.rest.issues.createMilestone({
+                  owner,
+                  repo,
+                  title: milestoneTitle,
+                  description: 'Canonical active-work grouping for Business & Life. Lifecycle state is carried by exactly one status:* label.'
+                });
+                milestone = created.data;
+              } else if (milestone.state !== 'open') {
+                const reopened = await github.rest.issues.updateMilestone({
+                  owner,
+                  repo,
+                  milestone_number: milestone.number,
+                  state: 'open'
+                });
+                milestone = reopened.data;
+              }
+              return milestone.number;
+            }
+
+            function labelNames(issue) {
+              return (issue.labels || []).map((label) => typeof label === 'string' ? label : label.name);
+            }
+
+            async function setStatus(issueNumber, targetStatus, milestoneNumber) {
+              if (!statusNames.has(targetStatus)) {
+                throw new Error('Unknown lifecycle status: ' + targetStatus);
+              }
+
+              const response = await github.rest.issues.get({
+                owner,
+                repo,
+                issue_number: issueNumber
+              });
+              const issue = response.data;
+              if (issue.pull_request) {
+                return;
+              }
+
+              const currentNames = labelNames(issue);
+              const nonStatus = currentNames.filter((name) => !statusNames.has(name));
+              const currentStatuses = currentNames.filter((name) => statusNames.has(name));
+              const desiredLabels = [...nonStatus, targetStatus];
+              const needsLabels = currentStatuses.length !== 1 || currentStatuses[0] !== targetStatus;
+              const needsMilestone = !issue.milestone;
+
+              if (!needsLabels && !needsMilestone) {
+                return;
+              }
+
+              const update = {
+                owner,
+                repo,
+                issue_number: issueNumber
+              };
+              if (needsLabels) {
+                update.labels = desiredLabels;
+              }
+              if (needsMilestone) {
+                update.milestone = milestoneNumber;
+              }
+              await github.rest.issues.update(update);
+            }
+
+            async function seedOpenIssues(milestoneNumber) {
+              const items = await github.paginate(github.rest.issues.listForRepo, {
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100
+              });
+              for (const issue of items) {
+                if (issue.pull_request) {
+                  continue;
+                }
+                const current = labelNames(issue).filter((name) => statusNames.has(name));
+                const target = current.length ? current[0] : 'status:open';
+                await setStatus(issue.number, target, milestoneNumber);
+              }
+            }
+
+            function linkedIssueNumbers(pr) {
+              const numbers = new Set();
+              const text = [pr.title || '', pr.body || '', pr.head?.ref || ''].join('\n');
+              const referencePattern = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|relates\s+to)\s*:?[ \t]*#(\d+)/gi;
+              let match;
+              while ((match = referencePattern.exec(text)) !== null) {
+                numbers.add(Number(match[1]));
+              }
+
+              const branchMatch = (pr.head?.ref || '').match(/-(\d+)$/);
+              if (branchMatch) {
+                numbers.add(Number(branchMatch[1]));
+              }
+              return [...numbers].filter((number) => Number.isInteger(number) && number > 0);
+            }
+
+            async function setLinkedPrStatus(pr, targetStatus, milestoneNumber) {
+              for (const issueNumber of linkedIssueNumbers(pr)) {
+                try {
+                  const response = await github.rest.issues.get({
+                    owner,
+                    repo,
+                    issue_number: issueNumber
+                  });
+                  if (!response.data.pull_request && response.data.state === 'open') {
+                    await setStatus(issueNumber, targetStatus, milestoneNumber);
+                  }
+                } catch (error) {
+                  if (error.status !== 404) {
+                    throw error;
+                  }
+                }
+              }
+            }
+
+            await ensureLabels();
+            const milestoneNumber = await ensureMilestone();
+
+            if (context.eventName === 'push' || context.eventName === 'workflow_dispatch') {
+              await seedOpenIssues(milestoneNumber);
+              return;
+            }
+
+            if (context.eventName === 'issues') {
+              const issue = context.payload.issue;
+              const action = context.payload.action;
+
+              if (action === 'closed') {
+                await setStatus(issue.number, 'status:done', milestoneNumber);
+                return;
+              }
+
+              if (action === 'opened' || action === 'reopened') {
+                await setStatus(issue.number, 'status:open', milestoneNumber);
+                return;
+              }
+
+              if (action === 'labeled') {
+                const added = context.payload.label?.name;
+                if (statusNames.has(added)) {
+                  await setStatus(issue.number, added, milestoneNumber);
+                }
+              }
+              return;
+            }
+
+            if (context.eventName === 'create' && context.payload.ref_type === 'branch') {
+              const match = String(context.payload.ref || '').match(/-(\d+)$/);
+              if (!match) {
+                return;
+              }
+              const issueNumber = Number(match[1]);
+              try {
+                const response = await github.rest.issues.get({
+                  owner,
+                  repo,
+                  issue_number: issueNumber
+                });
+                if (!response.data.pull_request && response.data.state === 'open') {
+                  await setStatus(issueNumber, 'status:in-progress', milestoneNumber);
+                }
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+              }
+              return;
+            }
+
+            if (context.eventName === 'pull_request') {
+              const pr = context.payload.pull_request;
+              const action = context.payload.action;
+
+              if (action === 'closed') {
+                for (const issueNumber of linkedIssueNumbers(pr)) {
+                  try {
+                    const response = await github.rest.issues.get({
+                      owner,
+                      repo,
+                      issue_number: issueNumber
+                    });
+                    if (response.data.pull_request) {
+                      continue;
+                    }
+                    if (response.data.state === 'closed') {
+                      await setStatus(issueNumber, 'status:done', milestoneNumber);
+                    } else {
+                      await setStatus(issueNumber, 'status:in-progress', milestoneNumber);
+                    }
+                  } catch (error) {
+                    if (error.status !== 404) {
+                      throw error;
+                    }
+                  }
+                }
+                return;
+              }
+
+              const target = pr.draft || action === 'converted_to_draft'
+                ? 'status:in-progress'
+                : 'status:review';
+              await setLinkedPrStatus(pr, target, milestoneNumber);
+            }
