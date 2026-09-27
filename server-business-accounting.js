@@ -407,7 +407,10 @@ app.post('/api/accounting/admin/workspaces',jsonBody,async(req,res,next)=>{try{c
 app.post('/api/accounting/admin/bindings',jsonBody,async(req,res,next)=>{try{const admin=await requireAdmin(req),target=Number(req.body?.target_account_id),businessId=Number(req.body?.business_id),role=clean(req.body?.role,40);if(!Number.isInteger(target)||!Number.isInteger(businessId)||!['merchant','supplier'].includes(role))return res.status(400).json({error:'Target account, business and role are required'});const b=await pool.query(`SELECT * FROM businesses WHERE id=$1`,[businessId]);if(!b.rowCount)return res.status(404).json({error:'Business not found'});await pool.query(`INSERT INTO business_memberships(business_id,account_id,membership_role,active) VALUES($1,$2,'owner',TRUE) ON CONFLICT(business_id,account_id) DO UPDATE SET active=TRUE`,[businessId,target]);await pool.query(`INSERT INTO profile_business_bindings(account_id,role,business_id,status,is_primary) VALUES($1,$2,$3,'active',$4) ON CONFLICT(account_id,role,business_id) DO UPDATE SET status='active',is_primary=EXCLUDED.is_primary,updated_at=NOW()`,[target,role,businessId,Boolean(req.body?.is_primary)]);if(req.body?.is_primary)await pool.query(`UPDATE profile_business_bindings SET is_primary=(business_id=$3) WHERE account_id=$1 AND role=$2`,[target,role,businessId]);await tenancyAudit(admin.account.id,target,role,businessId,'admin_profile_business_bound');res.json({ok:true})}catch(e){next(e)}});
 
 app.get('/api/accounting/finance-overview',async(req,res,next)=>{try{
-  const ctx=await accountingContext(req);
+  const requested=Number(req.query.business_id);
+  const ctx=Number.isSafeInteger(requested)&&requested>0
+    ?await specificBusiness(req,requested)
+    :await accountingContext(req);
   res.json(await businessFinanceOverview(pool,ctx));
 }catch(e){next(e)}});
 
