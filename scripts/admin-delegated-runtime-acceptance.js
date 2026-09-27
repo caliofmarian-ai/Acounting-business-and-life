@@ -68,6 +68,11 @@ async function main(){
   assert(owner?.me?.is_admin===true,'Bootstrap owner is not Admin');
   assert((owner.me.assignments||[]).some(a=>(a.effective_rank||a.authority_rank||a.admin_role)==='super_admin'),'Owner Super Admin assignment missing');
 
+  await request('/api/admin/members/1/status',{
+    token:ownerToken,method:'PATCH',expected:409,
+    body:{status:'suspended',reason:'CI current Admin account must remain protected',confirm:true}
+  });
+
   const suffix=Date.now().toString(36);
   const t1=await request('/api/governance/admin/territories',{
     token:ownerToken,method:'POST',expected:201,
@@ -300,6 +305,7 @@ async function main(){
     members_business_membership:'PASS',
     members_controls_explicit_permission:'PASS',
     members_controls_audit:'PASS',
+    members_self_protection:'PASS',
     members_specialist_deny:'PASS'
   }));
 }
