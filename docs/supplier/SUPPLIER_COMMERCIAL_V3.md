@@ -249,18 +249,21 @@ Product use:
 - retail-channel visibility;
 - quarantine/recall evidence.
 
-## 13. Active gateway parity
+## 13. Active gateway authority
 
-The runtime currently exposes procurement receiving/payment through both the dedicated Supplier service and the multi-business accounting gateway.
+Procurement receiving remains exposed in both the dedicated Supplier service and the multi-business accounting gateway until receiving is consolidated.
 
-Until that architecture is consolidated, every change to these operations must preserve behavioral parity across both active routes:
-- receiving creates the same `purchase_receipt_items` evidence;
-- receiving creates the same traceable `supply_lots`;
-- linked Inventory conversion and lot base units remain aligned;
-- payment uses the same current commercial outstanding calculation;
-- confirmed Supplier credits reduce the same payable/receivable basis.
+Supplier payment is different: it has one canonical mutation owner in the Supplier service. The accounting gateway must not register a second `POST /api/procurement/orders/:id/payment` handler.
 
-A static test must protect both routes. A change is incomplete if only one gateway implements the rule.
+The canonical payment transaction must:
+- lock the PO before calculating current commercial outstanding;
+- record the Merchant business expense in the exact Merchant business;
+- record the Supplier receipt in `purchase_orders.supplier_business_id`;
+- write both sides atomically;
+- return the Supplier receipt business id as runtime evidence;
+- leave payout/provider settlement as a separate evidence boundary.
+
+Static tests protect both the remaining receiving parity and the single-owner payment rule.
 
 ## 14. Regression gates
 
