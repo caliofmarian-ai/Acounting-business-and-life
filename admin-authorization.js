@@ -5,6 +5,7 @@ export const ADMIN_PERMISSIONS = Object.freeze([
   'members.view',
   'members.manage_status',
   'members.sessions.revoke',
+  'members.notes.manage',
   'admin.assign_limited',
   'admin.delegate',
   'territory.manage',
@@ -120,6 +121,24 @@ export async function ensureAdminSchema(pool){
     );
     CREATE INDEX IF NOT EXISTS admin_audit_events_scope_idx ON admin_audit_events(country_code,territory_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS admin_audit_events_actor_idx ON admin_audit_events(actor_account_id,created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS admin_member_notes (
+      id BIGSERIAL PRIMARY KEY,
+      member_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      note_text TEXT NOT NULL,
+      created_by_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS admin_member_notes_member_idx ON admin_member_notes(member_account_id,created_at DESC,id DESC);
+
+    CREATE TABLE IF NOT EXISTS admin_member_tags (
+      member_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      tag TEXT NOT NULL,
+      created_by_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(member_account_id,tag)
+    );
+    CREATE INDEX IF NOT EXISTS admin_member_tags_member_idx ON admin_member_tags(member_account_id,created_at DESC);
 
     INSERT INTO platform_admin_assignments(account_id,admin_role,authority_rank,country_code,territory_id,status,assigned_by_account_id,reason)
     VALUES(1,'super_admin','super_admin','PH',NULL,'active',1,'Bootstrap Platform Owner / Super Admin')
