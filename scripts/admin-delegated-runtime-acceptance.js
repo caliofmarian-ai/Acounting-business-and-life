@@ -125,7 +125,7 @@ async function main(){
     token:ownerToken,method:'POST',expected:201,
     body:{
       target_email:territory.email,admin_role:'territory_admin',territory_id:Number(t1.id),
-      function_codes:['profile_onboarding','support_operations','delivery_operations'],
+      function_codes:['profile_onboarding','support_operations','delivery_operations','member_account_controls'],
       reason:'CI delegated Territory Admin acceptance'
     }
   });
@@ -158,6 +158,13 @@ async function main(){
   assert(countryMembers.scope?.country_wide===true&&countryMembers.scope?.platform_wide===false,'Country Admin Members scope must remain country-wide, not platform-wide');
   assert((countryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberA.id)),'Country Admin cannot see member in territory A');
   assert((countryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberB.id)),'Country Admin cannot see member in territory B');
+  const countryMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:countryToken});
+  assert(Number(countryMemberDetail.member?.account_id)===Number(memberA.id),'Country Admin cannot open member detail');
+  assert(countryMemberDetail.controls?.manage_status===false&&countryMemberDetail.controls?.revoke_sessions===false,'Read-only Country Admin unexpectedly received member controls');
+  await request('/api/admin/members/'+Number(memberA.id)+'/status',{
+    token:countryToken,method:'PATCH',expected:403,
+    body:{status:'suspended',reason:'Country Admin fixture is read-only',confirm:true}
+  });
   await request('/api/admin/finance/operating',{token:countryToken});
   await request('/api/admin/couriers',{token:countryToken,expected:403});
   await request('/api/governance/admin/territories',{
@@ -180,6 +187,8 @@ async function main(){
   assert(!territoryScope.has(Number(t2.id)),'Territory Admin leaked into sibling territory');
   assert(hasPermission(territoryBoot,'courier.verify'),'Territory Admin delegated Courier verification missing');
   assert(hasPermission(territoryBoot,'members.view'),'Territory Admin baseline Members permission missing');
+  assert(hasPermission(territoryBoot,'members.manage_status'),'Territory Admin explicit member status control missing');
+  assert(hasPermission(territoryBoot,'members.sessions.revoke'),'Territory Admin explicit member session control missing');
   assert(!hasPermission(territoryBoot,'delivery.pricing.manage'),'Territory Admin received country Delivery pricing');
   assert(!hasPermission(territoryBoot,'admin.delegate'),'Territory Admin received undelegated Admin delegation');
   await request('/api/admin/support',{token:territoryToken});
@@ -188,6 +197,40 @@ async function main(){
   assert(territoryMembers.scope?.country_wide===false,'Territory Admin Members escaped into country scope');
   assert((territoryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberA.id)),'Territory Admin cannot see in-scope member');
   assert(!(territoryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberB.id)),'Territory Admin leaked sibling-territory member');
+  await sessionFor(memberA.id,'member-a-target');
+  const territoryMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:territoryToken});
+  assert(territoryMemberDetail.controls?.manage_status===true&&territoryMemberDetail.controls?.revoke_sessions===true,'Territory Admin member controls not exposed for in-scope member');
+  assert(Number(territoryMemberDetail.security?.active_session_count||0)>=1,'Member security summary did not count active session');
+  await request('/api/admin/members/'+Number(memberB.id),{token:territoryToken,expected:404});
+  await request('/api/admin/members/'+Number(memberB.id)+'/status',{
+    token:territoryToken,method:'PATCH',expected:404,
+    body:{status:'suspended',reason:'Sibling territory must remain inaccessible',confirm:true}
+  });
+  const revokedSessions=await request('/api/admin/members/'+Number(memberA.id)+'/sessions/revoke',{
+    token:territoryToken,method:'POST',
+    body:{reason:'CI account takeover response check',confirm:true}
+  });
+  assert(Number(revokedSessions.sessions_revoked||0)>=1,'Territory Admin did not revoke active member session');
+  const afterSessionRevoke=await request('/api/admin/members/'+Number(memberA.id),{token:territoryToken});
+  assert(Number(afterSessionRevoke.security?.active_session_count||0)===0,'Revoked member session still counted active');
+  const suspendedMember=await request('/api/admin/members/'+Number(memberA.id)+'/status',{
+    token:territoryToken,method:'PATCH',
+    body:{status:'suspended',reason:'CI scoped member suspension acceptance',confirm:true}
+  });
+  assert(suspendedMember.auth_status==='suspended','Territory Admin could not suspend in-scope member');
+  const suspendedDetail=await request('/api/admin/members/'+Number(memberA.id),{token:territoryToken});
+  assert(suspendedDetail.member?.auth_status==='suspended','Suspended member detail did not refresh status');
+  const reactivatedMember=await request('/api/admin/members/'+Number(memberA.id)+'/status',{
+    token:territoryToken,method:'PATCH',
+    body:{status:'active',reason:'CI restore member after suspension acceptance',confirm:true}
+  });
+  assert(reactivatedMember.auth_status==='active','Territory Admin could not reactivate in-scope member');
+  const memberAudit=await pool.query(
+    "SELECT event_code,reason FROM admin_audit_events WHERE target_type='member_account' AND target_id=$1 ORDER BY id",
+    [String(memberA.id)]
+  );
+  const memberAuditCodes=new Set(memberAudit.rows.map(x=>x.event_code));
+  assert(memberAuditCodes.has('member_sessions_revoked')&&memberAuditCodes.has('member_account_suspended')&&memberAuditCodes.has('member_account_reactivated'),'Member control audit events missing');
   await request('/api/admin/finance/operating',{token:territoryToken});
   await request('/api/admin/assignments',{token:territoryToken,expected:403});
   await request('/api/admin/delivery/pricing',{token:territoryToken,expected:403});
@@ -216,6 +259,11 @@ async function main(){
   assert(specialistFinance.scope.function_codes.length===1&&specialistFinance.scope.function_codes[0]==='support_operations','Specialist finance escaped support function scope');
   await request('/api/admin/assignments',{token:specialistToken,expected:403});
   await request('/api/admin/members',{token:specialistToken,expected:403});
+  await request('/api/admin/members/'+Number(memberA.id),{token:specialistToken,expected:403});
+  await request('/api/admin/members/'+Number(memberA.id)+'/sessions/revoke',{
+    token:specialistToken,method:'POST',expected:403,
+    body:{reason:'Specialist must not revoke sessions',confirm:true}
+  });
   await request('/api/admin/couriers',{token:specialistToken,expected:403});
   await request('/api/admin/audit',{token:specialistToken,expected:403});
   await request('/api/admin/incidents',{token:specialistToken,expected:403});
@@ -236,6 +284,9 @@ async function main(){
     specialist_finance_function_scope:'PASS',
     members_country_scope:'PASS',
     members_territory_isolation:'PASS',
+    members_detail_scope:'PASS',
+    members_controls_explicit_permission:'PASS',
+    members_controls_audit:'PASS',
     members_specialist_deny:'PASS'
   }));
 }
