@@ -62,6 +62,9 @@ test('Legal member context is sanitized and separately permission gated',()=>{
   assert.doesNotMatch(block,/device_hash/);
   assert.doesNotMatch(block,/correlation_id/);
   assert.doesNotMatch(block,/content_sha256/);
+  assert.doesNotMatch(block,/business_id/);
+  assert.doesNotMatch(block,/admin_assignment_id/);
+  assert.doesNotMatch(block,/territory_id/);
 });
 
 test('Internal notes and tags are scoped, audited and notes remain append-only',()=>{
