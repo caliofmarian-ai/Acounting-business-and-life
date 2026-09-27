@@ -100,6 +100,18 @@ async function main(){
   const country=await createAccount('country-'+suffix);
   const territory=await createAccount('territory-'+suffix);
   const specialist=await createAccount('specialist-'+suffix);
+  const memberA=await createAccount('member-a-'+suffix);
+  const memberB=await createAccount('member-b-'+suffix);
+  await pool.query(
+    `INSERT INTO profile_authorizations(account_id,role,territory_id,status,approved_by_account_id,approved_at,reason)
+     VALUES($1,'service_provider',$2,'active',1,NOW(),'CI Members scope fixture')`,
+    [Number(memberA.id),Number(t1.id)]
+  );
+  await pool.query(
+    `INSERT INTO profile_authorizations(account_id,role,territory_id,status,approved_by_account_id,approved_at,reason)
+     VALUES($1,'service_provider',$2,'active',1,NOW(),'CI Members sibling scope fixture')`,
+    [Number(memberB.id),Number(t2.id)]
+  );
 
   await request('/api/admin/assignments',{
     token:ownerToken,method:'POST',expected:201,
@@ -136,11 +148,16 @@ async function main(){
   assert(hasPermission(countryBoot,'support.manage'),'Country Admin support permission missing');
   assert(hasPermission(countryBoot,'admin.delegate'),'Country Admin delegation permission missing');
   assert(hasPermission(countryBoot,'audit.view'),'Country Admin audit permission missing');
+  assert(hasPermission(countryBoot,'members.view'),'Country Admin baseline Members permission missing');
   assert(!hasPermission(countryBoot,'courier.verify'),'Country Admin received undelegated Courier verification');
   assert(territoryIds(countryBoot).has(Number(t1.id))&&territoryIds(countryBoot).has(Number(t2.id)),'Country Admin did not receive country-wide territory visibility');
   await request('/api/admin/support',{token:countryToken});
   await request('/api/admin/assignments',{token:countryToken});
   await request('/api/admin/audit',{token:countryToken});
+  const countryMembers=await request('/api/admin/members?limit=100',{token:countryToken});
+  assert(countryMembers.scope?.country_wide===true&&countryMembers.scope?.platform_wide===false,'Country Admin Members scope must remain country-wide, not platform-wide');
+  assert((countryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberA.id)),'Country Admin cannot see member in territory A');
+  assert((countryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberB.id)),'Country Admin cannot see member in territory B');
   await request('/api/admin/finance/operating',{token:countryToken});
   await request('/api/admin/couriers',{token:countryToken,expected:403});
   await request('/api/governance/admin/territories',{
@@ -162,10 +179,15 @@ async function main(){
   assert(territoryScope.has(Number(t1.id)),'Territory Admin cannot see assigned territory');
   assert(!territoryScope.has(Number(t2.id)),'Territory Admin leaked into sibling territory');
   assert(hasPermission(territoryBoot,'courier.verify'),'Territory Admin delegated Courier verification missing');
+  assert(hasPermission(territoryBoot,'members.view'),'Territory Admin baseline Members permission missing');
   assert(!hasPermission(territoryBoot,'delivery.pricing.manage'),'Territory Admin received country Delivery pricing');
   assert(!hasPermission(territoryBoot,'admin.delegate'),'Territory Admin received undelegated Admin delegation');
   await request('/api/admin/support',{token:territoryToken});
   await request('/api/admin/couriers',{token:territoryToken});
+  const territoryMembers=await request('/api/admin/members?limit=100',{token:territoryToken});
+  assert(territoryMembers.scope?.country_wide===false,'Territory Admin Members escaped into country scope');
+  assert((territoryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberA.id)),'Territory Admin cannot see in-scope member');
+  assert(!(territoryMembers.items||[]).some(x=>Number(x.account_id)===Number(memberB.id)),'Territory Admin leaked sibling-territory member');
   await request('/api/admin/finance/operating',{token:territoryToken});
   await request('/api/admin/assignments',{token:territoryToken,expected:403});
   await request('/api/admin/delivery/pricing',{token:territoryToken,expected:403});
@@ -184,6 +206,7 @@ async function main(){
   const specialistScope=territoryIds(specialistBoot);
   assert(specialistScope.has(Number(t1.id))&&!specialistScope.has(Number(t2.id)),'Specialist territory scope is incorrect');
   assert(hasPermission(specialistBoot,'support.manage'),'Specialist support permission missing');
+  assert(!hasPermission(specialistBoot,'members.view'),'Support-only Specialist received undelegated Members access');
   assert(!hasPermission(specialistBoot,'profiles.invite_merchant'),'Specialist received undelegated profile onboarding');
   assert(!hasPermission(specialistBoot,'courier.verify'),'Specialist received undelegated Courier verification');
   assert(!hasPermission(specialistBoot,'audit.view'),'Specialist received undelegated audit access');
@@ -192,6 +215,7 @@ async function main(){
   assert(Array.isArray(specialistFinance?.scope?.function_codes),'Specialist finance function scope missing');
   assert(specialistFinance.scope.function_codes.length===1&&specialistFinance.scope.function_codes[0]==='support_operations','Specialist finance escaped support function scope');
   await request('/api/admin/assignments',{token:specialistToken,expected:403});
+  await request('/api/admin/members',{token:specialistToken,expected:403});
   await request('/api/admin/couriers',{token:specialistToken,expected:403});
   await request('/api/admin/audit',{token:specialistToken,expected:403});
   await request('/api/admin/incidents',{token:specialistToken,expected:403});
@@ -209,7 +233,10 @@ async function main(){
     sibling_territory_denial:'PASS',
     territory_status_lifecycle:'PASS',
     territory_status_audit:'PASS',
-    specialist_finance_function_scope:'PASS'
+    specialist_finance_function_scope:'PASS',
+    members_country_scope:'PASS',
+    members_territory_isolation:'PASS',
+    members_specialist_deny:'PASS'
   }));
 }
 
