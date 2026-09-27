@@ -35,7 +35,7 @@ test('Admin home overview preserves scoped territories and avoids full governanc
   assert.doesNotMatch(block,/LIMIT 150|LIMIT 100|profile_invitations|profile_authorizations/);
 });
 
-test('Full Admin governance overview remains available for explicit Profiles intent',()=>{
+test('Full Admin governance overview remains available only for explicit Members governance-tab intent',()=>{
   const start=server.indexOf('async function adminOverview');
   const end=server.indexOf('function dispatchBusinessAccounting',start);
   const block=server.slice(start,end);
@@ -44,7 +44,14 @@ test('Full Admin governance overview remains available for explicit Profiles int
   assert.match(server,/app\.get\('\/api\/admin\/overview'/);
   assert.match(ui,/async function ensureAdminOverviewDetail/);
   assert.match(ui,/api\('\/api\/admin\/overview'\)/);
-  assert.match(ui,/active==='profiles'\)\{await ensureAdminOverviewDetail\(\)/);
+  const governanceStart=ui.indexOf('async function memberGovernancePanel');
+  const membersStart=ui.indexOf('async function membersPanel',governanceStart);
+  const governance=ui.slice(governanceStart,membersStart);
+  assert.match(governance,/await ensureAdminOverviewDetail\(\)/);
+  const memberPanelEnd=ui.indexOf('async function wireMembers',membersStart);
+  const memberPanel=ui.slice(membersStart,memberPanelEnd);
+  assert.match(memberPanel,/if\(hub\.active!=='directory'\)/);
+  assert.match(memberPanel,/return memberGovernancePanel\(hub\.active,hub\.tabs\)/);
 });
 
 test('Admin first open remains a single bootstrap request and deep finance audit queues stay intent-driven',()=>{
