@@ -472,3 +472,32 @@
   .memberControlDisclosure>summary{padding:13px}
   .memberControlBody{padding:0 13px 13px}
 }
+
+
+/* ADMIN MEMBERS HUB V5 — unified Members + Profile Governance */
+.memberHubV5{gap:12px}
+.memberHubHeader{align-items:flex-start;padding-bottom:0}
+.memberHubHeader h2{margin-bottom:4px}
+.memberHubNav{display:flex;gap:7px;overflow-x:auto;padding:2px 0 8px;scrollbar-width:thin}
+.memberHubNav button{display:inline-flex;align-items:center;gap:7px;min-height:38px;padding:8px 11px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);color:var(--muted);font:inherit;font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer}
+.memberHubNav button:hover{border-color:#3b536f;color:#e9f0f7}
+.memberHubNav button.active{border-color:rgba(96,214,180,.55);background:rgba(96,214,180,.1);color:var(--accent)}
+.memberHubNav button b{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border:1px solid currentColor;border-radius:999px;font-size:9px;font-weight:800}
+.memberDirectoryScopeLine{display:flex;justify-content:flex-end;margin-top:-2px}
+.memberGovernanceIntro{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:16px;border:1px solid var(--line);border-radius:18px;background:var(--panel)}
+.memberGovernanceIntro>div{min-width:0}
+.memberGovernanceIntro h3{margin:3px 0 5px;font-size:18px}
+.memberGovernanceIntro p{margin:0;color:var(--muted);max-width:760px;line-height:1.5}
+.memberHubV5>.row,.memberHubV5>#profileInvitationList>.row{border-radius:15px}
+@media(max-width:760px){
+  .memberGovernanceIntro{display:grid;gap:10px}
+  .memberGovernanceIntro .memberScopePill{justify-self:start}
+  .memberDirectoryScopeLine{justify-content:flex-start}
+}
+@media(max-width:520px){
+  .memberHubNav{margin:0 -2px;padding-bottom:7px}
+  .memberHubNav button{min-height:40px;padding:8px 10px}
+  .memberGovernanceIntro{padding:13px;border-radius:16px}
+  .memberGovernanceIntro h3{font-size:16px}
+  .memberGovernanceIntro p{font-size:11px}
+}
