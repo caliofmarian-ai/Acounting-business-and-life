@@ -503,10 +503,18 @@ export async function runServiceProviderExperienceAcceptance({
   expectStatus(earlyLocation,409,'Exact location before quote acceptance denial');
 
   if(['requested','provider_reviewing','quoted'].includes(job.status)&&job.status!=='quoted'){
-    const quoted=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/quote',{
+    const quoted=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/quotes',{
       method:'POST',
       token:provider.token,
-      body:{quote_amount:SERVICE_QUOTE_AMOUNT,quote_note:'Controlled QA quotation.'}
+      body:{
+        quote_kind:'fixed_quote',
+        scope_summary:'Controlled QA itemised quotation.',
+        materials_policy:'separate',
+        line_items:[
+          {item_kind:'labor',description:'Controlled QA handyman labour',quantity:1,unit_code:'job',unit_price:300},
+          {item_kind:'callout',description:'Controlled QA service visit',quantity:1,unit_code:'visit',unit_price:50}
+        ]
+      }
     });
     expectStatus(quoted,200,'Service Provider quote');
     job=quoted.json;
@@ -516,8 +524,12 @@ export async function runServiceProviderExperienceAcceptance({
   }
 
   if(job.status==='quoted'){
+    const quote=job.pricing?.current_quote;
+    if(!quote||Number(quote.total_amount)!==SERVICE_QUOTE_AMOUNT||!Array.isArray(quote.line_items)||quote.line_items.length!==2){
+      throw new Error('Service Provider itemised quote did not preserve its server-calculated lines and total.');
+    }
     const accepted=await requestJson(base,'/api/services/jobs/'+jobId+'/accept-quote',{
-      method:'POST',token:customer.token,body:{}
+      method:'POST',token:customer.token,body:{quote_id:Number(quote.id),expected_version:Number(quote.version_no)}
     });
     expectStatus(accepted,200,'Customer quote acceptance');
     job=accepted.json;
@@ -579,6 +591,43 @@ export async function runServiceProviderExperienceAcceptance({
     job=started.json;
     if(job.service_location!==null||job.exact_location_available!==true){
       throw new Error('Provider active-job response did not remain redacted.');
+    }
+  }
+
+  if(job.status==='in_progress'){
+    const unapprovedIncrease=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/status',{
+      method:'POST',token:provider.token,body:{status:'completed',final_price:SERVICE_FINAL_PRICE}
+    });
+    expectStatus(unapprovedIncrease,409,'Unapproved Local Services price increase denial');
+    if(unapprovedIncrease.json?.code!=='SERVICE_CHANGE_ORDER_REQUIRED'){
+      throw new Error('Unapproved final price was not rejected with the change-order boundary.');
+    }
+
+    const changed=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/quotes',{
+      method:'POST',token:provider.token,
+      body:{
+        quote_kind:'change_order',
+        scope_summary:'Controlled QA approved additional materials.',
+        materials_policy:'included',
+        line_items:[
+          {item_kind:'labor',description:'Controlled QA handyman labour',quantity:1,unit_code:'job',unit_price:350},
+          {item_kind:'materials',description:'Controlled QA approved materials',quantity:1,unit_code:'item',unit_price:25}
+        ]
+      }
+    });
+    expectStatus(changed,200,'Service Provider change order');
+    const changeQuote=changed.json?.pricing?.pending_change;
+    if(!changeQuote||Number(changeQuote.total_amount)!==SERVICE_FINAL_PRICE||changeQuote.quote_phase!=='change_order'){
+      throw new Error('Local Services change order did not preserve the full revised total.');
+    }
+    const acceptedChange=await requestJson(base,'/api/services/jobs/'+jobId+'/quotes/'+Number(changeQuote.id)+'/respond',{
+      method:'POST',token:customer.token,
+      body:{action:'accept',expected_version:Number(changeQuote.version_no)}
+    });
+    expectStatus(acceptedChange,200,'Customer change-order acceptance');
+    job=acceptedChange.json;
+    if(Number(job.agreed_total)!==SERVICE_FINAL_PRICE||Number(job.accepted_quote_id)!==Number(changeQuote.id)){
+      throw new Error('Accepted change order did not become the immutable agreed price.');
     }
   }
 

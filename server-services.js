@@ -17,6 +17,12 @@ import {
   redactProviderServiceJob,
   requireProviderExactLocation
 } from './service-location-privacy-core.js';
+import {
+  acceptedCompletionPrice,
+  normalizeServicePriceOffer,
+  normalizeServiceQuote,
+  quoteIsExpired
+} from './local-services-pricing-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -112,6 +118,15 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(account_id,category_id,service_label)
   );
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS pricing_method TEXT NOT NULL DEFAULT 'quotation';
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS rate_unit TEXT NOT NULL DEFAULT 'job';
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS price_from NUMERIC(12,2);
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS price_to NUMERIC(12,2);
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS minimum_charge NUMERIC(12,2);
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS callout_fee NUMERIC(12,2);
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS materials_policy TEXT NOT NULL DEFAULT 'separate';
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS service_mode TEXT NOT NULL DEFAULT 'at_customer';
+  ALTER TABLE service_provider_services ADD COLUMN IF NOT EXISTS pricing_note TEXT NOT NULL DEFAULT '';
   CREATE TABLE IF NOT EXISTS profile_credentials (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -173,6 +188,120 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
   CREATE INDEX IF NOT EXISTS service_jobs_provider_idx ON service_jobs(provider_account_id,status,created_at DESC);
   CREATE INDEX IF NOT EXISTS service_jobs_customer_idx ON service_jobs(customer_account_id,status,created_at DESC);
 
+  CREATE TABLE IF NOT EXISTS service_job_quotes (
+    id BIGSERIAL PRIMARY KEY,
+    public_id UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    job_id BIGINT NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,
+    version_no INTEGER NOT NULL,
+    quote_kind TEXT NOT NULL,
+    quote_phase TEXT NOT NULL,
+    parent_quote_id BIGINT REFERENCES service_job_quotes(id),
+    status TEXT NOT NULL DEFAULT 'sent',
+    scope_summary TEXT NOT NULL,
+    materials_policy TEXT NOT NULL DEFAULT 'separate',
+    currency_code TEXT NOT NULL DEFAULT 'PHP',
+    labor_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    materials_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    callout_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    travel_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    other_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    total_amount NUMERIC(12,2) NOT NULL,
+    estimated_duration_value NUMERIC(12,3),
+    estimated_duration_unit TEXT,
+    valid_until TIMESTAMPTZ NOT NULL,
+    inclusions TEXT NOT NULL DEFAULT '',
+    exclusions TEXT NOT NULL DEFAULT '',
+    terms TEXT NOT NULL DEFAULT '',
+    created_by_provider_account_id BIGINT NOT NULL REFERENCES accounts(id),
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    accepted_at TIMESTAMPTZ,
+    accepted_by_customer_account_id BIGINT REFERENCES accounts(id),
+    legacy_record BOOLEAN NOT NULL DEFAULT FALSE,
+    approval_evidence_status TEXT NOT NULL DEFAULT 'explicit_v2',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(job_id,version_no),
+    CHECK (quote_kind IN ('fixed_quote','estimate','inspection','change_order')),
+    CHECK (quote_phase IN ('initial','change_order')),
+    CHECK (status IN ('sent','accepted','superseded','withdrawn','declined','changes_requested','expired')),
+    CHECK (materials_policy IN ('included','separate','customer_supplied','mixed')),
+    CHECK (total_amount>=0)
+  );
+  CREATE INDEX IF NOT EXISTS service_job_quotes_job_idx ON service_job_quotes(job_id,version_no DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS service_job_quotes_one_sent_phase_idx ON service_job_quotes(job_id,quote_phase) WHERE status='sent';
+
+  CREATE TABLE IF NOT EXISTS service_job_quote_items (
+    id BIGSERIAL PRIMARY KEY,
+    quote_id BIGINT NOT NULL REFERENCES service_job_quotes(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    item_kind TEXT NOT NULL,
+    description TEXT NOT NULL,
+    quantity NUMERIC(12,3) NOT NULL,
+    unit_code TEXT NOT NULL,
+    unit_price NUMERIC(12,2) NOT NULL,
+    subtotal NUMERIC(12,2) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(quote_id,position),
+    CHECK (item_kind IN ('labor','materials','callout','travel','other')),
+    CHECK (unit_code IN ('job','hour','half_day','day','sqm','item','unit','visit')),
+    CHECK (quantity>0),
+    CHECK (unit_price>=0),
+    CHECK (subtotal>=0)
+  );
+
+  CREATE TABLE IF NOT EXISTS service_job_quote_events (
+    id BIGSERIAL PRIMARY KEY,
+    job_id BIGINT NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,
+    quote_id BIGINT NOT NULL REFERENCES service_job_quotes(id) ON DELETE CASCADE,
+    actor_account_id BIGINT NOT NULL REFERENCES accounts(id),
+    event_code TEXT NOT NULL,
+    detail_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS service_job_quote_events_job_idx ON service_job_quote_events(job_id,created_at DESC);
+
+  ALTER TABLE service_jobs ADD COLUMN IF NOT EXISTS accepted_quote_id BIGINT REFERENCES service_job_quotes(id);
+  ALTER TABLE service_jobs ADD COLUMN IF NOT EXISTS agreed_total NUMERIC(12,2);
+  ALTER TABLE service_jobs ADD COLUMN IF NOT EXISTS pricing_locked_at TIMESTAMPTZ;
+  ALTER TABLE service_jobs ADD COLUMN IF NOT EXISTS legacy_final_adjustment NUMERIC(12,2);
+
+  INSERT INTO service_job_quotes(
+    job_id,version_no,quote_kind,quote_phase,status,scope_summary,materials_policy,currency_code,
+    labor_amount,total_amount,valid_until,created_by_provider_account_id,sent_at,accepted_at,
+    accepted_by_customer_account_id,legacy_record,approval_evidence_status,created_at,updated_at
+  )
+  SELECT j.id,1,'fixed_quote','initial',
+         CASE WHEN j.status='quoted' THEN 'sent'
+              WHEN j.status IN ('accepted','scheduled','in_progress','completed','disputed') THEN 'accepted'
+              ELSE 'superseded' END,
+         COALESCE(NULLIF(BTRIM(j.quote_note),''),j.description),'separate',COALESCE(j.currency_code,'PHP'),
+         j.quote_amount,j.quote_amount,j.created_at+INTERVAL '100 years',j.provider_account_id,j.updated_at,
+         CASE WHEN j.status IN ('accepted','scheduled','in_progress','completed','disputed') THEN j.updated_at END,
+         CASE WHEN j.status IN ('accepted','scheduled','in_progress','completed','disputed') THEN j.customer_account_id END,
+         TRUE,
+         CASE WHEN j.status IN ('accepted','scheduled','in_progress','completed','disputed') THEN 'legacy_job_state' ELSE 'unknown_legacy' END,
+         j.created_at,j.updated_at
+    FROM service_jobs j
+   WHERE j.quote_amount IS NOT NULL
+     AND j.quote_amount>=0
+     AND NOT EXISTS(SELECT 1 FROM service_job_quotes q WHERE q.job_id=j.id)
+  ON CONFLICT(job_id,version_no) DO NOTHING;
+
+  INSERT INTO service_job_quote_items(quote_id,position,item_kind,description,quantity,unit_code,unit_price,subtotal)
+  SELECT q.id,1,'labor',q.scope_summary,1,'job',q.total_amount,q.total_amount
+    FROM service_job_quotes q
+   WHERE q.legacy_record=TRUE
+     AND NOT EXISTS(SELECT 1 FROM service_job_quote_items i WHERE i.quote_id=q.id)
+  ON CONFLICT(quote_id,position) DO NOTHING;
+
+  UPDATE service_jobs j
+     SET accepted_quote_id=q.id,
+         agreed_total=q.total_amount,
+         pricing_locked_at=COALESCE(q.accepted_at,q.sent_at),
+         legacy_final_adjustment=CASE WHEN j.final_price IS NOT NULL AND j.final_price<>q.total_amount THEN j.final_price-q.total_amount ELSE NULL END
+    FROM service_job_quotes q
+   WHERE q.job_id=j.id AND q.status='accepted' AND j.accepted_quote_id IS NULL;
+
   CREATE TABLE IF NOT EXISTS service_reviews (
     id BIGSERIAL PRIMARY KEY,
     job_id BIGINT UNIQUE NOT NULL REFERENCES service_jobs(id) ON DELETE CASCADE,
@@ -202,14 +331,116 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
 `);await ensureServiceLocationPrivacySchema(pool)}
 
 async function rating(accountId){const r=await pool.query(`SELECT COUNT(*)::int review_count,ROUND(AVG(overall)::numeric,2) rating FROM service_reviews WHERE provider_account_id=$1 AND moderation_status='published'`,[accountId]);return{review_count:Number(r.rows[0]?.review_count||0),rating:r.rows[0]?.rating==null?null:Number(r.rows[0].rating)}}
-async function publicProvider(accountId){const q=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url,pr.visibility FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE WHERE a.id=$1 AND pr.visibility='public'`,[accountId]);if(!q.rowCount)return null;const [services,credentials,portfolio,rate]=await Promise.all([pool.query(`SELECT c.code,c.name,s.service_label FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name,s.service_label`,[accountId]),pool.query(`SELECT credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status FROM profile_credentials WHERE account_id=$1 AND verification_status IN ('verified','submitted','unverified','expired') ORDER BY verification_status='verified' DESC,created_at DESC`,[accountId]),pool.query(`SELECT p.id,p.title,p.description,p.image_data_url,p.approximate_date,p.linked_job_id,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 AND (p.linked_job_id IS NULL OR p.customer_publication_consent=TRUE) ORDER BY p.created_at DESC LIMIT 20`,[accountId]),rating(accountId)]);const base=q.rows[0];return{...base,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,...(base.public_reputation_enabled?rate:{rating:null,review_count:0})}}
-async function privateProfile(accountId){const p=await pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`,[accountId]);const [services,credentials,portfolio,rate,reviews]=await Promise.all([pool.query(`SELECT s.category_id,c.code,c.name,c.credential_gate,s.service_label,s.active FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[accountId]),pool.query(`SELECT id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[accountId]),pool.query(`SELECT p.*,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 ORDER BY p.created_at DESC`,[accountId]),rating(accountId),pool.query(`SELECT r.id,r.job_id,r.overall,r.workmanship,r.reliability,r.communication,r.professionalism,r.property_care,r.price_transparency,r.review_text,r.created_at,a.display_name reviewer_name,j.service_label FROM service_reviews r JOIN accounts a ON a.id=r.reviewer_account_id JOIN service_jobs j ON j.id=r.job_id WHERE r.provider_account_id=$1 AND r.moderation_status='published' ORDER BY r.created_at DESC LIMIT 50`,[accountId])]);return{profile:p.rows[0]||null,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,reviews:reviews.rows,...rate}}
+const serviceOfferSelect=`s.category_id,c.code,c.name,c.credential_gate,s.service_label,s.active,
+  s.pricing_method,s.rate_unit,s.price_from,s.price_to,s.minimum_charge,s.callout_fee,
+  s.materials_policy,s.service_mode,s.pricing_note`;
+async function publicProvider(accountId){const q=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url,pr.visibility FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE WHERE a.id=$1 AND pr.visibility='public'`,[accountId]);if(!q.rowCount)return null;const [services,credentials,portfolio,rate]=await Promise.all([pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name,s.service_label`,[accountId]),pool.query(`SELECT credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status FROM profile_credentials WHERE account_id=$1 AND verification_status IN ('verified','submitted','unverified','expired') ORDER BY verification_status='verified' DESC,created_at DESC`,[accountId]),pool.query(`SELECT p.id,p.title,p.description,p.image_data_url,p.approximate_date,p.linked_job_id,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 AND (p.linked_job_id IS NULL OR p.customer_publication_consent=TRUE) ORDER BY p.created_at DESC LIMIT 20`,[accountId]),rating(accountId)]);const base=q.rows[0];return{...base,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,...(base.public_reputation_enabled?rate:{rating:null,review_count:0})}}
+async function privateProfile(accountId){const p=await pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`,[accountId]);const [services,credentials,portfolio,rate,reviews]=await Promise.all([pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[accountId]),pool.query(`SELECT id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[accountId]),pool.query(`SELECT p.*,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 ORDER BY p.created_at DESC`,[accountId]),rating(accountId),pool.query(`SELECT r.id,r.job_id,r.overall,r.workmanship,r.reliability,r.communication,r.professionalism,r.property_care,r.price_transparency,r.review_text,r.created_at,a.display_name reviewer_name,j.service_label FROM service_reviews r JOIN accounts a ON a.id=r.reviewer_account_id JOIN service_jobs j ON j.id=r.job_id WHERE r.provider_account_id=$1 AND r.moderation_status='published' ORDER BY r.created_at DESC LIMIT 50`,[accountId])]);return{profile:p.rows[0]||null,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,reviews:reviews.rows,...rate}}
 async function privateProfileHome(accountId){
   const [profile,services]=await Promise.all([
     pool.query(`SELECT account_id,display_name,professional_headline,service_area,availability_text,pricing_model,price_from,price_to,same_day_available,public_reputation_enabled,updated_at FROM service_provider_profiles WHERE account_id=$1`,[accountId]),
-    pool.query(`SELECT s.category_id,c.code,c.name,c.credential_gate,s.service_label,s.active FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name LIMIT 40`,[accountId])
+    pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name LIMIT 40`,[accountId])
   ]);
   return{detail_mode:'home',profile:profile.rows[0]||null,services:services.rows};
+}
+
+async function quoteWithItems(db,quoteId){
+  const quote=await db.query(`SELECT * FROM service_job_quotes WHERE id=$1`,[quoteId]);
+  if(!quote.rowCount)return null;
+  const items=await db.query(`SELECT id,position,item_kind,description,quantity,unit_code,unit_price,subtotal FROM service_job_quote_items WHERE quote_id=$1 ORDER BY position`,[quoteId]);
+  return{...quote.rows[0],line_items:items.rows};
+}
+
+async function pricingForJobs(db,jobs){
+  const rows=Array.isArray(jobs)?jobs:[];
+  const ids=[...new Set(rows.map(row=>Number(row.id)).filter(Number.isInteger))];
+  if(!ids.length)return rows;
+  const quotes=await db.query(`
+    SELECT q.*,
+           COALESCE(
+             jsonb_agg(
+               jsonb_build_object(
+                 'id',i.id,'position',i.position,'item_kind',i.item_kind,'description',i.description,
+                 'quantity',i.quantity,'unit_code',i.unit_code,'unit_price',i.unit_price,'subtotal',i.subtotal
+               ) ORDER BY i.position
+             ) FILTER(WHERE i.id IS NOT NULL),
+             '[]'::jsonb
+           ) line_items
+      FROM service_job_quotes q
+      LEFT JOIN service_job_quote_items i ON i.quote_id=q.id
+     WHERE q.job_id=ANY($1::bigint[])
+       AND q.status IN ('sent','accepted','declined','changes_requested')
+     GROUP BY q.id
+     ORDER BY q.job_id,q.version_no
+  `,[ids]);
+  const grouped=new Map();
+  for(const quote of quotes.rows){
+    const key=Number(quote.job_id),entry=grouped.get(key)||{accepted_quote:null,current_quote:null,pending_change:null};
+    if(quote.status==='accepted')entry.accepted_quote=quote;
+    if(quote.status==='sent'&&quote.quote_phase==='initial')entry.current_quote=quote;
+    if(quote.status==='sent'&&quote.quote_phase==='change_order')entry.pending_change=quote;
+    grouped.set(key,entry);
+  }
+  return rows.map(row=>({...row,pricing:grouped.get(Number(row.id))||{accepted_quote:null,current_quote:null,pending_change:null}}));
+}
+
+async function createServiceQuote(db,{job,providerAccountId,input}){
+  const quote=normalizeServiceQuote(input);
+  const initial=quote.quote_phase==='initial';
+  const allowedInitial=['requested','provider_reviewing','quoted'];
+  const allowedChange=['accepted','scheduled','in_progress'];
+  if(initial&&!allowedInitial.includes(job.status))throw Object.assign(new Error('Initial quote cannot be sent from the current job state'),{status:409});
+  if(!initial&&!allowedChange.includes(job.status))throw Object.assign(new Error('A change order is available only for accepted or active work'),{status:409});
+  if(!initial&&!job.accepted_quote_id)throw Object.assign(new Error('A Customer-accepted quote is required before a change order'),{status:409});
+  await db.query(`UPDATE service_job_quotes SET status='superseded',updated_at=NOW() WHERE job_id=$1 AND quote_phase=$2 AND status='sent'`,[job.id,quote.quote_phase]);
+  const version=await db.query(`SELECT COALESCE(MAX(version_no),0)+1 version_no FROM service_job_quotes WHERE job_id=$1`,[job.id]);
+  const inserted=await db.query(`
+    INSERT INTO service_job_quotes(
+      job_id,version_no,quote_kind,quote_phase,parent_quote_id,status,scope_summary,materials_policy,currency_code,
+      labor_amount,materials_amount,callout_amount,travel_amount,other_amount,total_amount,
+      estimated_duration_value,estimated_duration_unit,valid_until,inclusions,exclusions,terms,created_by_provider_account_id
+    ) VALUES($1,$2,$3,$4,$5,'sent',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+    RETURNING *
+  `,[job.id,Number(version.rows[0].version_no),quote.quote_kind,quote.quote_phase,initial?null:job.accepted_quote_id,quote.scope_summary,quote.materials_policy,quote.currency_code,quote.labor_amount,quote.materials_amount,quote.callout_amount,quote.travel_amount,quote.other_amount,quote.total_amount,quote.estimated_duration_value,quote.estimated_duration_unit,quote.valid_until,quote.inclusions,quote.exclusions,quote.terms,providerAccountId]);
+  const row=inserted.rows[0];
+  for(const [position,item] of quote.line_items.entries())await db.query(`
+    INSERT INTO service_job_quote_items(quote_id,position,item_kind,description,quantity,unit_code,unit_price,subtotal)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+  `,[row.id,position+1,item.item_kind,item.description,item.quantity,item.unit_code,item.unit_price,item.subtotal]);
+  await db.query(`INSERT INTO service_job_quote_events(job_id,quote_id,actor_account_id,event_code,detail_json) VALUES($1,$2,$3,'quote_sent',$4::jsonb)`,[job.id,row.id,providerAccountId,JSON.stringify({version_no:row.version_no,quote_phase:row.quote_phase,total_amount:Number(row.total_amount)})]);
+  if(initial)await db.query(`UPDATE service_jobs SET status='quoted',quote_amount=$1,quote_note=$2,updated_at=NOW() WHERE id=$3`,[row.total_amount,row.scope_summary,job.id]);
+  return quoteWithItems(db,row.id);
+}
+
+async function respondToServiceQuote(db,{job,quote,customerAccountId,action,note=''}){
+  if(quote.status!=='sent')throw Object.assign(new Error('This quote version is no longer available'),{status:409,code:'SERVICE_QUOTE_STALE'});
+  if(quoteIsExpired(quote)){
+    await db.query(`UPDATE service_job_quotes SET status='expired',updated_at=NOW() WHERE id=$1 AND status='sent'`,[quote.id]);
+    if(quote.quote_phase==='initial')await db.query(`UPDATE service_jobs SET status='provider_reviewing',quote_amount=NULL,quote_note='',updated_at=NOW() WHERE id=$1 AND status='quoted'`,[job.id]);
+    await db.query(`INSERT INTO service_job_quote_events(job_id,quote_id,actor_account_id,event_code,detail_json) VALUES($1,$2,$3,'quote_expired',$4::jsonb)`,[job.id,quote.id,customerAccountId,JSON.stringify({version_no:quote.version_no})]);
+    return{expired:true};
+  }
+  if(!['accept','decline','request_changes'].includes(action))throw Object.assign(new Error('Choose accept, decline or request changes'),{status:400});
+  if(quote.quote_phase==='initial'&&job.status!=='quoted')throw Object.assign(new Error('Initial quote cannot be answered from the current job state'),{status:409});
+  if(quote.quote_phase==='change_order'&&!['accepted','scheduled','in_progress'].includes(job.status))throw Object.assign(new Error('Change order cannot be answered from the current job state'),{status:409});
+  if(action==='accept'){
+    await db.query(`UPDATE service_job_quotes SET status='superseded',updated_at=NOW() WHERE job_id=$1 AND status='accepted'`,[job.id]);
+    await db.query(`UPDATE service_job_quotes SET status='accepted',accepted_at=NOW(),accepted_by_customer_account_id=$1,updated_at=NOW() WHERE id=$2`,[customerAccountId,quote.id]);
+    await db.query(`
+      UPDATE service_jobs
+         SET status=CASE WHEN $1='initial' THEN 'accepted' ELSE status END,
+             accepted_quote_id=$2,agreed_total=$3,pricing_locked_at=NOW(),
+             quote_amount=$3,quote_note=$4,updated_at=NOW()
+       WHERE id=$5
+    `,[quote.quote_phase,quote.id,quote.total_amount,quote.scope_summary,job.id]);
+    await db.query(`INSERT INTO service_job_quote_events(job_id,quote_id,actor_account_id,event_code,detail_json) VALUES($1,$2,$3,'quote_accepted',$4::jsonb)`,[job.id,quote.id,customerAccountId,JSON.stringify({version_no:quote.version_no,quote_phase:quote.quote_phase,total_amount:Number(quote.total_amount)})]);
+    return{accepted:true};
+  }
+  const nextStatus=action==='decline'?'declined':'changes_requested';
+  await db.query(`UPDATE service_job_quotes SET status=$1,updated_at=NOW() WHERE id=$2`,[nextStatus,quote.id]);
+  if(quote.quote_phase==='initial')await db.query(`UPDATE service_jobs SET status='provider_reviewing',quote_amount=NULL,quote_note='',updated_at=NOW() WHERE id=$1`,[job.id]);
+  await db.query(`INSERT INTO service_job_quote_events(job_id,quote_id,actor_account_id,event_code,detail_json) VALUES($1,$2,$3,$4,$5::jsonb)`,[job.id,quote.id,customerAccountId,action==='decline'?'quote_declined':'quote_changes_requested',JSON.stringify({version_no:quote.version_no,note:clean(note,500)})]);
+  return{accepted:false,status:nextStatus};
 }
 
 app.get('/health',async(req,res)=>{const r=await servicesFetch('/health',{headers:req.headers});const payload=await r.json().catch(()=>({ok:false,db:false,marketplace:false,version:'0.8.1-services'}));res.status(r.status).json(payload)})
@@ -223,21 +454,24 @@ app.get('/api/user-blocks',async(req,res,next)=>{try{const me=await identity(req
 app.get('/api/user-blocks/:accountId/status',async(req,res,next)=>{try{const me=await identity(req),targetId=Number(req.params.accountId);res.json({blocked_by_me:await hasActiveBlock(pool,{blockerAccountId:me.account.id,blockedAccountId:targetId,blockScope:'local_services'}),scope:'local_services'})}catch(e){next(e)}})
 app.post('/api/user-blocks',body,async(req,res,next)=>{try{const me=await identity(req);res.json(await blockAccount(pool,{blockerAccountId:me.account.id,blockedAccountId:req.body?.blocked_account_id,reasonCategory:req.body?.reason_category,blockScope:'local_services'}))}catch(e){next(e)}})
 app.delete('/api/user-blocks/:accountId',async(req,res,next)=>{try{const me=await identity(req);res.json(await unblockAccount(pool,{blockerAccountId:me.account.id,blockedAccountId:req.params.accountId,blockScope:'local_services'}))}catch(e){next(e)}})
-app.get('/api/services/providers',async(req,res,next)=>{try{await requireCustomer(req);const category=clean(req.query.category,80);const args=[];let clause='';if(category){args.push(category);clause=` AND EXISTS(SELECT 1 FROM service_provider_services ss JOIN service_categories c ON c.id=ss.category_id WHERE ss.account_id=a.id AND ss.active=TRUE AND c.code=$1)`}const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE AND pr.visibility='public' WHERE 1=1${clause} ORDER BY p.same_day_available DESC,a.display_name`,args);const out=[];for(const row of rows){const svc=await pool.query(`SELECT c.code,c.name,s.service_label FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order LIMIT 8`,[row.account_id]);const cred=await pool.query(`SELECT title,credential_type FROM profile_credentials WHERE account_id=$1 AND verification_status='verified' ORDER BY created_at DESC LIMIT 3`,[row.account_id]);const rate=row.public_reputation_enabled?await rating(row.account_id):{rating:null,review_count:0};out.push({...row,services:svc.rows,verified_credentials:cred.rows,...rate})}res.json(out)}catch(e){next(e)}})
+app.get('/api/services/providers',async(req,res,next)=>{try{await requireCustomer(req);const category=clean(req.query.category,80);const args=[];let clause='';if(category){args.push(category);clause=` AND EXISTS(SELECT 1 FROM service_provider_services ss JOIN service_categories c ON c.id=ss.category_id WHERE ss.account_id=a.id AND ss.active=TRUE AND c.code=$1)`}const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE AND pr.visibility='public' WHERE 1=1${clause} ORDER BY p.same_day_available DESC,a.display_name`,args);const out=[];for(const row of rows){const svc=await pool.query(`SELECT c.code,c.name,s.service_label,s.pricing_method,s.rate_unit,s.price_from,s.price_to,s.minimum_charge,s.callout_fee,s.materials_policy,s.service_mode,s.pricing_note FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order LIMIT 8`,[row.account_id]);const cred=await pool.query(`SELECT title,credential_type FROM profile_credentials WHERE account_id=$1 AND verification_status='verified' ORDER BY created_at DESC LIMIT 3`,[row.account_id]);const rate=row.public_reputation_enabled?await rating(row.account_id):{rating:null,review_count:0};out.push({...row,services:svc.rows,verified_credentials:cred.rows,...rate})}res.json(out)}catch(e){next(e)}})
 app.get('/api/services/providers/:accountId',async(req,res,next)=>{try{await requireCustomer(req);const p=await publicProvider(Number(req.params.accountId));if(!p)return res.status(404).json({error:'Public Service Provider profile not found'});res.json(p)}catch(e){next(e)}})
 
 app.get('/api/service-provider/me',async(req,res,next)=>{try{const me=await requireProvider(req);if(String(req.query.view||'')==='home')return res.json(await privateProfileHome(Number(me.account.id)));res.json(await privateProfile(Number(me.account.id)))}catch(e){next(e)}})
-app.put('/api/service-provider/me',body,async(req,res,next)=>{try{const me=await requireProvider(req),id=Number(me.account.id);const image=req.body?.profile_image_data_url===undefined?null:validateImage(req.body.profile_image_data_url);const cv=req.body?.cv_private_data_url===undefined?null:validateEvidence(req.body.cv_private_data_url);if(image!==null)await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_public',subjectType:'service_provider_profile',subjectId:id});if(cv!==null)await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_private',subjectType:'service_provider_cv',subjectId:id});await pool.query(`UPDATE service_provider_profiles SET display_name=$1,professional_headline=$2,about=$3,service_area=$4,years_experience=$5,languages=$6,availability_text=$7,pricing_model=$8,price_from=$9,price_to=$10,same_day_available=$11,public_reputation_enabled=$12,profile_image_data_url=COALESCE($13,profile_image_data_url),cv_public_summary=$14,cv_private_data_url=COALESCE($15,cv_private_data_url),updated_at=NOW() WHERE account_id=$16`,[clean(req.body?.display_name,120)||me.account.display_name,clean(req.body?.professional_headline,160),clean(req.body?.about,1800),clean(req.body?.service_area,300),numberOrNull(req.body?.years_experience),clean(req.body?.languages,300),clean(req.body?.availability_text,500),['quotation','fixed','hourly','daily','mixed'].includes(req.body?.pricing_model)?req.body.pricing_model:'quotation',numberOrNull(req.body?.price_from),numberOrNull(req.body?.price_to),Boolean(req.body?.same_day_available),Boolean(req.body?.public_reputation_enabled),image,clean(req.body?.cv_public_summary,1600),cv,id]);if(req.body?.visibility){const vis=['public','relationship_only','private'].includes(req.body.visibility)?req.body.visibility:'private';await pool.query(`UPDATE profiles SET visibility=$1,updated_at=NOW() WHERE account_id=$2 AND role='service_provider'`,[vis,id])}res.json(await privateProfile(id))}catch(e){next(e)}})
-app.put('/api/service-provider/services',body,async(req,res,next)=>{try{const me=await requireProvider(req),id=Number(me.account.id),selections=Array.isArray(req.body?.services)?req.body.services:[];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM service_provider_services WHERE account_id=$1`,[id]);for(const s of selections.slice(0,80)){const categoryId=Number(s.category_id);if(!Number.isInteger(categoryId))continue;await client.query(`INSERT INTO service_provider_services(account_id,category_id,service_label,active) VALUES($1,$2,$3,TRUE)`,[id,categoryId,clean(s.service_label,120)])}await client.query('COMMIT')}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}res.json(await privateProfile(id))}catch(e){next(e)}})
+app.put('/api/service-provider/me',body,async(req,res,next)=>{try{const me=await requireProvider(req),id=Number(me.account.id);const image=req.body?.profile_image_data_url===undefined?null:validateImage(req.body.profile_image_data_url);const cv=req.body?.cv_private_data_url===undefined?null:validateEvidence(req.body.cv_private_data_url);const priceFrom=numberOrNull(req.body?.price_from),priceTo=numberOrNull(req.body?.price_to);if((priceFrom!=null&&priceFrom<0)||(priceTo!=null&&priceTo<0)||(priceFrom!=null&&priceTo!=null&&priceTo<priceFrom))return res.status(400).json({error:'Profile price range is invalid'});if(image!==null)await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_public',subjectType:'service_provider_profile',subjectId:id});if(cv!==null)await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_private',subjectType:'service_provider_cv',subjectId:id});await pool.query(`UPDATE service_provider_profiles SET display_name=$1,professional_headline=$2,about=$3,service_area=$4,years_experience=$5,languages=$6,availability_text=$7,pricing_model=$8,price_from=$9,price_to=$10,same_day_available=$11,public_reputation_enabled=$12,profile_image_data_url=COALESCE($13,profile_image_data_url),cv_public_summary=$14,cv_private_data_url=COALESCE($15,cv_private_data_url),updated_at=NOW() WHERE account_id=$16`,[clean(req.body?.display_name,120)||me.account.display_name,clean(req.body?.professional_headline,160),clean(req.body?.about,1800),clean(req.body?.service_area,300),numberOrNull(req.body?.years_experience),clean(req.body?.languages,300),clean(req.body?.availability_text,500),['quotation','fixed','hourly','daily','mixed'].includes(req.body?.pricing_model)?req.body.pricing_model:'quotation',priceFrom,priceTo,Boolean(req.body?.same_day_available),Boolean(req.body?.public_reputation_enabled),image,clean(req.body?.cv_public_summary,1600),cv,id]);if(req.body?.visibility){const vis=['public','relationship_only','private'].includes(req.body.visibility)?req.body.visibility:'private';await pool.query(`UPDATE profiles SET visibility=$1,updated_at=NOW() WHERE account_id=$2 AND role='service_provider'`,[vis,id])}res.json(await privateProfile(id))}catch(e){next(e)}})
+app.put('/api/service-provider/services',body,async(req,res,next)=>{try{const me=await requireProvider(req),id=Number(me.account.id),selections=Array.isArray(req.body?.services)?req.body.services:[];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM service_provider_services WHERE account_id=$1`,[id]);for(const selection of selections.slice(0,80)){const categoryId=Number(selection.category_id);if(!Number.isInteger(categoryId))continue;const category=await client.query(`SELECT id,name FROM service_categories WHERE id=$1 AND active=TRUE`,[categoryId]);if(!category.rowCount)throw Object.assign(new Error('Choose an active Local Services category'),{status:400});const offer=normalizeServicePriceOffer(selection);await client.query(`INSERT INTO service_provider_services(account_id,category_id,service_label,active,pricing_method,rate_unit,price_from,price_to,minimum_charge,callout_fee,materials_policy,service_mode,pricing_note) VALUES($1,$2,$3,TRUE,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[id,categoryId,clean(selection.service_label,120)||category.rows[0].name,offer.pricing_method,offer.rate_unit,offer.price_from,offer.price_to,offer.minimum_charge,offer.callout_fee,offer.materials_policy,offer.service_mode,offer.pricing_note])}await client.query('COMMIT')}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}res.json(await privateProfile(id))}catch(e){next(e)}})
 app.post('/api/service-provider/credentials',body,async(req,res,next)=>{try{const me=await requireProvider(req),type=clean(req.body?.credential_type,60);if(!['prc_license','tesda_nc_coc','diploma_vocational','training_certificate','experience_certificate','other'].includes(type))return res.status(400).json({error:'Choose a credential type'});if(!clean(req.body?.title,200))return res.status(400).json({error:'Credential title is required'});const evidence=validateEvidence(req.body?.evidence_data_url);await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'service_credential',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO profile_credentials(account_id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,evidence_data_url,verification_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'submitted') RETURNING id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,created_at`,[me.account.id,type,clean(req.body.title,200),clean(req.body?.issuing_body,200),clean(req.body?.reference_number,120),req.body?.issue_date||null,req.body?.expiry_date||null,evidence]);res.status(201).json(rows[0])}catch(e){next(e)}})
 app.post('/api/service-provider/portfolio',body,async(req,res,next)=>{try{const me=await requireProvider(req);const image=validateImage(req.body?.image_data_url);if(!image||!clean(req.body?.title,160))return res.status(400).json({error:'Portfolio title and image are required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_public',subjectType:'service_portfolio',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO service_portfolio(account_id,title,description,category_id,image_data_url,approximate_date,customer_publication_consent) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[me.account.id,clean(req.body.title,160),clean(req.body?.description,800),req.body?.category_id?Number(req.body.category_id):null,image,req.body?.approximate_date||null,Boolean(req.body?.customer_publication_consent)]);res.status(201).json(rows[0])}catch(e){next(e)}})
 
 app.post('/api/services/jobs',body,async(req,res,next)=>{try{
-  const me=await requireCustomer(req),providerId=Number(req.body?.provider_account_id),categoryId=Number(req.body?.category_id);
+  const me=await requireCustomer(req),providerId=Number(req.body?.provider_account_id),categoryId=Number(req.body?.category_id),requestedLabel=clean(req.body?.service_label,120);
   if(providerId===Number(me.account.id))return res.status(409).json({error:'You cannot request your own service'});
   const provider=await publicProvider(providerId);
   if(!provider)return res.status(404).json({error:'Service Provider is not available'});
   if(await accountsBlocked(pool,me.account.id,providerId,'local_services'))return res.status(409).json({error:'New Local Services requests are unavailable between these accounts. Existing jobs and history remain available.'});
+  if(!Number.isInteger(categoryId))return res.status(400).json({error:'Choose a service offered by this Provider'});
+  const offered=await pool.query(`SELECT s.service_label,c.name FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.category_id=$2 AND s.active=TRUE AND c.active=TRUE AND ($3='' OR s.service_label=$3) ORDER BY s.service_label LIMIT 1`,[providerId,categoryId,requestedLabel]);
+  if(!offered.rowCount)return res.status(409).json({error:'This Service Provider does not currently offer the selected service'});
   const description=clean(req.body?.description,1500),exactLocation=clean(req.body?.service_location,400);
   if(!description)return res.status(400).json({error:'Describe the work you need'});
   if(!exactLocation)return res.status(400).json({error:'Enter the exact service address. It stays private until you accept a quote.'});
@@ -249,7 +483,7 @@ app.post('/api/services/jobs',body,async(req,res,next)=>{try{
       customer_account_id,provider_account_id,category_id,service_label,description,
       service_location,coarse_location,requested_window,status
     ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'requested') RETURNING *
-  `,[me.account.id,providerId,Number.isInteger(categoryId)?categoryId:null,clean(req.body?.service_label,120),description,exactLocation,coarseLocation,clean(req.body?.requested_window,300)]);
+  `,[me.account.id,providerId,categoryId,clean(offered.rows[0].service_label,120)||clean(offered.rows[0].name,120),description,exactLocation,coarseLocation,clean(req.body?.requested_window,300)]);
   res.status(201).json(rows[0]);
 }catch(e){next(e)}})
 app.get('/api/services/jobs/mine',async(req,res,next)=>{try{
@@ -318,14 +552,36 @@ app.get('/api/services/jobs/mine',async(req,res,next)=>{try{
     `,[id])
   ]);
   const providerRows=providerJobs.rows.map(row=>({...row.job,category:row.category,provider_name:row.provider_name,customer_name:row.customer_name,service_location:null,exact_location_available:Boolean(row.exact_location_available)}));
-  res.json([...customerJobs.rows,...providerRows].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,200))
+  const combined=[...customerJobs.rows,...providerRows].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,200);
+  res.json(await pricingForJobs(pool,combined))
 }catch(e){next(e)}})
-app.post('/api/service-provider/jobs/:id/quote',body,async(req,res,next)=>{try{
-  const me=await requireProvider(req),id=Number(req.params.id),amount=Number(req.body?.quote_amount);
-  if(!Number.isFinite(amount)||amount<0)return res.status(400).json({error:'Valid quote amount required'});
-  const r=await pool.query(`UPDATE service_jobs SET status='quoted',quote_amount=$1,quote_note=$2,updated_at=NOW() WHERE id=$3 AND provider_account_id=$4 AND status IN ('requested','provider_reviewing','quoted') RETURNING *`,[amount,clean(req.body?.quote_note,800),id,me.account.id]);
-  if(!r.rowCount)return res.status(409).json({error:'Job cannot be quoted from its current state'});
-  res.json(redactProviderServiceJob(r.rows[0]));
+async function sendServiceJobQuote(req,res,next){try{
+  const me=await requireProvider(req),id=Number(req.params.id);
+  if(!Number.isInteger(id)||id<1)return res.status(400).json({error:'Service job id is invalid'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const found=await client.query(`SELECT * FROM service_jobs WHERE id=$1 AND provider_account_id=$2 FOR UPDATE`,[id,me.account.id]);
+    if(!found.rowCount)throw Object.assign(new Error('Job not found'),{status:404});
+    const quote=await createServiceQuote(client,{job:found.rows[0],providerAccountId:me.account.id,input:req.body||{}});
+    const updated=await client.query(`SELECT * FROM service_jobs WHERE id=$1`,[id]);
+    await client.query('COMMIT');
+    res.json({...redactProviderServiceJob(updated.rows[0]),pricing:{accepted_quote:null,current_quote:quote.quote_phase==='initial'?quote:null,pending_change:quote.quote_phase==='change_order'?quote:null}});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+}catch(e){next(e)}}
+app.post('/api/service-provider/jobs/:id/quotes',body,sendServiceJobQuote)
+app.post('/api/service-provider/jobs/:id/quote',body,sendServiceJobQuote)
+
+app.get('/api/services/jobs/:id/pricing',async(req,res,next)=>{try{
+  const me=await identity(req),id=Number(req.params.id);
+  if(!Number.isInteger(id)||id<1)return res.status(400).json({error:'Service job id is invalid'});
+  const job=await pool.query(`SELECT * FROM service_jobs WHERE id=$1 AND (customer_account_id=$2 OR provider_account_id=$2)`,[id,me.account.id]);
+  if(!job.rowCount)return res.status(404).json({error:'Service job not found'});
+  const quotes=await pool.query(`SELECT * FROM service_job_quotes WHERE job_id=$1 ORDER BY version_no`,[id]);
+  const result=[];
+  for(const quote of quotes.rows)result.push(await quoteWithItems(pool,quote.id));
+  const events=await pool.query(`SELECT quote_id,event_code,detail_json,created_at FROM service_job_quote_events WHERE job_id=$1 ORDER BY created_at,id`,[id]);
+  res.json({job_id:id,accepted_quote_id:job.rows[0].accepted_quote_id,agreed_total:job.rows[0].agreed_total,currency_code:job.rows[0].currency_code||'PHP',quotes:result,events:events.rows});
 }catch(e){next(e)}})
 app.get('/api/service-provider/jobs/:id/exact-location',async(req,res,next)=>{try{
   const me=await requireProvider(req),jobId=Number(req.params.id);
@@ -352,19 +608,56 @@ app.get('/api/service-provider/jobs/:id/exact-location',async(req,res,next)=>{tr
     });
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
 }catch(e){next(e)}})
-app.post('/api/services/jobs/:id/accept-quote',body,async(req,res,next)=>{try{const me=await requireCustomer(req);const r=await pool.query(`UPDATE service_jobs SET status='accepted',updated_at=NOW() WHERE id=$1 AND customer_account_id=$2 AND status='quoted' RETURNING *`,[Number(req.params.id),me.account.id]);if(!r.rowCount)return res.status(409).json({error:'Quote is not available for acceptance'});res.json(r.rows[0])}catch(e){next(e)}})
+async function handleServiceQuoteResponse(req,res,next,{legacyAccept=false}={}){try{
+  const me=await requireCustomer(req),jobId=Number(req.params.id);
+  if(!Number.isInteger(jobId)||jobId<1)return res.status(400).json({error:'Service job id is invalid'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const found=await client.query(`SELECT * FROM service_jobs WHERE id=$1 AND customer_account_id=$2 FOR UPDATE`,[jobId,me.account.id]);
+    if(!found.rowCount)throw Object.assign(new Error('Service job not found'),{status:404});
+    const job=found.rows[0];
+    let quoteId=Number(req.params.quoteId||req.body?.quote_id);
+    if(!Number.isInteger(quoteId))throw Object.assign(new Error('Choose the exact quote version to answer'),{status:400,code:'SERVICE_QUOTE_ID_REQUIRED'});
+    const quoteResult=await client.query(`SELECT * FROM service_job_quotes WHERE id=$1 AND job_id=$2 FOR UPDATE`,[quoteId,jobId]);
+    if(!quoteResult.rowCount)throw Object.assign(new Error('Quote version not found'),{status:404});
+    const quote=quoteResult.rows[0];
+    const expectedVersion=req.body?.expected_version;
+    if(expectedVersion!==undefined&&Number(expectedVersion)!==Number(quote.version_no))throw Object.assign(new Error('Quote version changed. Review the latest version before responding.'),{status:409,code:'SERVICE_QUOTE_STALE'});
+    const outcome=await respondToServiceQuote(client,{job,quote,customerAccountId:me.account.id,action:legacyAccept?'accept':clean(req.body?.action,40),note:req.body?.note});
+    if(outcome.expired){await client.query('COMMIT');return res.status(409).json({error:'This quote has expired. Ask the Provider for a new version.',code:'SERVICE_QUOTE_EXPIRED'})}
+    const updated=await client.query(`SELECT * FROM service_jobs WHERE id=$1`,[jobId]);
+    const enriched=await pricingForJobs(client,updated.rows);
+    await client.query('COMMIT');
+    res.json(enriched[0]);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+}catch(e){next(e)}}
+app.post('/api/services/jobs/:id/quotes/:quoteId/respond',body,(req,res,next)=>handleServiceQuoteResponse(req,res,next))
+app.post('/api/services/jobs/:id/accept-quote',body,(req,res,next)=>handleServiceQuoteResponse(req,res,next,{legacyAccept:true}))
 app.post('/api/service-provider/jobs/:id/status',body,async(req,res,next)=>{try{
-  const me=await requireProvider(req),status=clean(req.body?.status,40);
+  const me=await requireProvider(req),status=clean(req.body?.status,40),jobId=Number(req.params.id);
   if(!['provider_reviewing','scheduled','in_progress','completed','cancelled','disputed'].includes(status))return res.status(400).json({error:'Unsupported job status'});
-  const job=await pool.query(`SELECT * FROM service_jobs WHERE id=$1 AND provider_account_id=$2`,[Number(req.params.id),me.account.id]);
-  if(!job.rowCount)return res.status(404).json({error:'Job not found'});
-  const current=job.rows[0];
-  const allowed={requested:['provider_reviewing','cancelled'],provider_reviewing:['cancelled'],accepted:['scheduled','in_progress','cancelled'],scheduled:['in_progress','cancelled'],in_progress:['completed','disputed'],quoted:['cancelled']}[current.status]||[];
-  if(!allowed.includes(status))return res.status(409).json({error:`Cannot move job from ${current.status} to ${status}`});
-  if(status==='cancelled')await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'service_job_cancel',subjectType:'service_job',subjectId:current.id});
-  const finalPrice=status==='completed'?(numberOrNull(req.body?.final_price)??numberOrNull(current.quote_amount)):current.final_price;
-  const{rows}=await pool.query(`UPDATE service_jobs SET status=$1,scheduled_at=CASE WHEN $1='scheduled' THEN COALESCE($2::timestamptz,scheduled_at) ELSE scheduled_at END,final_price=$3,provider_completed_at=CASE WHEN $1='completed' THEN NOW() ELSE provider_completed_at END,cancelled_at=CASE WHEN $1='cancelled' THEN NOW() ELSE cancelled_at END,cancellation_reason=CASE WHEN $1='cancelled' THEN $4 ELSE cancellation_reason END,updated_at=NOW() WHERE id=$5 RETURNING *`,[status,req.body?.scheduled_at||null,finalPrice,clean(req.body?.reason,500),current.id]);
-  res.json(redactProviderServiceJob(rows[0]));
+  if(!Number.isInteger(jobId)||jobId<1)return res.status(400).json({error:'Service job id is invalid'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const job=await client.query(`SELECT * FROM service_jobs WHERE id=$1 AND provider_account_id=$2 FOR UPDATE`,[jobId,me.account.id]);
+    if(!job.rowCount)throw Object.assign(new Error('Job not found'),{status:404});
+    const current=job.rows[0];
+    const allowed={requested:['provider_reviewing','cancelled'],provider_reviewing:['cancelled'],accepted:['scheduled','in_progress','cancelled'],scheduled:['in_progress','cancelled'],in_progress:['completed','disputed'],quoted:['cancelled']}[current.status]||[];
+    if(!allowed.includes(status))throw Object.assign(new Error(`Cannot move job from ${current.status} to ${status}`),{status:409});
+    if(status==='cancelled')await enforceHighRiskVelocity(client,{actorAccountId:me.account.id,actionCode:'service_job_cancel',subjectType:'service_job',subjectId:current.id});
+    let finalPrice=current.final_price;
+    if(status==='completed'){
+      if(current.agreed_total==null||!current.accepted_quote_id)throw Object.assign(new Error('Accept an exact quote before completing this job'),{status:409,code:'SERVICE_ACCEPTED_QUOTE_REQUIRED'});
+      const pending=await client.query(`SELECT 1 FROM service_job_quotes WHERE job_id=$1 AND quote_phase='change_order' AND status='sent' LIMIT 1`,[current.id]);
+      if(pending.rowCount)throw Object.assign(new Error('The Customer must answer the pending change order before completion'),{status:409,code:'SERVICE_CHANGE_ORDER_PENDING'});
+      finalPrice=acceptedCompletionPrice({acceptedTotal:current.agreed_total,requestedFinalPrice:req.body?.final_price});
+    }
+    const{rows}=await client.query(`UPDATE service_jobs SET status=$1,scheduled_at=CASE WHEN $1='scheduled' THEN COALESCE($2::timestamptz,scheduled_at) ELSE scheduled_at END,final_price=$3,provider_completed_at=CASE WHEN $1='completed' THEN NOW() ELSE provider_completed_at END,cancelled_at=CASE WHEN $1='cancelled' THEN NOW() ELSE cancelled_at END,cancellation_reason=CASE WHEN $1='cancelled' THEN $4 ELSE cancellation_reason END,updated_at=NOW() WHERE id=$5 RETURNING *`,[status,req.body?.scheduled_at||null,finalPrice,clean(req.body?.reason,500),current.id]);
+    await client.query('COMMIT');
+    res.json(redactProviderServiceJob(rows[0]));
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
 }catch(e){next(e)}})
 app.post('/api/services/jobs/:id/confirm-completion',body,async(req,res,next)=>{try{const me=await requireCustomer(req),id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`UPDATE service_jobs SET customer_confirmed_at=COALESCE(customer_confirmed_at,NOW()),updated_at=NOW() WHERE id=$1 AND customer_account_id=$2 AND status='completed' RETURNING *`,[id,me.account.id]);if(!r.rowCount)throw Object.assign(new Error('Completed job not available for confirmation'),{status:409});const j=r.rows[0];await recordMonetizableCompletion(client,{serviceScope:'local_services',subjectType:'account',subjectId:j.provider_account_id,sourceType:'service_job',sourceId:j.id,completedAt:j.customer_confirmed_at,grossValue:j.final_price??j.quote_amount??0,currencyCode:j.currency_code||'PHP'});await client.query('COMMIT');res.json(j)}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 app.post('/api/services/jobs/:id/review',body,async(req,res,next)=>{try{const me=await requireCustomer(req),jobId=Number(req.params.id);const j=await pool.query(`SELECT * FROM service_jobs WHERE id=$1 AND customer_account_id=$2 AND status='completed' AND customer_confirmed_at IS NOT NULL`,[jobId,me.account.id]);if(!j.rowCount)return res.status(409).json({error:'Review is available only after a completed, confirmed service job'});const vals=['workmanship','reliability','communication','professionalism','property_care','price_transparency','overall'].map(k=>Number(req.body?.[k]));if(vals.some(x=>!Number.isInteger(x)||x<1||x>5))return res.status(400).json({error:'Every rating must be from 1 to 5'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'review_submit',subjectType:'service_job',subjectId:jobId});const{rows}=await pool.query(`INSERT INTO service_reviews(job_id,reviewer_account_id,provider_account_id,workmanship,reliability,communication,professionalism,property_care,price_transparency,overall,review_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(job_id) DO NOTHING RETURNING *`,[jobId,me.account.id,j.rows[0].provider_account_id,...vals,clean(req.body?.review_text,1200)]);if(!rows.length)return res.status(409).json({error:'This job has already been reviewed'});res.status(201).json(rows[0])}catch(e){next(e)}})
@@ -436,7 +729,7 @@ function proxy(req,res,next){
   return marketplaceApp(req,res,next);
 }
 app.use(proxy)
-app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:status<500?err.message:'Unexpected server error'};res.status(status).json(payload)})
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:status<500?err.message:'Unexpected server error',...(status<500&&err?.code?{code:err.code}:{})};res.status(status).json(payload)})
 let embeddedStartPromise=null;
 export async function startEmbeddedServices(){
   if(!embeddedStartPromise){

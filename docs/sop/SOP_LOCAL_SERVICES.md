@@ -10,7 +10,7 @@ country_code: PH
 territory_scope: country
 owner_role: Documentation Governance Owner
 approver_role: Country Admin
-version: 1.0
+version: 1.1
 legal_classification: PLATFORM_POLICY
 ---
 
@@ -40,9 +40,10 @@ Applies to current public Service Provider discovery and service-job workflow.
 
 - Provider profile/services.
 - Service request description, official coarse area, private exact address and window.
-- Quote amount/note.
+- Versioned itemised quote: scope, labour/material/call-out/travel lines, charging units, validity, inclusions, exclusions and terms.
+- Customer response attached to the exact quote version.
 - Schedule/status.
-- Final price.
+- Customer-accepted agreed total and, where needed, an explicitly approved change order.
 - Customer completion confirmation.
 - Ratings/review.
 
@@ -52,21 +53,28 @@ Applies to current public Service Provider discovery and service-job workflow.
 2. Customer submits a service request with enough information to understand the work. The work description must not contain an address or private contact details.
 3. Before quote acceptance, the Provider receives only the Customer's official coarse barangay/area. The exact address remains private.
 4. Provider reviews request and may move into review/quote flow.
-5. Provider sends a clear quote amount and note.
-6. Customer accepts the quote before work proceeds through accepted/scheduled/in-progress states.
+5. Provider sends an itemised quote. The server calculates every line subtotal and the PHP total; a browser-supplied total is not authoritative.
+6. Customer accepts, declines or requests changes to the exact quote version. Only explicit acceptance moves the work into accepted/scheduled/in-progress states.
 7. The assigned Provider intentionally requests the exact address only for fulfilment. Each successful access is independently logged.
 8. Provider schedules/starts work using allowed state transitions.
-9. Provider performs the work within accepted scope and records final price when completing if applicable.
-10. Provider marks job Completed only after the work is actually completed. Exact-address access expires immediately when the job leaves accepted/scheduled/in-progress status.
-11. Customer separately confirms completion.
-12. Only after Completed + Customer confirmed may Customer submit one verified review.
-13. Public reputation contributes only according to provider's public-reputation setting and moderation rules.
-14. Handle disputes/safety/privacy problems through Incident/support rather than manipulating review/status history.
+9. Provider performs the work within the accepted scope. If price or scope must change, Provider sends a complete revised change order while the previous accepted price remains binding.
+10. Customer explicitly accepts or declines the change order. Acceptance replaces the agreed-price snapshot; silence or continued work is not acceptance.
+11. Provider marks job Completed only after the work is actually completed. Completion is pinned to the latest Customer-accepted total and is blocked while a change order awaits a response. Exact-address access expires immediately when the job leaves accepted/scheduled/in-progress status.
+12. Customer separately confirms completion.
+13. Only after Completed + Customer confirmed may Customer submit one verified review.
+14. Public reputation contributes only according to provider's public-reputation setting and moderation rules.
+15. Handle disputes/safety/privacy problems through Incident/support rather than manipulating review/status history.
 
 ## Control points
 
 - Provider cannot request own service.
-- Quote amount must be valid.
+- Every money value is non-negative and bounded; line quantities must be positive and use a supported unit.
+- Quote totals and subtotals are calculated server-side.
+- A new quote creates a new immutable version; it does not rewrite accepted history.
+- Acceptance targets the quote identifier and expected version under a database row lock.
+- Quote expiry, stale version and forged total attempts fail closed.
+- Completion total must equal the latest Customer-accepted total.
+- A pending change order blocks completion until the Customer responds.
 - Invalid job-state jumps are blocked.
 - `provider_reviewing` cannot bypass Customer quote acceptance and move directly to `scheduled`.
 - Provider list, quote and status payloads never contain the exact address.
@@ -88,7 +96,7 @@ Applies to current public Service Provider discovery and service-job workflow.
 
 ## Exceptions / escalation
 
-- Scope changes → new/updated quote/explicit agreement where supported, not hidden change.
+- Scope/price changes → versioned change order and explicit Customer approval; never a hidden final-price adjustment.
 - Safety/dispute → disputed/incident path.
 - Credential expires → stop gated activity until authorized.
 - Payment dispute → Support/Finance according to implemented payment model.
@@ -98,7 +106,8 @@ Applies to current public Service Provider discovery and service-job workflow.
 - Public/private provider profile.
 - Services/categories.
 - Credentials/evidence/status.
-- Job/request/quote/status.
+- Job/request/status, immutable quote versions, quote line items and quote-response event history.
+- Accepted quote identifier, agreed total and pricing-lock timestamp.
 - Privacy-safe coarse area and Customer-owned exact address.
 - Provider exact-address access event, actor, Customer subject, job-status snapshot, purpose and correlation identifier; the audit record does not duplicate the address.
 - Customer confirmation.

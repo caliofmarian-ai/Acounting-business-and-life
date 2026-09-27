@@ -233,7 +233,9 @@ app.post('/api/procurement/orders/:id/payment',body,(req,res)=>forwardJson(req,r
 
 // Local Services
 app.post('/api/services/jobs',body,(req,res)=>forwardJson(req,res,async data=>{const id=data.id;if(id)await emitServiceEvent(req,id,'service.request_created',{toProvider:true})}));
+app.post('/api/service-provider/jobs/:id/quotes',body,(req,res)=>forwardJson(req,res,()=>emitServiceEvent(req,req.params.id,'service.quote_created',{toCustomer:true})));
 app.post('/api/service-provider/jobs/:id/quote',body,(req,res)=>forwardJson(req,res,()=>emitServiceEvent(req,req.params.id,'service.quote_created',{toCustomer:true})));
+app.post('/api/services/jobs/:id/quotes/:quoteId/respond',body,(req,res)=>forwardJson(req,res,()=>emitServiceEvent(req,req.params.id,req.body?.action==='accept'?'service.quote_accepted':'service.status_changed',{toProvider:true})));
 app.post('/api/services/jobs/:id/accept-quote',body,(req,res)=>forwardJson(req,res,()=>emitServiceEvent(req,req.params.id,'service.quote_accepted',{toProvider:true})));
 app.post('/api/service-provider/jobs/:id/status',body,(req,res)=>forwardJson(req,res,()=>emitServiceEvent(req,req.params.id,'service.status_changed',{toCustomer:true})));
 app.post('/api/services/jobs/:id/confirm-completion',body,(req,res)=>forwardJson(req,res,()=>emitServiceEvent(req,req.params.id,'service.status_changed',{toProvider:true})));
