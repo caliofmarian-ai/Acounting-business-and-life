@@ -26,6 +26,8 @@ test('historical PO migration is deterministic and leaves ambiguous multi-busine
   assert.match(finance,/historical_unassigned/);
   assert.match(finance,/SUPPLIER_HISTORICAL_PO_ATTRIBUTION_REVIEW_REQUIRED/);
   assert.doesNotMatch(sourcing,/HAVING COUNT\(\*\)>1/);
+  assert.match(sourcing,/to_regclass\('public\.profile_business_bindings'\)/);
+  assert.match(suppliers,/to_regclass\('public\.profile_business_bindings'\)/);
 });
 
 test('Merchant Supplier relationship resolves a concrete Supplier business before ordering',()=>{
@@ -58,6 +60,7 @@ test('Supplier Finance, summaries and financial fee evidence are scoped by suppl
   assert.match(finance,/po\.supplier_business_id=\$3/);
   assert.match(finance,/po\.supplier_business_id=\$2/);
   assert.match(accounting,/supplier_business_id=\$2/);
+  assert.match(accounting,/specificBusiness\(req,requested\)/);
   assert.match(documents,/po\.supplier_business_id=\$1/);
   assert.match(finance,/SUPPLIER_BUSINESS_ATTRIBUTED/);
 });
