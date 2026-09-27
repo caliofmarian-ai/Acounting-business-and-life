@@ -46,10 +46,93 @@ function quantity(value,label='Quantity'){
   if(!Number.isFinite(number)||number<=0||number>QUANTITY_LIMIT)throw new ServicePricingValidationError(`${label} must be greater than zero`);
   return Math.round((number+Number.EPSILON)*1000)/1000;
 }
+function signedMoney(value,label){
+  const number=Number(value);
+  if(!Number.isFinite(number)||Math.abs(number)>MONEY_LIMIT)throw new ServicePricingValidationError(`${label} is invalid`);
+  return Math.round((number+Number.EPSILON)*100)/100;
+}
+function pricingIntegrity(message){
+  const error=new ServicePricingValidationError(message,'SERVICE_JOB_PRICE_INTEGRITY_MISMATCH');
+  error.status=409;
+  return error;
+}
+function integrityMoney(value,label){
+  try{return money(value,label)}catch{throw pricingIntegrity(`${label} is invalid in the Service Job pricing snapshot`)}
+}
+function integrityMoneyCents(value,label){
+  return Math.round(integrityMoney(value,label)*100);
+}
+function integritySignedMoney(value,label){
+  try{return signedMoney(value,label)}catch{throw pricingIntegrity(`${label} is invalid in the Service Job pricing snapshot`)}
+}
 export function moneyCents(value,label='Amount'){
   return Math.round(money(value,label)*100);
 }
 export function centsMoney(cents){return Number((Number(cents||0)/100).toFixed(2))}
+
+export function serviceJobPayableSnapshot(job={}){
+  const hasAcceptedId=job.accepted_quote_id!==undefined&&job.accepted_quote_id!==null&&job.accepted_quote_id!=='';
+  const hasAgreedTotal=job.agreed_total!==undefined&&job.agreed_total!==null&&job.agreed_total!=='';
+  const hasPricingSnapshot=hasAcceptedId||hasAgreedTotal||Boolean(job.pricing_locked_at);
+
+  if(hasPricingSnapshot){
+    const acceptedQuoteId=Number(job.accepted_quote_id);
+    if(!hasAcceptedId||!Number.isInteger(acceptedQuoteId)||acceptedQuoteId<=0||!hasAgreedTotal){
+      throw pricingIntegrity('Service Job pricing snapshot is incomplete');
+    }
+    const agreedTotal=integrityMoney(job.agreed_total,'Agreed total');
+    const legacyAdjustment=job.legacy_final_adjustment===undefined||job.legacy_final_adjustment===null||job.legacy_final_adjustment===''
+      ?null:integritySignedMoney(job.legacy_final_adjustment,'Legacy final adjustment');
+    const payableCents=moneyCents(agreedTotal)+(legacyAdjustment==null?0:Math.round(legacyAdjustment*100));
+    if(payableCents<0||payableCents>Math.round(MONEY_LIMIT*100))throw pricingIntegrity('Service Job payable value is invalid');
+    const payableValue=centsMoney(payableCents);
+    if(job.status==='completed'&&job.final_price!==undefined&&job.final_price!==null&&job.final_price!==''&&integrityMoneyCents(job.final_price,'Final price')!==payableCents){
+      throw pricingIntegrity('Completed Service Job price differs from its approved pricing snapshot');
+    }
+    return{
+      payable_value:payableValue,
+      payable_authority:'accepted_quote_snapshot',
+      accepted_quote_id:acceptedQuoteId,
+      agreed_total:agreedTotal,
+      legacy_final_adjustment:legacyAdjustment
+    };
+  }
+
+  const legacySource=job.final_price!==undefined&&job.final_price!==null&&job.final_price!==''?'final_price':'quote_amount';
+  const legacyValue=legacySource==='final_price'?job.final_price:job.quote_amount;
+  return{
+    payable_value:legacyValue===undefined||legacyValue===null||legacyValue===''?0:integrityMoney(legacyValue,'Legacy Service Job price'),
+    payable_authority:`legacy_${legacySource}`,
+    accepted_quote_id:null,
+    agreed_total:null,
+    legacy_final_adjustment:null
+  };
+}
+
+export function resolveAcceptedServiceJobPayable(job={},acceptedQuote=null){
+  const snapshot=serviceJobPayableSnapshot(job);
+  if(snapshot.accepted_quote_id==null)return snapshot;
+  if(!acceptedQuote||Number(acceptedQuote.id)!==snapshot.accepted_quote_id||Number(acceptedQuote.job_id)!==Number(job.id)){
+    throw pricingIntegrity('Service Job accepted quote snapshot is missing');
+  }
+  if(acceptedQuote.status!=='accepted')throw pricingIntegrity('Service Job accepted quote is no longer accepted');
+  if(integrityMoneyCents(acceptedQuote.total_amount,'Accepted quote total')!==integrityMoneyCents(snapshot.agreed_total,'Agreed total')){
+    throw pricingIntegrity('Service Job agreed total differs from the accepted quote');
+  }
+  if(acceptedQuote.currency_code&&job.currency_code&&acceptedQuote.currency_code!==job.currency_code){
+    throw pricingIntegrity('Service Job currency differs from the accepted quote');
+  }
+  const legacyQuote=acceptedQuote.legacy_record===true;
+  if(snapshot.legacy_final_adjustment!=null&&!legacyQuote){
+    throw pricingIntegrity('Only a migrated legacy quote may carry a legacy final adjustment');
+  }
+  return{
+    ...snapshot,
+    payable_authority:legacyQuote
+      ?(snapshot.legacy_final_adjustment==null?'legacy_accepted_quote':'legacy_accepted_quote_plus_adjustment')
+      :'accepted_quote'
+  };
+}
 
 export function normalizeServicePriceOffer(input={}){
   const pricingMethod=enumValue(input.pricing_method,SERVICE_PRICING_METHODS,{label:'Pricing method',fallback:'quotation'});

@@ -287,6 +287,8 @@ export async function resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,acc
         service_job_id:Number(j.id),
         provider_account_id:Number(j.provider_account_id),
         provider_name:j.provider_name||'',
+        accepted_quote_id:summary.commercial.accepted_quote_id,
+        payable_authority:summary.commercial.payable_authority,
         outstanding_amount:Number(summary.payment.outstanding)
       }
     };
