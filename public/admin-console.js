@@ -223,7 +223,7 @@ async function membersPanel(){
   params.set('limit','50');params.set('offset',String(filters.offset||0));
   const data=await api('/api/admin/members?'+params.toString());
   state.members=data;
-  const scopeLabel=data.scope?.country_wide?'Philippines scope':((data.scope?.territory_ids||[]).length+' delegated territor'+((data.scope?.territory_ids||[]).length===1?'y':'ies'));
+  const scopeLabel=data.scope?.platform_wide?'Platform-wide':data.scope?.country_wide?'Philippines scope':((data.scope?.territory_ids||[]).length+' delegated territor'+((data.scope?.territory_ids||[]).length===1?'y':'ies'));
   const form='<form id="memberSearchForm" class="adminForm memberSearchForm"><div class="memberFilterGrid">'
     +'<label>Search<input name="q" value="'+esc(filters.q||'')+'" placeholder="Name, email, Account ID or Personal ID"></label>'
     +'<label>Account status<select name="status"><option value="">All statuses</option><option value="active" '+(filters.status==='active'?'selected':'')+'>Active</option><option value="inactive" '+(filters.status==='inactive'?'selected':'')+'>Not active</option></select></label>'
