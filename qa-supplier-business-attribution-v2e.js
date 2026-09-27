@@ -77,7 +77,7 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
       method:"PUT",token:supplier.token,
       body:{
         business_id:businessId,visibility:"private",accepts_rfqs:true,
-        categories:["qa_v2e"],published_catalog_item_ids:[catalogItemId]
+        categories:["other"],published_catalog_item_ids:[catalogItemId]
       }
     });
     expectStatus(settings,200,"Supplier V2E sourcing settings "+businessId);
