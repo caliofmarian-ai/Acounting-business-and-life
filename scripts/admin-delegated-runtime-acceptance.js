@@ -105,6 +105,7 @@ async function main(){
   const country=await createAccount('country-'+suffix);
   const territory=await createAccount('territory-'+suffix);
   const specialist=await createAccount('specialist-'+suffix);
+  const profileSpecialist=await createAccount('profile-specialist-'+suffix);
   const memberSupportSpecialist=await createAccount('member-support-specialist-'+suffix);
   const memberA=await createAccount('member-a-'+suffix);
   const memberB=await createAccount('member-b-'+suffix);
@@ -195,6 +196,15 @@ async function main(){
   await request('/api/admin/assignments',{
     token:ownerToken,method:'POST',expected:201,
     body:{
+      target_email:profileSpecialist.email,admin_role:'specialist',territory_id:Number(t1.id),
+      function_codes:['profile_onboarding'],
+      reason:'CI Members Hub profile-governance-only specialist acceptance'
+    }
+  });
+
+  await request('/api/admin/assignments',{
+    token:ownerToken,method:'POST',expected:201,
+    body:{
       target_email:memberSupportSpecialist.email,admin_role:'specialist',territory_id:Number(t1.id),
       function_codes:['support_operations','member_directory'],
       reason:'CI Members V3 Support + Member Directory acceptance'
@@ -204,6 +214,7 @@ async function main(){
   const countryToken=await sessionFor(country.id,'country');
   const territoryToken=await sessionFor(territory.id,'territory');
   const specialistToken=await sessionFor(specialist.id,'specialist');
+  const profileSpecialistToken=await sessionFor(profileSpecialist.id,'profile-specialist');
   const memberSupportSpecialistToken=await sessionFor(memberSupportSpecialist.id,'member-support-specialist');
 
   // Country Admin: delegated country-wide onboarding/support/delegation/audit, but no Courier verification or territory management.
@@ -355,6 +366,20 @@ async function main(){
   });
   await request('/api/admin/members/'+Number(memberB.id),{token:memberSupportSpecialistToken,expected:404});
 
+  // Members Hub V5: Profile Governance-only Specialist must not gain Member Directory access.
+  const profileSpecialistBoot=await request('/api/admin/bootstrap',{token:profileSpecialistToken});
+  assert(hasPermission(profileSpecialistBoot,'profiles.invite_merchant'),'Profile Governance Specialist invitation permission missing');
+  assert(hasPermission(profileSpecialistBoot,'merchant.approve'),'Profile Governance Specialist review permission missing');
+  assert(hasPermission(profileSpecialistBoot,'profile.suspend'),'Profile Governance Specialist authorization permission missing');
+  assert(!hasPermission(profileSpecialistBoot,'members.view'),'Profile Governance Specialist gained Member Directory access through UI fusion');
+  await request('/api/admin/overview',{token:profileSpecialistToken});
+  await request('/api/governance/admin/invitations',{
+    token:profileSpecialistToken,method:'POST',expected:201,
+    body:{target_email:'ci-profile-hub-'+suffix+'@example.test',role:'merchant',territory_id:Number(t1.id),expires_days:2,note:'Members Hub governance-only acceptance'}
+  });
+  await request('/api/admin/members',{token:profileSpecialistToken,expected:403});
+  await request('/api/admin/members/'+Number(memberA.id),{token:profileSpecialistToken,expected:403});
+
   // Specialist: support-only operational authority. Finance remains available but is function-scoped.
   const specialistBoot=await request('/api/admin/bootstrap',{token:specialistToken});
   const specialistScope=territoryIds(specialistBoot);
@@ -406,6 +431,7 @@ async function main(){
     members_internal_notes_tags:'PASS',
     members_notes_tags_audit:'PASS',
     members_support_specialist_isolation:'PASS',
+    members_hub_governance_without_directory:'PASS',
     members_specialist_deny:'PASS'
   }));
 }
