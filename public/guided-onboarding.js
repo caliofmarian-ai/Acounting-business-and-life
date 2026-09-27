@@ -105,6 +105,20 @@ function targetSufficientlyVisible(rect,metrics){
   const visibleArea=Math.max(0,right-left)*Math.max(0,bottom-top),targetArea=Math.max(1,rect.width*rect.height);
   return visibleArea/targetArea>=.72;
 }
+function targetNeedsReadingRoom(target){
+  if(!target)return false;
+  if(target.matches?.('input,textarea,select,[contenteditable="true"]'))return true;
+  const control=target.querySelector?.('input,textarea,select,[contenteditable="true"]');
+  return Boolean(control&&target.matches?.('label'));
+}
+function guidanceContextTarget(target){
+  if(!target)return target;
+  if(target.matches?.('input,textarea,select,[contenteditable="true"]')){
+    const labelled=target.closest?.('label');
+    if(labelled&&visible(labelled))return labelled;
+  }
+  return target;
+}
 function maxCoachRoom(rect,metrics){
   const safeTop=metrics.top+metrics.safeTop+COACH_EDGE_GAP,safeBottom=metrics.bottom-metrics.safeBottom-COACH_EDGE_GAP;
   return Math.max(0,rect.top-COACH_TARGET_GAP-safeTop, safeBottom-rect.bottom-COACH_TARGET_GAP);
@@ -126,12 +140,12 @@ function syncCompactMore(coach){
 function placeCoach(target,metrics){
   const coach=overlay?.querySelector('.guidedCoach');if(!coach||!target)return;
   const targetRect=target.getBoundingClientRect(),safeTop=metrics.top+metrics.safeTop+COACH_EDGE_GAP,safeBottom=metrics.bottom-metrics.safeBottom-COACH_EDGE_GAP;
-  const narrow=metrics.width<COMPACT_BREAKPOINT||metrics.keyboardOpen;
+  const narrow=metrics.width<COMPACT_BREAKPOINT||metrics.keyboardOpen,readingRoom=targetNeedsReadingRoom(target);
   coach.classList.toggle('compact',narrow);coach.classList.remove('guidedCoachScroll');coach.style.maxHeight='';coach.style.right='auto';coach.style.bottom='auto';
   const width=Math.max(220,Math.min(metrics.width-COACH_EDGE_GAP*2,metrics.width>=820?390:520));coach.style.width=width+'px';
   let rect=coach.getBoundingClientRect();
   const roomAbove=()=>Math.max(0,targetRect.top-COACH_TARGET_GAP-safeTop),roomBelow=()=>Math.max(0,safeBottom-targetRect.bottom-COACH_TARGET_GAP);
-  const preferred=targetRect.top+targetRect.height/2>metrics.top+metrics.height/2?'top':'bottom';
+  const preferred=readingRoom?'bottom':targetRect.top+targetRect.height/2>metrics.top+metrics.height/2?'top':'bottom';
   let order=preferred==='top'?['top','bottom']:['bottom','top'];
   const fits=side=>(side==='top'?roomAbove():roomBelow())>=rect.height;
   let placement=order.find(fits)||'';
@@ -172,8 +186,8 @@ function scheduleCoachReposition(){
 async function positionGuidance(target,{scroll=true}={}){
   const spot=overlay?.querySelector('.guidedSpotlight');currentSpotlightTarget=target||null;
   if(!target){spot?.classList.add('hidden');return}
-  const run=++placementRun,metrics=viewportMetrics(),rect=target.getBoundingClientRect();
-  if(scroll&&(!targetSufficientlyVisible(rect,metrics)||maxCoachRoom(rect,metrics)<150)){
+  const run=++placementRun,metrics=viewportMetrics(),rect=target.getBoundingClientRect(),readingRoom=targetNeedsReadingRoom(target);
+  if(scroll&&(readingRoom||!targetSufficientlyVisible(rect,metrics)||maxCoachRoom(rect,metrics)<150)){
     target.scrollIntoView({block:'center',inline:'nearest',behavior:reducedMotion()?'auto':'smooth'});
     await nextAnimationFrame();await nextAnimationFrame();if(run!==placementRun||!overlay)return;
   }
@@ -203,7 +217,7 @@ function renderCoach({step,title,body,target=null,primary,secondary,back=false,w
   coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting});coach.dataset.bodyLong=String(String(body||'').length>118);
   bindCoachActions(step,{next});
   coach.querySelector('[data-guide-more]')?.addEventListener('click',event=>{coach.classList.toggle('expanded');event.currentTarget.textContent=coach.classList.contains('expanded')?'Less':'More';scheduleCoachReposition()});
-  positionGuidance(target,{scroll:true}).catch(()=>{});
+  positionGuidance(guidanceContextTarget(target),{scroll:true}).catch(()=>{});
   coach.focus?.({preventScroll:true});
 }
 function missingAccountTarget(){
