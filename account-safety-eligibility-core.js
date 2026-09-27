@@ -106,7 +106,7 @@ export async function requireAdultEligibility(db,accountId,{action='use an opera
 }
 
 async function withEligibilityTransaction(db,work){
-  if(typeof db.connect!=='function')return work(db);
+  if(typeof db.release==='function'||typeof db.connect!=='function')return work(db);
   const client=await db.connect();
   try{
     await client.query('BEGIN');

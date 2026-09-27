@@ -14,6 +14,7 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 
 class EligibilityDb{
   constructor(accountMode='personal'){
+    this.connectCalls=0;
     this.row={
       account_mode:accountMode,
       safety_eligibility_status:'pending',
@@ -24,7 +25,7 @@ class EligibilityDb{
     };
     this.events=[];
   }
-  async connect(){return this}
+  async connect(){this.connectCalls+=1;return this}
   release(){}
   async query(sql,args=[]){
     const normalized=String(sql).replace(/\s+/g,' ').trim();
@@ -70,6 +71,7 @@ test('personal account must explicitly attest before operational eligibility',as
   assert.equal(state.self_attested,true);
   assert.equal(db.events.length,1);
   assert.equal(db.events[0][2],'adult_eligibility_self_attested');
+  assert.equal(db.connectCalls,0,'an existing PostgreSQL client must never be connected a second time');
   const repeat=await recordAdultEligibilityAttestation(db,{accountId:1,attested:true,policyVersion:ADULT_ELIGIBILITY_POLICY_VERSION,source:'test'});
   assert.equal(repeat.eligible,true);
   assert.equal(db.events.length,1,'idempotent declaration must not append duplicate evidence');
