@@ -13,6 +13,7 @@ import { runQaAcceptanceIfRequested } from './qa-acceptance.js';
 import { startEmbeddedPaymentCore,stopEmbeddedPaymentCore } from './server-payments.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {ensureQaPhTestContext} from './qa-ph-test-context.js';
+import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 
 const {Pool}=pg;
 const app=express();
@@ -198,6 +199,7 @@ app.post('/api/payments/admin/paymongo/refunds/:id/execute',async(req,res,next)=
   try{
     const me=await identity(req);
     const assignment=await requireAdminPermission(pool,me.account.id,'payment.manage');
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'refund_request',subjectType:'refund',subjectId:req.params.id});
     const refund=await executePayMongoRefund(pool,{refundId:Number(req.params.id),actorAccountId:Number(me.account.id)});
     await appendAdminAudit(pool,{
       actorAccountId:me.account.id,assignmentId:assignment.id,permission:'payment.manage',
@@ -209,7 +211,7 @@ app.post('/api/payments/admin/paymongo/refunds/:id/execute',async(req,res,next)=
   }catch(e){next(e)}
 });
 
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected PayMongo adapter error',code:err.code||undefined,blockers:Array.isArray(err.blockers)?err.blockers:undefined})});
+app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:err.status?err.message:'Unexpected PayMongo adapter error',code:err.code||undefined,blockers:Array.isArray(err.blockers)?err.blockers:undefined};res.status(err.status||500).json(payload)});
 
 async function initDb(){
   await ensurePayMongoSchema(pool);

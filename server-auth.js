@@ -19,6 +19,7 @@ import {emitNotificationEvent} from './notification-core.js';
 import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboarding} from './guided-onboarding-core.js';
 import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest} from './territory-demand-core.js';
 import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-account.js';
+import {ensureHighRiskVelocitySchema,enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -33,7 +34,6 @@ const ROLES = new Set(['merchant', 'customer', 'supplier', 'courier', 'service_p
 const jsonBody = express.json({ limit: '450kb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 const loginAttempts = new Map();
-const growthAnalyticsAttempts = new Map();
 const ACCOUNT_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_link_created','referral_shared']);
 const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_qr_opened','referral_landing_viewed','referral_shared','referral_signup_started']);
 let shuttingDown = false;
@@ -311,6 +311,7 @@ async function initDb() {
   await ensureAccountGeographySchema(pool);
   await ensureGuidedOnboardingSchema(pool);
   await ensureTerritoryDemandSchema(pool);
+  await ensureHighRiskVelocitySchema(pool);
 }
 
 async function profileSnapshot(accountId) {
@@ -362,22 +363,6 @@ function throttled(req, identity) {
   state.count += 1; loginAttempts.set(key, state); return false;
 }
 function clearThrottle(req, identity) { loginAttempts.delete(`${req.ip || 'unknown'}:${identity}`); }
-
-function growthAnalyticsThrottled(identity, limit = 90) {
-  const key = String(identity || 'unknown');
-  const now = Date.now();
-  const state = growthAnalyticsAttempts.get(key) || { count: 0, first: now };
-  if (now - state.first > 60_000) { state.count = 0; state.first = now; }
-  if (state.count >= limit) return true;
-  state.count += 1;
-  growthAnalyticsAttempts.set(key, state);
-  if (growthAnalyticsAttempts.size > 5000) {
-    for (const [candidate, value] of growthAnalyticsAttempts) {
-      if (now - value.first > 60_000) growthAnalyticsAttempts.delete(candidate);
-    }
-  }
-  return false;
-}
 
 function canonicalReferralAnalyticsProperties(event, input = {}) {
   const role = clean(input?.source_profile_role, 40);
@@ -598,10 +583,6 @@ app.post('/api/growth/referral-analytics/account', body, auth, async (req, res, 
   if (!ACCOUNT_REFERRAL_ANALYTICS_EVENTS.has(event)) {
     return res.status(400).json({ error: 'Referral analytics event is not allowed for account instrumentation' });
   }
-  if (growthAnalyticsThrottled(`account:${req.accountId}`, 120)) {
-    return res.status(429).json({ error: 'Referral analytics rate limit exceeded' });
-  }
-
   let properties;
   try {
     properties = canonicalReferralAnalyticsProperties(event, req.body?.properties);
@@ -610,6 +591,7 @@ app.post('/api/growth/referral-analytics/account', body, auth, async (req, res, 
   }
 
   try {
+    await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'referral_event_account',subjectType:'referral_event',subjectId:event});
     const enabled = await pool.query(
       'SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 AND enabled=TRUE LIMIT 1',
       [req.accountId, properties.source_profile_role]
@@ -628,10 +610,6 @@ app.post('/api/growth/referral-analytics/public', body, async (req, res, next) =
   if (!PUBLIC_REFERRAL_ANALYTICS_EVENTS.has(event)) {
     return res.status(400).json({ error: 'Referral analytics event is not allowed for public instrumentation' });
   }
-  if (growthAnalyticsThrottled(`public:${req.ip || 'unknown'}`, 60)) {
-    return res.status(429).json({ error: 'Referral analytics rate limit exceeded' });
-  }
-
   const referralCode = clean(req.body?.referral_code, 40);
   if (!isValidReferralCode(referralCode)) {
     return res.status(202).json({ accepted: false, delivered: false, reason: 'invalid_referral' });
@@ -645,6 +623,10 @@ app.post('/api/growth/referral-analytics/public', body, async (req, res, next) =
   }
 
   try {
+    await enforceHighRiskVelocity(pool,{
+      actorKey:String(req.ip||'unknown'),
+      actionCode:'referral_event_public',subjectType:'referral_event',subjectId:event,secret:TOKEN_SECRET
+    });
     const known = await pool.query(
       `SELECT ra.account_id AS referrer_account_id
          FROM referral_accounts ra
@@ -686,7 +668,7 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
     if (avatar.length > 300_000) return res.status(413).json({ error: 'Avatar is too large' });
   }
   try {
-    const currentResult=await pool.query(`SELECT email,account_mode FROM accounts WHERE id=$1`,[req.accountId]);
+    const currentResult=await pool.query(`SELECT email,address,avatar_data_url,account_mode FROM accounts WHERE id=$1`,[req.accountId]);
     const current=currentResult.rows[0];
     if(!current)return res.status(404).json({error:'Account not found'});
     const companyTest=current.account_mode==='company_test';
@@ -695,6 +677,12 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
     if (savedEmail) {
       const duplicate = await pool.query(`SELECT id FROM accounts WHERE LOWER(email)=$1 AND id<>$2`, [savedEmail, req.accountId]);
       if (duplicate.rowCount) return res.status(409).json({ error: 'That email is already used by another account' });
+    }
+    if(Object.prototype.hasOwnProperty.call(req.body||{},'address')&&address!==clean(current.address,300)){
+      await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'account_location_change',subjectType:'account',subjectId:req.accountId});
+    }
+    if(avatar!==undefined&&avatar!==current.avatar_data_url){
+      await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'upload_public',subjectType:'account_avatar',subjectId:req.accountId});
     }
     await pool.query(`UPDATE accounts SET display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, companyTest?'':address, avatar === undefined ? null : avatar, req.accountId]);
     res.json(await profileSnapshot(req.accountId));
@@ -706,6 +694,7 @@ app.put('/api/me/geography',body,auth,async(req,res,next)=>{try{
   if(!current.rowCount)return res.status(404).json({error:'Account not found'});
   const qaRemoteRequested=Boolean(req.body?.qa_remote_test);
   if(qaRemoteRequested&&!isQaRemoteTestEmail(current.rows[0].email))return res.status(403).json({error:'Remote PH testing is available only to the designated QA test account'});
+  await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'account_location_change',subjectType:'account_geography',subjectId:req.accountId});
   const geography=await saveAccountGeography(pool,req.accountId,req.body?.psgc_code,{source:current.rows[0].account_mode==='company_test'?'company_test_selected_psgc':qaRemoteRequested&&isQaRemoteTestEmail(current.rows[0].email)?'qa_remote_ph_test':'account_settings_selected_psgc'});
   await emitAccountGeographyNotice(req.accountId,geography);
   res.json(await profileSnapshot(req.accountId));
@@ -828,6 +817,15 @@ app.get('/api/context/:role', auth, async (req, res, next) => {
 
 app.use('/api',(req,res)=>{
   res.status(404).json({error:'No Account/Auth route owns this request'});
+});
+
+app.use((err,_req,res,_next)=>{
+  if(err?.code!=='HIGH_RISK_VELOCITY_LIMIT')return _next(err);
+  const status=Number(err?.status)||500;
+  if(status>=500)console.error(err);
+  if(res.headersSent)return;
+  res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));
+  res.status(status).json(highRiskVelocityErrorBody(err));
 });
 
 let embeddedStartPromise=null;
