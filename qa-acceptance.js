@@ -3167,6 +3167,146 @@ async function runIncidentRuntimeV7Acceptance({pool,base,secret}){
   if(after.json?.status!=='investigating')throw new Error('Incident V7 scoped triage status did not persist.');
   if(!(after.json?.actions||[]).some(x=>x.action_type==='admin_status'))throw new Error('Incident V7 Admin triage action evidence was missing.');
 
+  const severeCreated=await requestJson(base,'/api/incidents',{
+    method:'POST',
+    token:customer.token,
+    body:{
+      category:'Exploitation concern',
+      urgency_indicator:'payment_fraud_or_money_mule',
+      description:'Controlled severe Incident V7 acceptance record for prioritized human review in the isolated QA environment.',
+      related_type:'other',
+      territory_id:territoryId
+    }
+  });
+  expectStatus(severeCreated,201,'Incident V7 severe create');
+  const severeIncidentId=Number(severeCreated.json?.id),severeCaseId=Number(severeCreated.json?.trust_case_id);
+  if(!severeIncidentId||!severeCaseId)throw new Error('Incident V7 severe create returned incomplete canonical ids.');
+
+  const severeRecord=await pool.query(`
+    SELECT i.urgency_indicator,i.territory_id,i.status incident_status,
+      c.id case_id,c.status case_status,c.severity case_severity,c.territory_id case_territory_id,
+      e.id escalation_id,e.policy_version,e.trigger_source,e.trigger_code,e.route_code,
+      e.severity escalation_severity,e.state escalation_state,e.country_scoped,
+      e.legal_review_required,e.evidence_preservation_required,e.external_reporting_state
+    FROM incident_reports i
+    JOIN trust_cases c ON c.id=i.trust_case_id
+    JOIN trust_case_escalations e ON e.source_incident_id=i.id
+    WHERE i.id=$1
+  `,[severeIncidentId]);
+  if(severeRecord.rowCount!==1)throw new Error('Incident V7 severe escalation record was not created exactly once.');
+  const severe=severeRecord.rows[0],escalationId=Number(severeRecord.rows[0].escalation_id);
+  if(!escalationId)throw new Error('Incident V7 severe escalation returned no escalation id.');
+  if(severe.urgency_indicator!=='payment_fraud_or_money_mule')throw new Error('Incident V7 severe urgency indicator did not persist.');
+  if(Number(severe.territory_id)!==Number(territoryId))throw new Error('Incident V7 severe Incident lost its operating territory.');
+  if(severe.case_territory_id!==null)throw new Error('Incident V7 country-scoped severe case retained a territory scope.');
+  if(severe.policy_version!=='ph-severe-escalation-v1'||severe.trigger_source!=='report_category'||severe.trigger_code!=='exploitation_concern'){
+    throw new Error('Incident V7 severe policy precedence did not select the exploitation category.');
+  }
+  if(severe.route_code!=='child_vulnerable_safety'||severe.case_severity!=='critical'||severe.escalation_severity!=='critical'){
+    throw new Error('Incident V7 severe category did not route to the critical child/vulnerable-person queue.');
+  }
+  if(severe.escalation_state!=='pending_acknowledgement'||severe.country_scoped!==true||severe.legal_review_required!==true||severe.evidence_preservation_required!==true||severe.external_reporting_state!=='not_determined'){
+    throw new Error('Incident V7 severe escalation safeguards were incomplete at creation.');
+  }
+
+  const territorySevereRead=await requestJson(base,'/api/admin/incidents/'+severeIncidentId,{token:territoryAdmin.token});
+  expectStatus(territorySevereRead,403,'Incident V7 country-scoped Incident denial');
+  const territoryCaseRead=await requestJson(base,'/api/admin/trust-cases/'+severeCaseId,{token:territoryAdmin.token});
+  expectStatus(territoryCaseRead,403,'Incident V7 country-scoped case denial');
+
+  const severeQueue=await requestJson(base,'/api/admin/trust-cases?severity=critical',{token:admin.token});
+  expectStatus(severeQueue,200,'Incident V7 severe queue');
+  const queuedCase=(Array.isArray(severeQueue.json)?severeQueue.json:[]).find(x=>Number(x.id)===severeCaseId);
+  if(!queuedCase||Number(queuedCase.active_escalation_id)!==escalationId||queuedCase.active_escalation_state!=='pending_acknowledgement'){
+    throw new Error('Incident V7 severe case was missing from the prioritized Admin queue.');
+  }
+
+  const severeDetail=await requestJson(base,'/api/admin/trust-cases/'+severeCaseId,{token:admin.token});
+  expectStatus(severeDetail,200,'Incident V7 severe case detail');
+  if(!(severeDetail.json?.escalations||[]).some(x=>Number(x.id)===escalationId&&x.external_reporting_state==='not_determined')){
+    throw new Error('Incident V7 severe case detail omitted the escalation boundary.');
+  }
+
+  const prematureResolution=await requestJson(base,`/api/admin/trust-cases/${severeCaseId}/escalations/${escalationId}/resolve`,{
+    method:'POST',token:admin.token,body:{human_reviewed:true,rationale:'Controlled denial before acknowledgement in Preview QA.'}
+  });
+  expectStatus(prematureResolution,409,'Incident V7 ordered escalation resolution guard');
+
+  const prematureIncidentClose=await requestJson(base,'/api/admin/incidents/'+severeIncidentId,{
+    method:'PATCH',token:admin.token,body:{status:'resolved',note:'Controlled close guard check.',resolution_summary:'Controlled QA resolution.'}
+  });
+  expectStatus(prematureIncidentClose,409,'Incident V7 active escalation Incident close guard');
+
+  const prematureCaseDowngrade=await requestJson(base,'/api/admin/trust-cases/'+severeCaseId,{
+    method:'PATCH',token:admin.token,body:{
+      status:'investigating',severity:'high',reason_category:'safety_review',
+      rationale:'Controlled severity floor guard check in Preview QA.',human_reviewed:true
+    }
+  });
+  expectStatus(prematureCaseDowngrade,409,'Incident V7 active escalation severity floor');
+
+  const unconfirmedAcknowledgement=await requestJson(base,`/api/admin/trust-cases/${severeCaseId}/escalations/${escalationId}/acknowledge`,{
+    method:'POST',token:admin.token,body:{rationale:'Controlled missing human confirmation check.'}
+  });
+  expectStatus(unconfirmedAcknowledgement,400,'Incident V7 explicit human acknowledgement guard');
+
+  const acknowledged=await requestJson(base,`/api/admin/trust-cases/${severeCaseId}/escalations/${escalationId}/acknowledge`,{
+    method:'POST',token:admin.token,body:{human_reviewed:true,rationale:'Controlled acknowledgement after human review in Preview QA.'}
+  });
+  expectStatus(acknowledged,200,'Incident V7 severe acknowledgement');
+  if(acknowledged.json?.state!=='acknowledged'||acknowledged.json?.external_reporting_state!=='not_determined'){
+    throw new Error('Incident V7 severe acknowledgement changed an invariant unexpectedly.');
+  }
+
+  const escalationResolved=await requestJson(base,`/api/admin/trust-cases/${severeCaseId}/escalations/${escalationId}/resolve`,{
+    method:'POST',token:admin.token,body:{human_reviewed:true,rationale:'Controlled resolution after acknowledgement in Preview QA.'}
+  });
+  expectStatus(escalationResolved,200,'Incident V7 severe escalation resolution');
+  if(escalationResolved.json?.state!=='resolved'||escalationResolved.json?.external_reporting_state!=='not_determined'){
+    throw new Error('Incident V7 severe escalation resolution changed the external-reporting boundary.');
+  }
+
+  const severeIncidentClose=await requestJson(base,'/api/admin/incidents/'+severeIncidentId,{
+    method:'PATCH',token:admin.token,body:{
+      status:'resolved',note:'Controlled close after severe escalation resolution.',
+      resolution_summary:'Controlled severe Incident V7 acceptance completed.'
+    }
+  });
+  expectStatus(severeIncidentClose,200,'Incident V7 severe Incident close after escalation');
+
+  const severeCaseClose=await requestJson(base,'/api/admin/trust-cases/'+severeCaseId,{
+    method:'PATCH',token:admin.token,body:{
+      status:'resolved',severity:'critical',reason_category:'resolution',
+      rationale:'Controlled case close after the ordered escalation workflow.',
+      resolution_summary:'Controlled severe case acceptance completed.',human_reviewed:true
+    }
+  });
+  expectStatus(severeCaseClose,200,'Incident V7 severe case close after escalation');
+  if(severeCaseClose.json?.status!=='resolved'||severeCaseClose.json?.severity!=='critical'){
+    throw new Error('Incident V7 severe case did not preserve critical severity when closed.');
+  }
+
+  const restoredTerritoryRead=await requestJson(base,'/api/admin/incidents/'+severeIncidentId,{token:territoryAdmin.token});
+  expectStatus(restoredTerritoryRead,200,'Incident V7 resolved escalation territory read');
+
+  const severeEvidence=await pool.query(`
+    SELECT i.status incident_status,c.status case_status,c.severity case_severity,
+      e.state escalation_state,e.external_reporting_state,
+      (SELECT COUNT(*)::int FROM trust_actions a WHERE a.case_id=c.id AND a.action_code IN ('severe_escalation_acknowledged','severe_escalation_resolved')) reviewed_action_count,
+      (SELECT COUNT(*)::int FROM admin_audit_events a WHERE a.target_type='trust_case_escalation' AND a.target_id=e.id::text AND a.event_code IN ('severe_escalation_acknowledged','severe_escalation_resolved')) audit_event_count
+    FROM incident_reports i
+    JOIN trust_cases c ON c.id=i.trust_case_id
+    JOIN trust_case_escalations e ON e.source_incident_id=i.id
+    WHERE i.id=$1
+  `,[severeIncidentId]);
+  const evidence=severeEvidence.rows[0];
+  if(evidence?.incident_status!=='resolved'||evidence?.case_status!=='resolved'||evidence?.case_severity!=='critical'||evidence?.escalation_state!=='resolved'||evidence?.external_reporting_state!=='not_determined'){
+    throw new Error('Incident V7 severe final state evidence was incomplete.');
+  }
+  if(Number(evidence.reviewed_action_count)!==2||Number(evidence.audit_event_count)!==2){
+    throw new Error('Incident V7 severe human-review or Admin audit evidence was incomplete.');
+  }
+
   for(const [label,token] of [
     ['Customer',customer.token],
     ['Merchant',merchant.token],
@@ -3188,7 +3328,18 @@ async function runIncidentRuntimeV7Acceptance({pool,base,secret}){
     attachment_authorization:true,
     cross_account_denial:true,
     scoped_admin_triage:true,
-    incident_status:'investigating'
+    incident_status:'investigating',
+    severe_incident_id:severeIncidentId,
+    severe_case_id:severeCaseId,
+    severe_escalation_id:escalationId,
+    severe_policy_precedence:true,
+    country_scope_denial:true,
+    ordered_acknowledgement_resolution:true,
+    active_close_and_downgrade_guards:true,
+    explicit_human_review:true,
+    admin_audit_evidence:true,
+    external_reporting_not_determined:true,
+    resolved_scope_release:true
   };
 }
 
