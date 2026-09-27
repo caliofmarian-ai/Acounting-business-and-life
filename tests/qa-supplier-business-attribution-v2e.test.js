@@ -31,7 +31,7 @@ test('Supplier V2E Preview acceptance proves two-business isolation and restores
   assert.match(source,/api\/accounting\/finance-overview\?business_id=/);
   assert.match(source,/api\/supplier\/v5\/today\?business_id=/);
   assert.match(source,/Supplier business B could read business A PO detail/);
-  assert.match(source,/Supplier payment receipt was posted outside business B/);
+  assert.match(source,/Supplier payment receipt business mismatch: actual/);
   assert.match(source,/relationship_restored_to_business_a:true/);
 });
 
