@@ -112,6 +112,16 @@ async function main(){
      VALUES($1,'service_provider',$2,'active',1,NOW(),'CI Members sibling scope fixture')`,
     [Number(memberB.id),Number(t2.id)]
   );
+  const memberBusiness=await pool.query(
+    `INSERT INTO businesses(name,country_code,currency_code,territory_id)
+     VALUES($1,'PH','PHP',$2) RETURNING id,name`,
+    ['CI Member Business '+suffix,Number(t1.id)]
+  );
+  await pool.query(
+    `INSERT INTO business_memberships(business_id,account_id,membership_role,active)
+     VALUES($1,$2,'owner',TRUE)`,
+    [Number(memberBusiness.rows[0].id),Number(memberA.id)]
+  );
 
   await request('/api/admin/assignments',{
     token:ownerToken,method:'POST',expected:201,
@@ -200,6 +210,8 @@ async function main(){
   await sessionFor(memberA.id,'member-a-target');
   const territoryMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:territoryToken});
   assert(territoryMemberDetail.controls?.manage_status===true&&territoryMemberDetail.controls?.revoke_sessions===true,'Territory Admin member controls not exposed for in-scope member');
+  assert((territoryMemberDetail.businesses||[]).some(x=>Number(x.business_id)===Number(memberBusiness.rows[0].id)&&x.membership_role==='owner'),'Member detail did not expose scoped business membership');
+  assert(!(territoryMemberDetail.businesses||[]).some(x=>Object.prototype.hasOwnProperty.call(x,'balance')||Object.prototype.hasOwnProperty.call(x,'payment_credentials')),'Member detail leaked financial or payment data');
   assert(Number(territoryMemberDetail.security?.active_session_count||0)>=1,'Member security summary did not count active session');
   await request('/api/admin/members/'+Number(memberB.id),{token:territoryToken,expected:404});
   await request('/api/admin/members/'+Number(memberB.id)+'/status',{
@@ -285,6 +297,7 @@ async function main(){
     members_country_scope:'PASS',
     members_territory_isolation:'PASS',
     members_detail_scope:'PASS',
+    members_business_membership:'PASS',
     members_controls_explicit_permission:'PASS',
     members_controls_audit:'PASS',
     members_specialist_deny:'PASS'
