@@ -333,7 +333,62 @@ async function memberDetailPanel(accountId){
     +'</div>';
 }
 
+
+function memberHubTabs(){
+  const tabs=[];
+  if(hasAny(['members.view']))tabs.push({id:'directory',label:'Directory'});
+  if(hasAny(MEMBER_PROFILE_REVIEW_PERMISSIONS))tabs.push({id:'requests',label:'Profile requests'});
+  if(inviteRolesForAdmin().length)tabs.push({id:'invitations',label:'Invitations'});
+  if(hasAny(MEMBER_PROFILE_GOVERNANCE_PERMISSIONS))tabs.push({id:'authorizations',label:'Authorizations'});
+  return tabs;
+}
+function activeMemberHubTab(){
+  const tabs=memberHubTabs();
+  if(!tabs.length)return{tabs,active:null};
+  if(!tabs.some(x=>x.id===state.memberHubTab))state.memberHubTab=tabs[0].id;
+  return{tabs,active:state.memberHubTab};
+}
+function memberHubNav(tabs,counts={}){
+  return '<nav class="memberHubNav" aria-label="Members sections">'+tabs.map(tab=>{
+    const count=counts[tab.id];
+    return '<button type="button" data-member-hub-tab="'+esc(tab.id)+'" class="'+(tab.id===state.memberHubTab?'active':'')+'"><span>'+esc(tab.label)+'</span>'+(count==null?'':'<b>'+Number(count)+'</b>')+'</button>';
+  }).join('')+'</nav>';
+}
+function memberHubHeader(tabs,counts={},subtitle='People, profile governance and authorizations in one place.'){
+  return '<header class="memberDirectoryHeader memberHubHeader"><div><span class="memberEyebrow">ADMIN MEMBERS HUB</span><h2>Members</h2><p>'+esc(subtitle)+'</p></div></header>'+memberHubNav(tabs,counts);
+}
+async function memberGovernancePanel(tab,tabs){
+  await ensureAdminOverviewDetail();
+  const apps=state.overview?.applications||[],auths=state.overview?.authorizations||[],invites=state.overview?.invitations||[];
+  const pendingApps=apps.filter(x=>['submitted','under_review'].includes(String(x.status||''))).length;
+  const counts={requests:pendingApps,invitations:invites.length,authorizations:auths.length};
+  const header=memberHubHeader(tabs,counts);
+  if(tab==='requests'){
+    return '<div class="memberV4 memberHubV5">'+header
+      +'<section class="memberGovernanceIntro"><div><span class="memberEyebrow">PROFILE GOVERNANCE</span><h3>Profile requests</h3><p>Review governed onboarding applications inside your delegated scope. Evidence access and approval authority remain permission-gated.</p></div><span class="memberScopePill">'+pendingApps+' pending</span></section>'
+      +rows(apps,profileApplicationRow)+'</div>';
+  }
+  if(tab==='invitations'){
+    return '<div class="memberV4 memberHubV5">'+header
+      +'<section class="memberGovernanceIntro"><div><span class="memberEyebrow">PROFILE GOVERNANCE</span><h3>Invitations</h3><p>Create and track private, territory-scoped onboarding invitations. An invitation never approves a profile.</p></div><span class="memberScopePill">'+invites.length+' tracked</span></section>'
+      +invitationAction()
+      +'<div id="profileInvitationList">'+rows(invites,invitationRow)+'</div></div>';
+  }
+  if(tab==='authorizations'){
+    return '<div class="memberV4 memberHubV5">'+header
+      +'<section class="memberGovernanceIntro"><div><span class="memberEyebrow">PROFILE GOVERNANCE</span><h3>Authorizations</h3><p>Profile authorization remains separate from the person account. Access changes keep the existing confirmation and audit requirements.</p></div><span class="memberScopePill">'+auths.length+' records</span></section>'
+      +rows(auths,profileAuthorizationRow)+'</div>';
+  }
+  throw new Error('This Members section is not available for the current Admin permission set.');
+}
 async function membersPanel(){
+  const hub=activeMemberHubTab();
+  if(!hub.active)return '<div class="notice">No Members function is delegated to this Admin account.</div>';
+  if(hub.active!=='directory'){
+    state.memberDetailId=null;state.memberDetail=null;
+    return memberGovernancePanel(hub.active,hub.tabs);
+  }
+  if(!hasAny(['members.view']))throw new Error('Member Directory access is not delegated to this Admin account.');
   if(state.memberDetailId)return memberDetailPanel(state.memberDetailId);
   const filters=state.memberFilters||{q:'',status:'',verification:'',profile:'',offset:0};
   const params=new URLSearchParams();
@@ -366,13 +421,23 @@ async function membersPanel(){
   const start=Number(data.offset||0),end=Math.min(start+Number(data.items?.length||0),Number(data.total||0));
   const paging='<div class="memberPaging memberPagingV4"><span>'+esc(data.total||0)+' registered · showing '+(data.total?start+1:0)+'–'+end+'</span><div><button class="secondary" type="button" data-member-page="prev" '+(start<=0?'disabled':'')+'>Previous</button><button class="secondary" type="button" data-member-page="next" '+(end>=Number(data.total||0)?'disabled':'')+'>Next</button></div></div>';
 
-  return '<div class="memberV4"><header class="memberDirectoryHeader"><div><span class="memberEyebrow">ADMIN DIRECTORY</span><h2>Members</h2><p>Find people, understand their platform relationship and open only the detail you need.</p></div><span class="memberScopePill">'+esc(scopeLabel)+'</span></header>'
+  return '<div class="memberV4 memberHubV5">'+memberHubHeader(hub.tabs,{},'Find people, understand their platform relationship and open only the detail you need.')
+    +'<div class="memberDirectoryScopeLine"><span class="memberScopePill">'+esc(scopeLabel)+'</span></div>'
     +'<div class="memberSummaryV4"><div class="metric"><strong>'+esc(data.total||0)+'</strong><span>Registered in scope</span></div><div class="metric"><strong>'+Number(data.items?.length||0)+'</strong><span>Shown on this page</span></div><div class="metric memberScopeMetric"><strong>'+esc(scopeLabel)+'</strong><span>Directory scope</span></div></div>'
     +form
     +'<div class="memberListHeader"><strong>'+esc(data.total||0)+' members</strong><span class="muted">Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here.</span></div>'
     +paging+list+paging+'</div>';
 }
 async function wireMembers(){
+  document.querySelectorAll('[data-member-hub-tab]').forEach(button=>button.onclick=async()=>{
+    state.memberHubTab=String(button.dataset.memberHubTab||'');
+    state.memberDetailId=null;state.memberDetail=null;
+    await renderActive();
+  });
+  if(state.memberHubTab&&state.memberHubTab!=='directory'){
+    wireProfiles();
+    return;
+  }
   if(state.memberDetailId){
     document.getElementById('memberBack')?.addEventListener('click',async()=>{state.memberDetailId=null;state.memberDetail=null;await renderActive()});
     const statusForm=document.getElementById('memberStatusForm');
