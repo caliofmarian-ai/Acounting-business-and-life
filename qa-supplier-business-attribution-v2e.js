@@ -117,7 +117,8 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
     throw new Error("Supplier business B catalog association is missing.");
   }
 
-  const noteB="Controlled QA Supplier Business Attribution V2E PO B";
+  const qaRevision=String(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local').slice(0,12);
+  const noteB="Controlled QA Supplier Business Attribution V2E PO B "+qaRevision;
   const existingPoB=await pool.query(
     "SELECT id FROM purchase_orders WHERE business_id=$1 AND supplier_account_id=$2 AND supplier_business_id=$3 AND merchant_note=$4 ORDER BY id DESC LIMIT 1",
     [merchantBusinessId,supplier.accountId,businessB,noteB]
@@ -275,6 +276,7 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
     finance_isolated:true,
     today_money_isolated:true,
     supplier_receipt_business_b:true,
-    relationship_restored_to_business_a:true
+    relationship_restored_to_business_a:true,
+    qa_revision:qaRevision
   };
 }
