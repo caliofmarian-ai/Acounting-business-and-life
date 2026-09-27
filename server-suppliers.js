@@ -350,14 +350,17 @@ app.post('/api/procurement/orders/:id/payment',body,async(req,res,next)=>{try{
       [paid,status,id]
     );
     const paymentEvidenceId=id*1000000+Math.round(paid*100);
-    if(Number(b.id)===1){
-      await client.query(
-        `INSERT INTO transactions(type,category,amount,payment_method,account,note,source,source_id,occurred_at)
-         VALUES('business_expense','Supplier payment',$1,$2,$2,$3,'supplier_payment',$4,NOW())
-         ON CONFLICT DO NOTHING`,
-        [amount,account,`Payment for ${po.po_number}`,paymentEvidenceId]
-      );
-    }
+    await client.query(
+      `INSERT INTO transactions(
+         business_id,type,category,amount,payment_method,account,note,source,source_id,occurred_at
+       ) VALUES($1,'business_expense','Supplier payment',$2,$3,$3,$4,'supplier_payment',$5,NOW())
+       ON CONFLICT (source,source_id) WHERE source='supplier_payment'
+       DO UPDATE SET
+         business_id=EXCLUDED.business_id,type='business_expense',category='Supplier payment',
+         amount=EXCLUDED.amount,payment_method=EXCLUDED.payment_method,
+         account=EXCLUDED.account,note=EXCLUDED.note`,
+      [Number(b.id),amount,account,`Payment for ${po.po_number}`,paymentEvidenceId]
+    );
     let supplierReceiptBusinessId=null;
     if(po.supplier_business_id!=null){
       const receipt=await client.query(
