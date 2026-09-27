@@ -51,11 +51,12 @@ test('both active Supplier receipt routes create canonical traceable lots',()=>{
   assert.match(accounting,/lotBaseUnit/);
 });
 
-test('both Supplier payment routes use current commercial outstanding including confirmed credits',()=>{
+test('Supplier payment has one canonical owner and Accounting does not shadow it',()=>{
   assert.match(supplier,/commercialOutstandingForPo\(client,id\)/);
-  assert.match(accounting,/commercialOutstandingForPo\(pool,id\)/);
-  assert.match(accounting,/Payment exceeds current Supplier commercial outstanding amount/);
-  assert.doesNotMatch(accounting,/Payment exceeds PO outstanding amount/);
+  assert.match(supplier,/Payment exceeds current Supplier commercial outstanding amount/);
+  assert.match(supplier,/supplier_receipt_business_id:supplierReceiptBusinessId/);
+  assert.match(supplier,/business_id,type,category,amount,payment_method,account,note,source,source_id/);
+  assert.doesNotMatch(accounting,/app\.post\('\/api\/procurement\/orders\/:id\/payment'/);
 });
 
 test('active multi-business receipt keeps Inventory conversion and lot base unit aligned',()=>{
