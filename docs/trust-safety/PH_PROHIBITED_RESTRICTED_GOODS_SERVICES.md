@@ -366,7 +366,7 @@ The PH public pilot is not READY until:
 - Merchant identity/business evidence required by the marketplace model is implemented;
 - Report flow and Trust & Safety queue exist;
 - authority takedown workflow exists;
-- OSAEC/CSAEM escalation procedure exists;
+- OSAEC/CSAEM escalation procedure exists (`PH_SEVERE_ESCALATION_PROCEDURE.md`);
 - policy decisions and appeals are auditable.
 
 ## 11. Review cadence
