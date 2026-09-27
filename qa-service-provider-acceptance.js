@@ -1,4 +1,7 @@
 const SERVICE_JOB_DESCRIPTION='Controlled QA Local Services handyman job v1';
+const SERVICE_EXACT_LOCATION='Internal QA exact service address — never public';
+const SERVICE_UNTRUSTED_COARSE_LOCATION='Client supplied coarse value must not be authoritative';
+const SERVICE_LOCATION_CORRELATION='qa-local-services-location-privacy-v1';
 const SERVICE_SUPPORT_PREFIX='Controlled QA Service Provider support job ';
 const SERVICE_QUOTE_AMOUNT=350;
 const SERVICE_FINAL_PRICE=375;
@@ -467,7 +470,8 @@ export async function runServiceProviderExperienceAcceptance({
       category_id:categoryId,
       service_label:'General handyman',
       description:SERVICE_JOB_DESCRIPTION,
-      service_location:'Internal QA service location — Philippines',
+      coarse_location:SERVICE_UNTRUSTED_COARSE_LOCATION,
+      service_location:SERVICE_EXACT_LOCATION,
       requested_window:'Controlled QA window'
     }
   });
@@ -475,6 +479,28 @@ export async function runServiceProviderExperienceAcceptance({
   let job=created.json;
   const jobId=Number(job?.id);
   if(!jobId)throw new Error('Local Services QA job is missing.');
+  if(job.service_location!==SERVICE_EXACT_LOCATION){
+    throw new Error('Customer did not retain their own exact Local Services address.');
+  }
+  if(!clean(job.coarse_location,300)
+    ||job.coarse_location===SERVICE_EXACT_LOCATION
+    ||job.coarse_location===SERVICE_UNTRUSTED_COARSE_LOCATION){
+    throw new Error('Local Services coarse area was not derived from authoritative geography.');
+  }
+
+  const providerBeforeAcceptance=await requestJson(base,'/api/services/jobs/mine',{token:provider.token});
+  expectStatus(providerBeforeAcceptance,200,'Provider jobs before quote acceptance');
+  const providerRequested=(Array.isArray(providerBeforeAcceptance.json)?providerBeforeAcceptance.json:[]).find(x=>Number(x.id)===jobId);
+  if(!providerRequested||providerRequested.service_location!==null||providerRequested.exact_location_available!==false){
+    throw new Error('Provider job payload exposed exact location before quote acceptance.');
+  }
+  if(providerRequested.coarse_location!==job.coarse_location){
+    throw new Error('Provider did not receive the authoritative coarse service area.');
+  }
+  const earlyLocation=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/exact-location',{
+    token:provider.token,headers:{'X-Request-Id':SERVICE_LOCATION_CORRELATION+'-denied'}
+  });
+  expectStatus(earlyLocation,409,'Exact location before quote acceptance denial');
 
   if(['requested','provider_reviewing','quoted'].includes(job.status)&&job.status!=='quoted'){
     const quoted=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/quote',{
@@ -484,6 +510,9 @@ export async function runServiceProviderExperienceAcceptance({
     });
     expectStatus(quoted,200,'Service Provider quote');
     job=quoted.json;
+    if(job.service_location!==null||job.exact_location_available!==false){
+      throw new Error('Provider quote response exposed exact service location.');
+    }
   }
 
   if(job.status==='quoted'){
@@ -495,6 +524,41 @@ export async function runServiceProviderExperienceAcceptance({
   }
 
   if(job.status==='accepted'){
+    const providerAcceptedJobs=await requestJson(base,'/api/services/jobs/mine',{token:provider.token});
+    expectStatus(providerAcceptedJobs,200,'Provider accepted jobs');
+    const providerAccepted=(Array.isArray(providerAcceptedJobs.json)?providerAcceptedJobs.json:[]).find(x=>Number(x.id)===jobId);
+    if(!providerAccepted||providerAccepted.service_location!==null||providerAccepted.exact_location_available!==true){
+      throw new Error('Accepted Provider job did not remain redacted with intentional exact-location availability.');
+    }
+    const exactLocation=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/exact-location',{
+      token:provider.token,headers:{'X-Request-Id':SERVICE_LOCATION_CORRELATION}
+    });
+    expectStatus(exactLocation,200,'Exact location after quote acceptance');
+    if(exactLocation.json?.service_location!==SERVICE_EXACT_LOCATION
+      ||exactLocation.json?.job_status!=='accepted'
+      ||exactLocation.json?.purpose_code!=='active_job_fulfilment'
+      ||!Number(exactLocation.json?.access_event_id)){
+      throw new Error('Exact service location access response lost its purpose or audit evidence.');
+    }
+    const locationAudit=await pool.query(
+      `SELECT job_id,actor_account_id,subject_account_id,actor_context,event_code,job_status,purpose_code,request_correlation_id
+         FROM service_job_sensitive_access_events WHERE id=$1`,
+      [Number(exactLocation.json.access_event_id)]
+    );
+    const access=locationAudit.rows[0];
+    if(Number(access?.job_id)!==jobId
+      ||Number(access?.actor_account_id)!==provider.accountId
+      ||Number(access?.subject_account_id)!==customer.accountId
+      ||access?.actor_context!=='service_provider'
+      ||access?.event_code!=='exact_service_location_viewed'
+      ||access?.job_status!=='accepted'
+      ||access?.purpose_code!=='active_job_fulfilment'
+      ||access?.request_correlation_id!==SERVICE_LOCATION_CORRELATION){
+      throw new Error('Exact service location access audit is incomplete or incorrectly scoped.');
+    }
+  }
+
+  if(job.status==='accepted'){
     const scheduled=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/status',{
       method:'POST',
       token:provider.token,
@@ -502,6 +566,9 @@ export async function runServiceProviderExperienceAcceptance({
     });
     expectStatus(scheduled,200,'Service Provider schedule job');
     job=scheduled.json;
+    if(job.service_location!==null||job.exact_location_available!==true){
+      throw new Error('Provider schedule response did not remain redacted.');
+    }
   }
 
   if(job.status==='scheduled'){
@@ -510,6 +577,9 @@ export async function runServiceProviderExperienceAcceptance({
     });
     expectStatus(started,200,'Service Provider start job');
     job=started.json;
+    if(job.service_location!==null||job.exact_location_available!==true){
+      throw new Error('Provider active-job response did not remain redacted.');
+    }
   }
 
   if(job.status==='in_progress'){
@@ -520,9 +590,17 @@ export async function runServiceProviderExperienceAcceptance({
     });
     expectStatus(completed,200,'Service Provider complete job');
     job=completed.json;
+    if(job.service_location!==null||job.exact_location_available!==false){
+      throw new Error('Provider completion response retained exact-location access.');
+    }
   }
 
   if(job.status!=='completed')throw new Error('Local Services job did not reach completed state.');
+
+  const expiredLocation=await requestJson(base,'/api/service-provider/jobs/'+jobId+'/exact-location',{
+    token:provider.token,headers:{'X-Request-Id':SERVICE_LOCATION_CORRELATION+'-expired'}
+  });
+  expectStatus(expiredLocation,409,'Exact location after completion denial');
 
   if(job.customer_confirmed_at){
     throw new Error('Fresh Local Services QA job was unexpectedly customer-confirmed before the Customer action.');
@@ -568,6 +646,14 @@ export async function runServiceProviderExperienceAcceptance({
     if(row?.status!=='completed'||!row.customer_confirmed_at){
       throw new Error('Local Services completed job is missing from one participant history.');
     }
+  }
+  const customerHistory=(Array.isArray(customerJobs.json)?customerJobs.json:[]).find(x=>Number(x.id)===jobId);
+  const providerHistory=(Array.isArray(providerJobs.json)?providerJobs.json:[]).find(x=>Number(x.id)===jobId);
+  if(customerHistory?.service_location!==SERVICE_EXACT_LOCATION){
+    throw new Error('Customer history lost the Customer-owned exact service address.');
+  }
+  if(providerHistory?.service_location!==null||providerHistory?.exact_location_available!==false){
+    throw new Error('Provider history exposed an expired exact service address.');
   }
 
   const finance=await requestJson(base,'/api/profile-money/service_provider',{token:provider.token});
@@ -650,6 +736,11 @@ export async function runServiceProviderExperienceAcceptance({
     quote_amount:SERVICE_QUOTE_AMOUNT,
     final_price:SERVICE_FINAL_PRICE,
     customer_confirmed_completion:true,
+    service_location_privacy:true,
+    coarse_location_authoritative:true,
+    exact_location_denied_before_acceptance:true,
+    exact_location_access_audited:true,
+    exact_location_expired_after_completion:true,
     verified_review_id:reviewId,
     review_blocked_before_customer_confirmation:true,
     stale_qa_credentials_rejected:Number(staleQaCredentialsRejected),

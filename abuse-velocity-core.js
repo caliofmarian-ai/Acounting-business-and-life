@@ -5,6 +5,7 @@ const RULES=Object.freeze({
   order_cancel:[{windowSeconds:3600,maxAttempts:10},{windowSeconds:86400,maxAttempts:25}],
   service_job_create:[{windowSeconds:3600,maxAttempts:12},{windowSeconds:86400,maxAttempts:50}],
   service_job_cancel:[{windowSeconds:3600,maxAttempts:10},{windowSeconds:86400,maxAttempts:25}],
+  service_exact_location_access:[{windowSeconds:60,maxAttempts:20},{windowSeconds:3600,maxAttempts:100},{windowSeconds:86400,maxAttempts:300}],
   refund_request:[{windowSeconds:3600,maxAttempts:6},{windowSeconds:86400,maxAttempts:20}],
   payout_destination_change:[{windowSeconds:3600,maxAttempts:6},{windowSeconds:86400,maxAttempts:15}],
   upload_private:[{windowSeconds:3600,maxAttempts:20},{windowSeconds:86400,maxAttempts:100}],

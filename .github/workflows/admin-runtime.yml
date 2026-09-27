@@ -42,8 +42,10 @@ on:
       - 'server-incidents.js'
       - 'trust-safety-case-core.js'
       - 'trust-safety-escalation-core.js'
+      - 'service-location-privacy-core.js'
       - 'tests/trust-safety-case-v1.test.js'
       - 'tests/severe-escalation-v1.test.js'
+      - 'tests/local-services-location-privacy-v1.test.js'
       - 'public/shell.js'
       - 'public/app.js'
       - 'public/business-accounting-ui.js'
@@ -83,8 +85,10 @@ on:
       - 'server-incidents.js'
       - 'trust-safety-case-core.js'
       - 'trust-safety-escalation-core.js'
+      - 'service-location-privacy-core.js'
       - 'tests/trust-safety-case-v1.test.js'
       - 'tests/severe-escalation-v1.test.js'
+      - 'tests/local-services-location-privacy-v1.test.js'
       - 'server-suppliers.js'
       - 'server-services.js'
       - 'server-marketplace.js'
@@ -196,6 +200,10 @@ jobs:
             response_due_at,country_scoped,legal_review_required,evidence_preservation_required,
             external_reporting_state
             FROM trust_case_escalations LIMIT 0;
+          SELECT coarse_location FROM service_jobs LIMIT 0;
+          SELECT job_id,actor_account_id,subject_account_id,actor_context,event_code,job_status,
+            purpose_code,request_correlation_id,created_at
+            FROM service_job_sensitive_access_events LIMIT 0;
           DO $trust_safety_runtime$
           BEGIN
             IF (
@@ -214,6 +222,13 @@ jobs:
                 AND conname='incident_reports_urgency_indicator_check'
             ) THEN
               RAISE EXCEPTION 'Incident urgency indicator constraint is missing';
+            END IF;
+            IF (
+              SELECT COUNT(*) FROM pg_constraint
+              WHERE conrelid='service_job_sensitive_access_events'::regclass
+                AND contype='c'
+            ) <> 4 THEN
+              RAISE EXCEPTION 'Local Services sensitive-access constraints are incomplete';
             END IF;
           END
           $trust_safety_runtime$;
