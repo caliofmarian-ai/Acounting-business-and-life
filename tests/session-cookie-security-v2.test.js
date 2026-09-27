@@ -46,6 +46,7 @@ test('cookie transport is converted to the existing internal bearer boundary',()
   assert.equal(req.ablSessionToken,'v2.cookie.value');
   assert.equal(req.headers.authorization,'Bearer v2.cookie.value');
   assert.deepEqual(sessionCredentialFromHeaders(req.headers),{token:'v2.cookie.value',transport:'bearer'});
+  assert.deepEqual(sessionCredentialFromHeaders({Authorization:'Bearer internal-boundary'}),{token:'internal-boundary',transport:'bearer'});
   assert.equal(parseCookieHeader(req.headers.cookie)[SESSION_COOKIE_NAME],'v2.cookie.value');
 });
 

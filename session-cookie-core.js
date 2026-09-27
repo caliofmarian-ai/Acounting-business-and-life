@@ -23,7 +23,9 @@ function headerValue(headers,name){
   if(!headers)return'';
   if(typeof headers.get==='function')return String(headers.get(name)||'');
   const lower=String(name).toLowerCase();
-  return String(headers[lower]??headers[name]??'');
+  if(headers[lower]!=null)return String(headers[lower]);
+  for(const [key,value] of Object.entries(headers))if(String(key).toLowerCase()===lower)return String(value??'');
+  return'';
 }
 
 function decodeCookieValue(value){
