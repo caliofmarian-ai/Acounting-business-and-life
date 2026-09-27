@@ -730,10 +730,116 @@ function memberTimelineLabel(code){
     profile_authorized:'Profile authorization granted',
     member_account_suspended:'Account suspended by Admin',
     member_account_reactivated:'Account reactivated by Admin',
-    member_sessions_revoked:'Active sessions revoked by Admin'
+    member_sessions_revoked:'Active sessions revoked by Admin',
+    member_internal_note_added:'Internal member note added',
+    member_tag_added:'Internal member tag added',
+    member_tag_removed:'Internal member tag removed'
   };
   return labels[code]||String(code||'Activity').replaceAll('_',' ');
 }
+
+async function memberSupportContext(ctx,id){
+  const allowed=await memberPermissionAvailable(ctx,id,'support.manage');
+  if(!allowed)return{available:false,total:0,items:[]};
+  const scope=scopeFromContext(ctx,'support.manage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+  const where=scope.countryWide?"st.country_code='PH'":"st.territory_id=ANY($2::bigint[])";
+  const q=await pool.query(
+    "SELECT st.id,st.category,st.subject,st.priority,st.status,st.territory_id,t.name territory_name,st.updated_at,st.created_at,"+
+    "COUNT(*) OVER()::int total_count FROM support_tickets st LEFT JOIN territories t ON t.id=st.territory_id "+
+    "WHERE st.requester_account_id=$1 AND "+where+" ORDER BY st.updated_at DESC,st.id DESC LIMIT 20",
+    scope.countryWide?[id]:[id,ids]
+  ).catch(error=>{if(error?.code==='42P01'||error?.code==='42703')return{rows:[]};throw error});
+  return{available:true,total:Number(q.rows[0]?.total_count||0),items:q.rows.map(({total_count,...row})=>row)};
+}
+async function memberSafetyContext(ctx,id){
+  const allowed=await memberPermissionAvailable(ctx,id,'incident.triage');
+  if(!allowed)return{available:false,total:0,items:[]};
+  const scope=scopeFromContext(ctx,'incident.triage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
+  const where=scope.countryWide?"tc.country_code='PH'":"tc.territory_id=ANY($2::bigint[])";
+  const q=await pool.query(
+    "SELECT tc.id,tc.public_id,tc.case_type,tc.title,tc.status,tc.severity,tc.territory_id,t.name territory_name,tc.last_event_at,tc.updated_at,"+
+    "ARRAY_AGG(DISTINCT e.relation_type ORDER BY e.relation_type) relation_types,COUNT(*) OVER()::int total_count "+
+    "FROM trust_case_entities e JOIN trust_cases tc ON tc.id=e.case_id LEFT JOIN territories t ON t.id=tc.territory_id "+
+    "WHERE e.entity_type='account' AND e.entity_id=$1 AND "+where+" "+
+    "GROUP BY tc.id,t.name ORDER BY tc.last_event_at DESC,tc.id DESC LIMIT 20",
+    scope.countryWide?[String(id)]:[String(id),ids]
+  ).catch(error=>{if(error?.code==='42P01'||error?.code==='42703')return{rows:[]};throw error});
+  return{available:true,total:Number(q.rows[0]?.total_count||0),items:q.rows.map(({total_count,...row})=>row)};
+}
+async function memberLegalContext(ctx,id){
+  const allowed=await memberPermissionAvailable(ctx,id,'legal.view');
+  if(!allowed)return{available:false,total:0,items:[]};
+  const q=await pool.query(
+    "SELECT la.id,la.state,la.role_context,la.business_id,la.admin_assignment_id,la.territory_id,la.action_code,la.purpose,"+
+    "la.accepted_at,la.revoked_at,la.created_at,d.code document_code,d.title,v.version_label,v.locale,v.status version_status,"+
+    "COUNT(*) OVER()::int total_count FROM legal_acceptances la "+
+    "JOIN legal_document_versions v ON v.id=la.document_version_id JOIN legal_documents d ON d.id=v.document_id "+
+    "WHERE la.account_id=$1 ORDER BY la.created_at DESC,la.id DESC LIMIT 50",[id]
+  ).catch(error=>{if(error?.code==='42P01'||error?.code==='42703')return{rows:[]};throw error});
+  return{available:true,total:Number(q.rows[0]?.total_count||0),items:q.rows.map(({total_count,...row})=>row)};
+}
+async function memberInternalContext(ctx,id){
+  const allowed=await memberPermissionAvailable(ctx,id,'members.notes.manage');
+  if(!allowed)return{available:false,notes:[],tags:[]};
+  const [notes,tags]=await Promise.all([
+    optionalMemberRows(
+      "SELECT n.id,n.note_text,n.created_at,n.created_by_account_id,a.display_name created_by_name "+
+      "FROM admin_member_notes n LEFT JOIN accounts a ON a.id=n.created_by_account_id "+
+      "WHERE n.member_account_id=$1 ORDER BY n.created_at DESC,n.id DESC LIMIT 100",[id]),
+    optionalMemberRows(
+      "SELECT t.tag,t.created_at,t.created_by_account_id,a.display_name created_by_name "+
+      "FROM admin_member_tags t LEFT JOIN accounts a ON a.id=t.created_by_account_id "+
+      "WHERE t.member_account_id=$1 ORDER BY t.tag",[id])
+  ]);
+  return{available:true,notes,tags};
+}
+function normalizeMemberTag(value){
+  const tag=clean(value,40).toLowerCase().replace(/\s+/g,' ');
+  if(!tag||!^[\p{L}\p{N}][\p{L}\p{N} _-]{0,39}$/u.test(tag))throw Object.assign(new Error('Use a tag of 1–40 letters, numbers, spaces, hyphens or underscores'),{status:400});
+  return tag;
+}
+async function addMemberInternalNote(req,ctx,accountId){
+  const assignment=requirePermissionFromContext(ctx,'members.notes.manage');
+  const scoped=await memberScopeRecord(ctx,accountId,'members.notes.manage'),id=scoped.accountId;
+  const note=clean(req.body?.note,1200);
+  if(note.length<3)throw Object.assign(new Error('Write an internal note of at least 3 characters'),{status:400});
+  const q=await pool.query(
+    "INSERT INTO admin_member_notes(member_account_id,note_text,created_by_account_id) VALUES($1,$2,$3) RETURNING id,note_text,created_at",
+    [id,note,ctx.accountId]
+  );
+  await appendAdminAudit(pool,{
+    actorAccountId:ctx.accountId,assignmentId:assignment?.id||null,permission:'members.notes.manage',
+    territoryId:assignment?.territory_id||null,targetType:'member_account',targetId:String(id),
+    eventCode:'member_internal_note_added',after:{note_id:Number(q.rows[0].id)},reason:'Internal member coordination note added',correlationId:correlation(req)
+  });
+  return{...q.rows[0],created_by_account_id:ctx.accountId};
+}
+async function addMemberInternalTag(req,ctx,accountId){
+  const assignment=requirePermissionFromContext(ctx,'members.notes.manage');
+  const scoped=await memberScopeRecord(ctx,accountId,'members.notes.manage'),id=scoped.accountId,tag=normalizeMemberTag(req.body?.tag);
+  const q=await pool.query(
+    "INSERT INTO admin_member_tags(member_account_id,tag,created_by_account_id) VALUES($1,$2,$3) ON CONFLICT(member_account_id,tag) DO NOTHING RETURNING tag,created_at",
+    [id,tag,ctx.accountId]
+  );
+  if(q.rowCount)await appendAdminAudit(pool,{
+    actorAccountId:ctx.accountId,assignmentId:assignment?.id||null,permission:'members.notes.manage',
+    territoryId:assignment?.territory_id||null,targetType:'member_account',targetId:String(id),
+    eventCode:'member_tag_added',after:{tag},reason:'Internal member tag added',correlationId:correlation(req)
+  });
+  return{ok:true,tag,created:Boolean(q.rowCount)};
+}
+async function removeMemberInternalTag(req,ctx,accountId,rawTag){
+  const assignment=requirePermissionFromContext(ctx,'members.notes.manage');
+  const scoped=await memberScopeRecord(ctx,accountId,'members.notes.manage'),id=scoped.accountId,tag=normalizeMemberTag(rawTag);
+  const q=await pool.query("DELETE FROM admin_member_tags WHERE member_account_id=$1 AND tag=$2 RETURNING tag",[id,tag]);
+  if(q.rowCount)await appendAdminAudit(pool,{
+    actorAccountId:ctx.accountId,assignmentId:assignment?.id||null,permission:'members.notes.manage',
+    territoryId:assignment?.territory_id||null,targetType:'member_account',targetId:String(id),
+    eventCode:'member_tag_removed',before:{tag},reason:'Internal member tag removed',correlationId:correlation(req)
+  });
+  return{ok:true,tag,removed:Boolean(q.rowCount)};
+}
+
 async function adminMemberDetails(accountId,ctx){
   const scoped=await memberScopeRecord(ctx,accountId,'members.view'),id=scoped.accountId;
   const memberQ=await pool.query(
@@ -789,9 +895,14 @@ async function adminMemberDetails(accountId,ctx){
   for(const e of security)timeline.push({type:'security',code:e.event_code,label:memberTimelineLabel(e.event_code),created_at:e.created_at});
   for(const e of adminEvents)timeline.push({type:'admin',code:e.event_code,label:memberTimelineLabel(e.event_code),actor_name:e.actor_name,reason:e.reason,created_at:e.created_at});
   timeline.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
-  const [canManageStatus,canRevokeSessions]=await Promise.all([
+  const [canManageStatus,canRevokeSessions,canManageNotes,supportContext,safetyContext,legalContext,internalContext]=await Promise.all([
     memberPermissionAvailable(ctx,id,'members.manage_status'),
-    memberPermissionAvailable(ctx,id,'members.sessions.revoke')
+    memberPermissionAvailable(ctx,id,'members.sessions.revoke'),
+    memberPermissionAvailable(ctx,id,'members.notes.manage'),
+    memberSupportContext(ctx,id),
+    memberSafetyContext(ctx,id),
+    memberLegalContext(ctx,id),
+    memberInternalContext(ctx,id)
   ]);
   const bindingsByBusiness=new Map();
   for(const binding of businessBindings){
@@ -803,7 +914,8 @@ async function adminMemberDetails(accountId,ctx){
   return{
     member,profiles,applications,authorizations,businesses:businessMemberships,admin_roles:adminRoles,
     security:{email_verified:Boolean(member.email_verified_at),phone_verified:Boolean(member.phone_verified_at),password_configured:Boolean(member.password_configured),active_session_count:Number(member.active_session_count||0),last_session_at:member.last_session_at},
-    controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions},
+    controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions,manage_notes:canManageNotes},
+    context:{support:supportContext,safety:safetyContext,legal:legalContext,internal:internalContext},
     timeline:timeline.slice(0,80)
   };
 }
@@ -958,6 +1070,10 @@ app.get('/api/admin/members',async(req,res,next)=>{try{const me=await identity(r
 app.get('/api/admin/members/:accountId',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await adminMemberDetails(req.params.accountId,ctx))}catch(e){next(e)}});
 app.patch('/api/admin/members/:accountId/status',body,async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await updateMemberAccountStatus(req,ctx,req.params.accountId))}catch(e){next(e)}});
 app.post('/api/admin/members/:accountId/sessions/revoke',body,async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await revokeMemberSessions(req,ctx,req.params.accountId))}catch(e){next(e)}});
+
+app.post('/api/admin/members/:accountId/notes',body,async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.status(201).json(await addMemberInternalNote(req,ctx,req.params.accountId))}catch(e){next(e)}});
+app.post('/api/admin/members/:accountId/tags',body,async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await addMemberInternalTag(req,ctx,req.params.accountId))}catch(e){next(e)}});
+app.delete('/api/admin/members/:accountId/tags/:tag',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await removeMemberInternalTag(req,ctx,req.params.accountId,decodeURIComponent(req.params.tag)))}catch(e){next(e)}});
 
 app.get('/api/admin/delivery/pricing',(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
 app.put('/api/admin/delivery/pricing',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
