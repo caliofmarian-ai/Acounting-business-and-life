@@ -47,7 +47,8 @@ const SUPPLIER_PERFORMANCE_RUNTIME_WAVE='supplier_performance_runtime_v1';
 const COURIER_PERFORMANCE_BASELINE_WAVE='courier_performance_baseline_v1';
 const COURIER_PERFORMANCE_RUNTIME_WAVE='courier_performance_runtime_v1';
 const DELIVERY_PRICING_V2B_RUNTIME_WAVE='delivery_pricing_v2b_runtime';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE]);
+const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -5122,6 +5123,141 @@ async function runLocalServicesRuntimeV11Acceptance({pool,base,secret}){
   };
 }
 
+async function runAdultEligibilityRuntimeAcceptance({pool,base,secret}){
+  const suffix=crypto.randomBytes(8).toString('hex');
+  const email=`adult-eligibility-${suffix}@example.test`;
+  const password=`QA-adult-${crypto.randomBytes(18).toString('base64url')}`;
+  let accountId=null;
+  try{
+    const barangay=await pool.query(`
+      SELECT g.psgc_code
+        FROM ph_geographic_registry g
+        JOIN (
+          SELECT source_version FROM ph_geographic_registry_imports
+           WHERE country_code='PH' AND status='success'
+           ORDER BY completed_at DESC NULLS LAST,id DESC LIMIT 1
+        ) latest ON latest.source_version=g.source_version
+       WHERE g.country_code='PH' AND g.geographic_level='barangay'
+       ORDER BY g.psgc_code LIMIT 1
+    `);
+    if(!barangay.rowCount)throw new Error('Adult eligibility QA found no official PSGC barangay.');
+    const baseRegistration={
+      display_name:'Adult Eligibility QA',email,password,phone:'',address:'QA-only address',
+      home_psgc_code:barangay.rows[0].psgc_code
+    };
+    const missingDeclaration=await requestJson(base,'/api/auth/register',{method:'POST',body:baseRegistration});
+    expectStatus(missingDeclaration,422,'Adult eligibility registration denial');
+
+    const registered=await requestJson(base,'/api/auth/register',{
+      method:'POST',
+      body:{...baseRegistration,adult_eligibility_attested:true,adult_eligibility_policy_version:'ph-adult-eligibility-v1'}
+    });
+    expectStatus(registered,201,'Adult eligibility registration');
+    const token=clean(registered.json?.token,500);
+    accountId=Number(registered.json?.profile?.account?.id);
+    if(!token||!accountId||registered.json?.profile?.adult_eligibility?.eligible!==true){
+      throw new Error('Adult eligibility registration did not persist the current policy declaration.');
+    }
+
+    await pool.query(`
+      UPDATE accounts
+         SET safety_eligibility_status='pending',safety_eligibility_policy_version='',
+             safety_eligibility_attested_at=NULL,safety_eligibility_reviewed_at=NULL,
+             safety_eligibility_reviewed_by_account_id=NULL,safety_eligibility_source='qa_pending_simulation'
+       WHERE id=$1
+    `,[accountId]);
+    const customerDenied=await requestJson(base,'/api/profiles/customer/activate',{method:'POST',token,body:{}});
+    expectStatus(customerDenied,403,'Adult eligibility Customer activation denial');
+    const onboardingDenied=await requestJson(base,'/api/governance/service-provider/start',{method:'POST',token,body:{}});
+    expectStatus(onboardingDenied,403,'Adult eligibility operational onboarding denial');
+
+    const unconfirmed=await requestJson(base,'/api/me/adult-eligibility/attest',{
+      method:'POST',token,body:{adult_eligibility_attested:false,adult_eligibility_policy_version:'ph-adult-eligibility-v1'}
+    });
+    expectStatus(unconfirmed,422,'Adult eligibility unconfirmed declaration denial');
+    const attested=await requestJson(base,'/api/me/adult-eligibility/attest',{
+      method:'POST',token,body:{adult_eligibility_attested:true,adult_eligibility_policy_version:'ph-adult-eligibility-v1'}
+    });
+    expectStatus(attested,200,'Adult eligibility authenticated declaration');
+    if(attested.json?.adult_eligibility?.self_attested!==true||attested.json?.adult_eligibility?.eligible!==true){
+      throw new Error('Adult eligibility authenticated declaration returned an invalid state.');
+    }
+
+    const admin=await qaAccountSession({
+      pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Adult Eligibility Super Admin QA'
+    });
+    const qaExemption=await pool.query(`
+      SELECT safety_eligibility_status,safety_eligibility_policy_version
+        FROM accounts
+       WHERE id=$1 AND account_mode='company_test'
+    `,[admin.accountId]);
+    if(qaExemption.rows[0]?.safety_eligibility_status!=='company_test_exempt'||
+       qaExemption.rows[0]?.safety_eligibility_policy_version!=='ph-adult-eligibility-v1'){
+      throw new Error('Adult eligibility controlled QA exemption is missing or stale.');
+    }
+    const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+    const application=await pool.query(`
+      INSERT INTO profile_applications(
+        account_id,role,territory_id,status,responsibility_acknowledged,application_data,submitted_at
+      ) VALUES($1,'service_provider',$2,'submitted',TRUE,'{"qa_adult_eligibility":true}'::jsonb,NOW())
+      RETURNING id
+    `,[accountId,territoryId]);
+    const applicationId=Number(application.rows[0].id);
+    const adminUnconfirmed=await requestJson(base,`/api/governance/admin/applications/${applicationId}/review`,{
+      method:'POST',token:admin.token,body:{decision:'approve',reason:'Controlled QA review',approved_category_ids:[]}
+    });
+    expectStatus(adminUnconfirmed,422,'Adult eligibility Admin review denial');
+    const adminReviewed=await requestJson(base,`/api/governance/admin/applications/${applicationId}/review`,{
+      method:'POST',token:admin.token,
+      body:{decision:'approve',reason:'Controlled QA adult eligibility review',approved_category_ids:[],adult_eligibility_reviewed:true}
+    });
+    expectStatus(adminReviewed,200,'Adult eligibility Admin review');
+
+    const evidence=await pool.query(`
+      SELECT safety_eligibility_status,safety_eligibility_policy_version,
+        (SELECT COUNT(*)::int FROM account_safety_eligibility_events e
+          WHERE e.account_id=a.id AND e.event_code='adult_eligibility_self_attested') self_attestation_events,
+        (SELECT COUNT(*)::int FROM account_safety_eligibility_events e
+          WHERE e.account_id=a.id AND e.event_code='adult_eligibility_admin_reviewed'
+            AND e.actor_account_id=$2) admin_review_events
+      FROM accounts a WHERE a.id=$1
+    `,[accountId,admin.accountId]);
+    const row=evidence.rows[0];
+    if(row?.safety_eligibility_status!=='adult_reviewed'||row?.safety_eligibility_policy_version!=='ph-adult-eligibility-v1'){
+      throw new Error('Adult eligibility Admin-reviewed state was not persisted.');
+    }
+    if(Number(row.self_attestation_events)<1||Number(row.admin_review_events)!==1){
+      throw new Error('Adult eligibility append-only audit evidence is incomplete.');
+    }
+    return{
+      status:'PASS',wave:ADULT_ELIGIBILITY_RUNTIME_WAVE,
+      registration_requires_explicit_attestation:true,
+      pending_profile_activation_denied:true,
+      pending_operational_onboarding_denied:true,
+      authenticated_attestation_audited:true,
+      governed_admin_review_required:true,
+      company_test_exemption_active:true,
+      date_of_birth_collected:false
+    };
+  }finally{
+    if(accountId){
+      const cleanup=await pool.connect();
+      try{
+        await cleanup.query('BEGIN');
+        await cleanup.query(`DELETE FROM profile_governance_events WHERE actor_account_id=$1 OR target_account_id=$1`,[accountId]);
+        await cleanup.query(`DELETE FROM high_risk_velocity_denials WHERE actor_account_id=$1`,[accountId]);
+        await cleanup.query(`DELETE FROM high_risk_velocity_buckets WHERE actor_account_id=$1`,[accountId]);
+        const deleted=await cleanup.query(`DELETE FROM accounts WHERE id=$1 RETURNING id`,[accountId]);
+        if(deleted.rowCount!==1)throw new Error('Adult eligibility QA account cleanup did not remove the temporary account.');
+        await cleanup.query('COMMIT');
+      }catch(error){
+        await cleanup.query('ROLLBACK').catch(()=>{});
+        throw error;
+      }finally{cleanup.release()}
+    }
+  }
+}
+
 
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
@@ -5130,7 +5266,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===DELIVERY_PRICING_V2B_RUNTIME_WAVE
+    const result=config.wave===ADULT_ELIGIBILITY_RUNTIME_WAVE
+      ?await runAdultEligibilityRuntimeAcceptance({pool,base,secret:config.secret})
+      :config.wave===DELIVERY_PRICING_V2B_RUNTIME_WAVE
       ?await runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===COURIER_PERFORMANCE_RUNTIME_WAVE
       ?await runCourierPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
@@ -5226,5 +5364,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE
 };

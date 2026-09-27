@@ -20,6 +20,7 @@ import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboar
 import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest} from './territory-demand-core.js';
 import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-account.js';
 import {ensureHighRiskVelocitySchema,enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {ADULT_ELIGIBILITY_POLICY_VERSION,ensureAccountSafetyEligibilitySchema,accountAdultEligibilitySnapshot,recordAdultEligibilityAttestation,recordCompanyTestEligibilityExemption,requireAdultEligibility} from './account-safety-eligibility-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -307,6 +308,7 @@ async function initDb() {
     SELECT setval(pg_get_serial_sequence('businesses','id'), GREATEST((SELECT MAX(id) FROM businesses),1));
   `);
   await ensurePersonIdentitySchema(pool);
+  await ensureAccountSafetyEligibilitySchema(pool);
   await ensureReferralAccountSchema(pool);
   await ensureAccountGeographySchema(pool);
   await ensureGuidedOnboardingSchema(pool);
@@ -315,7 +317,7 @@ async function initDb() {
 }
 
 async function profileSnapshot(accountId) {
-  const [account, profiles, businesses, customer, supplier, courier, serviceProvider, geography] = await Promise.all([
+  const [account, profiles, businesses, customer, supplier, courier, serviceProvider, geography, adultEligibility] = await Promise.all([
     pool.query(`SELECT id,display_name,phone,email,address,avatar_data_url,active_role,identity_country_code,personal_public_id,email_verified_at,phone_verified_at,auth_status,account_mode,test_role,(password_hash IS NOT NULL) has_password,created_at,updated_at FROM accounts WHERE id=$1`, [accountId]),
     pool.query(`SELECT role,enabled,visibility,status,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role`, [accountId]),
     pool.query(`SELECT b.id,b.name,b.country_code,b.currency_code,bm.membership_role,bm.active FROM businesses b JOIN business_memberships bm ON bm.business_id=b.id WHERE bm.account_id=$1 AND bm.active=TRUE ORDER BY b.id`, [accountId]),
@@ -323,7 +325,8 @@ async function profileSnapshot(accountId) {
     pool.query(`SELECT * FROM supplier_profiles WHERE account_id=$1`, [accountId]),
     pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`, [accountId]),
     pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`, [accountId]),
-    accountGeographySnapshot(pool,accountId)
+    accountGeographySnapshot(pool,accountId),
+    accountAdultEligibilitySnapshot(pool,accountId)
   ]);
   if (!account.rows[0]) throw Object.assign(new Error('Account not found'), { status: 404 });
   const activeRole=account.rows[0].active_role;
@@ -335,7 +338,7 @@ async function profileSnapshot(accountId) {
   const accountRow=account.rows[0];
   geography.required=accountRow.account_mode!=='company_test';
   const qa_remote_test=qaRemoteTestAccountState(accountRow);
-  return withPublicProfileIds({ account: accountRow, geography, qa_remote_test, profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
+  return withPublicProfileIds({ account: accountRow, adult_eligibility: adultEligibility, geography, qa_remote_test, profiles: profiles.rows, businesses: businesses.rows, customer: customer.rows[0] || null, supplier: supplier.rows[0] || null, courier: courier.rows[0] || null, service_provider: serviceProvider.rows[0] || null });
 }
 
 function injectedIndex() {
@@ -447,6 +450,8 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   if (!name) return res.status(400).json({ error: 'Name is required' });
   if (!validEmail(email)) return res.status(400).json({ error: 'A valid email is required' });
   if (!passwordOkay(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if(!companyTest&&req.body?.adult_eligibility_attested!==true)return res.status(422).json({error:'Confirm that you are 18 or older to create a Philippines pilot account'});
+  if(!companyTest&&clean(req.body?.adult_eligibility_policy_version,80)!==ADULT_ELIGIBILITY_POLICY_VERSION)return res.status(409).json({error:'Review and accept the current adult eligibility notice before creating your account'});
   let geography=null;
   if(homePsgcCode){geography=await geographyAvailabilityForCode(pool,homePsgcCode);if(!geography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});}
   if(!companyTest&&!geography)return res.status(400).json({error:'Choose your official barangay before creating your account'});
@@ -460,6 +465,8 @@ app.post('/api/auth/register', body, async (req, res, next) => {
     await client.query('BEGIN');
     const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,'active',$7,$8) RETURNING id`, [name, phone, email, address, salt, hash, companyTest?'company_test':'personal', companyTest?.role||null]);
     const accountId = Number(account.rows[0].id);
+    if(companyTest)await recordCompanyTestEligibilityExemption(client,{accountId,source:'company_test_registration'});
+    else await recordAdultEligibilityAttestation(client,{accountId,actorAccountId:accountId,attested:true,policyVersion:req.body?.adult_eligibility_policy_version,source:'password_registration'});
     if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':qaRemoteRequested&&isQaRemoteTestEmail(email)?'qa_remote_ph_test':'registration_selected_psgc'});
     await client.query('COMMIT');
     clearThrottle(req, email);
@@ -700,10 +707,23 @@ app.put('/api/me/geography',body,auth,async(req,res,next)=>{try{
   res.json(await profileSnapshot(req.accountId));
 }catch(e){next(e)}});
 
+app.post('/api/me/adult-eligibility/attest',body,auth,async(req,res,next)=>{try{
+  await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'adult_eligibility_attestation',subjectType:'account',subjectId:req.accountId});
+  const adult_eligibility=await recordAdultEligibilityAttestation(pool,{
+    accountId:req.accountId,
+    actorAccountId:req.accountId,
+    attested:req.body?.adult_eligibility_attested,
+    policyVersion:req.body?.adult_eligibility_policy_version,
+    source:'account_settings'
+  });
+  res.json({ok:true,adult_eligibility,profile:await profileSnapshot(req.accountId)});
+}catch(e){next(e)}});
+
 app.patch('/api/me/active-role', body, auth, async (req, res, next) => {
   const role = clean(req.body?.role, 40);
   if (!ROLES.has(role)) return res.status(400).json({ error: 'Unknown profile role' });
   try {
+    await requireAdultEligibility(pool,req.accountId,{action:'switch into a profile'});
     const classification=await pool.query(`SELECT account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
     const classified=classification.rows[0];
     if(classified?.account_mode==='company_test'&&companyTestProfileRole(classified.test_role)!==role)return res.status(403).json({error:`This company test account is reserved for ${classified.test_role.replaceAll('_',' ')}.`});
@@ -721,6 +741,7 @@ app.put('/api/profiles/:role', body, auth, async (req, res, next) => {
   const visibility = ['public', 'relationship_only', 'private'].includes(req.body?.visibility) ? req.body.visibility : 'private';
   try {
     if(enabled){
+      await requireAdultEligibility(pool,req.accountId,{action:'activate a profile'});
       const classification=await pool.query(`SELECT account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
       const classified=classification.rows[0];
       if(classified?.account_mode!=='company_test'){const geo=await accountGeographySnapshot(pool,req.accountId);if(geo.assigned&&!geo.operational_onboarding_available)await recordUnavailableProfileInterest(pool,{accountId:req.accountId,psgcCode:geo.psgc_code,role});await requireAssignedOpenBarangay(pool,req.accountId);}
@@ -741,6 +762,7 @@ app.put('/api/profiles/:role', body, auth, async (req, res, next) => {
 
 app.post('/api/profiles/customer/activate', body, auth, async (req,res,next)=>{
   try{
+    await requireAdultEligibility(pool,req.accountId,{action:'activate Customer'});
     const account=await pool.query(`SELECT display_name,email,address,email_verified_at,account_mode,test_role FROM accounts WHERE id=$1`,[req.accountId]);
     const a=account.rows[0];
     const companyTest=a?.account_mode==='company_test';
