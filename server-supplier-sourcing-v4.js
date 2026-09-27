@@ -320,7 +320,10 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
           COALESCE(sp.delivery_available,FALSE) delivery_available,COALESCE(sp.normal_lead_days,1) normal_lead_days,
           sp.minimum_order_value,
           EXISTS(SELECT 1 FROM supplier_relationships r
-            WHERE r.business_id=$2 AND r.supplier_account_id=ss.supplier_account_id AND r.state='accepted') relationship_accepted,
+            WHERE r.business_id=$2
+              AND r.supplier_account_id=ss.supplier_account_id
+              AND r.supplier_business_id=ss.business_id
+              AND r.state='accepted') relationship_accepted,
           ARRAY(SELECT sc.category_code FROM supplier_sourcing_categories sc
             WHERE sc.business_id=ss.business_id ORDER BY sc.category_code) categories
          FROM supplier_sourcing_settings ss
@@ -619,15 +622,23 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
       const merchant=await exactProfileBusiness(pool,me,'merchant',inv.rows[0].business_id);
       const sources=validatePreferenceRanks(req.body?.sources||[]),catalogIds=sources.map(x=>x.catalog_item_id);
       const catalogs=catalogIds.length?await pool.query(
-        `SELECT c.id,c.supplier_account_id FROM supplier_catalog_items c
-         WHERE c.id=ANY($1::bigint[]) AND c.active=TRUE`,[catalogIds]
+        `SELECT DISTINCT c.id,c.supplier_account_id,spi.business_id supplier_business_id
+           FROM supplier_catalog_items c
+           JOIN supplier_sourcing_published_items spi ON spi.catalog_item_id=c.id
+           JOIN supplier_relationships rel
+             ON rel.business_id=$2
+            AND rel.supplier_account_id=c.supplier_account_id
+            AND rel.supplier_business_id=spi.business_id
+            AND rel.state='accepted'
+          WHERE c.id=ANY($1::bigint[]) AND c.active=TRUE`,
+        [catalogIds,merchant.id]
       ):{rows:[]};
       if(catalogs.rowCount!==catalogIds.length)return res.status(409).json({error:'One or more Supplier sources are unavailable'});
       const byCatalog=new Map(catalogs.rows.map(x=>[Number(x.id),x]));
       for(const s of sources){
         const cat=byCatalog.get(s.catalog_item_id);
-        if(!await acceptedRelationship(pool,merchant.id,cat.supplier_account_id)){
-          throw err(409,'Preferred reorder sources require accepted Supplier relationships');
+        if(!await acceptedRelationship(pool,merchant.id,cat.supplier_account_id,cat.supplier_business_id)){
+          throw err(409,'Preferred reorder sources require an accepted relationship with the owning Supplier business');
         }
       }
       const client=await pool.connect();
@@ -783,9 +794,12 @@ export async function supplierReorderSuggestions(pool,businessId){
          ON sc.id=ms.catalog_item_id
         AND sc.active=TRUE
         AND sc.availability_status<>'unavailable'
+       JOIN supplier_sourcing_published_items spi
+         ON spi.catalog_item_id=ms.catalog_item_id
        JOIN supplier_relationships rel
          ON rel.business_id=ms.business_id
         AND rel.supplier_account_id=ms.supplier_account_id
+        AND rel.supplier_business_id=spi.business_id
         AND rel.state='accepted'
        WHERE ms.business_id=i.business_id
          AND ms.inventory_id=i.id
