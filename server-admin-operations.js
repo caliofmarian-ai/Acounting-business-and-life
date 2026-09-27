@@ -770,7 +770,7 @@ async function memberLegalContext(ctx,id){
   const allowed=await memberPermissionAvailable(ctx,id,'legal.view');
   if(!allowed)return{available:false,total:0,items:[]};
   const q=await pool.query(
-    "SELECT la.id,la.state,la.role_context,la.business_id,la.admin_assignment_id,la.territory_id,la.action_code,la.purpose,"+
+    "SELECT la.id,la.state,la.role_context,la.action_code,la.purpose,"+
     "la.accepted_at,la.revoked_at,la.created_at,d.code document_code,d.title,v.version_label,v.locale,v.status version_status,"+
     "COUNT(*) OVER()::int total_count FROM legal_acceptances la "+
     "JOIN legal_document_versions v ON v.id=la.document_version_id JOIN legal_documents d ON d.id=v.document_id "+
