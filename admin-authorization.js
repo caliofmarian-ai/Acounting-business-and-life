@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 export const ADMIN_PERMISSIONS = Object.freeze([
   'admin.console',
+  'members.view',
   'admin.assign_limited',
   'admin.delegate',
   'territory.manage',
@@ -121,6 +122,14 @@ export async function ensureAdminSchema(pool){
     INSERT INTO platform_admin_assignments(account_id,admin_role,authority_rank,country_code,territory_id,status,assigned_by_account_id,reason)
     VALUES(1,'super_admin','super_admin','PH',NULL,'active',1,'Bootstrap Platform Owner / Super Admin')
     ON CONFLICT(account_id,admin_role,country_code,COALESCE(territory_id,0))
+    DO UPDATE SET status='active',effective_until=NULL,updated_at=NOW();
+
+    INSERT INTO admin_permission_grants(assignment_id,permission_code,status,granted_by_account_id,reason)
+    SELECT a.id,'members.view','active',COALESCE(a.assigned_by_account_id,1),'Baseline scoped member directory for Admin rank'
+    FROM platform_admin_assignments a
+    WHERE COALESCE(NULLIF(a.authority_rank,''),a.admin_role) IN ('country_admin','territory_admin')
+      AND a.status='active'
+    ON CONFLICT(assignment_id,permission_code)
     DO UPDATE SET status='active',effective_until=NULL,updated_at=NOW();
   `);
 }
