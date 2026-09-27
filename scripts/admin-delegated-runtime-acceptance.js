@@ -105,6 +105,7 @@ async function main(){
   const country=await createAccount('country-'+suffix);
   const territory=await createAccount('territory-'+suffix);
   const specialist=await createAccount('specialist-'+suffix);
+  const memberSupportSpecialist=await createAccount('member-support-specialist-'+suffix);
   const memberA=await createAccount('member-a-'+suffix);
   const memberB=await createAccount('member-b-'+suffix);
   await pool.query(
@@ -128,6 +129,44 @@ async function main(){
     [Number(memberBusiness.rows[0].id),Number(memberA.id)]
   );
 
+  const supportA=await pool.query(
+    `INSERT INTO support_tickets(requester_account_id,country_code,territory_id,category,subject,description,priority,status)
+     VALUES($1,'PH',$2,'account','CI Member Support A','Private support body must stay in Support','high','triaged') RETURNING id`,
+    [Number(memberA.id),Number(t1.id)]
+  );
+  await pool.query(
+    `INSERT INTO support_tickets(requester_account_id,country_code,territory_id,category,subject,description,priority,status)
+     VALUES($1,'PH',$2,'account','CI Member Support B','Sibling private support body','normal','new')`,
+    [Number(memberB.id),Number(t2.id)]
+  );
+  const trustA=await pool.query(
+    `INSERT INTO trust_cases(public_id,case_type,title,status,severity,country_code,territory_id,created_by_account_id)
+     VALUES($1,'fraud_or_identity','CI Member Safety A','investigating','high','PH',$2,1) RETURNING id`,
+    ['CI-TSC-A-'+suffix,Number(t1.id)]
+  );
+  await pool.query(
+    `INSERT INTO trust_case_entities(case_id,entity_type,entity_id,relation_type,added_by_account_id)
+     VALUES($1,'account',$2,'reported_subject',1)`,
+    [Number(trustA.rows[0].id),String(memberA.id)]
+  );
+  const privacyDoc=await pool.query("SELECT id FROM legal_documents WHERE code='privacy_notice' LIMIT 1");
+  assert(privacyDoc.rowCount===1,'Privacy notice legal document fixture missing');
+  const legalHash=('a'+suffix.replace(/[^a-z0-9]/gi,'')).padEnd(64,'0').slice(0,64);
+  const legalVersion=await pool.query(
+    `INSERT INTO legal_document_versions(
+       document_id,version_label,locale,content_markdown,content_sha256,status,authoritative,
+       translation_review_status,legal_review_status,effective_at,published_at,source_ref,created_by_account_id
+     ) VALUES($1,$2,'en-PH',$3,$4,'active',TRUE,'not_applicable','reviewed',NOW(),NOW(),'ci-members-v3',1)
+     RETURNING id,content_sha256`,
+    [Number(privacyDoc.rows[0].id),'ci-members-v3-'+suffix,'CI Members V3 privacy acceptance fixture content for runtime scope verification.',legalHash]
+  );
+  await pool.query(
+    `INSERT INTO legal_acceptances(
+       account_id,document_version_id,state,role_context,territory_id,action_code,purpose,content_sha256,accepted_at
+     ) VALUES($1,$2,'accepted','service_provider',$3,'profile.submit','CI Members V3 sanitized legal history',$4,NOW())`,
+    [Number(memberA.id),Number(legalVersion.rows[0].id),Number(t1.id),legalVersion.rows[0].content_sha256]
+  );
+
   await request('/api/admin/assignments',{
     token:ownerToken,method:'POST',expected:201,
     body:{
@@ -140,7 +179,7 @@ async function main(){
     token:ownerToken,method:'POST',expected:201,
     body:{
       target_email:territory.email,admin_role:'territory_admin',territory_id:Number(t1.id),
-      function_codes:['profile_onboarding','support_operations','delivery_operations','member_account_controls'],
+      function_codes:['profile_onboarding','support_operations','delivery_operations','member_account_controls','member_context_notes','trust_safety'],
       reason:'CI delegated Territory Admin acceptance'
     }
   });
@@ -153,9 +192,19 @@ async function main(){
     }
   });
 
+  await request('/api/admin/assignments',{
+    token:ownerToken,method:'POST',expected:201,
+    body:{
+      target_email:memberSupportSpecialist.email,admin_role:'specialist',territory_id:Number(t1.id),
+      function_codes:['support_operations','member_directory'],
+      reason:'CI Members V3 Support + Member Directory acceptance'
+    }
+  });
+
   const countryToken=await sessionFor(country.id,'country');
   const territoryToken=await sessionFor(territory.id,'territory');
   const specialistToken=await sessionFor(specialist.id,'specialist');
+  const memberSupportSpecialistToken=await sessionFor(memberSupportSpecialist.id,'member-support-specialist');
 
   // Country Admin: delegated country-wide onboarding/support/delegation/audit, but no Courier verification or territory management.
   const countryBoot=await request('/api/admin/bootstrap',{token:countryToken});
@@ -176,10 +225,20 @@ async function main(){
   const countryMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:countryToken});
   assert(Number(countryMemberDetail.member?.account_id)===Number(memberA.id),'Country Admin cannot open member detail');
   assert(countryMemberDetail.controls?.manage_status===false&&countryMemberDetail.controls?.revoke_sessions===false,'Read-only Country Admin unexpectedly received member controls');
+  assert(countryMemberDetail.context?.support?.available===true,'Country Admin Support context not available');
+  assert((countryMemberDetail.context?.support?.items||[]).some(x=>Number(x.id)===Number(supportA.rows[0].id)),'Country Admin Support context missing member ticket');
+  assert(countryMemberDetail.context?.safety?.available===false,'Country Admin without incident.triage received Trust & Safety context');
+  assert(countryMemberDetail.context?.legal?.available===false,'Country Admin without legal.view received Legal context');
+  assert(countryMemberDetail.context?.internal?.available===false&&countryMemberDetail.controls?.manage_notes===false,'Country Admin received undelegated internal notes');
   await request('/api/admin/members/'+Number(memberA.id)+'/status',{
     token:countryToken,method:'PATCH',expected:403,
     body:{status:'suspended',reason:'Country Admin fixture is read-only',confirm:true}
   });
+  const ownerMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:ownerToken});
+  assert(ownerMemberDetail.context?.legal?.available===true,'Super Admin legal context missing');
+  const legalItem=(ownerMemberDetail.context?.legal?.items||[]).find(x=>x.purpose==='CI Members V3 sanitized legal history');
+  assert(Boolean(legalItem),'Sanitized legal acceptance history missing');
+  assert(!Object.prototype.hasOwnProperty.call(legalItem,'ip_hash')&&!Object.prototype.hasOwnProperty.call(legalItem,'device_hash')&&!Object.prototype.hasOwnProperty.call(legalItem,'correlation_id')&&!Object.prototype.hasOwnProperty.call(legalItem,'content_sha256'),'Legal context leaked metadata hashes or evidence fields');
   await request('/api/admin/finance/operating',{token:countryToken});
   await request('/api/admin/couriers',{token:countryToken,expected:403});
   await request('/api/governance/admin/territories',{
@@ -204,6 +263,8 @@ async function main(){
   assert(hasPermission(territoryBoot,'members.view'),'Territory Admin baseline Members permission missing');
   assert(hasPermission(territoryBoot,'members.manage_status'),'Territory Admin explicit member status control missing');
   assert(hasPermission(territoryBoot,'members.sessions.revoke'),'Territory Admin explicit member session control missing');
+  assert(hasPermission(territoryBoot,'members.notes.manage'),'Territory Admin explicit member notes authority missing');
+  assert(hasPermission(territoryBoot,'incident.triage'),'Territory Admin Trust & Safety function missing');
   assert(!hasPermission(territoryBoot,'delivery.pricing.manage'),'Territory Admin received country Delivery pricing');
   assert(!hasPermission(territoryBoot,'admin.delegate'),'Territory Admin received undelegated Admin delegation');
   await request('/api/admin/support',{token:territoryToken});
@@ -215,6 +276,25 @@ async function main(){
   await sessionFor(memberA.id,'member-a-target');
   const territoryMemberDetail=await request('/api/admin/members/'+Number(memberA.id),{token:territoryToken});
   assert(territoryMemberDetail.controls?.manage_status===true&&territoryMemberDetail.controls?.revoke_sessions===true,'Territory Admin member controls not exposed for in-scope member');
+  assert(territoryMemberDetail.controls?.manage_notes===true&&territoryMemberDetail.context?.internal?.available===true,'Territory Admin member notes control missing');
+  assert(territoryMemberDetail.context?.support?.available===true,'Territory Admin Support context missing');
+  assert(territoryMemberDetail.context?.safety?.available===true,'Territory Admin Trust & Safety context missing');
+  assert((territoryMemberDetail.context?.safety?.items||[]).some(x=>Number(x.id)===Number(trustA.rows[0].id)),'Territory Admin safety context missing in-scope case');
+  assert(territoryMemberDetail.context?.legal?.available===false,'Territory Admin without legal.view received legal context');
+  await request('/api/admin/members/'+Number(memberA.id)+'/notes',{
+    token:territoryToken,method:'POST',expected:201,
+    body:{note:'CI Members V3 append-only coordination note'}
+  });
+  const addedTag=await request('/api/admin/members/'+Number(memberA.id)+'/tags',{
+    token:territoryToken,method:'POST',
+    body:{tag:'Pilot User'}
+  });
+  assert(addedTag.created===true&&addedTag.tag==='pilot user','Member tag was not normalized and created');
+  const contextAfterNote=await request('/api/admin/members/'+Number(memberA.id),{token:territoryToken});
+  assert((contextAfterNote.context?.internal?.notes||[]).some(x=>x.note_text==='CI Members V3 append-only coordination note'),'Internal member note missing after append');
+  assert((contextAfterNote.context?.internal?.tags||[]).some(x=>x.tag==='pilot user'),'Internal member tag missing after add');
+  const removedTag=await request('/api/admin/members/'+Number(memberA.id)+'/tags/'+encodeURIComponent('pilot user'),{token:territoryToken,method:'DELETE'});
+  assert(removedTag.removed===true,'Internal member tag was not removed');
   assert((territoryMemberDetail.businesses||[]).some(x=>Number(x.business_id)===Number(memberBusiness.rows[0].id)&&x.membership_role==='owner'),'Member detail did not expose scoped business membership');
   assert(!(territoryMemberDetail.businesses||[]).some(x=>Object.prototype.hasOwnProperty.call(x,'balance')||Object.prototype.hasOwnProperty.call(x,'payment_credentials')),'Member detail leaked financial or payment data');
   assert(Number(territoryMemberDetail.security?.active_session_count||0)>=1,'Member security summary did not count active session');
@@ -248,6 +328,7 @@ async function main(){
   );
   const memberAuditCodes=new Set(memberAudit.rows.map(x=>x.event_code));
   assert(memberAuditCodes.has('member_sessions_revoked')&&memberAuditCodes.has('member_account_suspended')&&memberAuditCodes.has('member_account_reactivated'),'Member control audit events missing');
+  assert(memberAuditCodes.has('member_internal_note_added')&&memberAuditCodes.has('member_tag_added')&&memberAuditCodes.has('member_tag_removed'),'Member notes/tags audit events missing');
   await request('/api/admin/finance/operating',{token:territoryToken});
   await request('/api/admin/assignments',{token:territoryToken,expected:403});
   await request('/api/admin/delivery/pricing',{token:territoryToken,expected:403});
@@ -260,6 +341,19 @@ async function main(){
     token:territoryToken,method:'POST',expected:403,
     body:{target_email:'ci-territory-denied-'+suffix+'@example.test',role:'supplier',territory_id:Number(t2.id),expires_days:2,note:'Must remain outside sibling territory'}
   });
+
+  // Members V3 specialist: Member Directory + Support only. No Trust, Legal or internal notes.
+  const memberSupportBoot=await request('/api/admin/bootstrap',{token:memberSupportSpecialistToken});
+  assert(hasPermission(memberSupportBoot,'members.view')&&hasPermission(memberSupportBoot,'support.manage'),'Members V3 Support specialist permissions missing');
+  assert(!hasPermission(memberSupportBoot,'incident.triage')&&!hasPermission(memberSupportBoot,'legal.view')&&!hasPermission(memberSupportBoot,'members.notes.manage'),'Members V3 Support specialist received sensitive extra authority');
+  const memberSupportDetail=await request('/api/admin/members/'+Number(memberA.id),{token:memberSupportSpecialistToken});
+  assert(memberSupportDetail.context?.support?.available===true,'Members V3 Support specialist cannot see allowed Support context');
+  assert(memberSupportDetail.context?.safety?.available===false&&memberSupportDetail.context?.legal?.available===false&&memberSupportDetail.context?.internal?.available===false,'Members V3 Support specialist context isolation failed');
+  await request('/api/admin/members/'+Number(memberA.id)+'/notes',{
+    token:memberSupportSpecialistToken,method:'POST',expected:403,
+    body:{note:'Must be denied'}
+  });
+  await request('/api/admin/members/'+Number(memberB.id),{token:memberSupportSpecialistToken,expected:404});
 
   // Specialist: support-only operational authority. Finance remains available but is function-scoped.
   const specialistBoot=await request('/api/admin/bootstrap',{token:specialistToken});
@@ -306,6 +400,12 @@ async function main(){
     members_controls_explicit_permission:'PASS',
     members_controls_audit:'PASS',
     members_self_protection:'PASS',
+    members_support_context_gate:'PASS',
+    members_safety_context_gate:'PASS',
+    members_legal_context_sanitized:'PASS',
+    members_internal_notes_tags:'PASS',
+    members_notes_tags_audit:'PASS',
+    members_support_specialist_isolation:'PASS',
     members_specialist_deny:'PASS'
   }));
 }
