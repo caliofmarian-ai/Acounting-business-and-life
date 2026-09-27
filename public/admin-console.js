@@ -318,7 +318,7 @@ async function memberDetailPanel(accountId){
     +memberDisclosure({id:'memberProfilesSection',title:'Profiles & business',summary:(data.profiles||[]).length+' profile record(s) · '+(data.businesses||[]).length+' business membership(s)',count:String((data.profiles||[]).length+(data.businesses||[]).length),body:profileBody})
     +(contextBody?memberDisclosure({id:'memberContextSection',title:'Support & safety',summary:memberCompactContextSummary(data),body:contextBody}):'')
     +(notesBody?memberDisclosure({id:'memberNotesSection',title:'Internal notes & tags',summary:(data.context?.internal?.notes||[]).length+' note(s) · '+(data.context?.internal?.tags||[]).length+' tag(s)',count:String((data.context?.internal?.notes||[]).length+(data.context?.internal?.tags||[]).length),body:notesBody}):'')
-    +memberDisclosure({id:'memberActivitySection',title:'Activity',summary:(data.timeline||[]).length+' recent event(s)',count:String((data.timeline||[]).length),body:activityBody});
+    +memberDisclosure({id:'memberActivitySection',title:'Activity timeline',summary:(data.timeline||[]).length+' recent event(s)',count:String((data.timeline||[]).length),body:activityBody});
 
   const securityCard='<aside class="memberSecurityCard"><div><span class="memberEyebrow">SECURITY SNAPSHOT</span><h3>Account security</h3></div>'
     +'<div class="memberSecurityFacts"><span><b>'+(m.email_verified_at?'Verified':'Not verified')+'</b>Email</span><span><b>'+(m.phone_verified_at?'Verified':'Not verified')+'</b>Phone</span><span><b>'+Number(s.active_session_count||0)+'</b>Active sessions</span><span><b>'+(s.password_configured?'Configured':'Not configured')+'</b>Password</span></div>'
@@ -368,7 +368,7 @@ async function membersPanel(){
   return '<div class="memberV4"><header class="memberDirectoryHeader"><div><span class="memberEyebrow">ADMIN DIRECTORY</span><h2>Members</h2><p>Find people, understand their platform relationship and open only the detail you need.</p></div><span class="memberScopePill">'+esc(scopeLabel)+'</span></header>'
     +'<div class="memberSummaryV4"><div class="metric"><strong>'+esc(data.total||0)+'</strong><span>Registered in scope</span></div><div class="metric"><strong>'+Number(data.items?.length||0)+'</strong><span>Shown on this page</span></div><div class="metric memberScopeMetric"><strong>'+esc(scopeLabel)+'</strong><span>Directory scope</span></div></div>'
     +form
-    +'<div class="memberListHeader"><strong>'+esc(data.total||0)+' members</strong><span class="muted">Private addresses, passwords, raw sessions, IP data and uploaded evidence stay hidden.</span></div>'
+    +'<div class="memberListHeader"><strong>'+esc(data.total||0)+' members</strong><span class="muted">Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here.</span></div>'
     +paging+list+paging+'</div>';
 }
 async function wireMembers(){
