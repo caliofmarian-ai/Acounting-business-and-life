@@ -645,18 +645,17 @@ async function adminOverview(accountId,seedContext=null){
 
 async function memberDirectoryScope(ctx){
   const scope=scopeFromContext(ctx,'members.view','territory_id');
-  if(scope.countryWide)return{countryWide:true,territoryIds:scope.ids,accountIds:[]};
+  if(ctx.superAdmin)return{platformWide:true,countryWide:true,territoryIds:scope.ids,accountIds:[]};
+  if(scope.countryWide)return{platformWide:false,countryWide:true,territoryIds:scope.ids,accountIds:[]};
   const territoryIds=scope.ids.length?scope.ids:[-1];
   const accountIds=new Set();
   const direct=await pool.query(
-    `SELECT DISTINCT account_id FROM (
-       SELECT pa.account_id FROM profile_authorizations pa
-        WHERE pa.territory_id=ANY($1::bigint[]) AND pa.status<>'revoked'
-       UNION
-       SELECT bm.account_id FROM business_memberships bm
-       JOIN businesses b ON b.id=bm.business_id
-        WHERE bm.active=TRUE AND b.territory_id=ANY($1::bigint[])
-     ) scoped_accounts`,
+    "SELECT DISTINCT account_id FROM ("+
+      "SELECT pa.account_id FROM profile_authorizations pa WHERE pa.territory_id=ANY($1::bigint[]) AND pa.status<>'revoked' "+
+      "UNION SELECT app.account_id FROM profile_applications app WHERE app.territory_id=ANY($1::bigint[]) AND app.status<>'revoked' "+
+      "UNION SELECT bm.account_id FROM business_memberships bm JOIN businesses b ON b.id=bm.business_id "+
+      "WHERE bm.active=TRUE AND b.territory_id=ANY($1::bigint[])"+
+    ") scoped_accounts",
     [territoryIds]
   ).catch(error=>{
     if(error?.code==='42P01'||error?.code==='42703')return{rows:[]};
@@ -665,8 +664,7 @@ async function memberDirectoryScope(ctx){
   direct.rows.forEach(row=>accountIds.add(Number(row.account_id)));
   const rootIds=new Set();
   for(const assignment of ctx.assignments){
-    const rank=assignmentRank(assignment),perms=new Set(Array.isArray(assignment.permissions)?assignment.permissions:[]);
-    if(rank==='super_admin'||assignment.admin_role==='super_admin')return{countryWide:true,territoryIds:scope.ids,accountIds:[]};
+    const perms=new Set(Array.isArray(assignment.permissions)?assignment.permissions:[]);
     if(!perms.has('members.view')||!assignment.territory_id)continue;
     rootIds.add(Number(assignment.territory_id));
   }
@@ -676,7 +674,7 @@ async function memberDirectoryScope(ctx){
     if(psgc.length!==10)continue;
     for(const accountId of await accountIdsInPsgcScope(pool,psgc))accountIds.add(Number(accountId));
   }
-  return{countryWide:false,territoryIds:scope.ids,accountIds:[...accountIds].filter(Number.isInteger)};
+  return{platformWide:false,countryWide:false,territoryIds:scope.ids,accountIds:[...accountIds].filter(Number.isInteger)};
 }
 
 async function adminMembers(req,ctx){
@@ -693,15 +691,49 @@ async function adminMembers(req,ctx){
   if(profile&&!MEMBER_PROFILE_ROLES.has(profile))throw Object.assign(new Error('Unknown profile filter'),{status:400});
 
   const params=[],where=[];
-  if(scope.countryWide){
-    where.push("(COALESCE(NULLIF(ag.country_code,''),NULLIF(a.identity_country_code,''),'PH')='PH')");
+  if(scope.platformWide){
+    where.push('TRUE');
+  }else if(scope.countryWide){
+    where.push("COALESCE(NULLIF(ag.country_code,''),NULLIF(a.identity_country_code,''),'PH')='PH'");
   }else{
     params.push(scope.accountIds.length?scope.accountIds:[-1]);
-    where.push("a.id=ANY($"+params.length+"::bigint[])");
+    where.push('a.id=ANY($'+params.length+'::bigint[])');
   }
   if(search){
     params.push('%'+search+'%');
-    const p='
+    const p='$'+params.length;
+    where.push("(LOWER(a.display_name) LIKE "+p+" OR LOWER(a.email) LIKE "+p+" OR LOWER(COALESCE(a.personal_public_id,'')) LIKE "+p+" OR a.id::text LIKE REPLACE("+p+",'%',''))");
+  }
+  if(status==='active')where.push("a.auth_status='active'");
+  if(status==='inactive')where.push("a.auth_status<>'active'");
+  if(verification==='verified')where.push('a.email_verified_at IS NOT NULL');
+  if(verification==='unverified')where.push('a.email_verified_at IS NULL');
+  if(profile){
+    params.push(profile);
+    where.push("EXISTS(SELECT 1 FROM profiles pf WHERE pf.account_id=a.id AND pf.role=$"+params.length+" AND pf.enabled=TRUE AND pf.status='active')");
+  }
+  params.push(limit);const limitParam='$'+params.length;
+  params.push(offset);const offsetParam='$'+params.length;
+  const result=await pool.query(
+    "SELECT a.id account_id,a.personal_public_id personal_id,a.display_name,a.email,a.auth_status,"+
+      "a.account_mode,a.test_role,a.email_verified_at,a.created_at,a.updated_at,"+
+      "ag.geographic_name,ag.path_text,ag.psgc_code,"+
+      "COALESCE((SELECT jsonb_agg(jsonb_build_object('role',pf.role,'status',pf.status,'enabled',pf.enabled) ORDER BY pf.role) FROM profiles pf WHERE pf.account_id=a.id),'[]'::jsonb) profiles,"+
+      "(SELECT MAX(s.created_at) FROM account_sessions s WHERE s.account_id=a.id) last_session_at,"+
+      "COUNT(*) OVER()::int total_count "+
+    "FROM accounts a LEFT JOIN account_geography_assignments ag ON ag.account_id=a.id "+
+    "WHERE "+where.join(' AND ')+" ORDER BY a.created_at DESC,a.id DESC LIMIT "+limitParam+" OFFSET "+offsetParam,
+    params
+  );
+  const total=Number(result.rows[0]?.total_count||0);
+  return{
+    scope:{country_code:scope.platformWide?null:'PH',platform_wide:scope.platformWide,country_wide:scope.countryWide,territory_ids:scope.territoryIds},
+    total,limit,offset,
+    items:result.rows.map(({total_count,...row})=>row)
+  };
+}
+
+function dispatchBusinessAccounting(req,res,{headers={},afterSuccess=null}={}){
   if(!businessAccountingApp)return Promise.reject(Object.assign(new Error('Multi-business Accounting runtime is not ready'),{status:503}));
   const previousHeaders=new Map();
   for(const[key,value]of Object.entries(headers)){
@@ -743,7 +775,6 @@ async function adminMembers(req,ctx){
     });
   });
 }
-
 async function forwardAdmin(req,res,permission,territoryId,targetType='',targetId=''){
   const{me,assignment}=await adminFor(req,permission,territoryId);
   const scopedTerritoryId=territoryId??assignment.territory_id??null;
