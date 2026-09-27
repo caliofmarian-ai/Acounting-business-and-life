@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 export const ADMIN_PERMISSIONS = Object.freeze([
   'admin.console',
   'members.view',
+  'members.manage_status',
+  'members.sessions.revoke',
   'admin.assign_limited',
   'admin.delegate',
   'territory.manage',

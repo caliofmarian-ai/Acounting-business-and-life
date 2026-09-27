@@ -643,8 +643,8 @@ async function adminOverview(accountId,seedContext=null){
   };
 }
 
-async function memberDirectoryScope(ctx){
-  const scope=scopeFromContext(ctx,'members.view','territory_id');
+async function memberDirectoryScope(ctx,permission='members.view'){
+  const scope=scopeFromContext(ctx,permission,'territory_id');
   if(ctx.superAdmin)return{platformWide:true,countryWide:true,territoryIds:scope.ids,accountIds:[]};
   if(scope.countryWide)return{platformWide:false,countryWide:true,territoryIds:scope.ids,accountIds:[]};
   const territoryIds=scope.ids.length?scope.ids:[-1],accountIds=new Set();
@@ -659,7 +659,7 @@ async function memberDirectoryScope(ctx){
   const rootIds=new Set();
   for(const assignment of ctx.assignments){
     const perms=new Set(Array.isArray(assignment.permissions)?assignment.permissions:[]);
-    if(perms.has('members.view')&&assignment.territory_id)rootIds.add(Number(assignment.territory_id));
+    if(perms.has(permission)&&assignment.territory_id)rootIds.add(Number(assignment.territory_id));
   }
   for(const id of rootIds){
     const territory=ctx.byId.get(Number(id)),psgc=String(territory?.psgc_code||'').replace(/\D/g,'');
@@ -696,6 +696,171 @@ async function adminMembers(req,ctx){
   const total=Number(result.rows[0]?.total_count||0);
   return{scope:{country_code:scope.platformWide?null:'PH',platform_wide:scope.platformWide,country_wide:scope.countryWide,territory_ids:scope.territoryIds},total,limit,offset,items:result.rows.map(({total_count,...row})=>row)};
 }
+
+async function optionalMemberRows(sql,args=[]){
+  try{return (await pool.query(sql,args)).rows}
+  catch(error){if(error?.code==='42P01'||error?.code==='42703')return[];throw error}
+}
+async function memberScopeRecord(ctx,accountId,permission='members.view'){
+  requirePermissionFromContext(ctx,permission);
+  const id=Number(accountId);
+  if(!Number.isInteger(id)||id<=0)throw Object.assign(new Error('Invalid member account'),{status:400});
+  const scope=await memberDirectoryScope(ctx,permission);
+  const q=await pool.query(
+    "SELECT a.id,COALESCE(NULLIF(ag.country_code,''),NULLIF(a.identity_country_code,''),'PH') country_code "+
+    "FROM accounts a LEFT JOIN account_geography_assignments ag ON ag.account_id=a.id WHERE a.id=$1 LIMIT 1",[id]
+  );
+  if(!q.rowCount)throw Object.assign(new Error('Member not found'),{status:404});
+  const allowed=scope.platformWide||(scope.countryWide&&q.rows[0].country_code==='PH')||scope.accountIds.includes(id);
+  if(!allowed)throw Object.assign(new Error('Member not found'),{status:404});
+  return{accountId:id,scope,record:q.rows[0]};
+}
+async function memberPermissionAvailable(ctx,accountId,permission){
+  if(!ctx.superAdmin&&!ctx.permissions.has(permission))return false;
+  try{await memberScopeRecord(ctx,accountId,permission);return true}
+  catch(error){if(error?.status===403||error?.status===404)return false;throw error}
+}
+function memberTimelineLabel(code){
+  const labels={
+    account_registered:'Account registered',
+    profile_created:'Profile created',
+    profile_updated:'Profile updated',
+    application_submitted:'Profile application submitted',
+    application_reviewed:'Profile application reviewed',
+    profile_authorized:'Profile authorization granted',
+    member_account_suspended:'Account suspended by Admin',
+    member_account_reactivated:'Account reactivated by Admin',
+    member_sessions_revoked:'Active sessions revoked by Admin'
+  };
+  return labels[code]||String(code||'Activity').replaceAll('_',' ');
+}
+async function adminMemberDetails(accountId,ctx){
+  const scoped=await memberScopeRecord(ctx,accountId,'members.view'),id=scoped.accountId;
+  const memberQ=await pool.query(
+    "SELECT a.id account_id,a.personal_public_id personal_id,a.display_name,a.email,a.auth_status,a.account_mode,a.test_role,"+
+    "a.email_verified_at,a.phone_verified_at,a.created_at,a.updated_at,(a.password_hash IS NOT NULL AND a.password_hash<>'') password_configured,"+
+    "ag.geographic_name,ag.path_text,ag.psgc_code,COALESCE(NULLIF(ag.country_code,''),NULLIF(a.identity_country_code,''),'PH') country_code,"+
+    "(SELECT COUNT(*)::int FROM account_sessions s WHERE s.account_id=a.id AND s.revoked_at IS NULL AND s.expires_at>NOW()) active_session_count,"+
+    "(SELECT MAX(s.created_at) FROM account_sessions s WHERE s.account_id=a.id) last_session_at "+
+    "FROM accounts a LEFT JOIN account_geography_assignments ag ON ag.account_id=a.id WHERE a.id=$1 LIMIT 1",[id]
+  );
+  if(!memberQ.rowCount)throw Object.assign(new Error('Member not found'),{status:404});
+  const [profiles,applications,authorizations,businesses,businessBindings,adminRoles,governance,security,adminEvents]=await Promise.all([
+    optionalMemberRows("SELECT role,status,enabled,visibility,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role",[id]),
+    optionalMemberRows(
+      "SELECT pa.id,pa.role,pa.status,pa.proposed_business_name,pa.territory_id,t.name territory_name,pa.submitted_at,pa.reviewed_at,pa.decision_reason,pa.created_at,pa.updated_at "+
+      "FROM profile_applications pa LEFT JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 ORDER BY pa.created_at DESC LIMIT 50",[id]),
+    optionalMemberRows(
+      "SELECT pa.id,pa.role,pa.status,pa.territory_id,t.name territory_name,pa.approved_at,pa.expires_at,pa.reason,pa.created_at,pa.updated_at "+
+      "FROM profile_authorizations pa LEFT JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 ORDER BY pa.created_at DESC LIMIT 50",[id]),
+    optionalMemberRows(
+      "SELECT b.id business_id,b.name,b.country_code,b.currency_code,b.territory_id,t.name territory_name,bm.membership_role,bm.active "+
+      "FROM business_memberships bm JOIN businesses b ON b.id=bm.business_id LEFT JOIN territories t ON t.id=b.territory_id "+
+      "WHERE bm.account_id=$1 ORDER BY bm.active DESC,b.name,b.id",[id]),
+    optionalMemberRows(
+      "SELECT business_id,role,status,is_primary,created_at,updated_at FROM profile_business_bindings WHERE account_id=$1 ORDER BY role,business_id",[id]),
+    optionalMemberRows(
+      "SELECT COALESCE(NULLIF(a.authority_rank,''),a.admin_role) admin_rank,a.status,a.country_code,a.territory_id,t.name territory_name,a.created_at "+
+      "FROM platform_admin_assignments a LEFT JOIN territories t ON t.id=a.territory_id WHERE a.account_id=$1 ORDER BY a.created_at DESC",[id]),
+    optionalMemberRows(
+      "SELECT e.event_code,e.role,e.created_at,t.name territory_name,actor.display_name actor_name "+
+      "FROM profile_governance_events e LEFT JOIN territories t ON t.id=e.territory_id LEFT JOIN accounts actor ON actor.id=e.actor_account_id "+
+      "WHERE e.target_account_id=$1 ORDER BY e.created_at DESC LIMIT 40",[id]),
+    optionalMemberRows(
+      "SELECT event_code,created_at FROM auth_security_events WHERE account_id=$1 ORDER BY created_at DESC LIMIT 30",[id]),
+    optionalMemberRows(
+      "SELECT e.event_code,e.permission_code,e.reason,e.created_at,actor.display_name actor_name "+
+      "FROM admin_audit_events e LEFT JOIN accounts actor ON actor.id=e.actor_account_id "+
+      "WHERE e.target_type='member_account' AND e.target_id=$1 ORDER BY e.created_at DESC LIMIT 30",[String(id)])
+  ]);
+  const member=memberQ.rows[0],timeline=[
+    {type:'account',code:'account_registered',label:'Account registered',created_at:member.created_at}
+  ];
+  for(const p of profiles){
+    timeline.push({type:'profile',code:'profile_created',label:'Profile created',role:p.role,created_at:p.created_at});
+    if(p.updated_at&&String(p.updated_at)!==String(p.created_at))timeline.push({type:'profile',code:'profile_updated',label:'Profile updated',role:p.role,status:p.status,created_at:p.updated_at});
+  }
+  for(const a of applications){
+    if(a.submitted_at)timeline.push({type:'application',code:'application_submitted',label:'Profile application submitted',role:a.role,territory_name:a.territory_name,created_at:a.submitted_at});
+    if(a.reviewed_at)timeline.push({type:'application',code:'application_reviewed',label:'Profile application reviewed',role:a.role,status:a.status,territory_name:a.territory_name,created_at:a.reviewed_at});
+  }
+  for(const a of authorizations)if(a.approved_at)timeline.push({type:'authorization',code:'profile_authorized',label:'Profile authorization granted',role:a.role,status:a.status,territory_name:a.territory_name,created_at:a.approved_at});
+  for(const e of governance)timeline.push({type:'governance',code:e.event_code,label:memberTimelineLabel(e.event_code),role:e.role,territory_name:e.territory_name,actor_name:e.actor_name,created_at:e.created_at});
+  for(const e of security)timeline.push({type:'security',code:e.event_code,label:memberTimelineLabel(e.event_code),created_at:e.created_at});
+  for(const e of adminEvents)timeline.push({type:'admin',code:e.event_code,label:memberTimelineLabel(e.event_code),actor_name:e.actor_name,reason:e.reason,created_at:e.created_at});
+  timeline.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+  const [canManageStatus,canRevokeSessions]=await Promise.all([
+    memberPermissionAvailable(ctx,id,'members.manage_status'),
+    memberPermissionAvailable(ctx,id,'members.sessions.revoke')
+  ]);
+  const bindingsByBusiness=new Map();
+  for(const binding of businessBindings){
+    const key=Number(binding.business_id);
+    if(!bindingsByBusiness.has(key))bindingsByBusiness.set(key,[]);
+    bindingsByBusiness.get(key).push({role:binding.role,status:binding.status,is_primary:Boolean(binding.is_primary),created_at:binding.created_at,updated_at:binding.updated_at});
+  }
+  const businessMemberships=businesses.map(b=>({...b,profile_bindings:bindingsByBusiness.get(Number(b.business_id))||[]}));
+  return{
+    member,profiles,applications,authorizations,businesses:businessMemberships,admin_roles:adminRoles,
+    security:{email_verified:Boolean(member.email_verified_at),phone_verified:Boolean(member.phone_verified_at),password_configured:Boolean(member.password_configured),active_session_count:Number(member.active_session_count||0),last_session_at:member.last_session_at},
+    controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions},
+    timeline:timeline.slice(0,80)
+  };
+}
+async function ensureMemberControlTarget(ctx,accountId,permission){
+  const scoped=await memberScopeRecord(ctx,accountId,permission),id=scoped.accountId;
+  if(id===Number(ctx.accountId))throw Object.assign(new Error('Use your own Security & access controls for your current Admin account'),{status:409});
+  const protectedAdmin=await pool.query(
+    "SELECT 1 FROM platform_admin_assignments WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='super_admin' AND status='active' LIMIT 1",[id]
+  );
+  if(protectedAdmin.rowCount)throw Object.assign(new Error('Active Super Admin accounts are protected from Members controls'),{status:409});
+  return scoped;
+}
+async function updateMemberAccountStatus(req,ctx,accountId){
+  const assignment=requirePermissionFromContext(ctx,'members.manage_status');
+  const scoped=await ensureMemberControlTarget(ctx,accountId,'members.manage_status'),id=scoped.accountId;
+  const status=clean(req.body?.status,30).toLowerCase(),reason=clean(req.body?.reason,1200);
+  if(!['active','suspended'].includes(status))throw Object.assign(new Error('Choose active or suspended'),{status:400});
+  if(req.body?.confirm!==true)throw Object.assign(new Error('Confirm this account action explicitly'),{status:400});
+  if(reason.length<8)throw Object.assign(new Error('Record a clear reason of at least 8 characters'),{status:400});
+  const client=await pool.connect();let before,sessionsRevoked=0;
+  try{
+    await client.query('BEGIN');
+    const q=await client.query("SELECT id,auth_status FROM accounts WHERE id=$1 FOR UPDATE",[id]);
+    if(!q.rowCount)throw Object.assign(new Error('Member not found'),{status:404});
+    before=q.rows[0];
+    if(before.auth_status!==status){
+      await client.query("UPDATE accounts SET auth_status=$1,updated_at=NOW() WHERE id=$2",[status,id]);
+      if(status==='suspended'){
+        const revoked=await client.query("UPDATE account_sessions SET revoked_at=NOW() WHERE account_id=$1 AND revoked_at IS NULL AND expires_at>NOW()",[id]);
+        sessionsRevoked=revoked.rowCount;
+      }
+    }
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}finally{client.release()}
+  const eventCode=status==='suspended'?'member_account_suspended':'member_account_reactivated';
+  await appendAdminAudit(pool,{
+    actorAccountId:ctx.accountId,assignmentId:assignment?.id||null,permission:'members.manage_status',
+    territoryId:assignment?.territory_id||null,targetType:'member_account',targetId:String(id),eventCode,
+    before:{auth_status:before.auth_status},after:{auth_status:status,sessions_revoked:sessionsRevoked},reason,correlationId:correlation(req)
+  });
+  return{ok:true,account_id:id,auth_status:status,sessions_revoked:sessionsRevoked};
+}
+async function revokeMemberSessions(req,ctx,accountId){
+  const assignment=requirePermissionFromContext(ctx,'members.sessions.revoke');
+  const scoped=await ensureMemberControlTarget(ctx,accountId,'members.sessions.revoke'),id=scoped.accountId;
+  const reason=clean(req.body?.reason,1200);
+  if(req.body?.confirm!==true)throw Object.assign(new Error('Confirm session revocation explicitly'),{status:400});
+  if(reason.length<8)throw Object.assign(new Error('Record a clear reason of at least 8 characters'),{status:400});
+  const revoked=await pool.query("UPDATE account_sessions SET revoked_at=NOW() WHERE account_id=$1 AND revoked_at IS NULL AND expires_at>NOW()",[id]);
+  await appendAdminAudit(pool,{
+    actorAccountId:ctx.accountId,assignmentId:assignment?.id||null,permission:'members.sessions.revoke',
+    territoryId:assignment?.territory_id||null,targetType:'member_account',targetId:String(id),eventCode:'member_sessions_revoked',
+    before:null,after:{sessions_revoked:revoked.rowCount},reason,correlationId:correlation(req)
+  });
+  return{ok:true,account_id:id,sessions_revoked:revoked.rowCount};
+}
+
 function dispatchBusinessAccounting(req,res,{headers={},afterSuccess=null}={}){
   if(!businessAccountingApp)return Promise.reject(Object.assign(new Error('Multi-business Accounting runtime is not ready'),{status:503}));
   const previousHeaders=new Map();
@@ -789,6 +954,10 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.get('/api/admin/members',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await adminMembers(req,ctx))}catch(e){next(e)}});
+
+app.get('/api/admin/members/:accountId',async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await adminMemberDetails(req.params.accountId,ctx))}catch(e){next(e)}});
+app.patch('/api/admin/members/:accountId/status',body,async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await updateMemberAccountStatus(req,ctx,req.params.accountId))}catch(e){next(e)}});
+app.post('/api/admin/members/:accountId/sessions/revoke',body,async(req,res,next)=>{try{const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);res.json(await revokeMemberSessions(req,ctx,req.params.accountId))}catch(e){next(e)}});
 
 app.get('/api/admin/delivery/pricing',(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));
 app.put('/api/admin/delivery/pricing',body,(req,res,next)=>forwardAdmin(req,res,'delivery.pricing.manage',null,'delivery_pricing').catch(next));

@@ -293,3 +293,30 @@
 
 /* ADMIN MEMBERS V1 */
 .memberSearchForm{margin:14px 0}.memberFilterGrid{display:grid;grid-template-columns:1fr;gap:10px}.memberSearchActions{display:flex;gap:8px;flex-wrap:wrap}.memberRow{gap:8px}.memberRow .rowHeader>div{display:grid;gap:3px;min-width:0}.memberId{font-size:10px;color:var(--muted);overflow-wrap:anywhere}.memberEmail{font-size:12px;overflow-wrap:anywhere}.memberProfiles{display:flex;gap:6px;flex-wrap:wrap}.memberProfiles span,.memberTestBadge{font-size:10px;border:1px solid var(--line);border-radius:999px;padding:5px 7px;background:var(--panel2)}.memberTestBadge{border-style:dashed}.memberMeta{display:flex;gap:6px 12px;flex-wrap:wrap;color:var(--muted);font-size:10px}.memberPaging{display:flex;justify-content:space-between;gap:10px;align-items:center;margin:10px 0;color:var(--muted);font-size:11px}.memberPaging>div{display:flex;gap:6px}.memberSummary .metric strong{font-size:18px;overflow-wrap:anywhere}@media(min-width:760px){.memberFilterGrid{grid-template-columns:minmax(220px,2fr) repeat(3,minmax(150px,1fr))}}@media(max-width:520px){.memberPaging{align-items:stretch;flex-direction:column}.memberPaging>div{display:grid;grid-template-columns:1fr 1fr}.memberSearchActions button{flex:1 1 140px}}
+
+
+/* ADMIN MEMBERS V2 */
+.memberRowActions{display:flex;justify-content:flex-end;margin-top:4px}
+.memberBack{margin:0 0 12px}
+.memberDetailHero{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:16px;border:1px solid var(--line);border-radius:16px;background:var(--panel2)}
+.memberDetailHero h2{margin:4px 0 3px;font-size:22px}
+.memberDetailHero p{margin:2px 0;overflow-wrap:anywhere}
+.memberEyebrow{font-size:10px;letter-spacing:.12em;color:var(--muted);font-weight:700}
+.memberDetailMetrics{margin:12px 0}
+.memberDetailSection,.memberDangerZone{margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--panel)}
+.memberDetailSection h3,.memberDangerZone h3{margin:0 0 10px}
+.memberFacts{display:grid;grid-template-columns:1fr;gap:8px}
+.memberFacts span{display:grid;gap:2px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);overflow-wrap:anywhere}
+.memberFacts b{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.memberDetailList{display:grid;gap:8px}
+.memberDetailItem{display:grid;gap:5px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.memberTimeline{display:grid;gap:0;border-left:2px solid var(--line);margin-left:7px;padding-left:14px}
+.memberTimelineItem{position:relative;padding:0 0 14px}
+.memberTimelineItem:before{content:"";position:absolute;left:-20px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--panel);border:2px solid var(--line)}
+.memberTimelineItem>div{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.memberTimelineItem>div span{font-size:10px;color:var(--muted);white-space:nowrap}
+.memberTimelineItem p{margin:4px 0 0}
+.memberDangerZone{border-style:dashed}
+.memberControlForm{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+@media(min-width:700px){.memberFacts{grid-template-columns:repeat(2,minmax(0,1fr))}.memberDetailMetrics{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:520px){.memberDetailHero{flex-direction:column}.memberDetailHero .status{align-self:flex-start}.memberTimelineItem>div{display:grid;gap:3px}.memberTimelineItem>div span{white-space:normal}.memberRowActions button{width:100%}}

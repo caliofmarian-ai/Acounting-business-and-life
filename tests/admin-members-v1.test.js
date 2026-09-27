@@ -26,7 +26,7 @@ test('Members uses a dedicated scoped Admin permission and delegable function',(
 
 test('Members API is server scoped and keeps Super Admin platform-wide',()=>{
   const block=between(server,'async function memberDirectoryScope','function dispatchBusinessAccounting');
-  assert.match(block,/scopeFromContext\(ctx,'members\.view','territory_id'\)/);
+  assert.match(block,/scopeFromContext\(ctx,permission,'territory_id'\)/);
   assert.match(block,/ctx\.superAdmin.*platformWide:true/);
   assert.match(block,/accountIdsInPsgcScope/);
   assert.match(block,/profile_authorizations/);
@@ -37,7 +37,7 @@ test('Members API is server scoped and keeps Super Admin platform-wide',()=>{
 });
 
 test('Members API supports bounded search filters and avoids sensitive account/session fields',()=>{
-  const block=between(server,'async function adminMembers','function dispatchBusinessAccounting');
+  const block=between(server,'async function adminMembers','async function optionalMemberRows');
   assert.match(block,/Math\.min\(100,Number\(req\.query\.limit\)\|\|50\)/);
   assert.match(block,/Math\.min\(5000,Number\(req\.query\.offset\)\|\|0\)/);
   assert.match(block,/personal_public_id personal_id/);
