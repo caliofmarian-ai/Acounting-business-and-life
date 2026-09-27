@@ -14,7 +14,8 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process
 const jsonBody = express.json({ limit: '14mb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
 const INCIDENT_STATUSES = new Set(['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated']);
-const RELATED_TYPES = new Set(['order','delivery','merchant','courier','service_job','service_provider','supplier','payment','other']);
+const RELATED_TYPES = new Set(['order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other']);
+const CONTEXTUAL_RELATED_TYPES = new Set(['merchant','marketplace_product','service_provider']);
 const IMAGE_MIMES = new Set(['image/jpeg','image/png','image/webp']);
 const PDF_MIME = 'application/pdf';
 const MAX_IMAGE_BYTES = 1_500_000;
@@ -91,6 +92,17 @@ function validateAttachments(raw){
   }).map(x=>{if(images>5)throw Object.assign(new Error('Maximum 5 images per incident'),{status:400});if(pdfs>1)throw Object.assign(new Error('Maximum 1 PDF per incident'),{status:400});if(totalBytes>10_000_000)throw Object.assign(new Error('Total incident evidence exceeds 10 MB'),{status:413});return x});
 }
 
+async function validateIncidentRelation(db,relatedType,relatedId){
+  if(!CONTEXTUAL_RELATED_TYPES.has(relatedType)||relatedId==null)return;
+  const queries={
+    merchant:`SELECT 1 FROM businesses WHERE id=$1`,
+    marketplace_product:`SELECT 1 FROM marketplace_products WHERE id=$1`,
+    service_provider:`SELECT 1 FROM service_provider_profiles WHERE account_id=$1`
+  };
+  const q=await db.query(queries[relatedType],[relatedId]);
+  if(!q.rowCount)throw Object.assign(new Error('The reported profile or listing no longer exists'),{status:404});
+}
+
 async function initDb(){
   await pool.query(`
     CREATE TABLE IF NOT EXISTS incident_reports (
@@ -107,8 +119,11 @@ async function initDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       resolved_at TIMESTAMPTZ,
       CHECK(status IN ('submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated')),
-      CHECK(related_type IN ('order','delivery','merchant','courier','service_job','service_provider','supplier','payment','other'))
+      CHECK(related_type IN ('order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other'))
     );
+    ALTER TABLE incident_reports DROP CONSTRAINT IF EXISTS incident_reports_related_type_check;
+    ALTER TABLE incident_reports ADD CONSTRAINT incident_reports_related_type_check
+      CHECK(related_type IN ('order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other'));
     CREATE INDEX IF NOT EXISTS incident_reports_reporter_idx ON incident_reports(reporter_account_id,submitted_at DESC);
     CREATE INDEX IF NOT EXISTS incident_reports_status_idx ON incident_reports(status,submitted_at DESC);
 
@@ -171,6 +186,7 @@ app.post('/api/incidents',body,async(req,res,next)=>{
     if(!category||description.length<10) throw Object.assign(new Error('Category and a clear description are required'),{status:400});
     if(!RELATED_TYPES.has(relatedType)) throw Object.assign(new Error('Unknown related incident type'),{status:400});
     if(relatedId!=null&&(!Number.isInteger(relatedId)||relatedId<1)) throw Object.assign(new Error('Related record ID must be a positive integer'),{status:400});
+    await validateIncidentRelation(client,relatedType,relatedId);
     const attachments=validateAttachments(req.body?.attachments);
     await client.query('BEGIN');
     const q=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status) VALUES($1,$2,$3,$4,$5,'submitted') RETURNING *`,[me.account.id,relatedType,relatedId,category,description]);

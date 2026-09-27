@@ -263,6 +263,21 @@ async function initDb(){
     UPDATE incident_reports i SET territory_id=b.territory_id
       FROM order_payments p JOIN orders o ON o.id=p.order_id JOIN businesses b ON b.id=o.business_id
       WHERE i.territory_id IS NULL AND i.related_type='payment' AND i.related_id=p.id;
+    UPDATE incident_reports i SET territory_id=b.territory_id
+      FROM businesses b
+      WHERE i.territory_id IS NULL AND i.related_type='merchant' AND i.related_id=b.id;
+    UPDATE incident_reports i SET territory_id=b.territory_id
+      FROM marketplace_products p JOIN businesses b ON b.id=p.business_id
+      WHERE i.territory_id IS NULL AND i.related_type='marketplace_product' AND i.related_id=p.id;
+    UPDATE incident_reports i SET territory_id=(
+      SELECT pa.territory_id FROM profile_authorizations pa
+      WHERE pa.account_id=i.related_id AND pa.role='service_provider' AND pa.status='active' AND pa.territory_id IS NOT NULL
+      ORDER BY pa.updated_at DESC,pa.id DESC LIMIT 1
+    )
+      WHERE i.territory_id IS NULL AND i.related_type='service_provider' AND EXISTS(
+        SELECT 1 FROM profile_authorizations pa
+        WHERE pa.account_id=i.related_id AND pa.role='service_provider' AND pa.status='active' AND pa.territory_id IS NOT NULL
+      );
   `);
 }
 async function inferTerritory(relatedType,relatedId,requested=null){
@@ -274,6 +289,9 @@ async function inferTerritory(relatedType,relatedId,requested=null){
   if(relatedType==='order'){const q=await pool.query(`SELECT b.territory_id FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1`,[relatedId]);return q.rows[0]?.territory_id?Number(q.rows[0].territory_id):null}
   if(relatedType==='delivery'){const q=await pool.query(`SELECT b.territory_id FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=o.business_id WHERE d.id=$1`,[relatedId]);return q.rows[0]?.territory_id?Number(q.rows[0].territory_id):null}
   if(relatedType==='payment'){const q=await pool.query(`SELECT b.territory_id FROM order_payments p JOIN orders o ON o.id=p.order_id JOIN businesses b ON b.id=o.business_id WHERE p.id=$1`,[relatedId]);return q.rows[0]?.territory_id?Number(q.rows[0].territory_id):null}
+  if(relatedType==='merchant'){const q=await pool.query(`SELECT territory_id FROM businesses WHERE id=$1`,[relatedId]);return q.rows[0]?.territory_id?Number(q.rows[0].territory_id):null}
+  if(relatedType==='marketplace_product'){const q=await pool.query(`SELECT b.territory_id FROM marketplace_products p JOIN businesses b ON b.id=p.business_id WHERE p.id=$1`,[relatedId]);return q.rows[0]?.territory_id?Number(q.rows[0].territory_id):null}
+  if(relatedType==='service_provider'){const q=await pool.query(`SELECT territory_id FROM profile_authorizations WHERE account_id=$1 AND role='service_provider' AND status='active' AND territory_id IS NOT NULL ORDER BY updated_at DESC,id DESC LIMIT 1`,[relatedId]);return q.rows[0]?.territory_id?Number(q.rows[0].territory_id):null}
   return null;
 }
 async function scopeClause(accountId,permission,column='territory_id'){
