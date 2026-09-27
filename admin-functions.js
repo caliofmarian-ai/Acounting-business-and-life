@@ -24,6 +24,12 @@ export const ADMIN_FUNCTION_BUNDLES = Object.freeze({
     assignable_to:['country_admin','territory_admin','specialist'],
     permissions:['admin.console','members.view','members.manage_status','members.sessions.revoke']
   }),
+  member_context_notes:Object.freeze({
+    code:'member_context_notes',label:'Member Context Notes',
+    description:'Scoped internal notes and tags for member coordination. Source-module context remains permission-gated separately.',
+    assignable_to:['country_admin','territory_admin','specialist'],
+    permissions:['admin.console','members.view','members.notes.manage']
+  }),
   profile_onboarding:Object.freeze({
     code:'profile_onboarding',label:'Profile Onboarding',
     description:'Invitations, application review, approvals and profile suspension.',
