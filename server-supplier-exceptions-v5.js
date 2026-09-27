@@ -34,15 +34,16 @@ async function supplierPoContext(pool,me,poId,requestedBusinessId=null){
   );
   if(!rows.length)throw httpError(404,'Purchase order not found');
   const po=rows[0];
-  if(po.quote_supplier_business_id!=null
-    &&Number(po.quote_supplier_business_id)!==Number(business.id)){
+  const canonicalSupplierBusinessId=po.supplier_business_id??po.quote_supplier_business_id??null;
+  if(canonicalSupplierBusinessId!=null
+    &&Number(canonicalSupplierBusinessId)!==Number(business.id)){
     throw httpError(404,'Purchase order is not attributed to this Supplier business');
   }
-  if(po.quote_supplier_business_id==null
+  if(canonicalSupplierBusinessId==null
     &&await activeSupplierBindingCount(pool,me.account.id)>1){
-    throw httpError(409,'Purchase order Supplier-business attribution is ambiguous for this multi-business account');
+    throw httpError(409,'Historical purchase order Supplier-business attribution is ambiguous and requires review');
   }
-  return{po,business};
+  return{po:{...po,resolved_supplier_business_id:canonicalSupplierBusinessId},business};
 }
 
 async function merchantPoBusiness(pool,me,poId){
