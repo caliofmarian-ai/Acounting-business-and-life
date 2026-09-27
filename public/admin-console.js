@@ -385,6 +385,12 @@ async function wireMembers(){
     const tagForm=document.getElementById('memberTagForm');
     if(tagForm)tagForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(tagForm),out=tagForm.querySelector('[data-member-tag-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/tags',{method:'POST',body:JSON.stringify({tag:String(fd.get('tag')||'').trim()})});if(out)out.innerHTML='<div class="notice">Tag saved and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     document.querySelectorAll('[data-member-remove-tag]').forEach(button=>button.onclick=async()=>{try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/tags/'+encodeURIComponent(button.dataset.memberRemoveTag),{method:'DELETE'});await renderActive()}catch(err){showError(err)}});
+    document.querySelectorAll('[data-member-jump]').forEach(button=>button.onclick=()=>{
+      const target=document.getElementById(button.dataset.memberJump);
+      if(!target)return;
+      if(target.tagName==='DETAILS')target.open=true;
+      target.scrollIntoView({behavior:'smooth',block:'start'});
+    });
     return;
   }
   const form=document.getElementById('memberSearchForm');
