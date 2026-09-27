@@ -1,10 +1,10 @@
 const ORDER_PROGRESS=['accepted','preparing','ready','completed'];
 let orderMe=null,orderWorkspace=null,productsCache=[],productsLoadError='',merchantBusinessId=null,ordersMode=null;
-const orderToken=()=>localStorage.getItem('abl_token')||'';
+const orderToken=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const h=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const php=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
 const nice=s=>String(s||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
-async function oapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(orderToken())headers.Authorization=`Bearer ${orderToken()}`;const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(b.error||`Request failed (${r.status})`);e.data=b;throw e}return b}
+async function oapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(b.error||`Request failed (${r.status})`);e.data=b;throw e}return b}
 function toast(msg){let t=document.getElementById('roleToast');if(t){t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}else alert(msg)}
 function ensureWorkspace(){
   const shell=document.getElementById('shell');if(!shell)return false;

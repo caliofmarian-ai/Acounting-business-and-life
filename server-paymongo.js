@@ -14,6 +14,7 @@ import { startEmbeddedPaymentCore,stopEmbeddedPaymentCore } from './server-payme
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {ensureQaPhTestContext} from './qa-ph-test-context.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {sessionSecurityMiddleware} from './session-cookie-core.js';
 
 const {Pool}=pg;
 const app=express();
@@ -47,6 +48,11 @@ app.use((_req,res,next)=>{
   res.setHeader('Content-Security-Policy-Report-Only',cspReportOnly);
   next();
 });
+
+// The public runtime terminates browser session transport here. Downstream
+// services continue to receive the existing internal bearer contract without
+// exposing the signed session token to browser JavaScript.
+app.use(sessionSecurityMiddleware);
 
 async function identity(req){const r=await authHardeningFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 

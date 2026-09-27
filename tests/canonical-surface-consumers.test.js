@@ -9,9 +9,10 @@ const roleModules=[
   'public/financial-documents-ui.js','public/business-accounting-ui.js'
 ];
 
-test('authentication stores only the session token and never a navigation role',()=>{
+test('authentication never persists browser bearer material or a navigation role',()=>{
   for(const path of ['public/auth-ui.js','public/auth-hardening-ui.js']){
     const source=read(path);
+    assert.doesNotMatch(source,/localStorage\.(?:getItem|setItem|removeItem)\(['"]abl_token['"]\)/,path);
     assert.doesNotMatch(source,/setItem\(['"]abl_active_role['"]/,path);
   }
 });

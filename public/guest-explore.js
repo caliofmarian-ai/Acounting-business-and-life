@@ -10,7 +10,7 @@ async function guestFetch(path){
   return body;
 }
 
-function authToken(){ return localStorage.getItem('abl_token') || ''; }
+function authToken(){ return window.ABLSession?.authenticated()?'cookie-session':''; }
 
 function ensureGuestEntry(){
   if(authToken() || document.getElementById('guestExploreBtn')) return;

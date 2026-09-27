@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-let token = localStorage.getItem('abl_token') || '';
+let token = false;
 let transactions = [];
 let inventory = [];
 let products = [];
@@ -26,7 +26,7 @@ const cacheKey = (key) => `abl_cache_${key}`;
 
 function setOnline(ok){const el=$('onlineState');if(!el)return;el.textContent=ok?'Online':'Offline';el.classList.toggle('offline',!ok)}
 async function api(path,options={}){
-  const headers={'Content-Type':'application/json',...(options.headers||{})};if(token)headers.Authorization=`Bearer ${token}`;
+  const headers={'Content-Type':'application/json',...(options.headers||{})};
   try{
     const r=await fetch(path,{...options,headers});
     if(r.status===401){logout();const e=new Error('Please log in again.');e.status=401;throw e}
@@ -37,7 +37,7 @@ async function api(path,options={}){
 async function cachedJson(path,key){try{const data=await api(path);localStorage.setItem(cacheKey(key),JSON.stringify(data));return data}catch(e){if(e.status===401)throw e;const cached=localStorage.getItem(cacheKey(key));if(cached)return JSON.parse(cached);throw e}}
 let baseActiveRole=window.BusinessLifeProfileState?.activeRole||null;
 function isMerchantBaseActive(){return baseActiveRole==='merchant'}
-function logout(){token='';baseActiveRole=null;localStorage.removeItem('abl_token');$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
+function logout(){token=false;baseActiveRole=null;window.ABLSession?.clearReadableSession();$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
 function showShell(){$('login').classList.add('hidden');$('shell').classList.remove('hidden')}
 function typeLabel(t){return({sale:'Sale',business_expense:'Business expense',money_received:'Money received',personal_withdrawal:'Personal withdrawal',adjustment:'Adjustment'})[t]||t}
 function accountLabel(a){return({cash:'Cash',gcash:'GCash',bank:'Bank',other:'Other'})[a]||a}
@@ -52,7 +52,7 @@ function txRow(tx,editable=false){
 function remitRow(r){const d=document.createElement('div');d.className='listRow';const diff=Number(r.difference_php||0);d.innerHTML=`<div class="rowMain"><strong>${esc(r.provider||'Remittance')} • ${esc(r.sent_currency)} ${Number(r.sent_amount).toFixed(2)}</strong><small>Received ${esc(money(r.received_php))} into ${esc(accountLabel(r.account))}${r.reference?` • ${esc(r.reference)}`:''}</small></div><div class="rowRight"><span class="${diff<0?'negative':diff>0?'positive':''}">${r.expected_php!=null?`Δ ${esc(money(diff))}`:''}</span></div>`;return d}
 function analysisRows(data){if(!data.categories?.length)return[emptyRow('No spending recorded in this period.')];return data.categories.map(x=>{const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(x.category)}</strong><small>${x.kind==='business'?'Business':'Personal'}</small></div><span>${esc(money(x.total))}</span>`;return d})}
 
-$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';try{const r=await api('/api/login',{method:'POST',body:JSON.stringify({pin:$('pin').value})});token=r.token;localStorage.setItem('abl_token',token);showShell()}catch(err){$('loginError').textContent=err.message}});
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';try{await api('/api/login',{method:'POST',body:JSON.stringify({pin:$('pin').value})});token=Boolean(window.ABLSession?.authenticated());showShell()}catch(err){$('loginError').textContent=err.message}});
 
 let merchantTodayCache=null;
 let merchantTodayPromise=null;
@@ -320,7 +320,7 @@ document.querySelectorAll('[data-view-link]').forEach(b=>b.onclick=()=>setView(b
 document.querySelectorAll('[data-today-action]').forEach(b=>b.onclick=()=>openMerchantAction(b.dataset.todayAction));
 if($('todayRefresh'))$('todayRefresh').onclick=()=>{invalidateMerchantToday();loadMerchantToday({force:true}).catch(()=>{})};
 if($('todayRetry'))$('todayRetry').onclick=()=>{invalidateMerchantToday();loadMerchantToday({force:true}).catch(()=>{})};
-$('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv',{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}catch(err){alert(err.message)}};
+$('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv');if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}catch(err){alert(err.message)}};
 document.addEventListener('abl:profile-state',event=>{
   baseActiveRole=event.detail?.activeRole||null;
   if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
@@ -338,10 +338,13 @@ window.addEventListener('online',()=>{
 window.addEventListener('offline',()=>setOnline(false));
 setOnline(navigator.onLine);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
-if(token){
-  showShell();
-  if(window.BusinessLifeProfileState){
-    baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
-    if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+(window.ABLSession?.ready||Promise.resolve()).then(()=>{
+  token=Boolean(window.ABLSession?.authenticated());
+  if(token){
+    showShell();
+    if(window.BusinessLifeProfileState){
+      baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
+      if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+    }
   }
-}
+});

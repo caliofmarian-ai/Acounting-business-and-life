@@ -47,9 +47,9 @@ function referralRegistrationContext(){
   };
 }
 
-function authToken(){return localStorage.getItem('abl_token') || ''}
+function authToken(){return Boolean(window.ABLSession?.authenticated())}
 async function authFetch(path, options={}){
-  const headers={'Content-Type':'application/json',...(options.headers||{})}; const t=authToken(); if(t)headers.Authorization=`Bearer ${t}`;
+  const headers={'Content-Type':'application/json',...(options.headers||{})};
   const r=await fetch(path,{...options,headers}); const body=await r.json().catch(()=>({}));
   if(!r.ok){const error=new Error(body.error||`Request failed (${r.status})`);error.status=r.status;throw error}
   return body;
@@ -122,13 +122,13 @@ async function submitAuth(e){
   try{
     const referralConversion=isRegistration?referralRegistrationContext():null;
     const payload=isRegistration?{display_name:document.getElementById('authName').value,email,password,phone:document.getElementById('authPhone').value,address:document.getElementById('authAddress').value,home_psgc_code:document.getElementById('authHomePsgcCode').value,adult_eligibility_attested:Boolean(document.getElementById('authAdultEligibility')?.checked),adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,...(referralConversion?{referral_conversion:referralConversion}:{})}:{email,password};
-    const result=await authFetch(isRegistration?'/api/auth/register':'/api/auth/login',{method:'POST',body:JSON.stringify(payload)});localStorage.setItem('abl_token',result.token);
+    await authFetch(isRegistration?'/api/auth/register':'/api/auth/login',{method:'POST',body:JSON.stringify(payload)});
     if(!isRegistration){location.reload();return}
     const verification=await authFetch('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);showRegistrationSuccess(verification);
   }catch(ex){err.textContent=ex.message;submit.disabled=false}
 }
 
-async function logoutAccount(){try{await authFetch('/api/auth/logout',{method:'POST',body:'{}'})}catch{}localStorage.removeItem('abl_token');location.reload()}
+async function logoutAccount(){try{await authFetch('/api/auth/logout',{method:'POST',body:'{}'})}catch{}window.ABLSession?.clearReadableSession();location.reload()}
 function securityToast(message){
   const toast=document.getElementById('roleToast');if(!toast)return;
   toast.textContent=message;toast.classList.add('show');
@@ -184,7 +184,7 @@ function decorateDrawer(){
   section.querySelector('#forgotPasswordButton')?.addEventListener('click',openPasswordRecovery);
 }
 function showExpiredSessionLogin(){
-  localStorage.removeItem('abl_token');
+  window.ABLSession?.clearReadableSession();
   currentProfile=null;
   document.getElementById('shell')?.classList.add('hidden');
   document.getElementById('login')?.classList.remove('hidden');
@@ -203,7 +203,7 @@ function guardNonOwnerMerchant(){
   document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');const hub=document.getElementById('roleHub');if(!hub)return;hub.innerHTML=`<div class="merchantMigrationNotice"><h2>Your Merchant profile is ready for setup.</h2><p>Your store identity can be created now. The legacy single-business accounting ledger stays isolated until the multi-business workspace migration is complete, so another merchant can never see the original merchant's finances.</p></div>`;hub.classList.remove('hidden');
 }
 function observeDrawer(){const panel=document.getElementById('profileDrawerPanel');if(!panel)return setTimeout(observeDrawer,100);new MutationObserver(()=>decorateDrawer()).observe(panel,{childList:true,subtree:false})}
-async function boot(){ensureAuthChoices();ensureModal();observeDrawer();if(authToken()){await loadProfile();decorateDrawer();setTimeout(guardNonOwnerMerchant,150);const shell=document.getElementById('shell');if(shell)new MutationObserver(()=>setTimeout(guardNonOwnerMerchant,30)).observe(shell,{attributes:true,attributeFilter:['class']});}}
+async function boot(){await (window.ABLSession?.ready||Promise.resolve());ensureAuthChoices();ensureModal();observeDrawer();if(authToken()){await loadProfile();decorateDrawer();setTimeout(guardNonOwnerMerchant,150);const shell=document.getElementById('shell');if(shell)new MutationObserver(()=>setTimeout(guardNonOwnerMerchant,30)).observe(shell,{attributes:true,attributeFilter:['class']});}}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 document.addEventListener('abl:auth-expired',showExpiredSessionLogin);
 document.addEventListener('abl:account-settings-rendered',event=>{if(event.detail?.view==='security')decorateDrawer()},{passive:true});

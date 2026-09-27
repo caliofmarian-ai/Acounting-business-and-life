@@ -1,9 +1,7 @@
-const ABL_AUTH_TOKEN='abl_token';
 const ADULT_ELIGIBILITY_POLICY_VERSION='ph-adult-eligibility-v1';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-function token(){return localStorage.getItem(ABL_AUTH_TOKEN)||''}
-function isV2(){const t=token();return t.startsWith('v2.')&&t.split('.').length===5}
-async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(token())headers.Authorization=`Bearer ${token()}`;const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}
+function sessionActive(){return Boolean(window.ABLSession?.authenticated())}
+async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}
 function clearQuery(){history.replaceState({},'',location.pathname)}
 function msg(text,kind=''){const el=document.getElementById('modernAuthMessage');if(el){el.textContent=text||'';el.className=`modernAuthMessage ${kind}`}}
 let status={google_enabled:false,email_delivery_configured:false,preview_link_enabled:false,qa_preview_context:{enabled:false}};
@@ -57,8 +55,8 @@ function render(mode){
   if(mode==='login'){document.getElementById('modernLogin').onsubmit=login;document.getElementById('forgotBtn').onclick=()=>renderForgot()}
   else{document.getElementById('modernRegister').onsubmit=register;bindModernBarangayPicker()}
 }
-async function login(e){e.preventDefault();msg('Signing in…');try{const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:document.getElementById('modernEmail').value,password:document.getElementById('modernPassword').value})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);location.reload()}catch(e){msg(e.message,'error')}}
-async function register(e){e.preventDefault();msg('Creating account…');try{const r=await api('/api/auth/register',{method:'POST',body:JSON.stringify({display_name:document.getElementById('regName').value,email:document.getElementById('regEmail').value,password:document.getElementById('regPassword').value,phone:document.getElementById('regPhone').value,address:document.getElementById('regAddress').value,home_psgc_code:document.getElementById('regHomePsgcCode').value,adult_eligibility_attested:Boolean(document.getElementById('regAdultEligibility')?.checked),adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,qa_remote_test:Boolean(document.getElementById('regQaRemoteTest')?.checked)})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);const v=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);if(v?.preview_verify_url){document.getElementById('modernAuthBody').innerHTML=`<div class="modernSuccess"><h2>Account created</h2><p>For this preview you can open the verification link directly.</p><a href="${esc(v.preview_verify_url)}">Verify email</a><button id="continueApp" class="modernPrimary">Continue to app</button></div>`;document.getElementById('continueApp').onclick=()=>location.reload()}else location.reload()}catch(e){msg(e.message,'error')}}
+async function login(e){e.preventDefault();msg('Signing in…');try{await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:document.getElementById('modernEmail').value,password:document.getElementById('modernPassword').value})});location.reload()}catch(e){msg(e.message,'error')}}
+async function register(e){e.preventDefault();msg('Creating account…');try{await api('/api/auth/register',{method:'POST',body:JSON.stringify({display_name:document.getElementById('regName').value,email:document.getElementById('regEmail').value,password:document.getElementById('regPassword').value,phone:document.getElementById('regPhone').value,address:document.getElementById('regAddress').value,home_psgc_code:document.getElementById('regHomePsgcCode').value,adult_eligibility_attested:Boolean(document.getElementById('regAdultEligibility')?.checked),adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,qa_remote_test:Boolean(document.getElementById('regQaRemoteTest')?.checked)})});const v=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);if(v?.preview_verify_url){document.getElementById('modernAuthBody').innerHTML=`<div class="modernSuccess"><h2>Account created</h2><p>For this preview you can open the verification link directly.</p><a href="${esc(v.preview_verify_url)}">Verify email</a><button id="continueApp" class="modernPrimary">Continue to app</button></div>`;document.getElementById('continueApp').onclick=()=>location.reload()}else location.reload()}catch(e){msg(e.message,'error')}}
 function renderForgot({email='',returnToApp=false}={}){const body=document.getElementById('modernAuthBody');setTab('none');body.innerHTML=`<div class="modernBackRow"><button id="backLogin" class="modernBack">‹</button><div><h2>Reset password</h2><p>Enter the email used for your account.</p></div></div><form id="forgotForm" class="modernAuthForm"><label>Email<input id="forgotEmail" type="email" autocomplete="email" value="${esc(email)}" required></label><button class="modernPrimary">Send reset instructions</button></form>`;document.getElementById('backLogin').onclick=()=>returnToApp?location.reload():render('login');document.getElementById('forgotForm').onsubmit=async e=>{e.preventDefault();msg('Preparing reset…');try{const r=await api('/api/auth/forgot-password',{method:'POST',body:JSON.stringify({email:document.getElementById('forgotEmail').value})});if(r.preview_reset_url){body.innerHTML=`<div class="modernSuccess"><h2>Reset prepared</h2><p>${esc(r.message)}</p><a href="${esc(r.preview_reset_url)}">Open preview reset link</a></div>`}else{body.innerHTML=`<div class="modernSuccess"><h2>Check your email</h2><p>${esc(r.message)}</p></div>`}msg('')}catch(e){msg(e.message,'error')}}}
 function openPasswordRecovery(email=''){
   document.getElementById('shell')?.classList.add('hidden');
@@ -78,12 +76,12 @@ function renderVerificationResult(state){
   root.innerHTML=`<section class="modernAuthCard"><div class="modernSuccess"><h2>Email verified</h2><p>${explanation}</p>${different?'<button id="verificationKeepSession" class="modernPrimary">Keep current account</button><button id="verificationSignIn" class="modernLinkBtn">Sign out and sign in to verified account</button>':same?'<button id="verificationContinue" class="modernPrimary">Continue to account</button>':'<button id="verificationSignIn" class="modernPrimary">Sign in</button>'}</div></section>`;
   document.getElementById('verificationContinue')?.addEventListener('click',()=>location.reload());
   document.getElementById('verificationKeepSession')?.addEventListener('click',()=>location.reload());
-  document.getElementById('verificationSignIn')?.addEventListener('click',()=>{localStorage.removeItem(ABL_AUTH_TOKEN);location.reload()});
+  document.getElementById('verificationSignIn')?.addEventListener('click',async()=>{try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}window.ABLSession?.clearReadableSession();location.reload()});
 }
 async function verifyFromUrl(raw){try{const r=await api('/api/auth/email-verification/verify',{method:'POST',body:JSON.stringify({token:raw})});clearQuery();renderVerificationResult(r.verification_session)}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
-async function oauthHandoff(raw){try{const r=await api('/api/auth/oauth/handoff',{method:'POST',body:JSON.stringify({code:raw})});localStorage.setItem(ABL_AUTH_TOKEN,r.token);clearQuery();location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
+async function oauthHandoff(raw){try{await api('/api/auth/oauth/handoff',{method:'POST',body:JSON.stringify({code:raw})});clearQuery();location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
 async function decorateSecurity(){
-  if(!isV2())return;
+  if(!sessionActive())return;
   const panel=document.getElementById('accountSecurityMount');if(!panel)return;
   const account=window.BusinessLifeProfileState?.snapshot?.account;if(!account)return;
   const protectionMount=document.getElementById('accountProtectionMount')||panel;
@@ -127,13 +125,13 @@ async function decorateSecurity(){
       try{await api('/api/auth/step-up/password',{method:'POST',body:JSON.stringify({password})});out.textContent='Identity confirmed. Sensitive actions are available for a short period on this session.';const button=sensitive.querySelector('button[type="submit"]');if(button)button.disabled=true;input.disabled=true}catch(error){input.value='';out.textContent=error.message}
     });
     sessions.querySelector('#revokeOthers').onclick=async()=>{const out=sessions.querySelector('#authSessionMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}};
-    sessions.querySelector('#signOutCurrent').onclick=async event=>{event.currentTarget.disabled=true;try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}localStorage.removeItem(ABL_AUTH_TOKEN);location.reload()};
+    sessions.querySelector('#signOutCurrent').onclick=async event=>{event.currentTarget.disabled=true;try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}window.ABLSession?.clearReadableSession();location.reload()};
   }catch{}finally{delete panel.dataset.authSecurityDecorating}
 }
 
 function watchDrawer(){document.addEventListener('abl:account-settings-rendered',event=>{if(event.detail?.view==='security')decorateSecurity().catch(()=>{})});document.addEventListener('abl:open-password-recovery',event=>openPasswordRecovery(event.detail?.email||''))}
 async function boot(){
-  if(token()&&!isV2())localStorage.removeItem(ABL_AUTH_TOKEN);
+  await (window.ABLSession?.ready||Promise.resolve());
   const params=new URLSearchParams(location.search);
   if(params.get('verify_token'))return verifyFromUrl(params.get('verify_token'));
   if(params.get('oauth_handoff'))return oauthHandoff(params.get('oauth_handoff'));

@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-let token = localStorage.getItem('abl_token') || '';
+let token = false;
 let transactions = [];
 const money = (v) => new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP',maximumFractionDigits:2}).format(Number(v||0));
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -11,7 +11,6 @@ function setOnline(ok){
 }
 async function api(path, options={}) {
   const headers = {'Content-Type':'application/json', ...(options.headers||{})};
-  if (token) headers.Authorization = `Bearer ${token}`;
   try {
     const r = await fetch(path, {...options, headers});
     if (r.status === 401) { logout(); const e=new Error('Please log in again.'); e.status=401; throw e; }
@@ -26,7 +25,7 @@ async function cachedJson(path,key){
 }
 let baseActiveRole=window.BusinessLifeProfileState?.activeRole||null;
 function isMerchantBaseActive(){return baseActiveRole==='merchant'}
-function logout(){ token=''; baseActiveRole=null; localStorage.removeItem('abl_token'); $('shell').classList.add('hidden'); $('login').classList.remove('hidden'); }
+function logout(){ token=false; baseActiveRole=null; window.ABLSession?.clearReadableSession(); $('shell').classList.add('hidden'); $('login').classList.remove('hidden'); }
 function showShell(){ $('login').classList.add('hidden'); $('shell').classList.remove('hidden'); }
 function typeLabel(t){return ({sale:'Sale',business_expense:'Business expense',money_received:'Money received',personal_withdrawal:'Personal withdrawal',adjustment:'Adjustment'})[t]||t;}
 function accountLabel(a){return ({cash:'Cash',gcash:'GCash',bank:'Bank',other:'Other'})[a]||a;}
@@ -53,7 +52,7 @@ function analysisRows(data){
 
 $('loginForm').addEventListener('submit', async e=>{
   e.preventDefault(); $('loginError').textContent='';
-  try{const r=await api('/api/login',{method:'POST',body:JSON.stringify({pin:$('pin').value})}); token=r.token; localStorage.setItem('abl_token',token); showShell();}
+  try{await api('/api/login',{method:'POST',body:JSON.stringify({pin:$('pin').value})}); token=Boolean(window.ABLSession?.authenticated()); showShell();}
   catch(err){$('loginError').textContent=err.message;}
 });
 
@@ -170,7 +169,7 @@ function setView(name){
 }
 document.querySelectorAll('.bottomNav button').forEach(b=>b.onclick=()=>setView(b.dataset.view));
 document.querySelectorAll('[data-go="add"]').forEach(b=>b.onclick=()=>setView('Add'));
-$('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv',{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}catch(err){alert(err.message);}};
+$('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv');if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}catch(err){alert(err.message);}};
 
 document.addEventListener('abl:profile-state',event=>{
   baseActiveRole=event.detail?.activeRole||null;
@@ -180,10 +179,13 @@ window.addEventListener('online',()=>{setOnline(true);if(isMerchantBaseActive())
 window.addEventListener('offline',()=>setOnline(false));
 setOnline(navigator.onLine);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(reg=>reg.update().catch(()=>{})).catch(()=>{});
-if (token) {
-  showShell();
-  if(window.BusinessLifeProfileState){
-    baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
-    if(isMerchantBaseActive())refreshAll();
+(window.ABLSession?.ready||Promise.resolve()).then(()=>{
+  token=Boolean(window.ABLSession?.authenticated());
+  if(token){
+    showShell();
+    if(window.BusinessLifeProfileState){
+      baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
+      if(isMerchantBaseActive())refreshAll();
+    }
   }
-}
+});

@@ -47,20 +47,18 @@ if(PERF_TRACE_ENABLED){
   });
 }
 
-const token = () => localStorage.getItem('abl_token') || '';
+const token = () => Boolean(window.ABLSession?.authenticated());
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
 async function profileApi(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  const t = token();
-  if (t) headers.Authorization = `Bearer ${t}`;
   const controller = options.signal ? null : new AbortController();
   const timeout = controller ? setTimeout(() => controller.abort(), 10000) : null;
   try {
     const response = await fetch(path, { ...options, headers, signal: options.signal || controller?.signal });
     const data = await response.json().catch(() => ({}));
     if (response.status === 401) {
-      localStorage.removeItem('abl_token');
+      window.ABLSession?.clearReadableSession();
       snapshot=null;profileFetchedAt=0;adminContext=null;adminContextFetchedAt=0;activeRole=null;activeSurface='account';
       document.getElementById('shell')?.classList.add('hidden');
       document.getElementById('login')?.classList.remove('hidden');
@@ -1570,7 +1568,7 @@ async function signOutCurrentAccount(button){
   if(button){button.disabled=true;button.setAttribute('aria-busy','true')}
   showToast('Signing out…');
   try{await profileApi('/api/auth/logout',{method:'POST',body:'{}'})}catch(_error){}
-  localStorage.removeItem('abl_token');
+  window.ABLSession?.clearReadableSession();
   sessionStorage.removeItem('abl_flash');
   snapshot=null;profileFetchedAt=0;adminContext=null;adminContextFetchedAt=0;activeRole=null;activeSurface='account';
   window.location.replace('/');
@@ -1637,7 +1635,8 @@ function onShellVisibility() {
   if (shell.classList.contains('hidden')) closeDrawer();
 }
 
-function boot() {
+async function boot() {
+  await (window.ABLSession?.ready||Promise.resolve());
   perfMark('shell_boot_start');
   if (!ensureShellChrome()) return setTimeout(boot, 80);
   perfMark('shell_chrome_ready');

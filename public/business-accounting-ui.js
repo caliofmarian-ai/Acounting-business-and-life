@@ -1,11 +1,9 @@
-const ablToken = () => localStorage.getItem('abl_token') || '';
+const ablToken = () => window.ABLSession?.authenticated()?'cookie-session':'';
 const originalFetch = window.fetch.bind(window);
 let accountingState = { role: null, activeBusinessId: null, businesses: [] };
 
 async function api(path, options={}) {
   const headers={ 'Content-Type':'application/json', ...(options.headers||{}) };
-  const token=ablToken();
-  if(token) headers.Authorization=`Bearer ${token}`;
   const response=await originalFetch(path,{...options,headers});
   const data=await response.json().catch(()=>({}));
   if(!response.ok) throw new Error(data.error||`Request failed (${response.status})`);

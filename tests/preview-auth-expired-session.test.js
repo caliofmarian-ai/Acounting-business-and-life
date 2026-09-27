@@ -8,7 +8,8 @@ const auth=read('public/auth-ui.js');
 
 test('stale auth tokens never leave preview on an empty authenticated shell',()=>{
   assert.match(shell,/response\.status === 401/);
-  assert.match(shell,/localStorage\.removeItem\('abl_token'\)/);
+  assert.match(shell,/window\.ABLSession\?\.clearReadableSession\(\)/);
+  assert.doesNotMatch(shell,/localStorage\.(?:getItem|setItem|removeItem)\('abl_token'\)/);
   assert.match(shell,/document\.getElementById\('shell'\)\?\.classList\.add\('hidden'\)/);
   assert.match(shell,/document\.getElementById\('login'\)\?\.classList\.remove\('hidden'\)/);
   assert.match(shell,/abl:auth-expired/);

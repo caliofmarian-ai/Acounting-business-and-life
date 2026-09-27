@@ -61,7 +61,9 @@ test('Promotion Center belongs to the selected profile settings, not the avatar 
 test('Promotion Center loads the authenticated account identity and never defaults to demo identity', () => {
   const page = read('public/referral/promotion-center.html');
   assert.match(page, /\/api\/growth\/referral\?profile=/);
-  assert.match(page, /Authorization:'Bearer '\+auth/);
+  assert.match(page, /<script src="\/session-security\.js"><\/script>/);
+  assert.match(page, /window\.ABLSession\?\.authenticated\(\)/);
+  assert.doesNotMatch(page, /Authorization:'Bearer '|localStorage\.getItem\('abl_token'\)/);
   assert.match(page, /Sign in required/);
   assert.doesNotMatch(page, /r1_DemoReferral/);
   assert.match(page, /direct referral sending stays disabled/i);

@@ -9,6 +9,7 @@ import { sendTransientEmailNotification } from './notification-core.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
 import {AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,resolveV2SessionStepUp,resolveV2SessionToken} from './auth-session-core.js';
 import {incidentsFetch,startEmbeddedIncidents,stopEmbeddedIncidents} from './server-incidents.js';
+import {clearBrowserSessionCookies,issueBrowserSessionCookies,sessionCredentialFromHeaders,sessionSecurityMiddleware} from './session-cookie-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -37,6 +38,8 @@ const attempts = new Map();
 let incidentsApp=null;
 let incidentsReady=false;
 let shuttingDown = false;
+
+app.use(sessionSecurityMiddleware);
 
 function clean(value, max = 500) { return String(value ?? '').trim().slice(0, max); }
 function normalizeEmail(value) { return clean(value, 160).toLowerCase(); }
@@ -85,7 +88,7 @@ async function createSession(accountId, req) {
   });
 }
 async function optionalV2(req) {
-  const token=req.headers.authorization?.replace(/^Bearer\s+/i,'')||'';
+  const token=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
   return resolveV2SessionToken(pool,TOKEN_SECRET,token);
 }
 async function requireV2(req) {
@@ -320,6 +323,7 @@ app.post('/api/auth/reset-password', jsonBody, async (req, res, next) => {
     });
     await maybeRetireOwnerPin(used.account_id);
     await audit(used.account_id, 'password_reset_completed', req);
+    clearBrowserSessionCookies(res);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -495,7 +499,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
 });
 app.post('/api/auth/oauth/handoff', jsonBody, async (req, res, next) => {
   const code = clean(req.body?.code, 300); if (!code) return res.status(400).json({ error: 'OAuth handoff code is required' });
-  const client = await pool.connect(); try { await client.query('BEGIN'); const q = await client.query(`SELECT * FROM auth_handoffs WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() FOR UPDATE`, [sha256(code)]); if (!q.rowCount) throw Object.assign(new Error('Google sign-in handoff expired'), { status: 400 }); const row = q.rows[0]; await client.query(`UPDATE auth_handoffs SET used_at=NOW() WHERE code_hash=$1`, [sha256(code)]); await client.query('COMMIT'); const session = await createSession(row.account_id, req); res.json({ token: session.token }); } catch (e) { await client.query('ROLLBACK').catch(() => {}); next(e); } finally { client.release(); }
+  const client = await pool.connect(); try { await client.query('BEGIN'); const q = await client.query(`SELECT * FROM auth_handoffs WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() FOR UPDATE`, [sha256(code)]); if (!q.rowCount) throw Object.assign(new Error('Google sign-in handoff expired'), { status: 400 }); const row = q.rows[0]; await client.query(`UPDATE auth_handoffs SET used_at=NOW() WHERE code_hash=$1`, [sha256(code)]); await client.query('COMMIT'); const session = await createSession(row.account_id, req); issueBrowserSessionCookies(res,session.token); res.json({ok:true,auth_transport:'cookie',expires_in_hours:24}); } catch (e) { await client.query('ROLLBACK').catch(() => {}); next(e); } finally { client.release(); }
 });
 
 app.use('/api', async (req, res, next) => {

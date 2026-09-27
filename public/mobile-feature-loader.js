@@ -9,7 +9,7 @@ const FEATURE_SPECS={
 
 const featurePromises=new Map();
 
-const token=()=>localStorage.getItem('abl_token')||'';
+const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 
 function toast(message){
   const existing=document.getElementById('roleToast');

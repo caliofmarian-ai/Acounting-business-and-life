@@ -1,5 +1,5 @@
 let settingsData=null,settingsWorkspace=null,settingsMode='profile',profileSettingsView='home',accountMoneyReturn='account',selectedSettingsRole='',selectedSettingsBusinessId=null,editingFinancialAccountId=null;
-const stoken=()=>localStorage.getItem('abl_token')||'';
+const stoken=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const sh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const snice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const smoney=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -20,7 +20,7 @@ const PROFILE_SETTINGS_COPY={
   courier:{title:'Delivery settings',intro:'Vehicle, availability, territory and earnings preferences for this Delivery profile.',identity:'Delivery identity and eligibility'},
   service_provider:{title:'Local Services settings',intro:'Public presentation, service area and work preferences for this Local Services profile.',identity:'Public service identity'}
 };
-async function sapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};if(stoken())headers.Authorization='Bearer '+stoken();const r=await fetch(path,{cache:'no-store',...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
+async function sapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{cache:'no-store',...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
 function stoast(msg){const t=document.getElementById('roleToast');if(t){t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000)}}
 function ensureSettingsWorkspace(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('profileSettingsWorkspace')){settingsWorkspace=document.createElement('section');settingsWorkspace.id='profileSettingsWorkspace';settingsWorkspace.className='profileSettingsWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',settingsWorkspace)}else settingsWorkspace=document.getElementById('profileSettingsWorkspace');return true}
 function injectSettingsEntry(){const panel=document.getElementById('profileDrawerPanel');if(!panel||panel.querySelector('#profileSettingsButton'))return;const accountForm=panel.querySelector('#accountIdentityForm');const before=accountForm?.closest('.drawerSection')||null;const section=document.createElement('section');section.className='drawerSection';section.innerHTML='<h3>Settings</h3><button id="profileSettingsButton" class="settingsAvatarEntry" type="button"><span>⚙️</span><span><strong>Settings</strong><small>Payments, banking and profile preferences</small></span></button>';if(before)panel.insertBefore(section,before);else panel.appendChild(section);section.querySelector('#profileSettingsButton').onclick=openProfileSettings}
