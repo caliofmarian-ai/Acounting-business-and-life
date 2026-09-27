@@ -9,12 +9,13 @@ async function api(path,options={}){
   return data;
 }
 const root=document.getElementById('adminRoot');
-let state={me:null,catalog:null,overview:null,active:'overview',assignments:null,renderRequest:0};
+let state={me:null,catalog:null,overview:null,active:'overview',assignments:null,renderRequest:0,memberHubTab:null};
 
+const MEMBER_PROFILE_REVIEW_PERMISSIONS=['merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider'];
+const MEMBER_PROFILE_GOVERNANCE_PERMISSIONS=['profiles.invite_merchant','profiles.invite_supplier','profiles.invite_courier',...MEMBER_PROFILE_REVIEW_PERMISSIONS,'profile.suspend'];
 const modules=[
   {id:'overview',label:'Overview',any:['admin.console']},
-  {id:'profiles',label:'Profiles',any:['profiles.invite_merchant','profiles.invite_supplier','profiles.invite_courier','merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider','profile.suspend']},
-  {id:'members',label:'Members',any:['members.view']},
+  {id:'members',label:'Members',any:['members.view',...MEMBER_PROFILE_GOVERNANCE_PERMISSIONS]},
   {id:'delivery',label:'Delivery',any:['delivery.dispatch.manage','delivery.pricing.manage','courier.verify']},
   {id:'support',label:'Support',any:['support.manage']},
   {id:'safety',label:'Trust & Safety',any:['incident.triage']},
@@ -147,8 +148,8 @@ async function openAdminApplication(id){
     const adultEligibilityReview=adultEligibility.company_test_exempt
       ?'<section class="card"><h3>Adult eligibility</h3><p><strong>Controlled QA exemption.</strong> This company-managed test identity is not a personal applicant.</p></section>'
       :'<section class="card"><h3>Adult eligibility</h3><p>Status: <strong>'+esc(String(adultEligibility.status||'pending').replaceAll('_',' '))+'</strong>. Self-declaration is not represented as verified age.</p>'+(reviewable?'<label class="inlineChoice"><input type="checkbox" name="adult_eligibility_reviewed"><span>I completed a human review of the available eligibility and identity context and confirm this applicant may enter the adult-only PH pilot. I am not recording a date of birth or claiming automated verification.</span></label>':'')+'</section>';
-    p.innerHTML='<button type="button" class="secondary supportBack" id="profileReviewBack">← Back to Profiles</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">APPLICATION #'+Number(a.id)+'</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Scoped territory')+'</span><span>'+esc(a.email||'')+'</span></div>'+(a.proposed_business_name?'<section class="card"><h3>Proposed business</h3><p>'+esc(a.proposed_business_name)+'</p></section>':'')+(a.applicant_note?'<section class="card"><h3>Applicant note</h3><p>'+esc(a.applicant_note)+'</p></section>':'')+(data.professional_headline||data.about||data.service_area?'<section class="card"><h3>Application details</h3>'+(data.professional_headline?'<p><strong>'+esc(data.professional_headline)+'</strong></p>':'')+(data.about?'<p>'+esc(data.about)+'</p>':'')+(data.service_area?'<p class="muted">Service area: '+esc(data.service_area)+'</p>':'')+'</section>':'')+applicationEvidenceHtml(a)+adultEligibilityReview+(reviewable?'<form id="adminApplicationReview" class="adminForm">'+applicationCategoryChoices(a)+'<label>Review reason / note<textarea name="reason" maxlength="1000" placeholder="What was reviewed and why"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I reviewed the available evidence and understand this changes profile access.</span></label><div class="adminDecisionGrid"><button class="secondary" type="button" data-review-decision="under_review">Keep under review</button><button class="secondary adminDanger" type="button" data-review-decision="reject">Reject</button><button class="primary" type="button" data-review-decision="approve">Approve profile</button></div><div id="applicationReviewResult"></div></form>':'<div class="notice">This application is not awaiting a review decision.</div>')+'</section>';
-    document.getElementById('profileReviewBack').onclick=async()=>{state.active='profiles';shell();await renderActive()};
+    p.innerHTML='<button type="button" class="secondary supportBack" id="profileReviewBack">← Back to Profile requests</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">APPLICATION #'+Number(a.id)+'</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Scoped territory')+'</span><span>'+esc(a.email||'')+'</span></div>'+(a.proposed_business_name?'<section class="card"><h3>Proposed business</h3><p>'+esc(a.proposed_business_name)+'</p></section>':'')+(a.applicant_note?'<section class="card"><h3>Applicant note</h3><p>'+esc(a.applicant_note)+'</p></section>':'')+(data.professional_headline||data.about||data.service_area?'<section class="card"><h3>Application details</h3>'+(data.professional_headline?'<p><strong>'+esc(data.professional_headline)+'</strong></p>':'')+(data.about?'<p>'+esc(data.about)+'</p>':'')+(data.service_area?'<p class="muted">Service area: '+esc(data.service_area)+'</p>':'')+'</section>':'')+applicationEvidenceHtml(a)+adultEligibilityReview+(reviewable?'<form id="adminApplicationReview" class="adminForm">'+applicationCategoryChoices(a)+'<label>Review reason / note<textarea name="reason" maxlength="1000" placeholder="What was reviewed and why"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I reviewed the available evidence and understand this changes profile access.</span></label><div class="adminDecisionGrid"><button class="secondary" type="button" data-review-decision="under_review">Keep under review</button><button class="secondary adminDanger" type="button" data-review-decision="reject">Reject</button><button class="primary" type="button" data-review-decision="approve">Approve profile</button></div><div id="applicationReviewResult"></div></form>':'<div class="notice">This application is not awaiting a review decision.</div>')+'</section>';
+    document.getElementById('profileReviewBack').onclick=async()=>{state.active='members';state.memberHubTab='requests';shell();await renderActive()};
     p.querySelectorAll('[data-application-document]').forEach(b=>b.onclick=()=>viewAdminApplicationDocument(b.dataset.applicationDocument));
     const form=document.getElementById('adminApplicationReview');
     if(form)form.querySelectorAll('[data-review-decision]').forEach(button=>button.onclick=async()=>{
@@ -161,7 +162,7 @@ async function openAdminApplication(id){
       button.disabled=true;
       try{
         await api('/api/governance/admin/applications/'+Number(a.id)+'/review',{method:'POST',body:JSON.stringify({decision,reason,approved_category_ids:approvedCategoryIds,adult_eligibility_reviewed:adultEligibilityReviewed})});
-        await loadBase();state.active='profiles';shell();await renderActive();
+        await loadBase();state.active='members';state.memberHubTab='requests';shell();await renderActive();
       }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
     });
   }catch(error){showError(error)}
@@ -170,13 +171,13 @@ async function openAdminAuthorization(id){
   const a=(state.overview?.authorizations||[]).find(x=>Number(x.id)===Number(id));
   if(!a)return showError(new Error('Authorization is no longer available in this scope.'));
   const p=document.getElementById('adminPanel');if(!p)return;
-  p.innerHTML='<button type="button" class="secondary supportBack" id="authorizationBack">← Back to Profiles</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">PROFILE AUTHORIZATION</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Country scope')+'</span></div><form id="authorizationStatusForm" class="adminForm"><label>Access status<select name="status">'+['active','suspended','revoked'].map(x=>'<option value="'+x+'" '+(x===a.status?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" maxlength="1000" required placeholder="Why this authorization is changing">'+esc(a.reason||'')+'</textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I understand this can enable or block operational profile access.</span></label><button class="primary" type="submit">Save access status</button><div id="authorizationStatusResult"></div></form></section>';
-  document.getElementById('authorizationBack').onclick=async()=>{state.active='profiles';shell();await renderActive()};
+  p.innerHTML='<button type="button" class="secondary supportBack" id="authorizationBack">← Back to Authorizations</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">PROFILE AUTHORIZATION</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Country scope')+'</span></div><form id="authorizationStatusForm" class="adminForm"><label>Access status<select name="status">'+['active','suspended','revoked'].map(x=>'<option value="'+x+'" '+(x===a.status?'selected':'')+'>'+readableCode(x)+'</option>').join('')+'</select></label><label>Reason<textarea name="reason" maxlength="1000" required placeholder="Why this authorization is changing">'+esc(a.reason||'')+'</textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I understand this can enable or block operational profile access.</span></label><button class="primary" type="submit">Save access status</button><div id="authorizationStatusResult"></div></form></section>';
+  document.getElementById('authorizationBack').onclick=async()=>{state.active='members';state.memberHubTab='authorizations';shell();await renderActive()};
   document.getElementById('authorizationStatusForm').onsubmit=async e=>{
     e.preventDefault();const form=e.currentTarget,out=document.getElementById('authorizationStatusResult'),button=form.querySelector('button[type="submit"]');
     if(!form.confirmed.checked)return out.innerHTML='<div class="error">Confirm the access change first.</div>';
     button.disabled=true;
-    try{await api('/api/governance/admin/authorizations/'+Number(a.id)+'/status',{method:'POST',body:JSON.stringify({status:form.status.value,reason:form.reason.value})});await loadBase();state.active='profiles';shell();await renderActive()}
+    try{await api('/api/governance/admin/authorizations/'+Number(a.id)+'/status',{method:'POST',body:JSON.stringify({status:form.status.value,reason:form.reason.value})});await loadBase();state.active='members';state.memberHubTab='authorizations';shell();await renderActive()}
     catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
   };
 }
@@ -1449,7 +1450,6 @@ async function renderActive(){
   try{
     let html='',wire=null;
     if(active==='overview'){html=overviewPanel();wire=wireOverview}
-    else if(active==='profiles'){await ensureAdminOverviewDetail();html=profilesPanel();wire=wireProfiles}
     else if(active==='members'){html=await membersPanel();wire=wireMembers}
     else if(active==='delivery'){html=await deliveryPanel();wire=wireDelivery}
     else if(active==='support'){html=await queuePanel('support');wire=bindSupportQueue}
