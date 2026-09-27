@@ -52,6 +52,8 @@ test('Supplier payment evidence is written once to the exact shared business led
   assert.match(suppliers,/'supplier_receipt'/);
   assert.match(suppliers,/po\.supplier_business_id/);
   assert.match(suppliers,/ON CONFLICT \(source,source_id\) WHERE source='supplier_receipt' DO UPDATE SET business_id=EXCLUDED\.business_id/);
+  assert.match(suppliers,/information_schema\.columns/);
+  assert.match(suppliers,/column_name='business_id'/);
   assert.match(suppliers,/t\.note=\('Receipt for '\|\|p\.po_number\)/);
   assert.match(suppliers,/t\.business_id IS DISTINCT FROM p\.supplier_business_id/);
   assert.doesNotMatch(finance,/CREATE TABLE/);
