@@ -233,7 +233,8 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
     throw new Error("Supplier payment receipt evidence is missing for PO B.");
   }
   if(Number(receiptB.rows[0]?.business_id)!==businessB){
-    throw new Error("Supplier payment receipt was posted outside business B.");
+    throw new Error("Supplier payment receipt business mismatch: actual "
+      +Number(receiptB.rows[0]?.business_id)+" expected "+businessB+".");
   }
   if(Number(moneyA.json?.business?.id)!==businessA||Number(moneyB.json?.business?.id)!==businessB){
     throw new Error("Supplier Today Money resolved the wrong economic workspace.");
