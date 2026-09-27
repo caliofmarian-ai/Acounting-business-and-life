@@ -795,7 +795,7 @@ async function memberInternalContext(ctx,id){
 }
 function normalizeMemberTag(value){
   const tag=clean(value,40).toLowerCase().replace(/\s+/g,' ');
-  if(!tag||!^[\p{L}\p{N}][\p{L}\p{N} _-]{0,39}$/u.test(tag))throw Object.assign(new Error('Use a tag of 1–40 letters, numbers, spaces, hyphens or underscores'),{status:400});
+  if(!tag||!/^[\p{L}\p{N}][\p{L}\p{N} _-]{0,39}$/u.test(tag))throw Object.assign(new Error('Use a tag of 1–40 letters, numbers, spaces, hyphens or underscores'),{status:400});
   return tag;
 }
 async function addMemberInternalNote(req,ctx,accountId){
