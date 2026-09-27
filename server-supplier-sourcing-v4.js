@@ -204,6 +204,39 @@ export async function ensureSupplierSourcingV4Schema(pool){
 
     ALTER TABLE purchase_orders
       ADD COLUMN IF NOT EXISTS source_quote_id BIGINT REFERENCES supplier_quotes(id) ON DELETE SET NULL;
+    ALTER TABLE purchase_orders
+      ADD COLUMN IF NOT EXISTS supplier_business_id BIGINT REFERENCES businesses(id) ON DELETE RESTRICT;
+    CREATE INDEX IF NOT EXISTS purchase_orders_supplier_business_idx
+      ON purchase_orders(supplier_business_id,created_at DESC,id DESC);
+  `);
+
+  await pool.query(`
+    UPDATE purchase_orders p
+       SET supplier_business_id=q.supplier_business_id,updated_at=NOW()
+      FROM supplier_quotes q
+     WHERE p.supplier_business_id IS NULL
+       AND p.source_quote_id=q.id
+       AND q.source_type='connected_supplier'
+       AND q.supplier_business_id IS NOT NULL
+       AND q.supplier_account_id=p.supplier_account_id;
+
+    WITH deterministic_supplier_binding AS (
+      SELECT pb.account_id,MIN(pb.business_id) business_id
+        FROM profile_business_bindings pb
+        JOIN business_memberships bm
+          ON bm.business_id=pb.business_id
+         AND bm.account_id=pb.account_id
+         AND bm.active=TRUE
+       WHERE pb.role='supplier'
+         AND pb.status='active'
+       GROUP BY pb.account_id
+      HAVING COUNT(*)=1
+    )
+    UPDATE purchase_orders p
+       SET supplier_business_id=d.business_id,updated_at=NOW()
+      FROM deterministic_supplier_binding d
+     WHERE p.supplier_business_id IS NULL
+       AND p.supplier_account_id=d.account_id;
   `);
 }
 
@@ -659,6 +692,23 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
       if(!await acceptedRelationship(pool,merchant.id,quote.supplier_account_id)){
         return res.status(409).json({error:'Accepted Supplier relationship required before creating a PO'});
       }
+      const supplierBinding=await pool.query(
+        `SELECT 1
+           FROM profile_business_bindings pb
+           JOIN business_memberships bm
+             ON bm.business_id=pb.business_id
+            AND bm.account_id=pb.account_id
+            AND bm.active=TRUE
+          WHERE pb.account_id=$1
+            AND pb.role='supplier'
+            AND pb.business_id=$2
+            AND pb.status='active'
+          LIMIT 1`,
+        [quote.supplier_account_id,quote.supplier_business_id]
+      );
+      if(!supplierBinding.rowCount){
+        return res.status(409).json({error:'Quoted Supplier business is no longer active'});
+      }
       const packs=Number(req.body?.order_packs??quote.quoted_packs);
       if(!positive(packs)||packs<Number(quote.minimum_packs)||packs>Number(quote.quoted_packs)+1e-9){
         return res.status(400).json({error:'Order quantity must fit the quoted quantity and MOQ'});
@@ -682,12 +732,12 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
         await client.query('BEGIN');
         const po=await client.query(
           `INSERT INTO purchase_orders(
-            public_token,business_id,supplier_account_id,status,fulfilment_mode,subtotal,delivery_fee,
+            public_token,business_id,supplier_account_id,supplier_business_id,status,fulfilment_mode,subtotal,delivery_fee,
             expected_total,requested_date,merchant_note,sent_at,source_quote_id
-          ) VALUES($1,$2,$3,'sent',$4,$5,$6,$7,$8,$9,NOW(),$10) RETURNING *`,
+          ) VALUES($1,$2,$3,$4,'sent',$5,$6,$7,$8,$9,$10,NOW(),$11) RETURNING *`,
           [
-            token(),merchant.id,quote.supplier_account_id,mode,subtotal,deliveryFee,total,quote.needed_by||null,
-            clean(req.body?.merchant_note,1000),quote.id
+            token(),merchant.id,quote.supplier_account_id,quote.supplier_business_id,mode,subtotal,deliveryFee,total,
+            quote.needed_by||null,clean(req.body?.merchant_note,1000),quote.id
           ]
         );
         const poId=Number(po.rows[0].id);await client.query(`UPDATE purchase_orders SET po_number=$1 WHERE id=$2`,[poNumber(poId),poId]);
@@ -704,7 +754,10 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
         await client.query(`UPDATE supplier_quotes SET status='converted',updated_at=NOW() WHERE id=$1`,[quote.id]);
         await client.query(`UPDATE supplier_rfqs SET status='closed',updated_at=NOW() WHERE id=$1`,[quote.rfq_id]);
         await client.query('COMMIT');
-        res.status(201).json({purchase_order_id:poId,po_number:poNumber(poId),source_quote_id:Number(quote.id),expected_total:total});
+        res.status(201).json({
+          purchase_order_id:poId,po_number:poNumber(poId),source_quote_id:Number(quote.id),
+          supplier_business_id:Number(quote.supplier_business_id),expected_total:total
+        });
       }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
       finally{client.release()}
     }catch(e){next(e)}
