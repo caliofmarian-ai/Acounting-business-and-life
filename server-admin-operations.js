@@ -745,7 +745,7 @@ async function adminMemberDetails(accountId,ctx){
     "FROM accounts a LEFT JOIN account_geography_assignments ag ON ag.account_id=a.id WHERE a.id=$1 LIMIT 1",[id]
   );
   if(!memberQ.rowCount)throw Object.assign(new Error('Member not found'),{status:404});
-  const [profiles,applications,authorizations,adminRoles,governance,security,adminEvents]=await Promise.all([
+  const [profiles,applications,authorizations,businesses,businessBindings,adminRoles,governance,security,adminEvents]=await Promise.all([
     optionalMemberRows("SELECT role,status,enabled,visibility,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role",[id]),
     optionalMemberRows(
       "SELECT pa.id,pa.role,pa.status,pa.proposed_business_name,pa.territory_id,t.name territory_name,pa.submitted_at,pa.reviewed_at,pa.decision_reason,pa.created_at,pa.updated_at "+
@@ -753,6 +753,12 @@ async function adminMemberDetails(accountId,ctx){
     optionalMemberRows(
       "SELECT pa.id,pa.role,pa.status,pa.territory_id,t.name territory_name,pa.approved_at,pa.expires_at,pa.reason,pa.created_at,pa.updated_at "+
       "FROM profile_authorizations pa LEFT JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 ORDER BY pa.created_at DESC LIMIT 50",[id]),
+    optionalMemberRows(
+      "SELECT b.id business_id,b.name,b.country_code,b.currency_code,b.territory_id,t.name territory_name,bm.membership_role,bm.active "+
+      "FROM business_memberships bm JOIN businesses b ON b.id=bm.business_id LEFT JOIN territories t ON t.id=b.territory_id "+
+      "WHERE bm.account_id=$1 ORDER BY bm.active DESC,b.name,b.id",[id]),
+    optionalMemberRows(
+      "SELECT business_id,role,status,is_primary,created_at,updated_at FROM profile_business_bindings WHERE account_id=$1 ORDER BY role,business_id",[id]),
     optionalMemberRows(
       "SELECT COALESCE(NULLIF(a.authority_rank,''),a.admin_role) admin_rank,a.status,a.country_code,a.territory_id,t.name territory_name,a.created_at "+
       "FROM platform_admin_assignments a LEFT JOIN territories t ON t.id=a.territory_id WHERE a.account_id=$1 ORDER BY a.created_at DESC",[id]),
@@ -787,8 +793,15 @@ async function adminMemberDetails(accountId,ctx){
     memberPermissionAvailable(ctx,id,'members.manage_status'),
     memberPermissionAvailable(ctx,id,'members.sessions.revoke')
   ]);
+  const bindingsByBusiness=new Map();
+  for(const binding of businessBindings){
+    const key=Number(binding.business_id);
+    if(!bindingsByBusiness.has(key))bindingsByBusiness.set(key,[]);
+    bindingsByBusiness.get(key).push({role:binding.role,status:binding.status,is_primary:Boolean(binding.is_primary),created_at:binding.created_at,updated_at:binding.updated_at});
+  }
+  const businessMemberships=businesses.map(b=>({...b,profile_bindings:bindingsByBusiness.get(Number(b.business_id))||[]}));
   return{
-    member,profiles,applications,authorizations,admin_roles:adminRoles,
+    member,profiles,applications,authorizations,businesses:businessMemberships,admin_roles:adminRoles,
     security:{email_verified:Boolean(member.email_verified_at),phone_verified:Boolean(member.phone_verified_at),password_configured:Boolean(member.password_configured),active_session_count:Number(member.active_session_count||0),last_session_at:member.last_session_at},
     controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions},
     timeline:timeline.slice(0,80)
