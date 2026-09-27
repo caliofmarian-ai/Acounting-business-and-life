@@ -51,7 +51,7 @@ test('Supplier payment evidence is written once to the exact shared business led
   assert.match(suppliers,/business_id,type,category,amount,payment_method,account,note,source,source_id/);
   assert.match(suppliers,/'supplier_receipt'/);
   assert.match(suppliers,/po\.supplier_business_id/);
-  assert.match(suppliers,/ON CONFLICT DO NOTHING/);
+  assert.match(suppliers,/ON CONFLICT \(source,source_id\) WHERE source='supplier_receipt' DO UPDATE SET business_id=EXCLUDED\.business_id/);
   assert.doesNotMatch(finance,/CREATE TABLE/);
 });
 
