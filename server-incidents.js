@@ -126,7 +126,7 @@ async function initDb(){
     ALTER TABLE incident_reports DROP CONSTRAINT IF EXISTS incident_reports_related_type_check;
     ALTER TABLE incident_reports ADD CONSTRAINT incident_reports_related_type_check
       CHECK(related_type IN ('order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other'));
-    ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS territory_id BIGINT REFERENCES territories(id) ON DELETE SET NULL;
+    ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS territory_id BIGINT;
     CREATE INDEX IF NOT EXISTS incident_reports_reporter_idx ON incident_reports(reporter_account_id,submitted_at DESC);
     CREATE INDEX IF NOT EXISTS incident_reports_status_idx ON incident_reports(status,submitted_at DESC);
 

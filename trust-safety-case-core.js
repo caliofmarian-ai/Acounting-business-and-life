@@ -74,7 +74,7 @@ export function trustCaseTitle(caseType){return CASE_TITLES[caseType]||CASE_TITL
 
 export async function ensureTrustSafetyCaseSchema(pool){
   await pool.query(`
-    ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS territory_id BIGINT REFERENCES territories(id) ON DELETE SET NULL;
+    ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS territory_id BIGINT;
 
     CREATE TABLE IF NOT EXISTS trust_cases (
       id BIGSERIAL PRIMARY KEY,
@@ -84,7 +84,7 @@ export async function ensureTrustSafetyCaseSchema(pool){
       status TEXT NOT NULL DEFAULT 'open',
       severity TEXT NOT NULL DEFAULT 'moderate',
       country_code TEXT NOT NULL DEFAULT 'PH',
-      territory_id BIGINT REFERENCES territories(id) ON DELETE SET NULL,
+      territory_id BIGINT,
       source_incident_id BIGINT UNIQUE REFERENCES incident_reports(id) ON DELETE SET NULL,
       assigned_admin_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
       created_by_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
@@ -127,7 +127,7 @@ export async function ensureTrustSafetyCaseSchema(pool){
       severity TEXT NOT NULL,
       confidence_class TEXT NOT NULL,
       country_code TEXT NOT NULL DEFAULT 'PH',
-      territory_id BIGINT REFERENCES territories(id) ON DELETE SET NULL,
+      territory_id BIGINT,
       related_object_type TEXT NOT NULL DEFAULT '',
       related_object_id TEXT NOT NULL DEFAULT '',
       correlation_id TEXT NOT NULL DEFAULT '',
@@ -159,6 +159,31 @@ export async function ensureTrustSafetyCaseSchema(pool){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS trust_actions_case_idx ON trust_actions(case_id,created_at,id);
+
+    DO $trust_safety_territory_fks$
+    BEGIN
+      IF to_regclass('public.territories') IS NOT NULL THEN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid='incident_reports'::regclass AND conname='incident_reports_territory_id_fkey'
+        ) THEN
+          EXECUTE 'ALTER TABLE incident_reports ADD CONSTRAINT incident_reports_territory_id_fkey FOREIGN KEY(territory_id) REFERENCES territories(id) ON DELETE SET NULL';
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid='trust_cases'::regclass AND conname='trust_cases_territory_id_fkey'
+        ) THEN
+          EXECUTE 'ALTER TABLE trust_cases ADD CONSTRAINT trust_cases_territory_id_fkey FOREIGN KEY(territory_id) REFERENCES territories(id) ON DELETE SET NULL';
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid='trust_risk_events'::regclass AND conname='trust_risk_events_territory_id_fkey'
+        ) THEN
+          EXECUTE 'ALTER TABLE trust_risk_events ADD CONSTRAINT trust_risk_events_territory_id_fkey FOREIGN KEY(territory_id) REFERENCES territories(id) ON DELETE SET NULL';
+        END IF;
+      END IF;
+    END
+    $trust_safety_territory_fks$;
 
     INSERT INTO trust_cases(
       public_id,case_type,title,status,severity,country_code,territory_id,source_incident_id,

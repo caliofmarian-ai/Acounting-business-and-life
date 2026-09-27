@@ -41,6 +41,11 @@ test('case schema preserves canonical cases, entities, risk events, actions and 
   assert.match(core,/UPDATE incident_reports i SET trust_case_id=c\.id/);
   assert.match(core,/confidence_class IN \('allegation','system_signal','corroborated','verified'\)/);
   assert.match(core,/case_id BIGINT NOT NULL REFERENCES trust_cases\(id\) ON DELETE RESTRICT/);
+  assert.match(core,/to_regclass\('public\.territories'\) IS NOT NULL/);
+  for(const constraint of ['incident_reports_territory_id_fkey','trust_cases_territory_id_fkey','trust_risk_events_territory_id_fkey']){
+    assert.match(core,new RegExp(constraint));
+  }
+  assert.doesNotMatch(incidents,/ADD COLUMN IF NOT EXISTS territory_id BIGINT REFERENCES territories/);
   assert.doesNotMatch(core,/criminal_score|risk_score|guilt_score/i);
   assert.doesNotMatch(core,/DELETE FROM (?:incident_reports|trust_cases|trust_risk_events|trust_actions)/);
 });

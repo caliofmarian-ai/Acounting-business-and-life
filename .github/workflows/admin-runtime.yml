@@ -187,6 +187,20 @@ jobs:
           SELECT case_id,action_code,reason_category,human_reviewed
             FROM trust_actions LIMIT 0;
           SELECT trust_case_id FROM incident_reports LIMIT 0;
+          DO $trust_safety_runtime$
+          BEGIN
+            IF (
+              SELECT COUNT(*) FROM pg_constraint
+              WHERE conname IN (
+                'incident_reports_territory_id_fkey',
+                'trust_cases_territory_id_fkey',
+                'trust_risk_events_territory_id_fkey'
+              )
+            ) <> 3 THEN
+              RAISE EXCEPTION 'Trust and Safety territory foreign keys are incomplete';
+            END IF;
+          END
+          $trust_safety_runtime$;
           SQL
       - name: Verify Financial Document Engine runtime
         run: |
