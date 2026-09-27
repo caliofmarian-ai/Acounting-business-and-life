@@ -375,7 +375,7 @@ async function commercialMetrics(ctx){
   const procurement=await pool.query(`SELECT COALESCE(SUM(GREATEST(COALESCE(actual_received_total,0)-paid_amount,0)),0) payables,COALESCE(SUM(CASE WHEN status NOT IN ('received','cancelled','rejected') THEN expected_total ELSE 0 END),0) commitments FROM purchase_orders WHERE business_id=$1`,[businessId]).catch(()=>({rows:[{payables:0,commitments:0}]}));
   let supplierRevenue=0,supplierReceivables=0;
   if(ctx.role==='supplier'){
-    const s=await pool.query(`SELECT COALESCE(SUM(actual_received_total),0) revenue,COALESCE(SUM(GREATEST(actual_received_total-paid_amount,0)),0) receivables FROM purchase_orders WHERE supplier_account_id=$1 AND status NOT IN ('cancelled','rejected')`,[ctx.me.account.id]);
+    const s=await pool.query(`SELECT COALESCE(SUM(actual_received_total),0) revenue,COALESCE(SUM(GREATEST(actual_received_total-paid_amount,0)),0) receivables FROM purchase_orders WHERE supplier_account_id=$1 AND supplier_business_id=$2 AND status NOT IN ('cancelled','rejected')`,[ctx.me.account.id,businessId]);
     supplierRevenue=Number(s.rows[0].revenue);supplierReceivables=Number(s.rows[0].receivables);
   }
   return{customer_receivables:Number(merchant.rows[0].receivables),supplier_payables:Number(procurement.rows[0].payables),procurement_commitments:Number(procurement.rows[0].commitments),supplier_fulfilled_revenue:supplierRevenue,supplier_receivables:supplierReceivables};
