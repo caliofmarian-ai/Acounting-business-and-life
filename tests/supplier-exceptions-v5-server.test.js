@@ -40,10 +40,11 @@ test('Merchant substitution acceptance is approval evidence, not fulfilment',()=
   assert.match(source,/po_mutated:false,inventory_changed:false,money_changed:false/);
 });
 
-test('multi-business Supplier accounts fail closed when PO business attribution is ambiguous',()=>{
-  assert.match(source,/Purchase order Supplier-business attribution is ambiguous/);
-  assert.match(source,/quote_supplier_business_id/);
+test('Supplier exceptions prefer canonical PO business attribution and fail closed only for ambiguous history',()=>{
+  assert.match(source,/canonicalSupplierBusinessId=po\.supplier_business_id\?\?po\.quote_supplier_business_id/);
+  assert.match(source,/Historical purchase order Supplier-business attribution is ambiguous and requires review/);
   assert.match(source,/activeSupplierBindingCount/);
+  assert.match(source,/resolved_supplier_business_id/);
 });
 
 
