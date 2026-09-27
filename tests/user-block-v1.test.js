@@ -7,6 +7,7 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const core=read('trust-safety-core.js');
 const services=read('server-services.js');
 const incidents=read('server-incidents.js');
+const velocity=read('abuse-velocity-core.js');
 const ui=read('public/services-ui.js');
 const css=read('public/services.css');
 
@@ -43,11 +44,9 @@ test('block mutations and Incident submissions have bounded velocity',()=>{
   assert.match(core,/BLOCK_ACTION_DAILY_LIMIT=60/);
   assert.match(core,/user_block_events[\s\S]{0,260}INTERVAL '1 hour'/);
   assert.match(core,/Too many block changes[\s\S]{0,80}status:429/);
-  assert.match(incidents,/INCIDENT_HOURLY_LIMIT = 12/);
-  assert.match(incidents,/INCIDENT_DAILY_LIMIT = 40/);
-  assert.match(incidents,/incident_reports[\s\S]{0,260}INTERVAL '24 hours'/);
+  assert.match(velocity,/incident_submit:\[\{windowSeconds:3600,maxAttempts:12\},\{windowSeconds:86400,maxAttempts:40\}\]/);
   const route=incidents.slice(incidents.indexOf("app.post('/api/incidents'"),incidents.indexOf("app.get('/api/incidents/mine'"));
-  assert.ok(route.indexOf('assertIncidentSubmissionAllowed')<route.indexOf('INSERT INTO incident_reports'));
+  assert.ok(route.indexOf("actionCode:'incident_submit'")<route.indexOf('INSERT INTO incident_reports'));
 });
 
 test('authenticated block API reveals only the callers own block direction',()=>{

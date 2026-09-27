@@ -43,6 +43,7 @@ import { startEmbeddedLegal,stopEmbeddedLegal } from './server-legal.js';
 import {notificationsFetch} from './server-notifications.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {resolveV2SessionStepUp} from './auth-session-core.js';
+import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -438,6 +439,7 @@ app.put('/api/settings/account-money/identity',body,async(req,res,next)=>{try{
 app.post('/api/settings/account-money/destinations',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
   const stepUp=await requireMoneyStepUp(req);
+  await enforceHighRiskVelocity(pool,{actorAccountId:stepUp.accountId,actionCode:'payout_destination_change',subjectType:'account_financial_destination',subjectId:'new'});
   const row=await createAccountFinancialDestination(pool,{
     publicId:'afd_'+crypto.randomUUID().replaceAll('-',''),accountId:stepUp.accountId,
     destinationKind:req.body?.destination_kind,displayName:req.body?.display_name,
@@ -451,6 +453,7 @@ app.post('/api/settings/account-money/destinations',body,async(req,res,next)=>{t
 app.patch('/api/settings/account-money/destinations/:id',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
   const stepUp=await requireMoneyStepUp(req);
+  await enforceHighRiskVelocity(pool,{actorAccountId:stepUp.accountId,actionCode:'payout_destination_change',subjectType:'account_financial_destination',subjectId:req.params.id});
   const row=await updateAccountFinancialDestination(pool,{
     accountId:stepUp.accountId,id:Number(req.params.id),displayName:req.body?.display_name,
     institutionName:req.body?.institution_name,accountName:req.body?.account_name,
@@ -462,12 +465,14 @@ app.patch('/api/settings/account-money/destinations/:id',body,async(req,res,next
 
 app.post('/api/settings/account-money/destinations/:id/default-payout',body,async(req,res,next)=>{try{
   const stepUp=await requireMoneyStepUp(req);
+  await enforceHighRiskVelocity(pool,{actorAccountId:stepUp.accountId,actionCode:'payout_destination_change',subjectType:'account_financial_destination',subjectId:req.params.id});
   res.json(await setDefaultAccountPayoutDestination(pool,{accountId:stepUp.accountId,id:Number(req.params.id)}));
 }catch(e){next(e)}});
 
 app.post('/api/settings/financial-accounts',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
   const me=await identity(req),role=clean(req.body?.profile_role,40),scope=financeScope(me,role,req.body?.business_id);
+  if(req.body?.can_payout===true||clean(req.body?.provider_destination_ref,250))await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'payout_destination_change',subjectType:'profile_financial_account',subjectId:'new'});
   const row=await createProfileFinancialAccount(pool,{
     publicId:'fa_'+crypto.randomUUID().replaceAll('-',''),
     accountId:me.account.id,profileRole:role,ownerScope:scope.owner_scope,businessId:scope.business_id,
@@ -483,6 +488,7 @@ app.post('/api/settings/financial-accounts',body,async(req,res,next)=>{try{
 app.patch('/api/settings/financial-accounts/:id',body,async(req,res,next)=>{try{
   rejectSensitiveFinancialFields(req.body);
   const me=await identity(req);
+  if(['can_payout','provider_destination_ref','status'].some(key=>Object.prototype.hasOwnProperty.call(req.body||{},key)))await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'payout_destination_change',subjectType:'profile_financial_account',subjectId:req.params.id});
   const row=await updateProfileFinancialAccount(pool,{
     accountId:me.account.id,id:Number(req.params.id),displayName:req.body?.display_name,
     institutionName:req.body?.institution_name,accountName:req.body?.account_name,
@@ -495,6 +501,7 @@ app.patch('/api/settings/financial-accounts/:id',body,async(req,res,next)=>{try{
 
 app.put('/api/settings/money-preferences/:role',body,async(req,res,next)=>{try{
   const me=await identity(req),role=clean(req.params.role,40),scope=financeScope(me,role,req.body?.business_id);
+  if(['default_payout_account_id','payout_schedule_preference'].some(key=>Object.prototype.hasOwnProperty.call(req.body||{},key)))await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'payout_destination_change',subjectType:'money_preference',subjectId:role});
   const receive=await financialAccountOwnedForScope(me.account.id,req.body?.default_receive_account_id,role,scope.business_id,'receive');
   const spend=await financialAccountOwnedForScope(me.account.id,req.body?.default_spend_account_id,role,scope.business_id,'pay');
   const payout=await financialAccountOwnedForScope(me.account.id,req.body?.default_payout_account_id,role,scope.business_id,'payout');
@@ -922,6 +929,7 @@ app.post('/api/payments/admin/fee-policies/:id/rules',body,async(req,res,next)=>
 
 app.post('/api/payments/admin/refunds',body,async(req,res,next)=>{try{
   const me=await identity(req),assignment=await requireAdminPermission(pool,me.account.id,'payment.manage');
+  await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'refund_request',subjectType:'payment_intent',subjectId:req.body?.payment_intent_id||req.body?.payment_intent});
   const row=await createRefundRequest(pool,{intentId:req.body?.payment_intent_id||req.body?.payment_intent,amount:req.body?.amount,reason:req.body?.reason||'',requestedBy:me.account.id});
   await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'payment.manage',targetType:'refund',targetId:String(row.id),eventCode:'refund_requested_provider_action_required',after:{amount:row.amount,status:row.status},reason:row.reason,correlationId:correlation(req)});
   res.status(201).json({...row,next_action:'PROVIDER_REFUND_ADAPTER_REQUIRED'});
@@ -949,7 +957,9 @@ function mountLegalApp(appInstance){
   app.use((err,_req,res,_next)=>{
     console.error(err);
     if(res.headersSent)return;
-    res.status(err.status||500).json({error:err.status?err.message:'Unexpected payment-core error'});
+    if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));
+    const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:err.status?err.message:'Unexpected payment-core error'};
+    res.status(err.status||500).json(payload);
   });
 }
 

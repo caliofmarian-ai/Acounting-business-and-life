@@ -3,6 +3,7 @@ import {supplierDomainV2Internals} from './server-supplier-domain-v2.js';
 import {
   normalizeDiscoverySettings,normalizeRfq,compareQuotes,validatePreferenceRanks,reorderPackSuggestion
 } from './supplier-sourcing-core.js';
+import {enforceHighRiskVelocity} from './abuse-velocity-core.js';
 
 const {exactProfileBusiness}=supplierDomainV2Internals;
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
@@ -348,6 +349,7 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
       const requestedExpiry=req.body?.expires_at?new Date(req.body.expires_at):null;
       const expires=requestedExpiry&&!Number.isNaN(requestedExpiry.getTime())?requestedExpiry:defaultExpiry;
       if(expires.getTime()<=Date.now())return res.status(400).json({error:'RFQ expiry must be in the future'});
+      await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'invitation_create',subjectType:'supplier_rfq',subjectId:merchant.id});
       const client=await pool.connect();
       try{
         await client.query('BEGIN');
@@ -674,6 +676,7 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
         :req.body?.fulfilment_mode==='delivery'?'delivery'
         :quote.rfq_fulfilment_mode==='pickup'?'pickup':'delivery';
       const deliveryFee=mode==='pickup'?0:Number(quote.delivery_fee),total=money(subtotal+deliveryFee);
+      await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'order_create',subjectType:'supplier_quote',subjectId:quote.id});
       const client=await pool.connect();
       try{
         await client.query('BEGIN');

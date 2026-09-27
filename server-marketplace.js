@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureCatalogMediaSchema,mediaForEntities,listCatalogMedia,buildPreparedFoodImagePrompt,generateCatalogImage,approveCatalogMedia,archiveCatalogMedia } from './catalog-media-core.js';
 import { ordersFetch,startEmbeddedOrders,stopEmbeddedOrders } from './server-orders.js';
 import { readOrderDetail } from './orders-read-core.js';
+import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -292,6 +293,7 @@ async function createMarketplaceOrder(req){
   if(payment==='cash'&&!store.cash_enabled)throw Object.assign(new Error('Cash is not enabled for this merchant'),{status:409});
   if(payment==='online'&&!store.online_enabled)throw Object.assign(new Error('Online payment is not enabled for this merchant yet'),{status:409});
   if(fulfilment==='delivery'&&payment==='cash')throw Object.assign(new Error('Cash delivery is not enabled yet'),{status:409});
+  await enforceHighRiskVelocity(pool,{actorAccountId:customerId,actionCode:'order_create',subjectType:'business',subjectId:businessId});
 
   const client=await pool.connect();
   try{
@@ -412,7 +414,45 @@ async function marketplaceStart(req,res,next){
     next(e);
   }finally{client.release()}
 }
-async function marketplaceCancel(req,res,next){const id=Number(req.params.id);if(!(await marketplaceOrderKind(id)))return proxy(req,res);const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});if(o.stock_consumed_at&&!o.stock_reversed_at){const mp=await client.query(`SELECT * FROM marketplace_stock_events WHERE order_id=$1 AND action='consume'`,[id]);for(const e of mp.rows){await client.query(`UPDATE marketplace_products SET stock_quantity=stock_quantity+$1,updated_at=NOW() WHERE id=$2`,[e.quantity,e.marketplace_product_id]);await client.query(`INSERT INTO marketplace_stock_events(order_id,marketplace_product_id,quantity,action) VALUES($1,$2,$3,'reverse') ON CONFLICT DO NOTHING`,[id,e.marketplace_product_id,e.quantity])}const inv=await client.query(`SELECT * FROM order_stock_consumptions WHERE order_id=$1 AND reversed_at IS NULL`,[id]);for(const x of inv.rows){await client.query(`UPDATE inventory SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2`,[x.quantity_used,x.inventory_id]);await client.query(`UPDATE order_stock_consumptions SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2`,[id,x.inventory_id])}await client.query(`UPDATE orders SET stock_reversed_at=NOW() WHERE id=$1`,[id])}const reason=clean(req.body?.reason,300);await client.query(`UPDATE orders SET order_status='cancelled',cancelled_at=NOW(),cancellation_reason=$1,updated_at=NOW() WHERE id=$2`,[reason,id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'cancelled',$3,$4)`,[id,o.order_status,me.account.id,reason||'Cancelled']);await client.query('COMMIT');const out=await readOrderDetail(pool,id);if(!out)throw Object.assign(new Error('Order detail unavailable after Marketplace cancel'),{status:500});res.json(out)}catch(e){try{await client.query('ROLLBACK')}catch{}next(e)}finally{client.release()}}
+async function marketplaceCancel(req,res,next){
+  const id=Number(req.params.id);
+  if(!(await marketplaceOrderKind(id)))return proxy(req,res);
+  try{
+    const pre=await pool.query(`SELECT business_id,order_status FROM orders WHERE id=$1`,[id]);
+    if(!pre.rowCount)throw Object.assign(new Error('Order not found'),{status:404});
+    const{me}=await requireMerchant(req,pre.rows[0].business_id);
+    if(['completed','cancelled'].includes(pre.rows[0].order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'order_cancel',subjectType:'order',subjectId:id});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);
+      if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});
+      const o=r.rows[0];
+      if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});
+      if(o.stock_consumed_at&&!o.stock_reversed_at){
+        const mp=await client.query(`SELECT * FROM marketplace_stock_events WHERE order_id=$1 AND action='consume'`,[id]);
+        for(const e of mp.rows){
+          await client.query(`UPDATE marketplace_products SET stock_quantity=stock_quantity+$1,updated_at=NOW() WHERE id=$2`,[e.quantity,e.marketplace_product_id]);
+          await client.query(`INSERT INTO marketplace_stock_events(order_id,marketplace_product_id,quantity,action) VALUES($1,$2,$3,'reverse') ON CONFLICT DO NOTHING`,[id,e.marketplace_product_id,e.quantity]);
+        }
+        const inv=await client.query(`SELECT * FROM order_stock_consumptions WHERE order_id=$1 AND reversed_at IS NULL`,[id]);
+        for(const x of inv.rows){
+          await client.query(`UPDATE inventory SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2`,[x.quantity_used,x.inventory_id]);
+          await client.query(`UPDATE order_stock_consumptions SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2`,[id,x.inventory_id]);
+        }
+        await client.query(`UPDATE orders SET stock_reversed_at=NOW() WHERE id=$1`,[id]);
+      }
+      const reason=clean(req.body?.reason,300);
+      await client.query(`UPDATE orders SET order_status='cancelled',cancelled_at=NOW(),cancellation_reason=$1,updated_at=NOW() WHERE id=$2`,[reason,id]);
+      await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,$2,'cancelled',$3,$4)`,[id,o.order_status,me.account.id,reason||'Cancelled']);
+      await client.query('COMMIT');
+      const out=await readOrderDetail(pool,id);
+      if(!out)throw Object.assign(new Error('Order detail unavailable after Marketplace cancel'),{status:500});
+      res.json(out);
+    }catch(e){try{await client.query('ROLLBACK')}catch{}throw e}finally{client.release()}
+  }catch(e){next(e)}
+}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await ordersFetch('/health');const ok=ordersReady&&r.ok;res.status(ok?200:503).json({ok,db:true,orders:ok,version:'0.8-marketplace'})}catch{res.status(503).json({ok:false,db:false,orders:false,version:'0.8-marketplace'})}})
 app.get('/marketplace.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','marketplace.css'),'utf8')))
@@ -437,7 +477,7 @@ app.get('/api/merchant/storefront/geocode',async(req,res,next)=>{try{
   res.json({provider:'OpenStreetMap Nominatim',results});
 }catch(e){next(e)}})
 app.post('/api/merchant/storefront/media',body,async(req,res,next)=>{try{
-  const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+  const{me,business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
   const kind=['cover','gallery'].includes(req.body?.media_kind)?req.body.media_kind:'';
   if(!kind)return res.status(400).json({error:'Media kind must be cover or gallery.'});
   const rawDataUrl=String(req.body?.data_url||'').trim();
@@ -445,6 +485,7 @@ app.post('/api/merchant/storefront/media',body,async(req,res,next)=>{try{
   const dataUrl=rawDataUrl;
   if(!dataUrl||!STOREFRONT_IMAGE_RE.test(dataUrl))return res.status(400).json({error:'Storefront image must be PNG, JPEG or WebP.'});
   const alt=clean(req.body?.alt_text,180);
+  await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_public',subjectType:'merchant_storefront',subjectId:business.id});
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
@@ -466,7 +507,7 @@ app.delete('/api/merchant/storefront/media/:id',async(req,res,next)=>{try{
   res.json({ok:true,id});
 }catch(e){next(e)}})
 app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
-  const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+  const{me,business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
   const current=await storefront(business.id,true);
   const domain=['food','non_food','mixed'].includes(req.body?.merchant_domain)?req.body.merchant_domain:'food';
   const status=['draft','published','paused'].includes(req.body?.publication_status)?req.body.publication_status:'draft';
@@ -484,6 +525,15 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
   if(rawLogo.length>320000)return res.status(413).json({error:'Logo is too large. Please use the in-app image optimiser.'});
   const logo=rawLogo;
   if(logo&&!STOREFRONT_IMAGE_RE.test(logo))return res.status(400).json({error:'Logo must be PNG, JPEG or WebP'});
+  const pickupAddress=clean(req.body?.pickup_address,400),locationLabel=clean(req.body?.location_label,160);
+  const locationChanged=!current
+    ||pickupAddress!==clean(current.pickup_address,400)
+    ||locationLabel!==clean(current.location_label,160)
+    ||lat!==((current.pickup_lat==null||current.pickup_lat==='')?null:Number(current.pickup_lat))
+    ||lng!==((current.pickup_lng==null||current.pickup_lng==='')?null:Number(current.pickup_lng))
+    ||publicLocation!==Boolean(current.public_location_enabled);
+  if(locationChanged)await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'store_location_change',subjectType:'merchant_storefront',subjectId:business.id});
+  if(logoProvided&&logo!==String(current?.logo_data_url||''))await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_public',subjectType:'merchant_storefront_logo',subjectId:business.id});
   const{rows}=await pool.query(`
     INSERT INTO merchant_storefronts(
       business_id,store_name,description,merchant_domain,publication_status,pickup_address,presence_type,public_location_enabled,
@@ -503,7 +553,7 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
     RETURNING *
   `,[
     business.id,clean(req.body?.store_name,120)||business.name,clean(req.body?.description,1000),domain,status,
-    clean(req.body?.pickup_address,400),presence,publicLocation,clean(req.body?.location_label,160),
+    pickupAddress,presence,publicLocation,locationLabel,
     clean(req.body?.finding_instructions,500),clean(req.body?.opening_hours_text,500),lat,lng,open,
     Math.max(1,Math.min(240,Number(req.body?.preparation_eta_minutes)||15)),req.body?.pickup_enabled!==false,
     Boolean(req.body?.delivery_enabled),req.body?.cash_enabled!==false,Boolean(req.body?.online_enabled),
@@ -636,7 +686,7 @@ function proxy(req,res,next){
   return ordersApp(req,res,next);
 }
 app.use(proxy)
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})})
+app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:err.status?err.message:'Unexpected server error'};res.status(err.status||500).json(payload)})
 
 let embeddedStartPromise=null;
 export async function startEmbeddedMarketplace(){

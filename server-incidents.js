@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {deliveryFinanceFetch,startEmbeddedDeliveryFinance,stopEmbeddedDeliveryFinance} from './server-delivery-finance.js';
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
+import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -20,8 +21,6 @@ const IMAGE_MIMES = new Set(['image/jpeg','image/png','image/webp']);
 const PDF_MIME = 'application/pdf';
 const MAX_IMAGE_BYTES = 1_500_000;
 const MAX_PDF_BYTES = 3_000_000;
-const INCIDENT_HOURLY_LIMIT = 12;
-const INCIDENT_DAILY_LIMIT = 40;
 let deliveryFinanceApp=null;
 let deliveryFinanceReady=false;
 let shuttingDown = false;
@@ -105,18 +104,6 @@ async function validateIncidentRelation(db,relatedType,relatedId){
   if(!q.rowCount)throw Object.assign(new Error('The reported profile or listing no longer exists'),{status:404});
 }
 
-async function assertIncidentSubmissionAllowed(db,accountId){
-  const q=await db.query(`
-    SELECT COUNT(*) FILTER(WHERE submitted_at>=NOW()-INTERVAL '1 hour')::int hourly,
-           COUNT(*)::int daily
-      FROM incident_reports
-     WHERE reporter_account_id=$1 AND submitted_at>=NOW()-INTERVAL '24 hours'
-  `,[accountId]);
-  if(Number(q.rows[0]?.hourly||0)>=INCIDENT_HOURLY_LIMIT||Number(q.rows[0]?.daily||0)>=INCIDENT_DAILY_LIMIT){
-    throw Object.assign(new Error('Too many recent reports. Try again later or add information to an existing report.'),{status:429});
-  }
-}
-
 async function initDb(){
   await pool.query(`
     CREATE TABLE IF NOT EXISTS incident_reports (
@@ -193,24 +180,27 @@ async function root(req,res){
 app.get('/',root);app.get('/index.html',root);
 
 app.post('/api/incidents',body,async(req,res,next)=>{
-  const client=await pool.connect();
   try{
     const me=await identity(req);
     const category=clean(req.body?.category,80),description=clean(req.body?.description,5000),relatedType=clean(req.body?.related_type||'other',40),relatedId=req.body?.related_id==null||req.body.related_id===''?null:Number(req.body.related_id);
     if(!category||description.length<10) throw Object.assign(new Error('Category and a clear description are required'),{status:400});
     if(!RELATED_TYPES.has(relatedType)) throw Object.assign(new Error('Unknown related incident type'),{status:400});
     if(relatedId!=null&&(!Number.isInteger(relatedId)||relatedId<1)) throw Object.assign(new Error('Related record ID must be a positive integer'),{status:400});
-    await assertIncidentSubmissionAllowed(client,me.account.id);
-    await validateIncidentRelation(client,relatedType,relatedId);
+    await validateIncidentRelation(pool,relatedType,relatedId);
     const attachments=validateAttachments(req.body?.attachments);
-    await client.query('BEGIN');
-    const q=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status) VALUES($1,$2,$3,$4,$5,'submitted') RETURNING *`,[me.account.id,relatedType,relatedId,category,description]);
-    const incident=q.rows[0];
-    for(const f of attachments) await client.query(`INSERT INTO incident_attachments(incident_id,kind,mime_type,file_name,byte_size,evidence_data_url) VALUES($1,$2,$3,$4,$5,$6)`,[incident.id,f.kind,f.mime,f.file_name,f.byte_size,f.data_url]);
-    await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'submitted','submitted','Incident submitted')`,[incident.id,me.account.id]);
-    await client.query('COMMIT');
-    res.status(201).json(await incidentSummary(incident.id));
-  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'incident_submit',subjectType:relatedType,subjectId:relatedId||''});
+    if(attachments.length)await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'incident_evidence',subjectId:relatedId||''});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const q=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status) VALUES($1,$2,$3,$4,$5,'submitted') RETURNING *`,[me.account.id,relatedType,relatedId,category,description]);
+      const incident=q.rows[0];
+      for(const f of attachments) await client.query(`INSERT INTO incident_attachments(incident_id,kind,mime_type,file_name,byte_size,evidence_data_url) VALUES($1,$2,$3,$4,$5,$6)`,[incident.id,f.kind,f.mime,f.file_name,f.byte_size,f.data_url]);
+      await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'submitted','submitted','Incident submitted')`,[incident.id,me.account.id]);
+      await client.query('COMMIT');
+      res.status(201).json(await incidentSummary(incident.id));
+    }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  }catch(e){next(e)}
 });
 
 app.get('/api/incidents/mine',async(req,res,next)=>{
@@ -226,7 +216,7 @@ app.get('/api/incidents/:id/attachments/:attachmentId',async(req,res,next)=>{
 });
 
 app.post('/api/incidents/:id/note',body,async(req,res,next)=>{
-  try{const{me,incident}=await authorizeIncident(req,Number(req.params.id));const note=clean(req.body?.note,3000);if(!note)return res.status(400).json({error:'Note is required'});await pool.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,from_status,to_status,note) VALUES($1,$2,$3,$4,$4,$5)`,[incident.id,me.account.id,isAdmin(me)?'admin_note':'reporter_note',incident.status,note]);await pool.query(`UPDATE incident_reports SET updated_at=NOW() WHERE id=$1`,[incident.id]);res.json({ok:true});}catch(e){next(e)}
+  try{const{me,incident}=await authorizeIncident(req,Number(req.params.id));const note=clean(req.body?.note,3000);if(!note)return res.status(400).json({error:'Note is required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'incident_note',subjectType:'incident',subjectId:incident.id});await pool.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,from_status,to_status,note) VALUES($1,$2,$3,$4,$4,$5)`,[incident.id,me.account.id,isAdmin(me)?'admin_note':'reporter_note',incident.status,note]);await pool.query(`UPDATE incident_reports SET updated_at=NOW() WHERE id=$1`,[incident.id]);res.json({ok:true});}catch(e){next(e)}
 });
 
 app.get('/api/admin/incidents',async(req,res,next)=>{
@@ -251,7 +241,7 @@ function proxy(req,res,next){
   return deliveryFinanceApp(req,res,next);
 }
 app.use(proxy);
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;res.status(err.status||500).json({error:err.status?err.message:'Unexpected server error'})});
+app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:err.status?err.message:'Unexpected server error'};res.status(err.status||500).json(payload)});
 
 let embeddedStartPromise=null;
 export async function startEmbeddedIncidents(){

@@ -12,6 +12,7 @@ import {authHardeningFetch} from './server-auth-hardening.js';
 import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
 import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
 import {buildSessionBootstrap} from './session-bootstrap-core.js';
+import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 
 const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -895,7 +896,8 @@ app.get('/api/support/assist/status',async(req,res,next)=>{try{
 }catch(e){next(e)}});
 
 app.post('/api/support/assist/transcribe',body,async(req,res,next)=>{try{
-  await identity(req);
+  const me=await identity(req);
+  await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'support_audio',subjectId:me.account.id});
   const result=await transcribeSupportAudio(req.body?.data_url,req.body?.file_name||'voice-recording.webm',req.body?.source_language||'');
   res.json({...result,provider:SUPPORT_AI_PROVIDER});
 }catch(e){next(e)}});
@@ -906,7 +908,7 @@ app.post('/api/support/assist/translate',body,async(req,res,next)=>{try{
   res.json({english_translation:translated,provider:SUPPORT_AI_PROVIDER});
 }catch(e){next(e)}});
 
-app.post('/api/support/tickets',body,async(req,res,next)=>{const client=await pool.connect();try{
+app.post('/api/support/tickets',body,async(req,res,next)=>{try{
   const me=await identity(req),category=clean(req.body?.category,80),subject=clean(req.body?.subject,180),description=clean(req.body?.description,5000),requestedRelatedType=clean(req.body?.related_type,50),requestedRelatedId=req.body?.related_id?Number(req.body.related_id):null,requestedDestination=SUPPORT_DESTINATIONS.has(req.body?.requested_destination)?req.body.requested_destination:'support',sourceLanguage=clean(req.body?.source_language,32),englishTranslation=clean(req.body?.english_translation,12000);
   if(!SUPPORT_CATEGORIES.has(category)||subject.length<3||description.length<10)return res.status(400).json({error:'Valid category, subject and clear description required'});
   const isPrivacyRequest=PRIVACY_SUPPORT_CATEGORIES.has(category);
@@ -914,18 +916,23 @@ app.post('/api/support/tickets',body,async(req,res,next)=>{const client=await po
   const relatedType=isPrivacyRequest?'privacy_rights':requestedRelatedType;
   const relatedId=isPrivacyRequest?null:requestedRelatedId;
   const attachments=validateSupportAttachments(req.body?.attachments),territoryId=isPrivacyRequest?null:await inferTerritory(relatedType,relatedId,req.body?.territory_id);
-  await client.query('BEGIN');
-  const q=await client.query(`INSERT INTO support_tickets(requester_account_id,territory_id,category,subject,description,requested_destination,source_language,english_translation,related_type,related_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[me.account.id,territoryId,category,subject,description,destination,sourceLanguage,englishTranslation,relatedType,relatedId]);
-  const ticket=q.rows[0];
-  await client.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[ticket.id,me.account.id,description]);
-  if(isPrivacyRequest){
-    await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,'privacy_rights',$2) ON CONFLICT DO NOTHING`,[ticket.id,me.account.id]);
-    await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[ticket.id,category,me.account.id]);
-  }
-  for(const a of attachments)await client.query(`INSERT INTO support_attachments(ticket_id,kind,mime_type,file_name,byte_size,data_url,transcript_text,transcript_language,english_translation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[ticket.id,a.kind,a.mime,a.file_name,a.byte_size,a.data_url,a.transcript_text,a.transcript_language,a.english_translation]);
-  await client.query('COMMIT');
-  res.status(201).json({...ticket,attachment_count:attachments.length});
-}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
+  await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'incident_submit',subjectType:'support_ticket',subjectId:relatedId||''});
+  if(attachments.length)await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'support_ticket',subjectId:relatedId||''});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const q=await client.query(`INSERT INTO support_tickets(requester_account_id,territory_id,category,subject,description,requested_destination,source_language,english_translation,related_type,related_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[me.account.id,territoryId,category,subject,description,destination,sourceLanguage,englishTranslation,relatedType,relatedId]);
+    const ticket=q.rows[0];
+    await client.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[ticket.id,me.account.id,description]);
+    if(isPrivacyRequest){
+      await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,'privacy_rights',$2) ON CONFLICT DO NOTHING`,[ticket.id,me.account.id]);
+      await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[ticket.id,category,me.account.id]);
+    }
+    for(const a of attachments)await client.query(`INSERT INTO support_attachments(ticket_id,kind,mime_type,file_name,byte_size,data_url,transcript_text,transcript_language,english_translation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[ticket.id,a.kind,a.mime,a.file_name,a.byte_size,a.data_url,a.transcript_text,a.transcript_language,a.english_translation]);
+    await client.query('COMMIT');
+    res.status(201).json({...ticket,attachment_count:attachments.length});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+}catch(e){next(e)}});
 app.get('/api/support/tickets/mine',async(req,res,next)=>{try{const me=await identity(req);const{rows}=await pool.query(`SELECT t.*,(SELECT jsonb_agg(x.tag ORDER BY x.tag) FROM support_ticket_tags x WHERE x.ticket_id=t.id) tags,(SELECT COUNT(*)::int FROM support_attachments a WHERE a.ticket_id=t.id) attachment_count FROM support_tickets t WHERE requester_account_id=$1 ORDER BY updated_at DESC LIMIT 150`,[me.account.id]);res.json(rows)}catch(e){next(e)}});
 app.get('/api/support/tickets/:id',async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0];if(Number(t.requester_account_id)!==Number(me.account.id)){await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id)}const messages=await pool.query(`SELECT m.id,m.actor_account_id,a.display_name actor_name,m.actor_context,m.visibility,m.message,m.created_at FROM support_messages m JOIN accounts a ON a.id=m.actor_account_id WHERE m.ticket_id=$1 AND (m.visibility='user' OR $2::boolean) ORDER BY m.created_at,m.id`,[id,Number(t.requester_account_id)!==Number(me.account.id)]);const tags=await pool.query(`SELECT tag FROM support_ticket_tags WHERE ticket_id=$1 ORDER BY tag`,[id]);const attachments=await pool.query(`SELECT id,kind,mime_type,file_name,byte_size,transcript_text,transcript_language,english_translation,created_at FROM support_attachments WHERE ticket_id=$1 ORDER BY id`,[id]);res.json({...t,messages:messages.rows,tags:tags.rows.map(x=>x.tag),attachments:attachments.rows})}catch(e){next(e)}});
 app.get('/api/support/tickets/:id/attachments/:attachmentId',async(req,res,next)=>{try{
@@ -987,7 +994,7 @@ app.use((req,res,next)=>{
   if(!businessAccountingApp)return res.status(503).json({error:'Multi-business Accounting runtime is not ready'});
   return businessAccountingApp(req,res,next);
 });
-app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected admin operations error'})});
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:status<500?err.message:'Unexpected admin operations error'};res.status(status).json(payload)});
 
 let embeddedStartPromise=null;
 export async function startEmbeddedAdminOperations(){
