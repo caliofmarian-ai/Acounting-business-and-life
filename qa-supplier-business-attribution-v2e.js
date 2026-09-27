@@ -195,6 +195,9 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
       method:"POST",token:merchant.token,body:{amount:outstandingB,account:"cash"}
     });
     expectStatus(paid,200,"Supplier V2E PO B payment");
+    if(Number(paid.json?.supplier_receipt_business_id)!==businessB){
+      throw new Error("Supplier V2E payment response did not confirm business B receipt ownership.");
+    }
     poB=paid.json;
   }
   if(poB.payment_status!=="paid")throw new Error("Supplier V2E PO B is not paid.");
