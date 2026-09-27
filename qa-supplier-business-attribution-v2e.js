@@ -196,7 +196,13 @@ export async function runSupplierBusinessAttributionV2EAcceptance({pool,base,sec
     });
     expectStatus(paid,200,"Supplier V2E PO B payment");
     if(Number(paid.json?.supplier_receipt_business_id)!==businessB){
-      throw new Error("Supplier V2E payment response did not confirm business B receipt ownership.");
+      throw new Error(
+        "Supplier V2E payment response receipt ownership mismatch: receipt "
+        +String(paid.json?.supplier_receipt_business_id??"missing")
+        +" PO "+String(paid.json?.supplier_business_id??"missing")
+        +" attribution "+String(paid.json?.supplier_business_attribution??"missing")
+        +" expected "+businessB
+      );
     }
     poB=paid.json;
   }
