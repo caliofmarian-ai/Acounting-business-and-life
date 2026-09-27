@@ -14,6 +14,7 @@ let state={me:null,catalog:null,overview:null,active:'overview',assignments:null
 const modules=[
   {id:'overview',label:'Overview',any:['admin.console']},
   {id:'profiles',label:'Profiles',any:['profiles.invite_merchant','profiles.invite_supplier','profiles.invite_courier','merchant.approve','supplier.approve','courier.verify','profiles.review_service_provider','profile.suspend']},
+  {id:'members',label:'Members',any:['members.view']},
   {id:'delivery',label:'Delivery',any:['delivery.dispatch.manage','delivery.pricing.manage','courier.verify']},
   {id:'support',label:'Support',any:['support.manage']},
   {id:'safety',label:'Trust & Safety',any:['incident.triage']},
@@ -80,7 +81,7 @@ function rows(items,formatter){
 }
 function overviewPanel(){
   const work=modules.filter(m=>!['overview','settings'].includes(m.id)&&hasAny(m.any));
-  return hero()+metrics()+'<div class="sectionTitle"><h3>Available work areas</h3></div>'+(work.length?'<div class="adminOverviewActions">'+work.map(m=>'<button type="button" class="row queueRow" data-overview-module="'+esc(m.id)+'"><strong>'+esc(m.label)+'</strong><span class="muted">'+esc(({profiles:'Review people and profile access',delivery:'Courier, dispatch and delivery pricing',support:'Help users and manage tickets',safety:'Review incidents and safety actions',territories:'Manage operating territory structure',finance:'Company money, budgets and platform economics',audit:'Review activity and operational metrics',team:'Delegate Admin responsibilities'})[m.id]||'Open Admin work area')+'</span><span class="adminRowAction">Open ›</span></button>').join('')+'</div>':'<div class="empty">No operational work areas are delegated to this account.</div>')+'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>TECHNICAL ACCESS</small><strong>Permission references</strong><span>Advanced audit reference only</span></span></summary><div class="adminDisclosureBody"><div class="permissionPills">'+(state.me.permissions||[]).map(p=>'<span>'+esc(p)+'</span>').join('')+'</div></div></details>';
+  return hero()+metrics()+'<div class="sectionTitle"><h3>Available work areas</h3></div>'+(work.length?'<div class="adminOverviewActions">'+work.map(m=>'<button type="button" class="row queueRow" data-overview-module="'+esc(m.id)+'"><strong>'+esc(m.label)+'</strong><span class="muted">'+esc(({profiles:'Review people and profile access',members:'Find registered members in your Admin scope',delivery:'Courier, dispatch and delivery pricing',support:'Help users and manage tickets',safety:'Review incidents and safety actions',territories:'Manage operating territory structure',finance:'Company money, budgets and platform economics',audit:'Review activity and operational metrics',team:'Delegate Admin responsibilities'})[m.id]||'Open Admin work area')+'</span><span class="adminRowAction">Open ›</span></button>').join('')+'</div>':'<div class="empty">No operational work areas are delegated to this account.</div>')+'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>TECHNICAL ACCESS</small><strong>Permission references</strong><span>Advanced audit reference only</span></span></summary><div class="adminDisclosureBody"><div class="permissionPills">'+(state.me.permissions||[]).map(p=>'<span>'+esc(p)+'</span>').join('')+'</div></div></details>';
 }
 function wireOverview(){document.querySelectorAll('[data-overview-module]').forEach(button=>button.onclick=()=>activateModule(button.dataset.overviewModule));}
 function profileRoleLabel(role){
@@ -203,6 +204,46 @@ function wireProfiles(){
   document.querySelectorAll('[data-admin-application]').forEach(button=>button.onclick=()=>openAdminApplication(Number(button.dataset.adminApplication)));
   document.querySelectorAll('[data-admin-authorization]').forEach(button=>button.onclick=()=>openAdminAuthorization(Number(button.dataset.adminAuthorization)));
 }
+function memberDate(value){
+  if(!value)return'—';
+  try{return new Intl.DateTimeFormat('en-PH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Manila'}).format(new Date(value))}
+  catch{return String(value)}
+}
+function memberProfilesMarkup(profiles){
+  const active=(Array.isArray(profiles)?profiles:[]).filter(x=>x?.enabled&&x?.status==='active');
+  return active.length?'<div class="memberProfiles">'+active.map(x=>'<span>'+esc(profileRoleLabel(x.role))+'</span>').join('')+'</div>':'<span class="muted">No active profiles</span>';
+}
+async function membersPanel(){
+  const filters=state.memberFilters||{q:'',status:'',verification:'',profile:'',offset:0};
+  const params=new URLSearchParams();
+  if(filters.q)params.set('q',filters.q);
+  if(filters.status)params.set('status',filters.status);
+  if(filters.verification)params.set('verification',filters.verification);
+  if(filters.profile)params.set('profile',filters.profile);
+  params.set('limit','50');params.set('offset',String(filters.offset||0));
+  const data=await api('/api/admin/members?'+params.toString());
+  state.members=data;
+  const scopeLabel=data.scope?.country_wide?'Philippines scope':((data.scope?.territory_ids||[]).length+' delegated territor'+((data.scope?.territory_ids||[]).length===1?'y':'ies'));
+  const form='<form id="memberSearchForm" class="adminForm memberSearchForm"><div class="memberFilterGrid">'
+    +'<label>Search<input name="q" value="'+esc(filters.q||'')+'" placeholder="Name, email, Account ID or Personal ID"></label>'
+    +'<label>Account status<select name="status"><option value="">All statuses</option><option value="active" '+(filters.status==='active'?'selected':'')+'>Active</option><option value="inactive" '+(filters.status==='inactive'?'selected':'')+'>Not active</option></select></label>'
+    +'<label>Email<select name="verification"><option value="">All verification states</option><option value="verified" '+(filters.verification==='verified'?'selected':'')+'>Verified</option><option value="unverified" '+(filters.verification==='unverified'?'selected':'')+'>Not verified</option></select></label>'
+    +'<label>Active profile<select name="profile"><option value="">All profiles</option>'+['customer','merchant','supplier','courier','service_provider'].map(role=>'<option value="'+role+'" '+(filters.profile===role?'selected':'')+'>'+esc(profileRoleLabel(role))+'</option>').join('')+'</select></label>'
+    +'</div><div class="memberSearchActions"><button class="primary" type="submit">Search members</button><button class="secondary" id="memberClearFilters" type="button">Clear</button></div></form>';
+  const list=rows(data.items,x=>'<article class="row memberRow"><div class="rowHeader"><div><strong>'+esc(x.display_name||('Account '+x.account_id))+'</strong><span class="memberId">#'+Number(x.account_id)+' · '+esc(x.personal_id||'Personal ID unavailable')+'</span></div><span class="status">'+esc(x.auth_status||'unknown')+'</span></div><span class="memberEmail">'+esc(x.email||'No email')+(x.email_verified_at?' · verified':' · not verified')+'</span><span class="muted">'+esc(x.path_text||x.geographic_name||'Area not assigned')+'</span>'+memberProfilesMarkup(x.profiles)+'<div class="memberMeta"><span>Registered '+esc(memberDate(x.created_at))+'</span><span>Last sign-in '+esc(memberDate(x.last_session_at))+'</span>'+(x.account_mode==='company_test'?'<span class="memberTestBadge">Company test account'+(x.test_role?' · '+esc(profileRoleLabel(x.test_role)):'')+'</span>':'')+'</div></article>');
+  const start=Number(data.offset||0),end=Math.min(start+Number(data.items?.length||0),Number(data.total||0));
+  const paging='<div class="memberPaging"><span>'+esc(data.total||0)+' registered · showing '+(data.total?start+1:0)+'–'+end+' · '+esc(scopeLabel)+'</span><div><button class="secondary" type="button" data-member-page="prev" '+(start<=0?'disabled':'')+'>Previous</button><button class="secondary" type="button" data-member-page="next" '+(end>=Number(data.total||0)?'disabled':'')+'>Next</button></div></div>';
+  return hero()+'<p class="moduleIntro">Registered people visible inside your delegated Admin scope. Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here.</p>'
+    +'<div class="grid memberSummary"><div class="metric"><strong>'+esc(data.total||0)+'</strong><span>Registered members in scope</span></div><div class="metric"><strong>'+esc(scopeLabel)+'</strong><span>Directory scope</span></div></div>'
+    +form+paging+list+paging;
+}
+async function wireMembers(){
+  const form=document.getElementById('memberSearchForm');
+  if(form)form.onsubmit=async e=>{e.preventDefault();const fd=new FormData(form);state.memberFilters={q:String(fd.get('q')||'').trim(),status:String(fd.get('status')||''),verification:String(fd.get('verification')||''),profile:String(fd.get('profile')||''),offset:0};await renderActive()};
+  document.getElementById('memberClearFilters')?.addEventListener('click',async()=>{state.memberFilters={q:'',status:'',verification:'',profile:'',offset:0};await renderActive()});
+  document.querySelectorAll('[data-member-page]').forEach(button=>button.onclick=async()=>{const current=Number(state.memberFilters?.offset||0),step=50;state.memberFilters={...(state.memberFilters||{}),offset:button.dataset.memberPage==='next'?current+step:Math.max(0,current-step)};await renderActive()});
+}
+
 function deliveryRuleFields(prefix,label,weighted){return '<fieldset><legend>'+esc(label)+'</legend><div class="supportControls"><label>Base fee<input id="'+prefix+'Base" type="number" min="0" step="0.01" required></label><label>Per km<input id="'+prefix+'Km" type="number" min="0" step="0.01" required></label></div>'+(weighted?'<div class="supportControls"><label>Per kg<input id="'+prefix+'Kg" type="number" min="0" step="0.01" required></label><label>Per litre<input id="'+prefix+'Liter" type="number" min="0" step="0.01" required></label></div>':'')+'<div class="supportControls"><label>Minimum fee<input id="'+prefix+'Min" type="number" min="0" step="0.01" required></label><label>Max distance km<input id="'+prefix+'Distance" type="number" min="0" step="0.1"></label></div><div class="supportControls"><label>Max weight kg<input id="'+prefix+'Weight" type="number" min="0" step="0.1"></label><label>Max volume L<input id="'+prefix+'Volume" type="number" min="0" step="0.1"></label></div></fieldset>'}
 function deliveryPricingPanel(rules){const active=(rules||[]).find(x=>x.active);return '<details class="adminDisclosure deliveryPricingDisclosure"><summary><span class="adminDisclosureCopy"><small>COUNTRY-LEVEL CONTROL</small><strong>Delivery pricing</strong><span>Vehicle fees, distance rules and delivery capacity</span></span><span class="status">'+esc(active?'Active v'+active.version:'HOLD')+'</span></summary><div class="adminDisclosureBody"><p class="muted">Create a new immutable vehicle-pricing version. No PHP tariff is hardcoded.</p><form id="adminDeliveryPricingForm" class="adminForm">'+deliveryRuleFields('bike','Bicycle · small parcel',false)+deliveryRuleFields('car','Car',true)+deliveryRuleFields('van','Van',true)+'<label>Route factor<input id="deliveryRouteFactor" type="number" min="1" step="0.01" value="1" required></label><button class="primary" type="submit">Save and activate version</button><div id="deliveryPricingResult"></div></form></div></details>'}
 function deliveryCourierPanel(couriers){return '<section><div class="sectionTitle"><h3>Courier verification</h3></div>'+rows(couriers,c=>'<div class="row"><div class="rowHeader"><strong>'+esc(c.courier_name||c.display_name)+'</strong><span class="status">'+esc(c.eligibility_status)+'</span></div><span class="muted">'+esc(c.email||'')+' · '+esc(c.approved_vehicle_class||c.vehicle_type||'No vehicle')+' · '+Number(c.submitted_documents||0)+' submitted documents</span><button class="secondary adminInlineAction" type="button" data-courier-decision="review" data-courier-id="'+Number(c.account_id)+'">Review eligibility</button></div>')+'</section>'}
@@ -1253,6 +1294,7 @@ async function renderActive(){
     let html='',wire=null;
     if(active==='overview'){html=overviewPanel();wire=wireOverview}
     else if(active==='profiles'){await ensureAdminOverviewDetail();html=profilesPanel();wire=wireProfiles}
+    else if(active==='members'){html=await membersPanel();wire=wireMembers}
     else if(active==='delivery'){html=await deliveryPanel();wire=wireDelivery}
     else if(active==='support'){html=await queuePanel('support');wire=bindSupportQueue}
     else if(active==='safety'){html=await queuePanel('safety');wire=bindSafetyQueue}
