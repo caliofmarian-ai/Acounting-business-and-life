@@ -14,11 +14,14 @@ const err=(status,message)=>Object.assign(new Error(message),{status});
 const token=()=>crypto.randomBytes(24).toString('base64url');
 const poNumber=id=>`PO-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${String(id).padStart(5,'0')}`;
 
-async function acceptedRelationship(pool,businessId,supplierAccountId){
+async function acceptedRelationship(pool,businessId,supplierAccountId,supplierBusinessId=null){
   const {rows}=await pool.query(
     `SELECT * FROM supplier_relationships
-      WHERE business_id=$1 AND supplier_account_id=$2 AND state='accepted'`,
-    [Number(businessId),Number(supplierAccountId)]
+      WHERE business_id=$1
+        AND supplier_account_id=$2
+        AND state='accepted'
+        AND ($3::bigint IS NULL OR supplier_business_id=$3)`,
+    [Number(businessId),Number(supplierAccountId),supplierBusinessId==null?null:Number(supplierBusinessId)]
   );
   return rows[0]||null;
 }
@@ -371,7 +374,7 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
            WHERE pb.business_id=$1 AND pb.role='supplier' AND pb.status='active'`,[supplierBusinessId]
         );
         if(!supplier.rowCount)throw err(404,'Supplier target not found');
-        const x=supplier.rows[0],relationship=await acceptedRelationship(pool,merchant.id,x.supplier_account_id);
+        const x=supplier.rows[0],relationship=await acceptedRelationship(pool,merchant.id,x.supplier_account_id,x.business_id);
         if(!(relationship||(Boolean(x.accepts_rfqs)&&['directory','rfq_only'].includes(x.visibility)))){
           throw err(409,'One or more Supplier targets do not accept sourcing requests');
         }
@@ -689,7 +692,7 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
         ||new Date(quoteValidDate+'T23:59:59Z').getTime()<Date.now()){
         return res.status(409).json({error:'Quote is no longer active'});
       }
-      if(!await acceptedRelationship(pool,merchant.id,quote.supplier_account_id)){
+      if(!await acceptedRelationship(pool,merchant.id,quote.supplier_account_id,quote.supplier_business_id)){
         return res.status(409).json({error:'Accepted Supplier relationship required before creating a PO'});
       }
       const supplierBinding=await pool.query(
