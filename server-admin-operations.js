@@ -13,6 +13,10 @@ import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssign
 import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
 import {buildSessionBootstrap} from './session-bootstrap-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {
+  ensureIncidentTrustCase,ensureTrustSafetyCaseSchema,linkIncidentToTrustCase,recordTrustAction,
+  syncIncidentTrustCaseTerritory,trustCaseSeverities,trustCaseSeverity,trustCaseStatuses,trustCaseStatus
+} from './trust-safety-case-core.js';
 
 const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -150,9 +154,13 @@ async function transcribeSupportAudio(dataUrl,fileName='voice-recording.webm',so
 }
 
 const INCIDENT_STATUSES=new Set(['submitted','triaged','investigating','awaiting_information','resolved','dismissed','escalated']);
+const TRUST_CASE_STATUSES=new Set(trustCaseStatuses());
+const TRUST_CASE_SEVERITIES=new Set(trustCaseSeverities());
+const TRUST_CASE_REASON_CATEGORIES=new Set(['triage','evidence_review','fraud_review','safety_review','privacy_review','payment_review','linked_reports','resolution','other']);
 let businessAccountingApp=null;let businessAccountingReady=false;let shuttingDown=false;
 
 const clean=(v,max=1600)=>String(v??'').trim().slice(0,max);
+const routeId=(value,label='Record')=>{const id=Number(value);if(!Number.isSafeInteger(id)||id<1)throw Object.assign(new Error(`${label} ID is invalid`),{status:400});return id};
 const authHeader=req=>req.headers.authorization||'';
 const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',120);
 async function upstream(path,options={}){return authHardeningFetch(path,options)}
@@ -161,6 +169,10 @@ function rolePermission(role){return role==='merchant'?'merchant.approve':role==
 const assignmentRank=a=>clean(a?.effective_rank||a?.authority_rank||a?.admin_role,40);
 async function adminFor(req,permission,territoryId=null){const me=await identity(req);const assignment=await requireAdminPermission(pool,Number(me.account.id),permission,territoryId);return{me,assignment}}
 async function isCountryWide(accountId,permission){const as=await getAdminAssignments(pool,accountId);for(const a of as){if(a.admin_role==='super_admin')return true;if(a.admin_role==='country_admin'){const p=new Set(Array.isArray(a.permissions)?a.permissions:[]);if(p.has(permission))return true}}return false}
+async function requireIncidentTriageScope(accountId,territoryId){
+  if(territoryId==null&&!(await isCountryWide(accountId,'incident.triage')))throw Object.assign(new Error('Country-level Trust & Safety authority is required for an unscoped case'),{status:403});
+  return requireAdminPermission(pool,accountId,'incident.triage',territoryId);
+}
 
 async function initDb(){
   await ensureAdminSchema(pool);
@@ -280,6 +292,7 @@ async function initDb(){
         WHERE pa.account_id=i.related_id AND pa.role='service_provider' AND pa.status='active' AND pa.territory_id IS NOT NULL
       );
   `);
+  await ensureTrustSafetyCaseSchema(pool);
 }
 async function inferTerritory(relatedType,relatedId,requested=null){
   if(requested){
@@ -946,19 +959,152 @@ app.patch('/api/admin/support/:id',body,async(req,res,next)=>{try{const me=await
 app.post('/api/admin/support/:id/messages',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0],assignment=await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id),message=clean(req.body?.message,3000),visibility=req.body?.visibility==='internal'?'internal':'user';if(!message)return res.status(400).json({error:'Message is required'});await pool.query(`INSERT INTO support_messages(ticket_id,actor_account_id,actor_context,visibility,message) VALUES($1,$2,'admin',$3,$4)`,[id,me.account.id,visibility,message]);await pool.query(`UPDATE support_tickets SET status=CASE WHEN $1='user' AND status NOT IN ('resolved','closed') THEN 'waiting_user' ELSE status END,updated_at=NOW() WHERE id=$2`,[visibility,id]);await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'support.manage',territoryId:t.territory_id,targetType:'support_ticket',targetId:String(id),eventCode:visibility==='internal'?'support_internal_note':'support_user_reply',correlationId:correlation(req)});res.json({ok:true})}catch(e){next(e)}});
 app.post('/api/admin/support/:id/assist/draft',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});await requireAdminPermission(pool,me.account.id,'support.manage',q.rows[0].territory_id);const messages=await pool.query(`SELECT actor_context,message FROM support_messages WHERE ticket_id=$1 AND visibility='user' ORDER BY created_at,id`,[id]);const draft=await draftAdminSupportReply(q.rows[0],messages.rows,req.body?.draft);res.json({draft,provider:SUPPORT_AI_PROVIDER,model:SUPPORT_AI_DRAFT_MODEL,automatic_send:false})}catch(e){next(e)}});
 app.post('/api/admin/support/:id/assist/translate',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT territory_id FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});await requireAdminPermission(pool,me.account.id,'support.manage',q.rows[0].territory_id);const translation=await translateAdminSupportReply(req.body?.text,req.body?.target_language,req.body?.instruction);res.json({translation,target_language:clean(req.body?.target_language,60),provider:SUPPORT_AI_PROVIDER,model:SUPPORT_AI_TRANSLATION_MODEL,automatic_send:false})}catch(e){next(e)}});
-app.post('/api/admin/support/:id/escalate',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0],supportAssignment=await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id);await requireAdminPermission(pool,me.account.id,'incident.triage',t.territory_id);if(t.linked_incident_id)return res.json({ok:true,incident_id:t.linked_incident_id});const inc=await pool.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status,territory_id,support_ticket_id) VALUES($1,'other',NULL,'Support escalation',$2,'escalated',$3,$4) RETURNING id`,[t.requester_account_id,`Escalated from support ticket #${id}: ${t.subject}\n${t.description}`,t.territory_id,id]);await pool.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'support_escalation','escalated',$3)`,[inc.rows[0].id,me.account.id,clean(req.body?.reason,1500)||'Escalated from Support']);await pool.query(`UPDATE support_tickets SET linked_incident_id=$1,status='waiting_internal',updated_at=NOW() WHERE id=$2`,[inc.rows[0].id,id]);await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:supportAssignment.id,permission:'incident.triage',territoryId:t.territory_id,targetType:'support_ticket',targetId:String(id),eventCode:'support_escalated_to_incident',after:{incident_id:inc.rows[0].id},reason:req.body?.reason,correlationId:correlation(req)});res.status(201).json({ok:true,incident_id:inc.rows[0].id})}catch(e){next(e)}});
+app.post('/api/admin/support/:id/escalate',body,async(req,res,next)=>{try{
+  const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});
+  const t=q.rows[0];
+  await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id);
+  const triageAssignment=await requireIncidentTriageScope(me.account.id,t.territory_id);
+  if(t.linked_incident_id)return res.json({ok:true,incident_id:t.linked_incident_id,trust_case_id:(await pool.query(`SELECT trust_case_id FROM incident_reports WHERE id=$1`,[t.linked_incident_id])).rows[0]?.trust_case_id||null});
+  const reason=clean(req.body?.reason,1500)||'Escalated from Support',client=await pool.connect();
+  let incident,trustCase;
+  try{
+    await client.query('BEGIN');
+    const locked=await client.query(`SELECT * FROM support_tickets WHERE id=$1 FOR UPDATE`,[id]);
+    if(!locked.rowCount)throw Object.assign(new Error('Support ticket not found'),{status:404});
+    if(locked.rows[0].linked_incident_id){
+      await client.query('COMMIT');
+      const linked=await pool.query(`SELECT id,trust_case_id FROM incident_reports WHERE id=$1`,[locked.rows[0].linked_incident_id]);
+      return res.json({ok:true,incident_id:linked.rows[0]?.id||locked.rows[0].linked_incident_id,trust_case_id:linked.rows[0]?.trust_case_id||null});
+    }
+    const inc=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status,territory_id,support_ticket_id) VALUES($1,'other',NULL,'Support escalation',$2,'escalated',$3,$4) RETURNING *`,[t.requester_account_id,`Escalated from support ticket #${id}: ${t.subject}\n${t.description}`,t.territory_id,id]);
+    incident=inc.rows[0];
+    await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'support_escalation','escalated',$3)`,[incident.id,me.account.id,reason]);
+    trustCase=await ensureIncidentTrustCase(client,{incidentId:incident.id,actorAccountId:me.account.id,sourceSurface:'support_escalation',severity:'high',correlationId:correlation(req)});
+    await client.query(`UPDATE support_tickets SET linked_incident_id=$1,status='waiting_internal',updated_at=NOW() WHERE id=$2`,[incident.id,id]);
+    await client.query('COMMIT');
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:triageAssignment.id,permission:'incident.triage',territoryId:t.territory_id,targetType:'support_ticket',targetId:String(id),eventCode:'support_escalated_to_incident',after:{incident_id:incident.id,trust_case_id:trustCase.id},reason,correlationId:correlation(req)});
+  res.status(201).json({ok:true,incident_id:incident.id,trust_case_id:trustCase.id});
+}catch(e){next(e)}});
+
+app.get('/api/admin/trust-cases',async(req,res,next)=>{try{
+  const me=await identity(req);
+  await requireAdminPermission(pool,me.account.id,'incident.triage');
+  const ids=await visibleTerritoryIds(pool,me.account.id,'incident.triage'),countryWide=await isCountryWide(me.account.id,'incident.triage');
+  const status=clean(req.query.status,40),severity=clean(req.query.severity,30),args=[];
+  if(status&&!TRUST_CASE_STATUSES.has(status))return res.status(400).json({error:'Unknown Trust & Safety case status'});
+  if(severity&&!TRUST_CASE_SEVERITIES.has(severity))return res.status(400).json({error:'Unknown Trust & Safety case severity'});
+  let where=countryWide?"(c.territory_id IS NULL OR c.territory_id IN (SELECT id FROM territories WHERE country_code='PH'))":`c.territory_id=ANY($1::bigint[])`;
+  if(!countryWide)args.push(ids.length?ids:[-1]);
+  if(status){args.push(status);where+=` AND c.status=$${args.length}`}
+  if(severity){args.push(severity);where+=` AND c.severity=$${args.length}`}
+  const{rows}=await pool.query(`
+    SELECT c.id,c.public_id,c.case_type,c.title,c.status,c.severity,c.territory_id,c.source_incident_id,
+      c.assigned_admin_account_id,c.resolution_summary,c.last_event_at,c.created_at,c.updated_at,c.closed_at,
+      a.display_name assigned_admin_name,
+      (SELECT COUNT(*)::int FROM incident_reports i WHERE i.trust_case_id=c.id) incident_count,
+      (SELECT COUNT(*)::int FROM trust_case_entities e WHERE e.case_id=c.id) entity_count,
+      (SELECT COUNT(*)::int FROM trust_risk_events r WHERE r.case_id=c.id) event_count
+    FROM trust_cases c
+    LEFT JOIN accounts a ON a.id=c.assigned_admin_account_id
+    WHERE ${where}
+    ORDER BY CASE c.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END,
+      CASE c.status WHEN 'open' THEN 0 WHEN 'triaged' THEN 1 WHEN 'investigating' THEN 2 WHEN 'awaiting_information' THEN 3 WHEN 'monitoring' THEN 4 WHEN 'resolved' THEN 5 WHEN 'dismissed' THEN 6 ELSE 7 END,
+      c.last_event_at DESC,c.id DESC LIMIT 300
+  `,args);
+  res.json(rows);
+}catch(e){next(e)}});
+
+app.get('/api/admin/trust-cases/:id',async(req,res,next)=>{try{
+  const me=await identity(req),id=routeId(req.params.id,'Trust & Safety case'),q=await pool.query(`SELECT c.*,a.display_name assigned_admin_name FROM trust_cases c LEFT JOIN accounts a ON a.id=c.assigned_admin_account_id WHERE c.id=$1`,[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Trust & Safety case not found'});
+  const trustCase=q.rows[0],assignment=await requireIncidentTriageScope(me.account.id,trustCase.territory_id);
+  const[incidents,entities,events,actions]=await Promise.all([
+    pool.query(`SELECT i.id,i.related_type,i.related_id,i.category,i.description,i.status,i.territory_id,i.resolution_summary,i.submitted_at,i.updated_at,i.resolved_at,a.display_name reporter_name,a.email reporter_email,(SELECT COUNT(*)::int FROM incident_attachments x WHERE x.incident_id=i.id) attachment_count FROM incident_reports i JOIN accounts a ON a.id=i.reporter_account_id WHERE i.trust_case_id=$1 ORDER BY i.submitted_at,i.id`,[id]),
+    pool.query(`SELECT id,entity_type,entity_id,relation_type,created_at FROM trust_case_entities WHERE case_id=$1 ORDER BY created_at,id`,[id]),
+    pool.query(`SELECT id,event_code,subject_type,subject_id,source_surface,severity,confidence_class,related_object_type,related_object_id,automated,signal_details,created_at FROM trust_risk_events WHERE case_id=$1 ORDER BY created_at,id`,[id]),
+    pool.query(`SELECT x.id,x.action_code,x.reason_category,x.rationale,x.from_status,x.to_status,x.from_severity,x.to_severity,x.human_reviewed,x.created_at,a.display_name actor_name FROM trust_actions x LEFT JOIN accounts a ON a.id=x.actor_account_id WHERE x.case_id=$1 ORDER BY x.created_at,x.id`,[id])
+  ]);
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:trustCase.territory_id,targetType:'trust_case',targetId:String(id),eventCode:'trust_case_viewed',correlationId:correlation(req)});
+  res.json({...trustCase,incidents:incidents.rows,entities:entities.rows,events:events.rows,actions:actions.rows});
+}catch(e){next(e)}});
+
+app.patch('/api/admin/trust-cases/:id',body,async(req,res,next)=>{try{
+  const me=await identity(req),id=routeId(req.params.id,'Trust & Safety case'),existing=await pool.query(`SELECT * FROM trust_cases WHERE id=$1`,[id]);
+  if(!existing.rowCount)return res.status(404).json({error:'Trust & Safety case not found'});
+  const current=existing.rows[0],assignment=await requireIncidentTriageScope(me.account.id,current.territory_id);
+  if(req.body?.human_reviewed!==true)return res.status(400).json({error:'Explicit human review confirmation is required'});
+  const status=trustCaseStatus(req.body?.status||current.status),severity=trustCaseSeverity(req.body?.severity||current.severity),reasonCategory=clean(req.body?.reason_category,80),rationale=clean(req.body?.rationale,3000),resolution=clean(req.body?.resolution_summary??current.resolution_summary,4000);
+  if(status==='linked')return res.status(400).json({error:'Cases become linked only through the reviewed Incident-link workflow'});
+  if(!TRUST_CASE_REASON_CATEGORIES.has(reasonCategory)||rationale.length<5)return res.status(400).json({error:'A valid reason category and clear rationale are required'});
+  if(['resolved','dismissed'].includes(status)&&resolution.length<5)return res.status(400).json({error:'A resolution summary is required before closing a case'});
+  const client=await pool.connect();let updated;
+  try{
+    await client.query('BEGIN');
+    const locked=await client.query(`SELECT * FROM trust_cases WHERE id=$1 FOR UPDATE`,[id]);
+    if(!locked.rowCount)throw Object.assign(new Error('Trust & Safety case not found'),{status:404});
+    const before=locked.rows[0];
+    if(before.status==='linked')throw Object.assign(new Error('A linked case is preserved as read-only history'),{status:409});
+    const changed=await client.query(`UPDATE trust_cases SET status=$1,severity=$2,assigned_admin_account_id=CASE WHEN $3 THEN $4 ELSE assigned_admin_account_id END,resolution_summary=$5,closed_at=CASE WHEN $1 IN ('resolved','dismissed') THEN COALESCE(closed_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$6 RETURNING *`,[status,severity,Boolean(req.body?.assign_to_self),me.account.id,resolution,id]);
+    updated=changed.rows[0];
+    await recordTrustAction(client,{caseId:id,actorAccountId:me.account.id,actionCode:'case_reviewed',reasonCategory,rationale,fromStatus:before.status,toStatus:status,fromSeverity:before.severity,toSeverity:severity,before:{status:before.status,severity:before.severity,assigned_admin_account_id:before.assigned_admin_account_id},after:{status,severity,assigned_admin_account_id:updated.assigned_admin_account_id},humanReviewed:true,correlationId:correlation(req)});
+    await client.query('COMMIT');
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:current.territory_id,targetType:'trust_case',targetId:String(id),eventCode:'trust_case_reviewed',before:{status:current.status,severity:current.severity},after:{status,severity},reason:rationale,correlationId:correlation(req)});
+  res.json(updated);
+}catch(e){next(e)}});
+
+app.post('/api/admin/trust-cases/:id/incidents',body,async(req,res,next)=>{try{
+  const me=await identity(req),caseId=routeId(req.params.id,'Trust & Safety case'),incidentId=Number(req.body?.incident_id),rationale=clean(req.body?.rationale,3000);
+  if(req.body?.human_reviewed!==true)return res.status(400).json({error:'Explicit human review confirmation is required'});
+  if(!Number.isSafeInteger(incidentId)||incidentId<1||rationale.length<5)return res.status(400).json({error:'An Incident ID and clear link rationale are required'});
+  const client=await pool.connect();let result,target,incident,assignment,crossTerritory=false;
+  try{
+    await client.query('BEGIN');
+    const targetQ=await client.query(`SELECT * FROM trust_cases WHERE id=$1 FOR UPDATE`,[caseId]);
+    if(!targetQ.rowCount)throw Object.assign(new Error('Trust & Safety case not found'),{status:404});
+    const incidentQ=await client.query(`SELECT * FROM incident_reports WHERE id=$1 FOR UPDATE`,[incidentId]);
+    if(!incidentQ.rowCount)throw Object.assign(new Error('Incident not found'),{status:404});
+    target=targetQ.rows[0];incident=incidentQ.rows[0];
+    assignment=await requireIncidentTriageScope(me.account.id,target.territory_id);
+    await requireIncidentTriageScope(me.account.id,incident.territory_id);
+    crossTerritory=target.territory_id==null||incident.territory_id==null||Number(target.territory_id)!==Number(incident.territory_id);
+    if(crossTerritory&&!(await isCountryWide(me.account.id,'incident.triage')))throw Object.assign(new Error('Country-level Trust & Safety authority is required to link Incidents across territory scopes'),{status:403});
+    result=await linkIncidentToTrustCase(client,{caseId,incidentId,actorAccountId:me.account.id,rationale,reasonCategory:'linked_reports',correlationId:correlation(req)});
+    await client.query('COMMIT');
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:crossTerritory?null:target.territory_id,targetType:'trust_case',targetId:String(caseId),eventCode:result.alreadyLinked?'trust_case_incident_link_confirmed':'trust_case_incident_linked',before:{incident_case_id:incident.trust_case_id},after:{incident_case_id:caseId,incident_id:incidentId,linked_case_id:result.linkedCaseId},reason:rationale,correlationId:correlation(req)});
+  res.status(result.alreadyLinked?200:201).json({ok:true,case_id:caseId,incident_id:incidentId,already_linked:result.alreadyLinked,linked_case_id:result.linkedCaseId});
+}catch(e){next(e)}});
 
 app.get('/api/admin/incidents',async(req,res,next)=>{try{const me=await identity(req);await requireAdminPermission(pool,me.account.id,'incident.triage');const ids=await visibleTerritoryIds(pool,me.account.id,'incident.triage'),countryWide=await isCountryWide(me.account.id,'incident.triage'),status=clean(req.query.status,40);if(status&&!INCIDENT_STATUSES.has(status))return res.status(400).json({error:'Unknown status'});const args=[];let where=countryWide?"(i.territory_id IS NULL OR i.territory_id IN (SELECT id FROM territories WHERE country_code='PH'))":`i.territory_id=ANY($1::bigint[])`;if(!countryWide)args.push(ids.length?ids:[-1]);if(status){args.push(status);where+=` AND i.status=$${args.length}`}const{rows}=await pool.query(`SELECT i.id,i.related_type,i.related_id,i.category,i.description,i.status,i.territory_id,i.assigned_admin_account_id,i.resolution_summary,i.submitted_at,i.updated_at,a.display_name reporter_name,a.email reporter_email,(SELECT COUNT(*)::int FROM incident_attachments x WHERE x.incident_id=i.id) attachment_count FROM incident_reports i JOIN accounts a ON a.id=i.reporter_account_id WHERE ${where} ORDER BY i.updated_at DESC LIMIT 250`,args);res.json(rows)}catch(e){next(e)}});
-app.get('/api/admin/incidents/:id',async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT i.*,a.display_name reporter_name,a.email reporter_email FROM incident_reports i JOIN accounts a ON a.id=i.reporter_account_id WHERE i.id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Incident not found'});await requireAdminPermission(pool,me.account.id,'incident.triage',q.rows[0].territory_id);const[att,actions]=await Promise.all([pool.query(`SELECT id,kind,mime_type,file_name,byte_size,created_at FROM incident_attachments WHERE incident_id=$1 ORDER BY id`,[id]),pool.query(`SELECT x.*,a.display_name actor_name FROM incident_actions x JOIN accounts a ON a.id=x.actor_account_id WHERE x.incident_id=$1 ORDER BY x.created_at,x.id`,[id])]);res.json({...q.rows[0],attachments:att.rows,actions:actions.rows})}catch(e){next(e)}});
-app.get('/api/admin/incidents/:id/attachments/:attachmentId',async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT territory_id FROM incident_reports WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Incident not found'});await requireAdminPermission(pool,me.account.id,'incident.triage',q.rows[0].territory_id);const a=await pool.query(`SELECT id,kind,mime_type,file_name,byte_size,evidence_data_url FROM incident_attachments WHERE incident_id=$1 AND id=$2`,[id,Number(req.params.attachmentId)]);if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});const x=a.rows[0];res.json({id:x.id,kind:x.kind,mime_type:x.mime_type,file_name:x.file_name,byte_size:x.byte_size,data_url:x.evidence_data_url})}catch(e){next(e)}});
-app.patch('/api/admin/incidents/:id',body,async(req,res,next)=>{const client=await pool.connect();try{const me=await identity(req),id=Number(req.params.id);await client.query('BEGIN');const q=await client.query(`SELECT * FROM incident_reports WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Incident not found'),{status:404});const before=q.rows[0],assignment=await requireAdminPermission(pool,me.account.id,'incident.triage',before.territory_id),status=clean(req.body?.status,40),note=clean(req.body?.note,3000),resolution=clean(req.body?.resolution_summary,4000);if(!INCIDENT_STATUSES.has(status))throw Object.assign(new Error('Unknown incident status'),{status:400});await client.query(`UPDATE incident_reports SET status=$1,assigned_admin_account_id=COALESCE(assigned_admin_account_id,$2),resolution_summary=CASE WHEN $3<>'' THEN $3 ELSE resolution_summary END,resolved_at=CASE WHEN $1 IN ('resolved','dismissed') THEN COALESCE(resolved_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$4`,[status,me.account.id,resolution,id]);await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,from_status,to_status,note) VALUES($1,$2,'admin_status',$3,$4,$5)`,[id,me.account.id,before.status,status,note]);await client.query('COMMIT');await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:before.territory_id,targetType:'incident',targetId:String(id),eventCode:'incident_status_changed',before:{status:before.status},after:{status},reason:note,correlationId:correlation(req)});res.json({ok:true,status})}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
+app.get('/api/admin/incidents/:id',async(req,res,next)=>{try{
+  const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT i.*,a.display_name reporter_name,a.email reporter_email FROM incident_reports i JOIN accounts a ON a.id=i.reporter_account_id WHERE i.id=$1`,[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Incident not found'});
+  const assignment=await requireIncidentTriageScope(me.account.id,q.rows[0].territory_id);
+  const[att,actions]=await Promise.all([pool.query(`SELECT id,kind,mime_type,file_name,byte_size,created_at FROM incident_attachments WHERE incident_id=$1 ORDER BY id`,[id]),pool.query(`SELECT x.*,a.display_name actor_name FROM incident_actions x JOIN accounts a ON a.id=x.actor_account_id WHERE x.incident_id=$1 ORDER BY x.created_at,x.id`,[id])]);
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:q.rows[0].territory_id,targetType:'incident',targetId:String(id),eventCode:'incident_viewed',correlationId:correlation(req)});
+  res.json({...q.rows[0],attachments:att.rows,actions:actions.rows});
+}catch(e){next(e)}});
+app.get('/api/admin/incidents/:id/attachments/:attachmentId',async(req,res,next)=>{try{
+  const me=await identity(req),id=Number(req.params.id),attachmentId=Number(req.params.attachmentId),q=await pool.query(`SELECT territory_id FROM incident_reports WHERE id=$1`,[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Incident not found'});
+  const assignment=await requireIncidentTriageScope(me.account.id,q.rows[0].territory_id);
+  const a=await pool.query(`SELECT id,kind,mime_type,file_name,byte_size,evidence_data_url FROM incident_attachments WHERE incident_id=$1 AND id=$2`,[id,attachmentId]);
+  if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});
+  const x=a.rows[0];
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:q.rows[0].territory_id,targetType:'incident_attachment',targetId:String(attachmentId),eventCode:'incident_attachment_viewed',after:{incident_id:id},correlationId:correlation(req)});
+  res.json({id:x.id,kind:x.kind,mime_type:x.mime_type,file_name:x.file_name,byte_size:x.byte_size,data_url:x.evidence_data_url});
+}catch(e){next(e)}});
+app.patch('/api/admin/incidents/:id',body,async(req,res,next)=>{const client=await pool.connect();try{const me=await identity(req),id=Number(req.params.id);await client.query('BEGIN');const q=await client.query(`SELECT * FROM incident_reports WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Incident not found'),{status:404});const before=q.rows[0],assignment=await requireIncidentTriageScope(me.account.id,before.territory_id),status=clean(req.body?.status,40),note=clean(req.body?.note,3000),resolution=clean(req.body?.resolution_summary,4000);if(!INCIDENT_STATUSES.has(status))throw Object.assign(new Error('Unknown incident status'),{status:400});await client.query(`UPDATE incident_reports SET status=$1,assigned_admin_account_id=COALESCE(assigned_admin_account_id,$2),resolution_summary=CASE WHEN $3<>'' THEN $3 ELSE resolution_summary END,resolved_at=CASE WHEN $1 IN ('resolved','dismissed') THEN COALESCE(resolved_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$4`,[status,me.account.id,resolution,id]);await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,from_status,to_status,note) VALUES($1,$2,'admin_status',$3,$4,$5)`,[id,me.account.id,before.status,status,note]);await client.query('COMMIT');await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:before.territory_id,targetType:'incident',targetId:String(id),eventCode:'incident_status_changed',before:{status:before.status},after:{status},reason:note,correlationId:correlation(req)});res.json({ok:true,status})}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
 
 app.post('/api/incidents',body,async(req,res,next)=>{try{
   await dispatchBusinessAccounting(req,res,{
     afterSuccess:async(_status,data)=>{
       if(!data?.id)return;
       const territoryId=await inferTerritory(clean(req.body?.related_type,50),req.body?.related_id?Number(req.body.related_id):null,req.body?.territory_id);
-      if(territoryId)await pool.query(`UPDATE incident_reports SET territory_id=$1 WHERE id=$2`,[territoryId,Number(data.id)]);
+      if(territoryId)await syncIncidentTrustCaseTerritory(pool,Number(data.id),territoryId);
     }
   });
 }catch(e){next(e)}});

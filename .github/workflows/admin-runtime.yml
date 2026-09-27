@@ -40,6 +40,8 @@ on:
       - 'server-delivery.js'
       - 'server-delivery-finance.js'
       - 'server-incidents.js'
+      - 'trust-safety-case-core.js'
+      - 'tests/trust-safety-case-v1.test.js'
       - 'public/shell.js'
       - 'public/app.js'
       - 'public/business-accounting-ui.js'
@@ -77,6 +79,8 @@ on:
       - 'server-delivery.js'
       - 'server-delivery-finance.js'
       - 'server-incidents.js'
+      - 'trust-safety-case-core.js'
+      - 'tests/trust-safety-case-v1.test.js'
       - 'server-suppliers.js'
       - 'server-services.js'
       - 'server-marketplace.js'
@@ -171,6 +175,19 @@ jobs:
           done
           cat /tmp/abl-admin-runtime.log
           exit 1
+      - name: Verify Trust and Safety case schema
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          SELECT id,public_id,case_type,status,severity,territory_id,source_incident_id,last_event_at
+            FROM trust_cases LIMIT 0;
+          SELECT case_id,entity_type,entity_id,relation_type
+            FROM trust_case_entities LIMIT 0;
+          SELECT case_id,event_code,severity,confidence_class,signal_details
+            FROM trust_risk_events LIMIT 0;
+          SELECT case_id,action_code,reason_category,human_reviewed
+            FROM trust_actions LIMIT 0;
+          SELECT trust_case_id FROM incident_reports LIMIT 0;
+          SQL
       - name: Verify Financial Document Engine runtime
         run: |
           set -euo pipefail

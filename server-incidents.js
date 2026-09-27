@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {deliveryFinanceFetch,startEmbeddedDeliveryFinance,stopEmbeddedDeliveryFinance} from './server-delivery-finance.js';
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {ensureIncidentTrustCase,ensureTrustSafetyCaseSchema} from './trust-safety-case-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -125,6 +126,7 @@ async function initDb(){
     ALTER TABLE incident_reports DROP CONSTRAINT IF EXISTS incident_reports_related_type_check;
     ALTER TABLE incident_reports ADD CONSTRAINT incident_reports_related_type_check
       CHECK(related_type IN ('order','delivery','merchant','marketplace_product','courier','service_job','service_provider','supplier','payment','other'));
+    ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS territory_id BIGINT REFERENCES territories(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS incident_reports_reporter_idx ON incident_reports(reporter_account_id,submitted_at DESC);
     CREATE INDEX IF NOT EXISTS incident_reports_status_idx ON incident_reports(status,submitted_at DESC);
 
@@ -152,6 +154,7 @@ async function initDb(){
     );
     CREATE INDEX IF NOT EXISTS incident_actions_incident_idx ON incident_actions(incident_id,created_at,id);
   `);
+  await ensureTrustSafetyCaseSchema(pool);
 }
 
 async function incidentSummary(id){
@@ -197,6 +200,7 @@ app.post('/api/incidents',body,async(req,res,next)=>{
       const incident=q.rows[0];
       for(const f of attachments) await client.query(`INSERT INTO incident_attachments(incident_id,kind,mime_type,file_name,byte_size,evidence_data_url) VALUES($1,$2,$3,$4,$5,$6)`,[incident.id,f.kind,f.mime,f.file_name,f.byte_size,f.data_url]);
       await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'submitted','submitted','Incident submitted')`,[incident.id,me.account.id]);
+      await ensureIncidentTrustCase(client,{incidentId:incident.id,actorAccountId:me.account.id,sourceSurface:'incident_report',correlationId:clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',120)});
       await client.query('COMMIT');
       res.status(201).json(await incidentSummary(incident.id));
     }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
