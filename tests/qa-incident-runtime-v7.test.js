@@ -28,3 +28,27 @@ test('Incident Runtime V7 acceptance covers ownership evidence and scoped triage
   assert.match(qa,/scoped_admin_triage:true/);
   assert.match(qa,/QA credential restore failed/);
 });
+
+test('Incident Runtime V7 acceptance proves the severe-escalation Preview gate',()=>{
+  for(const marker of [
+    "urgency_indicator:'payment_fraud_or_money_mule'",
+    "category:'Exploitation concern'",
+    "'ph-severe-escalation-v1'",
+    "'child_vulnerable_safety'",
+    "'/api/admin/trust-cases?severity=critical'",
+    "'pending_acknowledgement'",
+    "'severe_escalation_acknowledged'",
+    "'severe_escalation_resolved'",
+    "external_reporting_not_determined:true"
+  ])assert.ok(qa.includes(marker),`missing severe Incident V7 acceptance marker: ${marker}`);
+  assert.match(qa,/expectStatus\(territorySevereRead,403/);
+  assert.match(qa,/expectStatus\(territoryCaseRead,403/);
+  assert.match(qa,/expectStatus\(prematureResolution,409/);
+  assert.match(qa,/expectStatus\(prematureIncidentClose,409/);
+  assert.match(qa,/expectStatus\(prematureCaseDowngrade,409/);
+  assert.match(qa,/expectStatus\(unconfirmedAcknowledgement,400/);
+  assert.match(qa,/expectStatus\(acknowledged,200/);
+  assert.match(qa,/expectStatus\(escalationResolved,200/);
+  assert.match(qa,/expectStatus\(restoredTerritoryRead,200/);
+  assert.match(qa,/admin_audit_evidence:true/);
+});

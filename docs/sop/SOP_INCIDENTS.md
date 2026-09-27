@@ -38,6 +38,7 @@ Applies to current private incident system and future authorized triage roles.
 ## Inputs / evidence
 
 - Related type/record ID where applicable.
+- Closed urgency/risk indicator where applicable.
 - Description.
 - Images/PDF within limits.
 - Follow-up note.
@@ -46,14 +47,14 @@ Applies to current private incident system and future authorized triage roles.
 ## Procedure
 
 1. Reporter selects the appropriate related type (order, delivery, Merchant, Courier, service job/provider, Supplier, payment or other).
-2. Reporter describes what happened factually and submits only relevant evidence.
+2. Reporter selects a closed urgency/risk indicator when one applies, describes what happened factually and submits only relevant evidence. Free text must not be used as an automatic severe-risk classifier.
 3. System enforces evidence limits: maximum 5 JPEG/PNG/WebP images up to 1.5 MB each; maximum 1 PDF up to 3 MB; total decoded evidence up to 10 MB.
 4. Reporter reviews own incident in My reports and may add information.
-5. Authorized triage reviews case based on urgency/risk and records actions.
+5. A structured severe trigger creates a prioritized internal escalation under `docs/trust-safety/PH_SEVERE_ESCALATION_PROCEDURE.md`; authorized triage acknowledges it with rationale before resolution.
 6. Use supported status lifecycle: submitted, triaged, investigating, awaiting_information, escalated, resolved or dismissed.
 7. Request additional information only when necessary.
 8. Escalate safety, fraud, privacy, financial or legal concerns to the competent internal function.
-9. When resolved/dismissed, record a resolution summary sufficient for audit without unnecessary sensitive detail.
+9. Resolve every active severe escalation before resolving/dismissing the Incident or case, then record a resolution summary sufficient for audit without unnecessary sensitive detail.
 
 ## Control points
 
@@ -61,6 +62,7 @@ Applies to current private incident system and future authorized triage roles.
 - Access follows reporter/authorized Admin purpose.
 - Evidence file limits are server-enforced.
 - Admin actions/status changes create auditable case history.
+- Internal escalation does not mean an authority or emergency service was contacted.
 
 ## Prohibited shortcuts
 

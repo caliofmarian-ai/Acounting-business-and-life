@@ -292,7 +292,15 @@ export async function ensureIncidentTrustCase(db,{
 export async function syncIncidentTrustCaseTerritory(db,incidentId,territoryId){
   const iid=positiveId(incidentId),tid=positiveId(territoryId);
   await db.query(`UPDATE incident_reports SET territory_id=$1 WHERE id=$2`,[tid,iid]);
-  await db.query(`UPDATE trust_cases SET territory_id=COALESCE(territory_id,$1),updated_at=NOW() WHERE id=(SELECT trust_case_id FROM incident_reports WHERE id=$2)`,[tid,iid]);
+  await db.query(`
+    UPDATE trust_cases c SET
+      territory_id=CASE WHEN EXISTS(
+        SELECT 1 FROM trust_case_escalations e
+        WHERE e.case_id=c.id AND e.country_scoped=TRUE AND e.state<>'resolved'
+      ) THEN NULL ELSE COALESCE(c.territory_id,$1) END,
+      updated_at=NOW()
+    WHERE c.id=(SELECT trust_case_id FROM incident_reports WHERE id=$2)
+  `,[tid,iid]);
 }
 
 export async function recordTrustAction(db,{
@@ -321,14 +329,26 @@ export async function linkIncidentToTrustCase(db,{
   const incident=await incidentRow(db,iid,true),oldCaseId=incident.trust_case_id==null?null:Number(incident.trust_case_id);
   if(oldCaseId===targetId)return{case:target,incident,alreadyLinked:true,linkedCaseId:null};
   await db.query(`UPDATE incident_reports SET trust_case_id=$1,updated_at=NOW() WHERE id=$2`,[targetId,iid]);
+  await db.query(`UPDATE trust_case_escalations SET case_id=$1,updated_at=NOW() WHERE source_incident_id=$2`,[targetId,iid]);
+  const raised=await db.query(`
+    UPDATE trust_cases c SET
+      severity=CASE
+        WHEN c.severity='critical' OR EXISTS(SELECT 1 FROM trust_case_escalations e WHERE e.case_id=c.id AND e.state<>'resolved' AND e.severity='critical') THEN 'critical'
+        WHEN c.severity='high' OR EXISTS(SELECT 1 FROM trust_case_escalations e WHERE e.case_id=c.id AND e.state<>'resolved' AND e.severity='high') THEN 'high'
+        ELSE c.severity END,
+      territory_id=CASE WHEN EXISTS(SELECT 1 FROM trust_case_escalations e WHERE e.case_id=c.id AND e.state<>'resolved' AND e.country_scoped=TRUE) THEN NULL ELSE c.territory_id END,
+      updated_at=NOW()
+    WHERE c.id=$1 RETURNING c.*
+  `,[targetId]);
+  const raisedTarget=raised.rows[0]||target;
   await addIncidentEntitiesToCase(db,{caseId:targetId,incident,actorAccountId:actor});
   await recordTrustRiskEvent(db,{
     caseId:targetId,dedupeKey:`case:${targetId}:incident:${iid}:linked`,eventCode:'incident_linked',subjectType:'incident',subjectId:String(iid),
-    sourceSurface:'admin_case_link',severity:target.severity,confidenceClass:'allegation',territoryId:incident.territory_id||target.territory_id||null,
+    sourceSurface:'admin_case_link',severity:raisedTarget.severity,confidenceClass:'allegation',territoryId:incident.territory_id||raisedTarget.territory_id||null,
     relatedObjectType:incident.related_type,relatedObjectId:incident.related_id==null?'':String(incident.related_id),correlationId,
     automated:false,details:{link_basis:'human_review'},createdByAccountId:actor
   });
-  await recordTrustAction(db,{caseId:targetId,actorAccountId:actor,actionCode:'incident_linked',reasonCategory,rationale,fromStatus:target.status,toStatus:target.status,fromSeverity:target.severity,toSeverity:target.severity,before:{incident_case_id:oldCaseId},after:{incident_case_id:targetId,incident_id:iid},humanReviewed:true,correlationId});
+  await recordTrustAction(db,{caseId:targetId,actorAccountId:actor,actionCode:'incident_linked',reasonCategory,rationale,fromStatus:target.status,toStatus:raisedTarget.status,fromSeverity:target.severity,toSeverity:raisedTarget.severity,before:{incident_case_id:oldCaseId},after:{incident_case_id:targetId,incident_id:iid},humanReviewed:true,correlationId});
   let linkedCaseId=null;
   if(oldCaseId&&oldCaseId!==targetId){
     const remaining=await db.query(`SELECT COUNT(*)::int n FROM incident_reports WHERE trust_case_id=$1`,[oldCaseId]);
@@ -342,5 +362,6 @@ export async function linkIncidentToTrustCase(db,{
     }
   }
   if(target.territory_id==null||incident.territory_id==null||Number(target.territory_id)!==Number(incident.territory_id))await db.query(`UPDATE trust_cases SET territory_id=NULL,updated_at=NOW() WHERE id=$1`,[targetId]);
-  return{case:target,incident,alreadyLinked:false,linkedCaseId};
+  const finalTarget=(await db.query(`SELECT * FROM trust_cases WHERE id=$1`,[targetId])).rows[0]||raisedTarget;
+  return{case:finalTarget,incident,alreadyLinked:false,linkedCaseId};
 }

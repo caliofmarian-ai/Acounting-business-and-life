@@ -6,7 +6,13 @@ import { fileURLToPath } from 'node:url';
 import {deliveryFinanceFetch,startEmbeddedDeliveryFinance,stopEmbeddedDeliveryFinance} from './server-delivery-finance.js';
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
-import {ensureIncidentTrustCase,ensureTrustSafetyCaseSchema} from './trust-safety-case-core.js';
+import {
+  ensureIncidentTrustCase,ensureTrustSafetyCaseSchema,recordTrustAction,recordTrustRiskEvent
+} from './trust-safety-case-core.js';
+import {
+  assertSevereIncidentCanClose,createIncidentSevereEscalation,ensureSevereEscalationSchema,
+  incidentUrgencyIndicator,severeIncidentEscalationPolicy
+} from './trust-safety-escalation-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -155,6 +161,7 @@ async function initDb(){
     CREATE INDEX IF NOT EXISTS incident_actions_incident_idx ON incident_actions(incident_id,created_at,id);
   `);
   await ensureTrustSafetyCaseSchema(pool);
+  await ensureSevereEscalationSchema(pool);
 }
 
 async function incidentSummary(id){
@@ -185,7 +192,8 @@ app.get('/',root);app.get('/index.html',root);
 app.post('/api/incidents',body,async(req,res,next)=>{
   try{
     const me=await identity(req);
-    const category=clean(req.body?.category,80),description=clean(req.body?.description,5000),relatedType=clean(req.body?.related_type||'other',40),relatedId=req.body?.related_id==null||req.body.related_id===''?null:Number(req.body.related_id);
+    const category=clean(req.body?.category,80),description=clean(req.body?.description,5000),relatedType=clean(req.body?.related_type||'other',40),relatedId=req.body?.related_id==null||req.body.related_id===''?null:Number(req.body.related_id),urgencyIndicator=incidentUrgencyIndicator(req.body?.urgency_indicator||'none');
+    const escalationPolicy=severeIncidentEscalationPolicy({category,urgencyIndicator});
     if(!category||description.length<10) throw Object.assign(new Error('Category and a clear description are required'),{status:400});
     if(!RELATED_TYPES.has(relatedType)) throw Object.assign(new Error('Unknown related incident type'),{status:400});
     if(relatedId!=null&&(!Number.isInteger(relatedId)||relatedId<1)) throw Object.assign(new Error('Related record ID must be a positive integer'),{status:400});
@@ -196,11 +204,32 @@ app.post('/api/incidents',body,async(req,res,next)=>{
     const client=await pool.connect();
     try{
       await client.query('BEGIN');
-      const q=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status) VALUES($1,$2,$3,$4,$5,'submitted') RETURNING *`,[me.account.id,relatedType,relatedId,category,description]);
+      const q=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status,urgency_indicator) VALUES($1,$2,$3,$4,$5,'submitted',$6) RETURNING *`,[me.account.id,relatedType,relatedId,category,description,urgencyIndicator]);
       const incident=q.rows[0];
       for(const f of attachments) await client.query(`INSERT INTO incident_attachments(incident_id,kind,mime_type,file_name,byte_size,evidence_data_url) VALUES($1,$2,$3,$4,$5,$6)`,[incident.id,f.kind,f.mime,f.file_name,f.byte_size,f.data_url]);
       await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'submitted','submitted','Incident submitted')`,[incident.id,me.account.id]);
-      await ensureIncidentTrustCase(client,{incidentId:incident.id,actorAccountId:me.account.id,sourceSurface:'incident_report',correlationId:clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',120)});
+      const correlationId=clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',120);
+      const trustCase=await ensureIncidentTrustCase(client,{incidentId:incident.id,actorAccountId:me.account.id,sourceSurface:'incident_report',severity:escalationPolicy?.severity||'',correlationId});
+      if(escalationPolicy){
+        await createIncidentSevereEscalation(client,{caseId:trustCase.id,incidentId:incident.id,category,urgencyIndicator,actorAccountId:me.account.id});
+        await recordTrustRiskEvent(client,{
+          caseId:trustCase.id,dedupeKey:`incident:${incident.id}:severe-escalation`,eventCode:'severe_incident_escalated',
+          subjectType:'incident',subjectId:String(incident.id),sourceSurface:'incident_report',severity:escalationPolicy.severity,
+          confidenceClass:'allegation',relatedObjectType:relatedType,relatedObjectId:relatedId==null?'':String(relatedId),
+          correlationId,automated:true,details:{
+            trigger_code:escalationPolicy.trigger_code,route_code:escalationPolicy.route_code,
+            policy_version:escalationPolicy.policy_version,external_reporting_state:'not_determined'
+          },createdByAccountId:me.account.id
+        });
+        await recordTrustAction(client,{
+          caseId:trustCase.id,actorAccountId:me.account.id,actionCode:'severe_escalation_routed',
+          reasonCategory:'structured_safety_signal',rationale:'Structured report signal routed for prioritized human review.',
+          fromStatus:trustCase.status,toStatus:trustCase.status,fromSeverity:trustCase.severity,
+          toSeverity:escalationPolicy.severity,before:{escalation_state:null},
+          after:{escalation_state:'pending_acknowledgement',route_code:escalationPolicy.route_code},
+          humanReviewed:false,correlationId
+        });
+      }
       await client.query('COMMIT');
       res.status(201).json(await incidentSummary(incident.id));
     }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
@@ -208,7 +237,7 @@ app.post('/api/incidents',body,async(req,res,next)=>{
 });
 
 app.get('/api/incidents/mine',async(req,res,next)=>{
-  try{const me=await identity(req);const{rows}=await pool.query(`SELECT i.id,i.related_type,i.related_id,i.category,i.description,i.status,i.resolution_summary,i.submitted_at,i.updated_at,i.resolved_at,(SELECT COUNT(*)::int FROM incident_attachments x WHERE x.incident_id=i.id) attachment_count FROM incident_reports i WHERE i.reporter_account_id=$1 ORDER BY i.submitted_at DESC LIMIT 200`,[me.account.id]);res.json(rows);}catch(e){next(e)}
+  try{const me=await identity(req);const{rows}=await pool.query(`SELECT i.id,i.related_type,i.related_id,i.category,i.description,i.urgency_indicator,i.status,i.resolution_summary,i.submitted_at,i.updated_at,i.resolved_at,(SELECT COUNT(*)::int FROM incident_attachments x WHERE x.incident_id=i.id) attachment_count FROM incident_reports i WHERE i.reporter_account_id=$1 ORDER BY i.submitted_at DESC LIMIT 200`,[me.account.id]);res.json(rows);}catch(e){next(e)}
 });
 
 app.get('/api/incidents/:id',async(req,res,next)=>{
@@ -234,6 +263,7 @@ app.patch('/api/admin/incidents/:id',body,async(req,res,next)=>{
     if(!INCIDENT_STATUSES.has(status)) throw Object.assign(new Error('Unknown incident status'),{status:400});
     await client.query('BEGIN');
     const q=await client.query(`SELECT * FROM incident_reports WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Incident not found'),{status:404});const before=q.rows[0];
+    if(['resolved','dismissed'].includes(status))await assertSevereIncidentCanClose(client,id);
     await client.query(`UPDATE incident_reports SET status=$1,assigned_admin_account_id=COALESCE(assigned_admin_account_id,$2),resolution_summary=CASE WHEN $3<>'' THEN $3 ELSE resolution_summary END,resolved_at=CASE WHEN $1 IN ('resolved','dismissed') THEN COALESCE(resolved_at,NOW()) ELSE NULL END,updated_at=NOW() WHERE id=$4`,[status,me.account.id,resolution,id]);
     await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,from_status,to_status,note) VALUES($1,$2,'admin_status',$3,$4,$5)`,[id,me.account.id,before.status,status,note]);
     await client.query('COMMIT');res.json(await incidentSummary(id));
@@ -245,7 +275,7 @@ function proxy(req,res,next){
   return deliveryFinanceApp(req,res,next);
 }
 app.use(proxy);
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:err.status?err.message:'Unexpected server error'};res.status(err.status||500).json(payload)});
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:status<500?err.message:'Unexpected server error'};res.status(status).json(payload)});
 
 let embeddedStartPromise=null;
 export async function startEmbeddedIncidents(){

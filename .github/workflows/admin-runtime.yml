@@ -41,7 +41,9 @@ on:
       - 'server-delivery-finance.js'
       - 'server-incidents.js'
       - 'trust-safety-case-core.js'
+      - 'trust-safety-escalation-core.js'
       - 'tests/trust-safety-case-v1.test.js'
+      - 'tests/severe-escalation-v1.test.js'
       - 'public/shell.js'
       - 'public/app.js'
       - 'public/business-accounting-ui.js'
@@ -80,7 +82,9 @@ on:
       - 'server-delivery-finance.js'
       - 'server-incidents.js'
       - 'trust-safety-case-core.js'
+      - 'trust-safety-escalation-core.js'
       - 'tests/trust-safety-case-v1.test.js'
+      - 'tests/severe-escalation-v1.test.js'
       - 'server-suppliers.js'
       - 'server-services.js'
       - 'server-marketplace.js'
@@ -187,6 +191,11 @@ jobs:
           SELECT case_id,action_code,reason_category,human_reviewed
             FROM trust_actions LIMIT 0;
           SELECT trust_case_id FROM incident_reports LIMIT 0;
+          SELECT urgency_indicator FROM incident_reports LIMIT 0;
+          SELECT case_id,source_incident_id,policy_version,trigger_code,route_code,severity,state,
+            response_due_at,country_scoped,legal_review_required,evidence_preservation_required,
+            external_reporting_state
+            FROM trust_case_escalations LIMIT 0;
           DO $trust_safety_runtime$
           BEGIN
             IF (
@@ -198,6 +207,13 @@ jobs:
               )
             ) <> 3 THEN
               RAISE EXCEPTION 'Trust and Safety territory foreign keys are incomplete';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conrelid='incident_reports'::regclass
+                AND conname='incident_reports_urgency_indicator_check'
+            ) THEN
+              RAISE EXCEPTION 'Incident urgency indicator constraint is missing';
             END IF;
           END
           $trust_safety_runtime$;
