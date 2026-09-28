@@ -35,6 +35,7 @@ function profileSettingsHome(){
     +'<section class="settingsHero settingsHeroSimple"><small>'+sh((ROLE_LABELS[selectedSettingsRole]||selectedSettingsRole).toUpperCase())+'</small><h2>'+sh(identityName)+'</h2><p>Profile ID: <strong>'+sh(profile?.profile_id||'Unavailable')+'</strong></p></section>'
     +'<div class="profileSettingsMenu">'
     +'<button type="button" data-profile-settings-view="identity"><span>🪪</span><span><strong>'+sh(copy.identity)+'</strong><small>View the identity and operating context owned by this profile.</small></span><b>›</b></button>'
+    +(selectedSettingsRole==='courier'?'<button type="button" data-profile-settings-view="operatingArea"><span>📍</span><span><strong>Operating area</strong><small>Choose the barangay where you normally begin Delivery work. This is not your home address or live GPS.</small></span><b>›</b></button>':'')
     +'<button type="button" data-profile-settings-view="finance"><span>💳</span><span><strong>Money preferences</strong><small>Profile books, budgets, transfers and payout preferences.</small></span><b>›</b></button>'
     +'<button type="button" id="profileFinancialDocuments"><span>🧾</span><span><strong>Statements &amp; documents</strong><small>Open financial statements and traceable documents for this profile.</small></span><b>›</b></button>'
     +'<button type="button" id="profilePromotionCenter"><span>📣</span><span><strong>Promotion Center</strong><small>Referral and promotion tools attributed to this profile.</small></span><b>›</b></button>'
@@ -48,6 +49,56 @@ function profileIdentitySettings(){
     +'<section class="settingsCard"><div class="settingsSimpleRows"><div><span>Profile type</span><strong>'+sh(ROLE_LABELS[selectedSettingsRole]||selectedSettingsRole)+'</strong></div><div><span>Profile ID</span><strong>'+sh(profile?.profile_id||'Unavailable')+'</strong></div><div><span>Status</span><strong>'+sh(snice(profile?.status||(profile?.enabled?'active':'not_started')))+'</strong></div>'
     +(BUSINESS_ROLES.has(selectedSettingsRole)?'<div><span>Business workspace</span><strong>'+sh(business?.name||'Pending authorization')+'</strong></div>':'')+'</div>'
     +(BUSINESS_ROLES.has(selectedSettingsRole)?'<div class="settingsForm settingsBusinessPicker">'+businessSelector()+'</div>':'')+'</section>';
+}
+function courierDeliveryProfile(){return settingsData?.courier_delivery?.profile||null}
+function courierOperatingAreaSettings(){
+  const profile=courierDeliveryProfile();
+  const areaName=profile?.operating_area_name||'Not set';
+  const areaPath=profile?.operating_area_path||'Choose an official barangay where you normally begin Delivery work.';
+  const radius=profile?.service_radius_km==null?'Not set':String(profile.service_radius_km)+' km';
+  return profileSettingsHeader('Operating area','This is a Delivery work preference. It is separate from your private home address and from temporary live location during an active delivery.')
+    +'<section class="settingsCard courierOperatingAreaCard">'
+    +'<div class="settingsSimpleRows"><div><span>Preferred start area</span><strong>'+sh(areaName)+'</strong></div><div><span>Official area</span><strong>'+sh(areaPath)+'</strong></div><div><span>Service radius</span><strong>'+sh(radius)+'</strong></div></div>'
+    +'<p class="settingsPrivacyNote">Choosing an area does not approve you to work there. Courier authorization and Admin territory scope remain separate.</p>'
+    +'<form id="courierOperatingAreaForm" class="settingsForm courierOperatingAreaForm">'
+    +'<label>Search barangay<input id="courierOperatingAreaSearch" autocomplete="off" placeholder="Barangay or city"></label>'
+    +'<input id="courierOperatingPsgcCode" type="hidden" value="'+sh(profile?.operating_psgc_code||'')+'">'
+    +'<div class="courierOperatingAreaActions"><button id="courierOperatingAreaSearchButton" class="settingsSecondary" type="button">Search area</button><button class="settingsPrimary" type="submit">Save operating area</button></div>'
+    +'<div id="courierOperatingAreaResults" class="courierOperatingAreaResults"></div>'
+    +'<div id="courierOperatingAreaStatus" class="settingsInlineStatus">'+(profile?.operating_area_name?'Current: '+sh(profile.operating_area_name):'No operating area selected yet.')+'</div>'
+    +'</form></section>';
+}
+async function searchCourierOperatingArea(){
+  const input=document.getElementById('courierOperatingAreaSearch'),results=document.getElementById('courierOperatingAreaResults'),status=document.getElementById('courierOperatingAreaStatus');
+  const query=String(input?.value||'').trim();
+  if(query.length<2){if(status)status.textContent='Type at least 2 characters.';return}
+  if(results)results.innerHTML='<div class="settingsEmpty">Searching…</div>';
+  try{
+    const data=await sapi('/api/auth/geography/search?q='+encodeURIComponent(query));
+    const items=Array.isArray(data?.items)?data.items:[];
+    if(results)results.innerHTML=items.length?items.map(item=>'<button type="button" data-courier-operating-area="'+sh(item.psgc_code)+'" data-area-name="'+sh(item.name)+'" data-area-path="'+sh(item.path_text||'')+'"><strong>'+sh(item.name)+'</strong><small>'+sh(item.path_text||'')+'</small></button>').join(''):'<div class="settingsEmpty">No matching official barangay found.</div>';
+    bindCourierOperatingAreaResults();
+  }catch(err){if(results)results.innerHTML='<div class="settingsEmpty">'+sh(err.message)+'</div>'}
+}
+function bindCourierOperatingAreaResults(){
+  settingsWorkspace?.querySelectorAll('[data-courier-operating-area]').forEach(button=>button.onclick=()=>{
+    const hidden=document.getElementById('courierOperatingPsgcCode'),status=document.getElementById('courierOperatingAreaStatus');
+    if(hidden)hidden.value=button.dataset.courierOperatingArea||'';
+    if(status)status.textContent='Selected: '+(button.dataset.areaName||'')+(button.dataset.areaPath?' · '+button.dataset.areaPath:'');
+    settingsWorkspace?.querySelectorAll('[data-courier-operating-area]').forEach(x=>x.classList.toggle('selected',x===button));
+  });
+}
+async function saveCourierOperatingArea(e){
+  e.preventDefault();
+  const code=document.getElementById('courierOperatingPsgcCode')?.value||'',status=document.getElementById('courierOperatingAreaStatus');
+  if(!code){if(status)status.textContent='Choose an official barangay from the search results first.';return}
+  if(status)status.textContent='Saving…';
+  try{
+    const result=await sapi('/api/courier/operating-area',{method:'PUT',body:JSON.stringify({psgc_code:code})});
+    stoast('Delivery operating area saved.');
+    if(status)status.textContent=result?.operating_area?.operating_area_name?'Saved: '+result.operating_area.operating_area_name:'Operating area saved.';
+    await refreshSettings();
+  }catch(err){if(status)status.textContent=err.message}
 }
 function profileStatusSettings(){
   const profile=selectedProfile();
@@ -189,7 +240,7 @@ function renderSettings(){
   const profileTransfer=profileSettingsView==='finance'?profileFundTransferForm():null;
   const withdrawalPolicy='Withdraw will use the default payout destination configured above in Avatar → Money & Banking. Business & Life will not reduce the external/provider balance or mark a withdrawal succeeded until the provider confirms.';
   if(profileSettingsView==='finance')return renderProfileFinanceSettings(profileTransfer,withdrawalPolicy);
-  settingsWorkspace.innerHTML=profileSettingsView==='identity'?profileIdentitySettings():profileSettingsView==='status'?profileStatusSettings():profileSettingsHome();
+  settingsWorkspace.innerHTML=profileSettingsView==='identity'?profileIdentitySettings():profileSettingsView==='operatingArea'&&selectedSettingsRole==='courier'?courierOperatingAreaSettings():profileSettingsView==='status'?profileStatusSettings():profileSettingsHome();
   bindSettings();
   if(profileSettingsView==='home')settingsWorkspace.querySelector('[data-profile-settings-view="finance"]')?.insertAdjacentHTML('afterend','<button type="button" id="openAccountMoneyFromProfile"><span>🏦</span><span><strong>Account Money &amp; Banking</strong><small>Shared external payment methods and payout destinations for your account.</small></span><b>›</b></button>');
   settingsWorkspace.querySelectorAll('[data-profile-settings-view]').forEach(button=>button.onclick=()=>{profileSettingsView=button.dataset.profileSettingsView;renderSettings();window.scrollTo({top:0,behavior:'auto'})});
@@ -200,10 +251,16 @@ function renderSettings(){
   document.getElementById('manageProfileLifecycle')?.addEventListener('click',()=>{settingsWorkspace.classList.add('hidden');profileSettingsView='home';window.BusinessLifeShell?.openAccountSettings?.('profiles')});
 }
 function profileSettingsBack(){if(profileSettingsView!=='home'){profileSettingsView='home';renderSettings();window.scrollTo({top:0,behavior:'auto'});return}closeProfileSettings()}
-function bindSettings(){document.getElementById('openPayoutSecurity')?.addEventListener('click',()=>{settingsWorkspace?.classList.add('hidden');settingsMode='profile';window.BusinessLifeShell?.openAccountSettings?.('security')});const ami=document.getElementById('accountMoneyIdentityForm');if(ami)ami.onsubmit=saveAccountMoneyIdentity;const adf=document.getElementById('accountDestinationForm');if(adf)adf.onsubmit=saveAccountDestination;settingsWorkspace.querySelectorAll('[data-account-destination-disable]').forEach(b=>b.onclick=()=>disableAccountDestination(Number(b.dataset.accountDestinationDisable)));settingsWorkspace.querySelectorAll('[data-account-payout-default]').forEach(b=>b.onclick=()=>setDefaultAccountPayout(Number(b.dataset.accountPayoutDefault)));document.getElementById('settingsBack').onclick=settingsMode==='account'?closeAccountMoneySettings:profileSettingsBack;const business=document.getElementById('settingsBusinessSelect');if(business)business.onchange=()=>{selectedSettingsBusinessId=Number(business.value);editingFinancialAccountId=null;renderSettings()};settingsWorkspace.querySelectorAll('[data-fin-edit]').forEach(b=>b.onclick=()=>{editingFinancialAccountId=Number(b.dataset.finEdit);renderSettings();settingsWorkspace.querySelector('#financialAccountForm')?.scrollIntoView({behavior:'smooth',block:'start'})});settingsWorkspace.querySelectorAll('[data-fin-disable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finDisable),'inactive'));settingsWorkspace.querySelectorAll('[data-fin-enable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finEnable),'active'));document.getElementById('cancelFinEdit')?.addEventListener('click',()=>{editingFinancialAccountId=null;renderSettings()});const legacyFa=document.getElementById('financialAccountForm');if(legacyFa)legacyFa.onsubmit=saveFinancialAccount;const legacyMp=document.getElementById('moneyPreferencesForm');if(legacyMp)legacyMp.onsubmit=saveMoneyPreferences;const budgetCreate=document.getElementById('budgetCreateForm');if(budgetCreate)budgetCreate.onsubmit=saveBudgetEnvelope;const budgetAdjust=document.getElementById('budgetAdjustForm');if(budgetAdjust)budgetAdjust.onsubmit=saveBudgetAllocation;const pft=document.getElementById('profileFundTransferForm');if(pft){pft.onsubmit=saveProfileFundTransfer;document.getElementById('profileFundFrom').onchange=syncProfileFundTransfer;document.getElementById('profileFundTo').onchange=syncProfileFundTransfer;syncProfileFundTransfer()}const legacyMovement=document.getElementById('moneyMovementForm');if(legacyMovement){legacyMovement.onsubmit=saveMoneyMovement;document.getElementById('movementType').onchange=syncMovementDestinationOptions;syncMovementDestinationOptions()}}
+function bindSettings(){document.getElementById('courierOperatingAreaSearchButton')?.addEventListener('click',searchCourierOperatingArea);const courierAreaForm=document.getElementById('courierOperatingAreaForm');if(courierAreaForm)courierAreaForm.onsubmit=saveCourierOperatingArea;bindCourierOperatingAreaResults();document.getElementById('openPayoutSecurity')?.addEventListener('click',()=>{settingsWorkspace?.classList.add('hidden');settingsMode='profile';window.BusinessLifeShell?.openAccountSettings?.('security')});const ami=document.getElementById('accountMoneyIdentityForm');if(ami)ami.onsubmit=saveAccountMoneyIdentity;const adf=document.getElementById('accountDestinationForm');if(adf)adf.onsubmit=saveAccountDestination;settingsWorkspace.querySelectorAll('[data-account-destination-disable]').forEach(b=>b.onclick=()=>disableAccountDestination(Number(b.dataset.accountDestinationDisable)));settingsWorkspace.querySelectorAll('[data-account-payout-default]').forEach(b=>b.onclick=()=>setDefaultAccountPayout(Number(b.dataset.accountPayoutDefault)));document.getElementById('settingsBack').onclick=settingsMode==='account'?closeAccountMoneySettings:profileSettingsBack;const business=document.getElementById('settingsBusinessSelect');if(business)business.onchange=()=>{selectedSettingsBusinessId=Number(business.value);editingFinancialAccountId=null;renderSettings()};settingsWorkspace.querySelectorAll('[data-fin-edit]').forEach(b=>b.onclick=()=>{editingFinancialAccountId=Number(b.dataset.finEdit);renderSettings();settingsWorkspace.querySelector('#financialAccountForm')?.scrollIntoView({behavior:'smooth',block:'start'})});settingsWorkspace.querySelectorAll('[data-fin-disable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finDisable),'inactive'));settingsWorkspace.querySelectorAll('[data-fin-enable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finEnable),'active'));document.getElementById('cancelFinEdit')?.addEventListener('click',()=>{editingFinancialAccountId=null;renderSettings()});const legacyFa=document.getElementById('financialAccountForm');if(legacyFa)legacyFa.onsubmit=saveFinancialAccount;const legacyMp=document.getElementById('moneyPreferencesForm');if(legacyMp)legacyMp.onsubmit=saveMoneyPreferences;const budgetCreate=document.getElementById('budgetCreateForm');if(budgetCreate)budgetCreate.onsubmit=saveBudgetEnvelope;const budgetAdjust=document.getElementById('budgetAdjustForm');if(budgetAdjust)budgetAdjust.onsubmit=saveBudgetAllocation;const pft=document.getElementById('profileFundTransferForm');if(pft){pft.onsubmit=saveProfileFundTransfer;document.getElementById('profileFundFrom').onchange=syncProfileFundTransfer;document.getElementById('profileFundTo').onchange=syncProfileFundTransfer;syncProfileFundTransfer()}const legacyMovement=document.getElementById('moneyMovementForm');if(legacyMovement){legacyMovement.onsubmit=saveMoneyMovement;document.getElementById('movementType').onchange=syncMovementDestinationOptions;syncMovementDestinationOptions()}}
 function renderAccountMoneySettings(){if(!settingsData||!ensureSettingsWorkspace())return;settingsWorkspace.innerHTML='<div class="settingsHeader"><button class="settingsBack" type="button" id="settingsBack">‹</button><div><h1>Money &amp; Banking</h1><p>Shared external payment identity and payout destinations for your personal account.</p></div></div>'+accountMoneySettingsCard();bindSettings()}
 async function refreshSettings(){
-  settingsData=await sapi('/api/settings/finance');
+  const courierNeeded=settingsMode==='profile'&&selectedSettingsRole==='courier';
+  const [finance,courier]=await Promise.all([
+    sapi('/api/settings/finance'),
+    courierNeeded?sapi('/api/courier/delivery-profile'):Promise.resolve(null)
+  ]);
+  settingsData=finance;
+  if(courier)settingsData.courier_delivery=courier;
   if(settingsMode==='account')renderAccountMoneySettings();else renderSettings();
 }
 async function openProfileSettings(role=''){if(!stoken())return stoast('Sign in first.');const state=window.BusinessLifeShell?.getProfileState?.();const requested=role&&ROLE_LABELS[role]?role:state?.activeRole;if(state?.surface!=='profile'||!requested||requested!==state.activeRole)return stoast('Open the profile first, then use its Settings card.');settingsMode='profile';profileSettingsView='home';selectedSettingsRole=requested;selectedSettingsBusinessId=null;editingFinancialAccountId=null;document.getElementById('drawerClose')?.click();ensureSettingsWorkspace();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('profileSettingsWorkspace')){hideSettingsBase();settingsWorkspace.classList.remove('hidden')}settingsWorkspace.innerHTML='<div class="settingsEmpty">Loading settings…</div>';try{await refreshSettings()}catch(e){settingsWorkspace.innerHTML='<div class="settingsEmpty">'+sh(e.message)+'</div>'}}
