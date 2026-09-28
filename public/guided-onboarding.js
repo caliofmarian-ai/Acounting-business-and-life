@@ -12,6 +12,14 @@ const STEP_LABEL_KEYS={
 };
 const PROFILE_STEP_LABEL_KEYS={
   profile_welcome:'profile_tour.step_welcome',
+  customer_address_privacy:'customer_tour.step_address_privacy',
+  customer_price_payment:'customer_tour.step_price_payment',
+  customer_order_commitment:'customer_tour.step_order_commitment',
+  customer_tracking:'customer_tour.step_tracking',
+  customer_support_safety:'customer_tour.step_support_safety',
+  customer_money:'customer_tour.step_money',
+  customer_discovery:'customer_tour.step_discovery',
+  customer_services:'customer_tour.step_services',
   profile_settings:'profile_tour.step_settings'
 };
 const ROLE_LABEL_KEYS={customer:'role.customer',merchant:'role.merchant',supplier:'role.supplier',courier:'role.courier',service_provider:'role.service_provider'};
@@ -486,8 +494,83 @@ function stepDefinition(step){
     waiting:true
   };
 }
-async function profileJourneyDefinition(journey){
-  const role=journey?.profile_role||'',label=roleLabelFor(role),step=journey?.current_step_id||PROFILE_STEP_ORDER.find(x=>!(journey?.completed_steps||[]).includes(x))||'profile_welcome';
+async function customerJourneyTarget(...selectors){return firstVisible(...selectors,'.customerHomeHero','#roleHub')}
+function completeProfileTourStep(role,step){
+  return updateGuide({action:'profile_complete_step',profile_role:role,step_id:step},{render:false})
+    .then(()=>{selectedProfileJourneyRole=role;renderProfileJourney(role)});
+}
+function customerProfileJourneyDefinition(journey,label){
+  const role='customer',step=journey?.current_step_id||journey?.steps?.find(x=>!(journey?.completed_steps||[]).includes(x))||'profile_welcome';
+  const next=()=>completeProfileTourStep(role,step);
+  if(step==='profile_welcome')return{
+    step,
+    title:tr('profile_tour.welcome_title',{role:label},'{role} tutorial'),
+    body:tr('customer_tour.welcome_body',{},'This Customer tutorial focuses first on privacy, price, payment, order commitment, tracking and safety before optional discovery features.'),
+    target:customerJourneyTarget('.customerHomeHero'),
+    primary:tr('action.continue',{},'Continue'),
+    secondary:tr('action.pause',{},'Pause tutorial'),
+    next
+  };
+  if(step==='customer_address_privacy')return{
+    step,
+    title:tr('customer_tour.address_title',{},'Addresses and privacy'),
+    body:tr('customer_tour.address_body',{},'Your home address stays private. A delivery or service address is used only for that transaction. Location access is never required just to browse.'),
+    target:customerJourneyTarget('#checkoutAddressLabel','#checkoutAddress','.customerSettingsLink','[data-customer-nav="services"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='customer_price_payment')return{
+    step,
+    title:tr('customer_tour.price_title',{},'Check price and payment before committing'),
+    body:tr('customer_tour.price_body',{},'At checkout, review product or service price, any delivery charge and the payment method before you continue. Refunds are shown as completed only when the underlying payment/refund evidence confirms them.'),
+    target:customerJourneyTarget('[data-bl-pricing="customer_checkout"]','#checkoutPayment','#basketCheckout','[data-hub-feature="Money"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='customer_order_commitment')return{
+    step,
+    title:tr('customer_tour.commit_title',{},'Know when you commit'),
+    body:tr('customer_tour.commit_body',{},'Adding items to a basket does not place an order. Before Place order, review fulfilment, delivery address, price and payment. Place order is the commitment point.'),
+    target:customerJourneyTarget('.placeOrder','#marketCheckoutForm','#basketCheckout','[data-customer-nav-target="shop"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='customer_tracking')return{
+    step,
+    title:tr('customer_tour.tracking_title',{},'Track real order status'),
+    body:tr('customer_tour.tracking_body',{},'My orders shows the real order state. Delivery tracking appears only when a delivery exists, so preparation, pickup and delivery are not presented as the same thing.'),
+    target:customerJourneyTarget('[data-track]','#customerDeliveriesBtn','[data-hub-feature="Orders"]','[data-customer-nav="orders"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='customer_support_safety')return{
+    step,
+    title:tr('customer_tour.support_title',{},'Support and safety'),
+    body:tr('customer_tour.support_body',{},'Use Help & Support when something needs review. Use the report or safety action attached to the relevant store, order or service when the issue is about that transaction. Do not post private addresses in public notes.'),
+    target:customerJourneyTarget('#lazySupportBtn','.marketSafetyAction','.serviceSafetyAction','[data-hub-feature="Orders"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='customer_money')return{
+    step,
+    title:tr('customer_tour.money_title',{},'My money'),
+    body:tr('customer_tour.money_body',{},'Customer Money shows confirmed purchases, payments, outstanding amounts and refunds. It is personal activity, not business accounting or a bank/provider balance.'),
+    target:customerJourneyTarget('.moneyHeroCustomer','[data-customer-home-open="money"]','[data-hub-feature="Money"]','[data-customer-nav="money"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='customer_discovery')return{
+    step,
+    title:tr('customer_tour.discovery_title',{},'Discover stores'),
+    body:tr('customer_tour.discovery_body',{},'Food and non-food merchants show only their published storefront information. The Platform Store is separate; products, prices and baskets are not mixed automatically.'),
+    target:customerJourneyTarget('.customerShopBoundary','[data-customer-nav-target="shop"]','[data-customer-nav="shop"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='customer_services')return{
+    step,
+    title:tr('customer_tour.services_title',{},'Request local services'),
+    body:tr('customer_tour.services_body',{},'Local Services uses its own request, quote and job flow. Review the service scope and quote before accepting changes; the job address stays transaction-scoped.'),
+    target:customerJourneyTarget('#requestService','[data-hub-feature="Local Services"]','[data-customer-nav="services"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  return null;
+}
+function profileJourneyDefinition(journey){
+  const role=journey?.profile_role||'',label=roleLabelFor(role),steps=Array.isArray(journey?.steps)&&journey.steps.length?journey.steps:PROFILE_STEP_ORDER,step=journey?.current_step_id||steps.find(x=>!(journey?.completed_steps||[]).includes(x))||steps[0]||'profile_welcome';
   if(!journey?.is_active_profile)return{
     step,
     title:tr('profile_tour.open_profile_title',{role:label},'Open {role} to continue'),
@@ -496,6 +579,10 @@ async function profileJourneyDefinition(journey){
     waiting:true,
     secondary:tr('action.pause',{},'Pause tutorial')
   };
+  if(role==='customer'){
+    const customer=customerProfileJourneyDefinition(journey,label);
+    if(customer)return customer;
+  }
   if(step==='profile_welcome')return{
     step,
     title:tr('profile_tour.welcome_title',{role:label},'{role} tutorial'),
@@ -503,7 +590,7 @@ async function profileJourneyDefinition(journey){
     target:firstVisible('.hubHero','#roleHub'),
     primary:tr('action.continue',{},'Continue'),
     secondary:tr('action.pause',{},'Pause tutorial'),
-    next:()=>updateGuide({action:'profile_complete_step',profile_role:role,step_id:'profile_welcome'},{render:false}).then(()=>{selectedProfileJourneyRole=role;renderProfileJourney(role)})
+    next:()=>completeProfileTourStep(role,'profile_welcome')
   };
   const settingsVisible=visible(document.getElementById('profileSettingsWorkspace'));
   return{
@@ -530,12 +617,12 @@ function renderProfileJourney(role){
   if(journey.status==='completed'){
     missionCenterOpen=true;return renderMissionCenter();
   }
-  const def=profileJourneyDefinition(journey),index=Math.max(1,PROFILE_STEP_ORDER.indexOf(def.step)+1);
+  const steps=Array.isArray(journey.steps)&&journey.steps.length?journey.steps:PROFILE_STEP_ORDER,def=profileJourneyDefinition(journey),index=Math.max(1,steps.indexOf(def.step)+1);
   renderCoach({
     ...def,
     back:true,
     progressIndex:index,
-    progressTotal:PROFILE_STEP_ORDER.length,
+    progressTotal:steps.length,
     eyebrow:tr('profile_tour.eyebrow',{role:roleLabelFor(role)},roleLabelFor(role)+' TUTORIAL'),
     pause:()=>updateGuide({action:'profile_pause',profile_role:role},{render:false}).then(()=>{selectedProfileJourneyRole='';syncLauncher()})
   });
@@ -567,7 +654,7 @@ function profileJourneyRow(journey){
   const status=done?tr('mission.done_restart',{},'Done · tap to restart'):journey.status==='paused'?tr('mission.paused',{},'Paused'):active?tr('mission.in_progress',{},'In progress'):tr('mission.ready',{},'Ready');
   return '<button type="button" class="guidedMissionRow guidedJourneyRow '+(done?'done ':'')+(active?'current ':'')+'" data-guide-profile-journey="'+esc(role)+'">'+
     '<span class="guidedMissionIcon">'+(done?'✓':'↳')+'</span>'+
-    '<span><strong>'+esc(tr('profile_tour.row_title',{role:label},label+' tutorial'))+'</strong><small>'+esc(status)+' · '+Number(journey.progress_completed||0)+'/'+Number(journey.progress_total||PROFILE_STEP_ORDER.length)+'</small></span>'+
+    '<span><strong>'+esc(tr('profile_tour.row_title',{role:label},label+' tutorial'))+'</strong><small>'+esc(status)+' · '+Number(journey.progress_completed||0)+'/'+Number(journey.progress_total||journey.steps?.length||PROFILE_STEP_ORDER.length)+'</small></span>'+
     '<b>›</b></button>';
 }
 function renderMissionCenter(){
@@ -652,6 +739,7 @@ function bindLifecycle(){
     scheduleRender(100);
   });
   document.addEventListener('abl:guided-onboarding-refresh',event=>{if(event.detail?.reason==='application_saved'&&event.detail?.role)profileDraftSavedForRole.add(event.detail.role);scheduleRefresh(220)});
+  document.addEventListener('abl:marketplace-checkout-rendered',()=>scheduleRender(100));
   document.addEventListener('abl:guided-onboarding-open-profile',async event=>{
     const role=event.detail?.role;if(!ROLE_LABEL_KEYS[role])return;
     if(!guide)await refreshGuide({render:false}).catch(()=>null);
