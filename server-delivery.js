@@ -14,6 +14,7 @@ import {readOrderDetail} from './orders-read-core.js';
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
 import {handoffLockActive,nextHandoffFailureState} from './delivery-handoff-security.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -210,6 +211,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     route_source TEXT NOT NULL DEFAULT 'straight_line_estimate',
     route_profile TEXT NOT NULL DEFAULT '',
     route_eta_minutes INTEGER,
+    route_evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
     currency_code TEXT NOT NULL DEFAULT 'PHP',
     status TEXT NOT NULL DEFAULT 'quoted',
     expires_at TIMESTAMPTZ NOT NULL,
@@ -306,6 +308,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS route_source TEXT NOT NULL DEFAULT 'straight_line_estimate';
   ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS route_profile TEXT NOT NULL DEFAULT '';
   ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS route_eta_minutes INTEGER;
+  ALTER TABLE delivery_quotes ADD COLUMN IF NOT EXISTS route_evidence JSONB NOT NULL DEFAULT '{}'::jsonb;
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS required_vehicle_class TEXT NOT NULL DEFAULT '';
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS service_fare NUMERIC(12,2) NOT NULL DEFAULT 0;
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS platform_fee_basis_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
@@ -314,6 +317,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS route_source TEXT NOT NULL DEFAULT 'straight_line_estimate';
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS route_profile TEXT NOT NULL DEFAULT '';
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS route_eta_minutes INTEGER;
+  ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS route_evidence JSONB NOT NULL DEFAULT '{}'::jsonb;
   UPDATE delivery_quotes SET service_fare=fee WHERE service_fare=0 AND fee>0;
   UPDATE delivery_quotes SET platform_fee_basis_amount=service_fare WHERE platform_fee_basis_amount=0 AND service_fare>0;
   UPDATE deliveries SET service_fare=delivery_fee WHERE service_fare=0 AND delivery_fee>0;
@@ -433,14 +437,14 @@ app.get('/delivery-ui.js',(_q,r)=>r.type('application/javascript').send(readFile
 async function root(req,res){const r=await deliveryFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root)
 
-app.get('/api/delivery/config',async(req,res,next)=>{try{await identity(req);const rule=await activeRule();res.json({enabled:Boolean(rule),pricing_rule_version:rule?.version||null,routing_provider:'straight_line_estimate',live_map_provider:'OpenStreetMap/Leaflet preview'})}catch(e){next(e)}})
+app.get('/api/delivery/config',async(req,res,next)=>{try{await identity(req);const rule=await activeRule(),routing=deliveryRoutingPublicConfig();res.json({enabled:Boolean(rule),pricing_rule_version:rule?.version||null,routing_provider:routing.provider,routing_requested_provider:routing.requested_provider,routing_configured:routing.configured,routing_reason:routing.reason,live_map_provider:'OpenStreetMap/Leaflet preview'})}catch(e){next(e)}})
 app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
   const me=await requireCustomer(req),businessId=Number(req.body?.business_id),lat=Number(req.body?.dropoff_lat),lng=Number(req.body?.dropoff_lng);
   if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid delivery coordinates are required'});
   const store=await pool.query(`SELECT business_id,pickup_lat,pickup_lng,delivery_enabled FROM merchant_storefronts WHERE business_id=$1 AND publication_status='published'`,[businessId]);
   if(!store.rowCount||!store.rows[0].delivery_enabled)return res.status(409).json({error:'Delivery is not enabled for this merchant'});
-  const s=store.rows[0];
-  if(!finite(s.pickup_lat)||!finite(s.pickup_lng))return res.status(409).json({error:'Merchant pickup location is not configured yet'});
+  const pickup=store.rows[0];
+  if(!finite(pickup.pickup_lat)||!finite(pickup.pickup_lng))return res.status(409).json({error:'Merchant pickup location is not configured yet'});
   const bundle=await activePricingBundle();
   if(!bundle)return res.status(409).json({error:'Delivery pricing is not configured by Admin yet'});
   const {rule,vehicleRules}=bundle;
@@ -460,22 +464,71 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
     }
   }
 
-  const straight=haversine(Number(s.pickup_lat),Number(s.pickup_lng),lat,lng);
-  const distance=straight*Number(rule.route_factor||1);
-  if(rule.maximum_distance_km!=null&&distance>Number(rule.maximum_distance_km))return res.status(409).json({error:'Delivery destination is outside the configured service distance'});
+  const origin={lat:Number(pickup.pickup_lat),lng:Number(pickup.pickup_lng)};
+  const destination={lat,lng};
+  const straight=haversine(origin.lat,origin.lng,destination.lat,destination.lng);
+  const fallbackDistance=straight*Number(rule.route_factor||1);
+  const routeChoice=clean(req.body?.route_choice||'avoid_tolls',40);
+  let distance=fallbackDistance,routeCalls=0,routeEvidence={
+    provider:'fallback',provider_route_source:'haversine_route_factor',source:'straight_line_estimate',
+    provider_status:'legacy_fallback',distance_km:Math.round(fallbackDistance*10000)/10000,eta_minutes:null,
+    route_profile:'legacy_straight_line',route_choice:'avoid_tolls',travel_mode:'DRIVE',
+    avoid_tolls:false,avoid_highways:false,fallback_used:true,restriction_status:'not_verified',
+    toll_status:'unknown',toll_amount:null,toll_currency:'',provider_warning:''
+  };
 
   let quoteCalc,quoteTotal,vehiclePricingRuleId=null,requiredVehicleClass='',formulaType='',pricingSnapshot={};
-  const routeSource='straight_line_estimate';
   if(vehicleRules.length){
-    const shipment={distanceKm:distance,weightKg:weight,volumeL:volume,minimumVehicleClass:req.body?.minimum_vehicle_class||null};
-    quoteCalc=selectDeliveryVehicleQuote(vehicleRules,shipment);
-    const selected=vehicleRules.find(x=>{
-      try{return canonicalDeliveryVehicleClass(x.vehicle_class)===quoteCalc.vehicle_class}catch{return false}
+    const findRule=calc=>vehicleRules.find(x=>{
+      try{return canonicalDeliveryVehicleClass(x.vehicle_class)===calc.vehicle_class}catch{return false}
+    })||null;
+    let shipment={distanceKm:fallbackDistance,weightKg:weight,volumeL:volume,minimumVehicleClass:req.body?.minimum_vehicle_class||null};
+    let initial=selectDeliveryVehicleQuote(vehicleRules,shipment);
+    let selected=findRule(initial);
+    routeEvidence=await resolveDeliveryRoute({
+      origin,destination,routeFactor:rule.route_factor,vehicleClass:initial.vehicle_class,
+      routeProfile:initial.rule.route_profile,routeChoice
     });
+    if(routeEvidence.provider_attempted)routeCalls++;
+    distance=Number(routeEvidence.distance_km);
+    shipment={...shipment,distanceKm:distance};
+    quoteCalc=selectDeliveryVehicleQuote(vehicleRules,shipment);
+    selected=findRule(quoteCalc);
+
+    if(
+      routeEvidence.provider==='google_routes'&&selected&&
+      canonicalDeliveryVehicleClass(selected.vehicle_class)!==initial.vehicle_class&&
+      String(selected.route_profile||'')!==String(routeEvidence.route_profile||'')
+    ){
+      const secondRoute=await resolveDeliveryRoute({
+        origin,destination,routeFactor:rule.route_factor,vehicleClass:quoteCalc.vehicle_class,
+        routeProfile:quoteCalc.rule.route_profile,routeChoice
+      });
+      if(secondRoute.provider==='google_routes')routeCalls++;
+      routeEvidence=secondRoute;
+      distance=Number(routeEvidence.distance_km);
+      shipment={...shipment,distanceKm:distance};
+      quoteCalc=selectDeliveryVehicleQuote(vehicleRules,shipment);
+      selected=findRule(quoteCalc);
+    }
+
+    if(rule.maximum_distance_km!=null&&distance>Number(rule.maximum_distance_km)){
+      return res.status(409).json({error:'Delivery destination is outside the configured service distance'});
+    }
     vehiclePricingRuleId=selected?.id||null;
     requiredVehicleClass=quoteCalc.vehicle_class;
     formulaType=quoteCalc.formula_type;
-    quoteTotal=calculateDeliveryQuoteTotal(quoteCalc.rule,shipment,{});
+    const verifiedToll=routeEvidence.toll_status==='estimated'&&routeEvidence.toll_currency==='PHP'
+      ?Number(routeEvidence.toll_amount||0):0;
+    quoteTotal=calculateDeliveryQuoteTotal(quoteCalc.rule,shipment,{toll_amount:verifiedToll});
+    const selectedRouteProfile=quoteCalc.rule.route_profile;
+    routeEvidence={
+      ...routeEvidence,
+      provider_call_count:routeCalls,
+      pricing_vehicle_class:requiredVehicleClass,
+      pricing_route_profile:selectedRouteProfile,
+      profile_recalculation_limited:routeCalls>=2&&selectedRouteProfile!==routeEvidence.route_profile
+    };
     pricingSnapshot={
       pricing_rule_version:Number(rule.version),
       vehicle_pricing_rule_id:vehiclePricingRuleId,
@@ -495,13 +548,14 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
       free_wait_minutes:quoteCalc.rule.free_wait_minutes,
       waiting_fee_per_minute:quoteCalc.rule.waiting_fee_per_minute,
       demand_adjustment_cap_pct:quoteCalc.rule.demand_adjustment_cap_pct,
-      route_profile:quoteCalc.rule.route_profile,
+      route_profile:selectedRouteProfile,
       expressway_eligible:quoteCalc.rule.expressway_eligible,
       toll_policy:quoteCalc.rule.toll_policy,
       parking_policy:quoteCalc.rule.parking_policy,
       stacking_policy:quoteCalc.rule.stacking_policy,
-      route_source:routeSource,
+      route_source:routeEvidence.source,
       route_factor:Number(rule.route_factor||1),
+      route_evidence:routeEvidence,
       service_fare:quoteTotal.service_fare,
       platform_fee_basis_amount:quoteTotal.platform_fee_basis_amount,
       pass_through_amount:quoteTotal.pass_through_amount,
@@ -512,6 +566,8 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
       volume_component:quoteCalc.volume_component
     };
   }else{
+    distance=fallbackDistance;
+    if(rule.maximum_distance_km!=null&&distance>Number(rule.maximum_distance_km))return res.status(409).json({error:'Delivery destination is outside the configured service distance'});
     quoteCalc=legacyDeliveryPrice(rule,{distanceKm:distance,weightKg:weight,volumeL:volume});
     quoteTotal={
       service_fare:quoteCalc.delivery_price,
@@ -522,7 +578,12 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
       demand_adjustment_amount:0,promotion_discount:0,toll_amount:0,parking_amount:0,
       route_policy:{route_profile:'legacy_straight_line',expressway_eligible:true,toll_policy:'pass_through',parking_policy:'pass_through',stacking_policy:'direct_only'}
     };
-    pricingSnapshot={pricing_rule_version:Number(rule.version),formula_type:'legacy_generic',route_source:routeSource,route_factor:Number(rule.route_factor||1),service_fare:quoteCalc.delivery_price,platform_fee_basis_amount:quoteCalc.delivery_price,pass_through_amount:0,customer_delivery_total:quoteCalc.delivery_price};
+    pricingSnapshot={
+      pricing_rule_version:Number(rule.version),formula_type:'legacy_generic',
+      route_source:routeEvidence.source,route_factor:Number(rule.route_factor||1),route_evidence:routeEvidence,
+      service_fare:quoteCalc.delivery_price,platform_fee_basis_amount:quoteCalc.delivery_price,
+      pass_through_amount:0,customer_delivery_total:quoteCalc.delivery_price
+    };
   }
 
   const priceBreakdown={
@@ -536,13 +597,16 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
     special_handling:quoteTotal.special_handling_amount||0,
     demand_adjustment:quoteTotal.demand_adjustment_amount||0,
     promotion_discount:quoteTotal.promotion_discount||0,
-    toll:quoteTotal.toll_amount||0,
+    toll:routeEvidence.toll_status==='unknown'?null:(quoteTotal.toll_amount||0),
+    toll_status:routeEvidence.toll_status||'unknown',
+    toll_estimate_included:routeEvidence.toll_status==='estimated',
     parking:quoteTotal.parking_amount||0,
     pass_through:quoteTotal.pass_through_amount||0,
     platform_fee_basis:quoteTotal.platform_fee_basis_amount,
     total:quoteTotal.customer_delivery_total
   };
-  const routeProfile=quoteTotal.route_policy?.route_profile||pricingSnapshot.route_profile||'legacy_straight_line';
+  const routeSource=routeEvidence.source;
+  const routeProfile=routeEvidence.route_profile||quoteTotal.route_policy?.route_profile||pricingSnapshot.route_profile||'legacy_straight_line';
 
   const {rows}=await pool.query(`
     INSERT INTO delivery_quotes(
@@ -550,25 +614,18 @@ app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
       pickup_lat,pickup_lng,dropoff_lat,dropoff_lng,route_distance_km,
       estimated_weight_kg,estimated_volume_l,required_vehicle_class,formula_type,pricing_snapshot,
       fee,service_fare,platform_fee_basis_amount,pass_through_amount,price_breakdown,route_source,route_profile,
-      currency_code,status,expires_at
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20::jsonb,$21,$22,'PHP','quoted',NOW()+INTERVAL '15 minutes')
+      route_eta_minutes,route_evidence,currency_code,status,expires_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20::jsonb,$21,$22,$23,$24::jsonb,'PHP','quoted',NOW()+INTERVAL '15 minutes')
     RETURNING *
   `,[
     me.account.id,businessId,rule.id,rule.version,vehiclePricingRuleId,
-    s.pickup_lat,s.pickup_lng,lat,lng,distance,weight,volume,
+    pickup.pickup_lat,pickup.pickup_lng,lat,lng,distance,weight,volume,
     requiredVehicleClass,formulaType,JSON.stringify(pricingSnapshot),quoteTotal.customer_delivery_total,
     quoteTotal.service_fare,quoteTotal.platform_fee_basis_amount,quoteTotal.pass_through_amount,
-    JSON.stringify(priceBreakdown),routeSource,routeProfile
+    JSON.stringify(priceBreakdown),routeSource,routeProfile,routeEvidence.eta_minutes||null,JSON.stringify(routeEvidence)
   ]);
-  res.status(201).json({...rows[0],price_breakdown:priceBreakdown,route:{
-    source:routeSource,
-    profile:routeProfile,
-    distance_km:Math.round(distance*10000)/10000,
-    eta_minutes:null,
-    fallback_estimate:true
-  }});
+  res.status(201).json({...rows[0],price_breakdown:priceBreakdown,route:routeEvidence});
 }catch(e){next(e)}})
-
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{
   const createOrder=()=>createEmbeddedMarketplaceOrder({authorization:authHeader(req),body:req.body??{}});
   if(req.body?.fulfilment_method!=='delivery')return res.status(201).json(await createOrder());
@@ -589,7 +646,7 @@ app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{
     await client.query(`UPDATE delivery_quotes SET status='used' WHERE id=$1`,[quote.id]);
     await client.query(`UPDATE orders SET delivery_fee=$1,total=subtotal+$1,outstanding_amount=(subtotal+$1)-paid_amount,updated_at=NOW() WHERE id=$2`,[quote.fee,order.id]);
     const serviceFare=Number(quote.service_fare||quote.fee||0),feeBasis=Number(quote.platform_fee_basis_amount||serviceFare),passThrough=Number(quote.pass_through_amount||0);
-    const d=await client.query(`INSERT INTO deliveries(order_id,quote_id,business_id,customer_account_id,status,delivery_fee,service_fare,platform_fee_basis_amount,pass_through_amount,price_breakdown,route_source,route_profile,route_eta_minutes,currency_code,route_distance_km,estimated_weight_kg,estimated_volume_l,required_vehicle_class,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng) VALUES($1,$2,$3,$4,'quoted',$5,$6,$7,$8,$9::jsonb,$10,$11,$12,'PHP',$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING id`,[order.id,quote.id,quote.business_id,me.account.id,quote.fee,serviceFare,feeBasis,passThrough,JSON.stringify(quote.price_breakdown||{}),quote.route_source||'straight_line_estimate',quote.route_profile||'',quote.route_eta_minutes||null,quote.route_distance_km,quote.estimated_weight_kg,quote.estimated_volume_l,quote.required_vehicle_class||'',store.rows[0]?.pickup_address||'',quote.pickup_lat,quote.pickup_lng,clean(req.body?.delivery_address||me.account.address,500),quote.dropoff_lat,quote.dropoff_lng]);
+    const d=await client.query(`INSERT INTO deliveries(order_id,quote_id,business_id,customer_account_id,status,delivery_fee,service_fare,platform_fee_basis_amount,pass_through_amount,price_breakdown,route_source,route_profile,route_eta_minutes,route_evidence,currency_code,route_distance_km,estimated_weight_kg,estimated_volume_l,required_vehicle_class,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng) VALUES($1,$2,$3,$4,'quoted',$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13::jsonb,'PHP',$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING id`,[order.id,quote.id,quote.business_id,me.account.id,quote.fee,serviceFare,feeBasis,passThrough,JSON.stringify(quote.price_breakdown||{}),quote.route_source||'straight_line_estimate',quote.route_profile||'',quote.route_eta_minutes||null,JSON.stringify(quote.route_evidence||{}),quote.route_distance_km,quote.estimated_weight_kg,quote.estimated_volume_l,quote.required_vehicle_class||'',store.rows[0]?.pickup_address||'',quote.pickup_lat,quote.pickup_lng,clean(req.body?.delivery_address||me.account.address,500),quote.dropoff_lat,quote.dropoff_lng]);
     await client.query('COMMIT');
     const updated=await readOrderDetail(pool,order.id);
     if(!updated)throw Object.assign(new Error('Order detail unavailable after Delivery checkout'),{status:500});
