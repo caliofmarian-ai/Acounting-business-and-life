@@ -120,6 +120,20 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
   });
   expectStatus(profileSaved,200,'Courier profile configuration');
 
+  const accountArea=await pool.query(
+    "SELECT psgc_code FROM account_geography_assignments WHERE account_id=$1",
+    [courier.accountId]
+  );
+  const operatingPsgc=String(accountArea.rows[0]?.psgc_code||'');
+  if(!operatingPsgc)throw new Error('Courier QA account has no official barangay for the operating-area acceptance.');
+  const operatingArea=await requestJson(base,'/api/courier/operating-area',{
+    method:'PUT',token:courier.token,body:{psgc_code:operatingPsgc}
+  });
+  expectStatus(operatingArea,200,'Courier operating area');
+  if(operatingArea.json?.operating_area?.operating_psgc_code!==operatingPsgc){
+    throw new Error('Courier operating area did not persist the selected official barangay.');
+  }
+
   let document=(await pool.query(
     "SELECT id,verification_status FROM courier_documents WHERE account_id=$1 AND reference_number=$2 ORDER BY id DESC LIMIT 1",
     [courier.accountId,COURIER_QA_DOCUMENT_REFERENCE]
@@ -166,8 +180,11 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
   if(!p||p.eligibility_status!=='approved'||p.available!==true||p.approved_vehicle_class!=='bicycle'){
     throw new Error('Courier eligibility/availability state is not operational.');
   }
+  if(p.operating_psgc_code!==operatingPsgc||!p.operating_area_name){
+    throw new Error('Courier operating area did not survive profile reload.');
+  }
   if(qaDoc?.verification_status!=='verified')throw new Error('Courier QA identity evidence was not verified.');
-  return{documentId:Number(document.id)};
+  return{documentId:Number(document.id),operatingPsgc};
 }
 
 async function configureQaDeliveryPricing({base,adminToken,requestJson,expectStatus}){
