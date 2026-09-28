@@ -106,5 +106,6 @@
   "profile_tour.welcome_body": "This tutorial is separate from your account setup and from every other profile. It will explain the important controls for your {role} profile.",
   "profile_tour.settings_title": "Profile Settings",
   "profile_tour.settings_body": "Profile-specific preferences stay inside {role} Profile Settings. Account identity and shared banking remain separate.",
-  "profile_tour.open_settings": "Open Profile Settings"
+  "profile_tour.open_settings": "Open Profile Settings",
+  "mission.done_restart": "Done · tap to restart"
 }
