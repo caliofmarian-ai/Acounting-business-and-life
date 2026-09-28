@@ -366,13 +366,19 @@ function accountGeographyTone(geo=snapshot?.geography){
   if(['planned','paused','not_opened'].includes(status))return'warn';
   return'blocked';
 }
+function accountAvailabilityMessage(geo=snapshot?.geography){
+  const status=geo?.exact_territory?.status||'not_opened';
+  if(['active','onboarding'].includes(status))return{tone:'ok',title:'Business & Life is available in your area',body:'You can continue with profile onboarding and available services.'};
+  if(status==='paused')return{tone:'warn',title:'Onboarding is temporarily unavailable in your area',body:'We will notify you when onboarding reopens.'};
+  if(['suspended','closed'].includes(status))return{tone:'blocked',title:'Business & Life is not currently available in your area',body:'We will notify you if availability changes.'};
+  return{tone:'warn',title:'Business & Life is not available in your area yet',body:'We will notify you when onboarding opens.'};
+}
 function accountGeographyBanner(test=false){
   const geo=snapshot?.geography||{};
-  if(!geo.assigned){
-    if(test)return'';
-    return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Complete your Business & Life area</strong><p>Choose your official barangay before you start any operational profile.</p></div></section>';
-  }
-  return '<section class="accountGeographyNotice '+accountGeographyTone(geo)+'"><span aria-hidden="true">📍</span><div><strong>'+escapeHtml(geo.name||'Assigned barangay')+' · '+escapeHtml(accountGeographyStatusLabel(geo))+'</strong><p>'+escapeHtml(geo.message||geo.path_text||'Official PSGC area assigned.')+'</p></div></section>';
+  if(test)return'';
+  if(!geo.assigned)return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Add your home address</strong><p>We will check whether Business & Life is available in your area.</p></div></section>';
+  const message=accountAvailabilityMessage(geo);
+  return '<section class="accountGeographyNotice '+message.tone+'"><span aria-hidden="true">📍</span><div><strong>'+escapeHtml(message.title)+'</strong><p>'+escapeHtml(message.body)+'</p></div></section>';
 }
 function accountAdultEligibilityBanner(test=false){
   const state=snapshot?.adult_eligibility||{};
@@ -391,29 +397,30 @@ function accountAdultEligibilityCard(test=false){
 }
 function accountGeographyEditor(test=false){
   const geo=snapshot?.geography||{};
-  return '<section class="accountSettingsCard accountGeographyCard"><h2>'+(test?'Test operating area':'Your Business & Life area')+'</h2><p>This is your official PSGC barangay. It does not publish your private street address.</p>'
-    +(geo.assigned?'<div class="accountGeographyCurrent"><strong>'+escapeHtml(geo.name||'Assigned barangay')+'</strong><span>'+escapeHtml(geo.path_text||'')+'</span><small>PSGC '+escapeHtml(geo.psgc_code||'')+' · '+escapeHtml(accountGeographyStatusLabel(geo))+'</small></div>':'<div class="accountGeographyCurrent missing"><strong>No barangay assigned yet</strong><span>Choose your official area below.</span></div>')
-    +'<form id="accountGeographyForm" class="profileForm"><label>Search official barangay<input id="accountBarangaySearch" autocomplete="off" placeholder="Queens Row West, Bacoor…"></label><input id="accountHomePsgcCode" type="hidden"><div id="accountBarangayResults" class="accountGeoResults"></div><div id="accountBarangayStatus" class="accountGeoHint">'+escapeHtml(geo.message||'Search and select an official PSGC barangay.')+'</div><div class="formActions"><button class="primary" type="submit">Save area</button></div></form></section>';
+  if(test||geo.assigned)return'';
+  return '<section class="accountSettingsCard accountGeographyCard"><h2>We could not verify your area</h2><p>Search for your home address above. If it still cannot be verified, choose the correct local area here.</p>'+
+    '<form id="accountGeographyForm" class="profileForm"><label>Choose local area<input id="accountBarangaySearch" autocomplete="off" placeholder="Search your barangay or city"></label><input id="accountHomePsgcCode" type="hidden"><div id="accountBarangayResults" class="accountGeoResults"></div><div id="accountBarangayStatus" class="accountGeoHint">Choose the correct local area, then save.</div><div class="formActions"><button class="primary" type="submit">Save area</button></div></form></section>';
 }
 let accountGeoSearchTimer=null;
 function bindAccountGeographyControls(workspace){
   const form=workspace.querySelector('#accountGeographyForm'),input=workspace.querySelector('#accountBarangaySearch'),hidden=workspace.querySelector('#accountHomePsgcCode'),results=workspace.querySelector('#accountBarangayResults'),status=workspace.querySelector('#accountBarangayStatus');
   if(!form||!input||!hidden||!results||!status)return;
   const renderItems=items=>{
-    results.innerHTML=items.length?items.map(x=>'<button type="button" class="accountGeoResult" data-account-geo="'+escapeHtml(x.psgc_code)+'"><strong>'+escapeHtml(x.name)+'</strong><small>'+escapeHtml(x.path_text)+' · PSGC '+escapeHtml(x.psgc_code)+(x.operating_status?' · '+escapeHtml(String(x.operating_status).replaceAll('_',' ')):'')+'</small></button>').join(''):'<div class="accountGeoHint warn">No official barangay matched.</div>';
+    results.innerHTML=items.length?items.map(x=>'<button type="button" class="accountGeoResult" data-account-geo="'+escapeHtml(x.psgc_code)+'"><strong>'+escapeHtml(x.name)+'</strong><small>'+escapeHtml(x.path_text||'')+'</small></button>').join(''):'<div class="accountGeoHint warn">No matching area found.</div>';
     results.querySelectorAll('[data-account-geo]').forEach(button=>button.onclick=async()=>{
       hidden.value=button.dataset.accountGeo;
       input.value=button.querySelector('strong')?.textContent||'';
       results.innerHTML='';
       try{
         const availability=await profileApi('/api/auth/geography/status?psgc_code='+encodeURIComponent(hidden.value));
-        status.textContent=availability.message||'Official barangay selected.';
+        const message=availability.operational_onboarding_available?'Business & Life is available in this area.':'Business & Life is not available in this area yet. We will notify you when onboarding opens.';
+        status.textContent=message;
         status.className='accountGeoHint '+(availability.operational_onboarding_available?'ok':'warn');
       }catch(error){status.textContent=error.message}
     });
   };
   const load=async(query='')=>{
-    results.innerHTML='<div class="accountGeoHint">'+'Searching official PSGC…'+'</div>';
+    results.innerHTML='<div class="accountGeoHint">Searching areas…</div>';
     try{
       const data=await profileApi('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=15');
       renderItems(data.items||[]);
@@ -428,11 +435,11 @@ function bindAccountGeographyControls(workspace){
   };
   form.onsubmit=async e=>{
     e.preventDefault();
-    if(!hidden.value)return showToast('Select an official barangay from the results.');
+    if(!hidden.value)return showToast('Choose your local area from the results.');
     const button=form.querySelector('button[type="submit"]');button.disabled=true;
     try{
       snapshot=await profileApi('/api/me/geography',{method:'PUT',body:JSON.stringify({psgc_code:hidden.value,qa_remote_test:Boolean(snapshot?.qa_remote_test?.enabled)})});
-      profileFetchedAt=Date.now();renderTopAccount();renderAccountSettings('personal');showToast('Business & Life area saved.');
+      profileFetchedAt=Date.now();renderTopAccount();renderAccountSettings('personal');showToast('Area saved.');
     }catch(error){showToast(error.message);button.disabled=false}
   };
 }
@@ -445,7 +452,7 @@ function renderAccountSettings(view=accountSettingsView){
   accountSettingsView=view;
   if(view==='home'){
     workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountAdultEligibilityBanner(test)+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
-      <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and primary address'}</small><b>›</b></button>
+      <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and home address'}</small><b>›</b></button>
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
       <button type="button" id="accountMoneyBanking"><span>🏦</span><strong>Money & Banking</strong><small>Shared payment methods, payout destination and financial identity</small><b>›</b></button>
@@ -463,12 +470,12 @@ function renderAccountSettings(view=accountSettingsView){
       <div class="avatarHint">Photo is compressed on your phone before it is saved.</div>
       <label>${test?'Test account name':'Name'}<input id="shellDisplayName" value="${escapeHtml(account.display_name || '')}" required></label>
       <label>Email${test?' · protected company alias':''}<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}" ${test?'readonly aria-readonly="true"':''}></label>
-      ${test?'<div class="companyContactPolicy"><div><span>Personal phone</span><strong>Not required</strong></div><div><span>Personal address</span><strong>Not required</strong></div><div><span>Contact source</span><strong>Company / test scenario</strong></div></div>':`<label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label><label>Primary address<textarea id="shellAddress" rows="2">${escapeHtml(account.address || '')}</textarea></label>`}
+      ${test?'<div class="companyContactPolicy"><div><span>Personal phone</span><strong>Not required</strong></div><div><span>Personal address</span><strong>Not required</strong></div><div><span>Contact source</span><strong>Company / test scenario</strong></div></div>':`<label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label><div class="accountAddressPicker"><label>Home address <span>Private</span><textarea id="shellAddress" rows="2" autocomplete="street-address" placeholder="House / street, barangay or city, province">${escapeHtml(account.address || '')}</textarea></label><p>Enter your home address. We will check whether Business & Life is available in your area.</p><input id="shellAddressPsgcCode" type="hidden" value="${escapeHtml(snapshot?.geography?.psgc_code||'')}"><div id="accountAddressArea" class="accountAddressArea ${snapshot?.geography?.assigned?'':'hidden'}">${snapshot?.geography?.assigned?'<strong>'+escapeHtml(accountAvailabilityMessage(snapshot.geography).title)+'</strong><small>'+escapeHtml(accountAvailabilityMessage(snapshot.geography).body)+'</small>':''}</div><div class="accountAddressActions"><button id="accountAddressSearch" type="button">Search address</button><button id="accountAddressGps" type="button">Use my location</button></div><div id="accountAddressStatus" class="accountAddressStatus" role="status" aria-live="polite"></div><div id="accountAddressResults" class="accountAddressResults"></div><small class="accountAddressPrivacy">Your home address is private.</small></div>`}
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
     </form></section>${accountAdultEligibilityCard(test)}${accountGeographyEditor(test)}`;
   }else if(view==='profiles'){
     const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount(),adultReady=Boolean(snapshot?.adult_eligibility?.eligible),areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
-    const activationGate=!adultReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Confirm adult eligibility first</strong><p>The Philippines pilot is adult-only. Confirm that you are 18 or older before activating, entering or onboarding a profile.</p></div><button id="completeAdultEligibility" type="button">Open eligibility declaration</button></section>`:superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details and area first</strong><p>Add your name, email, primary address and official barangay before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Your area is not open for onboarding</strong><p>${escapeHtml(snapshot?.geography?.message||'Business & Life is not available for operational onboarding in your barangay yet.')}</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
+    const activationGate=!adultReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Confirm adult eligibility first</strong><p>The Philippines pilot is adult-only. Confirm that you are 18 or older before activating, entering or onboarding a profile.</p></div><button id="completeAdultEligibility" type="button">Open eligibility declaration</button></section>`:superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and home address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Business & Life is not available in your area yet</strong><p>We will notify you when onboarding opens.</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
     workspace.innerHTML=accountSettingsHeader(test?'Assigned test role':'Manage profiles',test?`This account is reserved for ${testAccountRoleLabel(account)} testing and does not require personal contact details.`:'Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+`<div id="accountSecurityMount" class="accountSecurityStack">
@@ -497,6 +504,7 @@ function renderAccountSettings(view=accountSettingsView){
     showToast('Support is still loading. Try again in a moment.');
   });
   workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
+  bindPrimaryAddressPicker(workspace);
   workspace.querySelector('#adultEligibilityForm')?.addEventListener('submit',async event=>{
     event.preventDefault();
     const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),out=form.querySelector('#adultEligibilityResult');
@@ -605,6 +613,113 @@ function closeDrawer() {
   document.body.style.overflow = '';
 }
 
+function accountAddressMessage(workspace,message,state=''){
+  const node=workspace?.querySelector('#accountAddressStatus');if(!node)return;
+  node.textContent=message||'';node.className='accountAddressStatus'+(state?' '+state:'');
+}
+function setAddressArea(workspace,geography){
+  const hidden=workspace?.querySelector('#shellAddressPsgcCode'),area=workspace?.querySelector('#accountAddressArea'),results=workspace?.querySelector('#accountAddressResults');
+  if(!hidden||!area)return;
+  const matched=geography?.matched&&geography?.candidate;
+  if(matched){
+    const item=geography.candidate,status=String(item.operating_status||'not_opened');
+    hidden.value=item.psgc_code||'';
+    let title='Business & Life is not available in your area yet',body='We will notify you when onboarding opens.',tone='warn';
+    if(['active','onboarding'].includes(status)){title='Business & Life is available in your area';body='You can continue with profile onboarding and available services.';tone='ok'}
+    else if(status==='paused'){title='Onboarding is temporarily unavailable in your area';body='We will notify you when onboarding reopens.'}
+    else if(['suspended','closed'].includes(status)){title='Business & Life is not currently available in your area';body='We will notify you if availability changes.';tone='warn'}
+    area.innerHTML='<strong>'+escapeHtml(title)+'</strong><small>'+escapeHtml(body)+'</small>';
+    area.className='accountAddressArea '+tone;
+    return;
+  }
+  hidden.value='';
+  const candidates=Array.isArray(geography?.candidates)?geography.candidates:[];
+  if(candidates.length){
+    area.innerHTML='<strong>Please confirm your area</strong><small>Choose the location that matches your address.</small>';
+    area.className='accountAddressArea warn';
+    if(results){
+      results.innerHTML=candidates.map((item,index)=>'<button type="button" class="accountAddressResult accountAreaResult" data-area-result="'+index+'"><strong>'+escapeHtml(item.name||'Area')+'</strong><small>'+escapeHtml(item.path_text||'')+'</small></button>').join('');
+      results.querySelectorAll('[data-area-result]').forEach(button=>button.onclick=()=>{
+        const item=candidates[Number(button.dataset.areaResult)];
+        if(!item?.psgc_code)return;
+        hidden.value=item.psgc_code;
+        const status=String(item.operating_status||'not_opened');
+        const available=['active','onboarding'].includes(status);
+        area.innerHTML='<strong>'+(available?'Business & Life is available in your area':'Business & Life is not available in your area yet')+'</strong><small>'+(available?'You can continue with profile onboarding and available services.':'We will notify you when onboarding opens.')+'</small>';
+        area.className='accountAddressArea '+(available?'ok':'warn');
+        results.innerHTML='';
+      });
+    }
+    return;
+  }
+  area.innerHTML='<strong>We could not verify your area</strong><small>Search for your address again or use the area option below.</small>';
+  area.className='accountAddressArea warn';
+}
+function renderAccountAddressResults(workspace,results=[]){
+  const box=workspace?.querySelector('#accountAddressResults');if(!box)return;
+  if(!results.length){box.innerHTML='';return}
+  box.innerHTML=results.map((item,index)=>'<button type="button" class="accountAddressResult" data-address-result="'+index+'"><strong>'+escapeHtml(item.label||'')+'</strong><small>Use this private address</small></button>').join('');
+  box.querySelectorAll('[data-address-result]').forEach(button=>button.onclick=()=>{
+    const item=results[Number(button.dataset.addressResult)];
+    const address=workspace.querySelector('#shellAddress');if(!item?.label||!address)return;
+    address.value=item.label;
+    box.innerHTML='';
+    setAddressArea(workspace,item.geography);
+    accountAddressMessage(workspace,item.geography?.matched?'Address selected. Press Save account.':'Address selected. Please confirm your area before saving.','ok');
+    address.focus({preventScroll:true});
+  });
+}
+async function searchPrimaryAddress(workspace){
+  const address=workspace?.querySelector('#shellAddress'),button=workspace?.querySelector('#accountAddressSearch');
+  const query=String(address?.value||'').trim();
+  if(query.length<3){accountAddressMessage(workspace,'Type at least 3 characters, then tap Search address.','warn');return}
+  button.disabled=true;accountAddressMessage(workspace,'Searching for matching addresses…');
+  renderAccountAddressResults(workspace,[]);
+  try{
+    const data=await profileApi('/api/me/address/search?q='+encodeURIComponent(query));
+    const results=Array.isArray(data?.results)?data.results:[];
+    if(!results.length){accountAddressMessage(workspace,'No matching address was found. Add more street, city or province detail and try again.','warn');return}
+    renderAccountAddressResults(workspace,results);
+    accountAddressMessage(workspace,'Choose the address that matches you.','ok');
+  }catch(error){accountAddressMessage(workspace,error.message||'Address search is unavailable. You can still type the address manually.','warn')}
+  finally{button.disabled=false}
+}
+function usePrimaryAddressGps(workspace){
+  const button=workspace?.querySelector('#accountAddressGps');
+  if(!window.isSecureContext||!navigator.geolocation){accountAddressMessage(workspace,'GPS is not available in this browser. Search or type the address instead.','warn');return}
+  button.disabled=true;accountAddressMessage(workspace,'Waiting for your location permission…');
+  navigator.geolocation.getCurrentPosition(async position=>{
+    try{
+      accountAddressMessage(workspace,'Finding your address…');
+      const data=await profileApi('/api/me/address/reverse',{method:'POST',body:JSON.stringify({latitude:position.coords.latitude,longitude:position.coords.longitude})});
+      const address=workspace.querySelector('#shellAddress');
+      if(address&&data?.address){
+        address.value=data.address;
+        renderAccountAddressResults(workspace,[]);
+        setAddressArea(workspace,data.geography);
+        accountAddressMessage(workspace,data.geography?.matched?'Address found. Press Save account.':'Address found. Please confirm your area before saving.','ok');
+        address.focus({preventScroll:true});
+      }else accountAddressMessage(workspace,'No street address was found. Search or type it manually.','warn');
+    }catch(error){accountAddressMessage(workspace,error.message||'Could not turn your location into an address. Search or type it manually.','warn')}
+    finally{button.disabled=false}
+  },error=>{
+    button.disabled=false;
+    const message=error?.code===1?'Location permission was not granted. You can search or type the address instead.':'Current location could not be read. Search or type the address instead.';
+    accountAddressMessage(workspace,message,'warn');
+  },{enableHighAccuracy:false,timeout:12000,maximumAge:60000});
+}
+function bindPrimaryAddressPicker(workspace){
+  const address=workspace?.querySelector('#shellAddress');if(!address)return;
+  const original=String(address.value||'').trim();
+  workspace.querySelector('#accountAddressSearch')?.addEventListener('click',()=>searchPrimaryAddress(workspace));
+  workspace.querySelector('#accountAddressGps')?.addEventListener('click',()=>usePrimaryAddressGps(workspace));
+  address.addEventListener('input',()=>{
+    if(String(address.value||'').trim()===original)return;
+    const hidden=workspace.querySelector('#shellAddressPsgcCode');if(hidden)hidden.value='';
+    const area=workspace.querySelector('#accountAddressArea');
+    if(area){area.innerHTML='';area.className='accountAddressArea hidden'}
+  });
+}
 async function saveIdentity(event) {
   event.preventDefault();
   try {
@@ -612,7 +727,8 @@ async function saveIdentity(event) {
       display_name: document.getElementById('shellDisplayName').value,
       email: document.getElementById('shellEmail').value,
       phone: document.getElementById('shellPhone')?.value || '',
-      address: document.getElementById('shellAddress')?.value || ''
+      address: document.getElementById('shellAddress')?.value || '',
+      home_psgc_code: document.getElementById('shellAddressPsgcCode')?.value || snapshot?.geography?.psgc_code || ''
     }) });
     profileFetchedAt=Date.now(); renderTopAccount(); renderAccountSettings(); showToast('Account saved.');
   } catch (err) { showToast(err.message); }
@@ -1584,7 +1700,7 @@ function applyActiveRole() {
       const detailsReady=accountDetailsReady(account);
       const emailReady=Boolean(account.email_verified_at);
       const test=isCompanyTestAccount(account);
-      hub.innerHTML=`<div class="hubHero ${test?'companyTestHero':''}"><div class="hubEyebrow">${test?'COMPANY TEST ACCOUNT':'PERSON ACCOUNT'}</div><h1>${test?`${escapeHtml(testAccountRoleLabel(account))} test account`:'Choose your first profile when ready.'}</h1><p>${test?'This identity is managed by Business & Life for controlled testing. It does not represent a person and does not need a personal phone or home address.':'Set up your account first. No Customer, Merchant, Supplier, Delivery or Local Services profile is active. You decide which onboarding to start.'}</p><span class="hubStatus">${test?'🧪':countryMeta(account.country_code).flag} ${escapeHtml(account.personal_id||'Account ID preparing')}</span></div><div class="hubSectionTitle"><h2>Before your first profile</h2><span>${detailsReady&&emailReady?'Ready to choose':'Setup required'}</span></div><div class="hubGrid"><div class="hubTile"><span class="hubTileIcon">${detailsReady?'✓':'1'}</span><strong>${test?'Test identity':'Personal details'}</strong><small>${test?'Company-managed; personal phone and address not required':detailsReady?'Name and primary address completed':'Add your name and primary address'}</small></div><div class="hubTile"><span class="hubTileIcon">${emailReady?'✓':'2'}</span><strong>Email verification</strong><small>${emailReady?'Email verified':'Open the verification message or request a new one'}</small></div><button class="hubTile profileSettingsTile" id="openFirstAccountSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>${test?'Open the assigned test role':'Complete setup and choose a profile to onboard'}</small></button></div>`;
+      hub.innerHTML=`<div class="hubHero ${test?'companyTestHero':''}"><div class="hubEyebrow">${test?'COMPANY TEST ACCOUNT':'PERSON ACCOUNT'}</div><h1>${test?`${escapeHtml(testAccountRoleLabel(account))} test account`:'Choose your first profile when ready.'}</h1><p>${test?'This identity is managed by Business & Life for controlled testing. It does not represent a person and does not need a personal phone or home address.':'Set up your account first. No Customer, Merchant, Supplier, Delivery or Local Services profile is active. You decide which onboarding to start.'}</p><span class="hubStatus">${test?'🧪':countryMeta(account.country_code).flag} ${escapeHtml(account.personal_id||'Account ID preparing')}</span></div><div class="hubSectionTitle"><h2>Before your first profile</h2><span>${detailsReady&&emailReady?'Ready to choose':'Setup required'}</span></div><div class="hubGrid"><div class="hubTile"><span class="hubTileIcon">${detailsReady?'✓':'1'}</span><strong>${test?'Test identity':'Personal details'}</strong><small>${test?'Company-managed; personal phone and address not required':detailsReady?'Name and home address completed':'Add your name and home address'}</small></div><div class="hubTile"><span class="hubTileIcon">${emailReady?'✓':'2'}</span><strong>Email verification</strong><small>${emailReady?'Email verified':'Open the verification message or request a new one'}</small></div><button class="hubTile profileSettingsTile" id="openFirstAccountSettings" type="button"><span class="hubTileIcon">⚙️</span><strong>Account Settings</strong><small>${test?'Open the assigned test role':'Complete setup and choose a profile to onboard'}</small></button></div>`;
       hub.classList.remove('hidden');hub.querySelector('#openFirstAccountSettings').onclick=()=>openAccountSettings();
     }return
   }

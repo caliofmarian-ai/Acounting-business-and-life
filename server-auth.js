@@ -14,7 +14,7 @@ import { bindReferralSignupConversion } from './growth/referral-conversion-bindi
 import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
 import { companyTestAccountForEmail, companyTestContact, companyTestProfileRole } from './company-test-accounts.js';
 import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-session-core.js';
-import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage} from './account-geography.js';
+import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage,resolveAddressBarangayCandidate} from './account-geography.js';
 import {emitNotificationEvent} from './notification-core.js';
 import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboarding} from './guided-onboarding-core.js';
 import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest} from './territory-demand-core.js';
@@ -22,6 +22,7 @@ import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-acc
 import {ensureHighRiskVelocitySchema,enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {ADULT_ELIGIBILITY_POLICY_VERSION,ensureAccountSafetyEligibilitySchema,accountAdultEligibilitySnapshot,recordAdultEligibilityAttestation,recordCompanyTestEligibilityExemption,requireAdultEligibility} from './account-safety-eligibility-core.js';
 import {clearBrowserSessionCookies,issueBrowserSessionCookies,sessionCredentialFromHeaders,sessionSecurityMiddleware} from './session-cookie-core.js';
+import {createPrivateAddressGeocoder} from './private-address-geocoder.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -43,6 +44,7 @@ const PUBLIC_REFERRAL_ANALYTICS_EVENTS = new Set(['referral_qr_opened','referral
 let shuttingDown = false;
 
 app.use(sessionSecurityMiddleware);
+const privateAddressGeocoder=createPrivateAddressGeocoder();
 
 function clean(value, max = 250) { return String(value ?? '').trim().slice(0, max); }
 function normalizeEmail(value) { return clean(value, 160).toLowerCase(); }
@@ -457,6 +459,23 @@ app.get('/api/auth/geography/status',async(req,res,next)=>{try{
   res.json({...result,message:geographyAvailabilityMessage(result)});
 }catch(e){next(e)}});
 
+async function deriveRegistrationGeography(address){
+  const value=clean(address,300);
+  if(value.length<3)return null;
+  try{
+    const results=await privateAddressGeocoder.search(value,'PH');
+    for(const item of results){
+      const resolved=await resolveAddressBarangayCandidate(pool,item);
+      if(resolved.matched&&resolved.candidate?.psgc_code){
+        return geographyAvailabilityForCode(pool,resolved.candidate.psgc_code);
+      }
+    }
+  }catch(_error){
+    // Registration must remain available when the external address provider is temporarily unavailable.
+  }
+  return null;
+}
+
 app.post('/api/auth/register', body, async (req, res, next) => {
   const email = normalizeEmail(req.body?.email);
   const name = clean(req.body?.display_name, 120);
@@ -471,11 +490,15 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   if (!passwordOkay(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   if(!companyTest&&req.body?.adult_eligibility_attested!==true)return res.status(422).json({error:'Confirm that you are 18 or older to create a Philippines pilot account'});
   if(!companyTest&&clean(req.body?.adult_eligibility_policy_version,80)!==ADULT_ELIGIBILITY_POLICY_VERSION)return res.status(409).json({error:'Review and accept the current adult eligibility notice before creating your account'});
-  let geography=null;
-  if(homePsgcCode){geography=await geographyAvailabilityForCode(pool,homePsgcCode);if(!geography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});}
-  if(!companyTest&&!geography)return res.status(400).json({error:'Choose your official barangay before creating your account'});
   if(qaRemoteRequested&&!isQaRemoteTestEmail(email))return res.status(403).json({error:'Remote PH testing is available only to the designated QA test account'});
   if (throttled(req, email)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+  let geography=null;
+  if(homePsgcCode){
+    geography=await geographyAvailabilityForCode(pool,homePsgcCode);
+    if(!geography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});
+  }else if(!companyTest&&address){
+    geography=await deriveRegistrationGeography(address);
+  }
   const client = await pool.connect();
   try {
     const exists = await client.query(`SELECT 1 FROM accounts WHERE LOWER(email)=$1`, [email]);
@@ -486,7 +509,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
     const accountId = Number(account.rows[0].id);
     if(companyTest)await recordCompanyTestEligibilityExemption(client,{accountId,source:'company_test_registration'});
     else await recordAdultEligibilityAttestation(client,{accountId,actorAccountId:accountId,attested:true,policyVersion:req.body?.adult_eligibility_policy_version,source:'password_registration'});
-    if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':qaRemoteRequested&&isQaRemoteTestEmail(email)?'qa_remote_ph_test':'registration_selected_psgc'});
+    if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':qaRemoteRequested&&isQaRemoteTestEmail(email)?'qa_remote_ph_test':homePsgcCode?'registration_selected_psgc':'registration_address_derived_psgc'});
     await client.query('COMMIT');
     clearThrottle(req, email);
 
@@ -577,6 +600,26 @@ app.post('/api/auth/password', body, auth, async (req, res, next) => {
 });
 
 app.get('/api/me', auth, async (req, res, next) => { try { res.json(await profileSnapshot(req.accountId)); } catch (err) { next(err); } });
+
+app.get('/api/me/address/search',auth,async(req,res,next)=>{try{
+  const account=await pool.query('SELECT identity_country_code FROM accounts WHERE id=$1',[req.accountId]);
+  if(!account.rowCount)return res.status(404).json({error:'Account not found'});
+  const results=await privateAddressGeocoder.search(req.query?.q,account.rows[0]?.identity_country_code||'PH');
+  const enriched=[];
+  for(const item of results){
+    const geography=await resolveAddressBarangayCandidate(pool,item);
+    enriched.push({label:item.label,geography});
+  }
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json({provider:'OpenStreetMap Nominatim',results:enriched});
+}catch(err){next(err)}});
+
+app.post('/api/me/address/reverse',body,auth,async(req,res,next)=>{try{
+  const result=await privateAddressGeocoder.reverse(req.body?.latitude,req.body?.longitude);
+  const geography=await resolveAddressBarangayCandidate(pool,result);
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json({provider:'OpenStreetMap Nominatim',address:result.label,geography});
+}catch(err){next(err)}});
 
 app.get('/api/onboarding/guide',auth,async(req,res,next)=>{try{
   res.set('Cache-Control','private, no-store, max-age=0');
@@ -705,6 +748,7 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
   const phone = clean(req.body?.phone, 40);
   const email = normalizeEmail(req.body?.email);
   const address = clean(req.body?.address, 300);
+  let homePsgcCode = clean(req.body?.home_psgc_code, 32).replace(/\D/g,'');
   if (!name) return res.status(400).json({ error: 'Display name is required' });
   if (email && !validEmail(email)) return res.status(400).json({ error: 'Email is invalid' });
   let avatar = req.body?.avatar_data_url;
@@ -724,13 +768,39 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
       const duplicate = await pool.query(`SELECT id FROM accounts WHERE LOWER(email)=$1 AND id<>$2`, [savedEmail, req.accountId]);
       if (duplicate.rowCount) return res.status(409).json({ error: 'That email is already used by another account' });
     }
-    if(Object.prototype.hasOwnProperty.call(req.body||{},'address')&&address!==clean(current.address,300)){
+    const existingGeo=await accountGeographySnapshot(pool,req.accountId).catch(()=>({assigned:false}));
+    const addressChanged=Object.prototype.hasOwnProperty.call(req.body||{},'address')&&address!==clean(current.address,300);
+    if(addressChanged){
       await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'account_location_change',subjectType:'account',subjectId:req.accountId});
+    }
+    if(!companyTest&&!/^\d{10}$/.test(homePsgcCode)&&(addressChanged||!existingGeo?.assigned)&&address){
+      const derived=await deriveRegistrationGeography(address);
+      if(derived?.psgc_code)homePsgcCode=derived.psgc_code;
+    }
+    if(!companyTest&&(addressChanged||!existingGeo?.assigned)&&address&&!/^\d{10}$/.test(homePsgcCode)){
+      return res.status(422).json({error:'Business & Life could not confidently detect your barangay from this address. Use Search personal address or confirm the detected area below.'});
     }
     if(avatar!==undefined&&avatar!==current.avatar_data_url){
       await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'upload_public',subjectType:'account_avatar',subjectId:req.accountId});
     }
-    await pool.query(`UPDATE accounts SET display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, companyTest?'':address, avatar === undefined ? null : avatar, req.accountId]);
+    if(!companyTest&&homePsgcCode){
+      const resolved=await geographyAvailabilityForCode(pool,homePsgcCode);
+      if(!resolved)return res.status(400).json({error:'The detected barangay is not in the current official PSGC registry. Search the address again or correct the area manually.'});
+    }
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query(`UPDATE accounts SET display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, companyTest?'':address, avatar === undefined ? null : avatar, req.accountId]);
+      if(!companyTest&&homePsgcCode)await saveAccountGeography(client,req.accountId,homePsgcCode,{source:'address_derived_psgc'});
+      await client.query('COMMIT');
+    }catch(error){
+      await client.query('ROLLBACK').catch(()=>{});
+      throw error;
+    }finally{client.release()}
+    if(!companyTest&&homePsgcCode&&existingGeo?.psgc_code!==homePsgcCode){
+      const geography=await accountGeographySnapshot(pool,req.accountId).catch(()=>null);
+      await emitAccountGeographyNotice(req.accountId,geography);
+    }
     res.json(await profileSnapshot(req.accountId));
   } catch (err) { next(err); }
 });

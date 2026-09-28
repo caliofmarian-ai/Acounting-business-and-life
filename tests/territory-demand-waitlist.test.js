@@ -20,6 +20,16 @@ test('registration remains allowed for any official barangay regardless of opera
   assert.doesNotMatch(block,/operational_onboarding_available.*return res\.status/);
 });
 
+test('address-derived barangay feeds aggregate expansion demand without exposing the street address',()=>{
+  const geo=read('account-geography.js');
+  assert.match(auth,/source:'address_derived_psgc'/);
+  assert.match(geo,/resolveAddressBarangayCandidate/);
+  assert.match(demand,/FROM account_geography_assignments a JOIN ph_geographic_registry/);
+  assert.match(demand,/registered_accounts/);
+  assert.match(demand,/new_accounts_7d/);
+  assert.doesNotMatch(demand,/SELECT[^\n]*address/i);
+});
+
 test('territory demand stores deduplicated role interest with attempt history',()=>{
   assert.match(demand,/CREATE TABLE IF NOT EXISTS territory_profile_interest_signals/);
   assert.match(demand,/PRIMARY KEY\(account_id,country_code,psgc_code,profile_role\)/);
@@ -48,6 +58,8 @@ test('Admin demand view is aggregate only and rolls account demand through geogr
   assert.match(governance,/\/api\/governance\/admin\/territory-demand/);
   assert.match(adminProxy,/\/api\/governance\/admin\/territory-demand/);
   assert.match(adminUi,/Territory Demand/);
+  assert.match(adminUi,/Accounts by detected PSGC area plus profile interest, aggregated without street addresses/);
+  assert.match(adminUi,/When a user confirms one personal address, Business & Life derives the PSGC area and counts that account here/);
   assert.match(adminUi,/Demand informs expansion\. It never opens a territory automatically/);
 });
 

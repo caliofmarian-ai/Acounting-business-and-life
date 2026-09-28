@@ -10,6 +10,80 @@ export function barangaySearchTokens(value){
   return clean(value,120).toLowerCase().split(/[^a-z0-9]+/).map(x=>x.trim()).filter(x=>x.length>=2).slice(0,8);
 }
 
+function normalizeAddressPlace(value){
+  return clean(value,180)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .replace(/\b(?:barangay|brgy\.?|city of|province of|municipality of)\b/g,' ')
+    .replace(/[^a-z0-9]+/g,' ')
+    .trim();
+}
+function addressPlaceHints(parts={},label=''){
+  const p=parts&&typeof parts==='object'&&!Array.isArray(parts)?parts:{};
+  const barangay=[
+    p.barangay,p.suburb,p.neighbourhood,p.quarter,p.village,p.hamlet,p.city_district
+  ].map(normalizeAddressPlace).filter(Boolean);
+  const locality=[
+    p.city,p.town,p.municipality,p.county,p.city_district
+  ].map(normalizeAddressPlace).filter(Boolean);
+  const province=[p.state,p.region].map(normalizeAddressPlace).filter(Boolean);
+  const segments=clean(label,400).split(',').map(normalizeAddressPlace).filter(Boolean);
+  return{
+    barangay:[...new Set(barangay)],
+    locality:[...new Set(locality)],
+    province:[...new Set(province)],
+    segments:[...new Set(segments)]
+  };
+}
+function addressBarangayScore(item,hints,label=''){
+  const name=normalizeAddressPlace(item?.name),path=normalizeAddressPlace(item?.path_text),full=normalizeAddressPlace(label);
+  let score=0;
+  if(name&&hints.barangay.includes(name))score+=12;
+  if(name&&hints.segments.includes(name))score+=8;
+  if(name&&full.includes(name))score+=4;
+  if(hints.locality.some(x=>x&&path.includes(x)))score+=4;
+  if(hints.province.some(x=>x&&path.includes(x)))score+=2;
+  return score;
+}
+
+export async function resolveAddressBarangayCandidate(pool,{label='',parts={}}={}){
+  const hints=addressPlaceHints(parts,label);
+  const queries=[];
+  for(const barangay of [...hints.barangay,...hints.segments]){
+    if(!barangay||barangay.length<2)continue;
+    const locality=hints.locality[0]||'',province=hints.province[0]||'';
+    queries.push([barangay,locality,province].filter(Boolean).join(' '));
+    if(locality)queries.push([barangay,locality].join(' '));
+    queries.push(barangay);
+    if(queries.length>=12)break;
+  }
+  const uniqueQueries=[...new Set(queries)].slice(0,12);
+  const byCode=new Map();
+  for(const query of uniqueQueries){
+    const found=await searchOfficialBarangays(pool,{query,limit:5});
+    for(const item of found.items||[]){
+      const score=addressBarangayScore(item,hints,label);
+      const current=byCode.get(item.psgc_code);
+      if(!current||score>current.score)byCode.set(item.psgc_code,{...item,score});
+    }
+    const strong=[...byCode.values()].filter(x=>x.score>=12);
+    if(strong.length===1&&uniqueQueries.indexOf(query)>=1)break;
+  }
+  const candidates=[...byCode.values()]
+    .sort((a,b)=>b.score-a.score||String(a.name).localeCompare(String(b.name)))
+    .slice(0,5)
+    .map(({score,...item})=>({...item,match_score:score}));
+  const top=candidates[0],next=candidates[1];
+  const matched=Boolean(top&&top.match_score>=10&&(!next||top.match_score-next.match_score>=2));
+  return{
+    matched,
+    source:'address_derived_psgc',
+    candidate:matched?top:null,
+    candidates
+  };
+}
+
 export async function ensureAccountGeographySchema(pool){
   if(accountGeographySchemaReady)return;
   await pool.query(
