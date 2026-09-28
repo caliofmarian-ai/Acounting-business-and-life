@@ -92,6 +92,19 @@ test('PayMongo refunds use provider payment id and official refunds endpoint',()
   assert.match(adapter,/refunded/);
 });
 
+test('PayMongo refund success reconciles Delivery-derived economics without inventing clawback',()=>{
+  assert.match(adapter,/export async function reconcileDeliveryRefundEconomics/);
+  const start=adapter.indexOf('export async function executePayMongoRefund');
+  const refund=adapter.slice(start);
+  assert.ok((refund.match(/reconcileDeliveryRefundEconomics\(/g)||[]).length>=2);
+  assert.match(refund,/delivery_refund_economics_reconciliation_failed/);
+  assert.match(adapter,/component_code IN \('courier_net','platform_fee'\)/);
+  assert.match(adapter,/settlement_lines/);
+  assert.match(adapter,/fullIntentRefund&&!cashMayHaveMoved\?'reversed':'manual_review'/);
+  assert.doesNotMatch(adapter,/UPDATE payment_allocations SET amount=/);
+});
+
+
 test('PayMongo provider metadata declares adapter readiness without storing credentials',()=>{
   assert.match(adapter,/v0\.15-hosted-checkout-v2/);
   assert.match(adapter,/secret_ready/);
