@@ -460,8 +460,7 @@ function renderAccountSettings(view=accountSettingsView){
     <section class="accountSettingsCard accountSharedUtilities"><h2>Communication, privacy & help</h2><p>These settings belong to your account and stay shared when you switch profiles.</p><div class="accountUtilityList">
       <button type="button" id="accountNotifications"><span>🔔</span><span><strong>Notifications & language</strong><small>Notification language, sounds, vibration, push and alert categories</small></span><b>›</b></button>
       <button type="button" id="accountLegalPrivacy"><span>⚖️</span><span><strong>Legal & privacy</strong><small>Terms, privacy notices, consent and acceptance history</small></span><b>›</b></button>
-      <button type="button" id="accountHelpSupport"><span>💬</span><span><strong>Help & Support</strong><small>Contact Support, view tickets and submit privacy-rights requests</small></span><b>›</b></button>
-      <a href="/help"><span>?</span><span><strong>Help Center</strong><small>Public guides and troubleshooting for Business & Life</small></span><b>›</b></a>
+      <button type="button" id="accountHelpSupport"><span>💬</span><span><strong>Help & Support</strong><small>Guides, contact Support, tickets and privacy-rights requests</small></span><b>›</b></button>
     </div><p class="accountLocaleBoundary">Language here controls supported account communications and document routing. It does not yet translate every application screen.</p></section>
     <div class="accountSettingsBoundary"><strong>Profile settings stay inside each profile</strong><p>Open Customer, Merchant, Supplier, Delivery or Local Services and use its dedicated Profile Settings card.</p></div>`;
   }else if(view==='personal'){
