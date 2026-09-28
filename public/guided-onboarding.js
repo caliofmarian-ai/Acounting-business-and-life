@@ -564,7 +564,7 @@ function missionRow(step,index){
 }
 function profileJourneyRow(journey){
   const role=journey.profile_role,label=roleLabelFor(role),done=profileJourneyCompleted(journey),active=journey.is_active_profile;
-  const status=done?tr('mission.done',{},'Done'):journey.status==='paused'?tr('mission.paused',{},'Paused'):active?tr('mission.in_progress',{},'In progress'):tr('mission.ready',{},'Ready');
+  const status=done?tr('mission.done_restart',{},'Done · tap to restart'):journey.status==='paused'?tr('mission.paused',{},'Paused'):active?tr('mission.in_progress',{},'In progress'):tr('mission.ready',{},'Ready');
   return '<button type="button" class="guidedMissionRow guidedJourneyRow '+(done?'done ':'')+(active?'current ':'')+'" data-guide-profile-journey="'+esc(role)+'">'+
     '<span class="guidedMissionIcon">'+(done?'✓':'↳')+'</span>'+
     '<span><strong>'+esc(tr('profile_tour.row_title',{role:label},label+' tutorial'))+'</strong><small>'+esc(status)+' · '+Number(journey.progress_completed||0)+'/'+Number(journey.progress_total||PROFILE_STEP_ORDER.length)+'</small></span>'+
