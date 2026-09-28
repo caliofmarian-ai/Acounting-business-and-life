@@ -37,7 +37,8 @@ test('Courier Home exposes the selected start area without changing Admin author
 });
 
 test('Courier runtime acceptance persists and reloads the operating barangay',()=>{
-  assert.match(qa,/account_geography_assignments/);
+  assert.match(qa,/ph_geographic_registry/);
+  assert.match(qa,/0402103028/);
   assert.match(qa,/\/api\/courier\/operating-area/);
   assert.match(qa,/operating area did not survive profile reload/);
 });
