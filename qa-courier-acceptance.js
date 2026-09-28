@@ -120,6 +120,19 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
   });
   expectStatus(profileSaved,200,'Courier profile configuration');
 
+  const qaArea=await pool.query(
+    "SELECT psgc_code FROM ph_geographic_registry WHERE country_code='PH' AND psgc_code='0402103028' ORDER BY source_version DESC LIMIT 1"
+  );
+  const operatingPsgc=String(qaArea.rows[0]?.psgc_code||'');
+  if(!operatingPsgc)throw new Error('Canonical QA barangay is missing from the PSGC registry.');
+  const operatingArea=await requestJson(base,'/api/courier/operating-area',{
+    method:'PUT',token:courier.token,body:{psgc_code:operatingPsgc}
+  });
+  expectStatus(operatingArea,200,'Courier operating area');
+  if(operatingArea.json?.operating_area?.operating_psgc_code!==operatingPsgc){
+    throw new Error('Courier operating area did not persist the selected official barangay.');
+  }
+
   let document=(await pool.query(
     "SELECT id,verification_status FROM courier_documents WHERE account_id=$1 AND reference_number=$2 ORDER BY id DESC LIMIT 1",
     [courier.accountId,COURIER_QA_DOCUMENT_REFERENCE]
@@ -166,8 +179,11 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
   if(!p||p.eligibility_status!=='approved'||p.available!==true||p.approved_vehicle_class!=='bicycle'){
     throw new Error('Courier eligibility/availability state is not operational.');
   }
+  if(p.operating_psgc_code!==operatingPsgc||!p.operating_area_name){
+    throw new Error('Courier operating area did not survive profile reload.');
+  }
   if(qaDoc?.verification_status!=='verified')throw new Error('Courier QA identity evidence was not verified.');
-  return{documentId:Number(document.id)};
+  return{documentId:Number(document.id),operatingPsgc};
 }
 
 async function configureQaDeliveryPricing({base,adminToken,requestJson,expectStatus}){
@@ -499,7 +515,7 @@ export async function runCourierExperienceAcceptance({
   const basket=await publicCourierBasket({base,token:customer.token,businessId,requestJson,expectStatus});
 
   const existing=await pool.query(
-    "SELECT o.id order_id,o.order_status,o.payment_status,d.id delivery_id,d.status delivery_status FROM orders o LEFT JOIN deliveries d ON d.order_id=o.id WHERE o.business_id=$1 AND o.customer_account_id=$2 AND o.note=$3 AND o.order_status<>'cancelled' ORDER BY o.id DESC LIMIT 1",
+    "SELECT o.id order_id,o.order_status,o.payment_status,d.id delivery_id,d.status delivery_status FROM orders o LEFT JOIN deliveries d ON d.order_id=o.id WHERE o.business_id=$1 AND o.customer_account_id=$2 AND o.note=$3 AND o.order_status NOT IN ('completed','cancelled') AND d.status NOT IN ('delivered','failed','cancelled') ORDER BY o.id DESC LIMIT 1",
     [businessId,customer.accountId,orderNote]
   );
 

@@ -213,11 +213,13 @@ export function deliveryVehicleRuleEligible(ruleInput,{distanceKm=0,weightKg=0,v
 function tieredDistanceComponents(rule,distance){
   if(distance<=rule.included_distance_km)return{amount:0,bands:[]};
   let previous=rule.included_distance_km;
+  let covered=rule.included_distance_km;
   let amount=0;
   const bands=[];
   for(const band of rule.distance_bands){
     const upper=band.up_to_km==null?distance:Math.min(distance,band.up_to_km);
     const km=Math.max(0,upper-previous);
+    covered=Math.max(covered,upper);
     if(km>0){
       const component=money(km*band.per_km);
       bands.push({
@@ -232,7 +234,6 @@ function tieredDistanceComponents(rule,distance){
     if(band.up_to_km==null||distance<=band.up_to_km)break;
     previous=band.up_to_km;
   }
-  const covered=bands.length?bands.at(-1).to_km:rule.included_distance_km;
   if(distance>covered+0.000001){
     throw Object.assign(new Error('Distance is outside configured tier coverage'),{status:409,code:'DELIVERY_DISTANCE_TIER_GAP'});
   }

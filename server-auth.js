@@ -280,6 +280,10 @@ async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_status TEXT NOT NULL DEFAULT 'not_requested';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_psgc_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_path TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_source_version TEXT NOT NULL DEFAULT '';
 
     CREATE TABLE IF NOT EXISTS service_provider_profiles (
       account_id BIGINT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,

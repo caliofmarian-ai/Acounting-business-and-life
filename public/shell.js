@@ -1257,10 +1257,11 @@ function renderCourierHomeData(hub,data){
   const expired=profile?.eligibility_status==='approved'&&!approved;
   const statusLabel=!profile?'Status unavailable':expired?'Approval expired':customerNice(profile.eligibility_status||'not requested');
   const vehicle=profile?.approved_vehicle_class||profile?.vehicle_type||'No approved vehicle';
+  const operatingArea=profile?.operating_area_name||'Start area not set';
   const status=hub.querySelector('#courierHomeStatus');
   if(status){
     status.innerHTML=
-      '<div class="courierStatusMain"><div><span class="courierStatusEyebrow">Eligibility</span><strong>'+escapeHtml(statusLabel)+'</strong><small>'+escapeHtml(vehicle)+'</small></div>'+
+      '<div class="courierStatusMain"><div><span class="courierStatusEyebrow">Eligibility</span><strong>'+escapeHtml(statusLabel)+'</strong><small>'+escapeHtml(vehicle)+' · '+escapeHtml(operatingArea)+'</small></div>'+
       '<button type="button" data-courier-home-open="Eligibility">'+(approved?'Review':'Fix eligibility')+'</button></div>'+
       '<div class="courierAvailabilityRow"><div><strong>'+(profile?.available&&approved?'Available':'Not available')+'</strong><small>'+(approved?'You decide when you are open for new assignments.':'Admin approval is required before availability can be enabled.')+'</small></div>'+
       '<button id="courierHomeAvailabilityAction" type="button" data-next-available="'+String(!(profile?.available&&approved))+'" '+(!approved?'disabled':'')+'>'+(profile?.available&&approved?'Pause availability':'Go available')+'</button></div>';
@@ -1342,7 +1343,7 @@ function renderCourierHub(){
         '<section class="courierHomeSection"><div class="hubSectionTitle"><h2>Current work</h2><span>What needs attention now</span></div><div id="courierHomeWork"></div></section>'+
         '<section class="courierHomeSection"><div class="hubSectionTitle"><h2>Money</h2><button type="button" data-courier-home-open="Money">Open Money</button></div><div id="courierHomeMoney" class="courierMoneySnapshot"></div></section>'+
       '</div>'+
-      '<button class="courierSettingsLink" type="button" data-hub-feature="Profile Settings"><span>⚙️</span><span><strong>Delivery settings</strong><small>Vehicle, documents, payout preferences and profile settings</small></span><b>›</b></button>'+
+      '<button class="courierSettingsLink" type="button" data-hub-feature="Profile Settings"><span>⚙️</span><span><strong>Delivery settings</strong><small>Vehicle, operating area, documents, payout preferences and profile settings</small></span><b>›</b></button>'+
     '</section>'+
     '<nav class="courierPrimaryNav" aria-label="Delivery navigation">'+
       '<button type="button" class="active" data-courier-nav="home"><span>⌂</span><strong>Home</strong></button>'+
