@@ -229,7 +229,7 @@ function missingAccountTarget(){
     return firstVisible('#shellAddress','#accountIdentityForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
   }
   if(!facts.area_assigned){
-    return firstVisible('#accountGeographyForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
+    return firstVisible('#shellAddress','#accountAddressArea','#accountGeographyForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
   }
   return firstVisible('#accountHomeSettings','#openFirstAccountSettings');
 }
@@ -276,10 +276,10 @@ function stepDefinition(step){
     };
   }
   if(step==='complete_account'){
-    const missing=!facts.email_verified?'verify your email':!facts.personal_details_ready?'complete your private account details':!facts.area_assigned?'choose your official barangay':'finish account setup';
+    const missing=!facts.email_verified?'verify your email':!facts.personal_details_ready?'complete your private account details':!facts.area_assigned?'add your home address':'finish account setup';
     return{
       title:'Complete your account',
-      body:'Next, '+missing+'. Business & Life keeps your private street address separate from your operating barangay.',
+      body:'Next, '+missing+'. We will check whether Business & Life is available in your area.',
       target:missingAccountTarget(),
       primary:'Show me',
       next:async()=>{
@@ -291,10 +291,17 @@ function stepDefinition(step){
     };
   }
   if(step==='area_status'){
-    const message=geo.message||'Your official barangay determines which Business & Life territory can onboard you.';
-    const target=firstVisible('.accountGeographyNotice','.accountGeographyCurrent','#accountHomeSettings','#openFirstAccountSettings');
+    const status=geo?.exact_territory?.status||'not_opened';
+    const message=geo.operational_onboarding_available
+      ?'Business & Life is available in your area.'
+      :status==='paused'
+        ?'Onboarding is temporarily unavailable in your area. We will notify you when it reopens.'
+        :['suspended','closed'].includes(status)
+          ?'Business & Life is not currently available in your area. We will notify you if availability changes.'
+          :'Business & Life is not available in your area yet. We will notify you when onboarding opens.';
+    const target=firstVisible('.accountGeographyNotice','.accountAddressArea','#accountHomeSettings','#openFirstAccountSettings');
     return{
-      title:'Understand your area',
+      title:'Availability in your area',
       body:message,
       target,
       primary:'Got it',
@@ -331,7 +338,7 @@ function stepDefinition(step){
     const areaReady=Boolean(geo.operational_onboarding_available||facts.company_test);
     const body=areaReady
       ?'Choose the profile that matches what you want to do. Business & Life does not choose a role for you; the next steps adapt to your selection.'
-      :(geo.message||'Your barangay is not open for onboarding yet. You can review profiles now and resume when the area becomes available.');
+      :'Business & Life is not available in your area yet. You can review profiles now, and we will notify you when onboarding opens.';
     return{
       title:'Choose your first profile',
       body,
@@ -342,8 +349,8 @@ function stepDefinition(step){
   }
   const selected=roleLabel(),role=guide?.selected_profile_role||facts.started_profile_role||'',areaReady=Boolean(geo.operational_onboarding_available||facts.company_test);
   if(!areaReady)return{
-    title:'Your area is not open yet',
-    body:geo.message||'Your barangay is not open for operational onboarding yet. The guide will resume from here when availability changes.',
+    title:'Business & Life is not available in your area yet',
+    body:'We will notify you when onboarding opens. The guide will resume from here when availability changes.',
     target:firstVisible('.accountGeographyNotice','.profileActivationGate','.profileRoleList'),
     secondary:'Pause tutorial',
     waiting:true

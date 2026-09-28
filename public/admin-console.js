@@ -745,8 +745,8 @@ function territoriesPanel(){
     +'</div></details>'
     +'<div class="sectionTitle"><div><h3>Business & Life Territory Tree</h3><span class="muted">Opened operating scopes are nested under their official parents.</span></div><span class="muted">'+territories.length+' opened</span></div>'
     +'<div class="territoryTreeWorkspace"><section class="territoryTreeColumn"><div id="territoryTreeRoot" class="territoryTreeRoot">'+territoryTreeHtml(territories)+'</div></section><div id="territoryDetailsRoot">'+territoryDetailsPanel(selected,territories)+'</div></div>'
-    +'<details class="adminDisclosure territoryDemandDisclosure" open><summary><span class="adminDisclosureCopy"><small>EXPANSION SIGNAL</small><strong>Territory Demand</strong><span>Registered accounts and profile interest, aggregated by official geography</span></span></summary><div class="adminDisclosureBody">'
-    +'<div class="territoryDemandToolbar"><label>View demand by<select id="territoryDemandLevel">'+['barangay','city','municipality','province','region'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label><span class="muted">Demand informs expansion. It never opens a territory automatically.</span></div>'
+    +'<details class="adminDisclosure territoryDemandDisclosure" open><summary><span class="adminDisclosureCopy"><small>EXPANSION SIGNAL</small><strong>Territory Demand</strong><span>Accounts by detected PSGC area plus profile interest, aggregated without street addresses</span></span></summary><div class="adminDisclosureBody">'
+    +'<div class="notice"><strong>Why this signal matters</strong><br>When a user confirms one personal address, Business & Life derives the PSGC area and counts that account here. Profile interest is added separately when the user tries to start a profile. No personal street address is shown in this view.</div>'\n    +'<div class="territoryDemandToolbar"><label>View demand by<select id="territoryDemandLevel">'+['barangay','city','municipality','province','region'].map(x=>'<option value="'+x+'">'+readableCode(x)+'</option>').join('')+'</select></label><span class="muted">Demand informs expansion. It never opens a territory automatically.</span></div>'
     +'<div id="territoryDemandResults"><div class="adminLoading">Loading demand…</div></div>'
     +'</div></details>';
 }
@@ -769,7 +769,7 @@ async function wireTerritories(){
       const roles=Object.entries(x.role_interest||{}).filter(([,count])=>Number(count)>0).map(([role,count])=>'<span>'+esc(demandRoles[role]||readableCode(role))+' '+Number(count)+'</span>').join('');
       return '<article class="territoryDemandCard"><div class="rowHeader"><strong>'+esc(x.name)+'</strong><span class="status">'+esc(readableCode(x.operating_status||'not_opened'))+'</span></div>'
         +'<p>'+esc(x.path_text||'')+'</p>'
-        +'<div class="territoryDemandMetrics"><span><b>'+Number(x.registered_accounts||0)+'</b> accounts</span><span><b>'+Number(x.new_accounts_7d||0)+'</b> new 7d</span><span><b>'+Number(x.new_accounts_30d||0)+'</b> new 30d</span><span><b>'+Number(x.profile_interest_accounts||0)+'</b> profile interest</span></div>'
+        +'<div class="territoryDemandMetrics"><span><b>'+Number(x.registered_accounts||0)+'</b> accounts in area</span><span><b>'+Number(x.new_accounts_7d||0)+'</b> new 7d</span><span><b>'+Number(x.new_accounts_30d||0)+'</b> new 30d</span><span><b>'+Number(x.profile_interest_accounts||0)+'</b> profile interest</span></div>'
         +(roles?'<div class="territoryDemandRoles">'+roles+'</div>':'')
         +'<small>PSGC '+esc(x.psgc_code)+'</small></article>';
     }).join('')+'</div>';

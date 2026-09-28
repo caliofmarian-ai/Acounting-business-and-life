@@ -52,16 +52,18 @@ test('availability copy explains planned paused restricted closed and unopened a
   assert.match(geographyAvailabilityMessage({...base,exact_territory:null,nearest_opened_scope:{name:'Parent City',status:'planned'}}),/nearest Business & Life scope.*Parent City.*planned/i);
 });
 
-test('email registration requires and validates official barangay without activating a profile',()=>{
+test('email registration uses one personal address and derives geography when possible without activating a profile',()=>{
   const start=auth.indexOf("app.post('/api/auth/register'");
   const block=auth.slice(start,auth.indexOf("app.post('/api/auth/login'",start));
-  assert.match(block,/home_psgc_code/);
-  assert.match(block,/Choose your official barangay before creating your account/);
+  assert.match(block,/deriveRegistrationGeography\(address\)/);
+  assert.match(block,/registration_address_derived_psgc/);
   assert.match(block,/saveAccountGeography\(client,accountId/);
+  assert.doesNotMatch(block,/Choose your official barangay before creating your account/);
   assert.doesNotMatch(block,/INSERT INTO profiles/);
-  assert.match(authUi,/Your barangay \(official PSGC\)/);
-  assert.match(authUi,/authHomePsgcCode/);
-  assert.match(authUi,/\/api\/auth\/geography\/search/);
+  assert.match(authUi,/Personal \/ home address \(private\)/);
+  assert.match(authUi,/Enter your home address\. We will check whether Business & Life is available in your area/);
+  assert.doesNotMatch(authUi,/id="authBarangaySearch"/);
+  assert.doesNotMatch(authUi,/id="authHomePsgcCode"/);
 });
 
 test('Google-created personal accounts can complete geography in Account Settings before profiles',()=>{
@@ -69,10 +71,10 @@ test('Google-created personal accounts can complete geography in Account Setting
   assert.match(google,/INSERT INTO accounts\(display_name,email,active_role,email_verified_at,auth_status\)/);
   assert.match(shell,/accountGeographyEditor/);
   assert.match(shell,/\/api\/me\/geography/);
-  assert.match(shell,/official barangay before activating a profile/);
+  assert.match(shell,/Add your name, email and home address before activating a profile/);
   assert.match(shell,/snapshot\?\.geography\?\.assigned/);
-  assert.match(shell,/Your area is not open for onboarding/);
-  assert.match(shell,/Area not open/);
+  assert.match(shell,/Business & Life is not available in your area yet/);
+  assert.match(shell,/We will notify you when onboarding opens/);
 });
 
 test('personal onboarding is automatically scoped to the assigned open barangay',()=>{
@@ -104,9 +106,12 @@ test('account and territory lifecycle emit in-app area status notifications',()=
   assert.match(notifications,/territory\.area_status/);
 });
 
-test('private address and public operating area remain separate UX concepts',()=>{
-  assert.match(authUi,/Primary address \(private\)/);
-  assert.match(authUi,/does not publish your home address/);
-  assert.match(shell,/It does not publish your private street address/);
+test('one private home address drives internal geography while customer UI shows only availability',()=>{
+  assert.match(authUi,/Personal \/ home address \(private\)/);
+  assert.match(authUi,/We will check whether Business & Life is available in your area/);
+  assert.match(shell,/Home address <span>Private<\/span>/);
+  assert.match(shell,/Business & Life is available in your area/);
+  assert.match(shell,/Business & Life is not available in your area yet/);
+  assert.doesNotMatch(shell,/aggregate territory-demand signal/);
   assert.doesNotMatch(governance,/address.*account_geography_assignments/);
 });

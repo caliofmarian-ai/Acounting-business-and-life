@@ -98,13 +98,13 @@ test('real governance actions notify the guide only after successful transitions
   assert.match(ui,/abl:guided-onboarding-refresh/);
 });
 
-test('modern registration sends official barangay PSGC required by account geography',()=>{
-  assert.match(modernAuth,/regBarangaySearch/);
-  assert.match(modernAuth,/regHomePsgcCode/);
-  assert.match(modernAuth,/\/api\/auth\/geography\/search/);
-  assert.match(modernAuth,/home_psgc_code:document\.getElementById\('regHomePsgcCode'\)\.value/);
-  assert.match(modernAuth,/Primary address <span>private<\/span>/);
-  assert.match(modernCss,/\.modernGeoPicker/);
+test('modern registration collects one private address and leaves area derivation to the canonical account flow',()=>{
+  assert.match(modernAuth,/Personal \/ home address <span>private<\/span>/);
+  assert.match(modernAuth,/Enter your home address\. We will check whether Business & Life is available in your area/);
+  assert.doesNotMatch(modernAuth,/id="regBarangaySearch"/);
+  assert.doesNotMatch(modernAuth,/id="regHomePsgcCode"/);
+  assert.doesNotMatch(modernAuth,/home_psgc_code:document\.getElementById\('regHomePsgcCode'\)/);
+  assert.match(server,/deriveRegistrationGeography/);
 });
 
 test('Figma reference is canonical for the coachmark and mission visual direction',()=>{
