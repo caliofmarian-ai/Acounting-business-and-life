@@ -72,6 +72,6 @@ test('localized onboarding keeps internal geography and expansion mechanics out 
 });
 
 test('Mission Center lets a user reopen the language chooser after selection',()=>{
-  assert.match(ui,/if\(step==='language'\)\{renderLanguageCoach\(\);return\}/);
+  assert.match(ui,/if\(step==='language'\)return renderLanguageCoach\(\)/);
   assert.match(ui,/stepLabel\(step\)/);
 });

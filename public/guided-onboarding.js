@@ -1,5 +1,6 @@
 const JOURNEY='first_account_first_profile_v1';
-const STEP_ORDER=['language','welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile','profile_onboarding'];
+const STEP_ORDER=['language','welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile'];
+const PROFILE_STEP_ORDER=['profile_welcome','profile_settings'];
 const STEP_LABEL_KEYS={
   language:'step.language',
   welcome:'step.welcome',
@@ -7,14 +8,17 @@ const STEP_LABEL_KEYS={
   area_status:'step.area_status',
   account_settings:'step.account_settings',
   manage_profiles:'step.manage_profiles',
-  choose_profile:'step.choose_profile',
-  profile_onboarding:'step.profile_onboarding'
+  choose_profile:'step.choose_profile'
+};
+const PROFILE_STEP_LABEL_KEYS={
+  profile_welcome:'profile_tour.step_welcome',
+  profile_settings:'profile_tour.step_settings'
 };
 const ROLE_LABEL_KEYS={customer:'role.customer',merchant:'role.merchant',supplier:'role.supplier',courier:'role.courier',service_provider:'role.service_provider'};
 const ROLE_FALLBACK={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
 const SUPPORTED_LOCALES=new Set(['en-PH','fil-PH']);
 const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
-let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH';
+let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH',selectedProfileJourneyRole='';
 const copyCache=new Map();
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
@@ -55,9 +59,16 @@ async function api(path,options={}){
 function shellState(){return window.BusinessLifeProfileState||{}}
 function completedSet(){return new Set(guide?.completed_steps||[])}
 function completedCount(){return STEP_ORDER.filter(step=>completedSet().has(step)).length}
-function progressPct(){return Math.round((completedCount()/STEP_ORDER.length)*100)}
+function progressPct(){return Math.round((completedCount()/Math.max(1,STEP_ORDER.length))*100)}
 function roleLabel(){return roleLabelFor(guide?.selected_profile_role)}
-function guideActive(){return Boolean(guide?.eligible&&guide.status!=='completed')}
+function profileJourneys(){return Array.isArray(guide?.profile_journeys)?guide.profile_journeys:[]}
+function profileJourney(role){return profileJourneys().find(j=>j.profile_role===role)||null}
+function profileJourneyCompleted(journey){return Boolean(journey?.status==='completed')}
+function profileJourneyActive(journey){return Boolean(journey&&journey.status!=='completed')}
+function activeProfileJourney(){return profileJourneys().find(j=>j.is_active_profile&&profileJourneyActive(j))||null}
+function incompleteJourneyCount(){return (guide?.status==='completed'?0:1)+profileJourneys().filter(profileJourneyActive).length}
+function guideActive(){return Boolean(guide?.eligible&&(guide.status!=='completed'||profileJourneys().some(profileJourneyActive)))}
+function profileStepLabel(step){return tr(PROFILE_STEP_LABEL_KEYS[step],{},step)}
 function visible(el){return Boolean(el&&el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden')}
 function firstVisible(...selectors){
   for(const selector of selectors){
@@ -106,12 +117,13 @@ function ensureLauncher(){
   return launcher;
 }
 function syncLauncher(){
-  const button=ensureLauncher();
-  if(!guide?.eligible||guide.status==='completed'){button.classList.add('hidden');return}
+  const button=ensureLauncher(),remaining=incompleteJourneyCount();
+  if(!guide?.eligible||remaining===0){button.classList.add('hidden');return}
   button.classList.remove('hidden');
   button.querySelector('strong').textContent=tr('launcher.title',{},'Getting started');
-  button.querySelector('small').textContent=completedCount()+'/'+STEP_ORDER.length;
-  button.classList.toggle('paused',guide.status==='paused');
+  button.querySelector('small').textContent=tr('mission.remaining',{count:remaining},remaining+' journey'+(remaining===1?'':'s')+' left');
+  const activeProfile=activeProfileJourney();
+  button.classList.toggle('paused',guide.status==='paused'||Boolean(activeProfile?.status==='paused'));
 }
 function overlayShell(){
   removeOverlay();
@@ -224,9 +236,9 @@ async function positionGuidance(target,{scroll=true}={}){
   }
   repositionGuidanceNow();
 }
-function coachMarkup(step,title,body,{primary=tr('action.continue',{},'Continue'),secondary=tr('action.skip',{},'Skip for now'),back=false,waiting=false}={}){
-  const index=Math.max(1,STEP_ORDER.indexOf(step)+1),pct=Math.round(index/STEP_ORDER.length*100);
-  return '<div class="guidedCoachHead"><div><small>'+esc(tr('common.getting_started',{},'GETTING STARTED'))+' · '+index+' / '+STEP_ORDER.length+'</small><h2>'+esc(title)+'</h2></div><span class="guidedProgressChip">'+pct+'%</span></div>'+
+function coachMarkup(step,title,body,{primary=tr('action.continue',{},'Continue'),secondary=tr('action.skip',{},'Skip for now'),back=false,waiting=false,progressIndex=null,progressTotal=null,eyebrow=''}={}){
+  const total=Math.max(1,Number(progressTotal)||STEP_ORDER.length),index=Math.max(1,Number(progressIndex)||STEP_ORDER.indexOf(step)+1),pct=Math.round(index/total*100);
+  return '<div class="guidedCoachHead"><div><small>'+esc(eyebrow||tr('common.getting_started',{},'GETTING STARTED'))+' · '+index+' / '+total+'</small><h2>'+esc(title)+'</h2></div><span class="guidedProgressChip">'+pct+'%</span></div>'+
     '<p class="guidedCoachBody">'+esc(body)+'</p><button type="button" data-guide-more class="guidedMore" hidden>'+esc(tr('action.more',{},'More'))+'</button><div class="guidedProgress"><i style="width:'+pct+'%"></i></div>'+
     '<div class="guidedCoachActions">'+
       (back?'<button type="button" data-guide-back class="guidedSecondary">'+esc(tr('action.back',{},'Back'))+'</button>':'')+
@@ -236,17 +248,21 @@ function coachMarkup(step,title,body,{primary=tr('action.continue',{},'Continue'
 }
 function bindCoachActions(step,actions={}){
   const coach=overlay?.querySelector('.guidedCoach');if(!coach)return;
-  coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{removeOverlay();missionCenterOpen=false;await updateGuide({action:'pause'},{render:false});syncLauncher()});
+  coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{
+    removeOverlay();missionCenterOpen=false;
+    if(actions.pause)return actions.pause();
+    await updateGuide({action:'pause'},{render:false});syncLauncher();
+  });
   coach.querySelector('[data-guide-next]')?.addEventListener('click',async()=>{
     if(actions.next)return actions.next();
     await updateGuide({action:'complete_step',step_id:step});
   });
-  coach.querySelector('[data-guide-back]')?.addEventListener('click',()=>{missionCenterOpen=true;renderMissionCenter()});
+  coach.querySelector('[data-guide-back]')?.addEventListener('click',()=>{selectedProfileJourneyRole='';missionCenterOpen=true;renderMissionCenter()});
 }
-function renderCoach({step,title,body,target=null,primary,secondary,back=false,waiting=false,next}){
+function renderCoach({step,title,body,target=null,primary,secondary,back=false,waiting=false,next,pause,progressIndex=null,progressTotal=null,eyebrow=''}){
   const root=overlayShell(),coach=root.querySelector('.guidedCoach');
-  coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting});coach.dataset.bodyLong=String(String(body||'').length>118);
-  bindCoachActions(step,{next});
+  coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting,progressIndex,progressTotal,eyebrow});coach.dataset.bodyLong=String(String(body||'').length>118);
+  bindCoachActions(step,{next,pause});
   coach.querySelector('[data-guide-more]')?.addEventListener('click',event=>{coach.classList.toggle('expanded');event.currentTarget.textContent=coach.classList.contains('expanded')?tr('action.less',{},'Less'):tr('action.more',{},'More');scheduleCoachReposition()});
   positionGuidance(guidanceContextTarget(target),{scroll:true}).catch(()=>{});
   coach.focus?.({preventScroll:true});
@@ -470,43 +486,124 @@ function stepDefinition(step){
     waiting:true
   };
 }
-async function renderGuide(){
+async function profileJourneyDefinition(journey){
+  const role=journey?.profile_role||'',label=roleLabelFor(role),step=journey?.current_step_id||PROFILE_STEP_ORDER.find(x=>!(journey?.completed_steps||[]).includes(x))||'profile_welcome';
+  if(!journey?.is_active_profile)return{
+    step,
+    title:tr('profile_tour.open_profile_title',{role:label},'Open {role} to continue'),
+    body:tr('profile_tour.open_profile_body',{role:label},'This tutorial belongs only to your {role} profile. Open that profile when you are ready to continue.'),
+    target:firstVisible('[data-account-role="'+role+'"]','[data-role-action="'+role+'"]','.profileRoleList'),
+    waiting:true,
+    secondary:tr('action.pause',{},'Pause tutorial')
+  };
+  if(step==='profile_welcome')return{
+    step,
+    title:tr('profile_tour.welcome_title',{role:label},'{role} tutorial'),
+    body:tr('profile_tour.welcome_body',{role:label},'This tutorial is separate from your account setup and from every other profile. It will explain the important controls for your {role} profile.'),
+    target:firstVisible('.hubHero','#roleHub'),
+    primary:tr('action.continue',{},'Continue'),
+    secondary:tr('action.pause',{},'Pause tutorial'),
+    next:()=>updateGuide({action:'profile_complete_step',profile_role:role,step_id:'profile_welcome'},{render:false}).then(()=>{selectedProfileJourneyRole=role;renderProfileJourney(role)})
+  };
+  const settingsVisible=visible(document.getElementById('profileSettingsWorkspace'));
+  return{
+    step,
+    title:tr('profile_tour.settings_title',{},'Profile Settings'),
+    body:tr('profile_tour.settings_body',{role:label},'Profile-specific preferences stay inside {role} Profile Settings. Account identity and shared banking remain separate.'),
+    target:firstVisible('[data-hub-feature="Profile Settings"]','.profileSettingsTile','[data-merchant-mobile-action="profileSettings"]','#profileSettingsWorkspace'),
+    primary:settingsVisible?tr('action.got_it',{},'Got it'):tr('profile_tour.open_settings',{},'Open Profile Settings'),
+    secondary:tr('action.pause',{},'Pause tutorial'),
+    next:async()=>{
+      if(!settingsVisible){window.BusinessLifeProfileSettings?.open?.(role);scheduleRender(300);return}
+      await updateGuide({action:'profile_complete_step',profile_role:role,step_id:'profile_settings'},{render:false});
+      selectedProfileJourneyRole='';missionCenterOpen=true;renderMissionCenter();
+    }
+  };
+}
+function renderProfileJourney(role){
+  const journey=profileJourney(role);
+  if(!journey){missionCenterOpen=true;selectedProfileJourneyRole='';return renderMissionCenter()}
+  missionCenterOpen=false;selectedProfileJourneyRole=role;
+  if(journey.status==='paused'){
+    missionCenterOpen=true;return renderMissionCenter();
+  }
+  if(journey.status==='completed'){
+    missionCenterOpen=true;return renderMissionCenter();
+  }
+  const def=profileJourneyDefinition(journey),index=Math.max(1,PROFILE_STEP_ORDER.indexOf(def.step)+1);
+  renderCoach({
+    ...def,
+    back:true,
+    progressIndex:index,
+    progressTotal:PROFILE_STEP_ORDER.length,
+    eyebrow:tr('profile_tour.eyebrow',{role:roleLabelFor(role)},roleLabelFor(role)+' TUTORIAL'),
+    pause:()=>updateGuide({action:'profile_pause',profile_role:role},{render:false}).then(()=>{selectedProfileJourneyRole='';syncLauncher()})
+  });
+}
+function renderGuide(){
   if(missionCenterOpen)return renderMissionCenter();
-  if(!guide?.eligible||guide.status==='completed'||guide.status==='paused'){removeOverlay();return}
-  const step=guide.current_step_id||STEP_ORDER.find(x=>!completedSet().has(x));
-  if(!step){removeOverlay();return}
-  if(step==='language')return renderLanguageCoach();
-  const def=stepDefinition(step);
-  renderCoach({step,...def});
+  if(!guide?.eligible){removeOverlay();return}
+  if(selectedProfileJourneyRole&&profileJourney(selectedProfileJourneyRole))return renderProfileJourney(selectedProfileJourneyRole);
+  if(guide.status!=='completed'&&guide.status!=='paused'){
+    const step=guide.current_step_id||STEP_ORDER.find(x=>!completedSet().has(x));
+    if(!step){removeOverlay();return}
+    if(step==='language')return renderLanguageCoach();
+    const def=stepDefinition(step);
+    return renderCoach({step,...def});
+  }
+  const activeProfile=activeProfileJourney();
+  if(activeProfile&&activeProfile.status==='active'&&activeProfile.auto_start_enabled)return renderProfileJourney(activeProfile.profile_role);
+  removeOverlay();
 }
 function missionRow(step,index){
   const done=completedSet().has(step),current=guide?.current_step_id===step;
-  const waiting=step==='profile_onboarding'&&!done&&guide?.selected_profile_role;
   return '<button type="button" class="guidedMissionRow '+(done?'done ':current?'current ':'')+'" data-guide-mission="'+esc(step)+'">'+
     '<span class="guidedMissionIcon">'+(done?'✓':index+1)+'</span>'+
-    '<span><strong>'+esc(stepLabel(step))+'</strong><small>'+(done?tr('mission.done',{},'Done'):waiting?tr('mission.in_progress',{},'In progress'):current?tr('mission.next',{},'Next mission'):tr('mission.upcoming',{},'Upcoming'))+'</small></span>'+
+    '<span><strong>'+esc(stepLabel(step))+'</strong><small>'+(done?tr('mission.done',{},'Done'):current?tr('mission.next',{},'Next mission'):tr('mission.upcoming',{},'Upcoming'))+'</small></span>'+
     '<b>'+((done||current)?'›':'')+'</b></button>';
+}
+function profileJourneyRow(journey){
+  const role=journey.profile_role,label=roleLabelFor(role),done=profileJourneyCompleted(journey),active=journey.is_active_profile;
+  const status=done?tr('mission.done_restart',{},'Done · tap to restart'):journey.status==='paused'?tr('mission.paused',{},'Paused'):active?tr('mission.in_progress',{},'In progress'):tr('mission.ready',{},'Ready');
+  return '<button type="button" class="guidedMissionRow guidedJourneyRow '+(done?'done ':'')+(active?'current ':'')+'" data-guide-profile-journey="'+esc(role)+'">'+
+    '<span class="guidedMissionIcon">'+(done?'✓':'↳')+'</span>'+
+    '<span><strong>'+esc(tr('profile_tour.row_title',{role:label},label+' tutorial'))+'</strong><small>'+esc(status)+' · '+Number(journey.progress_completed||0)+'/'+Number(journey.progress_total||PROFILE_STEP_ORDER.length)+'</small></span>'+
+    '<b>›</b></button>';
 }
 function renderMissionCenter(){
   missionCenterOpen=true;
-  const root=overlayShell(),coach=root.querySelector('.guidedCoach');
+  const root=overlayShell(),coach=root.querySelector('.guidedCoach'),profiles=profileJourneys();
   coach.classList.add('guidedMissionCenter');
-  coach.innerHTML='<div class="guidedMissionCenterHead"><small>'+esc(tr('common.getting_started',{},'GETTING STARTED'))+'</small><h2>'+esc(tr('mission.title',{},'Your first Business & Life journey'))+'</h2><p>'+esc(tr('mission.body',{},'Complete what you need now. You can pause and resume later.'))+'</p><div class="guidedProgress"><i style="width:'+progressPct()+'%"></i></div></div>'+
-    '<div class="guidedMissionList">'+STEP_ORDER.map(missionRow).join('')+'</div>'+
+  const accountRows=STEP_ORDER.map(missionRow).join('');
+  const profileRows=profiles.length?profiles.map(profileJourneyRow).join(''):'<div class="guidedJourneyEmpty">'+esc(tr('profile_tour.none',{},'Profile tutorials will appear here after you activate a profile.'))+'</div>';
+  coach.innerHTML='<div class="guidedMissionCenterHead"><small>'+esc(tr('common.getting_started',{},'GETTING STARTED'))+'</small><h2>'+esc(tr('mission.title',{},'Business & Life tutorials'))+'</h2><p>'+esc(tr('mission.body',{},'Account setup and profile tutorials are saved separately. You can pause and continue later.'))+'</p></div>'+
+    '<section class="guidedJourneySection"><div class="guidedJourneySectionHead"><strong>'+esc(tr('mission.account_journey',{},'Account setup'))+'</strong><small>'+esc(guide.status==='completed'?tr('mission.done',{},'Done'):tr('mission.in_progress',{},'In progress'))+'</small></div><div class="guidedMissionList">'+accountRows+'</div></section>'+
+    '<section class="guidedJourneySection"><div class="guidedJourneySectionHead"><strong>'+esc(tr('mission.profile_tours',{},'Profile tutorials'))+'</strong><small>'+profiles.length+'</small></div><div class="guidedMissionList">'+profileRows+'</div></section>'+
     '<div class="guidedCoachActions"><button type="button" data-guide-close class="guidedSecondary">'+esc(tr('action.close',{},'Close'))+'</button>'+
-    (guide?.status==='paused'?'<button type="button" data-guide-resume class="guidedPrimary">'+esc(tr('action.resume',{},'Resume tutorial'))+'</button>':'<button type="button" data-guide-pause class="guidedSecondary">'+esc(tr('action.pause',{},'Pause tutorial'))+'</button>')+'</div>';
+    (guide?.status==='paused'?'<button type="button" data-guide-resume class="guidedPrimary">'+esc(tr('action.resume',{},'Resume account tutorial'))+'</button>':guide?.status!=='completed'?'<button type="button" data-guide-pause class="guidedSecondary">'+esc(tr('action.pause',{},'Pause account tutorial'))+'</button>':'')+'</div>';
   root.querySelector('.guidedSpotlight')?.classList.add('hidden');
-  coach.querySelector('[data-guide-close]')?.addEventListener('click',()=>{missionCenterOpen=false;removeOverlay()});
-  coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{missionCenterOpen=false;removeOverlay();await updateGuide({action:'pause'},{render:false})});
-  coach.querySelector('[data-guide-resume]')?.addEventListener('click',async()=>{missionCenterOpen=false;await updateGuide({action:'resume'})});
+  coach.querySelector('[data-guide-close]')?.addEventListener('click',()=>{selectedProfileJourneyRole='';missionCenterOpen=false;removeOverlay()});
+  coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{await updateGuide({action:'pause'},{render:false});syncLauncher();renderMissionCenter()});
+  coach.querySelector('[data-guide-resume]')?.addEventListener('click',async()=>{await updateGuide({action:'resume'},{render:false});missionCenterOpen=false;renderGuide()});
   coach.querySelectorAll('[data-guide-mission]').forEach(button=>button.onclick=async()=>{
     const step=button.dataset.guideMission;
-    if(step!==guide.current_step_id&&!completedSet().has(step))return;
+    if(completedSet().has(step))return;
+    if(guide.status==='completed')return;
+    if(step!==guide.current_step_id)return;
     missionCenterOpen=false;
-    if(step==='language'){renderLanguageCoach();return}
-    if(completedSet().has(step)){removeOverlay();return}
+    if(step==='language')return renderLanguageCoach();
     if(guide.status==='paused')await updateGuide({action:'resume'},{render:false});
     guide.current_step_id=step;renderGuide();
+  });
+  coach.querySelectorAll('[data-guide-profile-journey]').forEach(button=>button.onclick=async()=>{
+    const role=button.dataset.guideProfileJourney,journey=profileJourney(role);
+    if(!journey)return;
+    if(journey.status==='completed'){
+      await updateGuide({action:'profile_reset',profile_role:role},{render:false});
+    }else if(journey.status==='paused'){
+      await updateGuide({action:'profile_resume',profile_role:role},{render:false});
+    }
+    selectedProfileJourneyRole=role;missionCenterOpen=false;renderProfileJourney(role);
   });
 }
 function decorateAccountSettings(){
@@ -541,8 +638,8 @@ function decorateAccountSettings(){
 }
 async function handleProfileChoice(target){
   const role=target?.dataset?.roleAction||target?.dataset?.profileReactivate||'';
-  if(!ROLE_LABEL_KEYS[role]||!guideActive())return;
-  await updateGuide({action:'select_profile',selected_profile_role:role},{render:false}).catch(()=>{});
+  if(!ROLE_LABEL_KEYS[role]||!guide?.eligible)return;
+  if(guide.status!=='completed')await updateGuide({action:'select_profile',selected_profile_role:role},{render:false}).catch(()=>{});
   scheduleRefresh(450);
 }
 function bindLifecycle(){
@@ -555,6 +652,14 @@ function bindLifecycle(){
     scheduleRender(100);
   });
   document.addEventListener('abl:guided-onboarding-refresh',event=>{if(event.detail?.reason==='application_saved'&&event.detail?.role)profileDraftSavedForRole.add(event.detail.role);scheduleRefresh(220)});
+  document.addEventListener('abl:guided-onboarding-open-profile',async event=>{
+    const role=event.detail?.role;if(!ROLE_LABEL_KEYS[role])return;
+    if(!guide)await refreshGuide({render:false}).catch(()=>null);
+    const journey=profileJourney(role);if(!journey)return;
+    if(journey.status==='completed')await updateGuide({action:'profile_reset',profile_role:role},{render:false});
+    else if(journey.status==='paused')await updateGuide({action:'profile_resume',profile_role:role},{render:false});
+    selectedProfileJourneyRole=role;missionCenterOpen=false;renderProfileJourney(role);
+  });
   document.addEventListener('click',event=>{
     const roleTarget=event.target.closest?.('[data-role-action]');
     if(roleTarget)handleProfileChoice(roleTarget);
@@ -571,11 +676,16 @@ async function boot(){
   try{
     await refreshGuide({render:false});
     if(!guide?.eligible)return;
-    if(guide.status==='active'&&guide.auto_start_enabled)setTimeout(()=>renderGuide(),650);
+    const profile=activeProfileJourney();
+    if((guide.status==='active'&&guide.auto_start_enabled)||(guide.status==='completed'&&profile?.status==='active'&&profile?.auto_start_enabled))setTimeout(()=>renderGuide(),650);
   }catch(error){console.warn('Guided onboarding unavailable:',error.message)}
 }
 window.BusinessLifeGuidedOnboarding=Object.freeze({
   open:async()=>{if(!guide)await refreshGuide({render:false});missionCenterOpen=true;renderMissionCenter()},
+  openProfile:async role=>{
+    if(!guide)await refreshGuide({render:false});
+    document.dispatchEvent(new CustomEvent('abl:guided-onboarding-open-profile',{detail:{role}}));
+  },
   resume:async()=>{await updateGuide({action:'resume'},{render:false});missionCenterOpen=false;renderGuide()},
   reset:async()=>{await updateGuide({action:'reset'},{render:false});missionCenterOpen=true;renderMissionCenter()},
   refresh:()=>refreshGuide()
