@@ -15,6 +15,7 @@ import {decodeVerifiedDataUrl} from './file-signature-core.js';
 import {handoffLockActive,nextHandoffFailureState} from './delivery-handoff-security.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
+import {geographyAvailabilityForCode} from './account-geography.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,7 @@ export function isDeliveryOwnedPath(path='',method='GET'){
   if(pathname.startsWith('/api/delivery/'))return true;
   if(verb==='POST'&&pathname==='/api/marketplace/checkout')return true;
   if(pathname==='/api/courier/delivery-profile')return true;
+  if(pathname==='/api/courier/operating-area')return true;
   if(pathname==='/api/courier/home')return true;
   if(pathname==='/api/courier/documents')return true;
   if(pathname==='/api/courier/availability')return true;
@@ -101,6 +103,11 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS approved_vehicle_class TEXT NOT NULL DEFAULT '';
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_expires_at TIMESTAMPTZ;
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS approval_note TEXT NOT NULL DEFAULT '';
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_psgc_code TEXT NOT NULL DEFAULT '';
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_path TEXT NOT NULL DEFAULT '';
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_source_version TEXT NOT NULL DEFAULT '';
+  CREATE INDEX IF NOT EXISTS courier_profiles_operating_psgc_idx ON courier_profiles(operating_psgc_code) WHERE operating_psgc_code<>'';
 
   CREATE TABLE IF NOT EXISTS courier_documents (
     id BIGSERIAL PRIMARY KEY,
@@ -414,7 +421,10 @@ async function courierHomeSnapshot(accountId,profile=null){
       eligibility_expires_at:profile.eligibility_expires_at,
       approved_vehicle_class:profile.approved_vehicle_class,
       vehicle_type:profile.vehicle_type,
-      available:Boolean(profile.available)
+      available:Boolean(profile.available),
+      operating_psgc_code:profile.operating_psgc_code||'',
+      operating_area_name:profile.operating_area_name||'',
+      operating_area_path:profile.operating_area_path||''
     }:null,
     deliveries:workResult.rows,
     compliance:{
@@ -660,6 +670,32 @@ app.post('/api/delivery/:id/request-courier',body,async(req,res,next)=>{try{cons
 
 app.get('/api/courier/home',async(req,res,next)=>{try{const me=await requireCourier(req);res.json(await courierHomeSnapshot(me.account.id,me.courier))}catch(e){next(e)}})
 app.get('/api/courier/delivery-profile',async(req,res,next)=>{try{const me=await requireCourier(req);const [p,docs,deliveries]=await Promise.all([pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[me.account.id]),pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM courier_documents WHERE account_id=$1 ORDER BY created_at DESC`,[me.account.id]),pool.query(`SELECT d.*,o.order_number,b.name business_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id WHERE d.courier_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id])]);res.json({profile:p.rows[0]||null,documents:docs.rows,deliveries:deliveries.rows.map(d=>deliveryPrivacyView(d,'courier'))})}catch(e){next(e)}})
+app.put('/api/courier/operating-area',body,async(req,res,next)=>{try{
+  const me=await requireCourier(req);
+  const psgcCode=clean(req.body?.psgc_code,20);
+  if(!psgcCode)return res.status(400).json({error:'Choose an official operating barangay'});
+  const area=await geographyAvailabilityForCode(pool,psgcCode);
+  if(!area)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});
+  const q=await pool.query(`
+    UPDATE courier_profiles
+       SET operating_psgc_code=$1,
+           operating_area_name=$2,
+           operating_area_path=$3,
+           operating_area_source_version=$4,
+           updated_at=NOW()
+     WHERE account_id=$5
+     RETURNING operating_psgc_code,operating_area_name,operating_area_path,operating_area_source_version,service_radius_km
+  `,[area.psgc_code,area.name,area.path_text||'',area.source_version||'',me.account.id]);
+  if(!q.rowCount)return res.status(404).json({error:'Courier profile missing'});
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json({
+    ok:true,
+    operating_area:q.rows[0],
+    territory_status:area.exact_territory?.status||area.nearest_opened_scope?.status||'not_opened',
+    operational_onboarding_available:Boolean(area.operational_onboarding_available),
+    authorization_boundary:'Preferred operating area does not grant Courier authority. Active profile authorization remains required for dispatch.'
+  });
+}catch(e){next(e)}})
 app.post('/api/courier/documents',body,async(req,res,next)=>{try{const me=await requireCourier(req),doc=evidence(req.body?.evidence_data_url);if(!doc||!clean(req.body?.document_type,80))return res.status(400).json({error:'Document type and evidence are required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'courier_document',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO courier_documents(account_id,document_type,vehicle_class,reference_number,issue_date,expiry_date,evidence_data_url,verification_status) VALUES($1,$2,$3,$4,$5,$6,$7,'submitted') RETURNING id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,created_at`,[me.account.id,clean(req.body.document_type,80),clean(req.body?.vehicle_class,40),clean(req.body?.reference_number,120),req.body?.issue_date||null,req.body?.expiry_date||null,doc]);res.status(201).json(rows[0])}catch(e){next(e)}})
 app.put('/api/courier/availability',body,async(req,res,next)=>{try{const me=await requireCourier(req);const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();if(req.body?.available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[Boolean(req.body?.available),me.account.id]);res.json({ok:true,available:Boolean(req.body?.available)})}catch(e){next(e)}})
 app.post('/api/courier/deliveries/:id/status',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),nextStatus=clean(req.body?.status,60);const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});const flow={courier_assigned:['courier_en_route_to_merchant'],courier_en_route_to_merchant:['courier_arrived_at_merchant'],courier_arrived_at_merchant:['picked_up'],picked_up:['in_transit'],in_transit:['courier_arrived_at_customer']}[d.status]||[];if(!flow.includes(nextStatus))return res.status(409).json({error:`Cannot move delivery from ${d.status} to ${nextStatus}`});const stamp={courier_en_route_to_merchant:'en_route_to_merchant_at',courier_arrived_at_merchant:'arrived_merchant_at',picked_up:'picked_up_at',in_transit:'in_transit_at',courier_arrived_at_customer:'arrived_customer_at'}[nextStatus];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE deliveries SET status=$1,${stamp}=NOW(),updated_at=NOW() WHERE id=$2`,[nextStatus,id]);if(nextStatus==='picked_up'){await client.query(`UPDATE orders SET order_status='handoff_to_delivery',handoff_at=COALESCE(handoff_at,NOW()),updated_at=NOW() WHERE id=$1 AND order_status='ready'`,[d.order_id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) SELECT id,'ready','handoff_to_delivery',$1,'Courier picked up order' FROM orders WHERE id=$2`,[me.account.id,d.order_id])}await client.query('COMMIT');res.json(deliveryPrivacyView(await deliveryDetail(id),'courier'))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
@@ -965,13 +1001,13 @@ app.post('/api/admin/delivery/pricing/preview',body,async(req,res,next)=>{try{
   });
 }catch(e){next(e)}})
 
-app.get('/api/admin/couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'courier.verify'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=a.id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note,(SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id WHERE ${scope} ORDER BY c.eligibility_status='approved' DESC,a.display_name`,values);res.json(rows)}catch(e){next(e)}})
+app.get('/api/admin/couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'courier.verify'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=a.id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note,(SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id WHERE ${scope} ORDER BY c.eligibility_status='approved' DESC,a.display_name`,values);res.json(rows)}catch(e){next(e)}})
 app.get('/api/admin/couriers/:accountId',async(req,res,next)=>{try{
   const me=await requireAdmin(req,'courier.verify'),id=Number(req.params.accountId),territoryId=me.admin_assertion.territoryId;
   if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'Valid Courier account required'});
   if(territoryId!=null){const scope=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[id,territoryId]);if(!scope.rowCount)return res.status(403).json({error:'Courier is outside your delegated territory'})}
   const [courier,documents]=await Promise.all([
-    pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id WHERE a.id=$1`,[id]),
+    pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id WHERE a.id=$1`,[id]),
     pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at,updated_at FROM courier_documents WHERE account_id=$1 ORDER BY created_at DESC,id DESC`,[id])
   ]);
   if(!courier.rowCount)return res.status(404).json({error:'Courier not found'});
@@ -986,7 +1022,7 @@ app.get('/api/admin/couriers/:accountId/documents/:documentId',async(req,res,nex
 }catch(e){next(e)}})
 app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{try{const me=await requireAdmin(req,'courier.verify'),id=Number(req.params.accountId),territoryId=me.admin_assertion.territoryId,status=clean(req.body?.eligibility_status,30);if(!['pending','approved','suspended','revoked','expired'].includes(status))return res.status(400).json({error:'Invalid eligibility status'});if(territoryId!=null){const scope=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[id,territoryId]);if(!scope.rowCount)return res.status(403).json({error:'Courier is outside your delegated territory'})}await pool.query(`UPDATE courier_profiles SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,approval_note=$4,available=CASE WHEN $1='approved' THEN available ELSE FALSE END,updated_at=NOW() WHERE account_id=$5`,[status,clean(req.body?.approved_vehicle_class,40),req.body?.eligibility_expires_at||null,clean(req.body?.approval_note,600),id]);if(Array.isArray(req.body?.document_updates))for(const d of req.body.document_updates){if(!['verified','rejected','expired'].includes(d.status))continue;await pool.query(`UPDATE courier_documents SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 AND account_id=$5`,[d.status,me.account.id,clean(d.rejection_reason,500),Number(d.id),id])}res.json({ok:true})}catch(e){next(e)}})
 app.get('/api/admin/deliveries',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId,status=clean(req.query?.status,40);const values=[],where=[];if(territoryId!=null){values.push(territoryId);where.push(`b.territory_id=$${values.length}`)}if(status){values.push(status);where.push(`d.status=$${values.length}`)}const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,b.name business_name,b.territory_id,cp.display_name courier_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY d.updated_at DESC LIMIT 150`,values);res.json(rows.map(d=>deliveryPrivacyView(d,'admin')))}catch(e){next(e)}})
-app.get('/api/admin/delivery/eligible-couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=c.account_id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT c.account_id,c.display_name courier_name,c.vehicle_type,c.approved_vehicle_class,c.max_weight_kg,c.max_volume_l,c.service_radius_km FROM courier_profiles c WHERE c.eligibility_status='approved' AND c.available=TRUE AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW()) AND ${scope} ORDER BY c.display_name`,values);res.json(rows)}catch(e){next(e)}})
+app.get('/api/admin/delivery/eligible-couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=c.account_id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT c.account_id,c.display_name courier_name,c.vehicle_type,c.approved_vehicle_class,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path FROM courier_profiles c WHERE c.eligibility_status='approved' AND c.available=TRUE AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW()) AND ${scope} ORDER BY c.display_name`,values);res.json(rows)}catch(e){next(e)}})
 app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{
   const me=await requireAdmin(req,'delivery.dispatch.manage');
   const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),d=await deliveryDetail(id);
