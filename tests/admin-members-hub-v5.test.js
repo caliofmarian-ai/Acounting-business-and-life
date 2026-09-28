@@ -17,6 +17,8 @@ function between(source,start,end){
 test('Members Hub V5 removes Profiles as a separate sidebar module',()=>{
   const modules=between(ui,'const modules=[','function hasAny');
   assert.doesNotMatch(modules,/id:'profiles'/);
+  assert.doesNotMatch(ui,/function profilesPanel\(\)/);
+  assert.doesNotMatch(ui,/profiles:'Review people and profile access'/);
   assert.match(modules,/id:'members',label:'Members'/);
   assert.match(modules,/members\.view/);
   assert.match(modules,/MEMBER_PROFILE_GOVERNANCE_PERMISSIONS/);
