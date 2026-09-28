@@ -2,6 +2,7 @@ import {accountGeographySnapshot} from './account-geography.js';
 
 export const GUIDED_ONBOARDING_JOURNEY='first_account_first_profile_v1';
 export const GUIDED_ONBOARDING_STEPS=Object.freeze([
+  'language',
   'welcome',
   'complete_account',
   'area_status',
@@ -10,10 +11,13 @@ export const GUIDED_ONBOARDING_STEPS=Object.freeze([
   'choose_profile',
   'profile_onboarding'
 ]);
+export const GUIDED_ONBOARDING_LOCALES=Object.freeze(['en-PH','fil-PH']);
 const STEP_SET=new Set(GUIDED_ONBOARDING_STEPS);
 const ROLE_SET=new Set(['customer','merchant','supplier','courier','service_provider']);
+const LOCALE_SET=new Set(GUIDED_ONBOARDING_LOCALES);
 const STATUS_SET=new Set(['active','paused','completed']);
 const clean=(v,max=200)=>String(v??'').trim().slice(0,max);
+const normalizeLocale=value=>LOCALE_SET.has(clean(value,20))?clean(value,20):'en-PH';
 
 export async function ensureGuidedOnboardingSchema(pool){
   await pool.query(
@@ -22,9 +26,11 @@ export async function ensureGuidedOnboardingSchema(pool){
     "journey_key TEXT NOT NULL,current_step_id TEXT NOT NULL DEFAULT 'welcome',"+
     "completed_steps JSONB NOT NULL DEFAULT '[]'::jsonb,status TEXT NOT NULL DEFAULT 'active',"+
     "selected_profile_role TEXT NOT NULL DEFAULT '',auto_start_enabled BOOLEAN NOT NULL DEFAULT TRUE,"+
+    "locale_confirmed BOOLEAN NOT NULL DEFAULT FALSE,"+
     "started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),paused_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,"+
     "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),PRIMARY KEY(account_id,journey_key),"+
     "CHECK(status IN ('active','paused','completed')));"+
+    "ALTER TABLE guided_onboarding_progress ADD COLUMN IF NOT EXISTS locale_confirmed BOOLEAN NOT NULL DEFAULT FALSE;"+
     "CREATE INDEX IF NOT EXISTS guided_onboarding_status_idx ON guided_onboarding_progress(status,updated_at DESC)"
   );
 }
@@ -39,7 +45,7 @@ function nextStep(completed){
 }
 async function accountFacts(pool,accountId){
   const [account,profiles,apps,geo]=await Promise.all([
-    pool.query("SELECT display_name,email,address,email_verified_at,account_mode,test_role FROM accounts WHERE id=$1",[Number(accountId)]),
+    pool.query("SELECT display_name,email,address,email_verified_at,account_mode,test_role,preferred_locale FROM accounts WHERE id=$1",[Number(accountId)]),
     pool.query("SELECT role,enabled,status,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY created_at,role",[Number(accountId)]),
     pool.query("SELECT role,status,territory_id,created_at,updated_at FROM profile_applications WHERE account_id=$1 ORDER BY created_at",[Number(accountId)]).catch(error=>error?.code==='42P01'?{rows:[]}:Promise.reject(error)),
     accountGeographySnapshot(pool,Number(accountId)).catch(()=>({assigned:false,operational_onboarding_available:false}))
@@ -59,6 +65,8 @@ async function accountFacts(pool,accountId){
   );
   return{
     company_test:companyTest,
+    preferred_locale:normalizeLocale(a.preferred_locale),
+    supported_locales:GUIDED_ONBOARDING_LOCALES,
     email_verified:companyTest||Boolean(a.email_verified_at),
     personal_details_ready:companyTest||Boolean(clean(a.display_name,120)&&clean(a.email,160)&&clean(a.address,300)),
     area_assigned:companyTest||Boolean(geo?.assigned),
@@ -84,6 +92,7 @@ async function ensureProgressRow(pool,accountId){
 
 function autoCompleted(progress,facts){
   const completed=new Set(normalizeCompleted(progress.completed_steps));
+  if(progress.locale_confirmed)completed.add('language');
   if(facts.email_verified&&facts.personal_details_ready&&facts.area_assigned)completed.add('complete_account');
   if(facts.started_profile_role)completed.add('choose_profile');
   if(facts.first_profile_meaningful)completed.add('profile_onboarding');
@@ -96,7 +105,8 @@ export async function guidedOnboardingSnapshot(pool,accountId){
   if(facts.company_test){
     return{
       eligible:false,journey_key:GUIDED_ONBOARDING_JOURNEY,status:'completed',auto_start_enabled:false,
-      current_step_id:null,completed_steps:GUIDED_ONBOARDING_STEPS,selected_profile_role:facts.started_profile_role||'',facts
+      current_step_id:null,completed_steps:GUIDED_ONBOARDING_STEPS,selected_profile_role:facts.started_profile_role||'',
+      preferred_locale:facts.preferred_locale,locale_confirmed:true,supported_locales:GUIDED_ONBOARDING_LOCALES,facts
     };
   }
   const progress=await ensureProgressRow(pool,accountId);
@@ -123,6 +133,7 @@ export async function guidedOnboardingSnapshot(pool,accountId){
     auto_start_enabled:Boolean(progress.auto_start_enabled),
     current_step_id:current,completed_steps:completed,
     selected_profile_role:progress.selected_profile_role||facts.started_profile_role||'',
+    preferred_locale:facts.preferred_locale,locale_confirmed:Boolean(progress.locale_confirmed),supported_locales:GUIDED_ONBOARDING_LOCALES,
     started_at:progress.started_at,paused_at:progress.paused_at,completed_at:status==='completed'?(progress.completed_at||new Date().toISOString()):progress.completed_at,
     facts
   };
@@ -135,10 +146,16 @@ export async function updateGuidedOnboarding(pool,accountId,input={}){
   const step=clean(input.step_id,80);
   const role=clean(input.selected_profile_role,40);
   const completed=new Set(normalizeCompleted(progress.completed_steps));
-  let status=progress.status,autoStart=Boolean(progress.auto_start_enabled),selectedRole=progress.selected_profile_role||'';
+  let status=progress.status,autoStart=Boolean(progress.auto_start_enabled),selectedRole=progress.selected_profile_role||'',localeConfirmed=Boolean(progress.locale_confirmed);
   if(action==='complete_step'){
     if(!STEP_SET.has(step))throw Object.assign(new Error('Unknown onboarding step'),{status:400});
+    if(step==='language')throw Object.assign(new Error('Choose a supported onboarding language'),{status:400});
     completed.add(step);
+  }else if(action==='set_locale'){
+    const locale=clean(input.locale,20);
+    if(!LOCALE_SET.has(locale))throw Object.assign(new Error('Unsupported onboarding language'),{status:400});
+    await pool.query("UPDATE accounts SET preferred_locale=$1,updated_at=NOW() WHERE id=$2",[locale,Number(accountId)]);
+    localeConfirmed=true;completed.add('language');
   }else if(action==='select_profile'){
     if(!ROLE_SET.has(role))throw Object.assign(new Error('Unknown profile role'),{status:400});
     selectedRole=role;completed.add('choose_profile');
@@ -149,7 +166,7 @@ export async function updateGuidedOnboarding(pool,accountId,input={}){
   }else if(action==='complete'){
     GUIDED_ONBOARDING_STEPS.forEach(x=>completed.add(x));status='completed';autoStart=false;
   }else if(action==='reset'){
-    completed.clear();status='active';autoStart=true;selectedRole='';
+    completed.clear();status='active';autoStart=true;selectedRole='';localeConfirmed=false;
   }else{
     throw Object.assign(new Error('Unknown onboarding action'),{status:400});
   }
@@ -157,10 +174,10 @@ export async function updateGuidedOnboarding(pool,accountId,input={}){
   const current=status==='completed'?null:nextStep(list);
   await pool.query(
     "UPDATE guided_onboarding_progress SET completed_steps=$1::jsonb,current_step_id=$2,status=$3,selected_profile_role=$4,"+
-    "auto_start_enabled=$5,paused_at=CASE WHEN $3='paused' THEN NOW() WHEN $3='active' THEN NULL ELSE paused_at END,"+
-    "completed_at=CASE WHEN $3='completed' THEN COALESCE(completed_at,NOW()) WHEN $3='active' AND $6='reset' THEN NULL ELSE completed_at END,updated_at=NOW() "+
-    "WHERE account_id=$7 AND journey_key=$8",
-    [JSON.stringify(list),current||'profile_onboarding',status,selectedRole,autoStart,action,Number(accountId),GUIDED_ONBOARDING_JOURNEY]
+    "auto_start_enabled=$5,locale_confirmed=$6,paused_at=CASE WHEN $3='paused' THEN NOW() WHEN $3='active' THEN NULL ELSE paused_at END,"+
+    "completed_at=CASE WHEN $3='completed' THEN COALESCE(completed_at,NOW()) WHEN $3='active' AND $7='reset' THEN NULL ELSE completed_at END,updated_at=NOW() "+
+    "WHERE account_id=$8 AND journey_key=$9",
+    [JSON.stringify(list),current||'profile_onboarding',status,selectedRole,autoStart,localeConfirmed,action,Number(accountId),GUIDED_ONBOARDING_JOURNEY]
   );
   return guidedOnboardingSnapshot(pool,accountId);
 }
