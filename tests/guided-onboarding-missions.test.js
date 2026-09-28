@@ -14,10 +14,10 @@ const modernAuth=read('public/auth-hardening-ui.js');
 const modernCss=read('public/auth-hardening.css');
 const doc=read('docs/design/GUIDED_ONBOARDING_MISSIONS_V1.md');
 
-test('guided onboarding journey is versioned and covers account through first-profile onboarding',()=>{
+test('guided account onboarding is versioned and stops before independent profile tutorials',()=>{
   assert.equal(GUIDED_ONBOARDING_JOURNEY,'first_account_first_profile_v1');
   assert.deepEqual(GUIDED_ONBOARDING_STEPS,[
-    'language','welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile','profile_onboarding'
+    'language','welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile'
   ]);
   assert.deepEqual(GUIDED_ONBOARDING_LOCALES,['en-PH','fil-PH']);
   assert.match(core,/CREATE TABLE IF NOT EXISTS guided_onboarding_progress/);
@@ -83,7 +83,7 @@ test('profile tutorial uses existing role-specific fields without inventing opti
 
 test('Mission Center and launcher preserve user control',()=>{
   assert.match(ui,/Skip for now/);
-  assert.match(ui,/Resume tutorial/);
+  assert.match(ui,/Resume account tutorial/);
   assert.match(ui,/Restart tutorial/);
   assert.match(ui,/guidedOnboardingLauncher/);
   assert.match(ui,/guidedMissionCenter/);
