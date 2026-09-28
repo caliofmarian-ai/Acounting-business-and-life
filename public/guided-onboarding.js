@@ -290,20 +290,6 @@ function renderLanguageCoach(){
   });
   coach.focus?.({preventScroll:true});
 }
-function missingAccountTarget(){
-  const facts=guide?.facts||{},state=shellState(),snapshot=state.snapshot||{};
-  if(!facts.email_verified){
-    return firstVisible('#sendVerify','[data-account-settings-view="security"]','#accountHomeSettings','#openFirstAccountSettings');
-  }
-  if(!facts.personal_details_ready){
-    return firstVisible('#shellAddress','#accountIdentityForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
-  }
-  if(!facts.area_assigned){
-    return firstVisible('#accountGeographyForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
-  }
-  return firstVisible('#accountHomeSettings','#openFirstAccountSettings');
-}
-
 function profileOnboardingSubstep(role){
   const modal=firstVisible('#govModal','.govModal');
   if(!modal)return null;
