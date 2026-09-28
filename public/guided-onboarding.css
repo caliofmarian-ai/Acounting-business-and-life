@@ -24,3 +24,10 @@
 .guidedLanguageChoices button b{flex:0 0 auto;border-radius:999px;background:#e7f6f1;color:#08705c;padding:4px 7px;font-size:8.5px}
 .guidedLanguageBoundary{display:block;margin-top:10px;color:#687386;font-size:9.5px;line-height:1.45}
 @media(max-width:419px){.guidedLanguageChoices button{min-height:58px}.guidedLanguageChoices button b{font-size:8px}}
+
+/* Guided Onboarding V2B — independent account/profile journeys */
+.guidedJourneySection{display:grid;gap:8px;margin-top:14px}
+.guidedJourneySectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 2px}
+.guidedJourneySectionHead strong{font-size:11px;color:#17233c}.guidedJourneySectionHead small{font-size:9px;color:#758193}
+.guidedJourneyRow.current{border-color:#7fc8b7;background:#f3fbf8}
+.guidedJourneyEmpty{border:1px dashed #d7e1de;border-radius:14px;padding:12px;color:#768292;font-size:10px;line-height:1.45}
