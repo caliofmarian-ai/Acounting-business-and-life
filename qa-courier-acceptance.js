@@ -515,7 +515,7 @@ export async function runCourierExperienceAcceptance({
   const basket=await publicCourierBasket({base,token:customer.token,businessId,requestJson,expectStatus});
 
   const existing=await pool.query(
-    "SELECT o.id order_id,o.order_status,o.payment_status,d.id delivery_id,d.status delivery_status FROM orders o LEFT JOIN deliveries d ON d.order_id=o.id WHERE o.business_id=$1 AND o.customer_account_id=$2 AND o.note=$3 AND o.order_status<>'cancelled' ORDER BY o.id DESC LIMIT 1",
+    "SELECT o.id order_id,o.order_status,o.payment_status,d.id delivery_id,d.status delivery_status FROM orders o LEFT JOIN deliveries d ON d.order_id=o.id WHERE o.business_id=$1 AND o.customer_account_id=$2 AND o.note=$3 AND o.order_status NOT IN ('completed','cancelled') AND d.status NOT IN ('delivered','failed','cancelled') ORDER BY o.id DESC LIMIT 1",
     [businessId,customer.accountId,orderNote]
   );
 
