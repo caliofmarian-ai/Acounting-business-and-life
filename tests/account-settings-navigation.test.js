@@ -7,6 +7,7 @@ const shell=read('public/shell.js');
 const auth=read('public/auth-ui.js');
 const hardening=read('public/auth-hardening-ui.js');
 const profileSettings=read('public/profile-settings-ui.js');
+const support=read('public/admin-operations-ui.js');
 const css=read('public/shell.css');
 
 test('avatar routes directly to the canonical Account Home instead of opening a duplicate menu',()=>{
@@ -56,7 +57,8 @@ test('Account Settings is a dedicated routed workspace with focused categories',
   assert.match(shell,/id="accountNotifications"/);
   assert.match(shell,/id="accountLegalPrivacy"/);
   assert.match(shell,/id="accountHelpSupport"/);
-  assert.match(shell,/href="\/help"/);
+  assert.doesNotMatch(shell.slice(shell.indexOf('accountSharedUtilities'),shell.indexOf('accountSettingsBoundary')),/<strong>Help Center<\/strong>/);
+  assert.match(support,/class="supportHelpCenterLink" href="\/help"/);
   assert.match(shell,/openAccountMoney/);
   assert.match(shell,/BusinessLifeNotifications/);
   assert.match(shell,/BusinessLifeFeatureLoader/);

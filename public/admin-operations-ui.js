@@ -24,6 +24,7 @@ function addButtons(){
 function openOps(title,html){ensureUi();document.getElementById('opsTitle').textContent=title;document.getElementById('opsBody').innerHTML=html;document.getElementById('supportOpsBackdrop').classList.remove('hidden');document.body.style.overflow='hidden'}
 function closeOps(){stopVoice(true);document.getElementById('supportOpsBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
 function supportFormHtml(){return `
+  <a class="supportHelpCenterLink" href="/help"><span aria-hidden="true">?</span><span><strong>Help Center</strong><small>Browse public guides and troubleshooting before opening a ticket.</small></span><b aria-hidden="true">›</b></a>
   <div class="opsTabs"><button class="active" data-tab="new">New issue</button><button data-tab="mine">My tickets</button></div>
   <div id="supportNew">
     <div class="opsNotice"><strong>Send a problem without searching for an email address.</strong><span>Routing is handled privately by the platform according to territory and Admin permissions.</span></div>
