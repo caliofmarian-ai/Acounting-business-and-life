@@ -46,6 +46,11 @@ test('Courier acceptance exercises real delivery lifecycle and secure completion
   assert.match(courier,/live_tracking_closed_after_completion:true/);
 });
 
+test('Courier acceptance does not reuse terminal Delivery economics evidence',()=>{
+  assert.match(courier,/o\.order_status NOT IN \('completed','cancelled'\)/);
+  assert.match(courier,/d\.status NOT IN \('delivered','failed','cancelled'\)/);
+});
+
 test('Courier digital payment is server-authoritative PayMongo QA evidence',()=>{
   assert.match(courier,/payMongoRuntimeConfig/);
   assert.match(courier,/checkout_session\.payment\.paid/);
