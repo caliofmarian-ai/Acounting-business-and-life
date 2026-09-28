@@ -74,6 +74,22 @@ test('Motorcycle tiered pricing is deterministic at Bacoor pilot fixture thresho
   assert.equal(calculateDeliveryPrice(r,{distanceKm:40}).service_fare,228.5);
 });
 
+test('open-ended tier coverage uses full route precision instead of rounded display kilometres',()=>{
+  const qaBicycle={
+    vehicle_class:'bicycle',formula_type:'tiered_distance',priority:1,
+    base_fee:30,included_distance_km:0,distance_bands:[{up_to_km:null,per_km:10}],
+    minimum_fee:30,maximum_distance_km:20,max_weight_kg:5,max_volume_l:20,
+    extra_stop_fee:30,free_wait_minutes:30,waiting_fee_per_minute:1,
+    demand_adjustment_cap_pct:0,route_profile:'bicycle_local',
+    toll_policy:'disabled',parking_policy:'pass_through',stacking_policy:'direct_only'
+  };
+  const distanceKm=0.2939472700122492;
+  const priced=calculateDeliveryPrice(qaBicycle,{distanceKm,weightKg:1,volumeL:1});
+  assert.equal(priced.distance_km,0.2939);
+  assert.equal(priced.distance_band_components.at(-1).to_km,0.2939);
+  assert.equal(priced.service_fare,32.94);
+});
+
 test('tiered pricing keeps kg and litre as capacity gates instead of hidden price multipliers',()=>{
   const a=calculateDeliveryPrice(motorcycle,{distanceKm:10,weightKg:1,volumeL:2});
   const b=calculateDeliveryPrice(motorcycle,{distanceKm:10,weightKg:19,volumeL:70});
