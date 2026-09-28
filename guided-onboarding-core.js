@@ -8,8 +8,7 @@ export const GUIDED_ONBOARDING_STEPS=Object.freeze([
   'area_status',
   'account_settings',
   'manage_profiles',
-  'choose_profile',
-  'profile_onboarding'
+  'choose_profile'
 ]);
 export const GUIDED_ONBOARDING_LOCALES=Object.freeze(['en-PH','fil-PH']);
 export const GUIDED_ONBOARDING_PROFILE_VERSION=1;
@@ -64,7 +63,7 @@ function normalizeProfileCompleted(value){
 }
 function nextStep(completed){
   const set=new Set(completed);
-  return GUIDED_ONBOARDING_STEPS.find(step=>!set.has(step))||'profile_onboarding';
+  return GUIDED_ONBOARDING_STEPS.find(step=>!set.has(step))||null;
 }
 function nextProfileStep(completed){
   const set=new Set(completed);
@@ -130,9 +129,9 @@ function profileRoleStarted(facts,role){
 }
 
 async function ensureProfileProgressRows(pool,accountId,facts,legacyProgress){
-  const legacyCompleted=new Set(normalizeCompleted(legacyProgress?.completed_steps));
+  const legacyCompletedRaw=new Set(Array.isArray(legacyProgress?.completed_steps)?legacyProgress.completed_steps.map(x=>clean(x,80)):[]);
   const legacyRole=clean(legacyProgress?.selected_profile_role,40)||facts.started_profile_role||'';
-  const migratedLegacyProfile=Boolean(legacyRole&&legacyCompleted.has('profile_onboarding'));
+  const migratedLegacyProfile=Boolean(legacyRole&&legacyCompletedRaw.has('profile_onboarding'));
   for(const role of ROLE_ORDER){
     if(!profileRoleStarted(facts,role))continue;
     const migrateCompleted=migratedLegacyProfile&&role===legacyRole;
@@ -158,7 +157,6 @@ function autoCompleted(progress,facts){
   if(progress.locale_confirmed)completed.add('language');
   if(facts.email_verified&&facts.personal_details_ready&&facts.area_assigned)completed.add('complete_account');
   if(facts.started_profile_role)completed.add('choose_profile');
-  if(facts.first_profile_meaningful)completed.add('profile_onboarding');
   return [...completed];
 }
 
@@ -217,8 +215,9 @@ export async function guidedOnboardingSnapshot(pool,accountId){
   const progress=await ensureProgressRow(pool,accountId);
   const completed=autoCompleted(progress,facts);
   let status=STATUS_SET.has(progress.status)?progress.status:'active';
-  if(completed.includes('profile_onboarding'))status='completed';
-  const current=status==='completed'?null:nextStep(completed);
+  const current=nextStep(completed);
+  if(!current)status='completed';
+  else if(status==='completed')status='active';
   if(
     JSON.stringify(completed)!==JSON.stringify(normalizeCompleted(progress.completed_steps))
     ||current!==progress.current_step_id
@@ -230,7 +229,7 @@ export async function guidedOnboardingSnapshot(pool,accountId){
       "selected_profile_role=CASE WHEN selected_profile_role='' THEN $4 ELSE selected_profile_role END,"+
       "completed_at=CASE WHEN $3='completed' THEN COALESCE(completed_at,NOW()) ELSE completed_at END,updated_at=NOW() "+
       "WHERE account_id=$5 AND journey_key=$6",
-      [JSON.stringify(completed),current||'profile_onboarding',status,facts.started_profile_role||'',Number(accountId),GUIDED_ONBOARDING_JOURNEY]
+      [JSON.stringify(completed),current||'choose_profile',status,facts.started_profile_role||'',Number(accountId),GUIDED_ONBOARDING_JOURNEY]
     );
   }
   const profileJourneys=await profileJourneySnapshots(pool,accountId,facts,{...progress,completed_steps:completed,status});
@@ -325,13 +324,15 @@ export async function updateGuidedOnboarding(pool,accountId,input={}){
     throw Object.assign(new Error('Unknown onboarding action'),{status:400});
   }
   const list=[...completed];
-  const current=status==='completed'?null:nextStep(list);
+  const current=nextStep(list);
+  if(!current)status='completed';
+  else if(status==='completed')status='active';
   await pool.query(
     "UPDATE guided_onboarding_progress SET completed_steps=$1::jsonb,current_step_id=$2,status=$3,selected_profile_role=$4,"+
     "auto_start_enabled=$5,locale_confirmed=$6,paused_at=CASE WHEN $3='paused' THEN NOW() WHEN $3='active' THEN NULL ELSE paused_at END,"+
     "completed_at=CASE WHEN $3='completed' THEN COALESCE(completed_at,NOW()) WHEN $3='active' AND $7='reset' THEN NULL ELSE completed_at END,updated_at=NOW() "+
     "WHERE account_id=$8 AND journey_key=$9",
-    [JSON.stringify(list),current||'profile_onboarding',status,selectedRole,autoStart,localeConfirmed,action,Number(accountId),GUIDED_ONBOARDING_JOURNEY]
+    [JSON.stringify(list),current||'choose_profile',status,selectedRole,autoStart,localeConfirmed,action,Number(accountId),GUIDED_ONBOARDING_JOURNEY]
   );
   return guidedOnboardingSnapshot(pool,accountId);
 }
