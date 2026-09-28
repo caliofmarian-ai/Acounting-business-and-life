@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { validateRuntimeSafety } from './runtime-safety.js';
 import { runCourierExperienceAcceptance } from './qa-courier-acceptance.js';
 import { runServiceProviderExperienceAcceptance } from './qa-service-provider-acceptance.js';
+import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
@@ -47,9 +48,10 @@ const SUPPLIER_PERFORMANCE_RUNTIME_WAVE='supplier_performance_runtime_v1';
 const COURIER_PERFORMANCE_BASELINE_WAVE='courier_performance_baseline_v1';
 const COURIER_PERFORMANCE_RUNTIME_WAVE='courier_performance_runtime_v1';
 const DELIVERY_PRICING_V2B_RUNTIME_WAVE='delivery_pricing_v2b_runtime';
+const DELIVERY_ROUTING_V2C_RUNTIME_WAVE='delivery_routing_v2c_runtime';
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
 const SESSION_SECURITY_V2_WAVE='session_security_v2';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const originalAutomationCredentials=new Map();
@@ -3767,6 +3769,66 @@ async function runSupplierPerformanceBaseline({pool,base,secret}){
 }
 
 
+async function runDeliveryRoutingV2CRuntimeAcceptance({base,secret,pool}){
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Delivery Routing V2C Customer QA'
+  });
+  const config=await requestJson(base,'/api/delivery/config',{token:customer.token});
+  expectStatus(config,200,'Delivery Routing V2C config');
+  const publicKeys=Object.keys(config.json||{});
+  if(publicKeys.some(key=>/api.?key|secret|credential/i.test(key))){
+    throw new Error('Delivery routing public config exposed credential-shaped fields.');
+  }
+
+  let providerCalls=0;
+  const noCredentialEnv={...process.env,DELIVERY_ROUTING_PROVIDER:'google_routes',GOOGLE_ROUTES_API_KEY:''};
+  const publicNoCredential=deliveryRoutingPublicConfig(noCredentialEnv);
+  const route=await resolveDeliveryRoute({
+    origin:{lat:14.458,lng:120.946},
+    destination:{lat:14.408,lng:120.985},
+    routeFactor:1.15,
+    vehicleClass:'motorcycle',
+    routeProfile:'motorcycle_no_expressway',
+    routeChoice:'fastest_with_tolls',
+    env:noCredentialEnv,
+    fetchImpl:async()=>{providerCalls++;throw new Error('External provider must not be called without credential');}
+  });
+  if(providerCalls!==0)throw new Error('Delivery Routing V2C called an external provider without credential.');
+  if(
+    publicNoCredential.provider!=='fallback'||
+    publicNoCredential.configured!==false||
+    route.source!=='straight_line_estimate'||
+    route.fallback_used!==true||
+    route.travel_mode!=='TWO_WHEELER'||
+    route.avoid_highways!==true||
+    route.avoid_tolls!==true||
+    route.toll_status!=='none'||
+    route.eta_minutes!==null
+  ){
+    throw new Error('Delivery Routing V2C no-credential fallback contract is invalid.');
+  }
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Delivery Routing V2C Customer logout');
+  return{
+    status:'PASS',
+    wave:DELIVERY_ROUTING_V2C_RUNTIME_WAVE,
+    public_config_credential_free:true,
+    no_credential_provider:'fallback',
+    no_credential_external_calls:providerCalls,
+    fallback_source:route.source,
+    fallback_labelled:true,
+    motorcycle_travel_mode:route.travel_mode,
+    motorcycle_avoid_highways:route.avoid_highways,
+    motorcycle_avoid_tolls:route.avoid_tolls,
+    motorcycle_toll_status:route.toll_status,
+    eta_without_provider:route.eta_minutes,
+    runtime_listener:8080,
+    logout:true
+  };
+}
+
+
 async function runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret}){
   const admin=await qaAccountSession({
     pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Delivery Pricing V2B Super Admin QA'
@@ -5364,6 +5426,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
       ?await runSessionSecurityV2Acceptance({pool,base,secret:config.secret})
       :config.wave===ADULT_ELIGIBILITY_RUNTIME_WAVE
       ?await runAdultEligibilityRuntimeAcceptance({pool,base,secret:config.secret})
+      :config.wave===DELIVERY_ROUTING_V2C_RUNTIME_WAVE
+      ?await runDeliveryRoutingV2CRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===DELIVERY_PRICING_V2B_RUNTIME_WAVE
       ?await runDeliveryPricingV2BRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===COURIER_PERFORMANCE_RUNTIME_WAVE
@@ -5460,5 +5524,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
 };
