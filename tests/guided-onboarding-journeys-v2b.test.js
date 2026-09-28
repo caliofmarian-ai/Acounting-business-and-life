@@ -68,7 +68,7 @@ test('Mission Center shows account setup and all available profile tutorials sep
 
 test('a completed account tutorial does not hide an unfinished profile tutorial',()=>{
   assert.match(ui,/incompleteJourneyCount/);
-  assert.match(ui,/guide\.status==='completed'\?0:1/);
+  assert.match(ui,/guide\?\.status==='completed'\?0:1/);
   assert.match(ui,/profileJourneys\(\)\.filter\(profileJourneyActive\)/);
   assert.match(ui,/guide\.status==='completed'&&profile\?\.status==='active'/);
 });
