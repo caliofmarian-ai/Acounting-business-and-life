@@ -106,5 +106,6 @@
   "profile_tour.welcome_body": "Hiwalay ang tutorial na ito sa account setup at sa iba mo pang profile. Ipapaliwanag nito ang mahahalagang controls para sa iyong {role} profile.",
   "profile_tour.settings_title": "Profile Settings",
   "profile_tour.settings_body": "Ang profile-specific preferences ay nasa loob ng {role} Profile Settings. Hiwalay ang account identity at shared banking.",
-  "profile_tour.open_settings": "Buksan ang Profile Settings"
+  "profile_tour.open_settings": "Buksan ang Profile Settings",
+  "mission.done_restart": "Tapos · i-tap para ulitin"
 }
