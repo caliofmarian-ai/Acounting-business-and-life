@@ -44,3 +44,14 @@
 .settingsContextCard{box-shadow:none;background:#fbfdff}
 .profileSettingsMenu{display:grid;gap:10px}.profileSettingsMenu>button{width:100%;min-height:76px;border:1px solid #dbe3ea;border-radius:17px;background:#fff;padding:13px;display:grid;grid-template-columns:42px 1fr 18px;gap:10px;align-items:center;text-align:left;color:#17233c}.profileSettingsMenu>button>span:first-child{width:42px;height:42px;border-radius:13px;background:#eef8f6;display:grid;place-items:center;font-size:21px}.profileSettingsMenu strong,.profileSettingsMenu small{display:block}.profileSettingsMenu strong{font-size:15px}.profileSettingsMenu small{font-size:12px;line-height:1.35;color:#64748b;margin-top:3px}.profileSettingsMenu b{font-size:22px;color:#94a3b8}.settingsBusinessPicker{margin-top:12px}
 @media(max-width:620px){.settingsSimpleRows>div{display:grid;gap:4px}.settingsSimpleRows strong{text-align:left;max-width:none}.settingsSimpleHead{gap:9px}}
+
+.courierOperatingAreaCard{display:grid;gap:14px}
+.settingsPrivacyNote{margin:0;padding:10px 12px;border-radius:12px;background:#f7faf9;border:1px solid #dfe9e5;color:#52645e;font-size:12px;line-height:1.5}
+.courierOperatingAreaForm{display:grid;gap:10px}
+.courierOperatingAreaActions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.courierOperatingAreaResults{display:grid;gap:7px}
+.courierOperatingAreaResults>button{min-height:50px;padding:10px 12px;border:1px solid #d7e2de;border-radius:13px;background:#fff;text-align:left;display:grid;gap:3px;color:#17233c}
+.courierOperatingAreaResults>button.selected{border-color:#0a7c66;box-shadow:0 0 0 2px rgba(10,124,102,.12)}
+.courierOperatingAreaResults strong{font-size:13px}.courierOperatingAreaResults small{font-size:11px;line-height:1.4;color:#66756f}
+.settingsInlineStatus{min-height:20px;font-size:11px;line-height:1.4;color:#52645e}
+@media(max-width:420px){.courierOperatingAreaActions{grid-template-columns:1fr}.courierOperatingAreaActions button{min-height:46px}}
