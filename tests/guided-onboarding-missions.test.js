@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {GUIDED_ONBOARDING_JOURNEY,GUIDED_ONBOARDING_STEPS} from '../guided-onboarding-core.js';
+import {GUIDED_ONBOARDING_JOURNEY,GUIDED_ONBOARDING_STEPS,GUIDED_ONBOARDING_LOCALES} from '../guided-onboarding-core.js';
 
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const core=read('guided-onboarding-core.js');
@@ -17,12 +17,14 @@ const doc=read('docs/design/GUIDED_ONBOARDING_MISSIONS_V1.md');
 test('guided onboarding journey is versioned and covers account through first-profile onboarding',()=>{
   assert.equal(GUIDED_ONBOARDING_JOURNEY,'first_account_first_profile_v1');
   assert.deepEqual(GUIDED_ONBOARDING_STEPS,[
-    'welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile','profile_onboarding'
+    'language','welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile','profile_onboarding'
   ]);
+  assert.deepEqual(GUIDED_ONBOARDING_LOCALES,['en-PH','fil-PH']);
   assert.match(core,/CREATE TABLE IF NOT EXISTS guided_onboarding_progress/);
   assert.match(core,/PRIMARY KEY\(account_id,journey_key\)/);
   assert.match(core,/completed_steps JSONB/);
   assert.match(core,/auto_start_enabled BOOLEAN/);
+  assert.match(core,/locale_confirmed BOOLEAN/);
 });
 
 test('Account/Auth owns persistent guide endpoints and loads the coachmark assets',()=>{

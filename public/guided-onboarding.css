@@ -12,3 +12,15 @@
 .guidedCoach{box-sizing:border-box}.guidedCoach[data-placement]{right:auto!important;bottom:auto!important;margin:0!important}.guidedCoach.guidedCoachScroll{overflow:auto;overscroll-behavior:contain}.guidedCoachBody{overflow-wrap:anywhere}.guidedMore{margin-top:7px;border:0;background:transparent;color:#08705c;padding:3px 0;font:inherit;font-size:9.5px;font-weight:900}.guidedCoach.compact{padding:12px;border-radius:18px}.guidedCoach.compact .guidedCoachHead{gap:8px}.guidedCoach.compact .guidedCoachHead h2{font-size:17px}.guidedCoach.compact .guidedCoachBody{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;margin-top:7px;line-height:1.4}.guidedCoach.compact.expanded .guidedCoachBody{display:block;-webkit-line-clamp:unset;overflow:visible}.guidedCoach.compact .guidedProgress{margin-top:9px}.guidedCoach.compact .guidedCoachActions{margin-top:10px}.guidedCoach[data-no-overlap="false"]{outline:2px solid rgba(181,74,80,.01)}
 @media(max-width:419px){.guidedCoach.compact .guidedProgressChip{min-width:42px;padding:4px 7px}.guidedCoach.compact .guidedCoachActions{display:grid;grid-template-columns:1fr 1.3fr;gap:7px}.guidedCoach.compact .guidedCoachActions button{min-height:40px;padding:9px 10px}.guidedCoach.compact .guidedCoachActions button:only-child{grid-column:1/-1}}
 @media(prefers-reduced-motion:reduce){.guidedCoach{transition:none!important}.guidedSpotlight{transition:none!important}}
+
+/* Guided Onboarding V2A — language-first */
+.guidedLanguageCoach .guidedCoachBody{margin-bottom:10px}
+.guidedLanguageChoices{display:grid;gap:8px;margin-top:12px}
+.guidedLanguageChoices button{width:100%;min-height:62px;display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #d7e4df;border-radius:15px;background:#fff;color:#17233c;padding:11px 12px;text-align:left;font:inherit}
+.guidedLanguageChoices button.selected{border-color:#77bfae;background:#f1faf7;box-shadow:0 0 0 2px rgba(10,124,102,.08)}
+.guidedLanguageChoices button>span{display:grid;gap:2px}
+.guidedLanguageChoices button strong{font-size:12px}
+.guidedLanguageChoices button small{font-size:10px;color:#687386}
+.guidedLanguageChoices button b{flex:0 0 auto;border-radius:999px;background:#e7f6f1;color:#08705c;padding:4px 7px;font-size:8.5px}
+.guidedLanguageBoundary{display:block;margin-top:10px;color:#687386;font-size:9.5px;line-height:1.45}
+@media(max-width:419px){.guidedLanguageChoices button{min-height:58px}.guidedLanguageChoices button b{font-size:8px}}

@@ -1,20 +1,48 @@
 const JOURNEY='first_account_first_profile_v1';
-const STEP_ORDER=['welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile','profile_onboarding'];
-const STEP_LABELS={
-  welcome:'Welcome',
-  complete_account:'Complete your account',
-  area_status:'Understand your area',
-  account_settings:'Open Account Settings',
-  manage_profiles:'Manage profiles',
-  choose_profile:'Choose your first profile',
-  profile_onboarding:'Follow profile onboarding'
+const STEP_ORDER=['language','welcome','complete_account','area_status','account_settings','manage_profiles','choose_profile','profile_onboarding'];
+const STEP_LABEL_KEYS={
+  language:'step.language',
+  welcome:'step.welcome',
+  complete_account:'step.complete_account',
+  area_status:'step.area_status',
+  account_settings:'step.account_settings',
+  manage_profiles:'step.manage_profiles',
+  choose_profile:'step.choose_profile',
+  profile_onboarding:'step.profile_onboarding'
 };
-const ROLE_LABELS={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
+const ROLE_LABEL_KEYS={customer:'role.customer',merchant:'role.merchant',supplier:'role.supplier',courier:'role.courier',service_provider:'role.service_provider'};
+const ROLE_FALLBACK={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
+const SUPPORTED_LOCALES=new Set(['en-PH','fil-PH']);
 const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
-let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0;
+let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH';
+const copyCache=new Map();
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const normalizeLocale=value=>SUPPORTED_LOCALES.has(String(value||''))?String(value):'en-PH';
+const activeLocale=()=>normalizeLocale(guide?.preferred_locale||guide?.facts?.preferred_locale||copyLocale);
+const formatCopy=(value,vars={})=>Object.entries(vars).reduce((out,[key,val])=>out.replaceAll('{'+key+'}',String(val??'')),String(value??''));
+const tr=(key,vars={},fallback='')=>formatCopy(copy[key]??(fallback||key),vars);
+const stepLabel=step=>tr(STEP_LABEL_KEYS[step],{},step);
+const roleLabelFor=role=>tr(ROLE_LABEL_KEYS[role],{},ROLE_FALLBACK[role]||'profile');
+const suggestedLocale=()=>{
+  const langs=[...(navigator.languages||[]),navigator.language||''].map(x=>String(x).toLowerCase());
+  return langs.some(x=>x.startsWith('fil')||x.startsWith('tl'))?'fil-PH':'en-PH';
+};
+async function loadCopy(locale=activeLocale()){
+  const normalized=normalizeLocale(locale);
+  if(copyCache.has(normalized)){copy=copyCache.get(normalized);copyLocale=normalized;document.documentElement.lang=normalized;return copy}
+  try{
+    const response=await fetch('/locales/guided-onboarding.'+normalized+'.json',{cache:'no-store'});
+    if(!response.ok)throw new Error('Locale pack unavailable');
+    const pack=await response.json();
+    copyCache.set(normalized,pack);copy=pack;copyLocale=normalized;document.documentElement.lang=normalized;return pack;
+  }catch(error){
+    if(normalized!=='en-PH')return loadCopy('en-PH');
+    copy={};copyLocale='en-PH';document.documentElement.lang='en-PH';return copy;
+  }
+}
+
 
 async function api(path,options={}){
   const headers={'Content-Type':'application/json',...(options.headers||{})};
@@ -28,7 +56,7 @@ function shellState(){return window.BusinessLifeProfileState||{}}
 function completedSet(){return new Set(guide?.completed_steps||[])}
 function completedCount(){return STEP_ORDER.filter(step=>completedSet().has(step)).length}
 function progressPct(){return Math.round((completedCount()/STEP_ORDER.length)*100)}
-function roleLabel(){return ROLE_LABELS[guide?.selected_profile_role]||'your selected profile'}
+function roleLabel(){return roleLabelFor(guide?.selected_profile_role)}
 function guideActive(){return Boolean(guide?.eligible&&guide.status!=='completed')}
 function visible(el){return Boolean(el&&el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden')}
 function firstVisible(...selectors){
@@ -44,6 +72,7 @@ function scheduleRefresh(delay=250){clearTimeout(refreshTimer);refreshTimer=setT
 async function refreshGuide({render=true}={}){
   if(!token())return null;
   guide=await api('/api/onboarding/guide');
+  await loadCopy(guide.preferred_locale);
   syncLauncher();
   decorateAccountSettings();
   if(render)scheduleRender(20);
@@ -51,6 +80,7 @@ async function refreshGuide({render=true}={}){
 }
 async function updateGuide(input,{render=true}={}){
   guide=await api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
+  await loadCopy(guide.preferred_locale);
   syncLauncher();
   decorateAccountSettings();
   if(render)scheduleRender(20);
@@ -69,7 +99,7 @@ function ensureLauncher(){
     launcher.id='guidedOnboardingLauncher';
     launcher.className='guidedOnboardingLauncher hidden';
     launcher.type='button';
-    launcher.innerHTML='<span aria-hidden="true">✓</span><strong>Getting started</strong><small></small>';
+    launcher.innerHTML='<span aria-hidden="true">✓</span><strong></strong><small></small>';
     launcher.addEventListener('click',()=>{missionCenterOpen=true;renderMissionCenter()});
     document.body.appendChild(launcher);
   }
@@ -79,6 +109,7 @@ function syncLauncher(){
   const button=ensureLauncher();
   if(!guide?.eligible||guide.status==='completed'){button.classList.add('hidden');return}
   button.classList.remove('hidden');
+  button.querySelector('strong').textContent=tr('launcher.title',{},'Getting started');
   button.querySelector('small').textContent=completedCount()+'/'+STEP_ORDER.length;
   button.classList.toggle('paused',guide.status==='paused');
 }
@@ -193,12 +224,12 @@ async function positionGuidance(target,{scroll=true}={}){
   }
   repositionGuidanceNow();
 }
-function coachMarkup(step,title,body,{primary='Continue',secondary='Skip for now',back=false,waiting=false}={}){
+function coachMarkup(step,title,body,{primary=tr('action.continue',{},'Continue'),secondary=tr('action.skip',{},'Skip for now'),back=false,waiting=false}={}){
   const index=Math.max(1,STEP_ORDER.indexOf(step)+1),pct=Math.round(index/STEP_ORDER.length*100);
-  return '<div class="guidedCoachHead"><div><small>GETTING STARTED · '+index+' OF '+STEP_ORDER.length+'</small><h2>'+esc(title)+'</h2></div><span class="guidedProgressChip">'+pct+'%</span></div>'+
-    '<p class="guidedCoachBody">'+esc(body)+'</p><button type="button" data-guide-more class="guidedMore" hidden>More</button><div class="guidedProgress"><i style="width:'+pct+'%"></i></div>'+
+  return '<div class="guidedCoachHead"><div><small>'+esc(tr('common.getting_started',{},'GETTING STARTED'))+' · '+index+' / '+STEP_ORDER.length+'</small><h2>'+esc(title)+'</h2></div><span class="guidedProgressChip">'+pct+'%</span></div>'+
+    '<p class="guidedCoachBody">'+esc(body)+'</p><button type="button" data-guide-more class="guidedMore" hidden>'+esc(tr('action.more',{},'More'))+'</button><div class="guidedProgress"><i style="width:'+pct+'%"></i></div>'+
     '<div class="guidedCoachActions">'+
-      (back?'<button type="button" data-guide-back class="guidedSecondary">Back</button>':'')+
+      (back?'<button type="button" data-guide-back class="guidedSecondary">'+esc(tr('action.back',{},'Back'))+'</button>':'')+
       '<button type="button" data-guide-pause class="guidedSecondary">'+esc(secondary)+'</button>'+
       (waiting?'':'<button type="button" data-guide-next class="guidedPrimary">'+esc(primary)+'</button>')+
     '</div>';
@@ -216,7 +247,7 @@ function renderCoach({step,title,body,target=null,primary,secondary,back=false,w
   const root=overlayShell(),coach=root.querySelector('.guidedCoach');
   coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting});coach.dataset.bodyLong=String(String(body||'').length>118);
   bindCoachActions(step,{next});
-  coach.querySelector('[data-guide-more]')?.addEventListener('click',event=>{coach.classList.toggle('expanded');event.currentTarget.textContent=coach.classList.contains('expanded')?'Less':'More';scheduleCoachReposition()});
+  coach.querySelector('[data-guide-more]')?.addEventListener('click',event=>{coach.classList.toggle('expanded');event.currentTarget.textContent=coach.classList.contains('expanded')?tr('action.less',{},'Less'):tr('action.more',{},'More');scheduleCoachReposition()});
   positionGuidance(guidanceContextTarget(target),{scroll:true}).catch(()=>{});
   coach.focus?.({preventScroll:true});
 }
@@ -234,54 +265,138 @@ function missingAccountTarget(){
   return firstVisible('#accountHomeSettings','#openFirstAccountSettings');
 }
 
+function renderLanguageCoach(){
+  const root=overlayShell(),coach=root.querySelector('.guidedCoach'),suggested=suggestedLocale(),current=activeLocale();
+  root.querySelector('.guidedSpotlight')?.classList.add('hidden');
+  coach.classList.add('guidedLanguageCoach');
+  coach.innerHTML='<div class="guidedCoachHead"><div><small>GETTING STARTED · PAGSISIMULA · 1 / '+STEP_ORDER.length+'</small><h2>Choose your language / Piliin ang iyong wika</h2></div><span class="guidedProgressChip">'+Math.round(100/STEP_ORDER.length)+'%</span></div>'+
+    '<p class="guidedCoachBody">Choose the language for this tutorial. / Piliin ang wikang gagamitin para sa gabay na ito.</p>'+
+    '<div class="guidedLanguageChoices">'+
+      '<button type="button" data-guide-locale="en-PH" class="'+(current==='en-PH'?'selected ':'')+'"><span><strong>English</strong><small>English (Philippines)</small></span>'+(suggested==='en-PH'?'<b>Suggested</b>':'')+'</button>'+
+      '<button type="button" data-guide-locale="fil-PH" class="'+(current==='fil-PH'?'selected ':'')+'"><span><strong>Filipino / Tagalog</strong><small>Filipino / Tagalog para sa Pilipinas</small></span>'+(suggested==='fil-PH'?'<b>Iminumungkahi</b>':'')+'</button>'+
+    '</div><small class="guidedLanguageBoundary">Language does not change your country, barangay, profile, currency or payment settings. / Hindi binabago ng wika ang iyong bansa, barangay, profile, currency o payment settings.</small>'+
+    '<div class="guidedCoachActions"><button type="button" data-guide-pause class="guidedSecondary">Later / Mamaya</button></div>';
+  coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{removeOverlay();missionCenterOpen=false;await updateGuide({action:'pause'},{render:false});syncLauncher()});
+  coach.querySelectorAll('[data-guide-locale]').forEach(button=>button.onclick=async()=>{
+    coach.querySelectorAll('button').forEach(x=>x.disabled=true);
+    try{
+      await updateGuide({action:'set_locale',locale:button.dataset.guideLocale},{render:false});
+      missionCenterOpen=false;
+      await loadCopy(button.dataset.guideLocale);
+      renderGuide();
+    }catch(error){
+      coach.querySelectorAll('button').forEach(x=>x.disabled=false);
+    }
+  });
+  coach.focus?.({preventScroll:true});
+}
+function missingAccountTarget(){
+  const facts=guide?.facts||{},state=shellState(),snapshot=state.snapshot||{};
+  if(!facts.email_verified){
+    return firstVisible('#sendVerify','[data-account-settings-view="security"]','#accountHomeSettings','#openFirstAccountSettings');
+  }
+  if(!facts.personal_details_ready){
+    return firstVisible('#shellAddress','#accountIdentityForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
+  }
+  if(!facts.area_assigned){
+    return firstVisible('#accountGeographyForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
+  }
+  return firstVisible('#accountHomeSettings','#openFirstAccountSettings');
+}
+
 function profileOnboardingSubstep(role){
   const modal=firstVisible('#govModal','.govModal');
   if(!modal)return null;
   if(['merchant','supplier'].includes(role)){
     const business=document.getElementById('appBusiness');
-    if(visible(business)&&!String(business.value||'').trim())return{title:'Add your business name',body:'Enter the business or store name used for this profile, then continue through the real application.',target:business,waiting:true};
+    if(visible(business)&&!String(business.value||'').trim())return{
+      title:tr('profile.business_title',{},'Add your business name'),
+      body:tr('profile.business_body',{},'Enter the business or store name used for this profile, then continue through the real application.'),
+      target:business,waiting:true
+    };
   }
   if(role==='service_provider'){
     const headline=document.getElementById('appHeadline');
-    if(visible(headline)&&!String(headline.value||'').trim())return{title:'Add your professional headline',body:'Describe the service identity people should understand first, for example your trade or main skill.',target:headline,waiting:true};
+    if(visible(headline)&&!String(headline.value||'').trim())return{
+      title:tr('profile.headline_title',{},'Add your professional headline'),
+      body:tr('profile.headline_body',{},'Describe the service identity people should understand first, for example your trade or main skill.'),
+      target:headline,waiting:true
+    };
     const about=document.getElementById('appAbout');
-    if(visible(about)&&!String(about.value||'').trim())return{title:'Describe your experience',body:'Add the relevant experience customers and reviewers need to understand your Local Services profile.',target:about,waiting:true};
+    if(visible(about)&&!String(about.value||'').trim())return{
+      title:tr('profile.about_title',{},'Describe your experience'),
+      body:tr('profile.about_body',{},'Add the relevant experience customers and reviewers need to understand your Local Services profile.'),
+      target:about,waiting:true
+    };
     const cats=[...document.querySelectorAll('[data-req-cat]')];
-    if(cats.length&&!cats.some(x=>x.checked))return{title:'Choose the services you want to offer',body:'Select the service categories that actually match your work. Admin approval remains category-specific.',target:firstVisible('.govCategoryGrid','[data-req-cat]'),waiting:true};
+    if(cats.length&&!cats.some(x=>x.checked))return{
+      title:tr('profile.categories_title',{},'Choose the services you want to offer'),
+      body:tr('profile.categories_body',{},'Select the service categories that actually match your work. Admin approval remains category-specific.'),
+      target:firstVisible('.govCategoryGrid','[data-req-cat]'),waiting:true
+    };
   }
   if(role==='courier'){
     const vehicle=document.getElementById('courierVehicleType');
-    if(visible(vehicle)&&!profileDraftSavedForRole.has(role))return{title:'Confirm your delivery vehicle',body:'Choose the vehicle you will use. The evidence guide changes to match that vehicle type.',target:vehicle,waiting:true};
+    if(visible(vehicle)&&!profileDraftSavedForRole.has(role))return{
+      title:tr('profile.vehicle_title',{},'Confirm your delivery vehicle'),
+      body:tr('profile.vehicle_body',{},'Choose the vehicle you will use. The evidence guide changes to match that vehicle type.'),
+      target:vehicle,waiting:true
+    };
   }
   const ack=document.getElementById('appAck');
-  if(visible(ack)&&!ack.checked)return{title:'Review the responsibility declaration',body:'Read the declaration and confirm it only when you understand that platform approval does not replace licences, permits, insurance or other legal duties.',target:ack.closest('label')||ack,waiting:true};
+  if(visible(ack)&&!ack.checked)return{
+    title:tr('profile.ack_title',{},'Review the responsibility declaration'),
+    body:tr('profile.ack_body',{},'Read the declaration and confirm it only when you understand that platform approval does not replace licences, permits, insurance or other legal duties.'),
+    target:ack.closest('label')||ack,waiting:true
+  };
   const save=document.querySelector('#govApplicationForm button[type="submit"]');
-  if(visible(save)&&!profileDraftSavedForRole.has(role))return{title:'Save your application',body:'Save the information you entered before submitting it for review.',target:save,waiting:true};
+  if(visible(save)&&!profileDraftSavedForRole.has(role))return{
+    title:tr('profile.save_title',{},'Save your application'),
+    body:tr('profile.save_body',{},'Save the information you entered before submitting it for review.'),
+    target:save,waiting:true
+  };
   const submit=document.getElementById('submitGovApp');
-  if(visible(submit))return{title:'Submit for review',body:'When the application is accurate, submit it. The tutorial will then wait for the real review or activation state.',target:submit,waiting:true};
-  const status=firstVisible('.govStatusLine','.govCard');
-  if(status)return{title:'Application in progress',body:'Your '+(ROLE_LABELS[role]||'profile')+' onboarding is now in its real workflow. The guide will complete this mission when the application reaches review/submitted status or the profile becomes active.',target:status,waiting:true};
-  return{title:'Follow '+(ROLE_LABELS[role]||'profile')+' onboarding',body:'Continue through the real onboarding shown here.',target:modal,waiting:true};
+  if(visible(submit))return{
+    title:tr('profile.submit_title',{},'Submit for review'),
+    body:tr('profile.submit_body',{},'When the application is accurate, submit it. The tutorial will then wait for the real review or activation state.'),
+    target:submit,waiting:true
+  };
+  const status=firstVisible('.govStatusLine','.govCard'),roleName=roleLabelFor(role);
+  if(status)return{
+    title:tr('profile.progress_title',{},'Application in progress'),
+    body:tr('profile.progress_body',{role:roleName},'Your {role} onboarding is now in its real workflow. The guide will complete this mission when the application reaches review/submitted status or the profile becomes active.'),
+    target:status,waiting:true
+  };
+  return{
+    title:tr('profile.follow_title',{role:roleName},'Follow {role} onboarding'),
+    body:tr('profile.follow_body',{},'Continue through the real onboarding shown here.'),
+    target:modal,waiting:true
+  };
 }
-
 function stepDefinition(step){
-  const facts=guide?.facts||{},geo=facts.geography||{},state=shellState();
+  const facts=guide?.facts||{},geo=facts.geography||{};
   if(step==='welcome'){
     return{
-      title:'Welcome to Business & Life',
-      body:'Your account is separate from every profile. This short guide will show you how to finish setup and start the first profile you actually need.',
+      title:tr('welcome.title',{},'Welcome to Business & Life'),
+      body:tr('welcome.body',{},'Your account is separate from every profile. This guide will show you how to finish setup and start the first profile you actually need.'),
       target:firstVisible('.accountHomeHero','#roleHub'),
-      primary:'Start tutorial',
+      primary:tr('action.start',{},'Start tutorial'),
       next:()=>updateGuide({action:'complete_step',step_id:'welcome'})
     };
   }
   if(step==='complete_account'){
-    const missing=!facts.email_verified?'verify your email':!facts.personal_details_ready?'complete your private account details':!facts.area_assigned?'add your home address':'finish account setup';
+    const missing=!facts.email_verified
+      ?tr('account.missing_email',{},'verify your email')
+      :!facts.personal_details_ready
+        ?tr('account.missing_details',{},'complete your private account details')
+        :!facts.area_assigned
+          ?tr('account.missing_area',{},'add your home address')
+          :tr('account.missing_finish',{},'finish account setup');
     return{
-      title:'Complete your account',
-      body:'Next, '+missing+'. We will check whether Business & Life is available in your area.',
+      title:tr('step.complete_account',{},'Complete your account'),
+      body:tr('account.complete_body',{action:missing},'Next, {action}. We will check whether Business & Life is available in your area.'),
       target:missingAccountTarget(),
-      primary:'Show me',
+      primary:tr('action.show_me',{},'Show me'),
       next:async()=>{
         if(!facts.email_verified){
           window.BusinessLifeShell?.openAccountSettings?.('security');scheduleRender(300);return;
@@ -293,28 +408,28 @@ function stepDefinition(step){
   if(step==='area_status'){
     const status=geo?.exact_territory?.status||'not_opened';
     const message=geo.operational_onboarding_available
-      ?'Business & Life is available in your area.'
+      ?tr('area.available',{},'Business & Life is available in your area.')
       :status==='paused'
-        ?'Onboarding is temporarily unavailable in your area. We will notify you when it reopens.'
+        ?tr('area.paused',{},'Onboarding is temporarily unavailable in your area. We will notify you when it reopens.')
         :['suspended','closed'].includes(status)
-          ?'Business & Life is not currently available in your area. We will notify you if availability changes.'
-          :'Business & Life is not available in your area yet. We will notify you when onboarding opens.';
+          ?tr('area.closed',{},'Business & Life is not currently available in your area. We will notify you if availability changes.')
+          :tr('area.not_open',{},'Business & Life is not available in your area yet. We will notify you when onboarding opens.');
     const target=firstVisible('.accountGeographyNotice','.accountAddressArea','#accountHomeSettings','#openFirstAccountSettings');
     return{
-      title:'Availability in your area',
+      title:tr('area.title',{},'Availability in your area'),
       body:message,
       target,
-      primary:'Got it',
+      primary:tr('action.got_it',{},'Got it'),
       next:async()=>updateGuide({action:'complete_step',step_id:'area_status'})
     };
   }
   if(step==='account_settings'){
     const target=firstVisible('#accountHomeSettings','#openFirstAccountSettings','.accountSettingsHeader');
     return{
-      title:'Account Settings',
-      body:'Account Settings holds your identity, security, area, notifications and profile management. Profile-specific settings stay inside each profile.',
+      title:tr('settings.title',{},'Account Settings'),
+      body:tr('settings.body',{},'Account Settings holds your identity, security, area, notifications and profile management. Profile-specific settings stay inside each profile.'),
       target,
-      primary:visible(document.querySelector('.accountSettingsHeader'))?'Continue':'Open settings',
+      primary:visible(document.querySelector('.accountSettingsHeader'))?tr('action.continue',{},'Continue'):tr('action.open_settings',{},'Open settings'),
       next:async()=>{
         if(visible(document.querySelector('.accountSettingsHeader'))){await updateGuide({action:'complete_step',step_id:'account_settings'});return}
         window.BusinessLifeShell?.openAccountSettings?.('home');scheduleRender(250);
@@ -324,10 +439,10 @@ function stepDefinition(step){
   if(step==='manage_profiles'){
     const target=firstVisible('[data-account-settings-view="profiles"]','.profileRoleList','#accountHomeSettings');
     return{
-      title:'Open Manage profiles',
-      body:'This is where you start, continue, deactivate or reactivate the profiles that belong to your Personal ID.',
+      title:tr('profiles.manage_title',{},'Open Manage profiles'),
+      body:tr('profiles.manage_body',{},'This is where you start, continue, deactivate or reactivate the profiles that belong to your Personal ID.'),
       target,
-      primary:visible(document.querySelector('.profileRoleList'))?'Continue':'Open profiles',
+      primary:visible(document.querySelector('.profileRoleList'))?tr('action.continue',{},'Continue'):tr('action.open_profiles',{},'Open profiles'),
       next:async()=>{
         if(visible(document.querySelector('.profileRoleList'))){await updateGuide({action:'complete_step',step_id:'manage_profiles'});return}
         window.BusinessLifeShell?.openAccountSettings?.('profiles');scheduleRender(350);
@@ -337,35 +452,35 @@ function stepDefinition(step){
   if(step==='choose_profile'){
     const areaReady=Boolean(geo.operational_onboarding_available||facts.company_test);
     const body=areaReady
-      ?'Choose the profile that matches what you want to do. Business & Life does not choose a role for you; the next steps adapt to your selection.'
-      :'Business & Life is not available in your area yet. You can review profiles now, and we will notify you when onboarding opens.';
+      ?tr('profiles.choose_body',{},'Choose the profile that matches what you want to do. Business & Life does not choose a role for you; the next steps adapt to your selection.')
+      :tr('profiles.area_closed',{},'Business & Life is not available in your area yet. You can review profiles now, and we will notify you when onboarding opens.');
     return{
-      title:'Choose your first profile',
+      title:tr('profiles.choose_title',{},'Choose your first profile'),
       body,
       target:firstVisible('.profileRoleList','.profileActivationGate','[data-account-settings-view="profiles"]'),
-      secondary:'Pause tutorial',
+      secondary:tr('action.pause',{},'Pause tutorial'),
       waiting:true
     };
   }
   const selected=roleLabel(),role=guide?.selected_profile_role||facts.started_profile_role||'',areaReady=Boolean(geo.operational_onboarding_available||facts.company_test);
   if(!areaReady)return{
-    title:'Business & Life is not available in your area yet',
-    body:'We will notify you when onboarding opens. The guide will resume from here when availability changes.',
+    title:tr('profiles.area_closed_title',{},'Business & Life is not available in your area yet'),
+    body:tr('profiles.area_closed_body',{},'We will notify you when onboarding opens. The guide will resume from here when availability changes.'),
     target:firstVisible('.accountGeographyNotice','.profileActivationGate','.profileRoleList'),
-    secondary:'Pause tutorial',
+    secondary:tr('action.pause',{},'Pause tutorial'),
     waiting:true
   };
   const sub=profileOnboardingSubstep(role);
-  if(sub)return{...sub,secondary:'Pause tutorial'};
-  let body='Follow the real '+selected+' onboarding shown on screen. The tutorial finishes when the profile reaches a meaningful submitted, review or active state.';
+  if(sub)return{...sub,secondary:tr('action.pause',{},'Pause tutorial')};
+  let body=tr('profile.general_body',{role:selected},'Follow the real {role} onboarding shown on screen. The tutorial finishes when the profile reaches a meaningful submitted, review or active state.');
   if(role&&['merchant','supplier','courier'].includes(role)&&!facts.started_profile_role){
-    body=selected+' is governed during the controlled launch. If an invitation is required, the guide will remain here until one is available.';
+    body=tr('profile.governed_body',{role:selected},'{role} is governed during the controlled launch. If an invitation is required, the guide will remain here until one is available.');
   }
   return{
-    title:'Follow '+selected+' onboarding',
+    title:tr('profile.follow_title',{role:selected},'Follow {role} onboarding'),
     body,
     target:firstVisible('.profileRoleList','.profileActivationGate'),
-    secondary:'Pause tutorial',
+    secondary:tr('action.pause',{},'Pause tutorial'),
     waiting:true
   };
 }
@@ -374,6 +489,7 @@ async function renderGuide(){
   if(!guide?.eligible||guide.status==='completed'||guide.status==='paused'){removeOverlay();return}
   const step=guide.current_step_id||STEP_ORDER.find(x=>!completedSet().has(x));
   if(!step){removeOverlay();return}
+  if(step==='language')return renderLanguageCoach();
   const def=stepDefinition(step);
   renderCoach({step,...def});
 }
@@ -382,17 +498,17 @@ function missionRow(step,index){
   const waiting=step==='profile_onboarding'&&!done&&guide?.selected_profile_role;
   return '<button type="button" class="guidedMissionRow '+(done?'done ':current?'current ':'')+'" data-guide-mission="'+esc(step)+'">'+
     '<span class="guidedMissionIcon">'+(done?'✓':index+1)+'</span>'+
-    '<span><strong>'+esc(STEP_LABELS[step])+'</strong><small>'+(done?'Done':waiting?'In progress':current?'Next mission':'Upcoming')+'</small></span>'+
+    '<span><strong>'+esc(stepLabel(step))+'</strong><small>'+(done?tr('mission.done',{},'Done'):waiting?tr('mission.in_progress',{},'In progress'):current?tr('mission.next',{},'Next mission'):tr('mission.upcoming',{},'Upcoming'))+'</small></span>'+
     '<b>'+((done||current)?'›':'')+'</b></button>';
 }
 function renderMissionCenter(){
   missionCenterOpen=true;
   const root=overlayShell(),coach=root.querySelector('.guidedCoach');
   coach.classList.add('guidedMissionCenter');
-  coach.innerHTML='<div class="guidedMissionCenterHead"><small>GETTING STARTED</small><h2>Your first Business & Life journey</h2><p>Complete what you need now. You can pause and resume later.</p><div class="guidedProgress"><i style="width:'+progressPct()+'%"></i></div></div>'+
+  coach.innerHTML='<div class="guidedMissionCenterHead"><small>'+esc(tr('common.getting_started',{},'GETTING STARTED'))+'</small><h2>'+esc(tr('mission.title',{},'Your first Business & Life journey'))+'</h2><p>'+esc(tr('mission.body',{},'Complete what you need now. You can pause and resume later.'))+'</p><div class="guidedProgress"><i style="width:'+progressPct()+'%"></i></div></div>'+
     '<div class="guidedMissionList">'+STEP_ORDER.map(missionRow).join('')+'</div>'+
-    '<div class="guidedCoachActions"><button type="button" data-guide-close class="guidedSecondary">Close</button>'+
-    (guide?.status==='paused'?'<button type="button" data-guide-resume class="guidedPrimary">Resume tutorial</button>':'<button type="button" data-guide-pause class="guidedSecondary">Pause tutorial</button>')+'</div>';
+    '<div class="guidedCoachActions"><button type="button" data-guide-close class="guidedSecondary">'+esc(tr('action.close',{},'Close'))+'</button>'+
+    (guide?.status==='paused'?'<button type="button" data-guide-resume class="guidedPrimary">'+esc(tr('action.resume',{},'Resume tutorial'))+'</button>':'<button type="button" data-guide-pause class="guidedSecondary">'+esc(tr('action.pause',{},'Pause tutorial'))+'</button>')+'</div>';
   root.querySelector('.guidedSpotlight')?.classList.add('hidden');
   coach.querySelector('[data-guide-close]')?.addEventListener('click',()=>{missionCenterOpen=false;removeOverlay()});
   coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{missionCenterOpen=false;removeOverlay();await updateGuide({action:'pause'},{render:false})});
@@ -401,6 +517,7 @@ function renderMissionCenter(){
     const step=button.dataset.guideMission;
     if(step!==guide.current_step_id&&!completedSet().has(step))return;
     missionCenterOpen=false;
+    if(step==='language'){renderLanguageCoach();return}
     if(completedSet().has(step)){removeOverlay();return}
     if(guide.status==='paused')await updateGuide({action:'resume'},{render:false});
     guide.current_step_id=step;renderGuide();
@@ -417,8 +534,18 @@ function decorateAccountSettings(){
     home.insertAdjacentElement('afterend',card);
   }
   const done=guide.status==='completed',paused=guide.status==='paused';
-  card.innerHTML='<div><span aria-hidden="true">🧭</span><div><strong>Getting started tutorial</strong><p>'+(done?'Completed. Restart it whenever you want a refresher.':paused?'Paused at '+esc(STEP_LABELS[guide.current_step_id]||'your next mission')+'.':'Progress '+completedCount()+'/'+STEP_ORDER.length+'.')+'</p></div></div>'+
-    '<button type="button" data-guide-settings-action="'+(done?'reset':paused?'resume':'open')+'">'+(done?'Restart tutorial':paused?'Resume tutorial':'Open missions')+'</button>';
+  const detail=done
+    ?tr('settings_tutorial.completed',{},'Completed. Restart it whenever you want a refresher.')
+    :paused
+      ?tr('settings_tutorial.paused',{step:stepLabel(guide.current_step_id)},'Paused at {step}.')
+      :tr('settings_tutorial.progress',{done:completedCount(),total:STEP_ORDER.length},'Progress {done}/{total}.');
+  const actionLabel=done
+    ?tr('action.restart',{},'Restart tutorial')
+    :paused
+      ?tr('action.resume',{},'Resume tutorial')
+      :tr('action.open_missions',{},'Open missions');
+  card.innerHTML='<div><span aria-hidden="true">🧭</span><div><strong>'+esc(tr('settings_tutorial.title',{},'Getting started tutorial'))+'</strong><p>'+esc(detail)+'</p></div></div>'+
+    '<button type="button" data-guide-settings-action="'+(done?'reset':paused?'resume':'open')+'">'+esc(actionLabel)+'</button>';
   card.querySelector('[data-guide-settings-action]').onclick=async()=>{
     const action=card.querySelector('[data-guide-settings-action]').dataset.guideSettingsAction;
     if(action==='reset'){await updateGuide({action:'reset'},{render:false});missionCenterOpen=true;renderMissionCenter();return}
@@ -428,7 +555,7 @@ function decorateAccountSettings(){
 }
 async function handleProfileChoice(target){
   const role=target?.dataset?.roleAction||target?.dataset?.profileReactivate||'';
-  if(!ROLE_LABELS[role]||!guideActive())return;
+  if(!ROLE_LABEL_KEYS[role]||!guideActive())return;
   await updateGuide({action:'select_profile',selected_profile_role:role},{render:false}).catch(()=>{});
   scheduleRefresh(450);
 }
