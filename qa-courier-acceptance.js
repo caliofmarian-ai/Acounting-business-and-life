@@ -120,12 +120,11 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
   });
   expectStatus(profileSaved,200,'Courier profile configuration');
 
-  const accountArea=await pool.query(
-    "SELECT psgc_code FROM account_geography_assignments WHERE account_id=$1",
-    [courier.accountId]
+  const qaArea=await pool.query(
+    "SELECT psgc_code FROM ph_geographic_registry WHERE country_code='PH' AND psgc_code='0402103028' ORDER BY source_version DESC LIMIT 1"
   );
-  const operatingPsgc=String(accountArea.rows[0]?.psgc_code||'');
-  if(!operatingPsgc)throw new Error('Courier QA account has no official barangay for the operating-area acceptance.');
+  const operatingPsgc=String(qaArea.rows[0]?.psgc_code||'');
+  if(!operatingPsgc)throw new Error('Canonical QA barangay is missing from the PSGC registry.');
   const operatingArea=await requestJson(base,'/api/courier/operating-area',{
     method:'PUT',token:courier.token,body:{psgc_code:operatingPsgc}
   });
