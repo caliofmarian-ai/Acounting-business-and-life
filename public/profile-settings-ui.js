@@ -38,6 +38,7 @@ function profileSettingsHome(){
     +'<button type="button" data-profile-settings-view="finance"><span>💳</span><span><strong>Money preferences</strong><small>Profile books, budgets, transfers and payout preferences.</small></span><b>›</b></button>'
     +'<button type="button" id="profileFinancialDocuments"><span>🧾</span><span><strong>Statements &amp; documents</strong><small>Open financial statements and traceable documents for this profile.</small></span><b>›</b></button>'
     +'<button type="button" id="profilePromotionCenter"><span>📣</span><span><strong>Promotion Center</strong><small>Referral and promotion tools attributed to this profile.</small></span><b>›</b></button>'
+    +'<button type="button" id="profileGuidedTutorial"><span>🧭</span><span><strong>Profile tutorial</strong><small>Open or restart the guided tutorial for this profile only.</small></span><b>›</b></button>'
     +'<button type="button" data-profile-settings-view="status"><span>🧩</span><span><strong>Profile status</strong><small>Review lifecycle state or manage deactivation without changing your account.</small></span><b>›</b></button>'
     +'</div>';
 }
@@ -195,6 +196,7 @@ function renderSettings(){
   document.getElementById('openAccountMoneyFromProfile')?.addEventListener('click',()=>openAccountMoneySettings('profile'));
   document.getElementById('profilePromotionCenter')?.addEventListener('click',()=>{location.href='/referral/promotion-center.html?profile='+encodeURIComponent(selectedSettingsRole)});
   document.getElementById('profileFinancialDocuments')?.addEventListener('click',()=>window.BusinessLifeFinancialDocuments?.open?.());
+  document.getElementById('profileGuidedTutorial')?.addEventListener('click',()=>document.dispatchEvent(new CustomEvent('abl:guided-onboarding-open-profile',{detail:{role:selectedSettingsRole}})));
   document.getElementById('manageProfileLifecycle')?.addEventListener('click',()=>{settingsWorkspace.classList.add('hidden');profileSettingsView='home';window.BusinessLifeShell?.openAccountSettings?.('profiles')});
 }
 function profileSettingsBack(){if(profileSettingsView!=='home'){profileSettingsView='home';renderSettings();window.scrollTo({top:0,behavior:'auto'});return}closeProfileSettings()}
