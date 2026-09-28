@@ -760,13 +760,90 @@ export async function reconcilePayMongoLivePayment(pool,{intentPublicId,actorAcc
   finally{client.release()}
 }
 
+export async function reconcileDeliveryRefundEconomics(db,{paymentIntentId,refundId=null,actorAccountId=null,providerCode='paymongo'}={}){
+  const intentId=Number(paymentIntentId);
+  if(!Number.isInteger(intentId)||intentId<1)throw Object.assign(new Error('Valid payment intent is required for Delivery refund reconciliation'),{status:400});
+  const position=await db.query(`
+    SELECT pi.id,pi.source_type,pi.source_id,pi.amount,
+      COALESCE((SELECT SUM(r.amount) FROM refunds r WHERE r.payment_intent_id=pi.id AND r.status='succeeded'),0)::numeric refunded_amount,
+      EXISTS(
+        SELECT 1 FROM payment_allocations pa
+        WHERE pa.payment_intent_id=pi.id AND pa.component_code='delivery' AND pa.amount>0
+      ) has_delivery
+    FROM payment_intents pi
+    WHERE pi.id=$1
+  `,[intentId]);
+  if(!position.rowCount)return{status:'NOOP',reason:'PAYMENT_INTENT_NOT_FOUND',payment_intent_id:intentId};
+  const p=position.rows[0];
+  if(p.source_type!=='order'||p.has_delivery!==true){
+    return{status:'NOOP',reason:'NOT_DELIVERY_ORDER_PAYMENT',payment_intent_id:intentId};
+  }
+  const refundedAmount=money(p.refunded_amount||0);
+  const intentAmount=money(p.amount||0);
+  const fullIntentRefund=refundedAmount>=intentAmount-0.001;
+  const allocations=await db.query(`
+    SELECT pa.id,pa.component_code,pa.settlement_status,pa.amount,pa.rule_snapshot,
+      EXISTS(SELECT 1 FROM settlement_lines sl WHERE sl.payment_allocation_id=pa.id) has_settlement_line
+    FROM payment_allocations pa
+    WHERE pa.payment_intent_id=$1
+      AND pa.component_code IN ('courier_net','platform_fee')
+      AND COALESCE(pa.rule_snapshot->>'delivery_id','')<>''
+      AND pa.settlement_status NOT IN ('reversed','failed')
+    ORDER BY id
+    FOR UPDATE
+  `,[intentId]);
+
+  const reversedIds=[],reviewIds=[];
+  for(const row of allocations.rows){
+    const current=clean(row.settlement_status,40);
+    const cashMayHaveMoved=current==='processing'||current==='paid'||row.has_settlement_line===true;
+    const target=fullIntentRefund&&!cashMayHaveMoved?'reversed':'manual_review';
+    if(current===target)continue;
+    const updated=await db.query(
+      "UPDATE payment_allocations SET settlement_status=$1 WHERE id=$2 AND settlement_status=$3 RETURNING id",
+      [target,Number(row.id),current]
+    );
+    if(!updated.rowCount)continue;
+    if(target==='reversed')reversedIds.push(Number(row.id));
+    else reviewIds.push(Number(row.id));
+  }
+
+  const result={
+    status:(reversedIds.length||reviewIds.length)?'RECONCILED':'NO_CHANGE',
+    payment_intent_id:intentId,
+    order_id:Number(p.source_id)||null,
+    refund_id:refundId==null?null:Number(refundId),
+    refunded_amount:refundedAmount,
+    intent_amount:intentAmount,
+    full_intent_refund:fullIntentRefund,
+    reversed_allocation_ids:reversedIds,
+    manual_review_allocation_ids:reviewIds
+  };
+  if(reversedIds.length||reviewIds.length){
+    await db.query(
+      `INSERT INTO payment_audit_events(
+        actor_account_id,payment_intent_id,event_code,provider_code,after_json,correlation_id
+      ) VALUES($1,$2,'delivery_refund_economics_reconciled',$3,$4::jsonb,$5)`,
+      [
+        actorAccountId||null,intentId,clean(providerCode,80),
+        JSON.stringify(result),
+        'delivery-refund-economics:'+intentId+':'+String(refundId||'aggregate')
+      ]
+    );
+  }
+  return result;
+}
+
 export async function executePayMongoRefund(pool,{refundId,actorAccountId=null}){
   const cfg=payMongoRuntimeConfig();
   const q=await pool.query("SELECT r.*,i.provider_code,i.provider_payment_id,i.public_id intent_public_id FROM refunds r JOIN payment_intents i ON i.id=r.payment_intent_id WHERE r.id=$1",[Number(refundId)]);
   if(!q.rowCount)throw Object.assign(new Error('Refund not found'),{status:404});
   const r=q.rows[0];
   if(r.provider_code!=='paymongo'||!r.provider_payment_id)throw Object.assign(new Error('Refund is not linked to a confirmed PayMongo payment'),{status:409});
-  if(r.status==='succeeded')return r;
+  if(r.status==='succeeded'){
+    await reconcileDeliveryRefundEconomics(pool,{paymentIntentId:r.payment_intent_id,refundId:r.id,actorAccountId});
+    return (await pool.query("SELECT * FROM refunds WHERE id=$1",[r.id])).rows[0];
+  }
   if(!['requested','failed','manual_review'].includes(r.status))throw Object.assign(new Error('Refund is already being processed'),{status:409});
   let reason='others';
   const low=String(r.reason||'').toLowerCase();
@@ -784,6 +861,16 @@ export async function executePayMongoRefund(pool,{refundId,actorAccountId=null})
       const intent=await pool.query("SELECT amount FROM payment_intents WHERE id=$1",[r.payment_intent_id]);
       const full=money(total.rows[0].total)>=money(intent.rows[0].amount)-0.001;
       await pool.query("UPDATE payment_intents SET status=$1,updated_at=NOW() WHERE id=$2",[full?'refunded':'partially_refunded',r.payment_intent_id]);
+      try{
+        await reconcileDeliveryRefundEconomics(pool,{
+          paymentIntentId:r.payment_intent_id,refundId:r.id,actorAccountId,providerCode:'paymongo'
+        });
+      }catch(reconcileError){
+        await pool.query(
+          "INSERT INTO payment_audit_events(actor_account_id,payment_intent_id,event_code,provider_code,after_json,correlation_id) VALUES($1,$2,'delivery_refund_economics_reconciliation_failed','paymongo',$3::jsonb,$4)",
+          [actorAccountId,r.payment_intent_id,JSON.stringify({refund_id:r.id,error:clean(reconcileError?.code||reconcileError?.message,120)}),'delivery-refund-economics-failed:'+r.public_id]
+        ).catch(()=>{});
+      }
     }
     await pool.query("INSERT INTO payment_audit_events(actor_account_id,payment_intent_id,event_code,provider_code,after_json,correlation_id) VALUES($1,$2,'paymongo_refund_requested','paymongo',$3::jsonb,$4)",[actorAccountId,r.payment_intent_id,JSON.stringify({refund_id:ref?.id,status:mapped,amount:Number(r.amount)}),'paymongo-refund:'+r.public_id]);
     return (await pool.query("SELECT * FROM refunds WHERE id=$1",[r.id])).rows[0];
