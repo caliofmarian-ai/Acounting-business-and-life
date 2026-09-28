@@ -12,6 +12,7 @@ function allocationSummary(row={}){
     processing:money(row.processing_amount),
     paid:money(row.paid_amount),
     failed:money(row.failed_amount),
+    manual_review:money(row.manual_review_amount),
     reversed:money(row.reversed_amount)
   };
 }
@@ -26,6 +27,7 @@ async function netAllocations(pool,componentCode,economicPartyId){
       COALESCE(SUM(amount) FILTER(WHERE settlement_status='processing'),0) processing_amount,
       COALESCE(SUM(amount) FILTER(WHERE settlement_status='paid'),0) paid_amount,
       COALESCE(SUM(amount) FILTER(WHERE settlement_status='failed'),0) failed_amount,
+      COALESCE(SUM(amount) FILTER(WHERE settlement_status='manual_review'),0) manual_review_amount,
       COALESCE(SUM(amount) FILTER(WHERE settlement_status='reversed'),0) reversed_amount
     FROM payment_allocations
     WHERE component_code=$1 AND economic_party_id=$2
@@ -164,19 +166,21 @@ export async function courierMoneySnapshot(pool,accountId){
              COALESCE(c.processing,0)::numeric courier_processing,
              COALESCE(c.held,0)::numeric courier_held,
              COALESCE(c.failed,0)::numeric courier_failed,
+             COALESCE(c.manual_review,0)::numeric courier_manual_review,
              COALESCE(c.allocation_count,0)::int courier_allocation_count
       FROM deliveries d
       JOIN orders o ON o.id=d.order_id
       JOIN businesses b ON b.id=d.business_id
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status<>'reversed'),0) courier_compensation,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status NOT IN ('reversed','manual_review')),0) courier_compensation,
           COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='paid'),0) paid,
           COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='eligible'),0) eligible,
           COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='pending'),0) pending,
           COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='processing'),0) processing,
           COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='held'),0) held,
           COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='failed'),0) failed,
+          COALESCE(SUM(pa.amount) FILTER(WHERE pa.settlement_status='manual_review'),0) manual_review,
           COUNT(*) FILTER(WHERE pa.settlement_status<>'reversed')::int allocation_count
         FROM payment_allocations pa
         JOIN payment_intents pi ON pi.id=pa.payment_intent_id
