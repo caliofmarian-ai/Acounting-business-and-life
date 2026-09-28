@@ -494,7 +494,7 @@ async function profileJourneyDefinition(journey){
     body:tr('profile_tour.open_profile_body',{role:label},'This tutorial belongs only to your {role} profile. Open that profile when you are ready to continue.'),
     target:firstVisible('[data-account-role="'+role+'"]','[data-role-action="'+role+'"]','.profileRoleList'),
     waiting:true,
-    secondary:tr('action.back',{},'Back')
+    secondary:tr('action.pause',{},'Pause tutorial')
   };
   if(step==='profile_welcome')return{
     step,
@@ -543,6 +543,7 @@ function renderProfileJourney(role){
 function renderGuide(){
   if(missionCenterOpen)return renderMissionCenter();
   if(!guide?.eligible){removeOverlay();return}
+  if(selectedProfileJourneyRole&&profileJourney(selectedProfileJourneyRole))return renderProfileJourney(selectedProfileJourneyRole);
   if(guide.status!=='completed'&&guide.status!=='paused'){
     const step=guide.current_step_id||STEP_ORDER.find(x=>!completedSet().has(x));
     if(!step){removeOverlay();return}
