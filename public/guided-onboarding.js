@@ -522,7 +522,7 @@ function customerProfileJourneyDefinition(journey,label){
     step,
     title:tr('customer_tour.price_title',{},'Check price and payment before committing'),
     body:tr('customer_tour.price_body',{},'At checkout, review product or service price, any delivery charge and the payment method before you continue. Refunds are shown as completed only when the underlying payment/refund evidence confirms them.'),
-    target:customerJourneyTarget('[data-bl-pricing="customer_checkout"]','#checkoutPayment','#basketCheckout','[data-hub-feature="Money"]'),
+    target:customerJourneyTarget('[data-bl-pricing="customer_checkout"]','#checkoutPayment','#basketCheckout','[data-customer-nav-target="shop"]'),
     primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
   };
   if(step==='customer_order_commitment')return{
