@@ -30,9 +30,12 @@ class ReadinessDb{
       const key=String(args[0])+':'+String(args[1]);
       return{rows:this.memberships.has(key)?[{ '?column?':1 }]:[],rowCount:this.memberships.has(key)?1:0};
     }
-    if(q.startsWith('SELECT 1 FROM profiles p')){
+    if(q.startsWith('SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 LIMIT 1')){
       const key=String(args[0])+':'+String(args[1]);
       return{rows:this.startedProfiles.has(key)?[{ '?column?':1 }]:[],rowCount:this.startedProfiles.has(key)?1:0};
+    }
+    if(q.startsWith('SELECT 1 FROM profile_applications WHERE account_id=$1 AND role=$2 LIMIT 1')){
+      return{rows:[],rowCount:0};
     }
     if(q.startsWith('SELECT * FROM microbusiness_readiness WHERE profile_role=$1 AND business_id=$2')){
       const row=this.rows.find(r=>r.profile_role===args[0]&&Number(r.business_id)===Number(args[1]));
@@ -340,4 +343,14 @@ test('commerce eligibility mutation is Super Admin only and limited state requir
   assert.match(governance,/commerceState==='eligible_limited'&&!Object\.keys\(commerceScope\)\.length/);
   assert.match(governance,/Define the limited commerce scope before granting limited eligibility/);
   assert.match(governance,/jsonb_agg\(jsonb_build_object\('id',b\.id,'name',b\.name\)/);
+});
+
+
+test('fresh database bootstrap does not require businesses before Auth starts',()=>{
+  const core=read('microbusiness-readiness-core.js');
+  assert.match(core,/business_id BIGINT,/);
+  assert.match(core,/to_regclass\('public\.businesses'\) IS NOT NULL/);
+  assert.match(core,/microbusiness_readiness_business_fk/);
+  assert.match(core,/SELECT 1 FROM profiles WHERE account_id=\$1 AND role=\$2 LIMIT 1/);
+  assert.match(core,/SELECT 1 FROM profile_applications WHERE account_id=\$1 AND role=\$2 LIMIT 1/);
 });
