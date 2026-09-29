@@ -52,12 +52,13 @@ test('availability copy explains planned paused restricted closed and unopened a
   assert.match(geographyAvailabilityMessage({...base,exact_territory:null,nearest_opened_scope:{name:'Parent City',status:'planned'}}),/nearest Business & Life scope.*Parent City.*planned/i);
 });
 
-test('email registration uses one personal address and derives geography when possible without activating a profile',()=>{
+test('email registration derives private geography before verification and persists it only when the verified account is created',()=>{
   const start=auth.indexOf("app.post('/api/auth/register'");
   const block=auth.slice(start,auth.indexOf("app.post('/api/auth/login'",start));
   assert.match(block,/deriveRegistrationGeography\(address\)/);
-  assert.match(block,/registration_address_derived_psgc/);
-  assert.match(block,/saveAccountGeography\(client,accountId/);
+  assert.match(block,/geography_psgc_code/);
+  assert.match(block,/INSERT INTO account_registration_intents/);
+  assert.match(block,/saveAccountGeography\(client,accountId,geographyCode,\{source:'verified_registration'\}\)/);
   assert.doesNotMatch(block,/Choose your official barangay before creating your account/);
   assert.doesNotMatch(block,/INSERT INTO profiles/);
   assert.match(authUi,/Personal \/ home address \(private\)/);

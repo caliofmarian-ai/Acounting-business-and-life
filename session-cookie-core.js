@@ -11,6 +11,8 @@ const SAFE_METHODS=new Set(['GET','HEAD','OPTIONS']);
 const SESSION_BOOTSTRAP_PATHS=new Set([
   '/api/auth/login',
   '/api/auth/register',
+  '/api/auth/email/preflight',
+  '/api/auth/registration/verify',
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/auth/owner-migrate',

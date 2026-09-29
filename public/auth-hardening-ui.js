@@ -79,6 +79,18 @@ function renderVerificationResult(state){
   document.getElementById('verificationSignIn')?.addEventListener('click',async()=>{try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}window.ABLSession?.clearReadableSession();location.reload()});
 }
 async function verifyFromUrl(raw){try{const r=await api('/api/auth/email-verification/verify',{method:'POST',body:JSON.stringify({token:raw})});clearQuery();renderVerificationResult(r.verification_session)}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
+async function verifyRegistrationFromUrl(raw){
+  try{
+    const r=await api('/api/auth/registration/verify',{method:'POST',body:JSON.stringify({token:raw})});
+    clearQuery();
+    if(r?.registration_completed){location.reload();return}
+    throw new Error('Registration verification did not complete.');
+  }catch(e){
+    clearQuery();
+    sessionStorage.setItem('abl_flash',e.message);
+    location.reload();
+  }
+}
 async function oauthHandoff(raw){try{await api('/api/auth/oauth/handoff',{method:'POST',body:JSON.stringify({code:raw})});clearQuery();location.reload()}catch(e){clearQuery();sessionStorage.setItem('abl_flash',e.message);location.reload()}}
 async function decorateSecurity(){
   if(!sessionActive())return;
@@ -171,6 +183,7 @@ function watchDrawer(){document.addEventListener('abl:account-settings-rendered'
 async function boot(){
   await (window.ABLSession?.ready||Promise.resolve());
   const params=new URLSearchParams(location.search);
+  if(params.get('registration_verify_token'))return verifyRegistrationFromUrl(params.get('registration_verify_token'));
   if(params.get('verify_token'))return verifyFromUrl(params.get('verify_token'));
   if(params.get('oauth_handoff'))return oauthHandoff(params.get('oauth_handoff'));
   const root=document.getElementById('modernAuthRoot');

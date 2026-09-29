@@ -4,7 +4,8 @@ import pg from 'pg';
 import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath,domainToASCII } from 'node:url';
+import { resolveMx,resolve4,resolve6 } from 'node:dns/promises';
 import { buildLiveReferralPayload, ensureAccountReferral, ensureReferralAccountSchema, normalizeReferralProfileRole } from './growth/referral-account.js';
 import { buildLocalReferralQr } from './growth/referral-qr.js';
 import { isValidReferralCode } from './growth/referral-domain.js';
@@ -15,7 +16,7 @@ import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profi
 import { companyTestAccountForEmail, companyTestContact, companyTestProfileRole } from './company-test-accounts.js';
 import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-session-core.js';
 import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage,resolveAddressBarangayCandidate} from './account-geography.js';
-import {emitNotificationEvent} from './notification-core.js';
+import {emitNotificationEvent,sendDirectSecurityEmail} from './notification-core.js';
 import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboarding} from './guided-onboarding-core.js';
 import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest} from './territory-demand-core.js';
 import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-account.js';
@@ -35,6 +36,8 @@ const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
 const QA_AUTOMATION_SECRET = process.env.QA_AUTOMATION_SECRET || '';
 const QA_BEARER_ENABLED = process.env.RAILWAY_SERVICE_NAME==='accounting-preview'&&String(process.env.APP_ENV||'').toLowerCase()==='qa';
 const TOKEN_TTL_MS = AUTH_SESSION_TTL_MS;
+const REGISTRATION_INTENT_TTL_HOURS=24;
+const EMAIL_PREFLIGHT_TIMEOUT_MS=3500;
 const ROLES = new Set(['merchant', 'customer', 'supplier', 'courier', 'service_provider']);
 const jsonBody = express.json({ limit: '450kb' });
 const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,res,next);
@@ -226,6 +229,27 @@ async function initDb() {
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auth_status TEXT NOT NULL DEFAULT 'active';
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS preferred_locale TEXT NOT NULL DEFAULT 'en-PH';
     CREATE UNIQUE INDEX IF NOT EXISTS accounts_email_unique_idx ON accounts(LOWER(email)) WHERE email <> '';
+
+    CREATE TABLE IF NOT EXISTS account_registration_intents (
+      id BIGSERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      address TEXT NOT NULL DEFAULT '',
+      geography_psgc_code TEXT NOT NULL DEFAULT '',
+      password_salt TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      adult_eligibility_policy_version TEXT NOT NULL,
+      referral_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+      token_hash TEXT NOT NULL UNIQUE,
+      provider_reference TEXT NOT NULL DEFAULT '',
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS account_registration_intents_email_idx
+      ON account_registration_intents(LOWER(email),created_at DESC);
+    CREATE INDEX IF NOT EXISTS account_registration_intents_expiry_idx
+      ON account_registration_intents(expires_at);
 
     CREATE TABLE IF NOT EXISTS account_sessions (
       session_id TEXT PRIMARY KEY,
@@ -467,6 +491,68 @@ async function emitAccountGeographyNotice(accountId,geography){
   }
 }
 
+
+function withEmailTimeout(promise,timeoutMs=EMAIL_PREFLIGHT_TIMEOUT_MS){
+  return Promise.race([
+    promise,
+    new Promise((_,reject)=>setTimeout(()=>reject(Object.assign(new Error('Email domain lookup timed out'),{code:'ETIMEOUT'})),timeoutMs))
+  ]);
+}
+function registrationPublicBase(req){
+  const configured=clean(process.env.AUTH_PUBLIC_BASE_URL||'',500).replace(/\/+$/,'');
+  if(configured){
+    try{const u=new URL(configured);if(['http:','https:'].includes(u.protocol))return u.origin}catch{}
+  }
+  const proto=clean(req.headers['x-forwarded-proto']||req.protocol||'https',12).split(',')[0];
+  const host=clean(req.headers['x-forwarded-host']||req.headers.host||'',240).split(',')[0];
+  return `${proto}://${host}`.replace(/\/$/,'');
+}
+async function emailDomainPreflight(rawEmail){
+  const email=normalizeEmail(rawEmail);
+  if(!validEmail(email))return{ok:false,code:'EMAIL_FORMAT_INVALID',message:'Enter a valid email address.'};
+  const rawDomain=email.split('@').pop()||'';
+  const domain=domainToASCII(rawDomain.toLowerCase());
+  if(!domain||!domain.includes('.'))return{ok:false,code:'EMAIL_DOMAIN_INVALID',message:'This email domain is not valid.'};
+  if(/(?:^|\.)(?:invalid|example|test|localhost)$/i.test(domain)){
+    return{ok:false,code:'EMAIL_DOMAIN_NOT_DELIVERABLE',message:'This email domain cannot receive real email.'};
+  }
+  try{
+    const mx=await withEmailTimeout(resolveMx(domain));
+    if(Array.isArray(mx)&&mx.some(row=>String(row?.exchange||'').trim()&&String(row.exchange).trim()!=='.')){
+      return{ok:true,domain,method:'mx',mailbox_confirmation_required:true};
+    }
+    if(Array.isArray(mx)&&mx.some(row=>String(row?.exchange||'').trim()==='.')){
+      return{ok:false,code:'EMAIL_DOMAIN_NOT_DELIVERABLE',message:'This email domain does not accept email.'};
+    }
+  }catch(error){
+    if(!['ENODATA','ENOTFOUND','ETIMEOUT','ESERVFAIL','EREFUSED'].includes(String(error?.code||'')))throw error;
+  }
+  try{
+    const addresses=await withEmailTimeout(Promise.allSettled([resolve4(domain),resolve6(domain)]));
+    const hasAddress=addresses.some(result=>result.status==='fulfilled'&&Array.isArray(result.value)&&result.value.length);
+    if(hasAddress)return{ok:true,domain,method:'address_fallback',mailbox_confirmation_required:true};
+  }catch{}
+  return{ok:false,code:'EMAIL_DOMAIN_NOT_DELIVERABLE',message:'This email domain cannot receive email. Check the address and try again.'};
+}
+async function purgeExpiredRegistrationIntents(){
+  await pool.query(`DELETE FROM account_registration_intents WHERE expires_at<=NOW()`).catch(()=>{});
+}
+function registrationVerificationHtml(link){
+  return `<p>Confirm that this email belongs to you before Business & Life creates your account.</p><p><a href="${link}">Verify email and create account</a></p><p>If you did not request this, ignore this message. No account will be created.</p>`;
+}
+
+app.post('/api/auth/email/preflight',body,async(req,res,next)=>{
+  try{
+    const email=normalizeEmail(req.body?.email);
+    if(throttled(req,'email-preflight:'+email))return res.status(429).json({error:'Too many email checks. Try again shortly.'});
+    const result=await emailDomainPreflight(email);
+    if(!result.ok)return res.status(422).json({error:result.message,code:result.code});
+    clearThrottle(req,'email-preflight:'+email);
+    res.set('Cache-Control','no-store');
+    res.json({ok:true,domain_can_receive_email:true,mailbox_confirmation_required:true});
+  }catch(error){next(error)}
+});
+
 app.get('/api/auth/geography/search',async(req,res,next)=>{try{
   const result=await searchOfficialBarangays(pool,{query:req.query.q,limit:req.query.limit});
   res.set('Cache-Control','public, max-age=60');
@@ -502,6 +588,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   const name = clean(req.body?.display_name, 120);
   const password = String(req.body?.password || '');
   const companyTest = companyTestAccountForEmail(email);
+  const qaBypass=qaBearerRequested(req);
   const phone = companyTest ? '' : clean(req.body?.phone, 40);
   const address = companyTest ? '' : clean(req.body?.address, 300);
   const homePsgcCode=clean(req.body?.home_psgc_code,32);
@@ -513,6 +600,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   if(!companyTest&&clean(req.body?.adult_eligibility_policy_version,80)!==ADULT_ELIGIBILITY_POLICY_VERSION)return res.status(409).json({error:'Review and accept the current adult eligibility notice before creating your account'});
   if(qaRemoteRequested&&!isQaRemoteTestEmail(email))return res.status(403).json({error:'Remote PH testing is available only to the designated QA test account'});
   if (throttled(req, email)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+
   let geography=null;
   if(homePsgcCode){
     geography=await geographyAvailabilityForCode(pool,homePsgcCode);
@@ -520,50 +608,150 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   }else if(!companyTest&&address){
     geography=await deriveRegistrationGeography(address);
   }
-  const client = await pool.connect();
-  try {
-    const exists = await client.query(`SELECT 1 FROM accounts WHERE LOWER(email)=$1`, [email]);
-    if (exists.rowCount) return res.status(409).json({ error: 'An account with this email already exists' });
-    const { salt, hash } = await hashPassword(password);
-    await client.query('BEGIN');
-    const accountStatus=companyTest?'active':'pending_verification';
-    const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9) RETURNING id`, [name, phone, email, address, salt, hash, accountStatus, companyTest?'company_test':'personal', companyTest?.role||null]);
-    const accountId = Number(account.rows[0].id);
-    if(companyTest)await recordCompanyTestEligibilityExemption(client,{accountId,source:'company_test_registration'});
-    else await recordAdultEligibilityAttestation(client,{accountId,actorAccountId:accountId,attested:true,policyVersion:req.body?.adult_eligibility_policy_version,source:'password_registration'});
-    if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':qaRemoteRequested&&isQaRemoteTestEmail(email)?'qa_remote_ph_test':homePsgcCode?'registration_selected_psgc':'registration_address_derived_psgc'});
-    await client.query('COMMIT');
-    clearThrottle(req, email);
 
-    const referralConversion = req.body?.referral_conversion;
-    if (referralConversion && typeof referralConversion === 'object' && !Array.isArray(referralConversion)) {
-      try {
-        const binding = await bindReferralSignupConversion(pool, {
-          referredAccountId: accountId,
-          context: referralConversion
-        });
-        if (binding.bound && !binding.idempotent) {
-          await deliverReferralAnalyticsEvent({
-            event: 'referral_signup_completed',
-            properties: {
-              campaign: binding.campaign,
-              source: binding.source || 'profile',
-              source_profile_role: binding.sourceProfileRole,
-              correlation_id: String(referralConversion.correlation_id || '')
-            }
-          }).catch(error => {
-            console.warn('Referral signup-completed analytics suppressed:', error.message);
-          });
-        }
-      } catch (error) {
-        console.warn('Referral signup conversion binding suppressed:', error.message);
+  // Controlled QA identities keep the direct path in isolated Preview only.
+  if(companyTest||qaBypass){
+    const client = await pool.connect();
+    try {
+      const exists = await client.query(`SELECT 1 FROM accounts WHERE LOWER(email)=$1`, [email]);
+      if (exists.rowCount) return res.status(409).json({ error: 'An account with this email already exists' });
+      const { salt, hash } = await hashPassword(password);
+      await client.query('BEGIN');
+      const accountStatus=companyTest?'active':'pending_verification';
+      const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9) RETURNING id`, [name, phone, email, address, salt, hash, accountStatus, companyTest?'company_test':'personal', companyTest?.role||null]);
+      const accountId = Number(account.rows[0].id);
+      if(companyTest)await recordCompanyTestEligibilityExemption(client,{accountId,source:'company_test_registration'});
+      else await recordAdultEligibilityAttestation(client,{accountId,actorAccountId:accountId,attested:true,policyVersion:req.body?.adult_eligibility_policy_version,source:'qa_password_registration'});
+      if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':'qa_registration_address'});
+      await client.query('COMMIT');
+      clearThrottle(req, email);
+      const session = await createSession(accountId);
+      return sendEstablishedSession(req,res,201,session,{profile:await profileSnapshot(accountId)});
+    } catch (err) { await client.query('ROLLBACK').catch(() => {}); return next(err); } finally { client.release(); }
+  }
+
+  try{
+    const preflight=await emailDomainPreflight(email);
+    if(!preflight.ok)return res.status(422).json({error:preflight.message,code:preflight.code});
+
+    await purgeExpiredRegistrationIntents();
+    const exists=await pool.query(`SELECT 1 FROM accounts WHERE LOWER(email)=$1`,[email]);
+    if(exists.rowCount)return res.status(409).json({error:'An account with this email already exists'});
+
+    const {salt,hash}=await hashPassword(password);
+    const rawToken=crypto.randomBytes(32).toString('base64url');
+    const tokenHash=crypto.createHash('sha256').update(rawToken).digest('hex');
+    const referralConversion=req.body?.referral_conversion&&typeof req.body.referral_conversion==='object'&&!Array.isArray(req.body.referral_conversion)
+      ?req.body.referral_conversion:{};
+    const client=await pool.connect();
+    let intentId;
+    try{
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM account_registration_intents WHERE LOWER(email)=$1`,[email]);
+      const inserted=await client.query(`
+        INSERT INTO account_registration_intents(
+          email,display_name,phone,address,geography_psgc_code,password_salt,password_hash,
+          adult_eligibility_policy_version,referral_json,token_hash,expires_at
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,NOW()+($11*INTERVAL '1 hour'))
+        RETURNING id
+      `,[email,name,phone,address,geography?.psgc_code||'',salt,hash,ADULT_ELIGIBILITY_POLICY_VERSION,JSON.stringify(referralConversion),tokenHash,REGISTRATION_INTENT_TTL_HOURS]);
+      intentId=Number(inserted.rows[0].id);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}finally{client.release()}
+
+    const verifyLink=`${registrationPublicBase(req)}/?registration_verify_token=${encodeURIComponent(rawToken)}`;
+    const delivery=await sendDirectSecurityEmail({
+      to:email,
+      subject:'Verify your Business & Life email',
+      html:registrationVerificationHtml(verifyLink),
+      text:'Verify your email before Business & Life creates your account: '+verifyLink,
+      eventCode:'auth.registration_verification'
+    });
+    if(!delivery.ok){
+      await pool.query(`DELETE FROM account_registration_intents WHERE id=$1`,[intentId]).catch(()=>{});
+      return res.status(503).json({
+        error:delivery.notConfigured?'Email verification is temporarily unavailable. No account was created.':'We could not send a verification message to this email. No account was created.',
+        code:'REGISTRATION_EMAIL_DELIVERY_FAILED'
+      });
+    }
+    await pool.query(`UPDATE account_registration_intents SET provider_reference=$1 WHERE id=$2`,[delivery.reference||'',intentId]);
+    clearThrottle(req,email);
+    const payload={
+      ok:true,
+      registration_pending:true,
+      account_created:false,
+      delivery_status:'sent',
+      message:'Check your email. Your Business & Life account will be created only after you verify this address.'
+    };
+    if(QA_BEARER_ENABLED&&process.env.AUTH_PREVIEW_SHOW_LINK==='true')payload.preview_registration_verify_url=verifyLink;
+    return res.status(202).json(payload);
+  }catch(error){next(error)}
+});
+
+app.post('/api/auth/registration/verify',body,async(req,res,next)=>{
+  const rawToken=clean(req.body?.token,500);
+  if(!rawToken)return res.status(400).json({error:'Verification token is required'});
+  const tokenHash=crypto.createHash('sha256').update(rawToken).digest('hex');
+  const client=await pool.connect();
+  let accountId=null,geographyCode='',referralConversion={};
+  try{
+    await client.query('BEGIN');
+    const intentQ=await client.query(`
+      SELECT * FROM account_registration_intents
+      WHERE token_hash=$1 AND expires_at>NOW()
+      FOR UPDATE
+    `,[tokenHash]);
+    if(!intentQ.rowCount)throw Object.assign(new Error('This registration link is invalid or has expired'),{status:400});
+    const intent=intentQ.rows[0];
+    const duplicate=await client.query(`SELECT 1 FROM accounts WHERE LOWER(email)=LOWER($1)`,[intent.email]);
+    if(duplicate.rowCount)throw Object.assign(new Error('An account with this email already exists'),{status:409});
+    const account=await client.query(`
+      INSERT INTO accounts(
+        display_name,phone,email,address,active_role,password_salt,password_hash,
+        email_verified_at,auth_status,account_mode,test_role
+      ) VALUES($1,$2,$3,$4,NULL,$5,$6,NOW(),'active','personal',NULL)
+      RETURNING id
+    `,[intent.display_name,intent.phone,intent.email,intent.address,intent.password_salt,intent.password_hash]);
+    accountId=Number(account.rows[0].id);
+    await recordAdultEligibilityAttestation(client,{
+      accountId,actorAccountId:accountId,attested:true,
+      policyVersion:intent.adult_eligibility_policy_version,
+      source:'verified_password_registration'
+    });
+    geographyCode=clean(intent.geography_psgc_code,32);
+    if(geographyCode)await saveAccountGeography(client,accountId,geographyCode,{source:'verified_registration'});
+    referralConversion=intent.referral_json&&typeof intent.referral_json==='object'?intent.referral_json:{};
+    await client.query(`DELETE FROM account_registration_intents WHERE id=$1`,[intent.id]);
+    await client.query('COMMIT');
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    return next(error);
+  }finally{client.release()}
+
+  try{
+    if(referralConversion&&Object.keys(referralConversion).length){
+      const binding=await bindReferralSignupConversion(pool,{referredAccountId:accountId,context:referralConversion});
+      if(binding.bound&&!binding.idempotent){
+        await deliverReferralAnalyticsEvent({
+          event:'referral_signup_completed',
+          properties:{
+            campaign:binding.campaign,
+            source:binding.source||'profile',
+            source_profile_role:binding.sourceProfileRole,
+            correlation_id:String(referralConversion.correlation_id||'')
+          }
+        }).catch(()=>{});
       }
     }
-
-    if(geography)await emitAccountGeographyNotice(accountId,await geographyAvailabilityForCode(pool,geography.psgc_code));
-    const session = await createSession(accountId);
-    sendEstablishedSession(req,res,201,session,{profile:await profileSnapshot(accountId)});
-  } catch (err) { await client.query('ROLLBACK').catch(() => {}); next(err); } finally { client.release(); }
+    if(geographyCode)await emitAccountGeographyNotice(accountId,await geographyAvailabilityForCode(pool,geographyCode));
+    const session=await createSession(accountId);
+    return sendEstablishedSession(req,res,200,session,{
+      ok:true,
+      registration_completed:true,
+      account_created:true,
+      profile:await profileSnapshot(accountId)
+    });
+  }catch(error){next(error)}
 });
 
 app.post('/api/auth/login', body, async (req, res, next) => {
@@ -574,7 +762,7 @@ app.post('/api/auth/login', body, async (req, res, next) => {
   try {
     const row = await pool.query(`SELECT id,password_salt,password_hash,auth_status,email_verified_at,account_mode FROM accounts WHERE LOWER(email)=$1`, [email]);
     const account = row.rows[0];
-    const loginStateAllowed=account&&['active','pending_verification'].includes(String(account.auth_status||''));
+    const loginStateAllowed=account&&account.auth_status==='active';
     if (!loginStateAllowed || !(await verifyPassword(password, account.password_salt, account.password_hash))) return res.status(401).json({ error: 'Incorrect email or password' });
     clearThrottle(req, email);
     const accountId = Number(account.id);
