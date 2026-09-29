@@ -39,10 +39,17 @@ test('availability quick update is Supplier-owned and never claims exact stock',
   assert.match(source,/availability_note/);
 });
 
-test('Today and availability fail closed for ambiguous multi-business Supplier accounts',()=>{
-  assert.match(source,/SUPPLIER_BUSINESS_ATTRIBUTION_REQUIRED/);
+test('Today is business-scoped for multi-business Supplier accounts',()=>{
+  assert.match(source,/p\.supplier_business_id=\$2/);
+  assert.match(source,/SUPPLIER_BUSINESS_ATTRIBUTED/);
+  assert.match(source,/supplierTodayOrders\(pool,scope\)/);
+  assert.match(source,/supplierTodayMoney\(pool,scope\)/);
+  assert.match(source,/supplierMoneyOrders\(pool,scope\)/);
+  assert.doesNotMatch(source,/Supplier Today is unavailable until this multi-business account/);
+});
+
+test('multi-business catalog actions require explicit Supplier-business association',()=>{
+  assert.match(source,/supplier_sourcing_published_items/);
   assert.match(source,/SUPPLIER_CATALOG_BUSINESS_ATTRIBUTION_REQUIRED/);
-  assert.match(source,/bindingCount!==1/);
-  assert.match(source,/SINGLE_SUPPLIER_BUSINESS_BINDING/);
-  assert.doesNotMatch(source,/ACCOUNT_LEVEL_ORDER_ACTIVITY/);
+  assert.match(source,/This catalog item is not associated with the selected Supplier business/);
 });

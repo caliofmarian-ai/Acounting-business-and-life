@@ -32,7 +32,8 @@ test('future PO items snapshot handling mode and normal receiving records a supp
 });
 
 test('Supplier payment uses current commercial outstanding rather than blindly PO expected total',()=>{
-  assert.match(supplier,/commercialOutstandingForPo\(pool,id\)/);
+  assert.match(supplier,/commercialOutstandingForPo\(client,id\)/);
+  assert.match(supplier,/SELECT \* FROM purchase_orders WHERE id=\$1 AND business_id=\$2 FOR UPDATE/);
   assert.match(supplier,/current Supplier commercial outstanding amount/);
   assert.doesNotMatch(supplier,/const outstanding=Math\.max\(0,Number\(po\.expected_total\)-Number\(po\.paid_amount\)\)/);
 });
@@ -50,11 +51,12 @@ test('both active Supplier receipt routes create canonical traceable lots',()=>{
   assert.match(accounting,/lotBaseUnit/);
 });
 
-test('both Supplier payment routes use current commercial outstanding including confirmed credits',()=>{
-  assert.match(supplier,/commercialOutstandingForPo\(pool,id\)/);
-  assert.match(accounting,/commercialOutstandingForPo\(pool,id\)/);
-  assert.match(accounting,/Payment exceeds current Supplier commercial outstanding amount/);
-  assert.doesNotMatch(accounting,/Payment exceeds PO outstanding amount/);
+test('Supplier payment has one canonical owner and Accounting does not shadow it',()=>{
+  assert.match(supplier,/commercialOutstandingForPo\(client,id\)/);
+  assert.match(supplier,/Payment exceeds current Supplier commercial outstanding amount/);
+  assert.match(supplier,/supplier_receipt_business_id:supplierReceiptBusinessId/);
+  assert.match(supplier,/business_id,type,category,amount,payment_method,account,note,source,source_id/);
+  assert.doesNotMatch(accounting,/app\.post\('\/api\/procurement\/orders\/:id\/payment'/);
 });
 
 test('active multi-business receipt keeps Inventory conversion and lot base unit aligned',()=>{
