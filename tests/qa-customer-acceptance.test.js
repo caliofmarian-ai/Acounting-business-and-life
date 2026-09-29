@@ -100,3 +100,10 @@ test('Customer Experience uses a commit-scoped transaction fixture so recent Mon
   assert.match(source,/const QA_REVISION=clean\(process\.env\.RAILWAY_GIT_COMMIT_SHA\|\|process\.env\.GITHUB_SHA/);
   assert.match(source,/orderNote:CUSTOMER_MARKETPLACE_NOTE\+' '\+CUSTOMER_EXPERIENCE_WAVE\+' '\+QA_REVISION/);
 });
+
+test('Customer Support ticket fixture is scoped to the current Marketplace order',()=>{
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  assert.match(source,/const subject=CUSTOMER_SUPPORT_SUBJECT\+' order '\+Number\(orderId\)/);
+  assert.match(source,/related_type='order' AND related_id=\$3/);
+  assert.match(source,/\[Number\(accountId\),subject,Number\(orderId\)\]/);
+});
