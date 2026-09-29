@@ -273,7 +273,16 @@ app.get('/api/governance/admin/overview',async(req,res,next)=>{try{await require
   pool.query(`SELECT t.*,p.name parent_name FROM territories t LEFT JOIN territories p ON p.id=t.parent_id WHERE t.country_code='PH' ORDER BY t.created_at DESC`),
   pool.query(`SELECT pa.*,a.display_name,a.email,t.name territory_name,(SELECT COUNT(*)::int FROM profile_application_documents d WHERE d.application_id=pa.id) document_count FROM profile_applications pa JOIN accounts a ON a.id=pa.account_id JOIN territories t ON t.id=pa.territory_id ORDER BY CASE pa.status WHEN 'submitted' THEN 1 WHEN 'under_review' THEN 2 ELSE 9 END,pa.updated_at DESC LIMIT 250`),
   pool.query(`SELECT i.id,i.target_email,i.role,i.status,i.note,i.expires_at,i.created_at,t.name territory_name FROM profile_invitations i JOIN territories t ON t.id=i.territory_id ORDER BY i.created_at DESC LIMIT 250`),
-  pool.query(`SELECT a.id,a.account_id,ac.display_name,ac.email,a.role,a.status,a.territory_id,t.name territory_name,a.approved_at,a.reason FROM profile_authorizations a JOIN accounts ac ON ac.id=a.account_id LEFT JOIN territories t ON t.id=a.territory_id ORDER BY a.updated_at DESC LIMIT 250`)
+  pool.query(`SELECT a.id,a.account_id,ac.display_name,ac.email,a.role,a.status,a.territory_id,t.name territory_name,a.approved_at,a.reason,
+    CASE WHEN a.role='merchant' THEN COALESCE((
+      SELECT jsonb_agg(jsonb_build_object('id',b.id,'name',b.name) ORDER BY b.name)
+        FROM business_memberships bm JOIN businesses b ON b.id=bm.business_id
+       WHERE bm.account_id=a.account_id AND bm.active=TRUE
+    ),'[]'::jsonb) ELSE '[]'::jsonb END businesses
+    FROM profile_authorizations a
+    JOIN accounts ac ON ac.id=a.account_id
+    LEFT JOIN territories t ON t.id=a.territory_id
+    ORDER BY a.updated_at DESC LIMIT 250`)
 ]);res.json({territories:territories.rows,applications:apps.rows,invitations:invites.rows,authorizations:auths.rows})}catch(e){next(e)}})
 
 app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{
@@ -376,6 +385,7 @@ app.get('/api/governance/admin/readiness/:accountId/:role',async(req,res,next)=>
 
 app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(req,res,next)=>{try{
   const me=await requireAdmin(req),accountId=Number(req.params.accountId),role=clean(req.params.role,40);
+  if(!(await isActiveSuperAdmin(me.account.id)))return res.status(403).json({error:'Active Super Admin assignment required for commerce eligibility review'});
   if(!Number.isInteger(accountId)||accountId<1)return res.status(400).json({error:'Valid target account required'});
   if(!['merchant','service_provider'].includes(role))return res.status(400).json({error:'Readiness review is available only for Merchant or Local Services'});
   const businessId=role==='merchant'?Number(req.body?.business_id):null;
