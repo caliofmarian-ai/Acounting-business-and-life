@@ -34,7 +34,7 @@ test('connected and external quotes remain distinct evidence sources',()=>{
 
 test('preferred reorder sources require accepted relationships and explicit rank',()=>{
   assert.match(source,/merchant_inventory_supplier_sources/);
-  assert.match(source,/Preferred reorder sources require accepted Supplier relationships/);
+  assert.match(source,/Preferred reorder sources require an accepted relationship with the owning Supplier business/);
   assert.match(source,/preference_rank/);
 });
 
@@ -42,6 +42,9 @@ test('quote to PO requires explicit Merchant call and snapshots source quote',()
   assert.match(source,/\/api\/procurement\/sourcing\/quotes\/:quoteId\/create-po/);
   assert.match(source,/Accepted Supplier relationship required before creating a PO/);
   assert.match(source,/source_quote_id/);
+  assert.match(source,/supplier_business_id/);
+  assert.match(source,/supplier_business_id=\$3/);
+  assert.match(source,/Quoted Supplier business is no longer active/);
   assert.match(source,/price_per_pack_snapshot/);
   assert.match(source,/handling_mode_snapshot/);
   assert.match(source,/status='converted'/);

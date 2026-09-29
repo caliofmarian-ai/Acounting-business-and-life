@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { validateRuntimeSafety } from './runtime-safety.js';
 import { runCourierExperienceAcceptance } from './qa-courier-acceptance.js';
 import { runServiceProviderExperienceAcceptance } from './qa-service-provider-acceptance.js';
+import { runSupplierBusinessAttributionV2EAcceptance } from './qa-supplier-business-attribution-v2e.js';
 import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
 import {runDeliveryRefundEconomicsV2DAcceptance} from './qa-delivery-refund-economics-v2d.js';
 
@@ -23,6 +24,7 @@ const SUPPLIER_DOMAIN_V2_WAVE='supplier_domain_v2';
 const SUPPLIER_COMMERCIAL_V3_WAVE='supplier_commercial_v3';
 const SUPPLIER_SOURCING_V4_WAVE='supplier_sourcing_v4';
 const SUPPLIER_DAILY_V5_WAVE='supplier_daily_v5';
+const SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE='supplier_business_attribution_v2e';
 const COURIER_EXPERIENCE_WAVE='courier_experience_v1';
 const SERVICE_PROVIDER_EXPERIENCE_WAVE='service_provider_experience_v1';
 const CUSTOMER_MARKETPLACE_WAVE='customer_marketplace_e2e_v1';
@@ -53,9 +55,10 @@ const DELIVERY_ROUTING_V2C_RUNTIME_WAVE='delivery_routing_v2c_runtime';
 const DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE='delivery_refund_economics_v2d_runtime';
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
 const SESSION_SECURITY_V2_WAVE='session_security_v2';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
+const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
 const originalAutomationCredentials=new Map();
 
 export function qaAcceptanceConfig(env=process.env){
@@ -986,11 +989,12 @@ async function ensureCustomerPasswordRecovery({pool,base,secret}){
 }
 
 async function ensureQaSupportTicket({pool,base,token,accountId,orderId}){
+  const subject=CUSTOMER_SUPPORT_SUBJECT+' order '+Number(orderId);
   const existing=await pool.query(
     `SELECT id FROM support_tickets
-      WHERE requester_account_id=$1 AND subject=$2
+      WHERE requester_account_id=$1 AND subject=$2 AND related_type='order' AND related_id=$3
       ORDER BY id DESC LIMIT 1`,
-    [Number(accountId),CUSTOMER_SUPPORT_SUBJECT]
+    [Number(accountId),subject,Number(orderId)]
   );
   let ticketId=Number(existing.rows[0]?.id||0);
   if(!ticketId){
@@ -998,7 +1002,7 @@ async function ensureQaSupportTicket({pool,base,token,accountId,orderId}){
       method:'POST',token,
       body:{
         category:'marketplace_order',
-        subject:CUSTOMER_SUPPORT_SUBJECT,
+        subject,
         description:'Controlled internal QA Support request linked to the completed Marketplace order. No real customer issue.',
         requested_destination:'support',
         related_type:'order',
@@ -1037,11 +1041,12 @@ async function ensureQaSupportTicket({pool,base,token,accountId,orderId}){
 }
 
 async function ensureQaPrivacyRequest({pool,base,customerToken,merchantToken,accountId}){
+  const subject=CUSTOMER_PRIVACY_SUBJECT+' '+QA_REVISION;
   const existing=await pool.query(
     `SELECT id FROM support_tickets
       WHERE requester_account_id=$1 AND subject=$2
       ORDER BY id DESC LIMIT 1`,
-    [Number(accountId),CUSTOMER_PRIVACY_SUBJECT]
+    [Number(accountId),subject]
   );
   let ticketId=Number(existing.rows[0]?.id||0);
   if(!ticketId){
@@ -1049,7 +1054,7 @@ async function ensureQaPrivacyRequest({pool,base,customerToken,merchantToken,acc
       method:'POST',token:customerToken,
       body:{
         category:'privacy_access',
-        subject:CUSTOMER_PRIVACY_SUBJECT,
+        subject,
         description:'Controlled internal QA privacy-access request. This is acceptance evidence only and does not request a real legal outcome.',
         requested_destination:'territory_admin',
         related_type:'order',
@@ -1100,7 +1105,7 @@ async function verifyCustomerNotifications({base,token,orderId}){
 }
 
 async function runCustomerExperienceAcceptance({pool,base,secret}){
-  const marketplace=await runCustomerMarketplaceE2E({pool,base,secret});
+  const marketplace=await runCustomerMarketplaceE2E({pool,base,secret,orderNote:CUSTOMER_MARKETPLACE_NOTE+' '+CUSTOMER_EXPERIENCE_WAVE+' '+QA_REVISION});
   if(marketplace.status!=='PASS')throw new Error('Customer Marketplace prerequisite did not pass.');
   const orderId=Number(marketplace.order_id);
   if(!orderId)throw new Error('Customer Experience acceptance requires a completed QA order.');
@@ -1356,7 +1361,7 @@ async function runMerchantExperienceAcceptance({pool,base,secret}){
 
 
 const SUPPLIER_QA_PRODUCT='QA Supplier Rice Pack';
-const SUPPLIER_QA_PO_NOTE='Controlled QA Supplier Experience PO v1';
+const SUPPLIER_QA_PO_NOTE='Controlled QA Supplier Experience PO v1 '+QA_REVISION;
 const SUPPLIER_QA_PRICE=120;
 const SUPPLIER_QA_PACKS=2;
 const SUPPLIER_V2_EXTERNAL_NAME='QA Public Market Rice Vendor';
@@ -5419,7 +5424,11 @@ async function runSessionSecurityV2Acceptance({pool,base,secret}){
 
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
-  if(!config.enabled)return{status:'SKIPPED',wave:''};
+  if(!config.enabled){
+    console.log('QA_ACCEPTANCE_SKIPPED no_wave');
+    return{status:'SKIPPED',wave:''};
+  }
+  console.log('QA_ACCEPTANCE_START '+config.wave);
 
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
@@ -5491,6 +5500,12 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
           ?await runSupplierCommercialV3Acceptance({pool,base,secret:config.secret})
         :config.wave===SUPPLIER_SOURCING_V4_WAVE
           ?await runSupplierSourcingV4Acceptance({pool,base,secret:config.secret})
+        :config.wave===SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE
+          ?await runSupplierBusinessAttributionV2EAcceptance({
+            pool,base,secret:config.secret,
+            aliases:{supplier:SUPPLIER_ALIAS,merchant:MERCHANT_ALIAS},
+            helpers:{requestJson,expectStatus,qaAccountSession,ensureActiveRole,runSupplierExperienceAcceptance}
+          })
         :config.wave===SUPPLIER_DAILY_V5_WAVE
           ?await runSupplierDailyV5Acceptance({pool,base,secret:config.secret})
         :config.wave===COURIER_EXPERIENCE_WAVE
@@ -5531,5 +5546,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
 };

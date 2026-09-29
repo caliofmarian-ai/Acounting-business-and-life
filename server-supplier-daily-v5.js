@@ -14,7 +14,7 @@ async function supplierBindingCount(pool,accountId){
   return Number(rows[0]?.c||0);
 }
 
-async function supplierTodayOrders(pool,accountId){
+async function supplierTodayOrders(pool,{businessId,accountId}){
   const {rows}=await pool.query(
     `WITH scoped AS (
        SELECT p.id,p.po_number,p.business_id,p.status,p.expected_total,p.fulfilment_mode,
@@ -23,6 +23,7 @@ async function supplierTodayOrders(pool,accountId){
          FROM purchase_orders p
          JOIN businesses b ON b.id=p.business_id
         WHERE p.supplier_account_id=$1
+          AND p.supplier_business_id=$2
           AND p.status NOT IN ('cancelled','rejected','received')
         ORDER BY p.created_at DESC,p.id DESC
         LIMIT 60
@@ -60,7 +61,7 @@ async function supplierTodayOrders(pool,accountId){
        LEFT JOIN inv ON inv.purchase_order_id=s.id
        LEFT JOIN cr ON cr.purchase_order_id=s.id
       ORDER BY s.created_at DESC,s.id DESC`,
-    [Number(accountId)]
+    [Number(accountId),Number(businessId)]
   );
   return rows;
 }
@@ -85,18 +86,20 @@ async function supplierTodayRfqs(pool,{businessId,accountId}){
   return rows;
 }
 
-async function supplierTodayReturns(pool,accountId){
+async function supplierTodayReturns(pool,{businessId,accountId}){
   const {rows}=await pool.query(
     `SELECT r.id,r.purchase_order_id,r.business_id,r.status,r.expected_credit,
             r.resolution_type,r.confirmed_credit,r.created_at,b.name business_name,
             COUNT(*) OVER()::int queue_total
        FROM purchase_returns r
+       JOIN purchase_orders p ON p.id=r.purchase_order_id
        JOIN businesses b ON b.id=r.business_id
       WHERE r.supplier_account_id=$1
+        AND p.supplier_business_id=$2
         AND r.status IN ('requested','returned')
       ORDER BY r.created_at,r.id
       LIMIT 24`,
-    [Number(accountId)]
+    [Number(accountId),Number(businessId)]
   );
   return rows;
 }
@@ -141,7 +144,7 @@ async function supplierTodaySubstitutions(pool,{businessId,accountId}){
   return rows;
 }
 
-async function supplierTodayCatalog(pool,accountId){
+async function supplierTodayCatalog(pool,{businessId,accountId,bindingCount}){
   const {rows}=await pool.query(
     `SELECT id,product_name,availability_status,lead_time_days,expected_restock_date,updated_at,
             COUNT(*) OVER()::int queue_total
@@ -149,14 +152,21 @@ async function supplierTodayCatalog(pool,accountId){
       WHERE supplier_account_id=$1
         AND active=TRUE
         AND availability_status IN ('limited','unavailable')
+        AND (
+          $3::int=1
+          OR EXISTS(
+            SELECT 1 FROM supplier_sourcing_published_items spi
+             WHERE spi.business_id=$2 AND spi.catalog_item_id=supplier_catalog_items.id
+          )
+        )
       ORDER BY availability_status='limited' DESC,updated_at DESC,id DESC
       LIMIT 40`,
-    [Number(accountId)]
+    [Number(accountId),Number(businessId),Number(bindingCount)]
   );
   return rows;
 }
 
-async function supplierTodayMoney(pool,accountId){
+async function supplierTodayMoney(pool,{businessId,accountId}){
   const {rows}=await pool.query(
     `WITH inv AS (
        SELECT purchase_order_id,
@@ -187,6 +197,7 @@ async function supplierTodayMoney(pool,accountId){
          LEFT JOIN inv ON inv.purchase_order_id=p.id
          LEFT JOIN cr ON cr.purchase_order_id=p.id
         WHERE p.supplier_account_id=$1
+          AND p.supplier_business_id=$2
           AND p.status NOT IN ('cancelled','rejected')
      )
      SELECT
@@ -201,7 +212,7 @@ async function supplierTodayMoney(pool,accountId){
        COUNT(*) FILTER(WHERE status IN ('ready_for_pickup','out_for_delivery','delivered','partially_received'))::int ready,
        COUNT(*) FILTER(WHERE status='received')::int completed
        FROM scoped`,
-    [Number(accountId)]
+    [Number(accountId),Number(businessId)]
   );
   const row=rows[0]||{};
   return{
@@ -216,7 +227,7 @@ async function supplierTodayMoney(pool,accountId){
   };
 }
 
-async function supplierMoneyOrders(pool,accountId){
+async function supplierMoneyOrders(pool,{businessId,accountId}){
   const {rows}=await pool.query(
     `WITH inv AS (
        SELECT purchase_order_id,
@@ -249,6 +260,7 @@ async function supplierMoneyOrders(pool,accountId){
          LEFT JOIN inv ON inv.purchase_order_id=p.id
          LEFT JOIN cr ON cr.purchase_order_id=p.id
         WHERE p.supplier_account_id=$1
+          AND p.supplier_business_id=$2
           AND p.status NOT IN ('cancelled','rejected')
      )
      SELECT id,po_number,business_id,status,business_name,earliest_due_date,
@@ -258,7 +270,7 @@ async function supplierMoneyOrders(pool,accountId){
       WHERE commercial_outstanding>0
       ORDER BY receivable_overdue DESC,earliest_due_date NULLS LAST,id DESC
       LIMIT 100`,
-    [Number(accountId)]
+    [Number(accountId),Number(businessId)]
   );
   return rows;
 }
@@ -278,24 +290,17 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
       const me=await identity(req);
       const business=await exactProfileBusiness(pool,me,'supplier',req.query.business_id||null);
       const bindingCount=await supplierBindingCount(pool,me.account.id);
-      if(bindingCount!==1){
-        return res.status(409).json({
-          error:'Supplier Today is unavailable until this multi-business account has explicit business attribution for orders and catalog items.',
-          code:'SUPPLIER_BUSINESS_ATTRIBUTION_REQUIRED',
-          business_id:Number(business.id),
-          active_supplier_businesses:bindingCount
-        });
-      }
       const moneyView=String(req.query.view||'today')==='money';
+      const scope={businessId:business.id,accountId:me.account.id};
       const [orders,rfqs,returns,catalog,backorders,substitutions,money,moneyOrders]=await Promise.all([
-        supplierTodayOrders(pool,me.account.id),
-        supplierTodayRfqs(pool,{businessId:business.id,accountId:me.account.id}),
-        supplierTodayReturns(pool,me.account.id),
-        supplierTodayCatalog(pool,me.account.id),
-        supplierTodayBackorders(pool,{businessId:business.id,accountId:me.account.id}),
-        supplierTodaySubstitutions(pool,{businessId:business.id,accountId:me.account.id}),
-        supplierTodayMoney(pool,me.account.id),
-        moneyView?supplierMoneyOrders(pool,me.account.id):Promise.resolve([])
+        supplierTodayOrders(pool,scope),
+        supplierTodayRfqs(pool,scope),
+        supplierTodayReturns(pool,scope),
+        supplierTodayCatalog(pool,{...scope,bindingCount}),
+        supplierTodayBackorders(pool,scope),
+        supplierTodaySubstitutions(pool,scope),
+        supplierTodayMoney(pool,scope),
+        moneyView?supplierMoneyOrders(pool,scope):Promise.resolve([])
       ]);
       const queueCount=rows=>Number(rows[0]?.queue_total||rows.length);
       const stripQueueMeta=rows=>rows.map(({queue_total,...row})=>row);
@@ -316,7 +321,7 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
         generated_at:new Date().toISOString(),
         detail_mode:moneyView?'money':'today',
         business:{id:Number(business.id),name:business.name,currency_code:business.currency_code||'PHP'},
-        attribution_status:'SINGLE_SUPPLIER_BUSINESS_BINDING',
+        attribution_status:'SUPPLIER_BUSINESS_ATTRIBUTED',
         ...summary,
         rfqs:cleanRfqs,
         returns:cleanReturns,
@@ -357,15 +362,22 @@ export function registerSupplierDailyV5Routes({app,pool,body,identity}){
       const me=await identity(req);
       const business=await exactProfileBusiness(pool,me,'supplier',req.body?.business_id||null);
       const bindingCount=await supplierBindingCount(pool,me.account.id);
-      if(bindingCount!==1){
-        return res.status(409).json({
-          error:'Catalog availability update requires explicit catalog-to-business attribution for multi-business Supplier accounts.',
-          code:'SUPPLIER_CATALOG_BUSINESS_ATTRIBUTION_REQUIRED',
-          business_id:Number(business.id),
-          active_supplier_businesses:bindingCount
-        });
-      }
       const id=Number(req.params.id);
+      if(bindingCount>1){
+        const association=await pool.query(
+          `SELECT 1 FROM supplier_sourcing_published_items
+            WHERE business_id=$1 AND catalog_item_id=$2 LIMIT 1`,
+          [Number(business.id),id]
+        );
+        if(!association.rowCount){
+          return res.status(409).json({
+            error:'This catalog item is not associated with the selected Supplier business.',
+            code:'SUPPLIER_CATALOG_BUSINESS_ATTRIBUTION_REQUIRED',
+            business_id:Number(business.id),
+            catalog_item_id:id
+          });
+        }
+      }
       const current=await pool.query(
         `SELECT * FROM supplier_catalog_items WHERE id=$1 AND supplier_account_id=$2 AND active=TRUE`,
         [id,me.account.id]

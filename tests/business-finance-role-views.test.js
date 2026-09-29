@@ -53,14 +53,17 @@ test('Supplier Finance keeps commercial PO value separate from actual money rece
   assert.match(core,/merchant_receivables/);
   assert.match(core,/business_ledger_recorded_receipts/);
   assert.match(core,/source='supplier_receipt'/);
-  assert.match(core,/PO paid_amount \/ supplier_receipt is recorded payment evidence; it is not bank payout evidence/);
+  assert.match(core,/PO paid_amount \/ supplier_receipt is recorded payment evidence for this Supplier business; it is not bank payout evidence/);
 });
 
-test('Supplier multi-business PO attribution is not invented',()=>{
-  assert.match(core,/MULTI_BUSINESS_SUPPLIER_PO_ATTRIBUTION_PENDING/);
-  assert.match(core,/ACCOUNT_LEVEL_UNATTRIBUTED/);
-  assert.match(core,/fulfilled_po_value:attribution==='SINGLE_SUPPLIER_BUSINESS_BINDING'\?money\(p\.fulfilled_value\):null/);
-  assert.match(core,/POs are linked to Supplier account, not supplier_business_id/);
+test('Supplier multi-business finance is scoped to the exact Supplier economic workspace',()=>{
+  assert.match(core,/p\.supplier_business_id=\$2/);
+  assert.match(core,/SUPPLIER_BUSINESS_ATTRIBUTED/);
+  assert.match(core,/historical_unassigned/);
+  assert.match(core,/SUPPLIER_HISTORICAL_PO_ATTRIBUTION_REVIEW_REQUIRED/);
+  assert.match(core,/supplierBusinessId:bid/);
+  assert.match(core,/po\.supplier_business_id=\$2/);
+  assert.doesNotMatch(core,/ACCOUNT_LEVEL_UNATTRIBUTED/);
 });
 
 test('Merchant and Supplier payouts remain evidence-gated',()=>{

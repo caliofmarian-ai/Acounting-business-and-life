@@ -292,3 +292,8 @@ test('Web Push reuses one system notification per groupable business entity',()=
   assert.match(sw,/\['business-life',data\.entity_type,data\.entity_id\]\.join\(': '\)|\['business-life',data\.entity_type,data\.entity_id\]\.join\(':'\)/);
   assert.match(sw,/renotify:Boolean\(attention\.renotify\)/);
 });
+
+test('Supplier re-invitations create a fresh notification event revision',()=>{
+  assert.match(server,/const inviteRevision=clean\(data\.invited_at,80\)\|\|String\(Date\.now\(\)\)/);
+  assert.match(server,/eventKey:\`supplier-rel:\$\{businessId\}:\$\{supplierId\}:invited:\$\{inviteRevision\}\`/);
+});
