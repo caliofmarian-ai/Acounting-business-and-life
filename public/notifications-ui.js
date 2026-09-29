@@ -1,3 +1,4 @@
+(()=>{
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}
@@ -360,3 +361,5 @@ function boot(){
   });
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+
+})();
