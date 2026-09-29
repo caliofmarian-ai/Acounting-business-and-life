@@ -20,6 +20,15 @@ const PROFILE_STEP_LABEL_KEYS={
   customer_money:'customer_tour.step_money',
   customer_discovery:'customer_tour.step_discovery',
   customer_services:'customer_tour.step_services',
+  merchant_storefront_visibility:'merchant_tour.step_storefront_visibility',
+  merchant_catalog_ai:'merchant_tour.step_catalog_ai',
+  merchant_orders_fulfilment:'merchant_tour.step_orders_fulfilment',
+  merchant_delivery_pricing:'merchant_tour.step_delivery_pricing',
+  merchant_refunds:'merchant_tour.step_refunds',
+  merchant_finance_settlement:'merchant_tour.step_finance_settlement',
+  merchant_supplier_sourcing:'merchant_tour.step_supplier_sourcing',
+  merchant_reputation_safety:'merchant_tour.step_reputation_safety',
+  merchant_promotion:'merchant_tour.step_promotion',
   profile_settings:'profile_tour.step_settings'
 };
 const ROLE_LABEL_KEYS={customer:'role.customer',merchant:'role.merchant',supplier:'role.supplier',courier:'role.courier',service_provider:'role.service_provider'};
@@ -577,6 +586,87 @@ function customerProfileJourneyDefinition(journey,label){
   };
   return null;
 }
+function merchantJourneyTarget(...selectors){
+  return firstVisible(...selectors,'#merchantWorkspaceNav','#merchantMobileTools','.hubHero','#roleHub');
+}
+function merchantProfileJourneyDefinition(journey,label){
+  const role='merchant',step=journey?.current_step_id||journey?.steps?.find(x=>!(journey?.completed_steps||[]).includes(x))||'profile_welcome';
+  const next=()=>completeProfileTourStep(role,step);
+  if(step==='profile_welcome')return{
+    step,
+    title:tr('profile_tour.welcome_title',{role:label},'{role} tutorial'),
+    body:tr('merchant_tour.welcome_body',{},'This Merchant tutorial explains the controls that can affect public visibility, customer commitments and money before optional promotion tools.'),
+    target:merchantJourneyTarget('.hubHero','#merchantWorkspaceNav'),
+    primary:tr('action.continue',{},'Continue'),
+    secondary:tr('action.pause',{},'Pause tutorial'),
+    next
+  };
+  if(step==='merchant_storefront_visibility')return{
+    step,
+    title:tr('merchant_tour.storefront_title',{},'Storefront, address and public visibility'),
+    body:tr('merchant_tour.storefront_body',{},'Your Storefront can be Food, Non-food or Mixed. Business presence, pickup address, map pin, logo, cover and gallery are separate controls. Exact location stays private unless you explicitly turn on public location sharing.'),
+    target:merchantJourneyTarget('#storeLocationPanel','#storefrontV2Media','#storePresence','#marketQuickButton','[data-merchant-mobile-action="marketQuickButton"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_catalog_ai')return{
+    step,
+    title:tr('merchant_tour.catalog_title',{},'Catalog and AI drafts'),
+    body:tr('merchant_tour.catalog_body',{},'Food, packaged resale, fresh/direct and non-food products use different stock rules. AI-generated media is always a draft: review it before choosing it as primary, and publishing remains a separate Merchant action.'),
+    target:merchantJourneyTarget('.merchantCatalogList','#directProductForm','#directKind','#marketQuickButton','[data-merchant-mobile-action="marketQuickButton"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_orders_fulfilment')return{
+    step,
+    title:tr('merchant_tour.orders_title',{},'Orders and fulfilment'),
+    body:tr('merchant_tour.orders_body',{},'Orders move through waiting, accepted, preparing and ready states. Record payment only when you actually received it. Ready, pickup completion and delivery handoff are customer commitments, so update the real state rather than using them as notes.'),
+    target:merchantJourneyTarget('.ordersBoard','.orderSummaryStrip','#ordersQuickButton','[data-merchant-mobile-action="ordersQuickButton"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_delivery_pricing')return{
+    step,
+    title:tr('merchant_tour.delivery_title',{},'Delivery price and handoff'),
+    body:tr('merchant_tour.delivery_body',{},'Delivery is a separate charge from merchandise sales. A valid pickup location and active Admin pricing rule are required for quotes. Confirm who pays the delivery charge before handoff; delivery fees are not merchandise revenue.'),
+    target:merchantJourneyTarget('#pickupLocationForm','[data-bl-pricing="merchant"]','#deliveryQuickButton','[data-merchant-mobile-action="deliveryQuickButton"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_refunds')return{
+    step,
+    title:tr('merchant_tour.refunds_title',{},'Cancellations and refunds'),
+    body:tr('merchant_tour.refunds_body',{},'Cancelling an order and refunding money are different facts. Do not tell a customer a refund succeeded until payment/refund evidence confirms it. Order cancellation may reverse stock, while payment reversal follows the payment record.'),
+    target:merchantJourneyTarget('.orderActions','#ordersQuickButton','[data-merchant-mobile-action="ordersQuickButton"]','.businessFinanceDetails'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_finance_settlement')return{
+    step,
+    title:tr('merchant_tour.finance_title',{},'Finance, fees and settlement'),
+    body:tr('merchant_tour.finance_body',{},'Merchant Finance keeps completed sales, confirmed customer payments, receivables, expenses and Supplier payables separate. Platform fees and payment-processor charges are separate. A payout or settlement is real only when provider evidence confirms it; manual records are not bank balance.'),
+    target:merchantJourneyTarget('.businessFinancePrimary','.businessFinanceDetails','#businessWorkspaceBar','[data-bl-pricing="merchant"]','#merchantHomeButton'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_supplier_sourcing')return{
+    step,
+    title:tr('merchant_tour.suppliers_title',{},'Supplier sourcing'),
+    body:tr('merchant_tour.suppliers_body',{},'Use Suppliers for procurement relationships, catalog offers and purchase orders. Supplier purchases and amounts owed belong to the selected Merchant business workspace and must not be mixed with another business or personal money.'),
+    target:merchantJourneyTarget('#supQuickButton','[data-merchant-mobile-action="supQuickButton"]','#supWorkspace'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_reputation_safety')return{
+    step,
+    title:tr('merchant_tour.reputation_title',{},'Reputation, safety and Support'),
+    body:tr('merchant_tour.reputation_body',{},'Public Merchant reputation and price comparison are opt-in controls. Publish only information you intend customers to see. Use Help & Support or the relevant safety/report flow for incidents; keep private addresses and internal financial details out of public notes.'),
+    target:merchantJourneyTarget('#storeReputation','#storeCompare','#lazySupportBtn','#marketQuickButton','[data-merchant-mobile-action="marketQuickButton"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='merchant_promotion')return{
+    step,
+    title:tr('merchant_tour.promotion_title',{},'Promotion is optional'),
+    body:tr('merchant_tour.promotion_body',{},'Promotion Center is optional and comes after the operational basics. Promotion never changes your storefront publication, prices, stock, order status or payment state automatically.'),
+    target:merchantJourneyTarget('#profilePromotionCenter','[data-merchant-mobile-action="profileSettings"]','.profileSettingsTile'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  return null;
+}
+
 function profileJourneyDefinition(journey){
   const role=journey?.profile_role||'',label=roleLabelFor(role),steps=Array.isArray(journey?.steps)&&journey.steps.length?journey.steps:PROFILE_STEP_ORDER,step=journey?.current_step_id||steps.find(x=>!(journey?.completed_steps||[]).includes(x))||steps[0]||'profile_welcome';
   if(!journey?.is_active_profile)return{
@@ -590,6 +680,10 @@ function profileJourneyDefinition(journey){
   if(role==='customer'){
     const customer=customerProfileJourneyDefinition(journey,label);
     if(customer)return customer;
+  }
+  if(role==='merchant'){
+    const merchant=merchantProfileJourneyDefinition(journey,label);
+    if(merchant)return merchant;
   }
   if(step==='profile_welcome')return{
     step,
