@@ -14,6 +14,7 @@ const securityUi=read('public/auth-hardening-ui.js');
 const adminLifecycleUi=read('public/admin-account-lifecycle-ui.js');
 const adminHtml=read('public/admin-console.html');
 const governance=read('server-profile-governance.js');
+const qa=read('qa-acceptance.js');
 
 test('password registration is pending until email ownership is verified',()=>{
   assert.match(auth,/const accountStatus=companyTest\?'active':'pending_verification'/);
@@ -141,6 +142,20 @@ test('legacy Admin profile approval and reactivation cannot bypass email ownersh
   const authorization=governance.slice(authorizationStart,authorizationEnd);
   assert.match(authorization,/Email ownership must be verified before an operational profile can be reactivated/);
   assert.match(authorization,/account_mode!=='company_test'&&!accountState\.rows\[0\]\.email_verified_at/);
+});
+
+test('Account Lifecycle V1 has an isolated runtime acceptance wave for pending verification, purge and closure',()=>{
+  assert.match(qa,/ACCOUNT_LIFECYCLE_V1_WAVE='account_lifecycle_v1'/);
+  assert.match(qa,/runAccountLifecycleV1Acceptance/);
+  assert.match(qa,/auth_status!=='pending_verification'/);
+  assert.match(qa,/EMAIL_VERIFICATION_REQUIRED/);
+  assert.match(qa,/purge_eligible!==true/);
+  assert.match(qa,/action:'purge_empty_unverified'/);
+  assert.match(qa,/confirmation:'DELETE'/);
+  assert.match(qa,/api\/auth\/account-closure\/close/);
+  assert.match(qa,/confirmation:'CLOSE'/);
+  assert.match(qa,/direct_personal_data_minimized:true/);
+  assert.match(qa,/config\.wave===ACCOUNT_LIFECYCLE_V1_WAVE/);
 });
 
 test('Security & access exposes governed user deletion instead of a blind hard-delete button',()=>{
