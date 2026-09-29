@@ -1080,6 +1080,7 @@ app.get('/admin-operations.css',(_q,res)=>res.type('text/css').send(readFileSync
 app.get('/admin-operations-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-operations-ui.js'),'utf8')));
 app.get('/admin-console.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-console.css'),'utf8')));
 app.get('/admin-console.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-console.js'),'utf8')));
+app.get('/admin-account-lifecycle-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-account-lifecycle-ui.js'),'utf8')));
 app.get('/admin',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
