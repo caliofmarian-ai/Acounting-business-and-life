@@ -13,6 +13,7 @@ const adminFunctions=read('admin-functions.js');
 const securityUi=read('public/auth-hardening-ui.js');
 const adminLifecycleUi=read('public/admin-account-lifecycle-ui.js');
 const adminHtml=read('public/admin-console.html');
+const adminServer=read('server-admin-operations.js');
 const governance=read('server-profile-governance.js');
 const qa=read('qa-acceptance.js');
 
@@ -117,6 +118,12 @@ test('Admin cannot reactivate a never-verified personal account or reopen a clos
   assert.match(hardening,/CLOSED_ACCOUNT_IMMUTABLE/);
   assert.match(hardening,/Email ownership must be verified before this account can become active/);
   assert.match(hardening,/requested==='active'&&target\.account_mode!=='company_test'&&!target\.email_verified_at/);
+});
+
+test('Admin runtime serves the isolated account lifecycle decorator referenced by the Admin HTML',()=>{
+  assert.match(adminHtml,/admin-account-lifecycle-ui\.js/);
+  assert.match(adminServer,/app\.get\('\/admin-account-lifecycle-ui\.js'/);
+  assert.match(adminServer,/public','admin-account-lifecycle-ui\.js'/);
 });
 
 test('Members UI exposes governed closure through an isolated decorator without overwriting the Admin console',()=>{
