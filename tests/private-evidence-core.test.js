@@ -27,6 +27,38 @@ test('private evidence config fails closed when scanner or storage is missing',(
   assert.equal(config.required,true);
 });
 
+test('private evidence may explicitly reuse existing platform S3 credentials without mixing partial private config',()=>{
+  const fallback=privateEvidenceConfig({
+    APP_ENV:'production',
+    PRIVATE_EVIDENCE_REQUIRED:'true',
+    PRIVATE_EVIDENCE_CLAMAV_HOST:'clamav.internal',
+    PRIVATE_EVIDENCE_REUSE_NOTIFICATION_AUDIO_STORAGE:'true',
+    NOTIFICATION_AUDIO_ENDPOINT:'https://storage.example.test',
+    NOTIFICATION_AUDIO_BUCKET:'platform-storage-test',
+    NOTIFICATION_AUDIO_ACCESS_KEY_ID:'PLATFORMTEST',
+    NOTIFICATION_AUDIO_SECRET_ACCESS_KEY:'platform-secret-test-only',
+    NOTIFICATION_AUDIO_REGION:'auto'
+  });
+  assert.equal(fallback.ready,true);
+  assert.equal(fallback.storageSource,'notification_audio_private_prefix');
+  assert.equal(fallback.bucket,'platform-storage-test');
+
+  assert.throws(
+    ()=>privateEvidenceConfig({
+      APP_ENV:'production',
+      PRIVATE_EVIDENCE_REQUIRED:'true',
+      PRIVATE_EVIDENCE_CLAMAV_HOST:'clamav.internal',
+      PRIVATE_EVIDENCE_REUSE_NOTIFICATION_AUDIO_STORAGE:'true',
+      PRIVATE_EVIDENCE_S3_BUCKET:'partial-private-config',
+      NOTIFICATION_AUDIO_ENDPOINT:'https://storage.example.test',
+      NOTIFICATION_AUDIO_BUCKET:'platform-storage-test',
+      NOTIFICATION_AUDIO_ACCESS_KEY_ID:'PLATFORMTEST',
+      NOTIFICATION_AUDIO_SECRET_ACCESS_KEY:'platform-secret-test-only'
+    }),
+    error=>error?.status===503&&error?.code==='PRIVATE_EVIDENCE_CONFIG_MISSING'
+  );
+});
+
 test('private evidence filename extension must agree with declared MIME',()=>{
   assert.equal(validateFileExtension('evidence.pdf','application/pdf'),true);
   assert.equal(validateFileExtension('voice.webm','audio/webm'),true);
