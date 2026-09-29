@@ -13,6 +13,10 @@ import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest,territoryDe
 import {emitNotificationEvent} from './notification-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {ensureAccountSafetyEligibilitySchema,accountAdultEligibilitySnapshot,recordAdultEligibilityAdminReview,requireAdultEligibility} from './account-safety-eligibility-core.js';
+import {
+  bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
+  readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence
+} from './private-evidence-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,11 +28,14 @@ const INVITE_ROLES = new Set(['merchant','supplier','courier']);
 const GOVERNED_ROLES = new Set(['merchant','supplier','courier','service_provider']);
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const APPLICATION_STATES = new Set(['application_started','requirements_pending','submitted','under_review','approved','rejected','suspended','revoked']);
+const APPLICATION_EVIDENCE_MIMES=new Set(['application/pdf','image/png','image/jpeg','image/webp']);
+const MAX_APPLICATION_EVIDENCE_BYTES=2_000_000;
 let authHardeningApp=null;
 let authHardeningReady=false;
 let shuttingDown = false;
 
 const clean=(v,max=700)=>String(v??'').trim().slice(0,max);
+const correlation=req=>clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',160);
 const email=v=>clean(v,160).toLowerCase();
 const authHeader=req=>req.headers.authorization||'';
 const randomToken=()=>crypto.randomBytes(30).toString('base64url');
@@ -61,7 +68,7 @@ async function ensureSuperAdminSelfProfile(client,me,role){
 async function applicationFor(accountId,role){const r=await pool.query(`SELECT pa.*,t.name territory_name,t.status territory_status FROM profile_applications pa LEFT JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 AND pa.role=$2 ORDER BY pa.created_at DESC LIMIT 1`,[accountId,role]);return r.rows[0]||null}
 async function audit(actorId,eventCode,targetAccountId=null,role='',territoryId=null,detail={}){await pool.query(`INSERT INTO profile_governance_events(actor_account_id,event_code,target_account_id,role,territory_id,detail_json) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,[actorId,clean(eventCode,100),targetAccountId,clean(role,40),territoryId,JSON.stringify(detail)]).catch(()=>{})}
 
-async function initDb(){await pool.query(`
+async function initDb(){await ensurePrivateEvidenceSchema(pool);await pool.query(`
   CREATE TABLE IF NOT EXISTS territories (
     id BIGSERIAL PRIMARY KEY,
     country_code TEXT NOT NULL DEFAULT 'PH',
@@ -125,9 +132,13 @@ async function initDb(){await pool.query(`
     application_id BIGINT NOT NULL REFERENCES profile_applications(id) ON DELETE CASCADE,
     document_type TEXT NOT NULL,
     label TEXT NOT NULL DEFAULT '',
-    evidence_data_url TEXT NOT NULL,
+    evidence_data_url TEXT,
+    private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  ALTER TABLE profile_application_documents ALTER COLUMN evidence_data_url DROP NOT NULL;
+  ALTER TABLE profile_application_documents ADD COLUMN IF NOT EXISTS private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id);
+  CREATE INDEX IF NOT EXISTS profile_application_documents_private_evidence_idx ON profile_application_documents(private_evidence_object_id);
 
   CREATE TABLE IF NOT EXISTS profile_authorizations (
     id BIGSERIAL PRIMARY KEY,
@@ -215,8 +226,40 @@ app.post('/api/governance/service-provider/start',body,async(req,res,next)=>{try
 
 app.put('/api/governance/applications/:id',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),appRow=await pool.query(`SELECT * FROM profile_applications WHERE id=$1 AND account_id=$2`,[id,me.account.id]);if(!appRow.rowCount)return res.status(404).json({error:'Application not found'});const current=appRow.rows[0];if(!['application_started','requirements_pending','rejected'].includes(current.status))return res.status(409).json({error:'Application can no longer be edited in its current state'});const data=req.body?.application_data&&typeof req.body.application_data==='object'?req.body.application_data:{};const{rows}=await pool.query(`UPDATE profile_applications SET proposed_business_name=$1,applicant_note=$2,responsibility_acknowledged=$3,application_data=$4::jsonb,status='requirements_pending',updated_at=NOW() WHERE id=$5 RETURNING *`,[clean(req.body?.proposed_business_name,180),clean(req.body?.applicant_note,1600),Boolean(req.body?.responsibility_acknowledged),JSON.stringify(data),id]);res.json(rows[0])}catch(e){next(e)}})
 
-function validEvidence(data){const x=String(data||'');if(!x)return false;if(x.length>2_800_000)return false;return /^data:(application\/pdf|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/.test(x)}
-app.post('/api/governance/applications/:id/documents',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id);const a=await pool.query(`SELECT 1 FROM profile_applications WHERE id=$1 AND account_id=$2 AND status IN ('application_started','requirements_pending','rejected')`,[id,me.account.id]);if(!a.rowCount)return res.status(409).json({error:'Application is not editable'});if(!validEvidence(req.body?.evidence_data_url))return res.status(400).json({error:'Evidence must be a PDF, PNG, JPEG or WebP within the preview size limit'});const count=await pool.query(`SELECT COUNT(*)::int n FROM profile_application_documents WHERE application_id=$1`,[id]);if(Number(count.rows[0].n)>=8)return res.status(409).json({error:'Application evidence limit reached'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'profile_application',subjectId:id});const{rows}=await pool.query(`INSERT INTO profile_application_documents(application_id,document_type,label,evidence_data_url) VALUES($1,$2,$3,$4) RETURNING id,document_type,label,created_at`,[id,clean(req.body?.document_type,80)||'supporting_document',clean(req.body?.label,180),String(req.body.evidence_data_url)]);res.status(201).json(rows[0])}catch(e){next(e)}})
+app.post('/api/governance/applications/:id/documents',body,async(req,res,next)=>{
+  let stored=null;
+  try{
+    const me=await identity(req),id=Number(req.params.id),fileName=clean(req.body?.file_name,220);
+    const a=await pool.query(`SELECT 1 FROM profile_applications WHERE id=$1 AND account_id=$2 AND status IN ('application_started','requirements_pending','rejected')`,[id,me.account.id]);
+    if(!a.rowCount)return res.status(409).json({error:'Application is not editable'});
+    if(!fileName)return res.status(400).json({error:'Evidence filename is required'});
+    const count=await pool.query(`SELECT COUNT(*)::int n FROM profile_application_documents WHERE application_id=$1`,[id]);
+    if(Number(count.rows[0].n)>=8)return res.status(409).json({error:'Application evidence limit reached'});
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'profile_application',subjectId:id});
+    stored=await storePrivateEvidence(pool,{
+      dataUrl:req.body?.evidence_data_url,fileName,
+      allowedMimes:[...APPLICATION_EVIDENCE_MIMES],maxBytes:MAX_APPLICATION_EVIDENCE_BYTES,
+      ownerAccountId:me.account.id,actorAccountId:me.account.id,
+      sourceType:'profile_application_document',sourceId:`pending:${id}`,
+      purpose:'profile_application_document_upload',classification:'profile_application_document',
+      correlationId:correlation(req)
+    });
+    const{rows}=await pool.query(`
+      INSERT INTO profile_application_documents(
+        application_id,document_type,label,evidence_data_url,private_evidence_object_id
+      ) VALUES($1,$2,$3,NULL,$4)
+      RETURNING id,document_type,label,created_at
+    `,[id,clean(req.body?.document_type,80)||'supporting_document',clean(req.body?.label,180),stored.id]);
+    await bindPrivateEvidenceSource(pool,{
+      objectId:stored.id,sourceType:'profile_application_document',sourceId:String(rows[0].id),
+      actorAccountId:me.account.id,purpose:'profile_application_document_bind',correlationId:correlation(req)
+    });
+    res.status(201).json(rows[0]);
+  }catch(e){
+    if(stored?.id)await deletePrivateEvidence(pool,{objectId:stored.id,purpose:'profile_application_document_rollback',correlationId:correlation(req)}).catch(()=>{});
+    next(e);
+  }
+})
 
 app.post('/api/governance/applications/:id/submit',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id);await requireAdultEligibility(pool,me.account.id,{action:'submit an operational profile application'});const a=await pool.query(`SELECT * FROM profile_applications WHERE id=$1 AND account_id=$2`,[id,me.account.id]);if(!a.rowCount)return res.status(404).json({error:'Application not found'});const x=a.rows[0];if(!x.responsibility_acknowledged)return res.status(409).json({error:'Acknowledge the role responsibility declaration before submitting'});if(x.role==='merchant'&&!clean(x.proposed_business_name,180))return res.status(409).json({error:'Merchant application needs a business/store name'});if(x.role==='service_provider'){const ids=Array.isArray(x.application_data?.requested_category_ids)?x.application_data.requested_category_ids.map(Number).filter(Number.isInteger):[];if(!ids.length)return res.status(409).json({error:'Choose at least one Local Services category'});}const{rows}=await pool.query(`UPDATE profile_applications SET status='submitted',submitted_at=NOW(),decision_reason='',updated_at=NOW() WHERE id=$1 AND status IN ('application_started','requirements_pending','rejected') RETURNING *`,[id]);if(!rows.length)return res.status(409).json({error:'Application cannot be submitted from its current state'});await audit(me.account.id,'application_submitted',me.account.id,x.role,x.territory_id,{application_id:id});res.json(rows[0])}catch(e){next(e)}})
 
@@ -289,7 +332,23 @@ app.get('/api/governance/invite/:token',async(req,res,next)=>{try{const me=await
 app.post('/api/governance/invite/:token/accept',body,async(req,res,next)=>{try{const me=await identity(req),tokenHash=hash(clean(req.params.token,300)),q=await pool.query(`SELECT i.id FROM profile_invitations i JOIN territories t ON t.id=i.territory_id WHERE i.token_hash=$1 AND i.status='invited' AND i.expires_at>NOW() AND t.country_code='PH' AND t.status IN ('onboarding','active')`,[tokenHash]);if(!q.rowCount)return res.status(409).json({error:'Invitation is invalid, expired or its operating territory is no longer open for onboarding'});req.params.id=String(q.rows[0].id);const fake={...req,params:{id:String(q.rows[0].id)}};const inv=await pool.query(`SELECT * FROM profile_invitations WHERE id=$1`,[q.rows[0].id]);const geo=await accountGeographySnapshot(pool,me.account.id);if(geo.assigned){const assigned=await requireAssignedOpenBarangay(pool,me.account.id);if(Number(inv.rows[0].territory_id)!==Number(assigned.id))return res.status(409).json({error:'This invitation is for a different Business & Life area than your assigned barangay'})}else if(me.account.account_mode!=='company_test')await requireAssignedOpenBarangay(pool,me.account.id);if(email(inv.rows[0].target_email)!==email(me.account.email))return res.status(403).json({error:'Sign in with the invited email address'});const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE profile_invitations SET status='accepted',accepted_by_account_id=$1,accepted_at=NOW() WHERE id=$2`,[me.account.id,q.rows[0].id]);const a=await client.query(`INSERT INTO profile_applications(account_id,role,territory_id,invitation_id,status) VALUES($1,$2,$3,$4,'application_started') ON CONFLICT(account_id,role,territory_id) WHERE status NOT IN ('rejected','revoked') DO UPDATE SET invitation_id=EXCLUDED.invitation_id,updated_at=NOW() RETURNING *`,[me.account.id,inv.rows[0].role,inv.rows[0].territory_id,q.rows[0].id]);await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,$2,FALSE,'private','application_started') ON CONFLICT(account_id,role) DO UPDATE SET enabled=FALSE,visibility='private',status='application_started',updated_at=NOW()`,[me.account.id,inv.rows[0].role]);await client.query('COMMIT');await audit(me.account.id,'invitation_accepted',me.account.id,inv.rows[0].role,inv.rows[0].territory_id,{invitation_id:q.rows[0].id});res.json(a.rows[0])}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
 app.get('/api/governance/admin/applications/:id',async(req,res,next)=>{try{await requireAdmin(req);const id=Number(req.params.id);const a=await pool.query(`SELECT pa.*,ac.display_name,ac.email,t.name territory_name FROM profile_applications pa JOIN accounts ac ON ac.id=pa.account_id JOIN territories t ON t.id=pa.territory_id WHERE pa.id=$1`,[id]);if(!a.rowCount)return res.status(404).json({error:'Application not found'});const requestedIds=Array.isArray(a.rows[0].application_data?.requested_category_ids)?a.rows[0].application_data.requested_category_ids.map(Number).filter(Number.isInteger):[];const[docs,services,credentials,requestedCategories,adultEligibility]=await Promise.all([pool.query(`SELECT id,document_type,label,created_at FROM profile_application_documents WHERE application_id=$1 ORDER BY created_at`,[id]),pool.query(`SELECT s.category_id,c.code,c.name,c.credential_gate,s.service_label FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[a.rows[0].account_id]),pool.query(`SELECT id,credential_type,title,issuing_body,verification_status,expiry_date FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[a.rows[0].account_id]),requestedIds.length?pool.query(`SELECT id,code,name,credential_gate FROM service_categories WHERE id=ANY($1::bigint[]) AND active=TRUE ORDER BY sort_order,name`,[requestedIds]):Promise.resolve({rows:[]}),accountAdultEligibilitySnapshot(pool,a.rows[0].account_id)]);res.json({...a.rows[0],adult_eligibility:adultEligibility,documents:docs.rows,existing_services:services.rows,credentials:credentials.rows,requested_categories:requestedCategories.rows})}catch(e){next(e)}})
-app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{try{await requireAdmin(req);const q=await pool.query(`SELECT document_type,label,evidence_data_url FROM profile_application_documents WHERE id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Document not found'});res.json(q.rows[0])}catch(e){next(e)}})
+app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{
+  try{
+    const me=await requireAdmin(req);
+    const q=await pool.query(`
+      SELECT d.id,d.private_evidence_object_id
+        FROM profile_application_documents d
+       WHERE d.id=$1
+    `,[Number(req.params.id)]);
+    if(!q.rowCount)return res.status(404).json({error:'Document not found'});
+    if(!q.rows[0].private_evidence_object_id)return res.status(409).json({error:'Private evidence migration is required before this document can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    const evidence=await readPrivateEvidence(pool,{
+      objectId:q.rows[0].private_evidence_object_id,actorAccountId:me.account.id,
+      purpose:'profile_application_document_read',correlationId:correlation(req)
+    });
+    return sendPrivateEvidence(res,evidence);
+  }catch(e){next(e)}
+})
 
 async function ensureApprovedProfile(client,appRow,adminId,approvedCategoryIds=[]){const accountId=Number(appRow.account_id),role=appRow.role,territoryId=Number(appRow.territory_id);await client.query(`INSERT INTO profile_authorizations(account_id,role,territory_id,application_id,status,approved_by_account_id,approved_at,reason) VALUES($1,$2,$3,$4,'active',$5,NOW(),'Approved') ON CONFLICT(account_id,role,COALESCE(territory_id,0)) DO UPDATE SET application_id=EXCLUDED.application_id,status='active',approved_by_account_id=EXCLUDED.approved_by_account_id,approved_at=NOW(),reason='Approved',updated_at=NOW()`,[accountId,role,territoryId,appRow.id,adminId]);await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,$2,TRUE,'private','active') ON CONFLICT(account_id,role) DO UPDATE SET enabled=TRUE,status='active',visibility=CASE WHEN profiles.visibility='public' THEN 'public' ELSE 'private' END,updated_at=NOW()`,[accountId,role]);if(role==='merchant'){const existing=await client.query(`SELECT 1 FROM business_memberships WHERE account_id=$1 AND active=TRUE LIMIT 1`,[accountId]);if(!existing.rowCount){const name=clean(appRow.proposed_business_name,180)||'My Business';const b=await client.query(`INSERT INTO businesses(name,country_code,currency_code,territory_id) VALUES($1,'PH','PHP',$2) RETURNING id`,[name,territoryId]);await client.query(`INSERT INTO business_memberships(business_id,account_id,membership_role,active) VALUES($1,$2,'owner',TRUE)`,[b.rows[0].id,accountId]);}}
 if(role==='supplier')await client.query(`INSERT INTO supplier_profiles(account_id,supplier_name) SELECT id,COALESCE(NULLIF($2,''),display_name) FROM accounts WHERE id=$1 ON CONFLICT(account_id) DO NOTHING`,[accountId,clean(appRow.proposed_business_name,180)]);

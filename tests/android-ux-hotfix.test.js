@@ -93,9 +93,9 @@ test('Support English translation is server-capable and retains browser fallback
 });
 
 test('MediaRecorder codec data URLs are normalized to their base audio MIME',()=>{
-  assert.match(supportServer,/const meta=raw\.slice\(5,comma\),parts=meta\.split\(';'\)/);
-  assert.match(supportServer,/const mime=String\(parts\.shift\(\)\|\|''\)\.toLowerCase\(\)/);
-  assert.match(supportServer,/parts\.some\(x=>x\.toLowerCase\(\)==='base64'\)/);
+  assert.match(supportServer,/return decodeVerifiedDataUrl\(dataUrl,\{/);
+  assert.match(supportServer,/allowedMimes:\[\.\.\.SUPPORT_IMAGE_MIMES,\.\.\.SUPPORT_DOC_MIMES,\.\.\.SUPPORT_AUDIO_MIMES\]/);
+  assert.match(supportServer,/validateFileExtension\(fileName,mime\)/);
 });
 
 test('ticket submit waits until voice processing finishes',()=>{
