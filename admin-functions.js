@@ -22,7 +22,7 @@ export const ADMIN_FUNCTION_BUNDLES = Object.freeze({
     code:'member_account_controls',label:'Member Account Controls',
     description:'Explicit scoped authority to suspend/reactivate member accounts and revoke active sessions.',
     assignable_to:['country_admin','territory_admin','specialist'],
-    permissions:['admin.console','members.view','members.manage_status','members.sessions.revoke']
+    permissions:['admin.console','members.view','members.manage_status','members.close_account','members.sessions.revoke']
   }),
   member_context_notes:Object.freeze({
     code:'member_context_notes',label:'Member Context Notes',
