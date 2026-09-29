@@ -456,6 +456,28 @@ async function membersPanel(){
     +'<div class="memberListHeader"><strong>'+esc(data.total||0)+' members</strong><span class="muted">Private addresses, passwords, sessions, IP data and uploaded evidence are not exposed here.</span></div>'
     +paging+list+paging+'</div>';
 }
+async function initializeMemberDeletionControl(memberId){
+  const mount=document.getElementById('memberAccountLifecycleMount');
+  if(!mount)return;
+  const lifecycle=window.BusinessLifeAdminAccountLifecycle;
+  if(!lifecycle?.decorate){
+    mount.dataset.lifecycleState='error';
+    mount.innerHTML='<span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="error">Deletion controls did not initialize. Reload this member and try again.</p>';
+    return;
+  }
+  try{
+    await lifecycle.decorate(Number(memberId));
+  }catch(error){
+    mount.dataset.lifecycleState='error';
+    mount.innerHTML='<span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="error">'+esc(error?.message||'Deletion controls could not be loaded.')+'</p>';
+    return;
+  }
+  if(!['ready','error'].includes(String(mount.dataset.lifecycleState||''))){
+    mount.dataset.lifecycleState='error';
+    mount.innerHTML='<span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="error">Deletion eligibility did not finish loading. Reload this member and try again.</p>';
+  }
+}
+
 async function wireMembers(){
   document.querySelectorAll('[data-member-hub-tab]').forEach(button=>button.onclick=async()=>{
     state.memberHubTab=String(button.dataset.memberHubTab||'');
@@ -468,7 +490,7 @@ async function wireMembers(){
   }
   if(state.memberDetailId){
     document.getElementById('memberBack')?.addEventListener('click',async()=>{state.memberDetailId=null;state.memberDetail=null;await renderActive()});
-    await window.BusinessLifeAdminAccountLifecycle?.decorate?.();
+    await initializeMemberDeletionControl(state.memberDetailId);
     const statusForm=document.getElementById('memberStatusForm');
     if(statusForm)statusForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(statusForm),out=statusForm.querySelector('[data-member-control-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/status',{method:'PATCH',body:JSON.stringify({status:statusForm.dataset.memberStatus,reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">Account status updated and audited.</div>';state.memberSummary=null;await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     const sessionsForm=document.getElementById('memberSessionsForm');

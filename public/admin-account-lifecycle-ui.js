@@ -1,19 +1,29 @@
 const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 
 async function lifecycleApi(path,options={}){
-  const response=await fetch(path,{
-    ...options,
-    headers:{'Content-Type':'application/json',...(options.headers||{})}
-  });
-  const payload=await response.json().catch(()=>({}));
-  if(!response.ok){
-    const error=new Error(payload.error||('Request failed ('+response.status+')'));
-    error.status=response.status;
-    error.code=payload.code||'';
-    error.assessment=payload.assessment||null;
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),12000);
+  try{
+    const response=await fetch(path,{
+      ...options,
+      signal:options.signal||controller.signal,
+      headers:{'Content-Type':'application/json',...(options.headers||{})}
+    });
+    const payload=await response.json().catch(()=>({}));
+    if(!response.ok){
+      const error=new Error(payload.error||('Request failed ('+response.status+')'));
+      error.status=response.status;
+      error.code=payload.code||'';
+      error.assessment=payload.assessment||null;
+      throw error;
+    }
+    return payload;
+  }catch(error){
+    if(error?.name==='AbortError')throw Object.assign(new Error('Deletion safety check timed out. Try again.'),{status:504,code:'ACCOUNT_DELETION_CHECK_TIMEOUT'});
     throw error;
+  }finally{
+    clearTimeout(timeout);
   }
-  return payload;
 }
 
 function currentMemberId(){
@@ -61,14 +71,18 @@ function stepUpMarkup(step){
     +'</form>';
 }
 
-async function decorateMemberLifecycle(){
+async function decorateMemberLifecycle(explicitMemberId=null){
   const mount=document.getElementById('memberAccountLifecycleMount');
   if(!mount)return;
-  const memberId=currentMemberId();
-  if(!memberId)return;
+  const memberId=Number(explicitMemberId||currentMemberId()||0);
+  if(!Number.isInteger(memberId)||memberId<=0){
+    mount.innerHTML='<span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="error">Member identity is unavailable. Reload this member and try again.</p>';
+    return;
+  }
   const existing=document.getElementById('memberAccountLifecycleControl');
   if(existing?.dataset.memberId===String(memberId))return;
   existing?.remove();
+  mount.dataset.lifecycleState='loading';
 
   let assessment;
   try{
@@ -78,11 +92,13 @@ async function decorateMemberLifecycle(){
     section.id='memberAccountLifecycleControl';
     section.dataset.memberId=String(memberId);
     section.className='memberReadOnlyControls';
-    section.innerHTML='<span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="muted">'+esc(error.message||'Deletion eligibility could not be checked.')+'</p><button type="button" class="danger" disabled>Delete account</button>';
+    section.innerHTML='<span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="error">'+esc(error.message||'Deletion eligibility could not be checked.')+'</p><button type="button" class="secondary" data-member-delete-retry>Retry check</button>';
     mount.replaceChildren(section);
+    mount.dataset.lifecycleState='error';
+    section.querySelector('[data-member-delete-retry]')?.addEventListener('click',()=>{section.remove();decorateMemberLifecycle(memberId).catch(()=>{})});
     return;
   }
-  if(currentMemberId()!==memberId)return;
+  if(Number(currentMemberId()||memberId)!==memberId)return;
 
   const step=await lifecycleApi('/api/auth/step-up/status').catch(()=>({verified:false}));
   const details=document.createElement('details');
@@ -95,6 +111,7 @@ async function decorateMemberLifecycle(){
     +'<div id="memberLifecycleStepUp">'+stepUpMarkup(step)+'</div>'
     +'<div id="memberLifecycleAssessment">'+confirmationMarkup(assessment)+'</div></div>';
   mount.replaceChildren(details);
+  mount.dataset.lifecycleState='ready';
   bindMemberLifecycle(details,memberId);
 }
 
@@ -166,5 +183,5 @@ const observer=new MutationObserver(()=>{
 observer.observe(document.documentElement,{subtree:true,childList:true});
 document.addEventListener('DOMContentLoaded',()=>decorateMemberLifecycle().catch(()=>{}));
 window.BusinessLifeAdminAccountLifecycle=Object.freeze({
-  decorate:()=>decorateMemberLifecycle().catch(()=>{})
+  decorate:memberId=>decorateMemberLifecycle(memberId)
 });
