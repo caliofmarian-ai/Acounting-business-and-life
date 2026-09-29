@@ -94,3 +94,9 @@ test('Customer Experience QA wave covers recovery Money notifications Support pr
   ])assert.ok(source.includes(marker),`missing Customer Experience QA marker: ${marker}`);
   assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|resetToken|previewUrl|recoveryPassword|secret)/i);
 });
+
+test('Customer Experience uses a commit-scoped transaction fixture so recent Money evidence is current',()=>{
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  assert.match(source,/const QA_REVISION=clean\(process\.env\.RAILWAY_GIT_COMMIT_SHA\|\|process\.env\.GITHUB_SHA/);
+  assert.match(source,/orderNote:CUSTOMER_MARKETPLACE_NOTE\+' '\+CUSTOMER_EXPERIENCE_WAVE\+' '\+QA_REVISION/);
+});
