@@ -39,6 +39,7 @@ const MARKETPLACE_RUNTIME_V12_WAVE='marketplace_runtime_v12';
 const ORDERS_RUNTIME_V13_WAVE='orders_runtime_v13';
 const ACCOUNT_AUTH_RUNTIME_V14_WAVE='account_auth_runtime_v14';
 const ACCOUNT_LIFECYCLE_V1_WAVE='account_lifecycle_v1';
+const EMAIL_OWNERSHIP_V2_WAVE='email_ownership_v2';
 const ACCOUNTING_RUNTIME_V15_WAVE='accounting_runtime_v15';
 const NOTIFICATIONS_RUNTIME_V16_WAVE='notifications_runtime_v16';
 const PROFILE_SELECTOR_BASELINE_WAVE='profile_selector_baseline_v1';
@@ -56,7 +57,7 @@ const DELIVERY_ROUTING_V2C_RUNTIME_WAVE='delivery_routing_v2c_runtime';
 const DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE='delivery_refund_economics_v2d_runtime';
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
 const SESSION_SECURITY_V2_WAVE='session_security_v2';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -4964,6 +4965,81 @@ async function runAccountingRuntimeV15Acceptance({pool,base,secret}){
 }
 
 
+async function runEmailOwnershipV2Acceptance({pool,base,secret}){
+  const suffix=crypto.randomBytes(6).toString('hex');
+  const email=`dropi.deliveries+ownership-${suffix}@gmail.com`;
+  const password='QaEmailOwnership-'+crypto.randomBytes(12).toString('base64url')+'!9';
+  let accountId=null;
+  try{
+    const rejected=await requestJson(base,'/api/auth/email/preflight',{
+      method:'POST',body:{email:'nobody@definitely-not-real.invalid'}
+    });
+    expectStatus(rejected,422,'Email Ownership V2 invalid-domain preflight');
+    if(rejected.json?.code!=='EMAIL_DOMAIN_NOT_DELIVERABLE')throw new Error('Email Ownership V2 invalid domain did not fail with the expected code.');
+
+    const preflight=await requestJson(base,'/api/auth/email/preflight',{method:'POST',body:{email}});
+    expectStatus(preflight,200,'Email Ownership V2 Gmail preflight');
+    if(preflight.json?.domain_can_receive_email!==true)throw new Error('Email Ownership V2 did not accept a real mail domain.');
+
+    const started=await requestJson(base,'/api/auth/register',{
+      method:'POST',
+      body:{
+        display_name:'QA Email Ownership',
+        email,
+        password,
+        phone:'',
+        address:'',
+        adult_eligibility_attested:true,
+        adult_eligibility_policy_version:'ph-adult-eligibility-v1'
+      }
+    });
+    expectStatus(started,202,'Email Ownership V2 staged registration');
+    if(started.json?.registration_pending!==true||started.json?.account_created!==false)throw new Error('Email Ownership V2 public registration created an account too early.');
+
+    const beforeAccount=await pool.query(`SELECT id FROM accounts WHERE LOWER(email)=$1`,[email.toLowerCase()]);
+    if(beforeAccount.rowCount)throw new Error('Email Ownership V2 created an accounts row before inbox verification.');
+    const intent=await pool.query(`SELECT id,expires_at FROM account_registration_intents WHERE LOWER(email)=$1`,[email.toLowerCase()]);
+    if(intent.rowCount!==1)throw new Error('Email Ownership V2 did not create exactly one temporary registration intent.');
+
+    const previewUrl=clean(started.json?.preview_registration_verify_url,1200);
+    if(!previewUrl)throw new Error('Email Ownership V2 Preview did not expose the controlled verification link.');
+    let token='';
+    try{token=new URL(previewUrl).searchParams.get('registration_verify_token')||''}catch{}
+    if(!token)throw new Error('Email Ownership V2 Preview verification token is missing.');
+
+    const verified=await requestJson(base,'/api/auth/registration/verify',{
+      method:'POST',
+      headers:{'X-BL-Auth-Mode':'bearer','X-BL-QA-Automation':String(secret||'')},
+      body:{token}
+    });
+    expectStatus(verified,200,'Email Ownership V2 verified registration');
+    if(verified.json?.registration_completed!==true||verified.json?.account_created!==true)throw new Error('Email Ownership V2 did not create the account after verification.');
+
+    const after=await pool.query(`SELECT id,auth_status,email_verified_at FROM accounts WHERE LOWER(email)=$1`,[email.toLowerCase()]);
+    if(after.rowCount!==1||after.rows[0].auth_status!=='active'||!after.rows[0].email_verified_at)throw new Error('Email Ownership V2 verified account state is invalid.');
+    accountId=Number(after.rows[0].id);
+    const remainingIntent=await pool.query(`SELECT 1 FROM account_registration_intents WHERE LOWER(email)=$1`,[email.toLowerCase()]);
+    if(remainingIntent.rowCount)throw new Error('Email Ownership V2 did not remove the temporary registration intent.');
+
+    const replay=await requestJson(base,'/api/auth/registration/verify',{method:'POST',body:{token}});
+    expectStatus(replay,400,'Email Ownership V2 replay denial');
+
+    return{
+      status:'PASS',
+      wave:EMAIL_OWNERSHIP_V2_WAVE,
+      invalid_domain_blocked:true,
+      real_domain_preflight:true,
+      no_account_before_verification:true,
+      account_created_after_verification:true,
+      replay_denied:true
+    };
+  }finally{
+    await pool.query(`DELETE FROM account_registration_intents WHERE LOWER(email)=$1`,[email.toLowerCase()]).catch(()=>{});
+    if(accountId)await pool.query(`DELETE FROM accounts WHERE id=$1`,[accountId]).catch(()=>{});
+  }
+}
+
+
 async function registerLifecycleQaAccount({base,label,suffix}){
   const email=('qa-lifecycle-'+suffix+'-'+crypto.randomBytes(5).toString('hex')+'@example.test').toLowerCase();
   const password='QaLifecycle-'+crypto.randomBytes(10).toString('base64url')+'!9';
@@ -5599,6 +5675,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
       ?await runNotificationsRuntimeV16Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNTING_RUNTIME_V15_WAVE
       ?await runAccountingRuntimeV15Acceptance({pool,base,secret:config.secret})
+      :config.wave===EMAIL_OWNERSHIP_V2_WAVE
+      ?await runEmailOwnershipV2Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNT_LIFECYCLE_V1_WAVE
       ?await runAccountLifecycleV1Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNT_AUTH_RUNTIME_V14_WAVE
@@ -5677,5 +5755,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
 };
