@@ -36,10 +36,10 @@ function blockerMarkup(blockers=[]){
 function confirmationMarkup(assessment){
   if(assessment?.already_closed)return '<div class="notice">This account is already closed.</div>';
   if(Number(assessment?.blocker_count||0)>0){
-    return '<div class="notice"><strong>Account closure is blocked.</strong><p>Resolve every outstanding financial, operational, Support, security or legal item first.</p></div>'+blockerMarkup(assessment.blockers||[]);
+    return '<div class="notice"><strong>Account deletion is blocked.</strong><p>Resolve every outstanding financial, operational, Support, security or legal item first.</p></div>'+blockerMarkup(assessment.blockers||[])+'<button type="button" class="danger" disabled>Delete account</button>';
   }
   const purge=Boolean(assessment?.purge_eligible),word=purge?'DELETE':'CLOSE',action=purge?'purge_empty_unverified':'close';
-  const title=purge?'Delete empty unverified registration':'Close account safely';
+  const title='Delete account';
   return '<form id="memberLifecycleClosureForm" class="adminForm memberControlForm" data-action="'+action+'" data-confirmation="'+word+'">'
     +'<label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why is this governed account action necessary?"></textarea></label>'
     +'<label>Type '+word+' to confirm<input name="confirmation" autocomplete="off" maxlength="20" required></label>'
@@ -84,11 +84,12 @@ async function decorateMemberLifecycle(){
 
   const step=await lifecycleApi('/api/auth/step-up/status').catch(()=>({verified:false}));
   const details=document.createElement('details');
+  details.open=true;
   details.id='memberAccountLifecycleControl';
   details.dataset.memberId=String(memberId);
   details.className='memberDangerZone memberControlDisclosure';
-  details.innerHTML='<summary><div><span class="memberEyebrow">GOVERNED ACCOUNT CLOSURE</span><strong>Close or delete account</strong><span>Financial, security and legal blockers are checked before execution.</span></div></summary>'
-    +'<div class="memberControlBody"><p class="muted memberControlBoundary">This is not a blind hard-delete. Empty never-verified registrations may be deleted only when no retained history exists. Other eligible accounts are closed with required historical evidence retained.</p>'
+  details.innerHTML='<summary><div><span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><span>Visible Super Admin control for this member. Safety blockers are checked before execution.</span></div></summary>'
+    +'<div class="memberControlBody"><p class="muted memberControlBoundary">Empty never-verified registrations with no retained history are permanently removed. Other eligible accounts are closed, personal access is removed and only records that must be retained for accounting, completed transactions, disputes, fraud/security or legal obligations remain with minimal identifiers.</p>'
     +'<div id="memberLifecycleStepUp">'+stepUpMarkup(step)+'</div>'
     +'<div id="memberLifecycleAssessment">'+confirmationMarkup(assessment)+'</div></div>';
   rail.appendChild(details);
