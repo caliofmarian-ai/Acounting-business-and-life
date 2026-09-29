@@ -5012,6 +5012,8 @@ async function runAccountLifecycleV1Acceptance({pool,base,secret}){
   };
   try{
     const admin=await qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Account Lifecycle V1 Super Admin QA'});
+    const adminBefore=await requestJson(base,'/api/me',{token:admin.token});
+    if(adminBefore.status!==200)throw new Error('Account Lifecycle V1 Admin baseline /api/me status '+adminBefore.status+': '+clean(adminBefore.json?.error||adminBefore.json?.code||'unknown',160));
 
     const unverified=await registerLifecycleQaAccount({base,label:'QA Lifecycle Unverified',suffix:'unverified'});
     createdIds.push(unverified.accountId);
@@ -5022,8 +5024,10 @@ async function runAccountLifecycleV1Acceptance({pool,base,secret}){
     expectStatus(denied,403,'Unverified operational mutation denial');
     if(denied.json?.code!=='EMAIL_VERIFICATION_REQUIRED')throw new Error('Unverified operational mutation did not expose the verification-required code.');
 
+    const adminAfterRegistration=await requestJson(base,'/api/me',{token:admin.token});
+    if(adminAfterRegistration.status!==200)throw new Error('Account Lifecycle V1 Admin session changed after registration: '+adminAfterRegistration.status+' '+clean(adminAfterRegistration.json?.error||adminAfterRegistration.json?.code||'unknown',160));
     const purgePreflight=await requestJson(base,`/api/admin/members/${unverified.accountId}/account-closure/preflight`,{token:admin.token});
-    expectStatus(purgePreflight,200,'Empty unverified Admin preflight');
+    if(purgePreflight.status!==200)throw new Error('Empty unverified Admin preflight status '+purgePreflight.status+': '+clean(purgePreflight.json?.error||purgePreflight.json?.code||'unknown',180));
     if(purgePreflight.json?.purge_eligible!==true||Number(purgePreflight.json?.blocker_count||0)!==0)throw new Error('Empty unverified registration was not purge eligible.');
 
     const purged=await requestJson(base,`/api/admin/members/${unverified.accountId}/account-closure`,{
