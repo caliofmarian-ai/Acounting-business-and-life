@@ -391,7 +391,9 @@ app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(re
   const businessId=role==='merchant'?Number(req.body?.business_id):null;
   if(role==='merchant'&&(!Number.isInteger(businessId)||businessId<1))return res.status(400).json({error:'Merchant business_id is required'});
   const commerceState=clean(req.body?.commerce_state,40),reason=clean(req.body?.reason,500);
+  const commerceScope=req.body?.commerce_scope&&typeof req.body.commerce_scope==='object'&&!Array.isArray(req.body.commerce_scope)?req.body.commerce_scope:{};
   if(!['readiness_only','eligible_limited','eligible_full'].includes(commerceState))return res.status(400).json({error:'Choose readiness_only, eligible_limited or eligible_full'});
+  if(commerceState==='eligible_limited'&&!Object.keys(commerceScope).length)return res.status(400).json({error:'Define the limited commerce scope before granting limited eligibility'});
   const before=await microbusinessReadinessSnapshot(pool,{accountId,profileRole:role,businessId,verifyOwnership:true});
   const authorization=await activeAuthorization(accountId,role);
   if(commerceState!=='readiness_only'){
@@ -401,7 +403,7 @@ app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(re
   }
   const readiness=await setMicrobusinessCommerceState(pool,{
     accountId,profileRole:role,businessId,actorAccountId:me.account.id,
-    commerceState,reason,commerceScope:req.body?.commerce_scope&&typeof req.body.commerce_scope==='object'?req.body.commerce_scope:{}
+    commerceState,reason,commerceScope
   });
   if(commerceState==='readiness_only'){
     if(role==='merchant')await pool.query(`UPDATE merchant_storefronts SET publication_status='paused',updated_at=NOW() WHERE business_id=$1`,[businessId]);
