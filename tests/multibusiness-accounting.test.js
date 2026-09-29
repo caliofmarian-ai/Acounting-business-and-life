@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const server = readFileSync(new URL('../server-business-accounting.js', import.meta.url), 'utf8');
+const suppliers = readFileSync(new URL('../server-suppliers.js', import.meta.url), 'utf8');
 const ui = readFileSync(new URL('../public/business-accounting-ui.js', import.meta.url), 'utf8');
 const shell = readFileSync(new URL('../public/shell.js', import.meta.url), 'utf8');
 
@@ -37,9 +38,11 @@ test('Supplier accounting records commercial receivables separately from actual 
 
 test('order and procurement money posts to the owning business instead of business 1', () => {
   assert.doesNotMatch(server, /Number\(order\.business_id\)===1/);
-  assert.doesNotMatch(server, /Number\(b\.id\)===1/);
   assert.match(server, /order\.business_id,`Order/);
-  assert.match(server, /ctx\.business\.id,amount,account/);
+  assert.doesNotMatch(server, /app\.post\('\/api\/procurement\/orders\/:id\/payment'/);
+  assert.doesNotMatch(suppliers, /Number\(b\.id\)===1/);
+  assert.match(suppliers, /\[Number\(b\.id\),amount,account/);
+  assert.match(suppliers, /\[Number\(po\.supplier_business_id\),amount,account/);
 });
 
 test('inventory linkage and Marketplace menu import are business scoped', () => {
