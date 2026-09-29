@@ -35,6 +35,8 @@ test('Member detail reuses delegated scope and returns only safe security summar
   assert.match(block,/memberScopeRecord\(ctx,accountId,'members\.view'\)/);
   assert.match(block,/password_configured/);
   assert.match(block,/active_session_count/);
+  assert.match(block,/memberPermissionAvailable\(ctx,id,'members\.close_account'\)/);
+  assert.match(block,/close_account:canCloseAccount/);
   assert.match(block,/SELECT event_code,created_at FROM auth_security_events/);
   assert.match(block,/business_memberships/);
   assert.match(block,/profile_business_bindings/);
@@ -61,7 +63,7 @@ test('Member controls require explicit confirmation, reason, audit and protect S
   assert.match(server,/app\.post\('\/api\/admin\/members\/:accountId\/sessions\/revoke'/);
 });
 
-test('Members V2 UI provides a mobile detail workspace without destructive delete',()=>{
+test('Members V2 UI provides a mobile detail workspace with governed Delete account visibility',()=>{
   assert.match(ui,/data-member-open/);
   assert.match(ui,/async function memberDetailPanel/);
   assert.match(ui,/Profiles/);
@@ -74,8 +76,11 @@ test('Members V2 UI provides a mobile detail workspace without destructive delet
   assert.match(ui,/Sign out all active sessions/);
   assert.match(ui,/Suspend account/);
   assert.match(ui,/Reactivate account/);
-  assert.match(ui,/Hard-delete is intentionally not available here/);
-  assert.doesNotMatch(ui,/data-member-delete/);
+  assert.match(ui,/controls\.close_account/);
+  assert.match(ui,/memberAccountLifecycleMount/);
+  assert.match(ui,/ACCOUNT DELETION/);
+  assert.match(ui,/Delete account/);
+  assert.doesNotMatch(ui,/Hard-delete is intentionally not available here/);
   assert.match(css,/ADMIN MEMBERS V2/);
   assert.match(css,/\.memberDetailHero/);
   assert.match(css,/@media\(max-width:520px\)/);
