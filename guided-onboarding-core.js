@@ -25,9 +25,22 @@ export const GUIDED_ONBOARDING_CUSTOMER_STEPS=Object.freeze([
   'customer_services',
   'profile_settings'
 ]);
+export const GUIDED_ONBOARDING_MERCHANT_STEPS=Object.freeze([
+  'profile_welcome',
+  'merchant_storefront_visibility',
+  'merchant_catalog_ai',
+  'merchant_orders_fulfilment',
+  'merchant_delivery_pricing',
+  'merchant_refunds',
+  'merchant_finance_settlement',
+  'merchant_supplier_sourcing',
+  'merchant_reputation_safety',
+  'merchant_promotion',
+  'profile_settings'
+]);
 export const GUIDED_ONBOARDING_PROFILE_DEFINITIONS=Object.freeze({
   customer:Object.freeze({version:2,steps:GUIDED_ONBOARDING_CUSTOMER_STEPS}),
-  merchant:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS}),
+  merchant:Object.freeze({version:2,steps:GUIDED_ONBOARDING_MERCHANT_STEPS}),
   supplier:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS}),
   courier:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS}),
   service_provider:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS})
