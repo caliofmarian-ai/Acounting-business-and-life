@@ -142,21 +142,56 @@ async function draftAdminSupportReply(ticket,messages=[],draft=''){
   if(!reply)throw Object.assign(new Error('Support AI returned no draft'),{status:502,code:'SUPPORT_DRAFT_EMPTY'});
   return reply;
 }
+function supportTranscriptionLanguage(sourceLanguage=''){
+  const base=clean(sourceLanguage,32).toLowerCase().split('-')[0];
+  if(base==='fil')return'tl';
+  if(base==='ceb')return'';
+  return/^[a-z]{2}$/.test(base)?base:'';
+}
+function supportTranscriptionModels(){
+  return[...new Set([SUPPORT_AI_TRANSCRIPTION_MODEL,'gpt-transcribe','whisper-1'].map(x=>clean(x,120)).filter(Boolean))];
+}
+async function requestSupportTranscription({bytes,mime,fileName,model,language}){
+  const form=new FormData();
+  form.append('file',new Blob([bytes],{type:mime}),clean(fileName,180)||'voice-recording.webm');
+  form.append('model',model);
+  form.append('response_format','json');
+  if(language)form.append('language',language);
+  if(model==='gpt-transcribe')form.append('chunking_strategy','auto');
+  const r=await fetch('https://api.openai.com/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${OPENAI_API_KEY}`},body:form});
+  const raw=await r.text();
+  let payload={};
+  try{payload=raw?JSON.parse(raw):{}}catch{}
+  const transcript=clean(typeof payload==='string'?payload:payload?.text,12000);
+  return{ok:r.ok,status:r.status,transcript};
+}
 async function transcribeSupportAudio(dataUrl,fileName='voice-recording.webm',sourceLanguage=''){
   if(!supportAiReady())throw Object.assign(new Error('Server voice transcription is not configured yet'),{status:503,code:'SUPPORT_AI_NOT_CONFIGURED'});
   const {mime,bytes}=decodeSupportDataUrl(dataUrl);
   if(!SUPPORT_AUDIO_MIMES.has(mime))throw Object.assign(new Error('Unsupported voice recording format'),{status:400});
   validateFileExtension(fileName,mime);
   if(bytes.length>MAX_SUPPORT_AUDIO_BYTES)throw Object.assign(new Error('Voice recording exceeds 10 MB'),{status:413});
-  const form=new FormData();
-  form.append('file',new Blob([bytes],{type:mime}),clean(fileName,180)||'voice-recording.webm');
-  form.append('model',SUPPORT_AI_TRANSCRIPTION_MODEL);
-  const r=await fetch('https://api.openai.com/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${OPENAI_API_KEY}`},body:form});
-  const payload=await r.json().catch(()=>({}));
-  if(!r.ok)throw Object.assign(new Error('Server voice transcription provider failed'),{status:502,code:'SUPPORT_TRANSCRIPTION_PROVIDER_FAILED'});
-  const transcript=clean(payload?.text,12000);
-  if(!transcript)throw Object.assign(new Error('Voice transcription returned no text'),{status:502,code:'SUPPORT_TRANSCRIPTION_EMPTY'});
-  const english=/^en(?:-|$)/i.test(clean(sourceLanguage,32))?transcript:await translateSupportText(transcript,sourceLanguage||'auto');
+  const language=supportTranscriptionLanguage(sourceLanguage);
+  let transcript='',hadSuccessfulProviderResponse=false,lastStatus=0;
+  for(const model of supportTranscriptionModels()){
+    const attempt=await requestSupportTranscription({bytes,mime,fileName,model,language});
+    lastStatus=attempt.status;
+    if(attempt.ok){
+      hadSuccessfulProviderResponse=true;
+      if(attempt.transcript){transcript=attempt.transcript;break}
+      console.warn('Support voice transcription produced no text; retrying fallback',{model,status:attempt.status});
+      continue;
+    }
+    console.warn('Support voice transcription provider attempt failed; retrying fallback',{model,status:attempt.status});
+    if([401,403].includes(attempt.status))break;
+  }
+  if(!transcript){
+    if(hadSuccessfulProviderResponse)throw Object.assign(new Error('Voice transcription returned no text'),{status:502,code:'SUPPORT_TRANSCRIPTION_EMPTY'});
+    throw Object.assign(new Error('Server voice transcription provider failed'),{status:502,code:'SUPPORT_TRANSCRIPTION_PROVIDER_FAILED',provider_status:lastStatus||0});
+  }
+  let english='';
+  if(/^en(?:-|$)/i.test(clean(sourceLanguage,32)))english=transcript;
+  else try{english=await translateSupportText(transcript,sourceLanguage||'auto')}catch{english=''}
   return{transcript,english_translation:english};
 }
 
