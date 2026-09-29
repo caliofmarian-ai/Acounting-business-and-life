@@ -169,6 +169,14 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS auth_security_events_account_idx ON auth_security_events(account_id,created_at DESC);
   `);
   await ensureAccountLifecycleSchema(pool);
+  await pool.query(`
+    UPDATE accounts
+       SET auth_status='pending_verification',updated_at=NOW()
+     WHERE COALESCE(account_mode,'personal')<>'company_test'
+       AND email_verified_at IS NULL
+       AND email<>''
+       AND auth_status='active'
+  `);
 }
 
 async function issueActionToken(accountId, purpose, ttlExpression) {
@@ -608,10 +616,32 @@ app.post('/api/auth/oauth/handoff', jsonBody, async (req, res, next) => {
   const client = await pool.connect(); try { await client.query('BEGIN'); const q = await client.query(`SELECT * FROM auth_handoffs WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() FOR UPDATE`, [sha256(code)]); if (!q.rowCount) throw Object.assign(new Error('Google sign-in handoff expired'), { status: 400 }); const row = q.rows[0]; await client.query(`UPDATE auth_handoffs SET used_at=NOW() WHERE code_hash=$1`, [sha256(code)]); await client.query('COMMIT'); const session = await createSession(row.account_id, req); issueBrowserSessionCookies(res,session.token); res.json({ok:true,auth_transport:'cookie',expires_in_hours:24}); } catch (e) { await client.query('ROLLBACK').catch(() => {}); next(e); } finally { client.release(); }
 });
 
+function pendingVerificationMutationAllowed(path,method){
+  const verb=String(method||'GET').toUpperCase();
+  if(['GET','HEAD','OPTIONS'].includes(verb))return true;
+  if(verb==='PATCH'&&path==='/api/me')return true;
+  if(verb==='PUT'&&path==='/api/me/geography')return true;
+  if(verb==='POST'&&['/api/me/address/reverse','/api/auth/password'].includes(path))return true;
+  return false;
+}
 app.use('/api', async (req, res, next) => {
-  const blocked = hardeningPolicyResponse(`/api${req.path}`, req.method, req.headers);
-  if (!blocked) return next();
-  res.status(blocked.status).json(await blocked.json());
+  const fullPath=`/api${req.path}`;
+  const blocked = hardeningPolicyResponse(fullPath, req.method, req.headers);
+  if (blocked)return res.status(blocked.status).json(await blocked.json());
+  try{
+    const session=await optionalV2(req);
+    if(session){
+      const q=await pool.query(`SELECT auth_status,email_verified_at,account_mode FROM accounts WHERE id=$1`,[session.accountId]);
+      const account=q.rows[0];
+      if(!account)return res.status(401).json({error:'Sign in again to continue'});
+      if(['suspended','closed'].includes(String(account.auth_status||'')))return res.status(403).json({error:'This account is not available',code:'ACCOUNT_NOT_ACTIVE'});
+      const pending=String(account.account_mode||'personal')!=='company_test'&&!account.email_verified_at;
+      if(pending&&!pendingVerificationMutationAllowed(fullPath,req.method)){
+        return res.status(403).json({error:'Verify your email before using Business & Life',code:'EMAIL_VERIFICATION_REQUIRED'});
+      }
+    }
+    next();
+  }catch(error){next(error)}
 });
 
 function proxy(req,res,next){
