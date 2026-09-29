@@ -146,6 +146,7 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
         document_type:'identity_support',
         vehicle_class:'bicycle',
         reference_number:COURIER_QA_DOCUMENT_REFERENCE,
+        file_name:'qa-courier-document.png',
         evidence_data_url:QA_IDENTITY_IMAGE
       }
     });

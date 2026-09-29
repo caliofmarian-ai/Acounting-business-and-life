@@ -40,7 +40,8 @@ test('Courier evidence is fetched only from scoped Admin detail routes',()=>{
   assert.match(delivery,/app\.get\('\/api\/admin\/couriers\/:accountId'/);
   assert.match(delivery,/app\.get\('\/api\/admin\/couriers\/:accountId\/documents\/:documentId'/);
   assert.match(delivery,/Courier is outside your delegated territory/);
-  assert.match(delivery,/evidence_data_url FROM courier_documents/);
+  assert.match(delivery,/SELECT id,private_evidence_object_id FROM courier_documents/);
+  assert.match(delivery,/readPrivateEvidence\(pool/);
   assert.match(gateway,/\/api\/admin\/couriers\/:accountId\/documents\/:documentId/);
   assert.match(admin,/data-courier-document-view/);
 });

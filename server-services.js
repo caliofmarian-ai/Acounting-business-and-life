@@ -8,6 +8,10 @@ import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetiza
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { marketplaceFetch,startEmbeddedMarketplace,stopEmbeddedMarketplace } from './server-marketplace.js';
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
+import {
+  bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
+  readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence
+} from './private-evidence-core.js';
 import {accountsBlocked,blockAccount,ensureTrustSafetySchema,hasActiveBlock,listBlockedAccounts,unblockAccount} from './trust-safety-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {accountGeographySnapshot} from './account-geography.js';
@@ -37,6 +41,8 @@ const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,re
 let marketplaceApp;
 let marketplaceReady=false;
 let shuttingDown = false;
+const PRIVATE_SERVICE_EVIDENCE_MIMES=new Set(['application/pdf','image/png','image/jpeg','image/webp']);
+const MAX_PRIVATE_SERVICE_EVIDENCE_BYTES=1_400_000;
 
 function clean(v,max=600){return String(v??'').trim().slice(0,max)}
 function authHeader(req){return req.headers.authorization||''}
@@ -49,6 +55,7 @@ export function isServicesOwnedPath(path='',method='GET'){
   if(pathname.startsWith('/api/service-provider/'))return true;
   if(pathname==='/api/user-blocks'||pathname.startsWith('/api/user-blocks/'))return true;
   if(pathname.startsWith('/api/admin/service-credentials/'))return true;
+  if(pathname.startsWith('/api/admin/service-providers/'))return true;
   return false;
 }
 export async function servicesFetch(path,options={}){
@@ -88,10 +95,9 @@ async function identity(req){const r=await servicesFetch('/api/me',{headers:{Aut
 function enabled(me,role){return me?.profiles?.some(p=>p.role===role&&p.enabled)}
 async function requireProvider(req){const me=await identity(req);if(!enabled(me,'service_provider'))throw Object.assign(new Error('Service Provider profile required'),{status:403});return me}
 async function requireCustomer(req){const me=await identity(req);if(!enabled(me,'customer'))throw Object.assign(new Error('Customer profile required'),{status:403});return me}
-function validateEvidence(data){const x=String(data||'');if(!x)return '';if(x.length>1_900_000)throw Object.assign(new Error('Document is too large for this preview. Keep it under about 1.4 MB.'),{status:413});if(!/^data:(application\/pdf|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Evidence must be PDF, PNG, JPEG or WebP'),{status:400});decodeVerifiedDataUrl(x,{allowedMimes:['application/pdf','image/png','image/jpeg','image/webp'],label:'Evidence'});return x}
 function validateImage(data){const x=String(data||'');if(!x)return '';if(x.length>450_000)throw Object.assign(new Error('Image is too large'),{status:413});if(!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Image must be PNG, JPEG or WebP'),{status:400});decodeVerifiedDataUrl(x,{allowedMimes:['image/png','image/jpeg','image/webp'],label:'Image'});return x}
 
-async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSafetySchema(pool);await pool.query(`
+async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSafetySchema(pool);await ensurePrivateEvidenceSchema(pool);await pool.query(`
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS profile_image_data_url TEXT NOT NULL DEFAULT '';
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS languages TEXT NOT NULL DEFAULT '';
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS availability_text TEXT NOT NULL DEFAULT '';
@@ -100,7 +106,9 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS price_to NUMERIC(12,2);
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS same_day_available BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS cv_public_summary TEXT NOT NULL DEFAULT '';
-  ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS cv_private_data_url TEXT NOT NULL DEFAULT '';
+  ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS cv_private_data_url TEXT;
+  ALTER TABLE service_provider_profiles ALTER COLUMN cv_private_data_url DROP NOT NULL;
+  ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS cv_private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id);
 
   CREATE TABLE IF NOT EXISTS service_categories (
     id BIGSERIAL PRIMARY KEY,
@@ -136,7 +144,8 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
     reference_number TEXT NOT NULL DEFAULT '',
     issue_date DATE,
     expiry_date DATE,
-    evidence_data_url TEXT NOT NULL DEFAULT '',
+    evidence_data_url TEXT,
+    private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id),
     verification_status TEXT NOT NULL DEFAULT 'submitted',
     verified_by_account_id BIGINT REFERENCES accounts(id),
     verified_at TIMESTAMPTZ,
@@ -146,7 +155,11 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
     CHECK (credential_type IN ('prc_license','tesda_nc_coc','diploma_vocational','training_certificate','experience_certificate','other')),
     CHECK (verification_status IN ('unverified','submitted','verified','rejected','expired'))
   );
+  ALTER TABLE profile_credentials ALTER COLUMN evidence_data_url DROP NOT NULL;
+  ALTER TABLE profile_credentials ADD COLUMN IF NOT EXISTS private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id);
   CREATE INDEX IF NOT EXISTS profile_credentials_account_idx ON profile_credentials(account_id,verification_status);
+  CREATE INDEX IF NOT EXISTS profile_credentials_private_evidence_idx ON profile_credentials(private_evidence_object_id);
+  CREATE INDEX IF NOT EXISTS service_provider_cv_private_evidence_idx ON service_provider_profiles(cv_private_evidence_object_id);
 
   CREATE TABLE IF NOT EXISTS service_portfolio (
     id BIGSERIAL PRIMARY KEY,
@@ -335,7 +348,14 @@ const serviceOfferSelect=`s.category_id,c.code,c.name,c.credential_gate,s.servic
   s.pricing_method,s.rate_unit,s.price_from,s.price_to,s.minimum_charge,s.callout_fee,
   s.materials_policy,s.service_mode,s.pricing_note`;
 async function publicProvider(accountId){const q=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url,pr.visibility FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE WHERE a.id=$1 AND pr.visibility='public'`,[accountId]);if(!q.rowCount)return null;const [services,credentials,portfolio,rate]=await Promise.all([pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name,s.service_label`,[accountId]),pool.query(`SELECT credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status FROM profile_credentials WHERE account_id=$1 AND verification_status IN ('verified','submitted','unverified','expired') ORDER BY verification_status='verified' DESC,created_at DESC`,[accountId]),pool.query(`SELECT p.id,p.title,p.description,p.image_data_url,p.approximate_date,p.linked_job_id,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 AND (p.linked_job_id IS NULL OR p.customer_publication_consent=TRUE) ORDER BY p.created_at DESC LIMIT 20`,[accountId]),rating(accountId)]);const base=q.rows[0];return{...base,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,...(base.public_reputation_enabled?rate:{rating:null,review_count:0})}}
-async function privateProfile(accountId){const p=await pool.query(`SELECT * FROM service_provider_profiles WHERE account_id=$1`,[accountId]);const [services,credentials,portfolio,rate,reviews]=await Promise.all([pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[accountId]),pool.query(`SELECT id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[accountId]),pool.query(`SELECT p.*,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 ORDER BY p.created_at DESC`,[accountId]),rating(accountId),pool.query(`SELECT r.id,r.job_id,r.overall,r.workmanship,r.reliability,r.communication,r.professionalism,r.property_care,r.price_transparency,r.review_text,r.created_at,a.display_name reviewer_name,j.service_label FROM service_reviews r JOIN accounts a ON a.id=r.reviewer_account_id JOIN service_jobs j ON j.id=r.job_id WHERE r.provider_account_id=$1 AND r.moderation_status='published' ORDER BY r.created_at DESC LIMIT 50`,[accountId])]);return{profile:p.rows[0]||null,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,reviews:reviews.rows,...rate}}
+async function privateProfile(accountId){const p=await pool.query(`
+  SELECT account_id,display_name,professional_headline,about,service_area,years_experience,
+         public_reputation_enabled,profile_image_data_url,languages,availability_text,pricing_model,
+         price_from,price_to,same_day_available,cv_public_summary,
+         (cv_private_evidence_object_id IS NOT NULL OR NULLIF(cv_private_data_url,'') IS NOT NULL) has_private_cv,
+         updated_at
+    FROM service_provider_profiles WHERE account_id=$1
+`,[accountId]);const [services,credentials,portfolio,rate,reviews]=await Promise.all([pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[accountId]),pool.query(`SELECT id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[accountId]),pool.query(`SELECT p.*,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 ORDER BY p.created_at DESC`,[accountId]),rating(accountId),pool.query(`SELECT r.id,r.job_id,r.overall,r.workmanship,r.reliability,r.communication,r.professionalism,r.property_care,r.price_transparency,r.review_text,r.created_at,a.display_name reviewer_name,j.service_label FROM service_reviews r JOIN accounts a ON a.id=r.reviewer_account_id JOIN service_jobs j ON j.id=r.job_id WHERE r.provider_account_id=$1 AND r.moderation_status='published' ORDER BY r.created_at DESC LIMIT 50`,[accountId])]);return{profile:p.rows[0]||null,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,reviews:reviews.rows,...rate}}
 async function privateProfileHome(accountId){
   const [profile,services]=await Promise.all([
     pool.query(`SELECT account_id,display_name,professional_headline,service_area,availability_text,pricing_model,price_from,price_to,same_day_available,public_reputation_enabled,updated_at FROM service_provider_profiles WHERE account_id=$1`,[accountId]),
@@ -458,9 +478,96 @@ app.get('/api/services/providers',async(req,res,next)=>{try{await requireCustome
 app.get('/api/services/providers/:accountId',async(req,res,next)=>{try{await requireCustomer(req);const p=await publicProvider(Number(req.params.accountId));if(!p)return res.status(404).json({error:'Public Service Provider profile not found'});res.json(p)}catch(e){next(e)}})
 
 app.get('/api/service-provider/me',async(req,res,next)=>{try{const me=await requireProvider(req);if(String(req.query.view||'')==='home')return res.json(await privateProfileHome(Number(me.account.id)));res.json(await privateProfile(Number(me.account.id)))}catch(e){next(e)}})
-app.put('/api/service-provider/me',body,async(req,res,next)=>{try{const me=await requireProvider(req),id=Number(me.account.id);const image=req.body?.profile_image_data_url===undefined?null:validateImage(req.body.profile_image_data_url);const cv=req.body?.cv_private_data_url===undefined?null:validateEvidence(req.body.cv_private_data_url);const priceFrom=numberOrNull(req.body?.price_from),priceTo=numberOrNull(req.body?.price_to);if((priceFrom!=null&&priceFrom<0)||(priceTo!=null&&priceTo<0)||(priceFrom!=null&&priceTo!=null&&priceTo<priceFrom))return res.status(400).json({error:'Profile price range is invalid'});if(image!==null)await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_public',subjectType:'service_provider_profile',subjectId:id});if(cv!==null)await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_private',subjectType:'service_provider_cv',subjectId:id});await pool.query(`UPDATE service_provider_profiles SET display_name=$1,professional_headline=$2,about=$3,service_area=$4,years_experience=$5,languages=$6,availability_text=$7,pricing_model=$8,price_from=$9,price_to=$10,same_day_available=$11,public_reputation_enabled=$12,profile_image_data_url=COALESCE($13,profile_image_data_url),cv_public_summary=$14,cv_private_data_url=COALESCE($15,cv_private_data_url),updated_at=NOW() WHERE account_id=$16`,[clean(req.body?.display_name,120)||me.account.display_name,clean(req.body?.professional_headline,160),clean(req.body?.about,1800),clean(req.body?.service_area,300),numberOrNull(req.body?.years_experience),clean(req.body?.languages,300),clean(req.body?.availability_text,500),['quotation','fixed','hourly','daily','mixed'].includes(req.body?.pricing_model)?req.body.pricing_model:'quotation',priceFrom,priceTo,Boolean(req.body?.same_day_available),Boolean(req.body?.public_reputation_enabled),image,clean(req.body?.cv_public_summary,1600),cv,id]);if(req.body?.visibility){const vis=['public','relationship_only','private'].includes(req.body.visibility)?req.body.visibility:'private';await pool.query(`UPDATE profiles SET visibility=$1,updated_at=NOW() WHERE account_id=$2 AND role='service_provider'`,[vis,id])}res.json(await privateProfile(id))}catch(e){next(e)}})
+app.put('/api/service-provider/me',body,async(req,res,next)=>{
+  let storedCv=null,me=null,previousCvObjectId=null;
+  try{
+    me=await requireProvider(req);
+    const id=Number(me.account.id),image=req.body?.profile_image_data_url===undefined?null:validateImage(req.body.profile_image_data_url);
+    const priceFrom=numberOrNull(req.body?.price_from),priceTo=numberOrNull(req.body?.price_to);
+    if((priceFrom!=null&&priceFrom<0)||(priceTo!=null&&priceTo<0)||(priceFrom!=null&&priceTo!=null&&priceTo<priceFrom))return res.status(400).json({error:'Profile price range is invalid'});
+    if(image!==null)await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_public',subjectType:'service_provider_profile',subjectId:id});
+    const cvData=req.body?.cv_private_data_url,hasCvUpload=cvData!==undefined&&String(cvData||'').trim()!=='';
+    if(hasCvUpload){
+      const fileName=clean(req.body?.cv_file_name,220);
+      if(!fileName)return res.status(400).json({error:'CV filename is required'});
+      await enforceHighRiskVelocity(pool,{actorAccountId:id,actionCode:'upload_private',subjectType:'service_provider_cv',subjectId:id});
+      const prior=await pool.query('SELECT cv_private_evidence_object_id FROM service_provider_profiles WHERE account_id=$1',[id]);
+      previousCvObjectId=Number(prior.rows[0]?.cv_private_evidence_object_id)||null;
+      storedCv=await storePrivateEvidence(pool,{
+        dataUrl:cvData,fileName,allowedMimes:[...PRIVATE_SERVICE_EVIDENCE_MIMES],
+        maxBytes:MAX_PRIVATE_SERVICE_EVIDENCE_BYTES,ownerAccountId:id,actorAccountId:id,
+        sourceType:'service_provider_cv',sourceId:String(id),purpose:'service_provider_cv_upload',
+        classification:'service_provider_cv',correlationId:correlation(req)
+      });
+    }
+    await pool.query(`
+      UPDATE service_provider_profiles
+         SET display_name=$1,professional_headline=$2,about=$3,service_area=$4,years_experience=$5,
+             languages=$6,availability_text=$7,pricing_model=$8,price_from=$9,price_to=$10,
+             same_day_available=$11,public_reputation_enabled=$12,
+             profile_image_data_url=COALESCE($13,profile_image_data_url),cv_public_summary=$14,updated_at=NOW()
+       WHERE account_id=$15
+    `,[
+      clean(req.body?.display_name,120)||me.account.display_name,clean(req.body?.professional_headline,160),
+      clean(req.body?.about,1800),clean(req.body?.service_area,300),numberOrNull(req.body?.years_experience),
+      clean(req.body?.languages,300),clean(req.body?.availability_text,500),
+      ['quotation','fixed','hourly','daily','mixed'].includes(req.body?.pricing_model)?req.body.pricing_model:'quotation',
+      priceFrom,priceTo,Boolean(req.body?.same_day_available),Boolean(req.body?.public_reputation_enabled),
+      image,clean(req.body?.cv_public_summary,1600),id
+    ]);
+    if(storedCv){
+      await pool.query(`
+        UPDATE service_provider_profiles
+           SET cv_private_data_url=NULL,cv_private_evidence_object_id=$1,updated_at=NOW()
+         WHERE account_id=$2
+      `,[storedCv.id,id]);
+      if(previousCvObjectId&&previousCvObjectId!==Number(storedCv.id)){
+        await deletePrivateEvidence(pool,{objectId:previousCvObjectId,actorAccountId:id,purpose:'service_provider_cv_replaced',correlationId:correlation(req)}).catch(()=>{});
+      }
+    }
+    if(req.body?.visibility){const vis=['public','relationship_only','private'].includes(req.body.visibility)?req.body.visibility:'private';await pool.query(`UPDATE profiles SET visibility=$1,updated_at=NOW() WHERE account_id=$2 AND role='service_provider'`,[vis,id])}
+    res.json(await privateProfile(id));
+  }catch(e){
+    if(storedCv?.id)await deletePrivateEvidence(pool,{objectId:storedCv.id,actorAccountId:me?.account?.id,purpose:'service_provider_cv_rollback',correlationId:correlation(req)}).catch(()=>{});
+    next(e);
+  }
+})
 app.put('/api/service-provider/services',body,async(req,res,next)=>{try{const me=await requireProvider(req),id=Number(me.account.id),selections=Array.isArray(req.body?.services)?req.body.services:[];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM service_provider_services WHERE account_id=$1`,[id]);for(const selection of selections.slice(0,80)){const categoryId=Number(selection.category_id);if(!Number.isInteger(categoryId))continue;const category=await client.query(`SELECT id,name FROM service_categories WHERE id=$1 AND active=TRUE`,[categoryId]);if(!category.rowCount)throw Object.assign(new Error('Choose an active Local Services category'),{status:400});const offer=normalizeServicePriceOffer(selection);await client.query(`INSERT INTO service_provider_services(account_id,category_id,service_label,active,pricing_method,rate_unit,price_from,price_to,minimum_charge,callout_fee,materials_policy,service_mode,pricing_note) VALUES($1,$2,$3,TRUE,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[id,categoryId,clean(selection.service_label,120)||category.rows[0].name,offer.pricing_method,offer.rate_unit,offer.price_from,offer.price_to,offer.minimum_charge,offer.callout_fee,offer.materials_policy,offer.service_mode,offer.pricing_note])}await client.query('COMMIT')}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}res.json(await privateProfile(id))}catch(e){next(e)}})
-app.post('/api/service-provider/credentials',body,async(req,res,next)=>{try{const me=await requireProvider(req),type=clean(req.body?.credential_type,60);if(!['prc_license','tesda_nc_coc','diploma_vocational','training_certificate','experience_certificate','other'].includes(type))return res.status(400).json({error:'Choose a credential type'});if(!clean(req.body?.title,200))return res.status(400).json({error:'Credential title is required'});const evidence=validateEvidence(req.body?.evidence_data_url);await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'service_credential',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO profile_credentials(account_id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,evidence_data_url,verification_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'submitted') RETURNING id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,created_at`,[me.account.id,type,clean(req.body.title,200),clean(req.body?.issuing_body,200),clean(req.body?.reference_number,120),req.body?.issue_date||null,req.body?.expiry_date||null,evidence]);res.status(201).json(rows[0])}catch(e){next(e)}})
+app.post('/api/service-provider/credentials',body,async(req,res,next)=>{
+  let stored=null,me=null;
+  try{
+    me=await requireProvider(req);
+    const type=clean(req.body?.credential_type,60),fileName=clean(req.body?.evidence_file_name,220);
+    if(!['prc_license','tesda_nc_coc','diploma_vocational','training_certificate','experience_certificate','other'].includes(type))return res.status(400).json({error:'Choose a credential type'});
+    if(!clean(req.body?.title,200))return res.status(400).json({error:'Credential title is required'});
+    if(!req.body?.evidence_data_url||!fileName)return res.status(400).json({error:'Credential evidence and filename are required'});
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'service_credential',subjectId:me.account.id});
+    stored=await storePrivateEvidence(pool,{
+      dataUrl:req.body.evidence_data_url,fileName,allowedMimes:[...PRIVATE_SERVICE_EVIDENCE_MIMES],
+      maxBytes:MAX_PRIVATE_SERVICE_EVIDENCE_BYTES,ownerAccountId:me.account.id,actorAccountId:me.account.id,
+      sourceType:'service_credential',sourceId:`pending:${me.account.id}`,
+      purpose:'service_credential_upload',classification:'service_credential',correlationId:correlation(req)
+    });
+    const{rows}=await pool.query(`
+      INSERT INTO profile_credentials(
+        account_id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,
+        evidence_data_url,private_evidence_object_id,verification_status
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,NULL,$8,'submitted')
+      RETURNING id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,created_at
+    `,[
+      me.account.id,type,clean(req.body.title,200),clean(req.body?.issuing_body,200),
+      clean(req.body?.reference_number,120),req.body?.issue_date||null,req.body?.expiry_date||null,stored.id
+    ]);
+    await bindPrivateEvidenceSource(pool,{
+      objectId:stored.id,sourceType:'service_credential',sourceId:String(rows[0].id),
+      actorAccountId:me.account.id,purpose:'service_credential_bind',correlationId:correlation(req)
+    });
+    res.status(201).json(rows[0]);
+  }catch(e){
+    if(stored?.id)await deletePrivateEvidence(pool,{objectId:stored.id,actorAccountId:me?.account?.id,purpose:'service_credential_rollback',correlationId:correlation(req)}).catch(()=>{});
+    next(e);
+  }
+})
 app.post('/api/service-provider/portfolio',body,async(req,res,next)=>{try{const me=await requireProvider(req);const image=validateImage(req.body?.image_data_url);if(!image||!clean(req.body?.title,160))return res.status(400).json({error:'Portfolio title and image are required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_public',subjectType:'service_portfolio',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO service_portfolio(account_id,title,description,category_id,image_data_url,approximate_date,customer_publication_consent) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,[me.account.id,clean(req.body.title,160),clean(req.body?.description,800),req.body?.category_id?Number(req.body.category_id):null,image,req.body?.approximate_date||null,Boolean(req.body?.customer_publication_consent)]);res.status(201).json(rows[0])}catch(e){next(e)}})
 
 app.post('/api/services/jobs',body,async(req,res,next)=>{try{
@@ -680,6 +787,73 @@ async function credentialReviewTarget(id){
   `,[id]);
   return rows[0]||null;
 }
+
+async function serviceProviderReviewTerritory(accountId){
+  const{rows}=await pool.query(`
+    SELECT COALESCE(
+      (SELECT pa.territory_id FROM profile_authorizations pa
+        WHERE pa.account_id=$1 AND pa.role='service_provider' AND pa.status='active' AND pa.territory_id IS NOT NULL
+        ORDER BY pa.id DESC LIMIT 1),
+      (SELECT app.territory_id FROM profile_applications app
+        WHERE app.account_id=$1 AND app.role='service_provider' AND app.status NOT IN ('rejected','revoked')
+        ORDER BY app.id DESC LIMIT 1)
+    ) territory_id
+  `,[Number(accountId)]);
+  return Number(rows[0]?.territory_id)||null;
+}
+
+app.get('/api/service-provider/private-cv',async(req,res,next)=>{try{
+  const me=await requireProvider(req),id=Number(me.account.id);
+  const q=await pool.query('SELECT cv_private_evidence_object_id,cv_private_data_url FROM service_provider_profiles WHERE account_id=$1',[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Service Provider profile not found'});
+  if(!q.rows[0].cv_private_evidence_object_id){
+    if(q.rows[0].cv_private_data_url)return res.status(409).json({error:'Private evidence migration is required before this CV can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    return res.status(404).json({error:'Private CV not found'});
+  }
+  const evidence=await readPrivateEvidence(pool,{objectId:q.rows[0].cv_private_evidence_object_id,actorAccountId:id,purpose:'service_provider_cv_read',correlationId:correlation(req)});
+  return sendPrivateEvidence(res,evidence);
+}catch(e){next(e)}})
+
+app.get('/api/service-provider/credentials/:id/evidence',async(req,res,next)=>{try{
+  const me=await requireProvider(req),id=Number(req.params.id);
+  const q=await pool.query('SELECT private_evidence_object_id,evidence_data_url FROM profile_credentials WHERE id=$1 AND account_id=$2',[id,me.account.id]);
+  if(!q.rowCount)return res.status(404).json({error:'Credential not found'});
+  if(!q.rows[0].private_evidence_object_id){
+    if(q.rows[0].evidence_data_url)return res.status(409).json({error:'Private evidence migration is required before this credential can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    return res.status(404).json({error:'Credential evidence not found'});
+  }
+  const evidence=await readPrivateEvidence(pool,{objectId:q.rows[0].private_evidence_object_id,actorAccountId:me.account.id,purpose:'service_credential_self_read',correlationId:correlation(req)});
+  return sendPrivateEvidence(res,evidence);
+}catch(e){next(e)}})
+
+app.get('/api/admin/service-credentials/:id/evidence',async(req,res,next)=>{try{
+  const me=await identity(req),id=Number(req.params.id),target=await credentialReviewTarget(id);
+  if(!target)return res.status(404).json({error:'Credential not found'});
+  const territoryId=Number(target.target_territory_id)||null;
+  if(!territoryId)return res.status(409).json({error:'Service Provider territory must be established before credential review'});
+  await requireAdminPermission(pool,me.account.id,'credential.verify',territoryId);
+  const q=await pool.query('SELECT private_evidence_object_id,evidence_data_url FROM profile_credentials WHERE id=$1',[id]);
+  if(!q.rows[0].private_evidence_object_id){
+    if(q.rows[0].evidence_data_url)return res.status(409).json({error:'Private evidence migration is required before this credential can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    return res.status(404).json({error:'Credential evidence not found'});
+  }
+  const evidence=await readPrivateEvidence(pool,{objectId:q.rows[0].private_evidence_object_id,actorAccountId:me.account.id,purpose:'service_credential_admin_read',correlationId:correlation(req)});
+  return sendPrivateEvidence(res,evidence);
+}catch(e){next(e)}})
+
+app.get('/api/admin/service-providers/:accountId/private-cv',async(req,res,next)=>{try{
+  const me=await identity(req),accountId=Number(req.params.accountId),territoryId=await serviceProviderReviewTerritory(accountId);
+  if(!territoryId)return res.status(409).json({error:'Service Provider territory must be established before CV review'});
+  await requireAdminPermission(pool,me.account.id,'credential.verify',territoryId);
+  const q=await pool.query('SELECT cv_private_evidence_object_id,cv_private_data_url FROM service_provider_profiles WHERE account_id=$1',[accountId]);
+  if(!q.rowCount)return res.status(404).json({error:'Service Provider profile not found'});
+  if(!q.rows[0].cv_private_evidence_object_id){
+    if(q.rows[0].cv_private_data_url)return res.status(409).json({error:'Private evidence migration is required before this CV can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    return res.status(404).json({error:'Private CV not found'});
+  }
+  const evidence=await readPrivateEvidence(pool,{objectId:q.rows[0].cv_private_evidence_object_id,actorAccountId:me.account.id,purpose:'service_provider_cv_admin_read',correlationId:correlation(req)});
+  return sendPrivateEvidence(res,evidence);
+}catch(e){next(e)}})
 
 app.patch('/api/admin/service-credentials/:id',body,async(req,res,next)=>{
   try{

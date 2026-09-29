@@ -11,7 +11,10 @@ import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
 import {readOrderDetail} from './orders-read-core.js';
-import {decodeVerifiedDataUrl} from './file-signature-core.js';
+import {
+  bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
+  readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence
+} from './private-evidence-core.js';
 import {handoffLockActive,nextHandoffFailureState} from './delivery-handoff-security.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
@@ -28,8 +31,11 @@ const body = (req,res,next) => req.body !== undefined ? next() : jsonBody(req,re
 let suppliersApp=null;
 let supplierReady=false;
 let shuttingDown = false;
+const COURIER_DOCUMENT_MIMES=new Set(['application/pdf','image/png','image/jpeg','image/webp']);
+const MAX_COURIER_DOCUMENT_BYTES=1_400_000;
 
 function clean(v,max=700){return String(v??'').trim().slice(0,max)}
+function correlation(req){return clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',160)}
 function num(v){return Number(v)}
 function finite(v){return Number.isFinite(num(v))}
 function clamp(v,min,max){return Math.max(min,Math.min(max,num(v)))}
@@ -91,11 +97,10 @@ async function requireMerchant(req,businessId=null){const me=await identity(req)
 async function requireCustomer(req){const me=await identity(req);if(!enabled(me,'customer'))throw Object.assign(new Error('Customer profile required'),{status:403});return me}
 async function requireCourier(req){const me=await identity(req);if(!enabled(me,'courier'))throw Object.assign(new Error('Delivery profile required'),{status:403});return me}
 async function requireAdmin(req,permission){const me=await identity(req);const assertion=verifyAdminAssertion(TOKEN_SECRET,req.headers['x-bl-admin-assertion'],me.account.id);if(!assertion||assertion.permission!==permission)throw Object.assign(new Error('Scoped Admin assertion required'),{status:403});me.admin_assertion=assertion;return me}
-function evidence(v){const x=String(v||'');if(!x)return'';if(x.length>1_900_000)throw Object.assign(new Error('Document is too large for this preview'),{status:413});if(!/^data:(application\/pdf|image\/(png|jpeg|webp));base64,[A-Za-z0-9+/=]+$/.test(x))throw Object.assign(new Error('Document must be PDF, PNG, JPEG or WebP'),{status:400});decodeVerifiedDataUrl(x,{allowedMimes:['application/pdf','image/png','image/jpeg','image/webp'],label:'Document'});return x}
 function haversine(lat1,lon1,lat2,lon2){const R=6371,dLat=(lat2-lat1)*Math.PI/180,dLon=(lon2-lon1)*Math.PI/180;const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))}
 function completionCode(deliveryId){if(!TOKEN_SECRET)return null;const hex=crypto.createHmac('sha256',TOKEN_SECRET).update(`delivery:${deliveryId}`).digest('hex');return String(parseInt(hex.slice(0,12),16)%1_000_000).padStart(6,'0')}
 
-async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
+async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivateEvidenceSchema(pool);await pool.query(`
   ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS pickup_lat DOUBLE PRECISION;
   ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS pickup_lng DOUBLE PRECISION;
   ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS estimated_weight_kg NUMERIC(12,4) NOT NULL DEFAULT 0;
@@ -117,7 +122,8 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     reference_number TEXT NOT NULL DEFAULT '',
     issue_date DATE,
     expiry_date DATE,
-    evidence_data_url TEXT NOT NULL,
+    evidence_data_url TEXT,
+    private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id),
     verification_status TEXT NOT NULL DEFAULT 'submitted',
     verified_by_account_id BIGINT REFERENCES accounts(id),
     verified_at TIMESTAMPTZ,
@@ -126,7 +132,10 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK(verification_status IN ('submitted','verified','rejected','expired'))
   );
+  ALTER TABLE courier_documents ALTER COLUMN evidence_data_url DROP NOT NULL;
+  ALTER TABLE courier_documents ADD COLUMN IF NOT EXISTS private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id);
   CREATE INDEX IF NOT EXISTS courier_documents_account_idx ON courier_documents(account_id,verification_status);
+  CREATE INDEX IF NOT EXISTS courier_documents_private_evidence_idx ON courier_documents(private_evidence_object_id);
 
   CREATE TABLE IF NOT EXISTS delivery_pricing_rules (
     id BIGSERIAL PRIMARY KEY,
@@ -696,7 +705,41 @@ app.put('/api/courier/operating-area',body,async(req,res,next)=>{try{
     authorization_boundary:'Preferred operating area does not grant Courier authority. Active profile authorization remains required for dispatch.'
   });
 }catch(e){next(e)}})
-app.post('/api/courier/documents',body,async(req,res,next)=>{try{const me=await requireCourier(req),doc=evidence(req.body?.evidence_data_url);if(!doc||!clean(req.body?.document_type,80))return res.status(400).json({error:'Document type and evidence are required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'courier_document',subjectId:me.account.id});const{rows}=await pool.query(`INSERT INTO courier_documents(account_id,document_type,vehicle_class,reference_number,issue_date,expiry_date,evidence_data_url,verification_status) VALUES($1,$2,$3,$4,$5,$6,$7,'submitted') RETURNING id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,created_at`,[me.account.id,clean(req.body.document_type,80),clean(req.body?.vehicle_class,40),clean(req.body?.reference_number,120),req.body?.issue_date||null,req.body?.expiry_date||null,doc]);res.status(201).json(rows[0])}catch(e){next(e)}})
+app.post('/api/courier/documents',body,async(req,res,next)=>{
+  let stored=null,me=null;
+  try{
+    me=await requireCourier(req);
+    const documentType=clean(req.body?.document_type,80),fileName=clean(req.body?.file_name,220);
+    if(!documentType||!req.body?.evidence_data_url||!fileName)return res.status(400).json({error:'Document type, filename and evidence are required'});
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'courier_document',subjectId:me.account.id});
+    stored=await storePrivateEvidence(pool,{
+      dataUrl:req.body.evidence_data_url,fileName,
+      allowedMimes:[...COURIER_DOCUMENT_MIMES],maxBytes:MAX_COURIER_DOCUMENT_BYTES,
+      ownerAccountId:me.account.id,actorAccountId:me.account.id,
+      sourceType:'courier_document',sourceId:`pending:${me.account.id}`,
+      purpose:'courier_document_upload',classification:'courier_document',
+      correlationId:correlation(req)
+    });
+    const{rows}=await pool.query(`
+      INSERT INTO courier_documents(
+        account_id,document_type,vehicle_class,reference_number,issue_date,expiry_date,
+        evidence_data_url,private_evidence_object_id,verification_status
+      ) VALUES($1,$2,$3,$4,$5,$6,NULL,$7,'submitted')
+      RETURNING id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,created_at
+    `,[
+      me.account.id,documentType,clean(req.body?.vehicle_class,40),clean(req.body?.reference_number,120),
+      req.body?.issue_date||null,req.body?.expiry_date||null,stored.id
+    ]);
+    await bindPrivateEvidenceSource(pool,{
+      objectId:stored.id,sourceType:'courier_document',sourceId:String(rows[0].id),
+      actorAccountId:me.account.id,purpose:'courier_document_bind',correlationId:correlation(req)
+    });
+    res.status(201).json(rows[0]);
+  }catch(e){
+    if(stored?.id)await deletePrivateEvidence(pool,{objectId:stored.id,actorAccountId:me?.account?.id,purpose:'courier_document_rollback',correlationId:correlation(req)}).catch(()=>{});
+    next(e);
+  }
+})
 app.put('/api/courier/availability',body,async(req,res,next)=>{try{const me=await requireCourier(req);const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();if(req.body?.available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[Boolean(req.body?.available),me.account.id]);res.json({ok:true,available:Boolean(req.body?.available)})}catch(e){next(e)}})
 app.post('/api/courier/deliveries/:id/status',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),nextStatus=clean(req.body?.status,60);const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});const flow={courier_assigned:['courier_en_route_to_merchant'],courier_en_route_to_merchant:['courier_arrived_at_merchant'],courier_arrived_at_merchant:['picked_up'],picked_up:['in_transit'],in_transit:['courier_arrived_at_customer']}[d.status]||[];if(!flow.includes(nextStatus))return res.status(409).json({error:`Cannot move delivery from ${d.status} to ${nextStatus}`});const stamp={courier_en_route_to_merchant:'en_route_to_merchant_at',courier_arrived_at_merchant:'arrived_merchant_at',picked_up:'picked_up_at',in_transit:'in_transit_at',courier_arrived_at_customer:'arrived_customer_at'}[nextStatus];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE deliveries SET status=$1,${stamp}=NOW(),updated_at=NOW() WHERE id=$2`,[nextStatus,id]);if(nextStatus==='picked_up'){await client.query(`UPDATE orders SET order_status='handoff_to_delivery',handoff_at=COALESCE(handoff_at,NOW()),updated_at=NOW() WHERE id=$1 AND order_status='ready'`,[d.order_id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) SELECT id,'ready','handoff_to_delivery',$1,'Courier picked up order' FROM orders WHERE id=$2`,[me.account.id,d.order_id])}await client.query('COMMIT');res.json(deliveryPrivacyView(await deliveryDetail(id),'courier'))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 app.post('/api/courier/deliveries/:id/location',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),lat=Number(req.body?.lat),lng=Number(req.body?.lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid coordinates required'});const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});if(!activeTracking(d.status))return res.status(409).json({error:'Tracking is closed for this delivery'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'courier_location_update',subjectType:'delivery',subjectId:id});await pool.query(`UPDATE deliveries SET last_lat=$1,last_lng=$2,last_location_at=NOW(),updated_at=NOW() WHERE id=$3`,[lat,lng,id]);res.json({ok:true,at:new Date().toISOString()})}catch(e){next(e)}})
@@ -1016,9 +1059,14 @@ app.get('/api/admin/couriers/:accountId',async(req,res,next)=>{try{
 app.get('/api/admin/couriers/:accountId/documents/:documentId',async(req,res,next)=>{try{
   const me=await requireAdmin(req,'courier.verify'),accountId=Number(req.params.accountId),documentId=Number(req.params.documentId),territoryId=me.admin_assertion.territoryId;
   if(territoryId!=null){const scope=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[accountId,territoryId]);if(!scope.rowCount)return res.status(403).json({error:'Courier is outside your delegated territory'})}
-  const q=await pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,evidence_data_url FROM courier_documents WHERE id=$1 AND account_id=$2`,[documentId,accountId]);
+  const q=await pool.query(`SELECT id,private_evidence_object_id FROM courier_documents WHERE id=$1 AND account_id=$2`,[documentId,accountId]);
   if(!q.rowCount)return res.status(404).json({error:'Courier document not found'});
-  res.json(q.rows[0]);
+  if(!q.rows[0].private_evidence_object_id)return res.status(409).json({error:'Private evidence migration is required before this Courier document can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+  const evidence=await readPrivateEvidence(pool,{
+    objectId:q.rows[0].private_evidence_object_id,actorAccountId:me.account.id,
+    purpose:'courier_document_read',correlationId:correlation(req)
+  });
+  return sendPrivateEvidence(res,evidence);
 }catch(e){next(e)}})
 app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{try{const me=await requireAdmin(req,'courier.verify'),id=Number(req.params.accountId),territoryId=me.admin_assertion.territoryId,status=clean(req.body?.eligibility_status,30);if(!['pending','approved','suspended','revoked','expired'].includes(status))return res.status(400).json({error:'Invalid eligibility status'});if(territoryId!=null){const scope=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[id,territoryId]);if(!scope.rowCount)return res.status(403).json({error:'Courier is outside your delegated territory'})}await pool.query(`UPDATE courier_profiles SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,approval_note=$4,available=CASE WHEN $1='approved' THEN available ELSE FALSE END,updated_at=NOW() WHERE account_id=$5`,[status,clean(req.body?.approved_vehicle_class,40),req.body?.eligibility_expires_at||null,clean(req.body?.approval_note,600),id]);if(Array.isArray(req.body?.document_updates))for(const d of req.body.document_updates){if(!['verified','rejected','expired'].includes(d.status))continue;await pool.query(`UPDATE courier_documents SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 AND account_id=$5`,[d.status,me.account.id,clean(d.rejection_reason,500),Number(d.id),id])}res.json({ok:true})}catch(e){next(e)}})
 app.get('/api/admin/deliveries',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId,status=clean(req.query?.status,40);const values=[],where=[];if(territoryId!=null){values.push(territoryId);where.push(`b.territory_id=$${values.length}`)}if(status){values.push(status);where.push(`d.status=$${values.length}`)}const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,b.name business_name,b.territory_id,cp.display_name courier_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY d.updated_at DESC LIMIT 150`,values);res.json(rows.map(d=>deliveryPrivacyView(d,'admin')))}catch(e){next(e)}})
