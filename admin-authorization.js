@@ -4,6 +4,7 @@ export const ADMIN_PERMISSIONS = Object.freeze([
   'admin.console',
   'members.view',
   'members.manage_status',
+  'members.close_account',
   'members.sessions.revoke',
   'members.notes.manage',
   'admin.assign_limited',
