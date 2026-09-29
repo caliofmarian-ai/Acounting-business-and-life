@@ -1041,11 +1041,12 @@ async function ensureQaSupportTicket({pool,base,token,accountId,orderId}){
 }
 
 async function ensureQaPrivacyRequest({pool,base,customerToken,merchantToken,accountId}){
+  const subject=CUSTOMER_PRIVACY_SUBJECT+' '+QA_REVISION;
   const existing=await pool.query(
     `SELECT id FROM support_tickets
       WHERE requester_account_id=$1 AND subject=$2
       ORDER BY id DESC LIMIT 1`,
-    [Number(accountId),CUSTOMER_PRIVACY_SUBJECT]
+    [Number(accountId),subject]
   );
   let ticketId=Number(existing.rows[0]?.id||0);
   if(!ticketId){
@@ -1053,7 +1054,7 @@ async function ensureQaPrivacyRequest({pool,base,customerToken,merchantToken,acc
       method:'POST',token:customerToken,
       body:{
         category:'privacy_access',
-        subject:CUSTOMER_PRIVACY_SUBJECT,
+        subject,
         description:'Controlled internal QA privacy-access request. This is acceptance evidence only and does not request a real legal outcome.',
         requested_destination:'territory_admin',
         related_type:'order',
