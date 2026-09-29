@@ -39,16 +39,23 @@ function rejected(message,code,status=400){
 
 export function privateEvidenceConfig(env=process.env){
   const required=bool(env.PRIVATE_EVIDENCE_REQUIRED);
+  const privateStorageValues=[
+    env.PRIVATE_EVIDENCE_S3_ENDPOINT,env.PRIVATE_EVIDENCE_S3_BUCKET,
+    env.PRIVATE_EVIDENCE_S3_ACCESS_KEY_ID,env.PRIVATE_EVIDENCE_S3_SECRET_ACCESS_KEY
+  ];
+  const hasAnyPrivateStorage=privateStorageValues.some(value=>String(value??'').trim());
+  const reuseNotificationStorage=!hasAnyPrivateStorage&&bool(env.PRIVATE_EVIDENCE_REUSE_NOTIFICATION_AUDIO_STORAGE);
   const config={
     required,
     clamavHost:clean(env.PRIVATE_EVIDENCE_CLAMAV_HOST,240),
     clamavPort:Number(env.PRIVATE_EVIDENCE_CLAMAV_PORT||3310),
     storageTimeoutMs:Math.max(1000,Math.min(60000,Number(env.PRIVATE_EVIDENCE_STORAGE_TIMEOUT_MS)||15000)),
-    endpoint:clean(env.PRIVATE_EVIDENCE_S3_ENDPOINT,500),
-    bucket:clean(env.PRIVATE_EVIDENCE_S3_BUCKET,240),
-    accessKeyId:clean(env.PRIVATE_EVIDENCE_S3_ACCESS_KEY_ID,500),
-    secretAccessKey:String(env.PRIVATE_EVIDENCE_S3_SECRET_ACCESS_KEY||''),
-    region:clean(env.PRIVATE_EVIDENCE_S3_REGION||'auto',80)||'auto',
+    endpoint:clean(reuseNotificationStorage?env.NOTIFICATION_AUDIO_ENDPOINT:env.PRIVATE_EVIDENCE_S3_ENDPOINT,500),
+    bucket:clean(reuseNotificationStorage?env.NOTIFICATION_AUDIO_BUCKET:env.PRIVATE_EVIDENCE_S3_BUCKET,240),
+    accessKeyId:clean(reuseNotificationStorage?env.NOTIFICATION_AUDIO_ACCESS_KEY_ID:env.PRIVATE_EVIDENCE_S3_ACCESS_KEY_ID,500),
+    secretAccessKey:String((reuseNotificationStorage?env.NOTIFICATION_AUDIO_SECRET_ACCESS_KEY:env.PRIVATE_EVIDENCE_S3_SECRET_ACCESS_KEY)||''),
+    region:clean((reuseNotificationStorage?env.NOTIFICATION_AUDIO_REGION:env.PRIVATE_EVIDENCE_S3_REGION)||'auto',80)||'auto',
+    storageSource:reuseNotificationStorage?'notification_audio_private_prefix':'private_evidence',
     urlStyle:clean(env.PRIVATE_EVIDENCE_S3_URL_STYLE||'virtual',20).toLowerCase(),
     prefix:clean(env.PRIVATE_EVIDENCE_S3_PREFIX||'private-evidence',120).replace(/^\/+|\/+$/g,''),
     environment:clean(env.APP_ENV||env.RAILWAY_ENVIRONMENT_NAME||'unknown',40).toLowerCase()
