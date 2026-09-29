@@ -320,3 +320,24 @@ test('governed Admin review endpoint remains separate from profile authorization
   assert.match(governance,/setMicrobusinessCommerceState\(pool/);
   assert.doesNotMatch(governance,/application_approve[^\n]{0,500}setMicrobusinessCommerceState/);
 });
+
+
+test('Super Admin commerce review UI is separate from application approval',()=>{
+  const ui=read('public/profile-governance-ui.js');
+  assert.match(ui,/Commerce readiness/);
+  assert.match(ui,/function commerceReadinessAdmin\(\)/);
+  assert.match(ui,/async function openCommerceReadiness\(/);
+  assert.match(ui,/Profile Authorization remains a separate gate/);
+  assert.match(ui,/Changing this state does not create or certify any government authorization/);
+  assert.match(ui,/Define the limited commerce scope before granting limited eligibility/);
+  assert.match(ui,/\/api\/governance\/admin\/readiness\//);
+  assert.doesNotMatch(ui,/reviewApp[\s\S]{0,900}commerce_state/);
+});
+
+test('commerce eligibility mutation is Super Admin only and limited state requires explicit scope',()=>{
+  const governance=read('server-profile-governance.js');
+  assert.match(governance,/Active Super Admin assignment required for commerce eligibility review/);
+  assert.match(governance,/commerceState==='eligible_limited'&&!Object\.keys\(commerceScope\)\.length/);
+  assert.match(governance,/Define the limited commerce scope before granting limited eligibility/);
+  assert.match(governance,/jsonb_agg\(jsonb_build_object\('id',b\.id,'name',b\.name\)/);
+});
