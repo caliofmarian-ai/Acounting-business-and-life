@@ -40,3 +40,8 @@ test('Supplier acceptance covers procurement, finance, notifications, Support an
   assert.match(source,/merchant_reconciliation:true/);
   assert.match(source,/live_online_payment:'HOLD_FOR_PAYMONGO_LIVE_GATE'/);
 });
+
+test('Supplier Experience uses a commit-scoped purchase-order fixture so notification lifecycle is current',()=>{
+  assert.match(source,/const QA_REVISION=clean\(process\.env\.RAILWAY_GIT_COMMIT_SHA\|\|process\.env\.GITHUB_SHA/);
+  assert.match(source,/SUPPLIER_QA_PO_NOTE='Controlled QA Supplier Experience PO v1 '\+QA_REVISION/);
+});
