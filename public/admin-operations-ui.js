@@ -2,6 +2,11 @@ const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const lazyFeatureMode=Boolean(window.__ABL_LAZY_FEATURES__);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}catch(e){if(e?.name==='AbortError')throw new Error('The server is taking too long to respond. Close this panel and try again.');throw e}finally{if(timer)clearTimeout(timer)}}
+async function privateAttachmentBlob(path){
+  const r=await fetch(path,{credentials:'same-origin'});
+  if(!r.ok){const data=await r.json().catch(()=>({}));throw new Error(data.error||`Request failed (${r.status})`)}
+  return{blob:await r.blob(),disposition:r.headers.get('content-disposition')||''};
+}
 const fileDataUrl=file=>new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(new Error('Could not read '+file.name));r.onload=()=>resolve(String(r.result));r.readAsDataURL(file)});
 let pendingAudio=null,voiceRecorder=null,voiceStream=null,voiceRecognition=null,voiceTimer=null,liveTranscript='',voiceBaseText='',voiceProcessing=false,supportAssistStatus=null,adminState=null,adminAccess=null;
 const PRIVACY_SUPPORT_CATEGORIES=new Set(['privacy_objection','privacy_access','privacy_correction','privacy_erasure_blocking','privacy_other_request']);
@@ -257,7 +262,12 @@ async function submitSupportReply(id,e){
   button.disabled=true;button.textContent='Sending…';
   try{await api('/api/support/tickets/'+id+'/reply',{method:'POST',body:JSON.stringify({message})});toast('Follow-up sent.');await openTicket(id)}catch(err){toast(err.message)}finally{button.disabled=false;button.textContent='Send follow-up'}
 }
-async function downloadAttachment(ticketId,id){try{const a=await api(`/api/support/tickets/${ticketId}/attachments/${id}`);const link=document.createElement('a');link.href=a.data_url;link.download=a.file_name||'attachment';link.click()}catch(e){toast(e.message)}}
+async function downloadAttachment(ticketId,id){try{
+  const{blob}=await privateAttachmentBlob(`/api/support/tickets/${ticketId}/attachments/${id}`);
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download='support-attachment';document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),120000);
+}catch(e){toast(e.message)}}
 
 async function openAdmin(){
   if(!token())return;
