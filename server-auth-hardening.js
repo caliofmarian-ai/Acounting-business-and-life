@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
+import {accountClosureAssessment,closeAccountSafely,ensureAccountLifecycleSchema} from './account-lifecycle-core.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
 import {AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,resolveV2SessionStepUp,resolveV2SessionToken} from './auth-session-core.js';
 import {incidentsFetch,startEmbeddedIncidents,stopEmbeddedIncidents} from './server-incidents.js';
@@ -165,6 +166,7 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS auth_security_events_account_idx ON auth_security_events(account_id,created_at DESC);
   `);
+  await ensureAccountLifecycleSchema(pool);
 }
 
 async function issueActionToken(accountId, purpose, ttlExpression) {
@@ -357,7 +359,7 @@ app.post('/api/auth/email-verification/verify', jsonBody, async (req, res, next)
   const token = clean(req.body?.token, 300); if (!token) return res.status(400).json({ error: 'Verification token is required' });
   try {
     const session = await optionalV2(req);
-    const used = await consumeActionToken(token, 'verify_email', async (client, row) => client.query(`UPDATE accounts SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1`, [row.account_id]));
+    const used = await consumeActionToken(token, 'verify_email', async (client, row) => client.query(`UPDATE accounts SET email_verified_at=COALESCE(email_verified_at,NOW()),auth_status=CASE WHEN auth_status='pending_verification' THEN 'active' ELSE auth_status END,updated_at=NOW() WHERE id=$1`, [row.account_id]));
     const verificationSession = !session
       ? 'signed_out'
       : Number(session.accountId) === Number(used.account_id)
@@ -403,7 +405,7 @@ app.post('/api/auth/owner-migrate', jsonBody, async (req, res, next) => {
 
 app.get('/api/auth/step-up/status', async (req,res,next) => {
   try {
-    const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||'';
+    const raw=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
     const state=await resolveV2SessionStepUp(pool,TOKEN_SECRET,raw);
     if(!state)throw Object.assign(new Error('Sign in again to continue'),{status:401});
     res.set('Cache-Control','private, no-store, max-age=0');
@@ -427,7 +429,7 @@ app.post('/api/auth/step-up/password', jsonBody, async (req,res,next) => {
     }
     const q=await pool.query(`SELECT password_salt,password_hash,auth_status FROM accounts WHERE id=$1`,[s.accountId]);
     const account=q.rows[0];
-    if(!account||account.auth_status!=='active')throw Object.assign(new Error('Account is not active'),{status:403});
+    if(!account||!['active','pending_verification'].includes(String(account.auth_status||'')))throw Object.assign(new Error('Account is not available'),{status:403});
     if(!account.password_hash){
       await audit(s.accountId,'step_up_password_unavailable',req,{session_id_hash:sha256(s.sessionId)});
       return res.status(409).json({
@@ -446,6 +448,49 @@ app.post('/api/auth/step-up/password', jsonBody, async (req,res,next) => {
     res.set('Cache-Control','private, no-store, max-age=0');
     res.json({ok:true,verified:true,verified_at:verifiedAt,valid_for_minutes:Math.round(AUTH_STEP_UP_TTL_MS/60_000)});
   } catch(e){next(e)}
+});
+
+async function requireRecentStepUp(req){
+  const raw=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
+  const state=await resolveV2SessionStepUp(pool,TOKEN_SECRET,raw);
+  if(!state)throw Object.assign(new Error('Sign in again to continue'),{status:401});
+  if(!state.stepUpValid)throw Object.assign(new Error('Confirm your identity before deleting your account'),{status:428,code:'STEP_UP_REQUIRED'});
+  return state;
+}
+
+app.get('/api/auth/account-closure/preflight',async(req,res,next)=>{
+  try{
+    const s=await requireV2(req);
+    const assessment=await accountClosureAssessment(pool,s.accountId);
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json(assessment);
+  }catch(error){next(error)}
+});
+
+app.post('/api/auth/account-closure/close',jsonBody,async(req,res,next)=>{
+  try{
+    const s=await requireRecentStepUp(req);
+    if(req.body?.confirm!==true||clean(req.body?.confirmation,40).toUpperCase()!=='DELETE'){
+      return res.status(400).json({error:'Type DELETE and confirm the account closure action'});
+    }
+    const assessment=await accountClosureAssessment(pool,s.accountId);
+    if(assessment.blockers.length){
+      await audit(s.accountId,'account_closure_blocked',req,{blocker_codes:assessment.blockers.map(x=>x.code)});
+      return res.status(409).json({error:'Account closure is blocked until outstanding matters are resolved',code:'ACCOUNT_CLOSURE_BLOCKED',assessment});
+    }
+    const result=await closeAccountSafely(pool,{
+      accountId:s.accountId,
+      actorAccountId:s.accountId,
+      actorType:'self',
+      reason:'Self-service account closure'
+    });
+    await audit(s.accountId,'account_closed_self_service',req,{mode:result.mode||'anonymize_and_retain_required_history'});
+    clearBrowserSessionCookies(res);
+    res.json({...result,signed_out:true});
+  }catch(error){
+    if(error?.assessment)return res.status(error.status||409).json({error:error.message,code:error.code||'ACCOUNT_CLOSURE_BLOCKED',assessment:error.assessment});
+    next(error);
+  }
 });
 
 app.post('/api/auth/sessions/revoke-others', jsonBody, async (req, res, next) => {
