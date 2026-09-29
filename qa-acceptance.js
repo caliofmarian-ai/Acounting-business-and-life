@@ -680,7 +680,7 @@ async function runMerchantCatalogSeed({pool,base,secret}){
 
 
 const CUSTOMER_MARKETPLACE_NOTE='Controlled QA customer marketplace E2E v1';
-const MERCHANT_EXPERIENCE_ORDER_NOTE='Controlled QA Merchant Experience Marketplace order';
+const MERCHANT_EXPERIENCE_ORDER_NOTE='Controlled QA Merchant Experience Marketplace order '+QA_REVISION;
 const CUSTOMER_MARKETPLACE_ITEMS=['QA Fish Soup','QA Fresh Carrots','QA Bottled Juice','QA Dish Soap'];
 const CUSTOMER_MARKETPLACE_CONSUMPTION=new Map([
   ['Water',200],
