@@ -307,3 +307,16 @@ test('Local Services readiness UI stays non-authoritative and keeps governed sta
   assert.match(ui,/Verified and Growing require governed evidence and cannot be self-declared/);
   assert.match(ui,/Public visibility and new customer requests stay locked until governed review is complete/);
 });
+
+
+test('governed Admin review endpoint remains separate from profile authorization',()=>{
+  const governance=read('server-profile-governance.js');
+  assert.match(governance,/app\.post\('\/api\/governance\/admin\/readiness\/:accountId\/:role\/review'/);
+  assert.match(governance,/const me=await requireAdmin\(req\)/);
+  assert.match(governance,/const authorization=await activeAuthorization\(accountId,role\)/);
+  assert.match(governance,/Active platform profile authorization is required before commerce eligibility can be granted/);
+  assert.match(governance,/Complete the activity track and operating context before commerce eligibility review/);
+  assert.match(governance,/profile_authorization_separate:true/);
+  assert.match(governance,/setMicrobusinessCommerceState\(pool/);
+  assert.doesNotMatch(governance,/application_approve[^\n]{0,500}setMicrobusinessCommerceState/);
+});
