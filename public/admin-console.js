@@ -284,12 +284,37 @@ async function memberDetailPanel(accountId){
   const data=await api('/api/admin/members/'+Number(accountId));
   state.memberDetail=data;
   const m=data.member||{},s=data.security||{},controls=data.controls||{};
-  const statusTarget=m.auth_status==='active'?'suspended':'active';
+  let closureAssessment=null,closureAssessmentError='';
+  if(hasAny(['members.close_account'])){
+    try{closureAssessment=await api('/api/admin/members/'+Number(accountId)+'/account-closure/preflight')}
+    catch(error){closureAssessmentError=String(error?.message||'Account closure preflight is unavailable.')}
+  }
+  const statusTarget=m.auth_status==='active'?'suspended':m.auth_status==='suspended'?'active':'';
+  const canChangeStatus=Boolean(controls.manage_status&&statusTarget&&(statusTarget!=='active'||m.account_mode==='company_test'||m.email_verified_at));
   const statusLabel=statusTarget==='suspended'?'Suspend account':'Reactivate account';
-  const actions=(controls.manage_status||controls.revoke_sessions)
-    ?'<details class="memberDangerZone memberControlDisclosure"><summary><div><span class="memberEyebrow">HIGH-IMPACT ACTIONS</span><strong>Account controls</strong><span>Reason + confirmation + audit are required.</span></div></summary><div class="memberControlBody"><p class="muted memberControlBoundary">Hard-delete is intentionally not available here.</p>'
-      +(controls.manage_status?'<form id="memberStatusForm" class="adminForm memberControlForm" data-member-status="'+esc(statusTarget)+'"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why is this account action necessary?"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm this '+esc(statusLabel.toLowerCase())+' action for the selected member.</span></label><button class="'+(statusTarget==='suspended'?'danger':'primary')+'" type="submit">'+esc(statusLabel)+'</button><div data-member-control-result></div></form>':'')
+  const statusBoundary=m.auth_status==='pending_verification'
+    ?'<div class="notice">Email ownership is not verified. Admin cannot activate this account; the member must verify the email first.</div>'
+    :m.auth_status==='closed'
+      ?'<div class="notice">This account is closed and cannot be reactivated from Members.</div>'
+      :'';
+  const closureBlockers=(closureAssessment?.blockers||[]);
+  const closureAction=closureAssessment?.purge_eligible?'purge_empty_unverified':'close';
+  const closureConfirmation=closureAction==='purge_empty_unverified'?'DELETE':'CLOSE';
+  const closureTitle=closureAction==='purge_empty_unverified'?'Delete empty unverified account':'Close account safely';
+  const closureControl=!hasAny(['members.close_account'])?''
+    :closureAssessmentError?'<div class="error">'+esc(closureAssessmentError)+'</div>'
+    :closureAssessment?.already_closed?'<div class="notice">This account is already closed.</div>'
+    :closureBlockers.length
+      ?'<section class="memberClosureBlockers"><strong>Account closure is blocked.</strong><p class="muted">Resolve every financial, operational, Support, security or legal item before this action becomes available.</p><div class="memberDetailList">'+closureBlockers.map(item=>'<article class="memberDetailItem"><strong>'+esc(item.message||item.code)+'</strong><span class="muted">'+esc(item.next_action||'Resolve this item before closure.')+'</span></article>').join('')+'</div></section>'
+      :closureAssessment
+        ?'<form id="memberClosureForm" class="adminForm memberControlForm" data-member-closure-action="'+esc(closureAction)+'" data-member-closure-confirmation="'+esc(closureConfirmation)+'"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why is this governed account closure necessary?"></textarea></label><label>Type '+esc(closureConfirmation)+' to confirm<input name="confirmation" autocomplete="off" maxlength="20" required></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm that the blocker check is clear and understand that required accounting, security and legal history is retained.</span></label><button class="danger" type="submit">'+esc(closureTitle)+'</button><div data-member-closure-result></div></form>'
+        :'';
+  const actions=(canChangeStatus||controls.revoke_sessions||hasAny(['members.close_account']))
+    ?'<details class="memberDangerZone memberControlDisclosure"><summary><div><span class="memberEyebrow">HIGH-IMPACT ACTIONS</span><strong>Account controls</strong><span>Reason + confirmation + audit are required.</span></div></summary><div class="memberControlBody"><p class="muted memberControlBoundary">Hard-delete is intentionally not available here. Governed closure first checks money, operations, Support, security and legal obligations; required historical evidence is retained.</p>'
+      +statusBoundary
+      +(canChangeStatus?'<form id="memberStatusForm" class="adminForm memberControlForm" data-member-status="'+esc(statusTarget)+'"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why is this account action necessary?"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm this '+esc(statusLabel.toLowerCase())+' action for the selected member.</span></label><button class="'+(statusTarget==='suspended'?'danger':'primary')+'" type="submit">'+esc(statusLabel)+'</button><div data-member-control-result></div></form>':'')
       +(controls.revoke_sessions?'<form id="memberSessionsForm" class="adminForm memberControlForm"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why must active sessions be revoked?"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm signing this member out of all active sessions.</span></label><button class="secondary" type="submit">Sign out all active sessions</button><div data-member-control-result></div></form>':'')
+      +closureControl
       +'</div></details>'
     :'<section class="memberDangerZone memberReadOnlyControls"><span class="memberEyebrow">ACCOUNT CONTROLS</span><strong>Read-only access</strong><p class="muted">Your delegated Admin function cannot change this member account.</p></section>';
 
@@ -471,6 +496,26 @@ async function wireMembers(){
     if(statusForm)statusForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(statusForm),out=statusForm.querySelector('[data-member-control-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/status',{method:'PATCH',body:JSON.stringify({status:statusForm.dataset.memberStatus,reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">Account status updated and audited.</div>';state.memberSummary=null;await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     const sessionsForm=document.getElementById('memberSessionsForm');
     if(sessionsForm)sessionsForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(sessionsForm),out=sessionsForm.querySelector('[data-member-control-result]');try{const result=await api('/api/admin/members/'+Number(state.memberDetailId)+'/sessions/revoke',{method:'POST',body:JSON.stringify({reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">'+Number(result.sessions_revoked||0)+' active session(s) revoked and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
+    const closureForm=document.getElementById('memberClosureForm');
+    if(closureForm)closureForm.onsubmit=async e=>{
+      e.preventDefault();
+      const fd=new FormData(closureForm),out=closureForm.querySelector('[data-member-closure-result]');
+      const expected=String(closureForm.dataset.memberClosureConfirmation||'CLOSE'),confirmation=String(fd.get('confirmation')||'').trim().toUpperCase();
+      if(confirmation!==expected){if(out)out.innerHTML='<div class="error">Type '+esc(expected)+' exactly to continue.</div>';return}
+      try{
+        const result=await api('/api/admin/members/'+Number(state.memberDetailId)+'/account-closure',{method:'POST',body:JSON.stringify({
+          action:String(closureForm.dataset.memberClosureAction||'close'),
+          reason:String(fd.get('reason')||'').trim(),
+          confirmation,
+          confirm:fd.get('confirm')==='on'
+        })});
+        if(out)out.innerHTML='<div class="notice">'+(result.purged?'Empty unverified registration deleted and audited.':'Account closed safely and audited.')+'</div>';
+        state.memberDetailId=null;state.memberDetail=null;state.memberSummary=null;
+        await renderActive();
+      }catch(err){
+        if(out)out.innerHTML='<div class="error">'+esc(err.message)+(String(err.message||'').toLowerCase().includes('identity')?' Confirm your identity in Account Settings → Security & access, then try again.':'')+'</div>';
+      }
+    };
     document.querySelectorAll('[data-member-support-ticket]').forEach(button=>button.onclick=()=>window.BusinessLifeAdminConsole?.openSupportTicket(Number(button.dataset.memberSupportTicket)));
     document.querySelectorAll('[data-member-trust-case]').forEach(button=>button.onclick=()=>window.BusinessLifeAdminConsole?.openCase(Number(button.dataset.memberTrustCase)));
     const noteForm=document.getElementById('memberNoteForm');
