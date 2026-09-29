@@ -81,6 +81,12 @@ test('Support voice uses browser acceleration plus server transcription fallback
   assert.match(supportServer,/\/api\/support\/assist\/status/);
   assert.match(supportServer,/\/api\/support\/assist\/transcribe/);
   assert.match(supportServer,/SUPPORT_AI_NOT_CONFIGURED/);
+  assert.match(supportServer,/supportTranscriptionLanguage/);
+  assert.match(supportServer,/\['gpt-transcribe','whisper-1'\]/);
+  assert.match(supportServer,/response_format','json'/);
+  assert.match(supportServer,/chunking_strategy','auto'/);
+  assert.match(supportServer,/retrying fallback/);
+  assert.match(supportServer,/else try\{english=await translateSupportText/);
 });
 
 test('Support English translation is server-capable and retains browser fallback',()=>{
