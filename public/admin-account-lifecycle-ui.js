@@ -17,6 +17,9 @@ async function lifecycleApi(path,options={}){
 }
 
 function currentMemberId(){
+  const mount=document.getElementById('memberAccountLifecycleMount');
+  const direct=Number(mount?.dataset.memberId||0);
+  if(Number.isInteger(direct)&&direct>0)return direct;
   const hero=document.querySelector('.memberDetailHeroV4');
   if(!hero)return null;
   const text=hero.textContent||'';
@@ -59,10 +62,10 @@ function stepUpMarkup(step){
 }
 
 async function decorateMemberLifecycle(){
+  const mount=document.getElementById('memberAccountLifecycleMount');
+  if(!mount)return;
   const memberId=currentMemberId();
   if(!memberId)return;
-  const rail=document.querySelector('.memberDetailRail');
-  if(!rail)return;
   const existing=document.getElementById('memberAccountLifecycleControl');
   if(existing?.dataset.memberId===String(memberId))return;
   existing?.remove();
@@ -71,13 +74,12 @@ async function decorateMemberLifecycle(){
   try{
     assessment=await lifecycleApi('/api/admin/members/'+memberId+'/account-closure/preflight');
   }catch(error){
-    if([401,403,404].includes(Number(error.status)))return;
     const section=document.createElement('section');
     section.id='memberAccountLifecycleControl';
     section.dataset.memberId=String(memberId);
-    section.className='memberDangerZone memberReadOnlyControls';
-    section.innerHTML='<span class="memberEyebrow">ACCOUNT LIFECYCLE</span><strong>Closure check unavailable</strong><p class="muted">'+esc(error.message)+'</p>';
-    rail.appendChild(section);
+    section.className='memberReadOnlyControls';
+    section.innerHTML='<span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="muted">'+esc(error.message||'Deletion eligibility could not be checked.')+'</p><button type="button" class="danger" disabled>Delete account</button>';
+    mount.replaceChildren(section);
     return;
   }
   if(currentMemberId()!==memberId)return;
@@ -92,7 +94,7 @@ async function decorateMemberLifecycle(){
     +'<div class="memberControlBody"><p class="muted memberControlBoundary">Empty never-verified registrations with no retained history are permanently removed. Other eligible accounts are closed, personal access is removed and only records that must be retained for accounting, completed transactions, disputes, fraud/security or legal obligations remain with minimal identifiers.</p>'
     +'<div id="memberLifecycleStepUp">'+stepUpMarkup(step)+'</div>'
     +'<div id="memberLifecycleAssessment">'+confirmationMarkup(assessment)+'</div></div>';
-  rail.appendChild(details);
+  mount.replaceChildren(details);
   bindMemberLifecycle(details,memberId);
 }
 
@@ -163,3 +165,6 @@ const observer=new MutationObserver(()=>{
 });
 observer.observe(document.documentElement,{subtree:true,childList:true});
 document.addEventListener('DOMContentLoaded',()=>decorateMemberLifecycle().catch(()=>{}));
+window.BusinessLifeAdminAccountLifecycle=Object.freeze({
+  decorate:()=>decorateMemberLifecycle().catch(()=>{})
+});
