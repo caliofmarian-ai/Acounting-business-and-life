@@ -68,7 +68,10 @@ test('auth reset and verification email uses the shared notification delivery le
 
 test('Account Settings opens Notification Settings without blocking on the inbox list',()=>{
   assert.match(ui,/async function renderNotificationSettingsOnly\(\)/);
+  assert.match(ui,/let notificationPanel=\{rows:\[\],prefs:null\}/);
   assert.match(ui,/const prefs=await api\('\/api\/notifications\/preferences'\)/);
+  assert.match(ui,/rows:Array\.isArray\(notificationPanel\?\.rows\)\?notificationPanel\.rows:\[\]/);
+  assert.doesNotMatch(ui,/rows:notificationPanel\.rows\|\|\[\]/);
   const settingsBlock=ui.match(/async function openNotificationSettings\(\)\{[\s\S]*?\n\}/)?.[0]||'';
   assert.match(settingsBlock,/renderNotificationSettingsOnly\(\)/);
   assert.doesNotMatch(settingsBlock,/renderNotificationCenter\(\)/);
