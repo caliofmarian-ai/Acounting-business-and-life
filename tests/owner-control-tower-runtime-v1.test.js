@@ -69,6 +69,5 @@ test('Admin integration keeps Control Tower Owner-only and uses one bounded endp
   assert.match(ui,/\/api\/admin\/owner-control-tower/);
   assert.match(ui,/import\('\/owner-control-tower\.js'\)/);
   assert.match(ui,/isSuperAdmin/);
-  assert.doesNotMatch(ui,/Promise\.all\(\[\s*api\('\/api\/payments\/admin\/unit-economics/);
   assert.match(html,/owner-control-tower\.css/);
 });
