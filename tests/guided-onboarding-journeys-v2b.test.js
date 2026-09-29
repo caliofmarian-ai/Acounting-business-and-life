@@ -37,11 +37,13 @@ test('started profiles receive their own rows without activating any profile',()
   assert.doesNotMatch(core,/active_role=\$|SET active_role/);
 });
 
-test('legacy first-profile completion migrates only the profile that actually completed it',()=>{
+test('legacy and prior-version completion migrate only overlapping steps for the same profile',()=>{
   assert.match(core,/legacyCompletedRaw\.has\('profile_onboarding'\)/);
   assert.match(core,/migratedLegacyProfile&&role===legacyRole/);
-  assert.match(core,/migrateCompleted\?GUIDED_ONBOARDING_PROFILE_STEPS:\[\]/);
-  assert.doesNotMatch(core,/for\(const role of ROLE_ORDER\)[\s\S]*migrateCompleted=true/);
+  assert.match(core,/SELECT journey_version,completed_steps,status FROM guided_onboarding_profile_progress/);
+  assert.match(core,/normalizeProfileCompleted\(previousRow\.completed_steps,role\)/);
+  assert.match(core,/GUIDED_ONBOARDING_PROFILE_STEPS\.filter\(step=>def\.steps\.includes\(step\)\)/);
+  assert.doesNotMatch(core,/for\(const role of ROLE_ORDER\)[\s\S]*completed=new Set\(def\.steps\)/);
 });
 
 test('profile pause resume reset complete and step completion are isolated by role and version',()=>{
