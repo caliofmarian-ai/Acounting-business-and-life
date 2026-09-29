@@ -123,7 +123,7 @@ async function decorateSecurity(){
     sensitive.innerHTML=`<h2>Sensitive-action confirmation</h2><p class="authSectionIntro">Confirm your identity only when a protected action requires it. This is separate from changing your password.</p>${stepUpMarkup}`;
     const sessions=document.createElement('section');sessions.className='accountSettingsCard authUpgradeCard authSessionsCard';
     sessions.innerHTML='<h2>Sessions</h2><div class="authSecurityLine"><span>Current session</span><strong>This device · Active</strong></div><p class="authSectionIntro">Manage signed-in access separately from your password.</p><button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><button id="signOutCurrent" type="button" class="dangerStrong">Sign out</button><div id="authSessionMsg" class="avatarHint"></div>';
-    const closure=document.createElement('section');closure.className='accountSettingsCard authUpgradeCard authAccountClosureCard';
+    const closure=document.createElement('section');closure.id='accountDeleteSection';closure.className='accountSettingsCard authUpgradeCard authAccountClosureCard';
     const closureBlocked=Boolean(closureAssessment?.blocker_count);
     const closureItems=(closureAssessment?.blockers||[]).map(item=>'<li><strong>'+esc(item.message||item.code)+'</strong><span>'+esc(item.next_action||'Resolve this item before closing your account.')+'</span></li>').join('');
     closure.innerHTML='<h2>Delete account</h2><p class="authSectionIntro">Deleting your account removes sign-in access and direct personal/authentication data. Records that must remain for accounting, completed transactions, disputes, fraud/security or legal obligations are retained with minimal identifiers.</p>'
@@ -131,6 +131,13 @@ async function decorateSecurity(){
         :closureBlocked?'<div class="authClosureBlocked"><strong>Account cannot be deleted yet.</strong><ul>'+closureItems+'</ul></div>'
         :'<form id="accountClosureForm" class="authStepUpForm"><label>Type DELETE to confirm<input name="confirmation" autocomplete="off" maxlength="20" required></label><label class="authClosureConfirm"><input name="confirm" type="checkbox" required> I understand that this closes my Business & Life account and signs out all devices.</label><button type="submit" class="dangerStrong">Delete account</button><div id="accountClosureMsg" class="avatarHint">A fresh financial, security, Support and legal blocker check runs again before deletion.</div></form>');
     protectionMount.replaceChildren(protection);sensitiveMount.replaceChildren(sensitive);sessionsMount.replaceChildren(sessions,closure);
+    if(sessionStorage.getItem('abl_open_account_delete')==='1'){
+      sessionStorage.removeItem('abl_open_account_delete');
+      requestAnimationFrame(()=>{
+        closure.scrollIntoView({behavior:'smooth',block:'start'});
+        closure.querySelector('[name="confirmation"]')?.focus();
+      });
+    }
 
     protection.querySelector('#sendVerify')?.addEventListener('click',async()=>{
       const out=protection.querySelector('#accountProtectionMsg');out.textContent='Preparing verification…';
