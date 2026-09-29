@@ -152,7 +152,6 @@ async function decorateSecurity(){
         const result=await api('/api/auth/account-closure/close',{method:'POST',body:JSON.stringify({confirmation:'DELETE',confirm:fd.get('confirm')==='on'})});
         if(result?.closed){
           window.ABLSession?.clearReadableSession();
-          sessionStorage.setItem('abl_flash','Your Business & Life account has been closed.');
           location.reload();
           return;
         }
