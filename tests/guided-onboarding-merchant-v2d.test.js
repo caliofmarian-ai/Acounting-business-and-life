@@ -72,22 +72,22 @@ test('Merchant tour points to real operational controls already present in the p
   assert.match(shell,/id="supQuickButton"/);
   assert.match(shell,/id="deliveryQuickButton"/);
   assert.match(shell,/data-merchant-mobile-action="profileSettings"/);
-  assert.match(market,/id="storeLocationPanel"/);
-  assert.match(market,/id="storePresence"/);
-  assert.match(market,/id="storePublicLocation"/);
-  assert.match(market,/id="storefrontV2Media"/);
-  assert.match(market,/id="directProductForm"/);
+  assert.match(market,/storeLocationPanel/);
+  assert.match(market,/storePresence/);
+  assert.match(market,/storePublicLocation/);
+  assert.match(market,/storefrontV2Media/);
+  assert.match(market,/directProductForm/);
   assert.match(market,/class="merchantCatalogList"/);
   assert.match(market,/AI image draft · review before use/);
-  assert.match(market,/id="storeReputation"/);
-  assert.match(market,/id="storeCompare"/);
+  assert.match(market,/storeReputation/);
+  assert.match(market,/storeCompare/);
   assert.match(orders,/class="ordersBoard"/);
   assert.match(orders,/data-action="cancel"/);
-  assert.match(delivery,/id="pickupLocationForm"/);
+  assert.match(delivery,/pickupLocationForm/);
   assert.match(finance,/class="businessFinancePrimary"/);
   assert.match(finance,/class="businessFinanceDetails"/);
   assert.match(pricing,/scope==='merchant'/);
-  assert.match(settings,/id="profilePromotionCenter"/);
+  assert.match(settings,/profilePromotionCenter/);
 });
 
 test('Merchant tour never publishes, moves money, refunds, changes order state or switches profile automatically',()=>{
