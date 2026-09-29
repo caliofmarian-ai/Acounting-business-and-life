@@ -55,6 +55,8 @@ async function authFetch(path, options={}){
   return body;
 }
 let authGeoTimer=null;
+let emailPreflightTimer=null;
+let emailPreflightState={email:'',ok:false,pending:false};
 async function searchAuthBarangays(query=''){
   const data=await authFetch('/api/auth/geography/search?q='+encodeURIComponent(String(query||'').trim())+'&limit=15');
   return data.items||[];
@@ -62,6 +64,65 @@ async function searchAuthBarangays(query=''){
 async function authGeographyStatus(code){
   return authFetch('/api/auth/geography/status?psgc_code='+encodeURIComponent(code));
 }
+function emailPreflightElements(){
+  return{
+    input:document.getElementById('authEmail'),
+    status:document.getElementById('authEmailStatus'),
+    submit:document.getElementById('authCreateButton')
+  };
+}
+function setEmailPreflightUi({message='',ok=false,pending=false,email=''}={}){
+  const {status,submit}=emailPreflightElements();
+  emailPreflightState={email,ok:Boolean(ok),pending:Boolean(pending)};
+  if(status){
+    status.textContent=message;
+    status.className='authGeoStatus '+(ok?'ok':message&&!pending?'warn':'');
+  }
+  if(submit)submit.disabled=!ok||pending;
+}
+async function runEmailPreflight(email,{silent=false}={}){
+  const normalized=String(email||'').trim().toLowerCase();
+  if(!normalized){
+    setEmailPreflightUi({message:'Enter your real email address. No account is created until you verify it.',email:normalized});
+    return false;
+  }
+  const input=document.getElementById('authEmail');
+  if(input&&!input.checkValidity()){
+    setEmailPreflightUi({message:'Enter a valid email address.',email:normalized});
+    return false;
+  }
+  setEmailPreflightUi({message:silent?'':'Checking whether this email domain can receive mail…',pending:true,email:normalized});
+  try{
+    const result=await authFetch('/api/auth/email/preflight',{method:'POST',body:JSON.stringify({email:normalized})});
+    if(String(document.getElementById('authEmail')?.value||'').trim().toLowerCase()!==normalized)return false;
+    setEmailPreflightUi({
+      message:'Email domain can receive mail. We will create the account only after you open the verification email.',
+      ok:Boolean(result.ok),email:normalized
+    });
+    return Boolean(result.ok);
+  }catch(error){
+    if(String(document.getElementById('authEmail')?.value||'').trim().toLowerCase()!==normalized)return false;
+    setEmailPreflightUi({message:error.message||'This email cannot be used.',email:normalized});
+    return false;
+  }
+}
+function bindRegistrationEmailPreflight(){
+  const {input}=emailPreflightElements();
+  if(!input)return;
+  setEmailPreflightUi({message:'Enter your real email address. No account is created until you verify it.',email:''});
+  input.addEventListener('input',()=>{
+    clearTimeout(emailPreflightTimer);
+    const email=String(input.value||'').trim().toLowerCase();
+    setEmailPreflightUi({message:email?'Checking email…':'Enter your real email address. No account is created until you verify it.',pending:Boolean(email),email});
+    if(!email)return;
+    emailPreflightTimer=setTimeout(()=>runEmailPreflight(email).catch(()=>{}),450);
+  });
+  input.addEventListener('blur',()=>{
+    clearTimeout(emailPreflightTimer);
+    if(input.value.trim())runEmailPreflight(input.value).catch(()=>{});
+  });
+}
+
 function bindAuthBarangayPicker(){
   const input=document.getElementById('authBarangaySearch'),hidden=document.getElementById('authHomePsgcCode'),results=document.getElementById('authBarangayResults'),status=document.getElementById('authBarangayStatus');
   if(!input||!hidden||!results||!status)return;
@@ -103,29 +164,60 @@ function openAuth(nextMode){ensureModal();renderAuth(nextMode);document.getEleme
 function closeAuth(){document.getElementById('authModalBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
 function renderAuth(nextMode){
   mode=nextMode;document.getElementById('authTabLogin')?.classList.toggle('active',mode==='login');document.getElementById('authTabRegister')?.classList.toggle('active',mode==='register');document.getElementById('authTitle').textContent=mode==='login'?'Welcome back':'Create your account';const host=document.getElementById('authFormHost');if(!host)return;
-  host.innerHTML=mode==='login'?`<form id="accountAuthForm" class="authForm"><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Password<input id="authPassword" type="password" autocomplete="current-password" required></label><button>Sign in</button><div id="authError" class="authError"></div></form>`:`<form id="accountAuthForm" class="authForm"><label>Name<input id="authName" autocomplete="name" required></label><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Phone (optional)<input id="authPhone" inputmode="tel" autocomplete="tel"></label><label>Personal / home address (private)<textarea id="authAddress" rows="2" autocomplete="street-address"></textarea></label><div class="authGeoStatus">Enter your home address. We will check whether Business & Life is available in your area.</div><label>Password<input id="authPassword" type="password" autocomplete="new-password" minlength="8" required></label><label class="authEligibilityChoice"><input id="authAdultEligibility" type="checkbox" required><span>I confirm that I am 18 or older. The Philippines pilot is adult-only because it includes commerce, payments, Delivery and Local Services.</span></label><button>Create person account</button><div class="authLegal">No date of birth is collected for this declaration. No operational profile is activated automatically.</div><div id="authError" class="authError"></div></form>`;
+  host.innerHTML=mode==='login'?`<form id="accountAuthForm" class="authForm"><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Password<input id="authPassword" type="password" autocomplete="current-password" required></label><button>Sign in</button><div id="authError" class="authError"></div></form>`:`<form id="accountAuthForm" class="authForm"><label>Name<input id="authName" autocomplete="name" required></label><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><div id="authEmailStatus" class="authGeoStatus">Enter your real email address. No account is created until you verify it.</div><label>Phone (optional)<input id="authPhone" inputmode="tel" autocomplete="tel"></label><label>Personal / home address (private)<textarea id="authAddress" rows="2" autocomplete="street-address"></textarea></label><div class="authGeoStatus">Enter your home address. We will check whether Business & Life is available in your area.</div><label>Password<input id="authPassword" type="password" autocomplete="new-password" minlength="8" required></label><label class="authEligibilityChoice"><input id="authAdultEligibility" type="checkbox" required><span>I confirm that I am 18 or older. The Philippines pilot is adult-only because it includes commerce, payments, Delivery and Local Services.</span></label><button id="authCreateButton" disabled>Create person account</button><div class="authLegal">No date of birth is collected for this declaration. No account or operational profile is created until the email address is verified.</div><div id="authError" class="authError"></div></form>`;
   host.querySelector('#accountAuthForm').onsubmit=submitAuth;
+  if(mode==='register')bindRegistrationEmailPreflight();
 }
 function registrationMessage(verification){
-  if(verification?.delivery_status==='sent')return 'Account created. We sent a verification link to your email.';
-  if(verification?.already_verified)return 'Account created. Your email is already verified.';
-  return 'Account created. Email delivery is currently unavailable; request a new verification link from Account Settings.';
+  if(verification?.registration_pending)return 'Verification email sent. No account exists yet; open the link to create it.';
+  if(verification?.delivery_status==='sent')return 'Verification email sent.';
+  return 'Email verification could not be started. No account was created.';
 }
 function showRegistrationSuccess(verification){
   const host=document.getElementById('authFormHost');if(!host)return;
-  if(verification?.preview_verify_url){host.innerHTML=`<div class="authRegistrationSuccess"><h3>Account created</h3><p>Email delivery is unavailable in this preview. Verify your email using the secure preview link, then continue to your person account.</p><a href="${verification.preview_verify_url}">Verify email</a><button id="continuePersonAccount" type="button">Continue to account</button></div>`;host.querySelector('#continuePersonAccount').onclick=()=>location.reload();return}
+  if(verification?.registration_pending){
+    const previewLink=verification.preview_registration_verify_url
+      ?'<a href="'+authEsc(verification.preview_registration_verify_url)+'">Verify email in Preview</a>'
+      :'';
+    host.innerHTML='<div class="authRegistrationSuccess"><h3>Check your email</h3><p>No Business & Life account has been created yet. Open the verification link sent to your email. Only then will your account be created.</p>'+previewLink+'<button id="registrationDone" type="button">Close</button></div>';
+    host.querySelector('#registrationDone').onclick=closeAuth;
+    return;
+  }
   sessionStorage.setItem('abl_flash',registrationMessage(verification));location.reload();
 }
 async function submitAuth(e){
-  e.preventDefault();const form=e.currentTarget,submit=form.querySelector('button[type="submit"],button:not([type])'),err=document.getElementById('authError');err.textContent='';if(submit?.disabled)return;submit.disabled=true;
-  const email=document.getElementById('authEmail').value,password=document.getElementById('authPassword').value,isRegistration=mode==='register';if(isRegistration)await trackReferralSignupStarted();
+  e.preventDefault();
+  const form=e.currentTarget,submit=form.querySelector('button[type="submit"],button:not([type])'),err=document.getElementById('authError');
+  err.textContent='';
+  const email=document.getElementById('authEmail').value,password=document.getElementById('authPassword').value,isRegistration=mode==='register';
+  if(isRegistration){
+    const normalized=email.trim().toLowerCase();
+    const preflightOk=emailPreflightState.ok&&emailPreflightState.email===normalized
+      ?true
+      :await runEmailPreflight(normalized,{silent:true});
+    if(!preflightOk){err.textContent='Use a real email address that can receive the verification message.';return}
+    await trackReferralSignupStarted();
+  }
+  if(submit?.disabled&&!isRegistration)return;
+  if(submit)submit.disabled=true;
   try{
     const referralConversion=isRegistration?referralRegistrationContext():null;
-    const payload=isRegistration?{display_name:document.getElementById('authName').value,email,password,phone:document.getElementById('authPhone').value,address:document.getElementById('authAddress').value,adult_eligibility_attested:Boolean(document.getElementById('authAdultEligibility')?.checked),adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,...(referralConversion?{referral_conversion:referralConversion}:{})}:{email,password};
-    await authFetch(isRegistration?'/api/auth/register':'/api/auth/login',{method:'POST',body:JSON.stringify(payload)});
+    const payload=isRegistration?{
+      display_name:document.getElementById('authName').value,email,password,
+      phone:document.getElementById('authPhone').value,address:document.getElementById('authAddress').value,
+      adult_eligibility_attested:Boolean(document.getElementById('authAdultEligibility')?.checked),
+      adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,
+      ...(referralConversion?{referral_conversion:referralConversion}:{})
+    }:{email,password};
+    const result=await authFetch(isRegistration?'/api/auth/register':'/api/auth/login',{method:'POST',body:JSON.stringify(payload)});
     if(!isRegistration){location.reload();return}
-    const verification=await authFetch('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);showRegistrationSuccess(verification);
-  }catch(ex){err.textContent=ex.message;submit.disabled=false}
+    if(result?.registration_pending){showRegistrationSuccess(result);return}
+    const verification=await authFetch('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);
+    showRegistrationSuccess(verification);
+  }catch(ex){
+    err.textContent=ex.message;
+    if(submit)submit.disabled=isRegistration?!emailPreflightState.ok:false;
+  }
 }
 
 async function logoutAccount(){try{await authFetch('/api/auth/logout',{method:'POST',body:'{}'})}catch{}window.ABLSession?.clearReadableSession();location.reload()}
