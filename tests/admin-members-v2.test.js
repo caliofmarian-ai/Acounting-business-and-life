@@ -20,12 +20,14 @@ test('Members V2 separates read access from high-risk member controls',()=>{
   assert.match(auth,/'members\.view'/);
   assert.match(auth,/'members\.manage_status'/);
   assert.match(auth,/'members\.sessions\.revoke'/);
+  assert.match(auth,/'members\.close_account'/);
   const bundle=between(functions,'member_account_controls:Object.freeze','profile_onboarding:Object.freeze');
   assert.match(bundle,/assignable_to:\['country_admin','territory_admin','specialist'\]/);
-  assert.match(bundle,/permissions:\['admin\.console','members\.view','members\.manage_status','members\.sessions\.revoke'\]/);
+  assert.match(bundle,/permissions:\['admin\.console','members\.view','members\.manage_status','members\.close_account','members\.sessions\.revoke'\]/);
   const directory=between(functions,'member_directory:Object.freeze','member_account_controls:Object.freeze');
   assert.doesNotMatch(directory,/members\.manage_status/);
   assert.doesNotMatch(directory,/members\.sessions\.revoke/);
+  assert.doesNotMatch(directory,/members\.close_account/);
 });
 
 test('Member detail reuses delegated scope and returns only safe security summaries',()=>{

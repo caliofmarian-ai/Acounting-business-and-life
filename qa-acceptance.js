@@ -38,6 +38,7 @@ const LOCAL_SERVICES_RUNTIME_V11_WAVE='local_services_runtime_v11';
 const MARKETPLACE_RUNTIME_V12_WAVE='marketplace_runtime_v12';
 const ORDERS_RUNTIME_V13_WAVE='orders_runtime_v13';
 const ACCOUNT_AUTH_RUNTIME_V14_WAVE='account_auth_runtime_v14';
+const ACCOUNT_LIFECYCLE_V1_WAVE='account_lifecycle_v1';
 const ACCOUNTING_RUNTIME_V15_WAVE='accounting_runtime_v15';
 const NOTIFICATIONS_RUNTIME_V16_WAVE='notifications_runtime_v16';
 const PROFILE_SELECTOR_BASELINE_WAVE='profile_selector_baseline_v1';
@@ -55,7 +56,7 @@ const DELIVERY_ROUTING_V2C_RUNTIME_WAVE='delivery_routing_v2c_runtime';
 const DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE='delivery_refund_economics_v2d_runtime';
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
 const SESSION_SECURITY_V2_WAVE='session_security_v2';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -4963,6 +4964,133 @@ async function runAccountingRuntimeV15Acceptance({pool,base,secret}){
 }
 
 
+async function registerLifecycleQaAccount({base,label,suffix}){
+  const email=('qa-lifecycle-'+suffix+'-'+crypto.randomBytes(5).toString('hex')+'@example.test').toLowerCase();
+  const password='QaLifecycle-'+crypto.randomBytes(10).toString('base64url')+'!9';
+  const result=await requestJson(base,'/api/auth/register',{
+    method:'POST',
+    headers:{'X-BL-Auth-Mode':'bearer','X-BL-QA-Automation':String(process.env.QA_AUTOMATION_SECRET||'')},
+    body:{
+      display_name:label,
+      email,
+      password,
+      phone:'',
+      address:'Controlled QA address, Queens Row West, Bacoor, Cavite',
+      home_psgc_code:'0402103028',
+      adult_eligibility_attested:true,
+      adult_eligibility_policy_version:'ph-adult-eligibility-v1'
+    }
+  });
+  expectStatus(result,201,label+' registration');
+  const token=clean(result.json?.token,500);
+  const accountId=Number(result.json?.profile?.account?.id);
+  if(!token||!accountId)throw new Error(label+' registration did not return QA bearer session and account id.');
+  return{email,password,token,accountId};
+}
+
+async function verifyLifecycleQaAccount({pool,base,account,label}){
+  const request=await requestJson(base,'/api/auth/email-verification/request',{method:'POST',token:account.token,body:{}});
+  expectStatus(request,200,label+' verification request');
+  const previewUrl=clean(request.json?.preview_verify_url,1200);
+  if(!previewUrl)throw new Error(label+' preview verification URL was not returned.');
+  let verifyToken='';
+  try{verifyToken=new URL(previewUrl).searchParams.get('verify_token')||''}catch{}
+  if(!verifyToken)throw new Error(label+' preview verification token is missing.');
+  const verified=await requestJson(base,'/api/auth/email-verification/verify',{method:'POST',token:account.token,body:{token:verifyToken}});
+  expectStatus(verified,200,label+' verification');
+  const state=await pool.query(`SELECT auth_status,email_verified_at FROM accounts WHERE id=$1`,[account.accountId]);
+  if(state.rows[0]?.auth_status!=='active'||!state.rows[0]?.email_verified_at)throw new Error(label+' did not transition to verified active state.');
+}
+
+async function runAccountLifecycleV1Acceptance({pool,base,secret}){
+  const createdIds=[];
+  const cleanup=async()=>{
+    if(!createdIds.length)return;
+    await pool.query(`DELETE FROM accounts WHERE id=ANY($1::bigint[])`,[createdIds]).catch(error=>{
+      console.error('Account Lifecycle V1 cleanup failed:',clean(error?.message,180));
+    });
+  };
+  try{
+    const admin=await qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Account Lifecycle V1 Super Admin QA'});
+    const adminBefore=await requestJson(base,'/api/me',{token:admin.token});
+    if(adminBefore.status!==200)throw new Error('Account Lifecycle V1 Admin baseline /api/me status '+adminBefore.status+': '+clean(adminBefore.json?.error||adminBefore.json?.code||'unknown',160));
+
+    const unverified=await registerLifecycleQaAccount({base,label:'QA Lifecycle Unverified',suffix:'unverified'});
+    createdIds.push(unverified.accountId);
+    const pending=await pool.query(`SELECT auth_status,email_verified_at FROM accounts WHERE id=$1`,[unverified.accountId]);
+    if(pending.rows[0]?.auth_status!=='pending_verification'||pending.rows[0]?.email_verified_at)throw new Error('New personal account was not held in pending_verification.');
+
+    const denied=await requestJson(base,'/api/profiles/customer/activate',{method:'POST',token:unverified.token,body:{}});
+    expectStatus(denied,403,'Unverified operational mutation denial');
+    if(denied.json?.code!=='EMAIL_VERIFICATION_REQUIRED')throw new Error('Unverified operational mutation did not expose the verification-required code.');
+
+    const adminAfterRegistration=await requestJson(base,'/api/me',{token:admin.token});
+    if(adminAfterRegistration.status!==200)throw new Error('Account Lifecycle V1 Admin session changed after registration: '+adminAfterRegistration.status+' '+clean(adminAfterRegistration.json?.error||adminAfterRegistration.json?.code||'unknown',160));
+    const purgePreflight=await requestJson(base,`/api/admin/members/${unverified.accountId}/account-closure/preflight`,{token:admin.token});
+    if(purgePreflight.status!==200)throw new Error('Empty unverified Admin preflight status '+purgePreflight.status+': '+clean(purgePreflight.json?.error||purgePreflight.json?.code||'unknown',180));
+    if(purgePreflight.json?.purge_eligible!==true||Number(purgePreflight.json?.blocker_count||0)!==0)throw new Error('Empty unverified registration was not purge eligible.');
+
+    const purged=await requestJson(base,`/api/admin/members/${unverified.accountId}/account-closure`,{
+      method:'POST',token:admin.token,
+      body:{action:'purge_empty_unverified',reason:'Controlled QA empty unverified account purge',confirmation:'DELETE',confirm:true}
+    });
+    expectStatus(purged,200,'Empty unverified Admin purge');
+    if(purged.json?.purged!==true)throw new Error('Empty unverified registration purge did not complete.');
+    const gone=await pool.query(`SELECT 1 FROM accounts WHERE id=$1`,[unverified.accountId]);
+    if(gone.rowCount)throw new Error('Purged unverified QA account still exists.');
+    createdIds.splice(createdIds.indexOf(unverified.accountId),1);
+
+    const self=await registerLifecycleQaAccount({base,label:'QA Lifecycle Self Close',suffix:'self'});
+    createdIds.push(self.accountId);
+    await verifyLifecycleQaAccount({pool,base,account:self,label:'Self-close QA account'});
+    const activated=await requestJson(base,'/api/profiles/customer/activate',{method:'POST',token:self.token,body:{}});
+    expectStatus(activated,[200,201],'Verified Customer activation before self-close');
+    const selfPreflight=await requestJson(base,'/api/auth/account-closure/preflight',{token:self.token});
+    expectStatus(selfPreflight,200,'Self-close preflight');
+    if(Number(selfPreflight.json?.blocker_count||0)!==0||selfPreflight.json?.purge_eligible===true)throw new Error('Verified account self-close preflight returned the wrong closure mode.');
+    const selfClosed=await requestJson(base,'/api/auth/account-closure/close',{
+      method:'POST',token:self.token,body:{confirmation:'DELETE',confirm:true}
+    });
+    expectStatus(selfClosed,200,'Self-service account closure');
+    if(selfClosed.json?.closed!==true)throw new Error('Self-service account closure did not complete.');
+    const selfState=await pool.query(`SELECT auth_status,email,phone,address,password_hash,closed_at FROM accounts WHERE id=$1`,[self.accountId]);
+    const selfRow=selfState.rows[0];
+    if(selfRow?.auth_status!=='closed'||!selfRow.closed_at||selfRow.email!==''||selfRow.phone!==''||selfRow.address!==''||selfRow.password_hash!==null)throw new Error('Self-service closure did not minimize direct authentication/personal data.');
+
+    const adminTarget=await registerLifecycleQaAccount({base,label:'QA Lifecycle Admin Close',suffix:'admin'});
+    createdIds.push(adminTarget.accountId);
+    await verifyLifecycleQaAccount({pool,base,account:adminTarget,label:'Admin-close QA account'});
+    const adminPreflight=await requestJson(base,`/api/admin/members/${adminTarget.accountId}/account-closure/preflight`,{token:admin.token});
+    expectStatus(adminPreflight,200,'Verified Admin close preflight');
+    if(Number(adminPreflight.json?.blocker_count||0)!==0||adminPreflight.json?.purge_eligible===true)throw new Error('Verified Admin target returned the wrong closure mode.');
+    const adminClosed=await requestJson(base,`/api/admin/members/${adminTarget.accountId}/account-closure`,{
+      method:'POST',token:admin.token,
+      body:{action:'close',reason:'Controlled QA verified account closure',confirmation:'CLOSE',confirm:true}
+    });
+    expectStatus(adminClosed,200,'Verified Admin account close');
+    if(adminClosed.json?.closed!==true)throw new Error('Verified Admin account close did not complete.');
+    const adminState=await pool.query(`SELECT auth_status,email,closed_at FROM accounts WHERE id=$1`,[adminTarget.accountId]);
+    if(adminState.rows[0]?.auth_status!=='closed'||adminState.rows[0]?.email!==''||!adminState.rows[0]?.closed_at)throw new Error('Admin close did not produce closed anonymized state.');
+
+    const adminLogout=await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
+    expectStatus(adminLogout,200,'Account Lifecycle V1 Super Admin logout');
+
+    return{
+      status:'PASS',
+      wave:ACCOUNT_LIFECYCLE_V1_WAVE,
+      pending_verification:true,
+      unverified_operational_gate:true,
+      empty_unverified_admin_purge:true,
+      verified_self_service_close:true,
+      verified_admin_close:true,
+      direct_personal_data_minimized:true
+    };
+  }finally{
+    await cleanup();
+  }
+}
+
+
 async function runAccountAuthRuntimeV14Acceptance({pool,base,secret}){
   const rootComposition=await verifyAccountAuthRootComposition(base,'/','Account/Auth Runtime V14 root composition');
   const indexComposition=await verifyAccountAuthRootComposition(base,'/index.html','Account/Auth Runtime V14 index composition');
@@ -5471,6 +5599,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
       ?await runNotificationsRuntimeV16Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNTING_RUNTIME_V15_WAVE
       ?await runAccountingRuntimeV15Acceptance({pool,base,secret:config.secret})
+      :config.wave===ACCOUNT_LIFECYCLE_V1_WAVE
+      ?await runAccountLifecycleV1Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNT_AUTH_RUNTIME_V14_WAVE
       ?await runAccountAuthRuntimeV14Acceptance({pool,base,secret:config.secret})
       :config.wave===ORDERS_RUNTIME_V13_WAVE
@@ -5547,5 +5677,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
 };

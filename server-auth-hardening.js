@@ -6,6 +6,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
+import {accountClosureAssessment,closeAccountSafely,ensureAccountLifecycleSchema,purgeEmptyUnverifiedAccount} from './account-lifecycle-core.js';
+import {accountGeographySnapshot} from './account-geography.js';
+import {appendAdminAudit,requireAdminPermission} from './admin-authorization.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
 import {AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,resolveV2SessionStepUp,resolveV2SessionToken} from './auth-session-core.js';
 import {incidentsFetch,startEmbeddedIncidents,stopEmbeddedIncidents} from './server-incidents.js';
@@ -164,6 +167,15 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS auth_security_events_account_idx ON auth_security_events(account_id,created_at DESC);
+  `);
+  await ensureAccountLifecycleSchema(pool);
+  await pool.query(`
+    UPDATE accounts
+       SET auth_status='pending_verification',updated_at=NOW()
+     WHERE COALESCE(account_mode,'personal')<>'company_test'
+       AND email_verified_at IS NULL
+       AND email<>''
+       AND auth_status='active'
   `);
 }
 
@@ -357,7 +369,7 @@ app.post('/api/auth/email-verification/verify', jsonBody, async (req, res, next)
   const token = clean(req.body?.token, 300); if (!token) return res.status(400).json({ error: 'Verification token is required' });
   try {
     const session = await optionalV2(req);
-    const used = await consumeActionToken(token, 'verify_email', async (client, row) => client.query(`UPDATE accounts SET email_verified_at=COALESCE(email_verified_at,NOW()),updated_at=NOW() WHERE id=$1`, [row.account_id]));
+    const used = await consumeActionToken(token, 'verify_email', async (client, row) => client.query(`UPDATE accounts SET email_verified_at=COALESCE(email_verified_at,NOW()),auth_status=CASE WHEN auth_status='pending_verification' THEN 'active' ELSE auth_status END,updated_at=NOW() WHERE id=$1`, [row.account_id]));
     const verificationSession = !session
       ? 'signed_out'
       : Number(session.accountId) === Number(used.account_id)
@@ -403,7 +415,7 @@ app.post('/api/auth/owner-migrate', jsonBody, async (req, res, next) => {
 
 app.get('/api/auth/step-up/status', async (req,res,next) => {
   try {
-    const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||'';
+    const raw=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
     const state=await resolveV2SessionStepUp(pool,TOKEN_SECRET,raw);
     if(!state)throw Object.assign(new Error('Sign in again to continue'),{status:401});
     res.set('Cache-Control','private, no-store, max-age=0');
@@ -427,7 +439,7 @@ app.post('/api/auth/step-up/password', jsonBody, async (req,res,next) => {
     }
     const q=await pool.query(`SELECT password_salt,password_hash,auth_status FROM accounts WHERE id=$1`,[s.accountId]);
     const account=q.rows[0];
-    if(!account||account.auth_status!=='active')throw Object.assign(new Error('Account is not active'),{status:403});
+    if(!account||!['active','pending_verification'].includes(String(account.auth_status||'')))throw Object.assign(new Error('Account is not available'),{status:403});
     if(!account.password_hash){
       await audit(s.accountId,'step_up_password_unavailable',req,{session_id_hash:sha256(s.sessionId)});
       return res.status(409).json({
@@ -446,6 +458,112 @@ app.post('/api/auth/step-up/password', jsonBody, async (req,res,next) => {
     res.set('Cache-Control','private, no-store, max-age=0');
     res.json({ok:true,verified:true,verified_at:verifiedAt,valid_for_minutes:Math.round(AUTH_STEP_UP_TTL_MS/60_000)});
   } catch(e){next(e)}
+});
+
+async function requireRecentStepUp(req){
+  const raw=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
+  const state=await resolveV2SessionStepUp(pool,TOKEN_SECRET,raw);
+  if(!state)throw Object.assign(new Error('Sign in again to continue'),{status:401});
+  if(!state.stepUpValid)throw Object.assign(new Error('Confirm your identity before deleting your account'),{status:428,code:'STEP_UP_REQUIRED'});
+  return state;
+}
+
+app.get('/api/auth/account-closure/preflight',async(req,res,next)=>{
+  try{
+    const s=await requireV2(req);
+    const assessment=await accountClosureAssessment(pool,s.accountId);
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json(assessment);
+  }catch(error){next(error)}
+});
+
+app.post('/api/auth/account-closure/close',jsonBody,async(req,res,next)=>{
+  try{
+    const s=await requireRecentStepUp(req);
+    if(req.body?.confirm!==true||clean(req.body?.confirmation,40).toUpperCase()!=='DELETE'){
+      return res.status(400).json({error:'Type DELETE and confirm the account closure action'});
+    }
+    const assessment=await accountClosureAssessment(pool,s.accountId);
+    if(assessment.blockers.length){
+      await audit(s.accountId,'account_closure_blocked',req,{blocker_codes:assessment.blockers.map(x=>x.code)});
+      return res.status(409).json({error:'Account closure is blocked until outstanding matters are resolved',code:'ACCOUNT_CLOSURE_BLOCKED',assessment});
+    }
+    const result=await closeAccountSafely(pool,{
+      accountId:s.accountId,
+      actorAccountId:s.accountId,
+      actorType:'self',
+      reason:'Self-service account closure'
+    });
+    await audit(s.accountId,'account_closed_self_service',req,{mode:result.mode||'anonymize_and_retain_required_history'});
+    clearBrowserSessionCookies(res);
+    res.json({...result,signed_out:true});
+  }catch(error){
+    if(error?.assessment)return res.status(error.status||409).json({error:error.message,code:error.code||'ACCOUNT_CLOSURE_BLOCKED',assessment:error.assessment});
+    next(error);
+  }
+});
+
+async function adminAccountClosureAuthority(req,targetAccountId,{stepUpRequired=false}={}){
+  const actor=stepUpRequired?await requireRecentStepUp(req):await requireV2(req);
+  const targetId=Number(targetAccountId);
+  if(!Number.isInteger(targetId)||targetId<=0)throw Object.assign(new Error('Valid member account id required'),{status:400});
+  if(Number(actor.accountId)===targetId)throw Object.assign(new Error('Use your own Account Settings to close your account'),{status:409});
+  const target=await pool.query(`SELECT id,auth_status,personal_public_id FROM accounts WHERE id=$1`,[targetId]);
+  if(!target.rowCount)throw Object.assign(new Error('Member not found'),{status:404});
+  const protectedAdmin=await pool.query(
+    `SELECT 1 FROM platform_admin_assignments WHERE account_id=$1 AND status='active' AND COALESCE(NULLIF(authority_rank,''),admin_role)='super_admin' LIMIT 1`,
+    [targetId]
+  ).catch(()=>({rowCount:0}));
+  if(protectedAdmin.rowCount)throw Object.assign(new Error('Active Super Admin accounts cannot be closed from Members'),{status:403,code:'PROTECTED_SUPER_ADMIN'});
+  const geography=await accountGeographySnapshot(pool,targetId).catch(()=>({assigned:false}));
+  const territoryId=geography?.exact_territory?.id||geography?.nearest_opened_scope?.id||null;
+  const assignment=await requireAdminPermission(pool,actor.accountId,'members.close_account',territoryId);
+  return{actor,target:target.rows[0],targetId,territoryId,assignment};
+}
+
+app.get('/api/admin/members/:accountId/account-closure/preflight',async(req,res,next)=>{
+  try{
+    const authority=await adminAccountClosureAuthority(req,req.params.accountId);
+    const assessment=await accountClosureAssessment(pool,authority.targetId);
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json(assessment);
+  }catch(error){next(error)}
+});
+
+app.post('/api/admin/members/:accountId/account-closure',jsonBody,async(req,res,next)=>{
+  try{
+    const authority=await adminAccountClosureAuthority(req,req.params.accountId,{stepUpRequired:true});
+    const reason=clean(req.body?.reason,1200);
+    if(reason.length<8)return res.status(400).json({error:'A clear Admin reason is required'});
+    if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit confirmation is required'});
+    const requestedAction=clean(req.body?.action,80);
+    const expectedConfirmation=requestedAction==='purge_empty_unverified'?'DELETE':'CLOSE';
+    if(clean(req.body?.confirmation,40).toUpperCase()!==expectedConfirmation){
+      return res.status(400).json({error:`Type ${expectedConfirmation} to confirm this governed account action`,code:'ACCOUNT_CLOSURE_CONFIRMATION_REQUIRED'});
+    }
+    const assessment=await accountClosureAssessment(pool,authority.targetId);
+    if(assessment.blockers.length){
+      await appendAdminAudit(pool,{
+        actorAccountId:authority.actor.accountId,assignmentId:authority.assignment.id,permission:'members.close_account',
+        territoryId:authority.territoryId,targetType:'account',targetId:String(authority.targetId),
+        eventCode:'member_account_closure_blocked',after:{blocker_codes:assessment.blockers.map(x=>x.code)},reason
+      });
+      return res.status(409).json({error:'Account closure is blocked until outstanding matters are resolved',code:'ACCOUNT_CLOSURE_BLOCKED',assessment});
+    }
+    const result=requestedAction==='purge_empty_unverified'
+      ?await purgeEmptyUnverifiedAccount(pool,{accountId:authority.targetId,actorAccountId:authority.actor.accountId,actorType:'admin',reason})
+      :await closeAccountSafely(pool,{accountId:authority.targetId,actorAccountId:authority.actor.accountId,actorType:'admin',reason});
+    await appendAdminAudit(pool,{
+      actorAccountId:authority.actor.accountId,assignmentId:authority.assignment.id,permission:'members.close_account',
+      territoryId:authority.territoryId,targetType:'account',targetId:String(authority.targetId),
+      eventCode:result.purged?'member_empty_unverified_account_purged':'member_account_closed',
+      after:{mode:result.mode||'',purged:Boolean(result.purged),closed:Boolean(result.closed)},reason
+    });
+    res.json(result);
+  }catch(error){
+    if(error?.assessment)return res.status(error.status||409).json({error:error.message,code:error.code||'ACCOUNT_CLOSURE_BLOCKED',assessment:error.assessment});
+    next(error);
+  }
 });
 
 app.post('/api/auth/sessions/revoke-others', jsonBody, async (req, res, next) => {
@@ -502,10 +620,50 @@ app.post('/api/auth/oauth/handoff', jsonBody, async (req, res, next) => {
   const client = await pool.connect(); try { await client.query('BEGIN'); const q = await client.query(`SELECT * FROM auth_handoffs WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() FOR UPDATE`, [sha256(code)]); if (!q.rowCount) throw Object.assign(new Error('Google sign-in handoff expired'), { status: 400 }); const row = q.rows[0]; await client.query(`UPDATE auth_handoffs SET used_at=NOW() WHERE code_hash=$1`, [sha256(code)]); await client.query('COMMIT'); const session = await createSession(row.account_id, req); issueBrowserSessionCookies(res,session.token); res.json({ok:true,auth_transport:'cookie',expires_in_hours:24}); } catch (e) { await client.query('ROLLBACK').catch(() => {}); next(e); } finally { client.release(); }
 });
 
+app.patch('/api/admin/members/:accountId/status',jsonBody,async(req,res,next)=>{
+  try{
+    await requireV2(req);
+    const targetId=Number(req.params.accountId),requested=clean(req.body?.status,40);
+    if(!Number.isInteger(targetId)||targetId<=0)return res.status(400).json({error:'Valid member account id required'});
+    const q=await pool.query(`SELECT auth_status,email_verified_at,account_mode FROM accounts WHERE id=$1`,[targetId]);
+    if(!q.rowCount)return res.status(404).json({error:'Member not found'});
+    const target=q.rows[0];
+    if(target.auth_status==='closed'){
+      return res.status(409).json({error:'Closed accounts cannot be reactivated or suspended',code:'CLOSED_ACCOUNT_IMMUTABLE'});
+    }
+    if(requested==='active'&&target.account_mode!=='company_test'&&!target.email_verified_at){
+      return res.status(409).json({error:'Email ownership must be verified before this account can become active',code:'EMAIL_VERIFICATION_REQUIRED'});
+    }
+    next();
+  }catch(error){next(error)}
+});
+
+function pendingVerificationMutationAllowed(path,method){
+  const verb=String(method||'GET').toUpperCase();
+  if(['GET','HEAD','OPTIONS'].includes(verb))return true;
+  if(verb==='PATCH'&&path==='/api/me')return true;
+  if(verb==='PUT'&&path==='/api/me/geography')return true;
+  if(verb==='POST'&&['/api/me/address/reverse','/api/auth/password'].includes(path))return true;
+  return false;
+}
 app.use('/api', async (req, res, next) => {
-  const blocked = hardeningPolicyResponse(`/api${req.path}`, req.method, req.headers);
-  if (!blocked) return next();
-  res.status(blocked.status).json(await blocked.json());
+  const fullPath=`/api${req.path}`;
+  const blocked = hardeningPolicyResponse(fullPath, req.method, req.headers);
+  if (blocked)return res.status(blocked.status).json(await blocked.json());
+  try{
+    const session=await optionalV2(req);
+    if(session){
+      const q=await pool.query(`SELECT auth_status,email_verified_at,account_mode FROM accounts WHERE id=$1`,[session.accountId]);
+      const account=q.rows[0];
+      if(!account)return res.status(401).json({error:'Sign in again to continue'});
+      if(['suspended','closed'].includes(String(account.auth_status||'')))return res.status(403).json({error:'This account is not available',code:'ACCOUNT_NOT_ACTIVE'});
+      const pending=String(account.account_mode||'personal')!=='company_test'&&!account.email_verified_at;
+      if(pending&&!pendingVerificationMutationAllowed(fullPath,req.method)){
+        return res.status(403).json({error:'Verify your email before using Business & Life',code:'EMAIL_VERIFICATION_REQUIRED'});
+      }
+    }
+    next();
+  }catch(error){next(error)}
 });
 
 function proxy(req,res,next){

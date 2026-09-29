@@ -90,7 +90,11 @@ async function decorateSecurity(){
   if(panel.dataset.authSecurityDecorating==='1')return;
   panel.dataset.authSecurityDecorating='1';
   try{
-    const [ids,stepUp]=await Promise.all([api('/api/auth/identities'),api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10}))]);
+    const [ids,stepUp,closureAssessment]=await Promise.all([
+      api('/api/auth/identities'),
+      api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10})),
+      api('/api/auth/account-closure/preflight').catch(()=>null)
+    ]);
     if(!document.body.contains(panel))return;
     const googleLinked=ids.some(x=>x.provider==='google');
     const deliveryNote=!account.email_verified_at&&!status.email_delivery_configured?'<div class="avatarHint authDeliveryWarning">Email delivery is not configured in this environment. A preview may offer a direct verification link.</div>':'';
@@ -107,7 +111,14 @@ async function decorateSecurity(){
     sensitive.innerHTML=`<h2>Sensitive-action confirmation</h2><p class="authSectionIntro">Confirm your identity only when a protected action requires it. This is separate from changing your password.</p>${stepUpMarkup}`;
     const sessions=document.createElement('section');sessions.className='accountSettingsCard authUpgradeCard authSessionsCard';
     sessions.innerHTML='<h2>Sessions</h2><div class="authSecurityLine"><span>Current session</span><strong>This device · Active</strong></div><p class="authSectionIntro">Manage signed-in access separately from your password.</p><button id="revokeOthers" type="button" class="dangerLite">Sign out other devices</button><button id="signOutCurrent" type="button" class="dangerStrong">Sign out</button><div id="authSessionMsg" class="avatarHint"></div>';
-    protectionMount.replaceChildren(protection);sensitiveMount.replaceChildren(sensitive);sessionsMount.replaceChildren(sessions);
+    const closure=document.createElement('section');closure.className='accountSettingsCard authUpgradeCard authAccountClosureCard';
+    const closureBlocked=Boolean(closureAssessment?.blocker_count);
+    const closureItems=(closureAssessment?.blockers||[]).map(item=>'<li><strong>'+esc(item.message||item.code)+'</strong><span>'+esc(item.next_action||'Resolve this item before closing your account.')+'</span></li>').join('');
+    closure.innerHTML='<h2>Delete account</h2><p class="authSectionIntro">Deleting your account removes sign-in access and direct personal/authentication data. Records that must remain for accounting, completed transactions, disputes, fraud/security or legal obligations are retained with minimal identifiers.</p>'
+      +(closureAssessment===null?'<div class="avatarHint">Account deletion status is temporarily unavailable. No deletion will be attempted until the safety check succeeds.</div>'
+        :closureBlocked?'<div class="authClosureBlocked"><strong>Account cannot be deleted yet.</strong><ul>'+closureItems+'</ul></div>'
+        :'<form id="accountClosureForm" class="authStepUpForm"><label>Type DELETE to confirm<input name="confirmation" autocomplete="off" maxlength="20" required></label><label class="authClosureConfirm"><input name="confirm" type="checkbox" required> I understand that this closes my Business & Life account and signs out all devices.</label><button type="submit" class="dangerStrong">Delete account</button><div id="accountClosureMsg" class="avatarHint">A fresh financial, security, Support and legal blocker check runs again before deletion.</div></form>');
+    protectionMount.replaceChildren(protection);sensitiveMount.replaceChildren(sensitive);sessionsMount.replaceChildren(sessions,closure);
 
     protection.querySelector('#sendVerify')?.addEventListener('click',async()=>{
       const out=protection.querySelector('#accountProtectionMsg');out.textContent='Preparing verification…';
@@ -123,6 +134,33 @@ async function decorateSecurity(){
       e.preventDefault();const input=sensitive.querySelector('#stepUpSecurityPassword'),out=sensitive.querySelector('#stepUpSecurityMsg');if(!input||!out)return;
       const password=input.value;input.value='';out.textContent='Confirming identity…';
       try{await api('/api/auth/step-up/password',{method:'POST',body:JSON.stringify({password})});out.textContent='Identity confirmed. Sensitive actions are available for a short period on this session.';const button=sensitive.querySelector('button[type="submit"]');if(button)button.disabled=true;input.disabled=true}catch(error){input.value='';out.textContent=error.message}
+    });
+    closure.querySelector('#accountClosureForm')?.addEventListener('submit',async event=>{
+      event.preventDefault();
+      const form=event.currentTarget,out=form.querySelector('#accountClosureMsg'),button=form.querySelector('button[type="submit"]');
+      const fd=new FormData(form),confirmation=String(fd.get('confirmation')||'').trim().toUpperCase();
+      if(confirmation!=='DELETE'){out.textContent='Type DELETE exactly to continue.';return}
+      button.disabled=true;out.textContent='Checking financial, security and legal blockers…';
+      try{
+        const currentStep=await api('/api/auth/step-up/status');
+        if(!currentStep?.verified){out.textContent='Confirm your identity in Sensitive-action confirmation above, then try again.';button.disabled=false;return}
+        const latest=await api('/api/auth/account-closure/preflight');
+        if(latest?.blocker_count){
+          out.textContent='Account closure is blocked. Reopen Security & access to review the unresolved items.';
+          button.disabled=false;return;
+        }
+        const result=await api('/api/auth/account-closure/close',{method:'POST',body:JSON.stringify({confirmation:'DELETE',confirm:fd.get('confirm')==='on'})});
+        if(result?.closed){
+          window.ABLSession?.clearReadableSession();
+          location.reload();
+          return;
+        }
+        out.textContent='Account closure did not complete.';button.disabled=false;
+      }catch(error){
+        const blockers=error?.assessment?.blockers||[];
+        out.textContent=blockers.length?'Account closure is blocked until the outstanding matters are resolved.':error.message;
+        button.disabled=false;
+      }
     });
     sessions.querySelector('#revokeOthers').onclick=async()=>{const out=sessions.querySelector('#authSessionMsg');try{await api('/api/auth/sessions/revoke-others',{method:'POST',body:'{}'});out.textContent='Other sessions signed out.'}catch(e){out.textContent=e.message}};
     sessions.querySelector('#signOutCurrent').onclick=async event=>{event.currentTarget.disabled=true;try{await api('/api/auth/logout',{method:'POST',body:'{}'})}catch{}window.ABLSession?.clearReadableSession();location.reload()};
