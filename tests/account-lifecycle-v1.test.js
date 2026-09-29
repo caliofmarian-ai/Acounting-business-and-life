@@ -139,6 +139,14 @@ test('Members UI exposes governed closure through an isolated decorator without 
   assert.match(adminLifecycleUi,/details\.open=true/);
   assert.match(adminLifecycleUi,/ACCOUNT DELETION/);
   assert.match(adminLifecycleUi,/Delete account/);
+  assert.match(adminLifecycleUi,/BusinessLifeAdminAccountLifecycle/);
+  assert.match(adminServer,/memberPermissionAvailable\(ctx,id,'members\.close_account'\)/);
+  assert.match(adminServer,/close_account:canCloseAccount/);
+  const adminConsole=read('public/admin-console.js');
+  assert.match(adminConsole,/memberAccountLifecycleMount/);
+  assert.match(adminConsole,/controls\.close_account/);
+  assert.doesNotMatch(adminConsole,/Hard-delete is intentionally not available here/);
+  assert.match(adminConsole,/BusinessLifeAdminAccountLifecycle\?\.decorate/);
   const syntax=spawnSync(process.execPath,['--check',fileURLToPath(new URL('../public/admin-account-lifecycle-ui.js',import.meta.url))],{encoding:'utf8'});
   assert.equal(syntax.status,0,syntax.stderr||syntax.stdout);
 });

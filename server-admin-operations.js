@@ -944,9 +944,10 @@ async function adminMemberDetails(accountId,ctx){
   for(const e of security)timeline.push({type:'security',code:e.event_code,label:memberTimelineLabel(e.event_code),created_at:e.created_at});
   for(const e of adminEvents)timeline.push({type:'admin',code:e.event_code,label:memberTimelineLabel(e.event_code),actor_name:e.actor_name,reason:e.reason,created_at:e.created_at});
   timeline.sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
-  const [canManageStatus,canRevokeSessions,canManageNotes,supportContext,safetyContext,legalContext,internalContext]=await Promise.all([
+  const [canManageStatus,canRevokeSessions,canCloseAccount,canManageNotes,supportContext,safetyContext,legalContext,internalContext]=await Promise.all([
     memberPermissionAvailable(ctx,id,'members.manage_status'),
     memberPermissionAvailable(ctx,id,'members.sessions.revoke'),
+    memberPermissionAvailable(ctx,id,'members.close_account'),
     memberPermissionAvailable(ctx,id,'members.notes.manage'),
     memberSupportContext(ctx,id),
     memberSafetyContext(ctx,id),
@@ -963,7 +964,7 @@ async function adminMemberDetails(accountId,ctx){
   return{
     member,profiles,applications,authorizations,businesses:businessMemberships,admin_roles:adminRoles,
     security:{email_verified:Boolean(member.email_verified_at),phone_verified:Boolean(member.phone_verified_at),password_configured:Boolean(member.password_configured),active_session_count:Number(member.active_session_count||0),last_session_at:member.last_session_at},
-    controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions,manage_notes:canManageNotes},
+    controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions,close_account:canCloseAccount,manage_notes:canManageNotes},
     context:{support:supportContext,safety:safetyContext,legal:legalContext,internal:internalContext},
     timeline:timeline.slice(0,80)
   };
