@@ -108,5 +108,5 @@ test('Mobile CSS keeps bounded grids and no forced horizontal layout',()=>{
   assert.match(css,/@media\(max-width:430px\)/);
   assert.match(css,/grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(css,/@media\(max-width:340px\).*grid-template-columns:1fr/s);
-  assert.doesNotMatch(css,/min-width:\s*(?:4\d\d|[5-9]\d\d)px/);
+  assert.match(css,/min-width:0/);\n  assert.doesNotMatch(css,/\{[^}]*min-width:\s*(?:4\d\d|[5-9]\d\d)px/);
 });
