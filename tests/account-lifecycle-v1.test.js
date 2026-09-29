@@ -74,7 +74,7 @@ test('closure minimizes authentication and payment destination data without dele
   assert.match(lifecycle,/provider_subject=\('closed:'\|\|account_id::text\|\|':'\|\|id::text\)/);
   assert.match(lifecycle,/provider_email_snapshot=''/);
   assert.match(lifecycle,/revoked_at=COALESCE\(revoked_at,NOW\(\)\)/);
-  assert.match(lifecycle,/SAVEPOINT account_lifecycle_optional_/);
+  assert.match(lifecycle,/client\.query\('SAVEPOINT '\+savepoint\)/);
   assert.doesNotMatch(lifecycle,/DELETE FROM payment_intents/);
   assert.doesNotMatch(lifecycle,/DELETE FROM orders/);
   assert.doesNotMatch(lifecycle,/DELETE FROM support_tickets/);
