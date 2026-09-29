@@ -41,14 +41,15 @@ test('every app entry opens the person account chooser and Merchant can be disab
   assert.doesNotMatch(shell,/locked=role==='merchant'/);
 });
 
-test('the public registration form starts email verification once and explains the result',()=>{
+test('the public registration form verifies email ownership before any person account exists',()=>{
   const ui=read('public/auth-ui.js');
-  assert.match(ui,/submit\.disabled=true/);
-  assert.match(ui,/if\(!isRegistration\)\{location\.reload\(\);return\}/);
-  assert.match(ui,/authFetch\('\/api\/auth\/email-verification\/request'/);
-  assert.match(ui,/delivery_status==='sent'/);
-  assert.match(ui,/preview_verify_url/);
-  assert.match(ui,/request a new verification link from Account Settings/);
+  assert.match(ui,/authFetch\('\/api\/auth\/email\/preflight'/);
+  assert.match(ui,/id="authCreateButton" disabled/);
+  assert.match(ui,/No account is created until you verify it/);
+  assert.match(ui,/registration_pending/);
+  assert.match(ui,/No Business & Life account has been created yet/);
+  assert.match(ui,/preview_registration_verify_url/);
+  assert.match(ui,/Only then will your account be created/);
 });
 
 test('a person with no active role sees a truthful first-profile checklist',()=>{
