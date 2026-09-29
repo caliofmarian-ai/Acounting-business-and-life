@@ -989,11 +989,12 @@ async function ensureCustomerPasswordRecovery({pool,base,secret}){
 }
 
 async function ensureQaSupportTicket({pool,base,token,accountId,orderId}){
+  const subject=CUSTOMER_SUPPORT_SUBJECT+' order '+Number(orderId);
   const existing=await pool.query(
     `SELECT id FROM support_tickets
-      WHERE requester_account_id=$1 AND subject=$2
+      WHERE requester_account_id=$1 AND subject=$2 AND related_type='order' AND related_id=$3
       ORDER BY id DESC LIMIT 1`,
-    [Number(accountId),CUSTOMER_SUPPORT_SUBJECT]
+    [Number(accountId),subject,Number(orderId)]
   );
   let ticketId=Number(existing.rows[0]?.id||0);
   if(!ticketId){
@@ -1001,7 +1002,7 @@ async function ensureQaSupportTicket({pool,base,token,accountId,orderId}){
       method:'POST',token,
       body:{
         category:'marketplace_order',
-        subject:CUSTOMER_SUPPORT_SUBJECT,
+        subject,
         description:'Controlled internal QA Support request linked to the completed Marketplace order. No real customer issue.',
         requested_destination:'support',
         related_type:'order',
