@@ -59,7 +59,7 @@ test('language chooser is touch-safe and can use device locale only as a suggest
   assert.match(ui,/data-guide-locale="en-PH"/);
   assert.match(ui,/data-guide-locale="fil-PH"/);
   assert.match(css,/\.guidedLanguageChoices button\{[^}]*min-height:62px/);
-  assert.match(ui,/Language does not change your country, barangay, profile, currency or payment settings/);
+  assert.match(ui,/Country, profile, money and payment settings stay unchanged/);
 });
 
 test('localized onboarding keeps internal geography and expansion mechanics out of customer copy',()=>{
@@ -74,4 +74,37 @@ test('localized onboarding keeps internal geography and expansion mechanics out 
 test('Mission Center lets a user reopen the language chooser after selection',()=>{
   assert.match(ui,/if\(step==='language'\)return renderLanguageCoach\(\)/);
   assert.match(ui,/stepLabel\(step\)/);
+});
+
+
+test('language can be changed back to English from every active coach and Mission Center',()=>{
+  assert.match(ui,/data-guide-language-switch/);
+  assert.match(ui,/Change tutorial language/);
+  assert.match(ui,/English \/ Filipino/);
+  assert.match(ui,/renderLanguageCoach\(\{returnToCurrent:true\}\)/);
+  assert.match(ui,/languagePickerReturnMode='mission'/);
+  assert.match(ui,/Back \/ Bumalik/);
+  assert.match(ui,/await updateGuide\(\{action:'set_locale',locale:button\.dataset\.guideLocale\}/);
+  assert.match(ui,/if\(mode==='mission'\)\{missionCenterOpen=true;renderMissionCenter\(\);return\}/);
+  assert.match(css,/\.guidedLanguageSwitch\{[^}]*min-height:40px/);
+  assert.match(css,/\.guidedLanguageSwitch\{min-height:44px\}/);
+});
+
+test('language recovery control uses self-identifying labels independent of current locale',()=>{
+  assert.match(ui,/<strong>English<\/strong>/);
+  assert.match(ui,/<strong>Filipino \/ Tagalog<\/strong>/);
+  assert.match(ui,/English \(Philippines\)/);
+  assert.match(ui,/Filipino \/ Tagalog para sa Pilipinas/);
+  assert.doesNotMatch(ui,/data-guide-language-switch[^>]*>[^<]*(?:English only|Filipino only)/);
+});
+
+test('changing tutorial language rerenders current journey without mutating profile or payment state',()=>{
+  assert.match(ui,/const mode=languagePickerReturnMode/);
+  assert.match(ui,/await loadCopy\(button\.dataset\.guideLocale\)/);
+  assert.match(ui,/renderGuide\(\)/);
+  const start=core.indexOf("}else if(action==='set_locale')");
+  const end=core.indexOf("}else if(action==='select_profile')",start);
+  const block=core.slice(start,end);
+  assert.match(block,/preferred_locale/);
+  assert.doesNotMatch(block,/active_role|profiles SET|payment|currency|businesses/);
 });

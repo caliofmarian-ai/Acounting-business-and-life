@@ -31,3 +31,10 @@
 .guidedJourneySectionHead strong{font-size:11px;color:#17233c}.guidedJourneySectionHead small{font-size:9px;color:#758193}
 .guidedJourneyRow.current{border-color:#7fc8b7;background:#f3fbf8}
 .guidedJourneyEmpty{border:1px dashed #d7e1de;border-radius:14px;padding:12px;color:#768292;font-size:10px;line-height:1.45}
+
+/* Guided Onboarding V2A language recovery hotfix */
+.guidedCoachHeadActions{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.guidedLanguageSwitch{min-height:40px;border:1px solid #cfe0da;border-radius:12px;background:#fff;color:#17233c;padding:7px 9px;font:inherit;font-size:9px;font-weight:900;white-space:nowrap}
+.guidedLanguageSwitch:focus-visible{outline:3px solid rgba(10,124,102,.2);outline-offset:2px}
+.guidedMissionCenterTop{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+@media(max-width:419px){.guidedCoachHeadActions{align-items:flex-end;flex-direction:column-reverse}.guidedLanguageSwitch{min-height:44px}.guidedMissionCenterTop{align-items:stretch;flex-direction:column}.guidedMissionCenterTop .guidedLanguageSwitch{width:100%}}

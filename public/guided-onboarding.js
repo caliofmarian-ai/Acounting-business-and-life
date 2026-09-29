@@ -26,7 +26,7 @@ const ROLE_LABEL_KEYS={customer:'role.customer',merchant:'role.merchant',supplie
 const ROLE_FALLBACK={customer:'Customer',merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'};
 const SUPPORTED_LOCALES=new Set(['en-PH','fil-PH']);
 const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
-let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH',selectedProfileJourneyRole='';
+let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH',selectedProfileJourneyRole='',languagePickerReturnMode='';
 const copyCache=new Map();
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
@@ -37,6 +37,7 @@ const formatCopy=(value,vars={})=>Object.entries(vars).reduce((out,[key,val])=>o
 const tr=(key,vars={},fallback='')=>formatCopy(copy[key]??(fallback||key),vars);
 const stepLabel=step=>tr(STEP_LABEL_KEYS[step],{},step);
 const roleLabelFor=role=>tr(ROLE_LABEL_KEYS[role],{},ROLE_FALLBACK[role]||'profile');
+const languageSwitchLabel=()=>activeLocale()==='fil-PH'?'English / Filipino':'English / Filipino';
 const suggestedLocale=()=>{
   const langs=[...(navigator.languages||[]),navigator.language||''].map(x=>String(x).toLowerCase());
   return langs.some(x=>x.startsWith('fil')||x.startsWith('tl'))?'fil-PH':'en-PH';
@@ -246,7 +247,7 @@ async function positionGuidance(target,{scroll=true}={}){
 }
 function coachMarkup(step,title,body,{primary=tr('action.continue',{},'Continue'),secondary=tr('action.skip',{},'Skip for now'),back=false,waiting=false,progressIndex=null,progressTotal=null,eyebrow=''}={}){
   const total=Math.max(1,Number(progressTotal)||STEP_ORDER.length),index=Math.max(1,Number(progressIndex)||STEP_ORDER.indexOf(step)+1),pct=Math.round(index/total*100);
-  return '<div class="guidedCoachHead"><div><small>'+esc(eyebrow||tr('common.getting_started',{},'GETTING STARTED'))+' · '+index+' / '+total+'</small><h2>'+esc(title)+'</h2></div><span class="guidedProgressChip">'+pct+'%</span></div>'+
+  return '<div class="guidedCoachHead"><div><small>'+esc(eyebrow||tr('common.getting_started',{},'GETTING STARTED'))+' · '+index+' / '+total+'</small><h2>'+esc(title)+'</h2></div><div class="guidedCoachHeadActions"><button type="button" class="guidedLanguageSwitch" data-guide-language-switch aria-label="Change tutorial language">🌐 '+esc(languageSwitchLabel())+'</button><span class="guidedProgressChip">'+pct+'%</span></div></div>'+
     '<p class="guidedCoachBody">'+esc(body)+'</p><button type="button" data-guide-more class="guidedMore" hidden>'+esc(tr('action.more',{},'More'))+'</button><div class="guidedProgress"><i style="width:'+pct+'%"></i></div>'+
     '<div class="guidedCoachActions">'+
       (back?'<button type="button" data-guide-back class="guidedSecondary">'+esc(tr('action.back',{},'Back'))+'</button>':'')+
@@ -271,6 +272,7 @@ function renderCoach({step,title,body,target=null,primary,secondary,back=false,w
   const root=overlayShell(),coach=root.querySelector('.guidedCoach');
   coach.innerHTML=coachMarkup(step,title,body,{primary,secondary,back,waiting,progressIndex,progressTotal,eyebrow});coach.dataset.bodyLong=String(String(body||'').length>118);
   bindCoachActions(step,{next,pause});
+  coach.querySelector('[data-guide-language-switch]')?.addEventListener('click',()=>{languagePickerReturnMode=selectedProfileJourneyRole?'profile':'current';renderLanguageCoach({returnToCurrent:true})});
   coach.querySelector('[data-guide-more]')?.addEventListener('click',event=>{coach.classList.toggle('expanded');event.currentTarget.textContent=coach.classList.contains('expanded')?tr('action.less',{},'Less'):tr('action.more',{},'More');scheduleCoachReposition()});
   positionGuidance(guidanceContextTarget(target),{scroll:true}).catch(()=>{});
   coach.focus?.({preventScroll:true});
@@ -289,24 +291,30 @@ function missingAccountTarget(){
   return firstVisible('#accountHomeSettings','#openFirstAccountSettings');
 }
 
-function renderLanguageCoach(){
+function renderLanguageCoach({returnToCurrent=false}={}){
   const root=overlayShell(),coach=root.querySelector('.guidedCoach'),suggested=suggestedLocale(),current=activeLocale();
   root.querySelector('.guidedSpotlight')?.classList.add('hidden');
   coach.classList.add('guidedLanguageCoach');
-  coach.innerHTML='<div class="guidedCoachHead"><div><small>GETTING STARTED · PAGSISIMULA · 1 / '+STEP_ORDER.length+'</small><h2>Choose your language / Piliin ang iyong wika</h2></div><span class="guidedProgressChip">'+Math.round(100/STEP_ORDER.length)+'%</span></div>'+
-    '<p class="guidedCoachBody">Choose the language for this tutorial. / Piliin ang wikang gagamitin para sa gabay na ito.</p>'+
+  coach.innerHTML='<div class="guidedCoachHead"><div><small>GETTING STARTED · PAGSISIMULA</small><h2>Choose your language / Piliin ang iyong wika</h2></div><span class="guidedProgressChip">🌐</span></div>'+
+    '<p class="guidedCoachBody">Choose the language for this tutorial. You can change it again at any time. / Piliin ang wikang gagamitin para sa gabay na ito. Maaari mo itong palitan anumang oras.</p>'+
     '<div class="guidedLanguageChoices">'+
       '<button type="button" data-guide-locale="en-PH" class="'+(current==='en-PH'?'selected ':'')+'"><span><strong>English</strong><small>English (Philippines)</small></span>'+(suggested==='en-PH'?'<b>Suggested</b>':'')+'</button>'+
       '<button type="button" data-guide-locale="fil-PH" class="'+(current==='fil-PH'?'selected ':'')+'"><span><strong>Filipino / Tagalog</strong><small>Filipino / Tagalog para sa Pilipinas</small></span>'+(suggested==='fil-PH'?'<b>Iminumungkahi</b>':'')+'</button>'+
-    '</div><small class="guidedLanguageBoundary">Language does not change your country, barangay, profile, currency or payment settings. / Hindi binabago ng wika ang iyong bansa, barangay, profile, currency o payment settings.</small>'+
-    '<div class="guidedCoachActions"><button type="button" data-guide-pause class="guidedSecondary">Later / Mamaya</button></div>';
-  coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{removeOverlay();missionCenterOpen=false;await updateGuide({action:'pause'},{render:false});syncLauncher()});
+    '</div><small class="guidedLanguageBoundary">Language changes only this guided tutorial. Country, profile, money and payment settings stay unchanged. / Ang wika ay para lamang sa guided tutorial.</small>'+
+    '<div class="guidedCoachActions">'+
+      (returnToCurrent?'<button type="button" data-guide-language-back class="guidedSecondary">Back / Bumalik</button>':'<button type="button" data-guide-pause class="guidedSecondary">Later / Mamaya</button>')+
+    '</div>';
+  coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{languagePickerReturnMode='';removeOverlay();missionCenterOpen=false;await updateGuide({action:'pause'},{render:false});syncLauncher()});
+  coach.querySelector('[data-guide-language-back]')?.addEventListener('click',()=>{const mode=languagePickerReturnMode;languagePickerReturnMode='';if(mode==='mission'){missionCenterOpen=true;return renderMissionCenter()}missionCenterOpen=false;renderGuide()});
   coach.querySelectorAll('[data-guide-locale]').forEach(button=>button.onclick=async()=>{
     coach.querySelectorAll('button').forEach(x=>x.disabled=true);
     try{
+      const mode=languagePickerReturnMode;
       await updateGuide({action:'set_locale',locale:button.dataset.guideLocale},{render:false});
-      missionCenterOpen=false;
       await loadCopy(button.dataset.guideLocale);
+      languagePickerReturnMode='';
+      if(mode==='mission'){missionCenterOpen=true;renderMissionCenter();return}
+      missionCenterOpen=false;
       renderGuide();
     }catch(error){
       coach.querySelectorAll('button').forEach(x=>x.disabled=false);
@@ -663,13 +671,14 @@ function renderMissionCenter(){
   coach.classList.add('guidedMissionCenter');
   const accountRows=STEP_ORDER.map(missionRow).join('');
   const profileRows=profiles.length?profiles.map(profileJourneyRow).join(''):'<div class="guidedJourneyEmpty">'+esc(tr('profile_tour.none',{},'Profile tutorials will appear here after you activate a profile.'))+'</div>';
-  coach.innerHTML='<div class="guidedMissionCenterHead"><small>'+esc(tr('common.getting_started',{},'GETTING STARTED'))+'</small><h2>'+esc(tr('mission.title',{},'Business & Life tutorials'))+'</h2><p>'+esc(tr('mission.body',{},'Account setup and profile tutorials are saved separately. You can pause and continue later.'))+'</p></div>'+
+  coach.innerHTML='<div class="guidedMissionCenterHead"><div class="guidedMissionCenterTop"><div><small>'+esc(tr('common.getting_started',{},'GETTING STARTED'))+'</small><h2>'+esc(tr('mission.title',{},'Business & Life tutorials'))+'</h2></div><button type="button" class="guidedLanguageSwitch" data-guide-language-switch aria-label="Change tutorial language">🌐 '+esc(languageSwitchLabel())+'</button></div><p>'+esc(tr('mission.body',{},'Account setup and profile tutorials are saved separately. You can pause and continue later.'))+'</p></div>'+
     '<section class="guidedJourneySection"><div class="guidedJourneySectionHead"><strong>'+esc(tr('mission.account_journey',{},'Account setup'))+'</strong><small>'+esc(guide.status==='completed'?tr('mission.done',{},'Done'):tr('mission.in_progress',{},'In progress'))+'</small></div><div class="guidedMissionList">'+accountRows+'</div></section>'+
     '<section class="guidedJourneySection"><div class="guidedJourneySectionHead"><strong>'+esc(tr('mission.profile_tours',{},'Profile tutorials'))+'</strong><small>'+profiles.length+'</small></div><div class="guidedMissionList">'+profileRows+'</div></section>'+
     '<div class="guidedCoachActions"><button type="button" data-guide-close class="guidedSecondary">'+esc(tr('action.close',{},'Close'))+'</button>'+
     (guide?.status==='paused'?'<button type="button" data-guide-resume class="guidedPrimary">'+esc(tr('action.resume',{},'Resume account tutorial'))+'</button>':guide?.status!=='completed'?'<button type="button" data-guide-pause class="guidedSecondary">'+esc(tr('action.pause',{},'Pause account tutorial'))+'</button>':'')+'</div>';
   root.querySelector('.guidedSpotlight')?.classList.add('hidden');
-  coach.querySelector('[data-guide-close]')?.addEventListener('click',()=>{selectedProfileJourneyRole='';missionCenterOpen=false;removeOverlay()});
+  coach.querySelector('[data-guide-language-switch]')?.addEventListener('click',()=>{languagePickerReturnMode='mission';missionCenterOpen=false;renderLanguageCoach({returnToCurrent:true})});
+  coach.querySelector('[data-guide-close]')?.addEventListener('click',()=>{selectedProfileJourneyRole='';languagePickerReturnMode='';missionCenterOpen=false;removeOverlay()});
   coach.querySelector('[data-guide-pause]')?.addEventListener('click',async()=>{await updateGuide({action:'pause'},{render:false});syncLauncher();renderMissionCenter()});
   coach.querySelector('[data-guide-resume]')?.addEventListener('click',async()=>{await updateGuide({action:'resume'},{render:false});missionCenterOpen=false;renderGuide()});
   coach.querySelectorAll('[data-guide-mission]').forEach(button=>button.onclick=async()=>{
@@ -774,6 +783,7 @@ window.BusinessLifeGuidedOnboarding=Object.freeze({
     if(!guide)await refreshGuide({render:false});
     document.dispatchEvent(new CustomEvent('abl:guided-onboarding-open-profile',{detail:{role}}));
   },
+  language:async()=>{if(!guide)await refreshGuide({render:false});languagePickerReturnMode='current';missionCenterOpen=false;renderLanguageCoach({returnToCurrent:true})},
   resume:async()=>{await updateGuide({action:'resume'},{render:false});missionCenterOpen=false;renderGuide()},
   reset:async()=>{await updateGuide({action:'reset'},{render:false});missionCenterOpen=true;renderMissionCenter()},
   refresh:()=>refreshGuide()
