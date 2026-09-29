@@ -157,6 +157,8 @@ test('Members UI exposes governed closure through an isolated decorator without 
   assert.match(adminConsole,/Deletion eligibility did not finish loading/);
   const syntax=spawnSync(process.execPath,['--check',fileURLToPath(new URL('../public/admin-account-lifecycle-ui.js',import.meta.url))],{encoding:'utf8'});
   assert.equal(syntax.status,0,syntax.stderr||syntax.stdout);
+  const notificationsUi=read('public/notifications-ui.js');
+  assert.doesNotThrow(()=>new Function(adminLifecycleUi+'\n'+adminConsole+'\n'+notificationsUi),'Admin classic scripts must not redeclare top-level lexical names');
 });
 
 test('legacy Admin profile approval and reactivation cannot bypass email ownership verification',()=>{
