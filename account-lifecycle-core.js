@@ -13,9 +13,22 @@ async function optionalCount(pool,sql,args=[]){
     throw error;
   }
 }
-async function optionalExec(pool,sql,args=[]){
-  try{return await pool.query(sql,args)}
-  catch(error){if(optionalSchemaError(error))return{rowCount:0,rows:[]};throw error}
+let optionalSavepointCounter=0;
+async function optionalExec(client,sql,args=[]){
+  const savepoint='account_lifecycle_optional_'+(++optionalSavepointCounter);
+  await client.query('SAVEPOINT '+savepoint);
+  try{
+    const result=await client.query(sql,args);
+    await client.query('RELEASE SAVEPOINT '+savepoint);
+    return result;
+  }catch(error){
+    if(optionalSchemaError(error)){
+      await client.query('ROLLBACK TO SAVEPOINT '+savepoint);
+      await client.query('RELEASE SAVEPOINT '+savepoint);
+      return{rowCount:0,rows:[]};
+    }
+    throw error;
+  }
 }
 function blocker(code,category,count,message,nextAction){
   return{code,category,count:Number(count||0),message,next_action:nextAction};
@@ -77,7 +90,8 @@ export async function accountClosureAssessment(pool,rawAccountId){
     optionalCount(pool,`SELECT COUNT(*)::int count FROM platform_admin_assignments WHERE account_id=$1 AND status='active'`,[accountId]),
     optionalCount(pool,`SELECT COUNT(*)::int count FROM business_memberships WHERE account_id=$1 AND active=TRUE`,[accountId]),
     optionalCount(pool,`SELECT COUNT(*)::int count FROM profile_applications WHERE account_id=$1 AND status NOT IN ('rejected','revoked','expired','cancelled','withdrawn')`,[accountId]),
-    optionalCount(pool,`SELECT COUNT(*)::int count FROM profile_authorizations WHERE account_id=$1 AND status IN ('approved','active','suspended')`,[accountId]),
+    optionalCount(pool,`SELECT COUNT(*)::int count FROM profile_authorizations WHERE account_id=$1 AND status IN ('active','suspended')`,[accountId]),
+    optionalCount(pool,`SELECT COUNT(*)::int count FROM service_category_authorizations WHERE account_id=$1 AND status IN ('pending','active','suspended')`,[accountId]),
     optionalCount(pool,`SELECT COUNT(*)::int count FROM orders WHERE customer_account_id=$1 AND order_status NOT IN ('completed','cancelled')`,[accountId]),
     optionalCount(pool,`SELECT COUNT(*)::int count FROM purchase_orders WHERE supplier_account_id=$1 AND status NOT IN ('received','cancelled','rejected')`,[accountId]),
     optionalCount(pool,`SELECT COUNT(*)::int count FROM deliveries WHERE (customer_account_id=$1 OR courier_account_id=$1) AND status NOT IN ('delivered','failed','cancelled')`,[accountId]),
@@ -90,7 +104,7 @@ export async function accountClosureAssessment(pool,rawAccountId){
     optionalCount(pool,`SELECT COUNT(*)::int count FROM trust_case_entities e JOIN trust_cases c ON c.id=e.case_id WHERE e.entity_type='account' AND e.entity_id=$1::text AND c.status NOT IN ('resolved','dismissed','linked')`,[String(accountId)])
   ]);
   const [
-    holds,adminAuthority,businessMemberships,profileApplications,profileAuthorizations,
+    holds,adminAuthority,businessMemberships,profileApplications,profileAuthorizations,serviceCategoryAuthorizations,
     orders,purchaseOrders,deliveries,serviceJobs,payments,refunds,moneyMovements,support,safetyIncidents,trustCases
   ]=checks;
 
@@ -100,6 +114,8 @@ export async function accountClosureAssessment(pool,rawAccountId){
   if(businessMemberships)blockers.push(blocker('ACTIVE_BUSINESS_MEMBERSHIP','financial',businessMemberships,'An active business membership or ownership relationship remains.','Transfer ownership or close/deactivate the business membership.'));
   if(profileApplications)blockers.push(blocker('OPEN_PROFILE_APPLICATION','governance',profileApplications,'A profile application is still open.','Finish, reject or withdraw the application.'));
   if(profileAuthorizations)blockers.push(blocker('PROFILE_AUTHORIZATION','governance',profileAuthorizations,'An operational profile authorization remains.','Revoke or close the authorization.'));
+  if(serviceCategoryAuthorizations)blockers.push(blocker('SERVICE_CATEGORY_AUTHORIZATION','governance',serviceCategoryAuthorizations,'A Local Services category authorization is still pending or active.','Resolve or revoke the category authorization.'));
+  if(account.account_mode==='company_test')blockers.push(blocker('COMPANY_MANAGED_ACCOUNT','security',1,'Company-managed test identities cannot be closed with the personal account deletion flow.','Use the governed company test-account administration process.'));
   if(orders)blockers.push(blocker('OPEN_ORDER','financial',orders,'One or more Customer orders are still open.','Complete or cancel the orders and settle any related payment.'));
   if(purchaseOrders)blockers.push(blocker('OPEN_PURCHASE_ORDER','financial',purchaseOrders,'One or more Supplier purchase orders are still open.','Receive, reject or cancel the purchase orders and settle obligations.'));
   if(deliveries)blockers.push(blocker('OPEN_DELIVERY','operational',deliveries,'A delivery is still active.','Complete, fail or cancel the delivery safely.'));
@@ -120,7 +136,8 @@ export async function accountClosureAssessment(pool,rawAccountId){
     optionalCount(pool,`SELECT COUNT(*)::int count FROM payment_intents WHERE payer_account_id=$1`,[accountId]),
     optionalCount(pool,`SELECT COUNT(*)::int count FROM support_tickets WHERE requester_account_id=$1`,[accountId]),
     optionalCount(pool,`SELECT COUNT(*)::int count FROM incident_reports WHERE reporter_account_id=$1`,[accountId]),
-    optionalCount(pool,`SELECT COUNT(*)::int count FROM platform_admin_assignments WHERE account_id=$1`,[accountId])
+    optionalCount(pool,`SELECT COUNT(*)::int count FROM platform_admin_assignments WHERE account_id=$1`,[accountId]),
+    optionalCount(pool,`SELECT COUNT(*)::int count FROM service_category_authorizations WHERE account_id=$1`,[accountId])
   ]);
   const meaningfulHistory=historyChecks.reduce((sum,value)=>sum+Number(value||0),0);
   const purgeEligible=account.account_mode!=='company_test'&&!account.email_verified_at&&blockers.length===0&&meaningfulHistory===0&&account.auth_status!=='closed';
@@ -165,7 +182,7 @@ export async function closeAccountSafely(pool,{
     await optionalExec(client,`UPDATE account_saved_payment_methods SET status='inactive',is_default=FALSE,provider_customer_ref='',provider_payment_method_ref='',display_label='',brand='',last4='',expiry_month=NULL,expiry_year=NULL,updated_at=NOW() WHERE account_id=$1`,[accountId]);
     await optionalExec(client,`UPDATE account_money_identities SET legal_name='',provider_customer_ref='',provider_wallet_ref='',capabilities_json='{}'::jsonb,updated_at=NOW() WHERE account_id=$1`,[accountId]);
 
-    await optionalExec(client,`UPDATE account_auth_identities SET provider_subject='',provider_email='',updated_at=NOW() WHERE account_id=$1`,[accountId]);
+    await optionalExec(client,`UPDATE account_auth_identities SET provider_subject=('closed:'||account_id::text||':'||id::text),provider_email_snapshot='',revoked_at=COALESCE(revoked_at,NOW()) WHERE account_id=$1`,[accountId]);
     await optionalExec(client,`DELETE FROM auth_action_tokens WHERE account_id=$1`,[accountId]);
     await optionalExec(client,`UPDATE account_sessions SET revoked_at=COALESCE(revoked_at,NOW()) WHERE account_id=$1`,[accountId]);
 
