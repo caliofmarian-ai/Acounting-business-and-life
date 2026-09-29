@@ -6,7 +6,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sendTransientEmailNotification } from './notification-core.js';
-import {accountClosureAssessment,closeAccountSafely,ensureAccountLifecycleSchema} from './account-lifecycle-core.js';
+import {accountClosureAssessment,closeAccountSafely,ensureAccountLifecycleSchema,purgeEmptyUnverifiedAccount} from './account-lifecycle-core.js';
+import {accountGeographySnapshot} from './account-geography.js';
+import {appendAdminAudit,requireAdminPermission} from './admin-authorization.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
 import {AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,resolveV2SessionStepUp,resolveV2SessionToken} from './auth-session-core.js';
 import {incidentsFetch,startEmbeddedIncidents,stopEmbeddedIncidents} from './server-incidents.js';
@@ -487,6 +489,65 @@ app.post('/api/auth/account-closure/close',jsonBody,async(req,res,next)=>{
     await audit(s.accountId,'account_closed_self_service',req,{mode:result.mode||'anonymize_and_retain_required_history'});
     clearBrowserSessionCookies(res);
     res.json({...result,signed_out:true});
+  }catch(error){
+    if(error?.assessment)return res.status(error.status||409).json({error:error.message,code:error.code||'ACCOUNT_CLOSURE_BLOCKED',assessment:error.assessment});
+    next(error);
+  }
+});
+
+async function adminAccountClosureAuthority(req,targetAccountId){
+  const actor=await requireRecentStepUp(req);
+  const targetId=Number(targetAccountId);
+  if(!Number.isInteger(targetId)||targetId<=0)throw Object.assign(new Error('Valid member account id required'),{status:400});
+  if(Number(actor.accountId)===targetId)throw Object.assign(new Error('Use your own Account Settings to close your account'),{status:409});
+  const target=await pool.query(`SELECT id,auth_status,personal_public_id FROM accounts WHERE id=$1`,[targetId]);
+  if(!target.rowCount)throw Object.assign(new Error('Member not found'),{status:404});
+  const protectedAdmin=await pool.query(
+    `SELECT 1 FROM platform_admin_assignments WHERE account_id=$1 AND status='active' AND COALESCE(NULLIF(authority_rank,''),admin_role)='super_admin' LIMIT 1`,
+    [targetId]
+  ).catch(()=>({rowCount:0}));
+  if(protectedAdmin.rowCount)throw Object.assign(new Error('Active Super Admin accounts cannot be closed from Members'),{status:403,code:'PROTECTED_SUPER_ADMIN'});
+  const geography=await accountGeographySnapshot(pool,targetId).catch(()=>({assigned:false}));
+  const territoryId=geography?.exact_territory?.id||geography?.nearest_opened_scope?.id||null;
+  const assignment=await requireAdminPermission(pool,actor.accountId,'members.close_account',territoryId);
+  return{actor,target:target.rows[0],targetId,territoryId,assignment};
+}
+
+app.get('/api/admin/members/:accountId/account-closure/preflight',async(req,res,next)=>{
+  try{
+    const authority=await adminAccountClosureAuthority(req,req.params.accountId);
+    const assessment=await accountClosureAssessment(pool,authority.targetId);
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json(assessment);
+  }catch(error){next(error)}
+});
+
+app.post('/api/admin/members/:accountId/account-closure',jsonBody,async(req,res,next)=>{
+  try{
+    const authority=await adminAccountClosureAuthority(req,req.params.accountId);
+    const reason=clean(req.body?.reason,1200);
+    if(reason.length<8)return res.status(400).json({error:'A clear Admin reason is required'});
+    if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit confirmation is required'});
+    const assessment=await accountClosureAssessment(pool,authority.targetId);
+    if(assessment.blockers.length){
+      await appendAdminAudit(pool,{
+        actorAccountId:authority.actor.accountId,assignmentId:authority.assignment.id,permission:'members.close_account',
+        territoryId:authority.territoryId,targetType:'account',targetId:String(authority.targetId),
+        eventCode:'member_account_closure_blocked',after:{blocker_codes:assessment.blockers.map(x=>x.code)},reason
+      });
+      return res.status(409).json({error:'Account closure is blocked until outstanding matters are resolved',code:'ACCOUNT_CLOSURE_BLOCKED',assessment});
+    }
+    const requestedAction=clean(req.body?.action,80);
+    const result=requestedAction==='purge_empty_unverified'
+      ?await purgeEmptyUnverifiedAccount(pool,{accountId:authority.targetId,actorAccountId:authority.actor.accountId,actorType:'admin',reason})
+      :await closeAccountSafely(pool,{accountId:authority.targetId,actorAccountId:authority.actor.accountId,actorType:'admin',reason});
+    await appendAdminAudit(pool,{
+      actorAccountId:authority.actor.accountId,assignmentId:authority.assignment.id,permission:'members.close_account',
+      territoryId:authority.territoryId,targetType:'account',targetId:String(authority.targetId),
+      eventCode:result.purged?'member_empty_unverified_account_purged':'member_account_closed',
+      after:{mode:result.mode||'',purged:Boolean(result.purged),closed:Boolean(result.closed)},reason
+    });
+    res.json(result);
   }catch(error){
     if(error?.assessment)return res.status(error.status||409).json({error:error.message,code:error.code||'ACCOUNT_CLOSURE_BLOCKED',assessment:error.assessment});
     next(error);
