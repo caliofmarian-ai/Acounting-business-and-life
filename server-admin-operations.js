@@ -14,6 +14,11 @@ import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdmi
 import {buildSessionBootstrap} from './session-bootstrap-core.js';
 import {accountIdsInPsgcScope} from './account-geography.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {decodeVerifiedDataUrl} from './file-signature-core.js';
+import {
+  bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
+  readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence,validateFileExtension
+} from './private-evidence-core.js';
 import {
   ensureIncidentTrustCase,ensureTrustSafetyCaseSchema,linkIncidentToTrustCase,recordTrustAction,
   recordTrustRiskEvent,syncIncidentTrustCaseTerritory,trustCaseSeverities,trustCaseSeverity,
@@ -58,17 +63,10 @@ const SUPPORT_AI_TRANSCRIPTION_MODEL=String(process.env.SUPPORT_AI_TRANSCRIPTION
 const SUPPORT_AI_TRANSLATION_MODEL=String(process.env.SUPPORT_AI_TRANSLATION_MODEL||'gpt-5.6-luna').trim().slice(0,120);
 const SUPPORT_AI_DRAFT_MODEL=String(process.env.SUPPORT_AI_DRAFT_MODEL||SUPPORT_AI_TRANSLATION_MODEL).trim().slice(0,120);
 function decodeSupportDataUrl(dataUrl){
-  const raw=String(dataUrl||'');
-  if(!raw.startsWith('data:'))throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
-  const comma=raw.indexOf(',');
-  if(comma<6)throw Object.assign(new Error('Attachment must be a valid base64 data URL'),{status:400});
-  const meta=raw.slice(5,comma),parts=meta.split(';').filter(Boolean);
-  const mime=String(parts.shift()||'').toLowerCase();
-  if(!mime||!parts.some(x=>x.toLowerCase()==='base64'))throw Object.assign(new Error('Attachment must be base64 encoded'),{status:400});
-  const payload=raw.slice(comma+1);
-  if(!/^[A-Za-z0-9+/=]+$/.test(payload))throw Object.assign(new Error('Attachment could not be decoded'),{status:400});
-  let bytes;try{bytes=Buffer.from(payload,'base64')}catch{throw Object.assign(new Error('Attachment could not be decoded'),{status:400})}
-  return{mime,bytes};
+  return decodeVerifiedDataUrl(dataUrl,{
+    allowedMimes:[...SUPPORT_IMAGE_MIMES,...SUPPORT_DOC_MIMES,...SUPPORT_AUDIO_MIMES],
+    label:'Support attachment'
+  });
 }
 
 function validateSupportAttachments(raw){
@@ -148,6 +146,7 @@ async function transcribeSupportAudio(dataUrl,fileName='voice-recording.webm',so
   if(!supportAiReady())throw Object.assign(new Error('Server voice transcription is not configured yet'),{status:503,code:'SUPPORT_AI_NOT_CONFIGURED'});
   const {mime,bytes}=decodeSupportDataUrl(dataUrl);
   if(!SUPPORT_AUDIO_MIMES.has(mime))throw Object.assign(new Error('Unsupported voice recording format'),{status:400});
+  validateFileExtension(fileName,mime);
   if(bytes.length>MAX_SUPPORT_AUDIO_BYTES)throw Object.assign(new Error('Voice recording exceeds 10 MB'),{status:413});
   const form=new FormData();
   form.append('file',new Blob([bytes],{type:mime}),clean(fileName,180)||'voice-recording.webm');
@@ -185,6 +184,7 @@ async function requireIncidentTriageScope(accountId,territoryId,db=pool){
 async function initDb(){
   await ensureAdminSchema(pool);
   await ensureAdminFinanceSchema(pool);
+  await ensurePrivateEvidenceSchema(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS support_tickets (
       id BIGSERIAL PRIMARY KEY,
@@ -222,14 +222,18 @@ async function initDb(){
       mime_type TEXT NOT NULL,
       file_name TEXT NOT NULL,
       byte_size INTEGER NOT NULL CHECK(byte_size>=0),
-      data_url TEXT NOT NULL,
+      data_url TEXT,
+      private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id),
       transcript_text TEXT NOT NULL DEFAULT '',
       transcript_language TEXT NOT NULL DEFAULT '',
       english_translation TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK(kind IN ('image','pdf','word','markdown','audio'))
     );
+    ALTER TABLE support_attachments ALTER COLUMN data_url DROP NOT NULL;
+    ALTER TABLE support_attachments ADD COLUMN IF NOT EXISTS private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id);
     CREATE INDEX IF NOT EXISTS support_attachments_ticket_idx ON support_attachments(ticket_id,id);
+    CREATE INDEX IF NOT EXISTS support_attachments_private_evidence_idx ON support_attachments(private_evidence_object_id);
     CREATE INDEX IF NOT EXISTS support_tickets_scope_idx ON support_tickets(country_code,territory_id,status,updated_at DESC);
     CREATE INDEX IF NOT EXISTS support_tickets_requester_idx ON support_tickets(requester_account_id,created_at DESC);
 
@@ -1342,27 +1346,68 @@ app.post('/api/support/tickets',body,async(req,res,next)=>{try{
   const attachments=validateSupportAttachments(req.body?.attachments),territoryId=isPrivacyRequest?null:await inferTerritory(relatedType,relatedId,req.body?.territory_id);
   await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'incident_submit',subjectType:'support_ticket',subjectId:relatedId||''});
   if(attachments.length)await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'support_ticket',subjectId:relatedId||''});
-  const client=await pool.connect();
+  const client=await pool.connect(),storedObjects=[];
   try{
     await client.query('BEGIN');
     const q=await client.query(`INSERT INTO support_tickets(requester_account_id,territory_id,category,subject,description,requested_destination,source_language,english_translation,related_type,related_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[me.account.id,territoryId,category,subject,description,destination,sourceLanguage,englishTranslation,relatedType,relatedId]);
-    const ticket=q.rows[0];
+    const ticket=q.rows[0],correlationId=correlation(req);
     await client.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[ticket.id,me.account.id,description]);
     if(isPrivacyRequest){
       await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,'privacy_rights',$2) ON CONFLICT DO NOTHING`,[ticket.id,me.account.id]);
       await client.query(`INSERT INTO support_ticket_tags(ticket_id,tag,created_by_account_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[ticket.id,category,me.account.id]);
     }
-    for(const a of attachments)await client.query(`INSERT INTO support_attachments(ticket_id,kind,mime_type,file_name,byte_size,data_url,transcript_text,transcript_language,english_translation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[ticket.id,a.kind,a.mime,a.file_name,a.byte_size,a.data_url,a.transcript_text,a.transcript_language,a.english_translation]);
+    for(const a of attachments){
+      const maxBytes=a.kind==='image'?MAX_SUPPORT_IMAGE_BYTES:a.kind==='audio'?MAX_SUPPORT_AUDIO_BYTES:MAX_SUPPORT_DOC_BYTES;
+      const stored=await storePrivateEvidence(pool,{
+        dataUrl:a.data_url,fileName:a.file_name,
+        allowedMimes:[...SUPPORT_IMAGE_MIMES,...SUPPORT_DOC_MIMES,...SUPPORT_AUDIO_MIMES],
+        maxBytes,ownerAccountId:me.account.id,actorAccountId:me.account.id,
+        sourceType:'support_attachment',sourceId:`pending:${ticket.id}`,
+        purpose:'support_attachment_upload',classification:a.kind==='audio'?'support_voice_evidence':'support_attachment',
+        correlationId
+      });
+      storedObjects.push(stored.id);
+      const inserted=await client.query(`
+        INSERT INTO support_attachments(
+          ticket_id,kind,mime_type,file_name,byte_size,data_url,private_evidence_object_id,
+          transcript_text,transcript_language,english_translation
+        ) VALUES($1,$2,$3,$4,$5,NULL,$6,$7,$8,$9) RETURNING id
+      `,[ticket.id,a.kind,stored.detected_mime,a.file_name,stored.byte_size,stored.id,a.transcript_text,a.transcript_language,a.english_translation]);
+      await bindPrivateEvidenceSource(pool,{
+        objectId:stored.id,sourceType:'support_attachment',sourceId:String(inserted.rows[0].id),
+        actorAccountId:me.account.id,purpose:'support_attachment_bind',correlationId
+      });
+    }
     await client.query('COMMIT');
     res.status(201).json({...ticket,attachment_count:attachments.length});
-  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    for(const objectId of storedObjects)await deletePrivateEvidence(pool,{objectId,actorAccountId:me.account.id,purpose:'support_ticket_rollback',correlationId:correlation(req)}).catch(()=>{});
+    throw e;
+  }finally{client.release()}
 }catch(e){next(e)}});
+
 app.get('/api/support/tickets/mine',async(req,res,next)=>{try{const me=await identity(req);const{rows}=await pool.query(`SELECT t.*,(SELECT jsonb_agg(x.tag ORDER BY x.tag) FROM support_ticket_tags x WHERE x.ticket_id=t.id) tags,(SELECT COUNT(*)::int FROM support_attachments a WHERE a.ticket_id=t.id) attachment_count FROM support_tickets t WHERE requester_account_id=$1 ORDER BY updated_at DESC LIMIT 150`,[me.account.id]);res.json(rows)}catch(e){next(e)}});
 app.get('/api/support/tickets/:id',async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT * FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0];if(Number(t.requester_account_id)!==Number(me.account.id)){await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id)}const messages=await pool.query(`SELECT m.id,m.actor_account_id,a.display_name actor_name,m.actor_context,m.visibility,m.message,m.created_at FROM support_messages m JOIN accounts a ON a.id=m.actor_account_id WHERE m.ticket_id=$1 AND (m.visibility='user' OR $2::boolean) ORDER BY m.created_at,m.id`,[id,Number(t.requester_account_id)!==Number(me.account.id)]);const tags=await pool.query(`SELECT tag FROM support_ticket_tags WHERE ticket_id=$1 ORDER BY tag`,[id]);const attachments=await pool.query(`SELECT id,kind,mime_type,file_name,byte_size,transcript_text,transcript_language,english_translation,created_at FROM support_attachments WHERE ticket_id=$1 ORDER BY id`,[id]);res.json({...t,messages:messages.rows,tags:tags.rows.map(x=>x.tag),attachments:attachments.rows})}catch(e){next(e)}});
 app.get('/api/support/tickets/:id/attachments/:attachmentId',async(req,res,next)=>{try{
-  const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT requester_account_id,territory_id FROM support_tickets WHERE id=$1`,[id]);if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});const t=q.rows[0];if(Number(t.requester_account_id)!==Number(me.account.id))await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id);
-  const a=await pool.query(`SELECT * FROM support_attachments WHERE id=$1 AND ticket_id=$2`,[Number(req.params.attachmentId),id]);if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});const x=a.rows[0];res.json({id:x.id,kind:x.kind,mime_type:x.mime_type,file_name:x.file_name,byte_size:x.byte_size,data_url:x.data_url,transcript_text:x.transcript_text,transcript_language:x.transcript_language,english_translation:x.english_translation});
+  const me=await identity(req),id=Number(req.params.id),q=await pool.query(`SELECT requester_account_id,territory_id FROM support_tickets WHERE id=$1`,[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Support ticket not found'});
+  const t=q.rows[0];
+  if(Number(t.requester_account_id)!==Number(me.account.id))await requireAdminPermission(pool,me.account.id,'support.manage',t.territory_id);
+  const a=await pool.query(`SELECT id,private_evidence_object_id,data_url FROM support_attachments WHERE id=$1 AND ticket_id=$2`,[Number(req.params.attachmentId),id]);
+  if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});
+  const x=a.rows[0];
+  if(!x.private_evidence_object_id){
+    if(x.data_url)return res.status(409).json({error:'Private evidence migration is required before this attachment can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    return res.status(404).json({error:'Attachment evidence not found'});
+  }
+  const evidence=await readPrivateEvidence(pool,{
+    objectId:x.private_evidence_object_id,actorAccountId:me.account.id,
+    purpose:'support_attachment_read',correlationId:correlation(req)
+  });
+  return sendPrivateEvidence(res,evidence);
 }catch(e){next(e)}});
+
 app.post('/api/support/tickets/:id/reply',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),message=clean(req.body?.message,3000);if(!message)return res.status(400).json({error:'Message is required'});const t=await pool.query(`SELECT * FROM support_tickets WHERE id=$1 AND requester_account_id=$2`,[id,me.account.id]);if(!t.rowCount)return res.status(404).json({error:'Support ticket not found'});await pool.query(`INSERT INTO support_messages(ticket_id,actor_account_id,visibility,message) VALUES($1,$2,'user',$3)`,[id,me.account.id,message]);await pool.query(`UPDATE support_tickets SET status=CASE WHEN status IN ('waiting_user','resolved','closed') THEN 'reopened' ELSE status END,updated_at=NOW() WHERE id=$1`,[id]);res.json({ok:true})}catch(e){next(e)}});
 
 app.get('/api/admin/support',async(req,res,next)=>{try{const me=await identity(req);await requireAdminPermission(pool,me.account.id,'support.manage');const ids=await visibleTerritoryIds(pool,me.account.id,'support.manage'),countryWide=await isCountryWide(me.account.id,'support.manage'),status=clean(req.query.status,40);if(status&&!SUPPORT_STATUSES.has(status))return res.status(400).json({error:'Unknown support status'});const args=[];let where=countryWide?"t.country_code='PH'":`t.territory_id=ANY($1::bigint[])`;if(!countryWide)args.push(ids.length?ids:[-1]);if(status){args.push(status);where+=` AND t.status=$${args.length}`}const{rows}=await pool.query(`SELECT t.*,a.display_name requester_name,a.email requester_email,(SELECT jsonb_agg(x.tag ORDER BY x.tag) FROM support_ticket_tags x WHERE x.ticket_id=t.id) tags,(SELECT COUNT(*)::int FROM support_attachments sa WHERE sa.ticket_id=t.id) attachment_count FROM support_tickets t JOIN accounts a ON a.id=t.requester_account_id WHERE ${where} ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,t.updated_at DESC LIMIT 250`,args);res.json(rows)}catch(e){next(e)}});
@@ -1609,12 +1654,18 @@ app.get('/api/admin/incidents/:id/attachments/:attachmentId',async(req,res,next)
   if(!q.rowCount)return res.status(404).json({error:'Incident not found'});
   const triageTerritory=await effectiveIncidentTriageTerritory(pool,id,q.rows[0].territory_id);
   const assignment=await requireIncidentTriageScope(me.account.id,triageTerritory);
-  const a=await pool.query(`SELECT id,kind,mime_type,file_name,byte_size,evidence_data_url FROM incident_attachments WHERE incident_id=$1 AND id=$2`,[id,attachmentId]);
+  const a=await pool.query(`SELECT id,private_evidence_object_id,evidence_data_url FROM incident_attachments WHERE incident_id=$1 AND id=$2`,[id,attachmentId]);
   if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});
   const x=a.rows[0];
+  if(!x.private_evidence_object_id){
+    if(x.evidence_data_url)return res.status(409).json({error:'Private evidence migration is required before this attachment can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    return res.status(404).json({error:'Attachment evidence not found'});
+  }
   await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission:'incident.triage',territoryId:triageTerritory,targetType:'incident_attachment',targetId:String(attachmentId),eventCode:'incident_attachment_viewed',after:{incident_id:id},correlationId:correlation(req)});
-  res.json({id:x.id,kind:x.kind,mime_type:x.mime_type,file_name:x.file_name,byte_size:x.byte_size,data_url:x.evidence_data_url});
+  const evidence=await readPrivateEvidence(pool,{objectId:x.private_evidence_object_id,actorAccountId:me.account.id,purpose:'incident_attachment_admin_read',correlationId:correlation(req)});
+  return sendPrivateEvidence(res,evidence);
 }catch(e){next(e)}});
+
 app.patch('/api/admin/incidents/:id',body,async(req,res,next)=>{const client=await pool.connect();try{
   const me=await identity(req),id=routeId(req.params.id,'Incident');
   await client.query('BEGIN');
@@ -1648,7 +1699,24 @@ app.post('/api/governance/admin/territories',body,async(req,res,next)=>{try{cons
 app.patch('/api/governance/admin/territories/:id/status',body,async(req,res,next)=>{try{const id=Number(req.params.id),q=await pool.query("SELECT id FROM territories WHERE id=$1 AND country_code='PH'",[id]);if(!q.rowCount)return res.status(404).json({error:'Territory not found'});return forwardAdmin(req,res,'territory.manage',id,'territory',String(id))}catch(e){next(e)}});
 app.post('/api/governance/admin/invitations',body,async(req,res,next)=>{try{const role=clean(req.body?.role,40),perm=role==='merchant'?'profiles.invite_merchant':role==='supplier'?'profiles.invite_supplier':'profiles.invite_courier';return forwardAdmin(req,res,perm,Number(req.body?.territory_id)||null,'profile_invitation',role)}catch(e){next(e)}});
 app.get('/api/governance/admin/applications/:id',async(req,res,next)=>{try{const q=await pool.query(`SELECT role,territory_id FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Application not found'});return forwardAdmin(req,res,rolePermission(q.rows[0].role),q.rows[0].territory_id,'profile_application',req.params.id)}catch(e){next(e)}});
-app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{try{const q=await pool.query(`SELECT pa.role,pa.territory_id FROM profile_application_documents d JOIN profile_applications pa ON pa.id=d.application_id WHERE d.id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Document not found'});return forwardAdmin(req,res,rolePermission(q.rows[0].role),q.rows[0].territory_id,'application_document',req.params.id)}catch(e){next(e)}});
+app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{try{
+  const me=await identity(req),id=Number(req.params.id);
+  const q=await pool.query(`
+    SELECT d.private_evidence_object_id,d.evidence_data_url,pa.role,pa.territory_id
+      FROM profile_application_documents d
+      JOIN profile_applications pa ON pa.id=d.application_id
+     WHERE d.id=$1
+  `,[id]);
+  if(!q.rowCount)return res.status(404).json({error:'Document not found'});
+  const permission=rolePermission(q.rows[0].role),assignment=await requireAdminPermission(pool,me.account.id,permission,q.rows[0].territory_id);
+  if(!q.rows[0].private_evidence_object_id){
+    if(q.rows[0].evidence_data_url)return res.status(409).json({error:'Private evidence migration is required before this document can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    return res.status(404).json({error:'Document evidence not found'});
+  }
+  await appendAdminAudit(pool,{actorAccountId:me.account.id,assignmentId:assignment.id,permission,territoryId:q.rows[0].territory_id,targetType:'application_document',targetId:String(id),eventCode:'application_document_viewed',correlationId:correlation(req)});
+  const evidence=await readPrivateEvidence(pool,{objectId:q.rows[0].private_evidence_object_id,actorAccountId:me.account.id,purpose:'profile_application_document_admin_read',correlationId:correlation(req)});
+  return sendPrivateEvidence(res,evidence);
+}catch(e){next(e)}});
 app.post('/api/governance/admin/applications/:id/review',body,async(req,res,next)=>{try{const q=await pool.query(`SELECT role,territory_id FROM profile_applications WHERE id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Application not found'});return forwardAdmin(req,res,rolePermission(q.rows[0].role),q.rows[0].territory_id,'profile_application',req.params.id)}catch(e){next(e)}});
 app.post('/api/governance/admin/authorizations/:id/status',body,async(req,res,next)=>{try{const q=await pool.query(`SELECT territory_id FROM profile_authorizations WHERE id=$1`,[Number(req.params.id)]);if(!q.rowCount)return res.status(404).json({error:'Authorization not found'});return forwardAdmin(req,res,'profile.suspend',q.rows[0].territory_id,'profile_authorization',req.params.id)}catch(e){next(e)}});
 
