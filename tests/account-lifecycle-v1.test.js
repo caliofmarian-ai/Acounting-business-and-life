@@ -14,6 +14,8 @@ const securityUi=read('public/auth-hardening-ui.js');
 const adminLifecycleUi=read('public/admin-account-lifecycle-ui.js');
 const adminHtml=read('public/admin-console.html');
 const adminServer=read('server-admin-operations.js');
+const shell=read('public/shell.js');
+const shellCss=read('public/shell.css');
 const governance=read('server-profile-governance.js');
 const qa=read('qa-acceptance.js');
 
@@ -134,7 +136,9 @@ test('Members UI exposes governed closure through an isolated decorator without 
   assert.match(adminLifecycleUi,/Type '\+word\+' to confirm/);
   assert.match(adminLifecycleUi,/Required accounting, security, dispute and legal records will be retained/);
   assert.match(adminLifecycleUi,/api\/admin\/members\/'\+memberId\+'\/account-closure/);
-  assert.doesNotMatch(adminLifecycleUi,/data-member-delete/);
+  assert.match(adminLifecycleUi,/details\.open=true/);
+  assert.match(adminLifecycleUi,/ACCOUNT DELETION/);
+  assert.match(adminLifecycleUi,/Delete account/);
   const syntax=spawnSync(process.execPath,['--check',fileURLToPath(new URL('../public/admin-account-lifecycle-ui.js',import.meta.url))],{encoding:'utf8'});
   assert.equal(syntax.status,0,syntax.stderr||syntax.stdout);
 });
@@ -163,6 +167,15 @@ test('Account Lifecycle V1 has an isolated runtime acceptance wave for pending v
   assert.match(qa,/confirmation:'CLOSE'/);
   assert.match(qa,/direct_personal_data_minimized:true/);
   assert.match(qa,/config\.wave===ACCOUNT_LIFECYCLE_V1_WAVE/);
+});
+
+test('Account Settings home exposes a direct self-service Delete account entry',()=>{
+  assert.match(shell,/data-account-delete-shortcut="1"/);
+  assert.match(shell,/>Delete account<\/strong>/);
+  assert.match(shell,/abl_open_account_delete/);
+  assert.match(shellCss,/accountDeleteTile/);
+  assert.match(securityUi,/id='accountDeleteSection'/);
+  assert.match(securityUi,/abl_open_account_delete/);
 });
 
 test('Security & access exposes governed user deletion instead of a blind hard-delete button',()=>{
