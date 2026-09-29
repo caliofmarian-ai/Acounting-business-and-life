@@ -29,6 +29,14 @@ const PROFILE_STEP_LABEL_KEYS={
   merchant_supplier_sourcing:'merchant_tour.step_supplier_sourcing',
   merchant_reputation_safety:'merchant_tour.step_reputation_safety',
   merchant_promotion:'merchant_tour.step_promotion',
+  supplier_workspace_identity:'supplier_tour.step_workspace_identity',
+  supplier_catalog_availability:'supplier_tour.step_catalog_availability',
+  supplier_relationships_quotes:'supplier_tour.step_relationships_quotes',
+  supplier_orders_eta:'supplier_tour.step_orders_eta',
+  supplier_exceptions:'supplier_tour.step_exceptions',
+  supplier_money_receivables:'supplier_tour.step_money_receivables',
+  supplier_settlement_payout:'supplier_tour.step_settlement_payout',
+  supplier_support_safety:'supplier_tour.step_support_safety',
   profile_settings:'profile_tour.step_settings'
 };
 const ROLE_LABEL_KEYS={customer:'role.customer',merchant:'role.merchant',supplier:'role.supplier',courier:'role.courier',service_provider:'role.service_provider'};
@@ -667,6 +675,78 @@ function merchantProfileJourneyDefinition(journey,label){
   return null;
 }
 
+function supplierJourneyTarget(...selectors){
+  return firstVisible(...selectors,'#supWorkspace','[data-hub-feature="Today"]','.hubHero','#roleHub');
+}
+function supplierProfileJourneyDefinition(journey,label){
+  const role='supplier',step=journey?.current_step_id||journey?.steps?.find(x=>!(journey?.completed_steps||[]).includes(x))||'profile_welcome';
+  const next=()=>completeProfileTourStep(role,step);
+  if(step==='profile_welcome')return{
+    step,
+    title:tr('profile_tour.welcome_title',{role:label},'{role} tutorial'),
+    body:tr('supplier_tour.welcome_body',{},'This Supplier tutorial explains your business workspace, catalog visibility, Merchant relationships, commitments, ETA, exceptions, fees and money evidence before secondary tools. Your Personal Account stays separate from this Supplier business.'),
+    target:supplierJourneyTarget('.hubHero','#businessWorkspaceBar'),
+    primary:tr('action.continue',{},'Continue'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_workspace_identity')return{
+    step,
+    title:tr('supplier_tour.workspace_title',{},'Supplier business and economic workspace'),
+    body:tr('supplier_tour.workspace_body',{},'Supplier activity belongs to the selected Supplier business workspace, not your Personal Account. Purchase orders, receivables, expenses, fees, financial documents and settlement records must remain attributed to that business; switching businesses must never mix their accounting.'),
+    target:supplierJourneyTarget('#businessWorkspaceBar','[data-hub-feature="Finance & Accounting"]','.businessFinanceHead'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_catalog_availability')return{
+    step,
+    title:tr('supplier_tour.catalog_title',{},'Catalog and availability'),
+    body:tr('supplier_tour.catalog_body',{},'Keep products, pack sizes, pricing and availability factual. Your sourcing visibility is private by default; only items you explicitly publish may appear to approved Merchants in Directory mode. RFQ acceptance is also an explicit control. Business activities describe what the Supplier does and do not claim a government licence.'),
+    target:supplierJourneyTarget('#supplierProfile','#catalogAdd','#supplierActivities','#supplierSourcingSettingsForm','[data-hub-feature="Catalog"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_relationships_quotes')return{
+    step,
+    title:tr('supplier_tour.relationships_title',{},'Merchant relationships and quotes'),
+    body:tr('supplier_tour.relationships_body',{},'Only accepted Merchant relationships can exchange in-app procurement orders. RFQs and quotes are separate from purchase orders. You can update your quote while the RFQ remains open; quote factual price, pack, availability, lead time and terms. A quote becomes a purchase order only when the Merchant explicitly decides to create one.'),
+    target:supplierJourneyTarget('#supEditSourcing','[data-rfq-quote]','#supplierRfqQuoteForm','[data-v5-open="Procurement"]','[data-hub-feature="Orders"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_orders_eta')return{
+    step,
+    title:tr('supplier_tour.eta_title',{},'Purchase orders, lead time and ETA'),
+    body:tr('supplier_tour.eta_body',{},'Responding to a purchase order is where you confirm or reject the requested quantities and may confirm prices, ready time and delivery ETA. Once accepted, the PO is a commercial commitment. ETA supports Merchant planning; it is not a delivery guarantee and never proves that goods were delivered or paid.'),
+    target:supplierJourneyTarget('[data-sup-respond]','#supReady','#supDeliveryEta','[data-sup-status]','[data-hub-feature="Orders"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_exceptions')return{
+    step,
+    title:tr('supplier_tour.exceptions_title',{},'Backorders, substitutions and exceptions'),
+    body:tr('supplier_tour.exceptions_body',{},'Shortages, backorders, substitutions, returns and recalls need explicit records and decisions. Never silently replace an item or promise unavailable stock. A proposed backorder or substitution does not change the original order until the Merchant approves it. A confirmed credit changes the commercial balance but is not cash refunded.'),
+    target:supplierJourneyTarget('[data-sup-shortage]','[data-propose-backorder]','[data-propose-substitution]','[data-v5-backorder-fulfil]','[data-return-auth]','[data-return-resolve]','#supIssueRecall'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_money_receivables')return{
+    step,
+    title:tr('supplier_tour.money_title',{},'Receivables and recorded payments'),
+    body:tr('supplier_tour.money_body',{},'Fulfilled PO value, Merchant receivables, recorded receipts, platform or processor fees, expenses and inventory value are different facts. An unreceived PO is not money due. Record a payment only from real evidence, and keep statements and financial documents attributed to the same Supplier business.'),
+    target:supplierJourneyTarget('.businessFinancePrimary','[data-hub-feature="Money"]','[data-hub-feature="Finance & Accounting"]','#profileFinancialDocuments'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_settlement_payout')return{
+    step,
+    title:tr('supplier_tour.settlement_title',{},'Settlement, payout and financial accounts'),
+    body:tr('supplier_tour.settlement_body',{},'A recorded receipt or accounting entry is not the same as provider-confirmed settlement. Do not show a payout or withdrawal as succeeded until provider evidence confirms it. External payment methods and payout destinations live in Account Money & Banking; Supplier books, financial accounts and payout preferences stay scoped to the selected Supplier business.'),
+    target:supplierJourneyTarget('.businessFinanceDetails','#openBusinessFinanceSettings','[data-profile-settings-view="finance"]','#openAccountMoneyFromProfile'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='supplier_support_safety')return{
+    step,
+    title:tr('supplier_tour.support_title',{},'Safety, returns and Support'),
+    body:tr('supplier_tour.support_body',{},'Use the real return, recall and exception records when goods have a problem. Use Help & Support for disputes, incidents or account help. Keep private contact details, addresses and financial evidence out of public notes; compliance requirements depend on the activity and should be checked through the current Compliance & Training guidance.'),
+    target:supplierJourneyTarget('#supIssueRecall','[data-return-resolve]','#supplierReturnResolve','#lazySupportBtn','#supWorkspace'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  return null;
+}
+
 function profileJourneyDefinition(journey){
   const role=journey?.profile_role||'',label=roleLabelFor(role),steps=Array.isArray(journey?.steps)&&journey.steps.length?journey.steps:PROFILE_STEP_ORDER,step=journey?.current_step_id||steps.find(x=>!(journey?.completed_steps||[]).includes(x))||steps[0]||'profile_welcome';
   if(!journey?.is_active_profile)return{
@@ -684,6 +764,10 @@ function profileJourneyDefinition(journey){
   if(role==='merchant'){
     const merchant=merchantProfileJourneyDefinition(journey,label);
     if(merchant)return merchant;
+  }
+  if(role==='supplier'){
+    const supplier=supplierProfileJourneyDefinition(journey,label);
+    if(supplier)return supplier;
   }
   if(step==='profile_welcome')return{
     step,
