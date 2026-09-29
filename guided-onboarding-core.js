@@ -13,16 +13,35 @@ export const GUIDED_ONBOARDING_STEPS=Object.freeze([
 export const GUIDED_ONBOARDING_LOCALES=Object.freeze(['en-PH','fil-PH']);
 export const GUIDED_ONBOARDING_PROFILE_VERSION=1;
 export const GUIDED_ONBOARDING_PROFILE_STEPS=Object.freeze(['profile_welcome','profile_settings']);
+export const GUIDED_ONBOARDING_CUSTOMER_STEPS=Object.freeze([
+  'profile_welcome',
+  'customer_address_privacy',
+  'customer_price_payment',
+  'customer_order_commitment',
+  'customer_tracking',
+  'customer_support_safety',
+  'customer_money',
+  'customer_discovery',
+  'customer_services',
+  'profile_settings'
+]);
+export const GUIDED_ONBOARDING_PROFILE_DEFINITIONS=Object.freeze({
+  customer:Object.freeze({version:2,steps:GUIDED_ONBOARDING_CUSTOMER_STEPS}),
+  merchant:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS}),
+  supplier:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS}),
+  courier:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS}),
+  service_provider:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS})
+});
 
 const ROLE_ORDER=Object.freeze(['customer','merchant','supplier','courier','service_provider']);
 const ROLE_SET=new Set(ROLE_ORDER);
 const STEP_SET=new Set(GUIDED_ONBOARDING_STEPS);
-const PROFILE_STEP_SET=new Set(GUIDED_ONBOARDING_PROFILE_STEPS);
 const LOCALE_SET=new Set(GUIDED_ONBOARDING_LOCALES);
 const STATUS_SET=new Set(['active','paused','completed']);
 const clean=(v,max=200)=>String(v??'').trim().slice(0,max);
 const normalizeLocale=value=>LOCALE_SET.has(clean(value,20))?clean(value,20):'en-PH';
-const profileJourneyKey=role=>`profile:${role}:v${GUIDED_ONBOARDING_PROFILE_VERSION}`;
+const profileDefinition=role=>GUIDED_ONBOARDING_PROFILE_DEFINITIONS[role]||{version:GUIDED_ONBOARDING_PROFILE_VERSION,steps:GUIDED_ONBOARDING_PROFILE_STEPS};
+const profileJourneyKey=role=>`profile:${role}:v${profileDefinition(role).version}`;
 
 export async function ensureGuidedOnboardingSchema(pool){
   await pool.query(
@@ -57,17 +76,18 @@ function normalizeCompleted(value){
   const values=Array.isArray(value)?value:[];
   return [...new Set(values.map(x=>clean(x,80)).filter(x=>STEP_SET.has(x)))];
 }
-function normalizeProfileCompleted(value){
+function normalizeProfileCompleted(value,role){
+  const allowed=new Set(profileDefinition(role).steps);
   const values=Array.isArray(value)?value:[];
-  return [...new Set(values.map(x=>clean(x,80)).filter(x=>PROFILE_STEP_SET.has(x)))];
+  return [...new Set(values.map(x=>clean(x,80)).filter(x=>allowed.has(x)))];
 }
 function nextStep(completed){
   const set=new Set(completed);
   return GUIDED_ONBOARDING_STEPS.find(step=>!set.has(step))||null;
 }
-function nextProfileStep(completed){
-  const set=new Set(completed);
-  return GUIDED_ONBOARDING_PROFILE_STEPS.find(step=>!set.has(step))||'profile_settings';
+function nextProfileStep(completed,role){
+  const steps=profileDefinition(role).steps,set=new Set(completed);
+  return steps.find(step=>!set.has(step))||steps.at(-1)||'profile_settings';
 }
 
 async function accountFacts(pool,accountId){
@@ -134,24 +154,34 @@ async function ensureProfileProgressRows(pool,accountId,facts,legacyProgress){
   const migratedLegacyProfile=Boolean(legacyRole&&legacyCompletedRaw.has('profile_onboarding'));
   for(const role of ROLE_ORDER){
     if(!profileRoleStarted(facts,role))continue;
-    const migrateCompleted=migratedLegacyProfile&&role===legacyRole;
+    const def=profileDefinition(role);
+    const previous=await pool.query(
+      "SELECT journey_version,completed_steps,status FROM guided_onboarding_profile_progress "+
+      "WHERE account_id=$1 AND profile_role=$2 ORDER BY journey_version DESC LIMIT 1",
+      [Number(accountId),role]
+    );
+    const previousRow=previous.rows[0]||null;
+    let migrated=[];
+    if(previousRow)migrated=normalizeProfileCompleted(previousRow.completed_steps,role);
+    else if(migratedLegacyProfile&&role===legacyRole)migrated=GUIDED_ONBOARDING_PROFILE_STEPS.filter(step=>def.steps.includes(step));
+    const completed=new Set(migrated);
+    const allDone=def.steps.every(step=>completed.has(step));
+    const current=allDone?(def.steps.at(-1)||'profile_settings'):nextProfileStep([...completed],role);
     await pool.query(
       "INSERT INTO guided_onboarding_profile_progress("+
       "account_id,profile_role,journey_version,current_step_id,completed_steps,status,auto_start_enabled,completed_at"+
       ") VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8) "+
       "ON CONFLICT(account_id,profile_role,journey_version) DO NOTHING",
       [
-        Number(accountId),role,GUIDED_ONBOARDING_PROFILE_VERSION,
-        migrateCompleted?'profile_settings':'profile_welcome',
-        JSON.stringify(migrateCompleted?GUIDED_ONBOARDING_PROFILE_STEPS:[]),
-        migrateCompleted?'completed':'active',
-        !migrateCompleted,
-        migrateCompleted?new Date():null
+        Number(accountId),role,def.version,current,
+        JSON.stringify([...completed]),
+        allDone?'completed':'active',
+        !allDone,
+        allDone?new Date():null
       ]
     );
   }
 }
-
 function autoCompleted(progress,facts){
   const completed=new Set(normalizeCompleted(progress.completed_steps));
   if(progress.locale_confirmed)completed.add('language');
@@ -161,7 +191,7 @@ function autoCompleted(progress,facts){
 }
 
 function profileJourneySummary(row,facts){
-  const completed=normalizeProfileCompleted(row.completed_steps);
+  const def=profileDefinition(row.profile_role),allowed=new Set(def.steps),completed=normalizeProfileCompleted(row.completed_steps,row.profile_role);
   const profile=(facts.profiles||[]).find(p=>p.role===row.profile_role)||null;
   const application=(facts.applications||[]).find(a=>a.role===row.profile_role)||null;
   const status=STATUS_SET.has(row.status)?row.status:'active';
@@ -169,13 +199,13 @@ function profileJourneySummary(row,facts){
     journey_key:profileJourneyKey(row.profile_role),
     journey_kind:'profile',
     profile_role:row.profile_role,
-    journey_version:Number(row.journey_version)||GUIDED_ONBOARDING_PROFILE_VERSION,
+    journey_version:Number(row.journey_version)||def.version,
     status,
     auto_start_enabled:Boolean(row.auto_start_enabled),
-    current_step_id:status==='completed'?null:(PROFILE_STEP_SET.has(row.current_step_id)?row.current_step_id:nextProfileStep(completed)),
+    current_step_id:status==='completed'?null:(allowed.has(row.current_step_id)?row.current_step_id:nextProfileStep(completed,row.profile_role)),
     completed_steps:completed,
-    steps:GUIDED_ONBOARDING_PROFILE_STEPS,
-    progress_total:GUIDED_ONBOARDING_PROFILE_STEPS.length,
+    steps:def.steps,
+    progress_total:def.steps.length,
     progress_completed:completed.length,
     profile_enabled:Boolean(profile?.enabled),
     profile_status:profile?.status||application?.status||'not_started',
@@ -189,10 +219,16 @@ function profileJourneySummary(row,facts){
 async function profileJourneySnapshots(pool,accountId,facts,legacyProgress){
   await ensureProfileProgressRows(pool,accountId,facts,legacyProgress);
   const q=await pool.query(
-    "SELECT * FROM guided_onboarding_profile_progress WHERE account_id=$1 AND journey_version=$2 ORDER BY updated_at,profile_role",
-    [Number(accountId),GUIDED_ONBOARDING_PROFILE_VERSION]
+    "SELECT * FROM guided_onboarding_profile_progress WHERE account_id=$1 ORDER BY updated_at,profile_role,journey_version DESC",
+    [Number(accountId)]
   );
-  return (q.rows||[])
+  const latest=new Map();
+  for(const row of q.rows||[]){
+    const def=profileDefinition(row.profile_role);
+    if(Number(row.journey_version)!==Number(def.version)||latest.has(row.profile_role))continue;
+    latest.set(row.profile_role,row);
+  }
+  return [...latest.values()]
     .map(row=>profileJourneySummary(row,facts))
     .sort((a,b)=>{
       if(a.is_active_profile!==b.is_active_profile)return a.is_active_profile?-1:1;
@@ -252,21 +288,22 @@ async function updateProfileJourney(pool,accountId,input){
   if(!profileRoleStarted(facts,role))throw Object.assign(new Error('Activate or start this profile before opening its tutorial'),{status:409});
   const legacy=await ensureProgressRow(pool,accountId);
   await ensureProfileProgressRows(pool,accountId,facts,legacy);
+  const def=profileDefinition(role);
   const rowResult=await pool.query(
     "SELECT * FROM guided_onboarding_profile_progress WHERE account_id=$1 AND profile_role=$2 AND journey_version=$3",
-    [Number(accountId),role,GUIDED_ONBOARDING_PROFILE_VERSION]
+    [Number(accountId),role,def.version]
   );
   const row=rowResult.rows[0];
   if(!row)throw Object.assign(new Error('Profile tutorial is unavailable'),{status:404});
   const action=clean(input.action,40);
   const step=clean(input.step_id,80);
-  const completed=new Set(normalizeProfileCompleted(row.completed_steps));
+  const completed=new Set(normalizeProfileCompleted(row.completed_steps,role));
   let status=STATUS_SET.has(row.status)?row.status:'active';
   let autoStart=Boolean(row.auto_start_enabled);
   if(action==='profile_complete_step'){
-    if(!PROFILE_STEP_SET.has(step))throw Object.assign(new Error('Unknown profile tutorial step'),{status:400});
+    if(!def.steps.includes(step))throw Object.assign(new Error('Unknown profile tutorial step'),{status:400});
     completed.add(step);
-    if(GUIDED_ONBOARDING_PROFILE_STEPS.every(x=>completed.has(x))){status='completed';autoStart=false}
+    if(def.steps.every(x=>completed.has(x))){status='completed';autoStart=false}
     else status='active';
   }else if(action==='profile_pause'){
     status='paused';autoStart=false;
@@ -275,18 +312,18 @@ async function updateProfileJourney(pool,accountId,input){
   }else if(action==='profile_reset'){
     completed.clear();status='active';autoStart=true;
   }else if(action==='profile_complete'){
-    GUIDED_ONBOARDING_PROFILE_STEPS.forEach(x=>completed.add(x));status='completed';autoStart=false;
+    def.steps.forEach(x=>completed.add(x));status='completed';autoStart=false;
   }else{
     throw Object.assign(new Error('Unknown profile tutorial action'),{status:400});
   }
   const list=[...completed];
-  const current=status==='completed'?null:nextProfileStep(list);
+  const current=status==='completed'?null:nextProfileStep(list,role);
   await pool.query(
     "UPDATE guided_onboarding_profile_progress SET completed_steps=$1::jsonb,current_step_id=$2,status=$3,auto_start_enabled=$4,"+
     "paused_at=CASE WHEN $3='paused' THEN NOW() WHEN $3='active' THEN NULL ELSE paused_at END,"+
     "completed_at=CASE WHEN $3='completed' THEN COALESCE(completed_at,NOW()) WHEN $3='active' AND $5='profile_reset' THEN NULL ELSE completed_at END,"+
     "updated_at=NOW() WHERE account_id=$6 AND profile_role=$7 AND journey_version=$8",
-    [JSON.stringify(list),current||'profile_settings',status,autoStart,action,Number(accountId),role,GUIDED_ONBOARDING_PROFILE_VERSION]
+    [JSON.stringify(list),current||def.steps.at(-1)||'profile_settings',status,autoStart,action,Number(accountId),role,def.version]
   );
   return guidedOnboardingSnapshot(pool,accountId);
 }
