@@ -286,8 +286,9 @@ async function memberDetailPanel(accountId){
   const m=data.member||{},s=data.security||{},controls=data.controls||{};
   const statusTarget=m.auth_status==='active'?'suspended':'active';
   const statusLabel=statusTarget==='suspended'?'Suspend account':'Reactivate account';
-  const actions=(controls.manage_status||controls.revoke_sessions)
-    ?'<details class="memberDangerZone memberControlDisclosure"><summary><div><span class="memberEyebrow">HIGH-IMPACT ACTIONS</span><strong>Account controls</strong><span>Reason + confirmation + audit are required.</span></div></summary><div class="memberControlBody"><p class="muted memberControlBoundary">Hard-delete is intentionally not available here.</p>'
+  const actions=(controls.manage_status||controls.revoke_sessions||controls.close_account)
+    ?'<details class="memberDangerZone memberControlDisclosure" open><summary><div><span class="memberEyebrow">HIGH-IMPACT ACTIONS</span><strong>Account controls</strong><span>Reason + confirmation + audit are required.</span></div></summary><div class="memberControlBody">'
+      +(controls.close_account?'<section id="memberAccountLifecycleMount" data-member-id="'+Number(m.account_id||0)+'" class="memberDeleteNativeMount"><span class="memberEyebrow">ACCOUNT DELETION</span><strong>Delete account</strong><p class="muted">Checking safety blockers and deletion eligibility…</p></section>':'')
       +(controls.manage_status?'<form id="memberStatusForm" class="adminForm memberControlForm" data-member-status="'+esc(statusTarget)+'"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why is this account action necessary?"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm this '+esc(statusLabel.toLowerCase())+' action for the selected member.</span></label><button class="'+(statusTarget==='suspended'?'danger':'primary')+'" type="submit">'+esc(statusLabel)+'</button><div data-member-control-result></div></form>':'')
       +(controls.revoke_sessions?'<form id="memberSessionsForm" class="adminForm memberControlForm"><label>Reason<textarea name="reason" minlength="8" maxlength="1200" required placeholder="Why must active sessions be revoked?"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirm" required><span>I confirm signing this member out of all active sessions.</span></label><button class="secondary" type="submit">Sign out all active sessions</button><div data-member-control-result></div></form>':'')
       +'</div></details>'
@@ -467,6 +468,7 @@ async function wireMembers(){
   }
   if(state.memberDetailId){
     document.getElementById('memberBack')?.addEventListener('click',async()=>{state.memberDetailId=null;state.memberDetail=null;await renderActive()});
+    await window.BusinessLifeAdminAccountLifecycle?.decorate?.();
     const statusForm=document.getElementById('memberStatusForm');
     if(statusForm)statusForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(statusForm),out=statusForm.querySelector('[data-member-control-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/status',{method:'PATCH',body:JSON.stringify({status:statusForm.dataset.memberStatus,reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">Account status updated and audited.</div>';state.memberSummary=null;await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     const sessionsForm=document.getElementById('memberSessionsForm');
