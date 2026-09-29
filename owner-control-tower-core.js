@@ -232,7 +232,7 @@ export function buildOwnerControlTower(input={}){
 export function ownerControlTowerHeadline(model){
   const decisions=model?.decision_status?.open_count;
   if(decisions===null)return{state:'unknown',title:'Owner decision status unavailable',detail:'Decision evidence could not be confirmed.'};
-  if(decisions>0)return{state:'attention',title:`${decisions} item${decisions===1?'':'s'} need Owner attention`,detail:'Review protected decisions before changing affected operations.'};
+  if(decisions>0)return{state:'attention',title:`${decisions} item${decisions===1?'':'s'} ${decisions===1?'needs':'need'} Owner attention`,detail:'Review protected decisions before changing affected operations.'};
   const health=Object.values(model?.health||{});
   if(health.some(x=>x?.state==='critical'))return{state:'critical',title:'Business & Life needs attention',detail:'A critical operational domain is reporting an exception.'};
   if(health.some(x=>x?.state==='attention'))return{state:'attention',title:'Business & Life needs review',detail:'An operational exception is active, but no protected Owner decision is currently queued.'};
