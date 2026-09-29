@@ -17,9 +17,10 @@ const services=read('public/services-ui.js');
 const en=JSON.parse(read('public/locales/guided-onboarding.en-PH.json'));
 const fil=JSON.parse(read('public/locales/guided-onboarding.fil-PH.json'));
 
-test('Customer has its own versioned complete journey while other profiles stay on V2B foundation',()=>{
+test('Customer keeps its own versioned complete journey while unfinished profiles stay on V2B foundation',()=>{
   assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.customer.version,2);
-  for(const role of ['merchant','supplier','courier','service_provider'])assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS[role].version,1);
+  assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.merchant.version,2);
+  for(const role of ['supplier','courier','service_provider'])assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS[role].version,1);
   assert.deepEqual(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.customer.steps,GUIDED_ONBOARDING_CUSTOMER_STEPS);
   assert.match(core,/profileDefinition\(role\)/);
   assert.match(core,/journey_version DESC LIMIT 1/);
