@@ -164,6 +164,11 @@ async function auth(req, res, next) {
     const token = req.ablSessionToken || sessionCredentialFromHeaders(req.headers||{}).token;
     const resolved = await resolveAccountToken(token);
     if (!resolved) return res.status(401).json({ error: 'Unauthorized' });
+    const state=await pool.query(`SELECT auth_status,email_verified_at,account_mode FROM accounts WHERE id=$1`,[resolved.accountId]);
+    if(!state.rowCount)return res.status(401).json({error:'Unauthorized'});
+    const account=state.rows[0];
+    if(['suspended','closed'].includes(String(account.auth_status||'')))return res.status(403).json({error:'This account is not available',code:'ACCOUNT_NOT_ACTIVE'});
+    if(account.account_mode!=='company_test'&&!account.email_verified_at)return res.status(403).json({error:'Verify your email before using Business & Life',code:'EMAIL_VERIFICATION_REQUIRED'});
     req.accountId = resolved.accountId;
     req.authSession = resolved;
     next();
@@ -510,7 +515,8 @@ app.post('/api/auth/register', body, async (req, res, next) => {
     if (exists.rowCount) return res.status(409).json({ error: 'An account with this email already exists' });
     const { salt, hash } = await hashPassword(password);
     await client.query('BEGIN');
-    const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,'active',$7,$8) RETURNING id`, [name, phone, email, address, salt, hash, companyTest?'company_test':'personal', companyTest?.role||null]);
+    const accountStatus=companyTest?'active':'pending_verification';
+    const account = await client.query(`INSERT INTO accounts(display_name,phone,email,address,active_role,password_salt,password_hash,auth_status,account_mode,test_role) VALUES($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9) RETURNING id`, [name, phone, email, address, salt, hash, accountStatus, companyTest?'company_test':'personal', companyTest?.role||null]);
     const accountId = Number(account.rows[0].id);
     if(companyTest)await recordCompanyTestEligibilityExemption(client,{accountId,source:'company_test_registration'});
     else await recordAdultEligibilityAttestation(client,{accountId,actorAccountId:accountId,attested:true,policyVersion:req.body?.adult_eligibility_policy_version,source:'password_registration'});
@@ -555,9 +561,10 @@ app.post('/api/auth/login', body, async (req, res, next) => {
   if (!validEmail(email) || !password) return res.status(400).json({ error: 'Email and password are required' });
   if (throttled(req, email)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
   try {
-    const row = await pool.query(`SELECT id,password_salt,password_hash,auth_status FROM accounts WHERE LOWER(email)=$1`, [email]);
+    const row = await pool.query(`SELECT id,password_salt,password_hash,auth_status,email_verified_at,account_mode FROM accounts WHERE LOWER(email)=$1`, [email]);
     const account = row.rows[0];
-    if (!account || account.auth_status !== 'active' || !(await verifyPassword(password, account.password_salt, account.password_hash))) return res.status(401).json({ error: 'Incorrect email or password' });
+    const loginStateAllowed=account&&['active','pending_verification'].includes(String(account.auth_status||''));
+    if (!loginStateAllowed || !(await verifyPassword(password, account.password_salt, account.password_hash))) return res.status(401).json({ error: 'Incorrect email or password' });
     clearThrottle(req, email);
     const accountId = Number(account.id);
     const session = await createSession(accountId);
