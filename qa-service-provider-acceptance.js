@@ -203,6 +203,7 @@ async function verifyCredentialAdminScope({
       title:'Controlled QA evidence record',
       issuing_body:'Business & Life QA',
       reference_number:'QA-SERVICE-'+Number(jobId),
+      evidence_file_name:'qa-service-credential.png',
       evidence_data_url:QA_EVIDENCE_IMAGE
     }
   });

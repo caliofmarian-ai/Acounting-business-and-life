@@ -5,6 +5,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {deliveryFinanceFetch,startEmbeddedDeliveryFinance,stopEmbeddedDeliveryFinance} from './server-delivery-finance.js';
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
+import {
+  bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
+  readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence
+} from './private-evidence-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {
   ensureIncidentTrustCase,ensureTrustSafetyCaseSchema,recordTrustAction,recordTrustRiskEvent
@@ -33,6 +37,7 @@ let deliveryFinanceReady=false;
 let shuttingDown = false;
 
 function clean(v,max=1200){ return String(v??'').trim().slice(0,max); }
+function correlation(req){return clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',160)}
 function authHeader(req){ return req.headers.authorization || ''; }
 async function downstreamFetch(path,options={}){
   return deliveryFinanceFetch(path,options);
@@ -112,6 +117,7 @@ async function validateIncidentRelation(db,relatedType,relatedId){
 }
 
 async function initDb(){
+  await ensurePrivateEvidenceSchema(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS incident_reports (
       id BIGSERIAL PRIMARY KEY,
@@ -143,10 +149,14 @@ async function initDb(){
       mime_type TEXT NOT NULL,
       file_name TEXT NOT NULL,
       byte_size INTEGER NOT NULL CHECK(byte_size>=0),
-      evidence_data_url TEXT NOT NULL,
+      evidence_data_url TEXT,
+      private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE incident_attachments ALTER COLUMN evidence_data_url DROP NOT NULL;
+    ALTER TABLE incident_attachments ADD COLUMN IF NOT EXISTS private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id);
     CREATE INDEX IF NOT EXISTS incident_attachments_incident_idx ON incident_attachments(incident_id,id);
+    CREATE INDEX IF NOT EXISTS incident_attachments_private_evidence_idx ON incident_attachments(private_evidence_object_id);
 
     CREATE TABLE IF NOT EXISTS incident_actions (
       id BIGSERIAL PRIMARY KEY,
@@ -201,14 +211,32 @@ app.post('/api/incidents',body,async(req,res,next)=>{
     const attachments=validateAttachments(req.body?.attachments);
     await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'incident_submit',subjectType:relatedType,subjectId:relatedId||''});
     if(attachments.length)await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'incident_evidence',subjectId:relatedId||''});
-    const client=await pool.connect();
+    const client=await pool.connect(),storedObjects=[];
     try{
       await client.query('BEGIN');
       const q=await client.query(`INSERT INTO incident_reports(reporter_account_id,related_type,related_id,category,description,status,urgency_indicator) VALUES($1,$2,$3,$4,$5,'submitted',$6) RETURNING *`,[me.account.id,relatedType,relatedId,category,description,urgencyIndicator]);
-      const incident=q.rows[0];
-      for(const f of attachments) await client.query(`INSERT INTO incident_attachments(incident_id,kind,mime_type,file_name,byte_size,evidence_data_url) VALUES($1,$2,$3,$4,$5,$6)`,[incident.id,f.kind,f.mime,f.file_name,f.byte_size,f.data_url]);
+      const incident=q.rows[0],correlationId=correlation(req);
+      for(const f of attachments){
+        const stored=await storePrivateEvidence(pool,{
+          dataUrl:f.data_url,fileName:f.file_name,
+          allowedMimes:[...IMAGE_MIMES,PDF_MIME],
+          maxBytes:f.kind==='image'?MAX_IMAGE_BYTES:MAX_PDF_BYTES,
+          ownerAccountId:me.account.id,actorAccountId:me.account.id,
+          sourceType:'incident_attachment',sourceId:`pending:${incident.id}`,
+          purpose:'incident_evidence_upload',classification:'incident_evidence',correlationId
+        });
+        storedObjects.push(stored.id);
+        const inserted=await client.query(`
+          INSERT INTO incident_attachments(
+            incident_id,kind,mime_type,file_name,byte_size,evidence_data_url,private_evidence_object_id
+          ) VALUES($1,$2,$3,$4,$5,NULL,$6) RETURNING id
+        `,[incident.id,f.kind,stored.detected_mime,f.file_name,stored.byte_size,stored.id]);
+        await bindPrivateEvidenceSource(pool,{
+          objectId:stored.id,sourceType:'incident_attachment',sourceId:String(inserted.rows[0].id),
+          actorAccountId:me.account.id,purpose:'incident_evidence_bind',correlationId
+        });
+      }
       await client.query(`INSERT INTO incident_actions(incident_id,actor_account_id,action_type,to_status,note) VALUES($1,$2,'submitted','submitted','Incident submitted')`,[incident.id,me.account.id]);
-      const correlationId=clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',120);
       const trustCase=await ensureIncidentTrustCase(client,{incidentId:incident.id,actorAccountId:me.account.id,sourceSurface:'incident_report',severity:escalationPolicy?.severity||'',correlationId});
       if(escalationPolicy){
         await createIncidentSevereEscalation(client,{caseId:trustCase.id,incidentId:incident.id,category,urgencyIndicator,actorAccountId:me.account.id});
@@ -232,7 +260,7 @@ app.post('/api/incidents',body,async(req,res,next)=>{
       }
       await client.query('COMMIT');
       res.status(201).json(await incidentSummary(incident.id));
-    }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}
+    }catch(e){await client.query('ROLLBACK').catch(()=>{});for(const objectId of storedObjects)await deletePrivateEvidence(pool,{objectId,actorAccountId:me.account.id,purpose:'incident_source_rollback',correlationId:correlation(req)}).catch(()=>{});throw e}finally{client.release()}
   }catch(e){next(e)}
 });
 
@@ -245,7 +273,21 @@ app.get('/api/incidents/:id',async(req,res,next)=>{
 });
 
 app.get('/api/incidents/:id/attachments/:attachmentId',async(req,res,next)=>{
-  try{const{incident}=await authorizeIncident(req,Number(req.params.id));const a=await pool.query(`SELECT * FROM incident_attachments WHERE id=$1 AND incident_id=$2`,[Number(req.params.attachmentId),incident.id]);if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});const row=a.rows[0];res.json({id:row.id,kind:row.kind,mime_type:row.mime_type,file_name:row.file_name,byte_size:row.byte_size,data_url:row.evidence_data_url});}catch(e){next(e)}
+  try{
+    const{me,incident}=await authorizeIncident(req,Number(req.params.id));
+    const a=await pool.query(`
+      SELECT id,kind,mime_type,file_name,byte_size,private_evidence_object_id
+        FROM incident_attachments WHERE id=$1 AND incident_id=$2
+    `,[Number(req.params.attachmentId),incident.id]);
+    if(!a.rowCount)return res.status(404).json({error:'Attachment not found'});
+    const row=a.rows[0];
+    if(!row.private_evidence_object_id)return res.status(409).json({error:'Private evidence migration is required before this attachment can be read',code:'PRIVATE_EVIDENCE_MIGRATION_REQUIRED'});
+    const evidence=await readPrivateEvidence(pool,{
+      objectId:row.private_evidence_object_id,actorAccountId:me.account.id,
+      purpose:'incident_evidence_read',correlationId:correlation(req)
+    });
+    return sendPrivateEvidence(res,evidence);
+  }catch(e){next(e)}
 });
 
 app.post('/api/incidents/:id/note',body,async(req,res,next)=>{

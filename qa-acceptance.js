@@ -7,6 +7,8 @@ import { runServiceProviderExperienceAcceptance } from './qa-service-provider-ac
 import { runSupplierBusinessAttributionV2EAcceptance } from './qa-supplier-business-attribution-v2e.js';
 import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
 import {runDeliveryRefundEconomicsV2DAcceptance} from './qa-delivery-refund-economics-v2d.js';
+import {privateEvidenceConfig,readPrivateEvidence} from './private-evidence-core.js';
+import {legacyPrivateEvidenceCounts,migratePrivateEvidenceV1} from './private-evidence-migration.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
@@ -57,7 +59,8 @@ const DELIVERY_ROUTING_V2C_RUNTIME_WAVE='delivery_routing_v2c_runtime';
 const DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE='delivery_refund_economics_v2d_runtime';
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
 const SESSION_SECURITY_V2_WAVE='session_security_v2';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE]);
+const PRIVATE_EVIDENCE_STORAGE_V1_WAVE='private_evidence_storage_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -202,6 +205,19 @@ async function requestJson(base,path,{method='GET',token='',body,headers:extraHe
   const response=await fetch(base+path,{method,headers,body:payload});
   const json=await response.json().catch(()=>({}));
   return{status:response.status,ok:response.ok,json,headers:response.headers};
+}
+
+async function requestBinary(base,path,{method='GET',token='',body,headers:extraHeaders={}}={}){
+  const headers={Accept:'application/octet-stream',...extraHeaders};
+  if(token)headers.Authorization='Bearer '+token;
+  let payload;
+  if(body!==undefined){
+    headers['Content-Type']='application/json';
+    payload=JSON.stringify(body);
+  }
+  const response=await fetch(base+path,{method,headers,body:payload});
+  const bytes=Buffer.from(await response.arrayBuffer());
+  return{status:response.status,ok:response.ok,bytes,headers:response.headers};
 }
 
 function expectStatus(result,expected,label){
@@ -4770,6 +4786,161 @@ async function runProfileSelectorBaseline({pool,base,secret}){
 }
 
 
+async function runPrivateEvidenceStorageV1Acceptance({pool,base,secret}){
+  const config=privateEvidenceConfig(process.env);
+  if(!config.ready||!config.required)throw new Error('Private evidence runtime is not configured fail-closed.');
+
+  const requireConfig503=(overrides,label)=>{
+    try{
+      privateEvidenceConfig({...process.env,PRIVATE_EVIDENCE_REQUIRED:'true',...overrides});
+    }catch(error){
+      if(Number(error?.status)===503)return true;
+      throw new Error(label+' did not fail with controlled 503.');
+    }
+    throw new Error(label+' did not fail closed.');
+  };
+  requireConfig503({PRIVATE_EVIDENCE_CLAMAV_HOST:''},'Missing private evidence scanner');
+  requireConfig503({PRIVATE_EVIDENCE_S3_ENDPOINT:''},'Missing private evidence storage');
+
+  const [customer,merchant]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Private Evidence Customer QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Private Evidence isolation QA'})
+  ]);
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Private Evidence Customer QA'});
+  await ensureActiveRole({base,token:merchant.token,role:'merchant',label:'Private Evidence isolation QA'});
+
+  const cleanPng='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2s5YAAAAASUVORK5CYII=';
+  const nonce=String(Date.now());
+  const cleanTicket=await requestJson(base,'/api/support/tickets',{
+    method:'POST',token:customer.token,
+    body:{
+      category:'technical_bug',
+      subject:'Controlled QA private evidence '+QA_REVISION+' '+nonce,
+      description:'Controlled QA clean private evidence storage verification.',
+      requested_destination:'support',
+      attachments:[{file_name:'qa-private-evidence.png',data_url:cleanPng}]
+    }
+  });
+  expectStatus(cleanTicket,201,'Private evidence clean Support upload');
+  const ticketId=Number(cleanTicket.json?.id);
+  if(!ticketId)throw new Error('Private evidence clean ticket was not created.');
+
+  const detail=await requestJson(base,'/api/support/tickets/'+ticketId,{token:customer.token});
+  expectStatus(detail,200,'Private evidence Support detail');
+  const attachmentId=Number(detail.json?.attachments?.[0]?.id);
+  if(!attachmentId)throw new Error('Private evidence clean attachment metadata is missing.');
+
+  const source=await pool.query(`
+    SELECT id,data_url,private_evidence_object_id
+      FROM support_attachments WHERE id=$1 AND ticket_id=$2
+  `,[attachmentId,ticketId]);
+  const sourceRow=source.rows[0];
+  if(!sourceRow||sourceRow.data_url!==null||!Number(sourceRow.private_evidence_object_id)){
+    throw new Error('New Support evidence still persists raw data or lacks an object reference.');
+  }
+  const objectId=Number(sourceRow.private_evidence_object_id);
+  const metadata=await pool.query(`
+    SELECT object_key,detected_mime,byte_size,sha256,scan_status,retention_state
+      FROM private_evidence_objects WHERE id=$1
+  `,[objectId]);
+  const object=metadata.rows[0];
+  if(!object||object.scan_status!=='clean'||object.retention_state!=='active'||object.detected_mime!=='image/png'
+    ||String(object.sha256||'').length!==64||String(object.object_key||'').includes('qa-private-evidence.png')){
+    throw new Error('Private evidence metadata is not clean, opaque and integrity-bound.');
+  }
+
+  const download=await requestBinary(base,`/api/support/tickets/${ticketId}/attachments/${attachmentId}`,{token:customer.token});
+  if(download.status!==200||!download.bytes.length
+    ||!String(download.headers.get('content-disposition')||'').toLowerCase().startsWith('attachment;')
+    ||String(download.headers.get('x-content-type-options')||'').toLowerCase()!=='nosniff'
+    ||!String(download.headers.get('cache-control')||'').toLowerCase().includes('no-store')){
+    throw new Error('Authorized private evidence download headers or payload are invalid.');
+  }
+
+  const denied=await requestBinary(base,`/api/support/tickets/${ticketId}/attachments/${attachmentId}`,{token:merchant.token});
+  if(denied.status!==403)throw new Error('Cross-account private evidence read did not fail closed.');
+
+  const eicar='X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
+  const eicarHash=crypto.createHash('sha256').update(Buffer.from(eicar,'utf8')).digest('hex');
+  const infected=await requestJson(base,'/api/support/tickets',{
+    method:'POST',token:customer.token,
+    body:{
+      category:'technical_bug',
+      subject:'Controlled QA EICAR private evidence '+QA_REVISION+' '+nonce,
+      description:'Controlled QA malware quarantine verification; no real user evidence.',
+      attachments:[{
+        file_name:'qa-eicar.txt',
+        data_url:'data:text/plain;base64,'+Buffer.from(eicar,'utf8').toString('base64')
+      }]
+    }
+  });
+  expectStatus(infected,422,'Private evidence EICAR quarantine');
+  const quarantined=await pool.query(`
+    SELECT id,scan_status,retention_state FROM private_evidence_objects
+     WHERE sha256=$1 AND scan_status='quarantined'
+     ORDER BY id DESC LIMIT 1
+  `,[eicarHash]);
+  if(!quarantined.rowCount)throw new Error('EICAR evidence was not recorded in quarantine.');
+  let quarantineDenied=false;
+  try{
+    await readPrivateEvidence(pool,{objectId:quarantined.rows[0].id,actorAccountId:customer.accountId,purpose:'qa_quarantine_read'});
+  }catch(error){quarantineDenied=Number(error?.status)===423}
+  if(!quarantineDenied)throw new Error('Quarantined private evidence remained readable.');
+
+  const legacy=await pool.query(`
+    INSERT INTO support_attachments(
+      ticket_id,kind,mime_type,file_name,byte_size,data_url,private_evidence_object_id,
+      transcript_text,transcript_language,english_translation
+    ) VALUES($1,'image','image/png',$2,$3,$4,NULL,'','','') RETURNING id
+  `,[ticketId,'qa-legacy-private-evidence.png',Buffer.from(cleanPng.split(',')[1],'base64').length,cleanPng]);
+  const legacyId=Number(legacy.rows[0]?.id);
+  const before=await legacyPrivateEvidenceCounts(pool);
+  if(before.total<1)throw new Error('Legacy private evidence seed was not visible to migration.');
+
+  const firstMigration=await migratePrivateEvidenceV1(pool,{env:process.env,limit:5000});
+  const migrated=await pool.query(`
+    SELECT data_url,private_evidence_object_id FROM support_attachments WHERE id=$1
+  `,[legacyId]);
+  if(migrated.rows[0]?.data_url!==null||!Number(migrated.rows[0]?.private_evidence_object_id)){
+    throw new Error('Legacy private evidence did not clear raw data only after object migration.');
+  }
+  const migratedObjectId=Number(migrated.rows[0].private_evidence_object_id);
+  const secondMigration=await migratePrivateEvidenceV1(pool,{env:process.env,limit:5000});
+  const after=await legacyPrivateEvidenceCounts(pool);
+  const stable=await pool.query('SELECT private_evidence_object_id FROM support_attachments WHERE id=$1',[legacyId]);
+  if(after.total!==0||Number(stable.rows[0]?.private_evidence_object_id)!==migratedObjectId||Number(secondMigration.migrated||0)!==0){
+    throw new Error('Legacy private evidence migration is not idempotent or legacy raw rows remain.');
+  }
+
+  const audits=await pool.query(`
+    SELECT COUNT(*)::int n FROM private_evidence_access_audit
+     WHERE object_id=$1 AND action='read' AND outcome='allowed'
+  `,[objectId]);
+  if(Number(audits.rows[0]?.n||0)<1)throw new Error('Private evidence authorized read was not independently audited.');
+
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:merchant.token,body:{}});
+
+  return{
+    status:'PASS',
+    wave:PRIVATE_EVIDENCE_STORAGE_V1_WAVE,
+    clean_upload:true,
+    raw_database_bytes_removed:true,
+    opaque_object_key:true,
+    malware_quarantine:true,
+    quarantined_read_denied:true,
+    authorized_download:true,
+    cross_account_denied:true,
+    safe_download_headers:true,
+    missing_scanner_fail_closed:true,
+    missing_storage_fail_closed:true,
+    legacy_migrated:Number(firstMigration.migrated||0),
+    legacy_remaining:after.total,
+    migration_idempotent:true,
+    read_audit:true
+  };
+}
+
 async function runNotificationsRuntimeV16Acceptance({pool,base,secret}){
   const rootComposition=await verifyNotificationsRootComposition(base,'/','Notifications Runtime V16 root composition');
   const indexComposition=await verifyNotificationsRootComposition(base,'/index.html','Notifications Runtime V16 index composition');
@@ -5671,6 +5842,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
       ?await runProfileSelectorRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===PROFILE_SELECTOR_BASELINE_WAVE
       ?await runProfileSelectorBaseline({pool,base,secret:config.secret})
+      :config.wave===PRIVATE_EVIDENCE_STORAGE_V1_WAVE
+      ?await runPrivateEvidenceStorageV1Acceptance({pool,base,secret:config.secret})
       :config.wave===NOTIFICATIONS_RUNTIME_V16_WAVE
       ?await runNotificationsRuntimeV16Acceptance({pool,base,secret:config.secret})
       :config.wave===ACCOUNTING_RUNTIME_V15_WAVE
@@ -5755,5 +5928,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE
 };
