@@ -9,6 +9,7 @@ const hardeningUi=read('public/auth-hardening-ui.js');
 const notifications=read('server-notifications.js');
 const notificationCore=read('notification-core.js');
 const cookie=read('session-cookie-core.js');
+const qa=read('qa-acceptance.js');
 
 test('public registration stores a short-lived intent instead of an account row',()=>{
   assert.match(auth,/CREATE TABLE IF NOT EXISTS account_registration_intents/);
@@ -68,6 +69,18 @@ test('registration verification is a bootstrap route and replay is fail-closed',
   assert.match(cookie,/'\/api\/auth\/registration\/verify'/);
   assert.match(auth,/This registration link is invalid or has expired/);
   assert.match(auth,/token_hash TEXT NOT NULL UNIQUE/);
+});
+
+test('Email Ownership V2 has an isolated Preview runtime acceptance wave',()=>{
+  assert.match(qa,/EMAIL_OWNERSHIP_V2_WAVE='email_ownership_v2'/);
+  assert.match(qa,/runEmailOwnershipV2Acceptance/);
+  assert.match(qa,/definitely-not-real\.invalid/);
+  assert.match(qa,/registration_pending!==true/);
+  assert.match(qa,/accounts row before inbox verification/);
+  assert.match(qa,/preview_registration_verify_url/);
+  assert.match(qa,/account_registration_intents/);
+  assert.match(qa,/replay denial/);
+  assert.match(qa,/config\.wave===EMAIL_OWNERSHIP_V2_WAVE/);
 });
 
 test('normal login accepts active accounts only',()=>{
