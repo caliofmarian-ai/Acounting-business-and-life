@@ -1,3 +1,4 @@
+(()=>{
 const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 
 async function lifecycleApi(path,options={}){
@@ -185,3 +186,5 @@ document.addEventListener('DOMContentLoaded',()=>decorateMemberLifecycle().catch
 window.BusinessLifeAdminAccountLifecycle=Object.freeze({
   decorate:memberId=>decorateMemberLifecycle(memberId)
 });
+
+})();
