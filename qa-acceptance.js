@@ -680,7 +680,7 @@ async function runMerchantCatalogSeed({pool,base,secret}){
 
 
 const CUSTOMER_MARKETPLACE_NOTE='Controlled QA customer marketplace E2E v1';
-const MERCHANT_EXPERIENCE_ORDER_NOTE='Controlled QA Merchant Experience Marketplace order';
+const MERCHANT_EXPERIENCE_ORDER_NOTE='Controlled QA Merchant Experience Marketplace order '+QA_REVISION;
 const CUSTOMER_MARKETPLACE_ITEMS=['QA Fish Soup','QA Fresh Carrots','QA Bottled Juice','QA Dish Soap'];
 const CUSTOMER_MARKETPLACE_CONSUMPTION=new Map([
   ['Water',200],
@@ -1219,11 +1219,12 @@ async function runCustomerExperienceAcceptance({pool,base,secret}){
 const MERCHANT_SUPPORT_SUBJECT='Controlled QA Merchant support E2E';
 
 async function ensureQaMerchantSupportTicket({pool,base,token,accountId,orderId}){
+  const subject=MERCHANT_SUPPORT_SUBJECT+' order '+Number(orderId);
   const existing=await pool.query(
     `SELECT id FROM support_tickets
       WHERE requester_account_id=$1 AND subject=$2
       ORDER BY id DESC LIMIT 1`,
-    [Number(accountId),MERCHANT_SUPPORT_SUBJECT]
+    [Number(accountId),subject]
   );
   let ticketId=Number(existing.rows[0]?.id||0);
   if(!ticketId){
@@ -1231,7 +1232,7 @@ async function ensureQaMerchantSupportTicket({pool,base,token,accountId,orderId}
       method:'POST',token,
       body:{
         category:'marketplace_order',
-        subject:MERCHANT_SUPPORT_SUBJECT,
+        subject,
         description:'Controlled internal QA Merchant support request linked to the completed Marketplace order. No real merchant issue.',
         requested_destination:'support',
         related_type:'order',

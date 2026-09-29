@@ -85,3 +85,14 @@ test('Merchant Experience QA wave reconciles business finance notifications sett
   ])assert.ok(source.includes(marker),`missing Merchant Experience QA marker: ${marker}`);
   assert.doesNotMatch(source,/console\.(?:log|error)\([^\n]*(?:password|resetToken|previewUrl|secret)/i);
 });
+
+test('Merchant Experience uses a commit-scoped Marketplace order fixture so notification evidence is current',()=>{
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  assert.match(source,/MERCHANT_EXPERIENCE_ORDER_NOTE='Controlled QA Merchant Experience Marketplace order '\+QA_REVISION/);
+});
+
+test('Merchant Support fixture is scoped to the current Marketplace order',()=>{
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  assert.match(source,/const subject=MERCHANT_SUPPORT_SUBJECT\+' order '\+Number\(orderId\)/);
+  assert.match(source,/\[Number\(accountId\),subject\]/);
+});
