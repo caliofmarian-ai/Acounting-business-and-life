@@ -35,6 +35,59 @@ export async function ensurePaymentSchema(pool){
   if(!fk.rowCount)await pool.query("ALTER TABLE order_payments ADD CONSTRAINT order_payments_payment_intent_id_fkey FOREIGN KEY(payment_intent_id) REFERENCES payment_intents(id) ON DELETE RESTRICT");
 }
 
+
+export async function paymentExceptionSummary(pool){
+  const [reconciliation,settlements,refunds,providers]=await Promise.all([
+    pool.query(`
+      WITH latest AS (
+        SELECT DISTINCT ON(provider_code)
+          id,provider_code,status,mismatch_count,created_at,completed_at
+        FROM reconciliation_runs
+        ORDER BY provider_code,created_at DESC,id DESC
+      ),
+      bad AS (
+        SELECT id,status,mismatch_count FROM latest
+        WHERE status IN ('mismatch','failed','manual_review')
+      )
+      SELECT
+        COUNT(*)::int reconciliation_exceptions,
+        COALESCE(SUM(mismatch_count),0)::int mismatch_items,
+        COALESCE((
+          SELECT SUM(ABS(COALESCE(i.variance,0)))
+          FROM reconciliation_items i
+          JOIN bad b ON b.id=i.reconciliation_run_id
+          WHERE i.status<>'matched'
+        ),0)::numeric mismatch_amount
+      FROM bad
+    `),
+    pool.query(`
+      SELECT COUNT(*) FILTER(WHERE status IN ('failed','manual_review'))::int failed_settlements
+      FROM settlements
+    `),
+    pool.query(`
+      SELECT COUNT(*) FILTER(WHERE status IN ('failed','manual_review'))::int refund_exceptions
+      FROM refunds
+    `),
+    pool.query(`SELECT status FROM payment_provider_configs ORDER BY provider_code`)
+  ]);
+  const providerStates=providers.rows.map(row=>clean(row.status,30).toLowerCase()).filter(Boolean);
+  const providerState=providerStates.includes('suspended')?'degraded'
+    :providerStates.includes('active')?'active'
+    :providerStates.includes('sandbox')?'sandbox'
+    :providerStates.length?'disabled':null;
+  const row=reconciliation.rows[0]||{};
+  return{
+    reconciliation_exceptions:Number(row.reconciliation_exceptions||0),
+    mismatch_items:Number(row.mismatch_items||0),
+    mismatch_amount:Number(row.mismatch_amount||0),
+    failed_settlements:Number(settlements.rows[0]?.failed_settlements||0),
+    refund_exceptions:Number(refunds.rows[0]?.refund_exceptions||0),
+    provider_state:providerState,
+    source:'payment_core',
+    observed_at:new Date().toISOString()
+  };
+}
+
 export function normalizeMethod(method){
   const m=clean(method,40).toLowerCase();
   if(m==='cash')return'cash';

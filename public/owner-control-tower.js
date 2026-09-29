@@ -1,4 +1,13 @@
 const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const sourceLabel=source=>({
+  deployment_evidence:'Deployment evidence',payment_core:'Payment Core',support:'Support',
+  trust_safety:'Trust & Safety',territory_governance:'Territory governance',
+  finance_kpi:'Finance KPI',quality_evidence:'Quality evidence'
+})[String(source||'')]||String(source||'Evidence');
+const observedLabel=value=>{
+  const d=value?new Date(value):null;
+  return d&&!Number.isNaN(d.getTime())?d.toLocaleString('en-IE',{dateStyle:'short',timeStyle:'short'}):'time unavailable';
+};
 const stateLabel=state=>({
   healthy:'Healthy',attention:'Attention',critical:'Critical',unknown:'Unknown',
   supply_constrained:'Supply constrained',support_constrained:'Support constrained',
@@ -10,12 +19,13 @@ function money(value,currency='PHP'){
   return new Intl.NumberFormat('en-PH',{style:'currency',currency,maximumFractionDigits:2}).format(Number(value));
 }
 
-function healthCard(label,item,value){
+function healthCard(label,item,value,observedAt){
   const state=item?.state||'unknown';
   return `<article class="ownerHealthCard ownerState-${esc(state)}">
     <div class="ownerCardHead"><span>${esc(label)}</span><b>${esc(stateLabel(state))}</b></div>
     <strong>${esc(value||item?.reason||'Evidence unavailable')}</strong>
     <small>${esc(item?.reason||'Evidence unavailable')}</small>
+    <small class="ownerEvidenceMeta">${esc(sourceLabel(item?.source))} · ${esc(observedLabel(item?.updated_at||observedAt))}</small>
   </article>`;
 }
 
@@ -70,8 +80,8 @@ export function renderOwnerControlTower(model,headline){
 
   return `<section class="ownerControlTower" data-owner-control-tower data-state="${esc(h.state)}">
     <header class="ownerTowerHeader">
-      <small>BUSINESS &amp; LIFE · OWNER</small>
-      <h2>Owner Control Tower</h2>
+      <div><small>BUSINESS &amp; LIFE · OWNER</small><h2>Owner Control Tower</h2></div>
+      <button type="button" class="ownerRefreshButton" data-owner-control-refresh>Refresh</button>
     </header>
     <section class="ownerTowerHero ownerHero-${esc(h.state)}">
       <small>PLATFORM HEALTH</small>
@@ -81,10 +91,10 @@ export function renderOwnerControlTower(model,headline){
 
     <h3 class="ownerSectionTitle">Platform health</h3>
     <div class="ownerHealthGrid">
-      ${healthCard('Production',production,productionValue)}
-      ${healthCard('Money',moneyHealth,moneyValue)}
-      ${healthCard('Support',support,supportValue)}
-      ${healthCard('Trust & Safety',safety,safetyValue)}
+      ${healthCard('Production',production,productionValue,model?.generated_at)}
+      ${healthCard('Money',moneyHealth,moneyValue,model?.generated_at)}
+      ${healthCard('Support',support,supportValue,model?.generated_at)}
+      ${healthCard('Trust & Safety',safety,safetyValue,model?.generated_at)}
     </div>
 
     <h3 class="ownerSectionTitle">Needs your decision</h3>

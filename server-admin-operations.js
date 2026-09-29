@@ -29,6 +29,7 @@ import {
   createIncidentSevereEscalation,ensureSevereEscalationSchema,resolveSevereEscalation,
   severeIncidentEscalationPolicy
 } from './trust-safety-escalation-core.js';
+import {buildOwnerControlTowerRuntime} from './owner-control-tower-runtime.js';
 
 const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -509,7 +510,8 @@ async function adminHomeSummaryFromContext(ctx){
     const scope=scopeFromContext(ctx,'support.manage','territory_id'),ids=scope.ids.length?scope.ids:[-1];
     const q=await pool.query(
       `SELECT COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed'))::int open,
-              COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed') AND priority='urgent')::int urgent
+              COUNT(*) FILTER(WHERE status NOT IN ('resolved','closed') AND priority='urgent')::int urgent,
+              MIN(created_at) FILTER(WHERE status NOT IN ('resolved','closed') AND priority='urgent') oldest_urgent_at
          FROM support_tickets
         WHERE ${scope.countryWide?"country_code='PH'":"territory_id=ANY($1::bigint[])"}`,
       scope.countryWide?[]:[ids]
@@ -1121,6 +1123,8 @@ app.get('/admin-operations-ui.js',(_q,res)=>res.type('application/javascript').s
 app.get('/admin-console.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-console.css'),'utf8')));
 app.get('/admin-console.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-console.js'),'utf8')));
 app.get('/admin-account-lifecycle-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-account-lifecycle-ui.js'),'utf8')));
+app.get('/owner-control-tower.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','owner-control-tower.css'),'utf8')));
+app.get('/owner-control-tower.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','owner-control-tower.js'),'utf8')));
 app.get('/admin',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
@@ -1148,6 +1152,18 @@ app.get('/api/admin/overview',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
   requirePermissionFromContext(ctx,'admin.console');
   res.json(await adminOverview(me.account.id,ctx));
+}catch(e){next(e)}});
+app.get('/api/admin/owner-control-tower',async(req,res,next)=>{try{
+  const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
+  requirePermissionFromContext(ctx,'admin.console');
+  if(!ctx.superAdmin)throw Object.assign(new Error('Owner Control Tower requires Super Admin authority'),{status:403});
+  const homeSummary=await adminHomeSummaryFromContext(ctx);
+  res.json(await buildOwnerControlTowerRuntime(pool,{
+    homeSummary,
+    fallbackTerritories:ctx.territories,
+    runtimeHealthy:businessAccountingReady,
+    env:process.env
+  }));
 }catch(e){next(e)}});
 app.get('/api/governance/admin/overview',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
