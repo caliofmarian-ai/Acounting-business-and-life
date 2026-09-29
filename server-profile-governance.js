@@ -17,6 +17,7 @@ import {
   bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
   readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence
 } from './private-evidence-core.js';
+import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,setMicrobusinessCommerceState} from './microbusiness-readiness-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -68,7 +69,7 @@ async function ensureSuperAdminSelfProfile(client,me,role){
 async function applicationFor(accountId,role){const r=await pool.query(`SELECT pa.*,t.name territory_name,t.status territory_status FROM profile_applications pa LEFT JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 AND pa.role=$2 ORDER BY pa.created_at DESC LIMIT 1`,[accountId,role]);return r.rows[0]||null}
 async function audit(actorId,eventCode,targetAccountId=null,role='',territoryId=null,detail={}){await pool.query(`INSERT INTO profile_governance_events(actor_account_id,event_code,target_account_id,role,territory_id,detail_json) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,[actorId,clean(eventCode,100),targetAccountId,clean(role,40),territoryId,JSON.stringify(detail)]).catch(()=>{})}
 
-async function initDb(){await ensurePrivateEvidenceSchema(pool);await pool.query(`
+async function initDb(){await ensurePrivateEvidenceSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await pool.query(`
   CREATE TABLE IF NOT EXISTS territories (
     id BIGSERIAL PRIMARY KEY,
     country_code TEXT NOT NULL DEFAULT 'PH',
@@ -362,6 +363,46 @@ app.post('/api/governance/admin/applications/:id/review',body,async(req,res,next
 else if(decision==='reject'){await client.query(`UPDATE profile_applications SET status='rejected',reviewed_by_account_id=$1,reviewed_at=NOW(),decision_reason=$2,updated_at=NOW() WHERE id=$3`,[me.account.id,clean(req.body?.reason,1000)||'Requirements not approved',id]);await client.query(`UPDATE profiles SET enabled=FALSE,status='rejected',visibility='private',updated_at=NOW() WHERE account_id=$1 AND role=$2`,[a.account_id,a.role]);}
 else{const accountState=await client.query(`SELECT email_verified_at,account_mode FROM accounts WHERE id=$1 FOR UPDATE`,[a.account_id]);if(!accountState.rowCount)throw Object.assign(new Error('Applicant account not found'),{status:404});if(accountState.rows[0].account_mode!=='company_test'&&!accountState.rows[0].email_verified_at)throw Object.assign(new Error('Email ownership must be verified before an operational profile can be approved'),{status:409,code:'EMAIL_VERIFICATION_REQUIRED'});const eligibility=await accountAdultEligibilitySnapshot(client,a.account_id,{lock:true});if(!eligibility.company_test_exempt)await recordAdultEligibilityAdminReview(client,{accountId:a.account_id,actorAccountId:me.account.id,confirmed:req.body?.adult_eligibility_reviewed===true,source:'profile_application_review'});await ensureApprovedProfile(client,a,me.account.id,req.body?.approved_category_ids);await client.query(`UPDATE profile_applications SET status='approved',reviewed_by_account_id=$1,reviewed_at=NOW(),decision_reason=$2,updated_at=NOW() WHERE id=$3`,[me.account.id,clean(req.body?.reason,1000)||'Approved',id]);}
 await client.query('COMMIT');await audit(me.account.id,`application_${decision}`,a.account_id,a.role,a.territory_id,{application_id:id,reason:clean(req.body?.reason,300),adult_eligibility_reviewed:decision==='approve'?Boolean(req.body?.adult_eligibility_reviewed):false});res.json(await applicationFor(a.account_id,a.role))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
+
+app.get('/api/governance/admin/readiness/:accountId/:role',async(req,res,next)=>{try{
+  await requireAdmin(req);
+  const accountId=Number(req.params.accountId),role=clean(req.params.role,40);
+  if(!Number.isInteger(accountId)||accountId<1)return res.status(400).json({error:'Valid target account required'});
+  if(!['merchant','service_provider'].includes(role))return res.status(400).json({error:'Readiness review is available only for Merchant or Local Services'});
+  const businessId=role==='merchant'?Number(req.query?.business_id):null;
+  if(role==='merchant'&&(!Number.isInteger(businessId)||businessId<1))return res.status(400).json({error:'Merchant business_id is required'});
+  res.json(await microbusinessReadinessSnapshot(pool,{accountId,profileRole:role,businessId,verifyOwnership:true}));
+}catch(e){next(e)}})
+
+app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(req,res,next)=>{try{
+  const me=await requireAdmin(req),accountId=Number(req.params.accountId),role=clean(req.params.role,40);
+  if(!Number.isInteger(accountId)||accountId<1)return res.status(400).json({error:'Valid target account required'});
+  if(!['merchant','service_provider'].includes(role))return res.status(400).json({error:'Readiness review is available only for Merchant or Local Services'});
+  const businessId=role==='merchant'?Number(req.body?.business_id):null;
+  if(role==='merchant'&&(!Number.isInteger(businessId)||businessId<1))return res.status(400).json({error:'Merchant business_id is required'});
+  const commerceState=clean(req.body?.commerce_state,40),reason=clean(req.body?.reason,500);
+  if(!['readiness_only','eligible_limited','eligible_full'].includes(commerceState))return res.status(400).json({error:'Choose readiness_only, eligible_limited or eligible_full'});
+  const before=await microbusinessReadinessSnapshot(pool,{accountId,profileRole:role,businessId,verifyOwnership:true});
+  const authorization=await activeAuthorization(accountId,role);
+  if(commerceState!=='readiness_only'){
+    if(!authorization)return res.status(409).json({error:'Active platform profile authorization is required before commerce eligibility can be granted'});
+    if(!before.activity_track||!before.operating_context)return res.status(409).json({error:'Complete the activity track and operating context before commerce eligibility review'});
+    if(!reason)return res.status(400).json({error:'Review reason is required when granting commerce eligibility'});
+  }
+  const readiness=await setMicrobusinessCommerceState(pool,{
+    accountId,profileRole:role,businessId,actorAccountId:me.account.id,
+    commerceState,reason,commerceScope:req.body?.commerce_scope&&typeof req.body.commerce_scope==='object'?req.body.commerce_scope:{}
+  });
+  if(commerceState==='readiness_only'){
+    if(role==='merchant')await pool.query(`UPDATE merchant_storefronts SET publication_status='paused',updated_at=NOW() WHERE business_id=$1`,[businessId]);
+    if(role==='service_provider')await pool.query(`UPDATE profiles SET visibility='private',updated_at=NOW() WHERE account_id=$1 AND role='service_provider'`,[accountId]);
+  }
+  await audit(me.account.id,'microbusiness_commerce_'+commerceState,accountId,role,authorization?.territory_id||null,{
+    business_id:businessId||null,reason,commerce_scope:readiness.commerce_scope,
+    profile_authorization_separate:true
+  });
+  res.json(readiness);
+}catch(e){next(e)}})
 
 app.post('/api/governance/admin/authorizations/:id/status',body,async(req,res,next)=>{try{const me=await requireAdmin(req),id=Number(req.params.id),status=clean(req.body?.status,30);if(!['active','suspended','revoked'].includes(status))return res.status(400).json({error:'Choose active, suspended or revoked'});const client=await pool.connect();try{await client.query('BEGIN');const q=await client.query(`SELECT * FROM profile_authorizations WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Authorization not found'),{status:404});const a=q.rows[0];if(status==='active'){const accountState=await client.query(`SELECT email_verified_at,account_mode FROM accounts WHERE id=$1 FOR UPDATE`,[a.account_id]);if(!accountState.rowCount)throw Object.assign(new Error('Profile account not found'),{status:404});if(accountState.rows[0].account_mode!=='company_test'&&!accountState.rows[0].email_verified_at)throw Object.assign(new Error('Email ownership must be verified before an operational profile can be reactivated'),{status:409,code:'EMAIL_VERIFICATION_REQUIRED'});await requireAdultEligibility(client,a.account_id,{action:'reactivate an operational profile'});}await client.query(`UPDATE profile_authorizations SET status=$1,reason=$2,updated_at=NOW() WHERE id=$3`,[status,clean(req.body?.reason,1000),id]);if(status==='active')await client.query(`UPDATE profiles SET enabled=TRUE,status='active',updated_at=NOW() WHERE account_id=$1 AND role=$2`,[a.account_id,a.role]);else{await client.query(`UPDATE profiles SET enabled=FALSE,status=$1,visibility='private',updated_at=NOW() WHERE account_id=$2 AND role=$3`,[status,a.account_id,a.role]);if(a.role==='merchant')await client.query(`UPDATE merchant_storefronts ms SET publication_status='paused',updated_at=NOW() FROM business_memberships bm WHERE bm.business_id=ms.business_id AND bm.account_id=$1`,[a.account_id]);if(a.role==='courier')await client.query(`UPDATE courier_profiles SET available=FALSE,eligibility_status=CASE WHEN eligibility_status='approved' THEN 'suspended' ELSE eligibility_status END,updated_at=NOW() WHERE account_id=$1`,[a.account_id]);}await client.query('COMMIT');await audit(me.account.id,`authorization_${status}`,a.account_id,a.role,a.territory_id,{authorization_id:id,reason:clean(req.body?.reason,300)});res.json({ok:true,status})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
