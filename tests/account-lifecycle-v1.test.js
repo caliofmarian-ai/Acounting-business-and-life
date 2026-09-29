@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const auth=read('server-auth.js');
@@ -9,7 +11,8 @@ const lifecycle=read('account-lifecycle-core.js');
 const adminAuth=read('admin-authorization.js');
 const adminFunctions=read('admin-functions.js');
 const securityUi=read('public/auth-hardening-ui.js');
-const adminUi=read('public/admin-console.js');
+const adminLifecycleUi=read('public/admin-account-lifecycle-ui.js');
+const adminHtml=read('public/admin-console.html');
 const governance=read('server-profile-governance.js');
 
 test('password registration is pending until email ownership is verified',()=>{
@@ -115,15 +118,17 @@ test('Admin cannot reactivate a never-verified personal account or reopen a clos
   assert.match(hardening,/requested==='active'&&target\.account_mode!=='company_test'&&!target\.email_verified_at/);
 });
 
-test('Members UI exposes governed closure only after preflight and never a blind member delete',()=>{
-  assert.match(adminUi,/api\/admin\/members\/'\+Number\(accountId\)\+'\/account-closure\/preflight/);
-  assert.match(adminUi,/id="memberClosureForm"/);
-  assert.match(adminUi,/data-member-closure-action/);
-  assert.match(adminUi,/purge_empty_unverified/);
-  assert.match(adminUi,/Type '\+esc\(closureConfirmation\)\+' to confirm/);
-  assert.match(adminUi,/required accounting, security and legal history is retained/);
-  assert.match(adminUi,/account-closure'\s*,?\{method:'POST'/);
-  assert.doesNotMatch(adminUi,/data-member-delete/);
+test('Members UI exposes governed closure through an isolated decorator without overwriting the Admin console',()=>{
+  assert.match(adminHtml,/admin-account-lifecycle-ui\.js/);
+  assert.match(adminLifecycleUi,/api\/admin\/members\/'\+memberId\+'\/account-closure\/preflight/);
+  assert.match(adminLifecycleUi,/id="memberLifecycleClosureForm"/);
+  assert.match(adminLifecycleUi,/purge_empty_unverified/);
+  assert.match(adminLifecycleUi,/Type '\+word\+' to confirm/);
+  assert.match(adminLifecycleUi,/Required accounting, security, dispute and legal records will be retained/);
+  assert.match(adminLifecycleUi,/api\/admin\/members\/'\+memberId\+'\/account-closure/);
+  assert.doesNotMatch(adminLifecycleUi,/data-member-delete/);
+  const syntax=spawnSync(process.execPath,['--check',fileURLToPath(new URL('../public/admin-account-lifecycle-ui.js',import.meta.url))],{encoding:'utf8'});
+  assert.equal(syntax.status,0,syntax.stderr||syntax.stdout);
 });
 
 test('legacy Admin profile approval and reactivation cannot bypass email ownership verification',()=>{
