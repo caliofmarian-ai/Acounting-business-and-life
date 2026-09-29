@@ -20,7 +20,7 @@ export const ADMIN_FUNCTION_BUNDLES = Object.freeze({
   }),
   member_account_controls:Object.freeze({
     code:'member_account_controls',label:'Member Account Controls',
-    description:'Explicit scoped authority to suspend/reactivate member accounts and revoke active sessions.',
+    description:'Explicit scoped authority to suspend/reactivate or safely close eligible member accounts and revoke active sessions.',
     assignable_to:['country_admin','territory_admin','specialist'],
     permissions:['admin.console','members.view','members.manage_status','members.close_account','members.sessions.revoke']
   }),
