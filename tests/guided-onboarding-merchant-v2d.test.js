@@ -86,7 +86,8 @@ test('Merchant tour points to real operational controls already present in the p
   assert.match(delivery,/pickupLocationForm/);
   assert.match(finance,/class="businessFinancePrimary"/);
   assert.match(finance,/class="businessFinanceDetails"/);
-  assert.match(pricing,/scope==='merchant'/);
+  assert.match(pricing,/profiles\?\.merchant/);
+  assert.match(pricing,/Merchant-side platform policy/);
   assert.match(settings,/profilePromotionCenter/);
 });
 
