@@ -818,3 +818,9 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
 .accountAddressResult strong{font-size:11px;line-height:1.35}.accountAddressResult small{font-size:9px;color:var(--bl-text-secondary)}
 .accountAddressPrivacy{display:block;padding:9px 10px;border-radius:11px;background:#f4f8f6;color:var(--bl-text-secondary);font-size:9.5px;line-height:1.45}
 @media(max-width:420px){.accountAddressActions{grid-template-columns:1fr}.accountAddressActions button{width:100%}}
+
+
+/* ACCOUNT DELETE UX — explicit self-service danger entry */
+.accountSettingsGrid>button.accountDeleteTile{border-color:#efb5b0;background:#fff7f6}
+.accountSettingsGrid>button.accountDeleteTile>span{background:#ffe5e1}
+.accountSettingsGrid>button.accountDeleteTile strong{color:#9d2f28}

@@ -454,6 +454,7 @@ function renderAccountSettings(view=accountSettingsView){
     workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountAdultEligibilityBanner(test)+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
       <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and home address'}</small><b>›</b></button>
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
+      ${test?'':`<button type="button" class="accountDeleteTile" data-account-settings-view="security" data-account-delete-shortcut="1"><span>🗑️</span><strong>Delete account</strong><small>Delete this account and sign out all devices</small><b>›</b></button>`}
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
       <button type="button" id="accountMoneyBanking"><span>🏦</span><strong>Money & Banking</strong><small>Shared payment methods, payout destination and financial identity</small><b>›</b></button>
     </div>
@@ -485,7 +486,10 @@ function renderAccountSettings(view=accountSettingsView){
     </div>`;
   }
   workspace.querySelector('#accountSettingsBack').onclick=()=>view==='home'?closeAccountSettings():renderAccountSettings('home');
-  workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>button.dataset.accountSettingsView==='profiles'?openAccountSettings('profiles'):renderAccountSettings(button.dataset.accountSettingsView));
+  workspace.querySelectorAll('[data-account-settings-view]').forEach(button=>button.onclick=()=>{
+    if(button.dataset.accountDeleteShortcut==='1')sessionStorage.setItem('abl_open_account_delete','1');
+    return button.dataset.accountSettingsView==='profiles'?openAccountSettings('profiles'):renderAccountSettings(button.dataset.accountSettingsView);
+  });
   workspace.querySelector('#accountMoneyBanking')?.addEventListener('click',openAccountMoneySettings);
   workspace.querySelector('#accountNotifications')?.addEventListener('click',()=>{
     const api=window.BusinessLifeNotifications;
