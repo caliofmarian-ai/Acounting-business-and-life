@@ -963,7 +963,7 @@ async function adminMemberDetails(accountId,ctx){
   return{
     member,profiles,applications,authorizations,businesses:businessMemberships,admin_roles:adminRoles,
     security:{email_verified:Boolean(member.email_verified_at),phone_verified:Boolean(member.phone_verified_at),password_configured:Boolean(member.password_configured),active_session_count:Number(member.active_session_count||0),last_session_at:member.last_session_at},
-    controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions,manage_notes:canManageNotes},
+    controls:{manage_status:canManageStatus,revoke_sessions:canRevokeSessions,close_account:canCloseAccount,manage_notes:canManageNotes},
     context:{support:supportContext,safety:safetyContext,legal:legalContext,internal:internalContext},
     timeline:timeline.slice(0,80)
   };
