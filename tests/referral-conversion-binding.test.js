@@ -258,7 +258,7 @@ test('registration carries referral context but only emits signup-completed afte
   assert.match(authUi, /referral_conversion:referralConversion/);
   assert.match(authUi, /correlation_id:referralCorrelationId\(\)/);
   assert.match(server, /bindReferralSignupConversion/);
-  assert.match(server, /if \(binding\.bound && !binding\.idempotent\)/);
-  assert.match(server, /event: 'referral_signup_completed'/);
+  assert.match(server, /if\(binding\.bound&&!binding\.idempotent\)/);
+  assert.match(server, /event:'referral_signup_completed'/);
   assert.match(analytics, /'referral_signup_completed'/);
 });
