@@ -66,10 +66,13 @@ test('auth reset and verification email uses the shared notification delivery le
   assert.match(core,/notification_deliveries/);
 });
 
-test('Account Settings can open the canonical notification center directly on Settings',()=>{
-  assert.match(ui,/function openNotificationSettings\(\)/);
-  assert.match(ui,/renderNotificationCenter\(\)/);
-  assert.match(ui,/switchNotificationTab\('settings',settingsTab\)/);
+test('Account Settings opens Notification Settings without blocking on the inbox list',()=>{
+  assert.match(ui,/async function renderNotificationSettingsOnly\(\)/);
+  assert.match(ui,/const prefs=await api\('\/api\/notifications\/preferences'\)/);
+  const settingsBlock=ui.match(/async function openNotificationSettings\(\)\{[\s\S]*?\n\}/)?.[0]||'';
+  assert.match(settingsBlock,/renderNotificationSettingsOnly\(\)/);
+  assert.doesNotMatch(settingsBlock,/renderNotificationCenter\(\)/);
+  assert.match(ui,/inboxTab\.onclick=\(\)=>renderNotificationCenter\(\)/);
   assert.match(ui,/BusinessLifeNotifications=Object\.freeze\(\{open:openNotifications,openSettings:openNotificationSettings,close:closeNotifications\}\)/);
 });
 

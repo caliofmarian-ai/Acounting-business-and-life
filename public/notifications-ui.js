@@ -25,13 +25,28 @@ function addBell(){
 async function refreshUnread(){if(!token())return;try{addBell();const x=await api('/api/notifications/unread-count?threaded=all');const badge=document.getElementById('notificationBadge');if(!badge)return;badge.textContent=String(x.unread||0);badge.classList.toggle('hidden',!x.unread)}catch{}}
 function closeNotifications(){document.getElementById('notificationBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
 async function openNotifications(){ensureNotificationUi();document.getElementById('notificationBackdrop').classList.remove('hidden');document.body.style.overflow='hidden';await renderNotificationCenter()}
+async function renderNotificationSettingsOnly(){
+  const body=document.getElementById('notificationBody');
+  body.innerHTML='<div class="notificationLoading">Loading settings…</div>';
+  try{
+    const prefs=await api('/api/notifications/preferences');
+    notificationPanel={rows:notificationPanel.rows||[],prefs};
+    body.innerHTML=`
+      <div class="notificationTabs"><button data-ntab="inbox">Inbox</button><button class="active" data-ntab="settings">Settings</button></div>
+      <section id="notificationInbox" class="hidden"></section>
+      <section id="notificationSettings"></section>`;
+    const inboxTab=document.querySelector('[data-ntab="inbox"]');
+    const settingsTab=document.querySelector('[data-ntab="settings"]');
+    if(inboxTab)inboxTab.onclick=()=>renderNotificationCenter();
+    if(settingsTab)settingsTab.onclick=()=>switchNotificationTab('settings',settingsTab);
+    renderSettings(prefs);
+  }catch(e){body.innerHTML=`<div class="notificationEmpty">${esc(e.message)}</div>`}
+}
 async function openNotificationSettings(){
   ensureNotificationUi();
   document.getElementById('notificationBackdrop').classList.remove('hidden');
   document.body.style.overflow='hidden';
-  await renderNotificationCenter();
-  const settingsTab=document.querySelector('[data-ntab="settings"]');
-  if(settingsTab)switchNotificationTab('settings',settingsTab);
+  await renderNotificationSettingsOnly();
 }
 function iconFor(code){if(code.startsWith('order.'))return'🛍️';if(code.startsWith('delivery.'))return'🛵';if(code.startsWith('procurement.')||code.startsWith('supplier.'))return'📦';if(code.startsWith('service.'))return'🧰';if(code.startsWith('support.'))return'💬';if(code.startsWith('incident.'))return'🛡️';if(code.startsWith('profile.'))return'👤';return'🔔'}
 function timeAgo(value){const ms=Date.now()-new Date(value).getTime(),m=Math.floor(ms/60000);if(m<1)return'now';if(m<60)return`${m}m`;const h=Math.floor(m/60);if(h<24)return`${h}h`;return`${Math.floor(h/24)}d`}
