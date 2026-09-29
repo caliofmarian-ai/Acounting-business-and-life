@@ -10,6 +10,7 @@ const adminAuth=read('admin-authorization.js');
 const adminFunctions=read('admin-functions.js');
 const securityUi=read('public/auth-hardening-ui.js');
 const adminUi=read('public/admin-console.js');
+const governance=read('server-profile-governance.js');
 
 test('password registration is pending until email ownership is verified',()=>{
   assert.match(auth,/const accountStatus=companyTest\?'active':'pending_verification'/);
@@ -123,6 +124,18 @@ test('Members UI exposes governed closure only after preflight and never a blind
   assert.match(adminUi,/required accounting, security and legal history is retained/);
   assert.match(adminUi,/account-closure'\s*,?\{method:'POST'/);
   assert.doesNotMatch(adminUi,/data-member-delete/);
+});
+
+test('legacy Admin profile approval and reactivation cannot bypass email ownership verification',()=>{
+  const reviewStart=governance.indexOf("app.post('/api/governance/admin/applications/:id/review'");
+  const reviewEnd=governance.indexOf("app.post('/api/governance/admin/authorizations/:id/status'",reviewStart);
+  const review=governance.slice(reviewStart,reviewEnd);
+  assert.match(review,/Email ownership must be verified before an operational profile can be approved/);
+  const authorizationStart=reviewEnd;
+  const authorizationEnd=governance.indexOf('async function forwardJson',authorizationStart);
+  const authorization=governance.slice(authorizationStart,authorizationEnd);
+  assert.match(authorization,/Email ownership must be verified before an operational profile can be reactivated/);
+  assert.match(authorization,/account_mode!=='company_test'&&!accountState\.rows\[0\]\.email_verified_at/);
 });
 
 test('Security & access exposes governed user deletion instead of a blind hard-delete button',()=>{
