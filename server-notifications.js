@@ -268,6 +268,14 @@ app.post('/api/notifications/webhooks/resend',express.raw({type:'application/jso
       event:verified.event,
       payloadDigest:verified.payloadDigest
     });
+    if(['email.bounced','email.failed','email.suppressed'].includes(String(verified.event?.type||''))){
+      const providerReference=clean(verified.event?.data?.email_id,300);
+      if(providerReference){
+        await pool.query(`DELETE FROM account_registration_intents WHERE provider_reference=$1`,[providerReference]).catch(error=>{
+          if(!['42P01','42703'].includes(String(error?.code||'')))console.error('Registration intent bounce cleanup:',error.message);
+        });
+      }
+    }
     res.status(result.ignored?202:200).json({
       ok:true,
       ignored:Boolean(result.ignored),
