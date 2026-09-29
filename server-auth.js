@@ -159,6 +159,15 @@ async function resolveAccountToken(token = '') {
   if (legacy) return legacy;
   return resolveV2SessionToken(pool,TOKEN_SECRET,token,{ttlMs:TOKEN_TTL_MS});
 }
+function unverifiedSelfServiceAllowed(req){
+  const method=String(req.method||'GET').toUpperCase();
+  if(['GET','HEAD','OPTIONS'].includes(method))return true;
+  const path=String(req.path||'');
+  if(method==='PATCH'&&path==='/api/me')return true;
+  if(method==='PUT'&&path==='/api/me/geography')return true;
+  if(method==='POST'&&['/api/me/address/reverse','/api/auth/password'].includes(path))return true;
+  return false;
+}
 async function auth(req, res, next) {
   try {
     const token = req.ablSessionToken || sessionCredentialFromHeaders(req.headers||{}).token;
@@ -168,9 +177,11 @@ async function auth(req, res, next) {
     if(!state.rowCount)return res.status(401).json({error:'Unauthorized'});
     const account=state.rows[0];
     if(['suspended','closed'].includes(String(account.auth_status||'')))return res.status(403).json({error:'This account is not available',code:'ACCOUNT_NOT_ACTIVE'});
-    if(account.account_mode!=='company_test'&&!account.email_verified_at)return res.status(403).json({error:'Verify your email before using Business & Life',code:'EMAIL_VERIFICATION_REQUIRED'});
+    const pendingVerification=account.account_mode!=='company_test'&&!account.email_verified_at;
+    if(pendingVerification&&!unverifiedSelfServiceAllowed(req))return res.status(403).json({error:'Verify your email before using Business & Life',code:'EMAIL_VERIFICATION_REQUIRED'});
     req.accountId = resolved.accountId;
     req.authSession = resolved;
+    req.emailVerificationPending=pendingVerification;
     next();
   } catch (err) { next(err); }
 }
@@ -802,7 +813,11 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
     const client=await pool.connect();
     try{
       await client.query('BEGIN');
-      await client.query(`UPDATE accounts SET display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, companyTest?'':address, avatar === undefined ? null : avatar, req.accountId]);
+      await client.query(`UPDATE accounts SET
+        display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),
+        email_verified_at=CASE WHEN account_mode<>'company_test' AND LOWER(COALESCE(email,''))<>LOWER(COALESCE($3,'')) THEN NULL ELSE email_verified_at END,
+        auth_status=CASE WHEN account_mode<>'company_test' AND LOWER(COALESCE(email,''))<>LOWER(COALESCE($3,'')) THEN 'pending_verification' ELSE auth_status END,
+        updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, companyTest?'':address, avatar === undefined ? null : avatar, req.accountId]);
       if(!companyTest&&homePsgcCode)await saveAccountGeography(client,req.accountId,homePsgcCode,{source:'address_derived_psgc'});
       await client.query('COMMIT');
     }catch(error){
