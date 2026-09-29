@@ -37,7 +37,7 @@ test('Account protection rendering is race-safe and replaces each dedicated Secu
   assert.match(authUi,/accountSessionsMount/);
   assert.match(authUi,/protectionMount\.replaceChildren\(protection\)/);
   assert.match(authUi,/sensitiveMount\.replaceChildren\(sensitive\)/);
-  assert.match(authUi,/sessionsMount\.replaceChildren\(sessions\)/);
+  assert.match(authUi,/sessionsMount\.replaceChildren\(sessions,closure\)/);
   assert.doesNotMatch(authUi,/panel\.appendChild\(section\)/);
 });
 
