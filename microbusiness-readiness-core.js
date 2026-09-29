@@ -141,7 +141,7 @@ export async function ensureMicrobusinessReadinessSchema(pool){
       id BIGSERIAL PRIMARY KEY,
       account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       profile_role TEXT NOT NULL,
-      business_id BIGINT REFERENCES businesses(id) ON DELETE CASCADE,
+      business_id BIGINT,
       activity_track TEXT NOT NULL DEFAULT '',
       operating_context TEXT NOT NULL DEFAULT '',
       readiness_stage TEXT NOT NULL DEFAULT 'starting',
@@ -160,7 +160,16 @@ export async function ensureMicrobusinessReadinessSchema(pool){
       CHECK(readiness_stage IN ('starting','building_records','getting_ready','applying','verified','growing')),
       CHECK(commerce_state IN ('readiness_only','eligible_limited','eligible_full'))
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS microbusiness_readiness_account_profile_idx
+    DO $
+    BEGIN
+      IF to_regclass('public.businesses') IS NOT NULL
+         AND NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk') THEN
+        ALTER TABLE microbusiness_readiness
+          ADD CONSTRAINT microbusiness_readiness_business_fk
+          FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE;
+      END IF;
+    END $;
+        CREATE UNIQUE INDEX IF NOT EXISTS microbusiness_readiness_account_profile_idx
       ON microbusiness_readiness(account_id,profile_role)
       WHERE business_id IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS microbusiness_readiness_business_profile_idx
@@ -198,18 +207,15 @@ async function subjectOwnership(pool,{accountId,profileRole,businessId}){
     if(!membership.rowCount)throw Object.assign(new Error('Business workspace not available for this account'),{status:403});
     return{accountId:account,profileRole:role,businessId:business};
   }
-  const started=await pool.query(
-    `SELECT 1
-       FROM profiles p
-      WHERE p.account_id=$1 AND p.role=$2
-      UNION ALL
-     SELECT 1
-       FROM profile_applications a
-      WHERE a.account_id=$1 AND a.role=$2
-      LIMIT 1`,
+  const profile=await pool.query(
+    'SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 LIMIT 1',
+    [account,role]
+  );
+  const application=await pool.query(
+    'SELECT 1 FROM profile_applications WHERE account_id=$1 AND role=$2 LIMIT 1',
     [account,role]
   ).catch(error=>error?.code==='42P01'?{rowCount:0,rows:[]}:Promise.reject(error));
-  if(!started.rowCount)throw Object.assign(new Error('Start this profile before opening its readiness journey'),{status:409});
+  if(!profile.rowCount&&!application.rowCount)throw Object.assign(new Error('Start this profile before opening its readiness journey'),{status:409});
   return{accountId:account,profileRole:role,businessId:null};
 }
 
