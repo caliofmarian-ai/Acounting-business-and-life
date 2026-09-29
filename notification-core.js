@@ -425,6 +425,10 @@ async function resendEmail({to,subject,html,text='',eventCode='',category='opera
   }catch(e){return{ok:false,error:clean(e.message,300),department:cfg.department}}
 }
 
+export async function sendDirectSecurityEmail({to,subject,html,text='',eventCode='auth.email_verification'}={}){
+  return resendEmail({to,subject,html,text,eventCode,category:'security'});
+}
+
 export async function sendTransientEmailNotification(pool,{
   eventKey,eventCode,accountId,to,subject,html,category='security',priority='high',data={}
 }){
