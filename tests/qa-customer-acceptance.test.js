@@ -107,3 +107,9 @@ test('Customer Support ticket fixture is scoped to the current Marketplace order
   assert.match(source,/related_type='order' AND related_id=\$3/);
   assert.match(source,/\[Number\(accountId\),subject,Number\(orderId\)\]/);
 });
+
+test('Customer Privacy fixture is scoped to the current commit',()=>{
+  const source=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+  assert.match(source,/const subject=CUSTOMER_PRIVACY_SUBJECT\+' '\+QA_REVISION/);
+  assert.match(source,/\[Number\(accountId\),subject\]/);
+});
