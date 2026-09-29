@@ -503,8 +503,8 @@ app.post('/api/auth/account-closure/close',jsonBody,async(req,res,next)=>{
   }
 });
 
-async function adminAccountClosureAuthority(req,targetAccountId){
-  const actor=await requireRecentStepUp(req);
+async function adminAccountClosureAuthority(req,targetAccountId,{stepUpRequired=false}={}){
+  const actor=stepUpRequired?await requireRecentStepUp(req):await requireV2(req);
   const targetId=Number(targetAccountId);
   if(!Number.isInteger(targetId)||targetId<=0)throw Object.assign(new Error('Valid member account id required'),{status:400});
   if(Number(actor.accountId)===targetId)throw Object.assign(new Error('Use your own Account Settings to close your account'),{status:409});
@@ -532,10 +532,15 @@ app.get('/api/admin/members/:accountId/account-closure/preflight',async(req,res,
 
 app.post('/api/admin/members/:accountId/account-closure',jsonBody,async(req,res,next)=>{
   try{
-    const authority=await adminAccountClosureAuthority(req,req.params.accountId);
+    const authority=await adminAccountClosureAuthority(req,req.params.accountId,{stepUpRequired:true});
     const reason=clean(req.body?.reason,1200);
     if(reason.length<8)return res.status(400).json({error:'A clear Admin reason is required'});
     if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit confirmation is required'});
+    const requestedAction=clean(req.body?.action,80);
+    const expectedConfirmation=requestedAction==='purge_empty_unverified'?'DELETE':'CLOSE';
+    if(clean(req.body?.confirmation,40).toUpperCase()!==expectedConfirmation){
+      return res.status(400).json({error:`Type ${expectedConfirmation} to confirm this governed account action`,code:'ACCOUNT_CLOSURE_CONFIRMATION_REQUIRED'});
+    }
     const assessment=await accountClosureAssessment(pool,authority.targetId);
     if(assessment.blockers.length){
       await appendAdminAudit(pool,{
@@ -545,7 +550,6 @@ app.post('/api/admin/members/:accountId/account-closure',jsonBody,async(req,res,
       });
       return res.status(409).json({error:'Account closure is blocked until outstanding matters are resolved',code:'ACCOUNT_CLOSURE_BLOCKED',assessment});
     }
-    const requestedAction=clean(req.body?.action,80);
     const result=requestedAction==='purge_empty_unverified'
       ?await purgeEmptyUnverifiedAccount(pool,{accountId:authority.targetId,actorAccountId:authority.actor.accountId,actorType:'admin',reason})
       :await closeAccountSafely(pool,{accountId:authority.targetId,actorAccountId:authority.actor.accountId,actorType:'admin',reason});
@@ -614,6 +618,24 @@ app.get('/api/auth/google/callback', async (req, res) => {
 app.post('/api/auth/oauth/handoff', jsonBody, async (req, res, next) => {
   const code = clean(req.body?.code, 300); if (!code) return res.status(400).json({ error: 'OAuth handoff code is required' });
   const client = await pool.connect(); try { await client.query('BEGIN'); const q = await client.query(`SELECT * FROM auth_handoffs WHERE code_hash=$1 AND used_at IS NULL AND expires_at>NOW() FOR UPDATE`, [sha256(code)]); if (!q.rowCount) throw Object.assign(new Error('Google sign-in handoff expired'), { status: 400 }); const row = q.rows[0]; await client.query(`UPDATE auth_handoffs SET used_at=NOW() WHERE code_hash=$1`, [sha256(code)]); await client.query('COMMIT'); const session = await createSession(row.account_id, req); issueBrowserSessionCookies(res,session.token); res.json({ok:true,auth_transport:'cookie',expires_in_hours:24}); } catch (e) { await client.query('ROLLBACK').catch(() => {}); next(e); } finally { client.release(); }
+});
+
+app.patch('/api/admin/members/:accountId/status',jsonBody,async(req,res,next)=>{
+  try{
+    await requireV2(req);
+    const targetId=Number(req.params.accountId),requested=clean(req.body?.status,40);
+    if(!Number.isInteger(targetId)||targetId<=0)return res.status(400).json({error:'Valid member account id required'});
+    const q=await pool.query(`SELECT auth_status,email_verified_at,account_mode FROM accounts WHERE id=$1`,[targetId]);
+    if(!q.rowCount)return res.status(404).json({error:'Member not found'});
+    const target=q.rows[0];
+    if(target.auth_status==='closed'){
+      return res.status(409).json({error:'Closed accounts cannot be reactivated or suspended',code:'CLOSED_ACCOUNT_IMMUTABLE'});
+    }
+    if(requested==='active'&&target.account_mode!=='company_test'&&!target.email_verified_at){
+      return res.status(409).json({error:'Email ownership must be verified before this account can become active',code:'EMAIL_VERIFICATION_REQUIRED'});
+    }
+    next();
+  }catch(error){next(error)}
 });
 
 function pendingVerificationMutationAllowed(path,method){
