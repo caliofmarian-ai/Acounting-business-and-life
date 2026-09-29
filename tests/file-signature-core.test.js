@@ -37,5 +37,49 @@ test('rejects JPEG bytes declared as PNG',()=>{
 test('rejects disallowed or empty payloads',()=>{
   const png=Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]);
   assert.throws(()=>decodeVerifiedDataUrl(url('image/png',png),{allowedMimes:['application/pdf']}),/not allowed/);
-  assert.throws(()=>decodeVerifiedDataUrl('data:image/png;base64,',{allowedMimes:['image/png']}),/valid base64 data URL/);
+  assert.throws(()=>decodeVerifiedDataUrl('data:image/png;base64,',{allowedMimes:['image/png']}),error=>error?.code==='INVALID_BASE64');
+});
+
+
+test('accepts UTF-8 text, Office and audio signatures used by private Support evidence',()=>{
+  assert.equal(fileSignatureMatches('text/plain',Buffer.from('plain support note\n','utf8')),true);
+  assert.equal(fileSignatureMatches('text/markdown',Buffer.from('# Support evidence\n','utf8')),true);
+
+  const doc=Buffer.concat([
+    Buffer.from([0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1]),
+    Buffer.alloc(32),
+    Buffer.from('WordDocument','utf16le')
+  ]);
+  assert.equal(fileSignatureMatches('application/msword',doc),true);
+
+  const docx=Buffer.concat([
+    Buffer.from([0x50,0x4b,0x03,0x04]),
+    Buffer.from('fixture-[Content_Types].xml-word/document.xml-word/')
+  ]);
+  assert.equal(fileSignatureMatches('application/vnd.openxmlformats-officedocument.wordprocessingml.document',docx),true);
+
+  assert.equal(fileSignatureMatches('audio/webm',Buffer.from([0x1a,0x45,0xdf,0xa3,0x00])),true);
+  assert.equal(fileSignatureMatches('audio/wav',Buffer.concat([Buffer.from('RIFF'),Buffer.alloc(4),Buffer.from('WAVE')])),true);
+  assert.equal(fileSignatureMatches('audio/mpeg',Buffer.from('ID3fixture')),true);
+  assert.equal(fileSignatureMatches('audio/mp4',Buffer.concat([Buffer.alloc(4),Buffer.from('ftyp'),Buffer.from('M4A ')])),true);
+  assert.equal(fileSignatureMatches('audio/ogg',Buffer.from('OggSfixture')),true);
+});
+
+test('rejects renamed ZIP and binary payloads masquerading as private documents',()=>{
+  const genericZip=Buffer.concat([Buffer.from([0x50,0x4b,0x03,0x04]),Buffer.from('random/archive.txt')]);
+  assert.equal(fileSignatureMatches('application/vnd.openxmlformats-officedocument.wordprocessingml.document',genericZip),false);
+  assert.equal(fileSignatureMatches('text/plain',Buffer.from([0xff,0x00,0xfe])),false);
+});
+
+
+test('accepts safe MIME parameters used by MediaRecorder while preserving signature checks',()=>{
+  const webm=Buffer.from([0x1a,0x45,0xdf,0xa3,0x00,0x00]);
+  const url='data:audio/webm;codecs=opus;base64,'+webm.toString('base64');
+  const decoded=decodeVerifiedDataUrl(url,{allowedMimes:['audio/webm'],label:'Voice recording'});
+  assert.equal(decoded.mime,'audio/webm');
+  assert.equal(decoded.bytes.equals(webm),true);
+  assert.throws(
+    ()=>decodeVerifiedDataUrl('data:audio/webm;bad parameter;base64,'+webm.toString('base64'),{allowedMimes:['audio/webm']}),
+    /invalid data URL parameters/i
+  );
 });
