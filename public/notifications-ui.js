@@ -1,7 +1,7 @@
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||`Request failed (${r.status})`);return data}
-let notificationPanel=null,pollTimer=null,currentNotificationAudio=null;
+let notificationPanel={rows:[],prefs:null},pollTimer=null,currentNotificationAudio=null;
 let foregroundVoiceReady=false,foregroundVoiceToken='',lastForegroundEventId=null,foregroundSoundEnabled=true,audioUserInteracted=false;
 
 function toast(msg){let n=document.getElementById('notificationToast');if(!n){n=document.createElement('div');n.id='notificationToast';n.className='notificationToast';document.body.appendChild(n)}n.textContent=msg;n.classList.add('show');setTimeout(()=>n.classList.remove('show'),2600)}
@@ -30,7 +30,7 @@ async function renderNotificationSettingsOnly(){
   body.innerHTML='<div class="notificationLoading">Loading settings…</div>';
   try{
     const prefs=await api('/api/notifications/preferences');
-    notificationPanel={rows:notificationPanel.rows||[],prefs};
+    notificationPanel={rows:Array.isArray(notificationPanel?.rows)?notificationPanel.rows:[],prefs};
     body.innerHTML=`
       <div class="notificationTabs"><button data-ntab="inbox">Inbox</button><button class="active" data-ntab="settings">Settings</button></div>
       <section id="notificationInbox" class="hidden"></section>
