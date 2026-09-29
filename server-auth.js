@@ -24,6 +24,7 @@ import {ensureHighRiskVelocitySchema,enforceHighRiskVelocity,highRiskVelocityErr
 import {ADULT_ELIGIBILITY_POLICY_VERSION,ensureAccountSafetyEligibilitySchema,accountAdultEligibilitySnapshot,recordAdultEligibilityAttestation,recordCompanyTestEligibilityExemption,requireAdultEligibility} from './account-safety-eligibility-core.js';
 import {clearBrowserSessionCookies,issueBrowserSessionCookies,sessionCredentialFromHeaders,sessionSecurityMiddleware} from './session-cookie-core.js';
 import {createPrivateAddressGeocoder} from './private-address-geocoder.js';
+import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,updateMicrobusinessReadiness} from './microbusiness-readiness-core.js';
 
 const { Pool } = pg;
 const scryptAsync = promisify(crypto.scrypt);
@@ -380,6 +381,7 @@ async function initDb() {
   await ensureGuidedOnboardingSchema(pool);
   await ensureTerritoryDemandSchema(pool);
   await ensureHighRiskVelocitySchema(pool);
+  await ensureMicrobusinessReadinessSchema(pool);
 }
 
 async function profileSnapshot(accountId) {
@@ -840,6 +842,24 @@ app.get('/api/onboarding/guide',auth,async(req,res,next)=>{try{
 app.put('/api/onboarding/guide',body,auth,async(req,res,next)=>{try{
   res.set('Cache-Control','private, no-store, max-age=0');
   res.json(await updateGuidedOnboarding(pool,req.accountId,req.body||{}));
+}catch(err){next(err)}});
+
+app.get('/api/onboarding/readiness',auth,async(req,res,next)=>{try{
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(await microbusinessReadinessSnapshot(pool,{
+    accountId:req.accountId,
+    profileRole:req.query?.profile_role,
+    businessId:req.query?.business_id,
+    verifyOwnership:true
+  }));
+}catch(err){next(err)}});
+
+app.put('/api/onboarding/readiness',body,auth,async(req,res,next)=>{try{
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(await updateMicrobusinessReadiness(pool,req.accountId,{
+    ...(req.body||{}),
+    source:'user_readiness_api'
+  }));
 }catch(err){next(err)}});
 
 

@@ -8,6 +8,7 @@ import { ensureCatalogMediaSchema,mediaForEntities,listCatalogMedia,buildPrepare
 import { ordersFetch,startEmbeddedOrders,stopEmbeddedOrders } from './server-orders.js';
 import { readOrderDetail } from './orders-read-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requireMicrobusinessCommerceEligibility,filterCommerceEligibleBusinessIds} from './microbusiness-readiness-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -199,7 +200,7 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`);await ensureCatalogMediaSchema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool)}
 
 async function storefrontMedia(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
@@ -217,11 +218,17 @@ function hidePrivateLocation(row){
 }
 async function publicStorefronts(domain=''){
   const args=[];let extra='';if(['food','non_food'].includes(domain)){args.push(domain);extra=` AND (s.merchant_domain=$1 OR s.merchant_domain='mixed')`}
-  const{rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.presence_type,s.public_location_enabled,CASE WHEN s.public_location_enabled THEN s.pickup_address ELSE '' END pickup_address,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);return rows
+  const{rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.presence_type,s.public_location_enabled,CASE WHEN s.public_location_enabled THEN s.pickup_address ELSE '' END pickup_address,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);
+  const eligible=await filterCommerceEligibleBusinessIds(pool,rows.map(row=>row.business_id));
+  return rows.filter(row=>eligible.has(Number(row.business_id)))
 }
 async function storefront(businessId,includePrivate=false){
   const q=await pool.query(`SELECT s.*,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 ${includePrivate?'':"AND s.publication_status='published'"}`,[businessId]);
   const row=q.rows[0]||null;if(!row)return null;
+  if(!includePrivate){
+    const eligible=await filterCommerceEligibleBusinessIds(pool,[businessId]);
+    if(!eligible.has(Number(businessId)))return null;
+  }
   const media=await storefrontMedia(businessId);
   return attachStorefrontMedia(includePrivate?row:hidePrivateLocation(row),media);
 }
@@ -245,7 +252,8 @@ async function guestPublicStorefronts(domain=''){
   const args=[];let extra='';
   if(['food','non_food'].includes(domain)){args.push(domain);extra=` AND (s.merchant_domain=$1 OR s.merchant_domain='mixed')`}
   const {rows}=await pool.query(`SELECT s.business_id,s.store_name,s.description,s.merchant_domain,s.presence_type,s.opening_status,s.preparation_eta_minutes,s.pickup_enabled,s.delivery_enabled,s.cash_enabled,s.online_enabled,s.public_reputation_enabled,s.logo_data_url,COUNT(p.id)::int product_count,MIN(p.selling_price) min_price FROM merchant_storefronts s LEFT JOIN marketplace_products p ON p.business_id=s.business_id AND p.published=TRUE AND p.active=TRUE WHERE s.publication_status='published'${extra} GROUP BY s.business_id ORDER BY s.opening_status='open' DESC,s.store_name`,args);
-  return rows;
+  const eligible=await filterCommerceEligibleBusinessIds(pool,rows.map(row=>row.business_id));
+  return rows.filter(row=>eligible.has(Number(row.business_id)));
 }
 async function guestPublicStorefront(businessId){
   const row=await storefront(businessId,false);if(!row)return null;
@@ -276,6 +284,8 @@ export async function createEmbeddedMarketplaceOrder({authorization='',body={}}=
 async function createMarketplaceOrder(req){
   const me=await requireCustomer(req);
   const customerId=Number(me.account.id),businessId=Number(req.body?.business_id),ids=[],qty=new Map();
+  if(!Number.isInteger(businessId)||businessId<1)throw Object.assign(new Error('Choose a valid merchant'),{status:400});
+  await requireMicrobusinessCommerceEligibility(pool,{profileRole:'merchant',businessId,action:'accept a public marketplace order'});
   for(const raw of req.body?.items||[]){
     const id=Number(raw.product_id),q=Number(raw.quantity);
     if(!Number.isInteger(id)||!positive(q))throw Object.assign(new Error('Every basket item needs a valid quantity'),{status:400});
@@ -469,7 +479,7 @@ app.get('/api/marketplace/storefronts',async(req,res,next)=>{try{await requireCu
 app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const s=await storefront(Number(req.params.businessId),false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(Number(req.params.businessId),false)})}catch(e){next(e)}})
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{res.status(201).json(await createMarketplaceOrder(req))}catch(e){next(e)}})
 
-app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}res.json({...s,products:await products(business.id,true)})}catch(e){next(e)}})
+app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}const readiness=await microbusinessReadinessSnapshot(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id});res.json({...s,readiness,products:await products(business.id,true)})}catch(e){next(e)}})
 app.get('/api/merchant/storefront/geocode',async(req,res,next)=>{try{
   const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
   const results=await geocodeAddress(req.query.q,business.country_code||'PH');
@@ -511,6 +521,7 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
   const current=await storefront(business.id,true);
   const domain=['food','non_food','mixed'].includes(req.body?.merchant_domain)?req.body.merchant_domain:'food';
   const status=['draft','published','paused'].includes(req.body?.publication_status)?req.body.publication_status:'draft';
+  if(status==='published')await requireMicrobusinessCommerceEligibility(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id,action:'publish the Merchant storefront'});
   const open=['open','busy','closed'].includes(req.body?.opening_status)?req.body.opening_status:'open';
   const presence=['online','physical','both'].includes(req.body?.presence_type)?req.body.presence_type:'online';
   const physical=presence!=='online';
