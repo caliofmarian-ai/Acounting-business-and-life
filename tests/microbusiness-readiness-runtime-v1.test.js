@@ -351,6 +351,7 @@ test('fresh database bootstrap does not require businesses before Auth starts',(
   assert.match(core,/business_id BIGINT,/);
   assert.match(core,/to_regclass\('public\.businesses'\) IS NOT NULL/);
   assert.match(core,/microbusiness_readiness_business_fk/);
+  assert.doesNotMatch(core,/DO \\$/);
   assert.match(core,/SELECT 1 FROM profiles WHERE account_id=\$1 AND role=\$2 LIMIT 1/);
   assert.match(core,/SELECT 1 FROM profile_applications WHERE account_id=\$1 AND role=\$2 LIMIT 1/);
 });
