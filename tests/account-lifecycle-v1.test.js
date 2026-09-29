@@ -9,6 +9,7 @@ const lifecycle=read('account-lifecycle-core.js');
 const adminAuth=read('admin-authorization.js');
 const adminFunctions=read('admin-functions.js');
 const securityUi=read('public/auth-hardening-ui.js');
+const adminUi=read('public/admin-console.js');
 
 test('password registration is pending until email ownership is verified',()=>{
   assert.match(auth,/const accountStatus=companyTest\?'active':'pending_verification'/);
@@ -96,6 +97,32 @@ test('Admin closure has a distinct delegated permission, step-up, scope and prot
   assert.match(hardening,/PROTECTED_SUPER_ADMIN/);
   assert.match(hardening,/member_account_closure_blocked/);
   assert.match(hardening,/member_empty_unverified_account_purged/);
+});
+
+test('Admin member closure preflight is readable without step-up while execution requires recent identity confirmation',()=>{
+  const authority=hardening.slice(hardening.indexOf('async function adminAccountClosureAuthority'),hardening.indexOf("app.post('/api/auth/sessions/revoke-others'"));
+  assert.match(authority,/stepUpRequired=false/);
+  assert.match(authority,/stepUpRequired\?await requireRecentStepUp\(req\):await requireV2\(req\)/);
+  assert.match(authority,/account-closure',jsonBody[\s\S]*stepUpRequired:true/);
+  assert.match(authority,/expectedConfirmation=requestedAction==='purge_empty_unverified'\?'DELETE':'CLOSE'/);
+});
+
+test('Admin cannot reactivate a never-verified personal account or reopen a closed account',()=>{
+  assert.match(hardening,/app\.patch\('\/api\/admin\/members\/:accountId\/status'/);
+  assert.match(hardening,/CLOSED_ACCOUNT_IMMUTABLE/);
+  assert.match(hardening,/Email ownership must be verified before this account can become active/);
+  assert.match(hardening,/requested==='active'&&target\.account_mode!=='company_test'&&!target\.email_verified_at/);
+});
+
+test('Members UI exposes governed closure only after preflight and never a blind member delete',()=>{
+  assert.match(adminUi,/api\/admin\/members\/'\+Number\(accountId\)\+'\/account-closure\/preflight/);
+  assert.match(adminUi,/id="memberClosureForm"/);
+  assert.match(adminUi,/data-member-closure-action/);
+  assert.match(adminUi,/purge_empty_unverified/);
+  assert.match(adminUi,/Type '\+esc\(closureConfirmation\)\+' to confirm/);
+  assert.match(adminUi,/required accounting, security and legal history is retained/);
+  assert.match(adminUi,/account-closure'\s*,?\{method:'POST'/);
+  assert.doesNotMatch(adminUi,/data-member-delete/);
 });
 
 test('Security & access exposes governed user deletion instead of a blind hard-delete button',()=>{
