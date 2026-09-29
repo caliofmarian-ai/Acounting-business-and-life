@@ -160,16 +160,7 @@ export async function ensureMicrobusinessReadinessSchema(pool){
       CHECK(readiness_stage IN ('starting','building_records','getting_ready','applying','verified','growing')),
       CHECK(commerce_state IN ('readiness_only','eligible_limited','eligible_full'))
     );
-    DO $
-    BEGIN
-      IF to_regclass('public.businesses') IS NOT NULL
-         AND NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk') THEN
-        ALTER TABLE microbusiness_readiness
-          ADD CONSTRAINT microbusiness_readiness_business_fk
-          FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE;
-      END IF;
-    END $;
-        CREATE UNIQUE INDEX IF NOT EXISTS microbusiness_readiness_account_profile_idx
+    CREATE UNIQUE INDEX IF NOT EXISTS microbusiness_readiness_account_profile_idx
       ON microbusiness_readiness(account_id,profile_role)
       WHERE business_id IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS microbusiness_readiness_business_profile_idx
@@ -192,6 +183,19 @@ export async function ensureMicrobusinessReadinessSchema(pool){
     CREATE INDEX IF NOT EXISTS microbusiness_readiness_events_subject_idx
       ON microbusiness_readiness_events(account_id,created_at DESC);
   `);
+
+  const businessTable=await pool.query("SELECT to_regclass('public.businesses') AS table_name");
+  if(businessTable.rows[0]?.table_name){
+    const fk=await pool.query(
+      "SELECT 1 FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk' LIMIT 1"
+    );
+    if(!fk.rowCount){
+      await pool.query(
+        "ALTER TABLE microbusiness_readiness ADD CONSTRAINT microbusiness_readiness_business_fk "+
+        "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE"
+      );
+    }
+  }
 }
 
 async function subjectOwnership(pool,{accountId,profileRole,businessId}){

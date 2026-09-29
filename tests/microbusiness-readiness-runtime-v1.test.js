@@ -26,6 +26,7 @@ class ReadinessDb{
   async query(sql,args=[]){
     const q=String(sql).replace(/\s+/g,' ').trim();
     if(q.startsWith('CREATE TABLE IF NOT EXISTS microbusiness_readiness'))return{rows:[],rowCount:0};
+    if(q==="SELECT to_regclass('public.businesses') AS table_name")return{rows:[{table_name:null}],rowCount:1};
     if(q.startsWith('SELECT 1 FROM business_memberships')){
       const key=String(args[0])+':'+String(args[1]);
       return{rows:this.memberships.has(key)?[{ '?column?':1 }]:[],rowCount:this.memberships.has(key)?1:0};
@@ -349,8 +350,9 @@ test('commerce eligibility mutation is Super Admin only and limited state requir
 test('fresh database bootstrap does not require businesses before Auth starts',()=>{
   const core=read('microbusiness-readiness-core.js');
   assert.match(core,/business_id BIGINT,/);
-  assert.match(core,/to_regclass\('public\.businesses'\) IS NOT NULL/);
+  assert.match(core,/SELECT to_regclass\('public\.businesses'\) AS table_name/);
   assert.match(core,/microbusiness_readiness_business_fk/);
+  assert.doesNotMatch(core,/DO \\$/);
   assert.match(core,/SELECT 1 FROM profiles WHERE account_id=\$1 AND role=\$2 LIMIT 1/);
   assert.match(core,/SELECT 1 FROM profile_applications WHERE account_id=\$1 AND role=\$2 LIMIT 1/);
 });
