@@ -8,6 +8,17 @@ async function api(path,options={}){
   if(!r.ok)throw new Error(data.error||('Request failed ('+r.status+')'));
   return data;
 }
+async function adminPrivateBlob(path){
+  const r=await fetch(path,{credentials:'same-origin'});
+  if(!r.ok){const data=await r.json().catch(()=>({}));throw new Error(data.error||('Request failed ('+r.status+')'))}
+  return r.blob();
+}
+async function openAdminPrivateBlob(path,popup){
+  if(!popup)throw new Error('Allow a new tab to view this private evidence file.');
+  const blob=await adminPrivateBlob(path),url=URL.createObjectURL(blob);
+  popup.location.href=url;
+  setTimeout(()=>URL.revokeObjectURL(url),120000);
+}
 const root=document.getElementById('adminRoot');
 let state={me:null,catalog:null,overview:null,active:'overview',assignments:null,renderRequest:0,memberHubTab:null,memberSummary:null};
 
@@ -124,13 +135,9 @@ function applicationEvidenceHtml(a){
   return '<div class="adminEvidenceGrid"><section class="card"><h3>Documents</h3>'+(docs.length?docs.map(d=>'<button class="secondary adminEvidenceButton" type="button" data-application-document="'+Number(d.id)+'">'+esc(d.label||d.document_type||('Document '+d.id))+'</button>').join(''):'<p class="muted">No uploaded application documents.</p>')+'</section><section class="card"><h3>Credentials</h3>'+(credentials.length?credentials.map(c=>'<div class="adminEvidenceLine"><strong>'+esc(c.title||c.credential_type)+'</strong><span class="muted">'+esc(c.issuing_body||'')+' · '+esc(c.verification_status||'unknown')+(c.expiry_date?' · '+esc(String(c.expiry_date).slice(0,10)):'')+'</span></div>').join(''):'<p class="muted">No credential records.</p>')+'</section></div>'+(services.length?'<section class="card"><h3>Existing services</h3>'+services.map(s=>'<div class="adminEvidenceLine"><strong>'+esc(s.name||s.service_label||s.code)+'</strong><span class="muted">'+esc(s.service_label||s.code||'')+'</span></div>').join('')+'</section>':'');
 }
 async function viewAdminApplicationDocument(id){
-  const popup=window.open('about:blank','_blank');
-  try{
-    const d=await api('/api/governance/admin/application-documents/'+Number(id));
-    if(!d.evidence_data_url)throw new Error('This evidence file is unavailable.');
-    if(popup)popup.location.href=d.evidence_data_url;
-    else throw new Error('Allow a new tab to view this evidence file.');
-  }catch(error){if(popup)popup.close();showError(error)}
+  const popup=window.open('about:blank','_blank','noopener,noreferrer');
+  try{await openAdminPrivateBlob('/api/governance/admin/application-documents/'+Number(id),popup)}
+  catch(error){if(popup)popup.close();showError(error)}
 }
 async function openAdminApplication(id){
   const p=document.getElementById('adminPanel');if(!p)return;
@@ -497,8 +504,8 @@ function deliveryRuleFields(prefix,label,weighted){return '<fieldset><legend>'+e
 function deliveryPricingPanel(rules){const active=(rules||[]).find(x=>x.active);return '<details class="adminDisclosure deliveryPricingDisclosure"><summary><span class="adminDisclosureCopy"><small>COUNTRY-LEVEL CONTROL</small><strong>Delivery pricing</strong><span>Vehicle fees, distance rules and delivery capacity</span></span><span class="status">'+esc(active?'Active v'+active.version:'HOLD')+'</span></summary><div class="adminDisclosureBody"><p class="muted">Create a new immutable vehicle-pricing version. No PHP tariff is hardcoded.</p><form id="adminDeliveryPricingForm" class="adminForm">'+deliveryRuleFields('bike','Bicycle · small parcel',false)+deliveryRuleFields('car','Car',true)+deliveryRuleFields('van','Van',true)+'<label>Route factor<input id="deliveryRouteFactor" type="number" min="1" step="0.01" value="1" required></label><button class="primary" type="submit">Save and activate version</button><div id="deliveryPricingResult"></div></form></div></details>'}
 function deliveryCourierPanel(couriers){return '<section><div class="sectionTitle"><h3>Courier verification</h3></div>'+rows(couriers,c=>'<div class="row"><div class="rowHeader"><strong>'+esc(c.courier_name||c.display_name)+'</strong><span class="status">'+esc(c.eligibility_status)+'</span></div><span class="muted">'+esc(c.email||'')+' · '+esc(c.approved_vehicle_class||c.vehicle_type||'No vehicle')+' · '+Number(c.submitted_documents||0)+' submitted documents</span><button class="secondary adminInlineAction" type="button" data-courier-decision="review" data-courier-id="'+Number(c.account_id)+'">Review eligibility</button></div>')+'</section>'}
 async function viewCourierDocument(accountId,documentId){
-  const popup=window.open('about:blank','_blank');
-  try{const d=await api('/api/admin/couriers/'+Number(accountId)+'/documents/'+Number(documentId));if(!d.evidence_data_url)throw new Error('Courier evidence is unavailable.');if(popup)popup.location.href=d.evidence_data_url;else throw new Error('Allow a new tab to view Courier evidence.')}
+  const popup=window.open('about:blank','_blank','noopener,noreferrer');
+  try{await openAdminPrivateBlob('/api/admin/couriers/'+Number(accountId)+'/documents/'+Number(documentId),popup)}
   catch(error){if(popup)popup.close();showError(error)}
 }
 async function openCourierReview(accountId){
@@ -576,8 +583,8 @@ async function openAdminTrustCase(id){
   }catch(error){showError(error)}
 }
 async function viewIncidentAttachment(incidentId,attachmentId){
-  const popup=window.open('about:blank','_blank');
-  try{const d=await api('/api/admin/incidents/'+Number(incidentId)+'/attachments/'+Number(attachmentId));if(!d.data_url)throw new Error('Evidence file is unavailable.');if(popup)popup.location.href=d.data_url;else throw new Error('Allow a new tab to view this evidence file.')}
+  const popup=window.open('about:blank','_blank','noopener,noreferrer');
+  try{await openAdminPrivateBlob('/api/admin/incidents/'+Number(incidentId)+'/attachments/'+Number(attachmentId),popup)}
   catch(error){if(popup)popup.close();showError(error)}
 }
 async function openAdminIncident(id){
