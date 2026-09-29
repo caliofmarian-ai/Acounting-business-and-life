@@ -82,7 +82,7 @@ test('Support voice uses browser acceleration plus server transcription fallback
   assert.match(supportServer,/\/api\/support\/assist\/transcribe/);
   assert.match(supportServer,/SUPPORT_AI_NOT_CONFIGURED/);
   assert.match(supportServer,/supportTranscriptionLanguage/);
-  assert.match(supportServer,/\['gpt-transcribe','whisper-1'\]/);
+  assert.match(supportServer,/SUPPORT_AI_TRANSCRIPTION_MODEL,'gpt-transcribe','whisper-1'/);
   assert.match(supportServer,/response_format','json'/);
   assert.match(supportServer,/chunking_strategy','auto'/);
   assert.match(supportServer,/retrying fallback/);
