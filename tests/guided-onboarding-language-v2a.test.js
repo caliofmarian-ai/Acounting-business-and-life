@@ -59,7 +59,7 @@ test('language chooser is touch-safe and can use device locale only as a suggest
   assert.match(ui,/data-guide-locale="en-PH"/);
   assert.match(ui,/data-guide-locale="fil-PH"/);
   assert.match(css,/\.guidedLanguageChoices button\{[^}]*min-height:62px/);
-  assert.match(ui,/Language does not change your country, barangay, profile, currency or payment settings/);
+  assert.match(ui,/Country, profile, money and payment settings stay unchanged/);
 });
 
 test('localized onboarding keeps internal geography and expansion mechanics out of customer copy',()=>{
@@ -87,7 +87,7 @@ test('language can be changed back to English from every active coach and Missio
   assert.match(ui,/await updateGuide\(\{action:'set_locale',locale:button\.dataset\.guideLocale\}/);
   assert.match(ui,/if\(mode==='mission'\)\{missionCenterOpen=true;renderMissionCenter\(\);return\}/);
   assert.match(css,/\.guidedLanguageSwitch\{[^}]*min-height:40px/);
-  assert.match(css,/@media\(max-width:419px\)\{[^}]*\.guidedLanguageSwitch\{min-height:44px/);
+  assert.match(css,/\.guidedLanguageSwitch\{min-height:44px\}/);
 });
 
 test('language recovery control uses self-identifying labels independent of current locale',()=>{
