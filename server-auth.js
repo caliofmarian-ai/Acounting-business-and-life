@@ -812,6 +812,11 @@ app.post('/api/auth/password', body, auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+app.get('/api/auth/session/identity', auth, (req,res)=>{
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json({account_id:Number(req.accountId)});
+});
+
 app.get('/api/me', auth, async (req, res, next) => { try { res.json(await profileSnapshot(req.accountId)); } catch (err) { next(err); } });
 
 app.get('/api/me/address/search',auth,async(req,res,next)=>{try{
