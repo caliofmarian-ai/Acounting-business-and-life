@@ -1703,6 +1703,14 @@ app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{
     if(!locked.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery not found'})}
     const d=locked.rows[0];
     if(d.status!=='awaiting_courier'||d.courier_account_id!=null){await client.query('ROLLBACK');return res.status(409).json({error:'Admin override is available only while the delivery is awaiting Courier acceptance'})}
+    const refused=await client.query(
+      `SELECT 1 FROM delivery_offers
+        WHERE delivery_id=$1 AND courier_account_id=$2
+          AND offer_round=$3 AND status='declined'
+        LIMIT 1`,
+      [id,courierId,d.dispatch_round]
+    );
+    if(refused.rowCount){await client.query('ROLLBACK');return res.status(409).json({error:'This Courier refused the current delivery offer and cannot be force-assigned in the same dispatch round'})}
     const cq=await client.query('SELECT * FROM courier_profiles WHERE account_id=$1 FOR UPDATE',[courierId]);
     if(!cq.rowCount){await client.query('ROLLBACK');return res.status(409).json({error:'Courier profile missing'})}
     const gate=await courierOfferGateFromDb(client,cq.rows[0],d);
