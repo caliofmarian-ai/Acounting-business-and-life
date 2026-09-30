@@ -57,6 +57,7 @@ export function isDeliveryOwnedPath(path='',method='GET'){
   if(pathname==='/api/courier/home')return true;
   if(pathname==='/api/courier/documents')return true;
   if(pathname==='/api/courier/availability')return true;
+  if(pathname==='/api/courier/delivery-offers'||pathname.startsWith('/api/courier/delivery-offers/'))return true;
   if(pathname.startsWith('/api/courier/deliveries/'))return true;
   if(pathname.startsWith('/api/admin/delivery/'))return true;
   if(pathname==='/api/admin/deliveries'||pathname.startsWith('/api/admin/deliveries/'))return true;
