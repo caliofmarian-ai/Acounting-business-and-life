@@ -392,6 +392,7 @@ app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(re
   if(role==='merchant'&&(!Number.isInteger(businessId)||businessId<1))return res.status(400).json({error:'Merchant business_id is required'});
   const commerceState=clean(req.body?.commerce_state,40),reason=clean(req.body?.reason,500);
   const commerceScope=req.body?.commerce_scope&&typeof req.body.commerce_scope==='object'&&!Array.isArray(req.body.commerce_scope)?req.body.commerce_scope:{};
+  const evidenceChecklist=Array.isArray(req.body?.eligibility_evidence)?req.body.eligibility_evidence:[];
   if(!['readiness_only','eligible_limited','eligible_full'].includes(commerceState))return res.status(400).json({error:'Choose readiness_only, eligible_limited or eligible_full'});
   if(commerceState==='eligible_limited'&&!Object.keys(commerceScope).length)return res.status(400).json({error:'Define the limited commerce scope before granting limited eligibility'});
   const before=await microbusinessReadinessSnapshot(pool,{accountId,profileRole:role,businessId,verifyOwnership:true});
@@ -403,7 +404,7 @@ app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(re
   }
   const readiness=await setMicrobusinessCommerceState(pool,{
     accountId,profileRole:role,businessId,actorAccountId:me.account.id,
-    commerceState,reason,commerceScope
+    commerceState,reason,commerceScope,evidenceChecklist
   });
   if(commerceState==='readiness_only'){
     if(role==='merchant')await pool.query(`UPDATE merchant_storefronts SET publication_status='paused',updated_at=NOW() WHERE business_id=$1`,[businessId]);
@@ -411,6 +412,8 @@ app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(re
   }
   await audit(me.account.id,'microbusiness_commerce_'+commerceState,accountId,role,authorization?.territory_id||null,{
     business_id:businessId||null,reason,commerce_scope:readiness.commerce_scope,
+    eligibility_evidence:readiness.eligibility_evidence.map(item=>({code:item.code,outcome:item.outcome,source_authority:item.source_authority})),
+    policy_version:readiness.policy_version,
     profile_authorization_separate:true
   });
   res.json(readiness);
