@@ -1242,7 +1242,8 @@ function bindCourierHomeDynamic(hub){
       const result=await profileApi('/api/courier/availability',{method:'PUT',body:JSON.stringify({available:desired})});
       if(Boolean(result?.available)!==desired)throw new Error('Availability was not confirmed by the server.');
       invalidateCourierHome();
-      showToast(desired?'You are available for assignments.':'Availability paused.');
+      const offerCount=Number(result?.new_offer_count||0);
+      showToast(desired?(offerCount?`You are available. ${offerCount} waiting delivery offer${offerCount===1?'':'s'} matched you.`:'You are available for new delivery offers.'):'Availability paused.');
       await loadCourierHome(hub,{force:true});
     }catch(err){
       availability.disabled=false;
@@ -1267,16 +1268,19 @@ function renderCourierHomeData(hub,data){
     status.innerHTML=
       '<div class="courierStatusMain"><div><span class="courierStatusEyebrow">Eligibility</span><strong>'+escapeHtml(statusLabel)+'</strong><small>'+escapeHtml(vehicle)+' · '+escapeHtml(operatingArea)+'</small></div>'+
       '<button type="button" data-courier-home-open="Eligibility">'+(approved?'Review':'Fix eligibility')+'</button></div>'+
-      '<div class="courierAvailabilityRow"><div><strong>'+(profile?.available&&approved?'Available':'Not available')+'</strong><small>'+(approved?'You decide when you are open for new assignments.':'Admin approval is required before availability can be enabled.')+'</small></div>'+
+      '<div class="courierAvailabilityRow"><div><strong>'+(profile?.available&&approved?'Available':'Not available')+'</strong><small>'+(approved?'You decide when you are open for new delivery offers.':'Admin approval is required before availability can be enabled.')+'</small></div>'+
       '<button id="courierHomeAvailabilityAction" type="button" data-next-available="'+String(!(profile?.available&&approved))+'" '+(!approved?'disabled':'')+'>'+(profile?.available&&approved?'Pause availability':'Go available')+'</button></div>';
   }
 
   const work=courierHomeCurrentWork(data.delivery);
+  const offers=Array.isArray(data.delivery?.offers)?data.delivery.offers:[];
   const workBox=hub.querySelector('#courierHomeWork');
   if(workBox){
     workBox.innerHTML=work
-      ?'<article class="courierCurrentWork"><div><span>'+escapeHtml(customerNice(work.item.status||'assigned'))+'</span><strong>'+escapeHtml(work.item.business_name||work.item.order_number||'Assigned delivery')+'</strong><small>'+escapeHtml(work.item.order_number||'Delivery')+'</small></div><button type="button" data-courier-home-open="'+escapeHtml(work.destination)+'">'+escapeHtml(work.label)+'</button></article>'
-      :'<div class="courierHomeEmpty"><strong>No assigned delivery right now.</strong><span>Stay available if you want to receive eligible assignments.</span><button type="button" data-courier-home-open="Deliveries">Open deliveries</button></div>';
+      ?'<article class="courierCurrentWork"><div><span>'+escapeHtml(customerNice(work.item.status||'assigned'))+'</span><strong>'+escapeHtml(work.item.business_name||work.item.order_number||'Accepted delivery')+'</strong><small>'+escapeHtml(work.item.order_number||'Delivery')+'</small></div><button type="button" data-courier-home-open="'+escapeHtml(work.destination)+'">'+escapeHtml(work.label)+'</button></article>'
+      :offers.length
+        ?'<article class="courierCurrentWork"><div><span>Delivery offer</span><strong>'+escapeHtml(String(offers.length))+' offer'+(offers.length===1?'':'s')+' waiting</strong><small>Review and Accept or Refuse before any route begins.</small></div><button type="button" data-courier-home-open="Deliveries">Review offers</button></article>'
+        :'<div class="courierHomeEmpty"><strong>No delivery job or offer right now.</strong><span>Stay available if you want to receive eligible delivery offers.</span><button type="button" data-courier-home-open="Deliveries">Open deliveries</button></div>';
   }
 
   const moneyBox=hub.querySelector('#courierHomeMoney');
@@ -1336,7 +1340,7 @@ function renderCourierHub(){
   if(!hub)return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   hub.innerHTML=
-    '<div class="hubHero courierHomeHero"><div class="hubEyebrow">Delivery profile</div><h1>Ready for your next delivery?</h1><p>See whether you can work, whether you are available, what is assigned now and what Money evidence is recorded.</p><span class="hubStatus">Courier workspace</span></div>'+
+    '<div class="hubHero courierHomeHero"><div class="hubEyebrow">Delivery profile</div><h1>Ready for your next delivery?</h1><p>Go Available, review incoming delivery offers, Accept or Refuse, then work only the delivery you accepted.</p><span class="hubStatus">Courier workspace</span></div>'+
     '<section class="courierHomePanel">'+
       '<div class="courierHomeToolbar"><div><strong>Home</strong><small>Your current work status</small></div><button id="courierHomeRefresh" type="button">Refresh</button></div>'+
       profileHomeLoadingMarkup('courierHomeLoading','courierHomeState','Checking your delivery status…','Eligibility, availability, assigned work and Money evidence.')+
