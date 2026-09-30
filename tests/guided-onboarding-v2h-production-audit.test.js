@@ -22,6 +22,8 @@ const suppliers=read('public/suppliers-ui.js');
 const accounting=read('public/business-accounting-ui.js');
 const profileMoney=read('public/profile-money-ui.js');
 const settings=read('public/profile-settings-ui.js');
+const indexHtml=read('public/index.html');
+const mobileLoader=read('public/mobile-feature-loader.js');
 const core=read('guided-onboarding-core.js');
 const en=JSON.parse(read('public/locales/guided-onboarding.en-PH.json'));
 const fil=JSON.parse(read('public/locales/guided-onboarding.fil-PH.json'));
@@ -116,7 +118,7 @@ test('V2H destructive and hard-to-reverse boundaries are explicitly taught inste
 });
 
 test('V2H audit confirms all role-specific tutorial targets are backed by real production controls',()=>{
-  const combined=[shell,market,orders,delivery,services,suppliers,accounting,profileMoney,settings].join('\n');
+  const combined=[shell,market,orders,delivery,services,suppliers,accounting,profileMoney,settings,indexHtml,mobileLoader].join('\n');
   const markers=[
     // Customer
     'checkoutAddress','checkoutPayment','placeOrder','data-track','lazySupportBtn','moneyHeroCustomer','requestService',
