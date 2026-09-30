@@ -1207,13 +1207,13 @@ app.post('/api/courier/delivery-offers/:offerId/decline',body,async(req,res,next
     `,[offerId,me.account.id]);
     if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery offer not found'})}
     const offer=q.rows[0];
+    if(offer.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
     if(deliveryOfferExpired(offer.expires_at)){
       await client.query(`UPDATE delivery_offers SET status='expired',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW() WHERE id=$1 AND status='pending'`,[offerId]);
       await recordDispatchEvent(client,{deliveryId:offer.delivery_id,actorAccountId:me.account.id,courierAccountId:me.account.id,eventCode:'offer_expired',offerRound:offer.offer_round,detail:{offer_id:offerId}});
       await client.query('COMMIT');
       return res.status(409).json({error:'This delivery offer has expired',code:'DELIVERY_OFFER_EXPIRED'});
     }
-    if(offer.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
     if(offer.delivery_status!=='awaiting_courier'||Number(offer.offer_round)!==Number(offer.dispatch_round)){
       await client.query(`UPDATE delivery_offers SET status='withdrawn',responded_at=NOW(),updated_at=NOW() WHERE id=$1`,[offerId]);
       await client.query('COMMIT');
@@ -1249,13 +1249,13 @@ app.post('/api/courier/delivery-offers/:offerId/accept',body,async(req,res,next)
     `,[offerId,me.account.id]);
     if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery offer not found'})}
     const row=q.rows[0],deliveryId=Number(row.delivery_id);
+    if(row.offer_status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
     if(deliveryOfferExpired(row.expires_at)){
       await client.query(`UPDATE delivery_offers SET status='expired',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW() WHERE id=$1 AND status='pending'`,[offerId]);
       await recordDispatchEvent(client,{deliveryId,actorAccountId:me.account.id,courierAccountId:me.account.id,eventCode:'offer_expired',offerRound:row.offer_round,detail:{offer_id:offerId}});
       await client.query('COMMIT');
       return res.status(409).json({error:'This delivery offer has expired',code:'DELIVERY_OFFER_EXPIRED'});
     }
-    if(row.offer_status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
     if(row.delivery_status!=='awaiting_courier'){
       await client.query('ROLLBACK');return res.status(409).json({error:'This delivery has already been taken'});
     }
