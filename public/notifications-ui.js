@@ -319,7 +319,7 @@ async function primeForegroundVoice(){
     foregroundVoiceReady=true;
   }catch{}
 }
-async function pollForegroundVoice(){
+async function pollForegroundVoice({refreshBadge=true}={}){
   const activeToken=token();
   if(!activeToken||document.hidden)return;
   if(!foregroundVoiceReady||foregroundVoiceToken!==activeToken){await primeForegroundVoice();return}
@@ -333,7 +333,7 @@ async function pollForegroundVoice(){
     const fresh=[];
     for(const row of rows){if(previous&&String(row.event_id??'')===previous)break;fresh.push(row)}
     lastForegroundEventId=latest.event_id;
-    await refreshUnread();
+    if(refreshBadge)await refreshUnread();
     if(!foregroundSoundEnabled||!audioUserInteracted)return;
     const candidate=fresh.find(row=>!row.read_at&&row.attention?.soundSlot&&!row.attention?.silent);
     if(!candidate)return;
@@ -342,7 +342,7 @@ async function pollForegroundVoice(){
 }
 async function refreshForegroundNotifications(){
   if(!token()||document.hidden)return;
-  await Promise.allSettled([refreshUnread(),pollForegroundVoice()]);
+  await Promise.allSettled([refreshUnread(),pollForegroundVoice({refreshBadge:false})]);
 }
 function noteAudioInteraction(){audioUserInteracted=true}
 window.BusinessLifeNotifications=Object.freeze({open:openNotifications,openSettings:openNotificationSettings,close:closeNotifications});

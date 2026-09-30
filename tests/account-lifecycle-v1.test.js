@@ -28,8 +28,10 @@ test('password registration is pending until email ownership is verified',()=>{
 
 test('unverified sessions are useful for account security but cannot mutate operational state',()=>{
   assert.match(auth,/function unverifiedSelfServiceAllowed\(req\)/);
+  assert.match(auth,/function unverifiedSelfServiceAllowedFor\(method='GET',path=''\)/);
+  assert.match(auth,/authenticatedAccountContext/);
   assert.match(auth,/EMAIL_VERIFICATION_REQUIRED/);
-  assert.match(auth,/req\.emailVerificationPending=pendingVerification/);
+  assert.match(auth,/req\.emailVerificationPending=context\.emailVerificationPending/);
   assert.match(hardening,/function pendingVerificationMutationAllowed\(path,method\)/);
   assert.match(hardening,/pending&&!pendingVerificationMutationAllowed/);
   assert.match(hardening,/code:'EMAIL_VERIFICATION_REQUIRED'/);

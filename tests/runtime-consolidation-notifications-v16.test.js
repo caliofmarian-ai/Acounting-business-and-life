@@ -7,6 +7,9 @@ const publicServer=read('server-paymongo.js');
 const payments=read('server-payments.js');
 const legal=read('server-legal.js');
 const notifications=read('server-notifications.js');
+const auth=read('server-auth.js');
+const notificationUi=read('public/notifications-ui.js');
+const notificationCore=read('notification-core.js');
 const qa=read('qa-acceptance.js');
 const workflow=read('.github/workflows/admin-runtime.yml');
 
@@ -65,11 +68,46 @@ test('PayMongo preserves PWA gating without a localhost asset proxy',()=>{
   assert.doesNotMatch(publicServer,/http:\/\/127\.0\.0\.1/);
 });
 
+test('Notifications polling resolves only lightweight authenticated identity',()=>{
+  assert.match(auth,/app\.get\('\/api\/auth\/session\/identity', auth/);
+  assert.match(auth,/account_id:Number\(req\.accountId\)/);
+  assert.match(auth,/authenticatedAccountContext/);
+  assert.match(auth,/pathname==='\/api\/auth\/session\/identity'/);
+  assert.match(auth,/SELECT auth_status,email_verified_at,account_mode FROM accounts/);
+  assert.match(auth,/ACCOUNT_NOT_ACTIVE/);
+  assert.match(auth,/EMAIL_VERIFICATION_REQUIRED/);
+  assert.match(notifications,/upstream\('\/api\/auth\/session\/identity'/);
+  assert.doesNotMatch(notifications,/upstream\('\/api\/me'/);
+});
+
+test('Notification inbox rendering is batched and unread counting avoids window scans',()=>{
+  assert.match(notifications,/renderNotifications\(pool,rows,'in_app'\)/);
+  assert.doesNotMatch(notifications,/for\(const row of rows\)\{const msg=await renderNotification/);
+  assert.match(notifications,/COUNT\(DISTINCT CASE/);
+  assert.match(notificationCore,/notification_recipients_active_account_idx/);
+  assert.match(notificationCore,/notification_recipients_unread_account_idx/);
+  assert.match(notificationCore,/notification_deliveries_in_app_delivered_idx/);
+  assert.match(notificationCore,/export async function renderNotifications/);
+});
+
+test('Foreground notification refresh performs one unread request per cycle',()=>{
+  assert.match(notificationUi,/async function pollForegroundVoice\(\{refreshBadge=true\}=\{\}\)/);
+  assert.match(notificationUi,/if\(refreshBadge\)await refreshUnread\(\)/);
+  assert.match(notificationUi,/pollForegroundVoice\(\{refreshBadge:false\}\)/);
+  assert.doesNotMatch(notificationUi,/Promise\.allSettled\(\[refreshUnread\(\),pollForegroundVoice\(\)\]\)/);
+});
+
 test('Notifications Runtime V16 acceptance is wired into canonical QA',()=>{
   assert.match(qa,/NOTIFICATIONS_RUNTIME_V16_WAVE='notifications_runtime_v16'/);
   assert.match(qa,/runNotificationsRuntimeV16Acceptance/);
   assert.match(qa,/config\.wave===NOTIFICATIONS_RUNTIME_V16_WAVE/);
   assert.match(qa,/transaction_notification_hook:true/);
+  assert.match(qa,/latency_samples:10/);
+  assert.match(qa,/inbox_p50_ms:inboxP50/);
+  assert.match(qa,/unread_p50_ms:unreadP50/);
+  assert.match(qa,/inbox p50 exceeded 750 ms/);
+  assert.match(qa,/unread p50 exceeded 500 ms/);
+  assert.match(qa,/QA_NOTIFICATIONS_LATENCY/);
   assert.match(qa,/resend_invalid_signature_fail_closed:true/);
   assert.match(qa,/legacy_port_4407_retired:true/);
 });
