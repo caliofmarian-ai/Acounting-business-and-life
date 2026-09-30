@@ -32,8 +32,9 @@ test('Courier acceptance exercises real delivery lifecycle and secure completion
     '/api/delivery/store-location',
     '/api/delivery/',
     '/request-courier',
-    '/api/admin/delivery/eligible-couriers',
-    '/api/admin/deliveries/',
+    '/api/courier/delivery-offers',
+    '/decline',
+    '/accept',
     '/api/courier/deliveries/',
     'courier_en_route_to_merchant',
     'courier_arrived_at_merchant',
@@ -42,7 +43,10 @@ test('Courier acceptance exercises real delivery lifecycle and secure completion
     'courier_arrived_at_customer',
     'completion_code'
   ]) assert.ok(courier.includes(marker),'missing Courier E2E marker: '+marker);
-  assert.match(courier,/incorrect completion-code denial/);
+  assert.match(courier,/Controlled QA refusal before re-offer/);
+  assert.match(courier,/assignment_mode!=='courier_accept'/);
+  assert.doesNotMatch(courier,/Admin Courier assignment/);
+    assert.match(courier,/incorrect completion-code denial/);
   assert.match(courier,/live_tracking_closed_after_completion:true/);
 });
 
