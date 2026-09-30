@@ -1,4 +1,4 @@
-export const MICROBUSINESS_READINESS_POLICY_VERSION='ph-microbusiness-readiness-v1';
+export const MICROBUSINESS_READINESS_POLICY_VERSION='ph-microbusiness-readiness-v2';
 
 export const MICROBUSINESS_ACTIVITY_TRACKS=Object.freeze(['food','non_food','local_services']);
 export const MICROBUSINESS_OPERATING_CONTEXTS=Object.freeze([
@@ -31,6 +31,137 @@ const COMMERCE_STATES=new Set(MICROBUSINESS_COMMERCE_STATES);
 const ROLES=new Set(['merchant','service_provider']);
 const clean=(value,max=200)=>String(value??'').trim().slice(0,max);
 
+export const MICROBUSINESS_READINESS_REVIEW_ITEMS=Object.freeze({
+  activity_scope_confirmed:Object.freeze({
+    code:'activity_scope_confirmed',
+    label:'Activity scope confirmed',
+    description:'Confirm that the declared Food, Non-food or Local Services activity matches the actual activity being reviewed.',
+    allow_not_applicable:false
+  }),
+  operating_context_confirmed:Object.freeze({
+    code:'operating_context_confirmed',
+    label:'Operating context confirmed',
+    description:'Confirm the actual operating context and that it matches the location model already stored by Business & Life.',
+    allow_not_applicable:false
+  }),
+  business_registration_requirements:Object.freeze({
+    code:'business_registration_requirements',
+    label:'Business registration requirements resolved',
+    description:'Resolve which business-registration requirements apply to this exact activity and location. Record verified evidence or a sourced not-applicable decision.',
+    allow_not_applicable:true
+  }),
+  location_permission_requirements:Object.freeze({
+    code:'location_permission_requirements',
+    label:'Location / vending authority requirements resolved',
+    description:'Resolve whether the operating location needs property, market, vending-space or other location authority. Record verified evidence or a sourced not-applicable decision.',
+    allow_not_applicable:true
+  }),
+  food_safety_requirements:Object.freeze({
+    code:'food_safety_requirements',
+    label:'Food safety / sanitary requirements resolved',
+    description:'For Food activity, resolve the applicable food-safety, sanitary and health requirements. Small size never bypasses an applicable food-safety requirement.',
+    allow_not_applicable:true
+  }),
+  regulated_goods_requirements:Object.freeze({
+    code:'regulated_goods_requirements',
+    label:'Regulated-goods requirements resolved',
+    description:'For Non-food activity, resolve whether the goods/category needs a permit, licence, restricted-goods control or other regulated-product evidence.',
+    allow_not_applicable:true
+  }),
+  service_category_requirements:Object.freeze({
+    code:'service_category_requirements',
+    label:'Service category scope resolved',
+    description:'Confirm the exact Local Services categories/tasks that are being enabled and their existing platform category authorization.',
+    allow_not_applicable:false
+  }),
+  professional_licence_requirements:Object.freeze({
+    code:'professional_licence_requirements',
+    label:'Professional / regulatory credential requirements resolved',
+    description:'Resolve whether the exact service task requires a professional or government credential. Business & Life must never treat profile approval as that licence.',
+    allow_not_applicable:true
+  }),
+  tax_record_requirements:Object.freeze({
+    code:'tax_record_requirements',
+    label:'Tax / receipt record requirements resolved',
+    description:'Resolve the applicable registration, invoice/receipt or record-keeping requirements from the competent authority without claiming Business & Life filed or paid them.',
+    allow_not_applicable:true
+  })
+});
+
+const REVIEW_OUTCOMES=new Set(['verified','not_applicable']);
+const REVIEW_COMMON=Object.freeze([
+  'activity_scope_confirmed',
+  'operating_context_confirmed',
+  'business_registration_requirements',
+  'tax_record_requirements'
+]);
+const REVIEW_BY_TRACK=Object.freeze({
+  food:Object.freeze(['location_permission_requirements','food_safety_requirements']),
+  non_food:Object.freeze(['location_permission_requirements','regulated_goods_requirements']),
+  local_services:Object.freeze(['service_category_requirements','professional_licence_requirements'])
+});
+
+export function microbusinessReadinessReviewRequirements({profile_role='',activity_track='',operating_context=''}={}){
+  const role=clean(profile_role,40);
+  const track=clean(activity_track,40);
+  const context=clean(operating_context,60);
+  if(!ROLES.has(role))return[];
+  if(!track||!allowedTrackForRole(role,track))return[];
+  const codes=[...REVIEW_COMMON,...(REVIEW_BY_TRACK[track]||[])];
+  return codes.map(code=>({
+    ...MICROBUSINESS_READINESS_REVIEW_ITEMS[code],
+    operating_context:context||''
+  }));
+}
+
+function normalizeEvidenceItem(raw={}){
+  return{
+    code:clean(raw.code,80),
+    outcome:clean(raw.outcome,30),
+    reference:clean(raw.reference,240),
+    source_authority:clean(raw.source_authority,200),
+    note:clean(raw.note,500)
+  };
+}
+
+export function validateMicrobusinessEligibilityEvidence(state,evidenceChecklist=[]){
+  const normalized=microbusinessReadinessState(state||{});
+  const requirements=microbusinessReadinessReviewRequirements(normalized);
+  if(!requirements.length)throw Object.assign(new Error('Complete the activity track and operating context before commerce eligibility review'),{status:409,code:'READINESS_CONTEXT_REQUIRED'});
+  const items=Array.isArray(evidenceChecklist)?evidenceChecklist.map(normalizeEvidenceItem):[];
+  const byCode=new Map(items.map(item=>[item.code,item]));
+  const missing=[];
+  for(const requirement of requirements){
+    const item=byCode.get(requirement.code);
+    if(!item||!REVIEW_OUTCOMES.has(item.outcome)){missing.push(requirement.code);continue;}
+    if(item.outcome==='not_applicable'&&!requirement.allow_not_applicable){
+      throw Object.assign(new Error(requirement.label+' cannot be marked not applicable'),{status:400,code:'READINESS_EVIDENCE_NOT_APPLICABLE_DENIED',requirement:requirement.code});
+    }
+    if(item.outcome==='verified'&&!item.reference){
+      throw Object.assign(new Error(requirement.label+' requires an evidence/reference identifier'),{status:400,code:'READINESS_EVIDENCE_REFERENCE_REQUIRED',requirement:requirement.code});
+    }
+    if(item.outcome==='not_applicable'&&(!item.source_authority||!item.note)){
+      throw Object.assign(new Error(requirement.label+' needs a source/authority and reason when marked not applicable'),{status:400,code:'READINESS_EVIDENCE_NA_SOURCE_REQUIRED',requirement:requirement.code});
+    }
+  }
+  if(missing.length)throw Object.assign(new Error('Resolve every required readiness review item before commerce eligibility can be granted'),{status:409,code:'READINESS_EVIDENCE_INCOMPLETE',missing});
+  return requirements.map(requirement=>byCode.get(requirement.code));
+}
+
+export function microbusinessReadinessEnforcementMode(env=process.env){
+  const value=clean(env?.MICROBUSINESS_READINESS_ENFORCEMENT,40).toLowerCase();
+  if(['transition','transitional','new_only'].includes(value))return'transition';
+  if(['1','true','yes','on','enabled','full'].includes(value))return'full';
+  return'off';
+}
+
+function transitionCutoff(env=process.env){
+  const raw=clean(env?.MICROBUSINESS_READINESS_TRANSITION_CUTOFF,80);
+  if(!raw)return null;
+  const d=new Date(raw);
+  return Number.isFinite(d.getTime())?d.toISOString():null;
+}
+
 function positiveId(value,label='identifier'){
   const id=Number(value);
   if(!Number.isInteger(id)||id<1)throw Object.assign(new Error(label+' is invalid'),{status:400});
@@ -54,8 +185,7 @@ function allowedTrackForRole(role,track){
 }
 
 export function microbusinessReadinessEnforcementEnabled(env=process.env){
-  const value=clean(env?.MICROBUSINESS_READINESS_ENFORCEMENT,20).toLowerCase();
-  return ['1','true','yes','on','enabled'].includes(value);
+  return microbusinessReadinessEnforcementMode(env)!=='off';
 }
 
 export function microbusinessReadinessState(row={}){
@@ -78,6 +208,7 @@ export function microbusinessReadinessState(row={}){
     eligibility_reviewed_at:row.eligibility_reviewed_at||null,
     eligibility_reviewed_by_account_id:Number(row.eligibility_reviewed_by_account_id)||null,
     eligibility_reason:clean(row.eligibility_reason,500),
+    eligibility_evidence:Array.isArray(row.eligibility_evidence_json)?row.eligibility_evidence_json.map(normalizeEvidenceItem):[],
     source:clean(row.source,80)||'readiness_runtime',
     policy_version:clean(row.policy_version,80)||MICROBUSINESS_READINESS_POLICY_VERSION,
     created_at:row.created_at||null,
@@ -150,6 +281,7 @@ export async function ensureMicrobusinessReadinessSchema(pool){
       eligibility_reviewed_at TIMESTAMPTZ,
       eligibility_reviewed_by_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
       eligibility_reason TEXT NOT NULL DEFAULT '',
+      eligibility_evidence_json JSONB NOT NULL DEFAULT '[]'::jsonb,
       source TEXT NOT NULL DEFAULT 'readiness_runtime',
       policy_version TEXT NOT NULL DEFAULT 'ph-microbusiness-readiness-v1',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -166,6 +298,8 @@ export async function ensureMicrobusinessReadinessSchema(pool){
     CREATE UNIQUE INDEX IF NOT EXISTS microbusiness_readiness_business_profile_idx
       ON microbusiness_readiness(business_id,profile_role)
       WHERE business_id IS NOT NULL;
+    ALTER TABLE microbusiness_readiness
+      ADD COLUMN IF NOT EXISTS eligibility_evidence_json JSONB NOT NULL DEFAULT '[]'::jsonb;
     CREATE INDEX IF NOT EXISTS microbusiness_readiness_commerce_idx
       ON microbusiness_readiness(profile_role,commerce_state,updated_at DESC);
 
@@ -271,7 +405,9 @@ export async function microbusinessReadinessSnapshot(pool,{accountId=null,profil
   return{
     ...state,
     next_action_code:nextMicrobusinessReadinessAction(state),
-    enforcement_enabled:microbusinessReadinessEnforcementEnabled()
+    review_requirements:microbusinessReadinessReviewRequirements(state),
+    enforcement_enabled:microbusinessReadinessEnforcementEnabled(),
+    enforcement_mode:microbusinessReadinessEnforcementMode()
   };
 }
 
@@ -335,7 +471,8 @@ export async function updateMicrobusinessReadiness(pool,accountId,input={}){
   if(Object.prototype.hasOwnProperty.call(input,'commerce_state')
     ||Object.prototype.hasOwnProperty.call(input,'commerce_scope')
     ||Object.prototype.hasOwnProperty.call(input,'eligibility_reviewed_at')
-    ||Object.prototype.hasOwnProperty.call(input,'eligibility_reason')){
+    ||Object.prototype.hasOwnProperty.call(input,'eligibility_reason')
+    ||Object.prototype.hasOwnProperty.call(input,'eligibility_evidence')){
     throw Object.assign(new Error('Commerce eligibility can only be changed through a governed review'),{status:403,code:'COMMERCE_ELIGIBILITY_GOVERNED'});
   }
 
@@ -391,13 +528,16 @@ export async function setMicrobusinessCommerceState(pool,{
   actorAccountId,
   commerceState,
   reason='',
-  commerceScope={}
+  commerceScope={},
+  evidenceChecklist=[]
 }={}){
   await ensureMicrobusinessReadinessSchema(pool);
   const stateValue=clean(commerceState,40);
   if(!COMMERCE_STATES.has(stateValue))throw Object.assign(new Error('Unknown commerce eligibility state'),{status:400});
   const row=await ensureSubjectRow(pool,{accountId,profileRole,businessId});
   const before=microbusinessReadinessState(row);
+  const evidence=stateValue==='readiness_only'?[]:validateMicrobusinessEligibilityEvidence(before,evidenceChecklist);
+  if(stateValue!=='readiness_only'&&!clean(reason,500))throw Object.assign(new Error('Review reason is required when granting commerce eligibility'),{status:400,code:'READINESS_REVIEW_REASON_REQUIRED'});
   const governedStage=stateValue==='readiness_only'
     ?(SELF_SERVICE_STAGES.has(before.readiness_stage)?before.readiness_stage:'getting_ready')
     :(before.readiness_stage==='growing'?'growing':'verified');
@@ -405,17 +545,18 @@ export async function setMicrobusinessCommerceState(pool,{
     `UPDATE microbusiness_readiness
         SET commerce_state=$1,
             commerce_scope_json=$2::jsonb,
+            eligibility_evidence_json=$3::jsonb,
             eligibility_reviewed_at=NOW(),
-            eligibility_reviewed_by_account_id=$3,
-            eligibility_reason=$4,
-            readiness_stage=$5,
+            eligibility_reviewed_by_account_id=$4,
+            eligibility_reason=$5,
+            readiness_stage=$6,
             source='governed_review',
-            policy_version=$6,
+            policy_version=$7,
             updated_at=NOW()
-      WHERE id=$7
+      WHERE id=$8
       RETURNING *`,
     [
-      stateValue,JSON.stringify(commerceScope||{}),
+      stateValue,JSON.stringify(commerceScope||{}),JSON.stringify(evidence),
       positiveId(actorAccountId,'Reviewer identifier'),
       clean(reason,500),governedStage,
       MICROBUSINESS_READINESS_POLICY_VERSION,row.id
@@ -434,16 +575,60 @@ export async function setMicrobusinessCommerceState(pool,{
   return after;
 }
 
+async function transitionLegacyCommerceAllowed(pool,{accountId=null,profileRole,businessId=null,env=process.env}={}){
+  if(microbusinessReadinessEnforcementMode(env)!=='transition')return false;
+  const cutoff=transitionCutoff(env);
+  if(!cutoff)return false;
+  const role=normalizeRole(profileRole);
+  if(role==='merchant'){
+    const business=normalizeBusinessId(businessId);
+    if(!business)return false;
+    const q=await pool.query(
+      `SELECT 1
+         FROM merchant_storefronts ms
+         JOIN business_memberships bm ON bm.business_id=ms.business_id AND bm.active=TRUE
+         JOIN profile_authorizations pa ON pa.account_id=bm.account_id
+              AND pa.role='merchant' AND pa.status='active'
+        WHERE ms.business_id=$1
+          AND ms.publication_status='published'
+          AND pa.approved_at IS NOT NULL
+          AND pa.approved_at<=$2::timestamptz
+        LIMIT 1`,
+      [business,cutoff]
+    );
+    return Boolean(q.rowCount);
+  }
+  const account=accountId==null?null:positiveId(accountId,'Account identifier');
+  if(!account)return false;
+  const q=await pool.query(
+    `SELECT 1
+       FROM profiles p
+       JOIN profile_authorizations pa ON pa.account_id=p.account_id
+            AND pa.role='service_provider' AND pa.status='active'
+      WHERE p.account_id=$1 AND p.role='service_provider'
+        AND p.enabled=TRUE AND p.status='active' AND p.visibility='public'
+        AND pa.approved_at IS NOT NULL
+        AND pa.approved_at<=$2::timestamptz
+      LIMIT 1`,
+    [account,cutoff]
+  );
+  return Boolean(q.rowCount);
+}
+
 export async function requireMicrobusinessCommerceEligibility(pool,{
   accountId=null,
   profileRole,
   businessId=null,
   action='use public commerce',
-  enforcementEnabled=microbusinessReadinessEnforcementEnabled()
+  enforcementEnabled=microbusinessReadinessEnforcementEnabled(),
+  env=process.env
 }={}){
   const readiness=await microbusinessReadinessSnapshot(pool,{accountId,profileRole,businessId});
   const decision=microbusinessCommerceDecision(readiness,{enforcementEnabled});
   if(decision.allowed)return decision;
+  if(enforcementEnabled&&await transitionLegacyCommerceAllowed(pool,{accountId,profileRole,businessId,env})){
+    return Object.freeze({...decision,allowed:true,reason:'legacy_production_transition',transition_only:true});
+  }
   throw Object.assign(
     new Error('This business is still in readiness mode. Public commerce unlocks only after the required review for this activity and operating context.'),
     {
@@ -456,7 +641,7 @@ export async function requireMicrobusinessCommerceEligibility(pool,{
   );
 }
 
-export async function filterCommerceEligibleBusinessIds(pool,businessIds,{enforcementEnabled=microbusinessReadinessEnforcementEnabled()}={}){
+export async function filterCommerceEligibleBusinessIds(pool,businessIds,{enforcementEnabled=microbusinessReadinessEnforcementEnabled(),env=process.env}={}){
   const ids=[...new Set((businessIds||[]).map(Number).filter(id=>Number.isInteger(id)&&id>0))];
   if(!enforcementEnabled)return new Set(ids);
   if(!ids.length)return new Set();
@@ -469,11 +654,28 @@ export async function filterCommerceEligibleBusinessIds(pool,businessIds,{enforc
         AND commerce_state IN ('eligible_limited','eligible_full')`,
     [ids]
   );
-  return new Set(q.rows.map(row=>Number(row.business_id)));
+  const allowed=new Set(q.rows.map(row=>Number(row.business_id)));
+  const cutoff=transitionCutoff(env);
+  if(microbusinessReadinessEnforcementMode(env)==='transition'&&cutoff){
+    const legacy=await pool.query(
+      `SELECT DISTINCT ms.business_id
+         FROM merchant_storefronts ms
+         JOIN business_memberships bm ON bm.business_id=ms.business_id AND bm.active=TRUE
+         JOIN profile_authorizations pa ON pa.account_id=bm.account_id
+              AND pa.role='merchant' AND pa.status='active'
+        WHERE ms.business_id=ANY($1::bigint[])
+          AND ms.publication_status='published'
+          AND pa.approved_at IS NOT NULL
+          AND pa.approved_at<=$2::timestamptz`,
+      [ids,cutoff]
+    );
+    for(const row of legacy.rows)allowed.add(Number(row.business_id));
+  }
+  return allowed;
 }
 
 
-export async function filterCommerceEligibleServiceProviderIds(pool,accountIds,{enforcementEnabled=microbusinessReadinessEnforcementEnabled()}={}){
+export async function filterCommerceEligibleServiceProviderIds(pool,accountIds,{enforcementEnabled=microbusinessReadinessEnforcementEnabled(),env=process.env}={}){
   const ids=[...new Set((accountIds||[]).map(Number).filter(id=>Number.isInteger(id)&&id>0))];
   if(!enforcementEnabled)return new Set(ids);
   if(!ids.length)return new Set();
@@ -487,5 +689,22 @@ export async function filterCommerceEligibleServiceProviderIds(pool,accountIds,{
         AND commerce_state IN ('eligible_limited','eligible_full')`,
     [ids]
   );
-  return new Set(q.rows.map(row=>Number(row.account_id)));
+  const allowed=new Set(q.rows.map(row=>Number(row.account_id)));
+  const cutoff=transitionCutoff(env);
+  if(microbusinessReadinessEnforcementMode(env)==='transition'&&cutoff){
+    const legacy=await pool.query(
+      `SELECT DISTINCT p.account_id
+         FROM profiles p
+         JOIN profile_authorizations pa ON pa.account_id=p.account_id
+              AND pa.role='service_provider' AND pa.status='active'
+        WHERE p.account_id=ANY($1::bigint[])
+          AND p.role='service_provider' AND p.enabled=TRUE
+          AND p.status='active' AND p.visibility='public'
+          AND pa.approved_at IS NOT NULL
+          AND pa.approved_at<=$2::timestamptz`,
+      [ids,cutoff]
+    );
+    for(const row of legacy.rows)allowed.add(Number(row.account_id));
+  }
+  return allowed;
 }
