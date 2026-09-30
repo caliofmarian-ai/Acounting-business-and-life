@@ -19,6 +19,7 @@ import {handoffLockActive,nextHandoffFailureState} from './delivery-handoff-secu
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
 import {geographyAvailabilityForCode} from './account-geography.js';
+import {DELIVERY_ROUTE_POINT_LIMIT,deliveryRouteTrackingActive,deliveryRoutePointDecision,deliveryProofAllowed} from './delivery-tracking-v2e-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,9 @@ let supplierReady=false;
 let shuttingDown = false;
 const COURIER_DOCUMENT_MIMES=new Set(['application/pdf','image/png','image/jpeg','image/webp']);
 const MAX_COURIER_DOCUMENT_BYTES=1_400_000;
+const DELIVERY_PROOF_MIMES=new Set(['image/png','image/jpeg','image/webp']);
+const MAX_DELIVERY_PROOF_BYTES=1_400_000;
+const MAX_DELIVERY_PROOFS_PER_TYPE=3;
 
 function clean(v,max=700){return String(v??'').trim().slice(0,max)}
 function correlation(req){return clean(req.headers['x-request-id']||req.headers['x-correlation-id']||'',160)}
@@ -284,6 +288,41 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivate
   CREATE INDEX IF NOT EXISTS deliveries_customer_idx ON deliveries(customer_account_id,status,created_at DESC);
   CREATE INDEX IF NOT EXISTS deliveries_courier_idx ON deliveries(courier_account_id,status,created_at DESC);
 
+  CREATE TABLE IF NOT EXISTS delivery_location_points (
+    id BIGSERIAL PRIMARY KEY,
+    delivery_id BIGINT NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+    courier_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    sequence_no INTEGER NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    accuracy_m NUMERIC(10,2),
+    heading_deg NUMERIC(8,2),
+    speed_mps NUMERIC(10,3),
+    delivery_status TEXT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    retention_until TIMESTAMPTZ,
+    UNIQUE(delivery_id,sequence_no)
+  );
+  CREATE INDEX IF NOT EXISTS delivery_location_points_delivery_idx
+    ON delivery_location_points(delivery_id,sequence_no);
+  CREATE INDEX IF NOT EXISTS delivery_location_points_courier_idx
+    ON delivery_location_points(courier_account_id,recorded_at DESC);
+
+  CREATE TABLE IF NOT EXISTS delivery_proof_media (
+    id BIGSERIAL PRIMARY KEY,
+    delivery_id BIGINT NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+    courier_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    proof_type TEXT NOT NULL CHECK(proof_type IN ('pickup','delivery')),
+    private_evidence_object_id BIGINT NOT NULL REFERENCES private_evidence_objects(id),
+    courier_note TEXT NOT NULL DEFAULT '',
+    delivery_status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS delivery_proof_media_delivery_idx
+    ON delivery_proof_media(delivery_id,proof_type,created_at DESC);
+  CREATE INDEX IF NOT EXISTS delivery_proof_media_object_idx
+    ON delivery_proof_media(private_evidence_object_id);
+
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS handoff_failed_attempts INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS handoff_locked_until TIMESTAMPTZ;
   ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS handoff_last_failed_at TIMESTAMPTZ;
@@ -389,6 +428,56 @@ function deliveryPrivacyView(d,audience='other'){
     last_lng:active?d.last_lng:null,
     last_location_at:active?d.last_location_at:null
   };
+}
+async function deliveryRoutePoints(deliveryId,{afterSequence=0,limit=DELIVERY_ROUTE_POINT_LIMIT}={}){
+  const safeAfter=Math.max(0,Number(afterSequence)||0);
+  const safeLimit=Math.max(1,Math.min(DELIVERY_ROUTE_POINT_LIMIT,Number(limit)||DELIVERY_ROUTE_POINT_LIMIT));
+  const{rows}=await pool.query(
+    `SELECT sequence_no,latitude,longitude,accuracy_m,heading_deg,speed_mps,delivery_status,recorded_at
+       FROM delivery_location_points
+      WHERE delivery_id=$1 AND sequence_no>$2
+      ORDER BY sequence_no ASC
+      LIMIT $3`,
+    [Number(deliveryId),safeAfter,safeLimit]
+  );
+  return rows.map(row=>({
+    sequence_no:Number(row.sequence_no),
+    lat:Number(row.latitude),
+    lng:Number(row.longitude),
+    accuracy_m:row.accuracy_m==null?null:Number(row.accuracy_m),
+    heading_deg:row.heading_deg==null?null:Number(row.heading_deg),
+    speed_mps:row.speed_mps==null?null:Number(row.speed_mps),
+    delivery_status:row.delivery_status,
+    recorded_at:row.recorded_at
+  }));
+}
+async function deliveryProofRows(deliveryId){
+  const{rows}=await pool.query(
+    `SELECT id,delivery_id,courier_account_id,proof_type,courier_note,delivery_status,created_at
+       FROM delivery_proof_media
+      WHERE delivery_id=$1
+      ORDER BY created_at ASC,id ASC`,
+    [Number(deliveryId)]
+  );
+  return rows;
+}
+async function scopedAdminDelivery(req,deliveryId){
+  const me=await requireAdmin(req,'delivery.dispatch.manage');
+  const d=await deliveryDetail(Number(deliveryId));
+  if(!d)throw Object.assign(new Error('Delivery not found'),{status:404});
+  if(me.admin_assertion.territoryId!=null){
+    const q=await pool.query('SELECT 1 FROM businesses WHERE id=$1 AND territory_id=$2',[d.business_id,me.admin_assertion.territoryId]);
+    if(!q.rowCount)throw Object.assign(new Error('Delivery is outside your delegated territory'),{status:403});
+  }
+  return{me,d};
+}
+async function auditDeliveryEvidenceView({deliveryId,actorAccountId,eventCode,detail={}}){
+  await pool.query(
+    `INSERT INTO delivery_security_events(
+       delivery_id,actor_account_id,event_code,attempt_count,detail_json
+     ) VALUES($1,$2,$3,0,$4::jsonb)`,
+    [Number(deliveryId),Number(actorAccountId),clean(eventCode,80),JSON.stringify(detail||{})]
+  );
 }
 function etaMinutes(d,rule){if(!d.last_lat||!d.last_lng||!rule||!d.vehicle_class)return null;const dist=haversine(Number(d.last_lat),Number(d.last_lng),Number(d.dropoff_lat),Number(d.dropoff_lng))*Number(rule.route_factor||1);let cls;try{cls=canonicalDeliveryVehicleClass(d.vehicle_class)}catch{return null}let speed=null;if(cls==='bicycle')speed=rule.average_speed_bicycle_kmh;else if(cls==='motorcycle')speed=rule.average_speed_motorbike_kmh;else speed=rule.average_speed_car_kmh;if(!speed||Number(speed)<=0)return null;return Math.ceil(dist/Number(speed)*60)}
 
@@ -742,7 +831,115 @@ app.post('/api/courier/documents',body,async(req,res,next)=>{
 })
 app.put('/api/courier/availability',body,async(req,res,next)=>{try{const me=await requireCourier(req);const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();if(req.body?.available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[Boolean(req.body?.available),me.account.id]);res.json({ok:true,available:Boolean(req.body?.available)})}catch(e){next(e)}})
 app.post('/api/courier/deliveries/:id/status',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),nextStatus=clean(req.body?.status,60);const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});const flow={courier_assigned:['courier_en_route_to_merchant'],courier_en_route_to_merchant:['courier_arrived_at_merchant'],courier_arrived_at_merchant:['picked_up'],picked_up:['in_transit'],in_transit:['courier_arrived_at_customer']}[d.status]||[];if(!flow.includes(nextStatus))return res.status(409).json({error:`Cannot move delivery from ${d.status} to ${nextStatus}`});const stamp={courier_en_route_to_merchant:'en_route_to_merchant_at',courier_arrived_at_merchant:'arrived_merchant_at',picked_up:'picked_up_at',in_transit:'in_transit_at',courier_arrived_at_customer:'arrived_customer_at'}[nextStatus];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE deliveries SET status=$1,${stamp}=NOW(),updated_at=NOW() WHERE id=$2`,[nextStatus,id]);if(nextStatus==='picked_up'){await client.query(`UPDATE orders SET order_status='handoff_to_delivery',handoff_at=COALESCE(handoff_at,NOW()),updated_at=NOW() WHERE id=$1 AND order_status='ready'`,[d.order_id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) SELECT id,'ready','handoff_to_delivery',$1,'Courier picked up order' FROM orders WHERE id=$2`,[me.account.id,d.order_id])}await client.query('COMMIT');res.json(deliveryPrivacyView(await deliveryDetail(id),'courier'))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
-app.post('/api/courier/deliveries/:id/location',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),lat=Number(req.body?.lat),lng=Number(req.body?.lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid coordinates required'});const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});if(!activeTracking(d.status))return res.status(409).json({error:'Tracking is closed for this delivery'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'courier_location_update',subjectType:'delivery',subjectId:id});await pool.query(`UPDATE deliveries SET last_lat=$1,last_lng=$2,last_location_at=NOW(),updated_at=NOW() WHERE id=$3`,[lat,lng,id]);res.json({ok:true,at:new Date().toISOString()})}catch(e){next(e)}})
+app.post('/api/courier/deliveries/:id/location',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireCourier(req),id=Number(req.params.id);
+    const point=deliveryRoutePointDecision({next:{
+      lat:req.body?.lat,lng:req.body?.lng,accuracy_m:req.body?.accuracy_m,
+      heading_deg:req.body?.heading_deg,speed_mps:req.body?.speed_mps
+    }}).point;
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'courier_location_update',subjectType:'delivery',subjectId:id});
+    await client.query('BEGIN');
+    const locked=await client.query(
+      `SELECT id,status,courier_account_id
+         FROM deliveries
+        WHERE id=$1
+        FOR UPDATE`,
+      [id]
+    );
+    if(!locked.rowCount||Number(locked.rows[0].courier_account_id)!==Number(me.account.id)){
+      await client.query('ROLLBACK');
+      return res.status(404).json({error:'Assigned delivery not found'});
+    }
+    const d=locked.rows[0];
+    if(!deliveryRouteTrackingActive(d.status)){
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Route tracking starts only after Start route and closes when the delivery ends'});
+    }
+    const last=await client.query(
+      `SELECT sequence_no,latitude,longitude,recorded_at
+         FROM delivery_location_points
+        WHERE delivery_id=$1
+        ORDER BY sequence_no DESC
+        LIMIT 1`,
+      [id]
+    );
+    const previous=last.rows[0]||null;
+    const pointCount=previous?Number(previous.sequence_no):0;
+    const decision=deliveryRoutePointDecision({previous,next:point,pointCount,nowMs:Date.now()});
+    let sequenceNo=previous?Number(previous.sequence_no):0;
+    if(decision.append){
+      sequenceNo+=1;
+      await client.query(
+        `INSERT INTO delivery_location_points(
+           delivery_id,courier_account_id,sequence_no,latitude,longitude,
+           accuracy_m,heading_deg,speed_mps,delivery_status
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [id,me.account.id,sequenceNo,point.latitude,point.longitude,
+         point.accuracy_m,point.heading_deg,point.speed_mps,d.status]
+      );
+    }
+    await client.query(
+      `UPDATE deliveries
+          SET last_lat=$1,last_lng=$2,last_location_at=NOW(),updated_at=NOW()
+        WHERE id=$3`,
+      [point.latitude,point.longitude,id]
+    );
+    await client.query('COMMIT');
+    res.json({
+      ok:true,
+      at:new Date().toISOString(),
+      route_point_stored:decision.append,
+      route_point_reason:decision.reason,
+      sequence_no:sequenceNo
+    });
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    next(e);
+  }finally{client.release()}
+})
+
+app.post('/api/courier/deliveries/:id/proof',body,async(req,res,next)=>{
+  let stored=null,me=null;
+  try{
+    me=await requireCourier(req);
+    const id=Number(req.params.id),proofType=clean(req.body?.proof_type,30),fileName=clean(req.body?.file_name,220);
+    if(!['pickup','delivery'].includes(proofType))return res.status(400).json({error:'Choose pickup or delivery proof'});
+    if(!fileName||!req.body?.evidence_data_url)return res.status(400).json({error:'Photo and filename are required'});
+    const d=await deliveryDetail(id);
+    if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});
+    if(!deliveryProofAllowed(proofType,d.status))return res.status(409).json({error:proofType==='pickup'?'Pickup proof is available only at Merchant pickup':'Delivery proof is available only after arriving at the Customer'});
+    const count=await pool.query('SELECT COUNT(*)::int count FROM delivery_proof_media WHERE delivery_id=$1 AND proof_type=$2',[id,proofType]);
+    if(Number(count.rows[0]?.count||0)>=MAX_DELIVERY_PROOFS_PER_TYPE)return res.status(409).json({error:'Maximum proof photos reached for this delivery stage'});
+    await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'upload_private',subjectType:'delivery_proof',subjectId:id});
+    stored=await storePrivateEvidence(pool,{
+      dataUrl:req.body.evidence_data_url,fileName,
+      allowedMimes:[...DELIVERY_PROOF_MIMES],maxBytes:MAX_DELIVERY_PROOF_BYTES,
+      ownerAccountId:me.account.id,actorAccountId:me.account.id,
+      sourceType:'delivery_proof',sourceId:`pending:${id}`,
+      purpose:`delivery_${proofType}_proof_upload`,classification:'delivery_proof',
+      correlationId:correlation(req)
+    });
+    const{rows}=await pool.query(
+      `INSERT INTO delivery_proof_media(
+         delivery_id,courier_account_id,proof_type,private_evidence_object_id,
+         courier_note,delivery_status
+       ) VALUES($1,$2,$3,$4,$5,$6)
+       RETURNING id,delivery_id,courier_account_id,proof_type,courier_note,delivery_status,created_at`,
+      [id,me.account.id,proofType,stored.id,clean(req.body?.note,500),d.status]
+    );
+    await bindPrivateEvidenceSource(pool,{
+      objectId:stored.id,sourceType:'delivery_proof',sourceId:String(rows[0].id),
+      actorAccountId:me.account.id,purpose:'delivery_proof_bind',correlationId:correlation(req)
+    });
+    res.status(201).json(rows[0]);
+  }catch(e){
+    if(stored?.id)await deletePrivateEvidence(pool,{objectId:stored.id,actorAccountId:me?.account?.id,purpose:'delivery_proof_rollback',correlationId:correlation(req)}).catch(()=>{});
+    next(e);
+  }
+})
+
 app.post('/api/courier/deliveries/:id/complete',body,async(req,res,next)=>{
   const client=await pool.connect();
   try{
@@ -893,6 +1090,37 @@ app.get('/api/delivery/mine',async(req,res,next)=>{try{
   const{rows}=await pool.query(`SELECT d.*,o.order_number,b.name business_name,cp.display_name courier_name,cp.vehicle_type FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.customer_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id]);
   res.json(rows.map(d=>({...d,completion_code:activeTracking(d.status)?completionCode(d.id):null,last_lat:activeTracking(d.status)?d.last_lat:null,last_lng:activeTracking(d.status)?d.last_lng:null})))
 }catch(e){next(e)}})
+app.get('/api/delivery/:id/route',async(req,res,next)=>{try{
+  const id=Number(req.params.id),d=await deliveryDetail(id);
+  if(!d)return res.status(404).json({error:'Delivery not found'});
+  await allowedDelivery(req,d);
+  if(!deliveryRouteTrackingActive(d.status))return res.json({delivery_id:id,active:false,closed:!activeTracking(d.status),points:[]});
+  const points=await deliveryRoutePoints(id,{afterSequence:req.query?.after_sequence,limit:req.query?.limit});
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json({delivery_id:id,active:true,closed:false,points});
+}catch(e){next(e)}})
+
+app.get('/api/delivery/:id/proofs',async(req,res,next)=>{try{
+  const id=Number(req.params.id),d=await deliveryDetail(id);
+  if(!d)return res.status(404).json({error:'Delivery not found'});
+  await allowedDelivery(req,d);
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(await deliveryProofRows(id));
+}catch(e){next(e)}})
+
+app.get('/api/delivery/:id/proofs/:proofId/file',async(req,res,next)=>{try{
+  const id=Number(req.params.id),proofId=Number(req.params.proofId),d=await deliveryDetail(id);
+  if(!d)return res.status(404).json({error:'Delivery not found'});
+  const me=await allowedDelivery(req,d);
+  const q=await pool.query('SELECT private_evidence_object_id FROM delivery_proof_media WHERE id=$1 AND delivery_id=$2',[proofId,id]);
+  if(!q.rowCount)return res.status(404).json({error:'Delivery proof not found'});
+  const evidence=await readPrivateEvidence(pool,{
+    objectId:q.rows[0].private_evidence_object_id,actorAccountId:me.account.id,
+    purpose:'delivery_proof_participant_read',correlationId:correlation(req)
+  });
+  return sendPrivateEvidence(res,evidence);
+}catch(e){next(e)}})
+
 app.get('/api/delivery/:id/live',async(req,res,next)=>{try{const d=await deliveryDetail(Number(req.params.id));if(!d)return res.status(404).json({error:'Delivery not found'});const me=await allowedDelivery(req,d),rule=await activeRule(),audience=deliveryAudience(me,d),view=deliveryPrivacyView(d,audience);const customer=audience==='customer';res.json({...view,completion_code:customer&&activeTracking(d.status)?completionCode(d.id):undefined,eta_minutes:etaMinutes(d,rule),distance_to_dropoff_km:activeTracking(d.status)&&d.last_lat&&d.last_lng?Math.round(haversine(Number(d.last_lat),Number(d.last_lng),Number(d.dropoff_lat),Number(d.dropoff_lng))*100)/100:null})}catch(e){next(e)}})
 
 app.get('/api/admin/delivery/pricing',async(req,res,next)=>{try{
@@ -1069,6 +1297,34 @@ app.get('/api/admin/couriers/:accountId/documents/:documentId',async(req,res,nex
   return sendPrivateEvidence(res,evidence);
 }catch(e){next(e)}})
 app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{try{const me=await requireAdmin(req,'courier.verify'),id=Number(req.params.accountId),territoryId=me.admin_assertion.territoryId,status=clean(req.body?.eligibility_status,30);if(!['pending','approved','suspended','revoked','expired'].includes(status))return res.status(400).json({error:'Invalid eligibility status'});if(territoryId!=null){const scope=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[id,territoryId]);if(!scope.rowCount)return res.status(403).json({error:'Courier is outside your delegated territory'})}await pool.query(`UPDATE courier_profiles SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,approval_note=$4,available=CASE WHEN $1='approved' THEN available ELSE FALSE END,updated_at=NOW() WHERE account_id=$5`,[status,clean(req.body?.approved_vehicle_class,40),req.body?.eligibility_expires_at||null,clean(req.body?.approval_note,600),id]);if(Array.isArray(req.body?.document_updates))for(const d of req.body.document_updates){if(!['verified','rejected','expired'].includes(d.status))continue;await pool.query(`UPDATE courier_documents SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 AND account_id=$5`,[d.status,me.account.id,clean(d.rejection_reason,500),Number(d.id),id])}res.json({ok:true})}catch(e){next(e)}})
+app.get('/api/admin/deliveries/:id/route-evidence',async(req,res,next)=>{try{
+  const id=Number(req.params.id),{me,d}=await scopedAdminDelivery(req,id);
+  const points=await deliveryRoutePoints(id,{afterSequence:req.query?.after_sequence,limit:req.query?.limit});
+  await auditDeliveryEvidenceView({deliveryId:id,actorAccountId:me.account.id,eventCode:'admin_route_evidence_viewed',detail:{status:d.status,point_count:points.length}});
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json({delivery_id:id,status:d.status,points});
+}catch(e){next(e)}})
+
+app.get('/api/admin/deliveries/:id/proofs',async(req,res,next)=>{try{
+  const id=Number(req.params.id),{me,d}=await scopedAdminDelivery(req,id);
+  const proofs=await deliveryProofRows(id);
+  await auditDeliveryEvidenceView({deliveryId:id,actorAccountId:me.account.id,eventCode:'admin_delivery_proof_list_viewed',detail:{status:d.status,proof_count:proofs.length}});
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(proofs);
+}catch(e){next(e)}})
+
+app.get('/api/admin/deliveries/:id/proofs/:proofId/file',async(req,res,next)=>{try{
+  const id=Number(req.params.id),proofId=Number(req.params.proofId),{me,d}=await scopedAdminDelivery(req,id);
+  const q=await pool.query('SELECT private_evidence_object_id,proof_type FROM delivery_proof_media WHERE id=$1 AND delivery_id=$2',[proofId,id]);
+  if(!q.rowCount)return res.status(404).json({error:'Delivery proof not found'});
+  await auditDeliveryEvidenceView({deliveryId:id,actorAccountId:me.account.id,eventCode:'admin_delivery_proof_viewed',detail:{status:d.status,proof_id:proofId,proof_type:q.rows[0].proof_type}});
+  const evidence=await readPrivateEvidence(pool,{
+    objectId:q.rows[0].private_evidence_object_id,actorAccountId:me.account.id,
+    purpose:'delivery_proof_admin_read',correlationId:correlation(req)
+  });
+  return sendPrivateEvidence(res,evidence);
+}catch(e){next(e)}})
+
 app.get('/api/admin/deliveries',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId,status=clean(req.query?.status,40);const values=[],where=[];if(territoryId!=null){values.push(territoryId);where.push(`b.territory_id=$${values.length}`)}if(status){values.push(status);where.push(`d.status=$${values.length}`)}const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,b.name business_name,b.territory_id,cp.display_name courier_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY d.updated_at DESC LIMIT 150`,values);res.json(rows.map(d=>deliveryPrivacyView(d,'admin')))}catch(e){next(e)}})
 app.get('/api/admin/delivery/eligible-couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=c.account_id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT c.account_id,c.display_name courier_name,c.vehicle_type,c.approved_vehicle_class,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path FROM courier_profiles c WHERE c.eligibility_status='approved' AND c.available=TRUE AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW()) AND ${scope} ORDER BY c.display_name`,values);res.json(rows)}catch(e){next(e)}})
 app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{
