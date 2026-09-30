@@ -747,6 +747,86 @@ function supplierProfileJourneyDefinition(journey,label){
   return null;
 }
 
+
+function courierJourneyTarget(...selectors){
+  return firstVisible(...selectors,'#courierHomeStatus','#courierHomeWork','#courierHomeMoney','.hubHero','#roleHub');
+}
+function courierProfileJourneyDefinition(journey,label){
+  const role='courier',step=journey?.current_step_id||journey?.steps?.find(x=>!(journey?.completed_steps||[]).includes(x))||'profile_welcome';
+  const next=()=>completeProfileTourStep(role,step);
+  if(step==='profile_welcome')return{
+    step,
+    title:tr('profile_tour.welcome_title',{role:label},'{role} tutorial'),
+    body:tr('courier_tour.welcome_body',{},'This Delivery tutorial explains authorization, availability, assigned work, customer privacy, live location, secure handoff, money evidence and safety before secondary features.'),
+    target:courierJourneyTarget('.hubHero','#courierHomeStatus'),
+    primary:tr('action.continue',{},'Continue'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_eligibility_vehicle')return{
+    step,
+    title:tr('courier_tour.eligibility_title',{},'Eligibility, vehicle and authorization'),
+    body:tr('courier_tour.eligibility_body',{},'Your Delivery profile may be enabled without being authorized to work. Vehicle details and submitted documents are evidence for review; only explicit Admin approval makes the eligibility gate approved. Expired or suspended approval blocks availability.'),
+    target:courierJourneyTarget('#courierHomeStatus','[data-courier-home-open="Eligibility"]','#courierProfileForm','#courierDocumentForm'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_availability_area')return{
+    step,
+    title:tr('courier_tour.availability_title',{},'Availability and operating area'),
+    body:tr('courier_tour.availability_body',{},'After approval, you decide when you are available for assignments. Your operating or start area is coarse work geography, not a public home address. A current job location belongs only to that delivery and must not turn your private home address into a public Courier location.'),
+    target:courierJourneyTarget('#courierHomeAvailabilityAction','[data-courier-home-open="Availability"]','#courierAvailable','[data-hub-feature="Profile Settings"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_assignments_workflow')return{
+    step,
+    title:tr('courier_tour.assignments_title',{},'Assigned deliveries and the pickup workflow'),
+    body:tr('courier_tour.assignments_body',{},'Work from the assigned Delivery queue and the recorded status sequence. An offer, message or note is not an accepted job unless the platform records the assignment. Update the real pickup and transit state only when it happens; never use a later status just to move the screen forward.'),
+    target:courierJourneyTarget('#courierHomeWork','[data-courier-nav="deliveries"]','[data-courier-status]','#deliveryWorkspace'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_customer_privacy')return{
+    step,
+    title:tr('courier_tour.privacy_title',{},'Customer contact and location privacy'),
+    body:tr('courier_tour.privacy_body',{},'Customer address, contact details and handoff information are for the assigned delivery only. Use them only to complete that job, do not copy them into public notes, and do not retain or reuse them for unrelated contact after the delivery.'),
+    target:courierJourneyTarget('#courierHomeWork','[data-del-live]','#deliveryWorkspace'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_navigation_location')return{
+    step,
+    title:tr('courier_tour.navigation_title',{},'Navigation, ETA and live location'),
+    body:tr('courier_tour.navigation_body',{},'ETA and the active route help the Customer and Merchant follow the current delivery. Share live location only for an active assigned delivery and only for that purpose. Off-duty or completed-delivery tracking is not part of the Courier workflow; location sharing must stop when the delivery ends.'),
+    target:courierJourneyTarget('[data-courier-home-open="Tracking"]','[data-share-location]','#liveDeliveryMap','[data-del-live]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_handoff_evidence')return{
+    step,
+    title:tr('courier_tour.handoff_title',{},'Secure handoff and proof'),
+    body:tr('courier_tour.handoff_body',{},'Complete a delivery only after the real handoff. The Customer handoff code is protected completion evidence: do not ask for it early, post it publicly or invent a successful handoff. Eligibility documents and delivery evidence also stay private and must reflect the real vehicle, document and event.'),
+    target:courierJourneyTarget('[data-complete-delivery]','#deliveryCodeInput','#courierDocumentForm','.deliveryDoc'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_money_earnings')return{
+    step,
+    title:tr('courier_tour.money_title',{},'Delivery price, earnings and fees'),
+    body:tr('courier_tour.money_body',{},'The Customer delivery charge is not automatically your earnings. Courier Money uses recorded courier_net and settlement evidence when configured, while platform fees and processor/provider charges remain separate. Never infer earnings from the merchandise value or from a delivery fee alone.'),
+    target:courierJourneyTarget('#courierHomeMoney','[data-courier-nav="money"]','[data-courier-home-open="Money"]','#profileMoneyWorkspace'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_settlement_payout')return{
+    step,
+    title:tr('courier_tour.settlement_title',{},'Wallet, settlement and payout'),
+    body:tr('courier_tour.settlement_body',{},'A recorded earning is not the same as money settled to an external account. Pending, eligible, held and processing amounts must remain distinguishable from paid amounts. Do not show a payout or withdrawal as succeeded until provider evidence confirms it; payout destinations belong in Account Money & Banking and profile finance settings.'),
+    target:courierJourneyTarget('#profileMoneyWorkspace','[data-profile-settings-view="finance"]','#openAccountMoneyFromProfile','[data-courier-nav="money"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='courier_safety_support')return{
+    step,
+    title:tr('courier_tour.support_title',{},'Incidents, safety and Help & Support'),
+    body:tr('courier_tour.support_body',{},'For an accident, unsafe situation, damaged order, serious handoff problem or privacy concern, protect people first and use the appropriate private incident or Help & Support flow. Keep incident evidence private, report facts promptly, and do not expose Customer addresses, contact details or handoff codes in public notes.'),
+    target:courierJourneyTarget('#lazySupportBtn','[data-help-support]','#courierHomeWork','#deliveryWorkspace'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  return null;
+}
+
 function profileJourneyDefinition(journey){
   const role=journey?.profile_role||'',label=roleLabelFor(role),steps=Array.isArray(journey?.steps)&&journey.steps.length?journey.steps:PROFILE_STEP_ORDER,step=journey?.current_step_id||steps.find(x=>!(journey?.completed_steps||[]).includes(x))||steps[0]||'profile_welcome';
   if(!journey?.is_active_profile)return{
@@ -768,6 +848,10 @@ function profileJourneyDefinition(journey){
   if(role==='supplier'){
     const supplier=supplierProfileJourneyDefinition(journey,label);
     if(supplier)return supplier;
+  }
+  if(role==='courier'){
+    const courier=courierProfileJourneyDefinition(journey,label);
+    if(courier)return courier;
   }
   if(step==='profile_welcome')return{
     step,
