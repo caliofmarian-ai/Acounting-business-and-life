@@ -111,15 +111,39 @@ async function openCommerceReadiness(accountId,role,businessId,label=''){
   try{
     const qs=role==='merchant'?('?business_id='+encodeURIComponent(businessId)):'';
     const r=await gapi('/api/governance/admin/readiness/'+accountId+'/'+encodeURIComponent(role)+qs);
-    const eligible=['eligible_limited','eligible_full'].includes(r.commerce_state);
-    openGov(head('Commerce readiness',label||GOV_META[role]?.label||role,true)+`<section class="govCard"><h3>Current readiness</h3><div class="govStatusLine"><span>Readiness stage</span><strong>${gh(gn(r.readiness_stage||'starting'))}</strong></div><div class="govStatusLine"><span>Activity track</span><strong>${gh(gn(r.activity_track||'not set'))}</strong></div><div class="govStatusLine"><span>Operating context</span><strong>${gh(gn(r.operating_context||'not set'))}</strong></div><div class="govStatusLine"><span>Commerce capability</span><strong>${gh(gn(r.commerce_state||'readiness_only'))}</strong></div><div class="govNotice">Profile Authorization remains a separate gate. Changing this state does not create or certify any government authorization.</div></section><section class="govCard"><h3>Super Admin commerce review</h3><form id="commerceReviewForm" class="govForm"><label>Decision<select id="commerceReviewState"><option value="readiness_only" ${r.commerce_state==='readiness_only'?'selected':''}>Readiness only</option><option value="eligible_limited" ${r.commerce_state==='eligible_limited'?'selected':''}>Eligible — limited scope</option><option value="eligible_full" ${r.commerce_state==='eligible_full'?'selected':''}>Eligible — full platform scope</option></select></label><label>Review reason<textarea id="commerceReviewReason" rows="3" placeholder="Record what evidence and context were reviewed"></textarea></label><label>Limited-scope note<textarea id="commerceScopeNote" rows="2" placeholder="Required for limited eligibility, e.g. Queens Row West pilot / exact activity"></textarea></label><button class="govBtn" type="submit">Save commerce decision</button><div id="commerceReviewMsg" class="govMessage"></div></form></section>`);
+    const currentEvidence=new Map((Array.isArray(r.eligibility_evidence)?r.eligibility_evidence:[]).map(item=>[item.code,item]));
+    const requirements=Array.isArray(r.review_requirements)?r.review_requirements:[];
+    const checklist=requirements.length
+      ?requirements.map((req,index)=>{
+        const item=currentEvidence.get(req.code)||{};
+        const verified=item.outcome==='verified',na=item.outcome==='not_applicable';
+        return `<div class="govCard" data-readiness-evidence="${gh(req.code)}"><small>REVIEW ITEM ${index+1}</small><h3>${gh(req.label||req.code)}</h3><p>${gh(req.description||'')}</p><label>Outcome<select data-evidence-outcome><option value="">Choose…</option><option value="verified" ${verified?'selected':''}>Verified</option>${req.allow_not_applicable?`<option value="not_applicable" ${na?'selected':''}>Not applicable — sourced decision</option>`:''}</select></label><label>Evidence / record reference<input data-evidence-reference value="${gh(item.reference||'')}" placeholder="Document ID, credential ID, official record or internal evidence reference"></label><label>Source / authority<input data-evidence-source value="${gh(item.source_authority||'')}" placeholder="e.g. Bacoor BPLO, BIR, DTI, PRC, TESDA, platform record"></label><label>Reviewer note<textarea data-evidence-note rows="2" placeholder="Why this satisfies the requirement, or why it is not applicable">${gh(item.note||'')}</textarea></label></div>`;
+      }).join('')
+      :'<div class="govNotice">Set the activity track and operating context before commerce eligibility can be reviewed.</div>';
+    openGov(head('Commerce readiness',label||GOV_META[role]?.label||role,true)+
+      `<section class="govCard"><h3>Current readiness</h3><div class="govStatusLine"><span>Readiness stage</span><strong>${gh(gn(r.readiness_stage||'starting'))}</strong></div><div class="govStatusLine"><span>Activity track</span><strong>${gh(gn(r.activity_track||'not set'))}</strong></div><div class="govStatusLine"><span>Operating context</span><strong>${gh(gn(r.operating_context||'not set'))}</strong></div><div class="govStatusLine"><span>Commerce capability</span><strong>${gh(gn(r.commerce_state||'readiness_only'))}</strong></div><div class="govStatusLine"><span>Policy version</span><strong>${gh(r.policy_version||'')}</strong></div><div class="govNotice">Who decides: an active Super Admin performs the Business & Life commerce-readiness review. Government agencies or professional regulators remain the authority for their own permits, registrations and licences. Business & Life only records whether the applicable requirement was resolved; it does not issue or replace government authority.</div></section><section class="govCard"><h3>Evidence checklist</h3><p>Every required item must be resolved before eligibility is granted. “Not applicable” is allowed only where the policy permits it and requires a source/authority plus a reason.</p></section>${checklist}<section class="govCard"><h3>Super Admin commerce decision</h3><form id="commerceReviewForm" class="govForm"><label>Decision<select id="commerceReviewState"><option value="readiness_only" ${r.commerce_state==='readiness_only'?'selected':''}>Readiness only</option><option value="eligible_limited" ${r.commerce_state==='eligible_limited'?'selected':''}>Eligible — limited scope</option><option value="eligible_full" ${r.commerce_state==='eligible_full'?'selected':''}>Eligible — full platform scope</option></select></label><label>Review reason<textarea id="commerceReviewReason" rows="3" placeholder="Summarise what was reviewed and why the platform decision is justified"></textarea></label><label>Limited-scope note<textarea id="commerceScopeNote" rows="2" placeholder="Required for limited eligibility: territory, activity/category and capability limitations"></textarea></label><button class="govBtn" type="submit">Save commerce decision</button><div id="commerceReviewMsg" class="govMessage"></div></form></section>`);
     document.querySelector('[data-gov-back]')?.addEventListener('click',()=>renderAdmin('commerce'));
     document.getElementById('commerceReviewForm').onsubmit=async event=>{
       event.preventDefault();
-      const state=document.getElementById('commerceReviewState').value,reason=document.getElementById('commerceReviewReason').value.trim(),scopeNote=document.getElementById('commerceScopeNote').value.trim();
+      const state=document.getElementById('commerceReviewState').value;
+      const reason=document.getElementById('commerceReviewReason').value.trim();
+      const scopeNote=document.getElementById('commerceScopeNote').value.trim();
       if(state!=='readiness_only'&&!reason)return gtoast('Record the review reason before granting commerce eligibility.');
       if(state==='eligible_limited'&&!scopeNote)return gtoast('Define the limited commerce scope before granting limited eligibility.');
-      const payload={commerce_state:state,reason,commerce_scope:state==='eligible_limited'?{note:scopeNote}:{}};
+      const eligibility_evidence=[...document.querySelectorAll('[data-readiness-evidence]')].map(card=>({
+        code:card.dataset.readinessEvidence,
+        outcome:card.querySelector('[data-evidence-outcome]')?.value||'',
+        reference:card.querySelector('[data-evidence-reference]')?.value.trim()||'',
+        source_authority:card.querySelector('[data-evidence-source]')?.value.trim()||'',
+        note:card.querySelector('[data-evidence-note]')?.value.trim()||''
+      }));
+      if(state!=='readiness_only'&&eligibility_evidence.some(item=>!item.outcome))return gtoast('Resolve every evidence checklist item before granting commerce eligibility.');
+      const payload={
+        commerce_state:state,
+        reason,
+        eligibility_evidence:state==='readiness_only'?[]:eligibility_evidence,
+        commerce_scope:state==='eligible_limited'?{note:scopeNote}:{}
+      };
       if(role==='merchant')payload.business_id=businessId;
       const msg=document.getElementById('commerceReviewMsg');msg.textContent='Saving governed decision…';
       try{
