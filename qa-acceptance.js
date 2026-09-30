@@ -60,7 +60,9 @@ const DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE='delivery_refund_economics_v2d_
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
 const SESSION_SECURITY_V2_WAVE='session_security_v2';
 const PRIVATE_EVIDENCE_STORAGE_V1_WAVE='private_evidence_storage_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE]);
+const OWNER_CONTROL_TOWER_V1_WAVE='owner_control_tower_v1';
+const MICROBUSINESS_READINESS_V1_WAVE='microbusiness_readiness_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -5798,6 +5800,444 @@ async function runSessionSecurityV2Acceptance({pool,base,secret}){
 }
 
 
+
+async function ensureReadinessQaServiceProviderApproved({pool,base,provider,adminToken,territoryId,requestJson,expectStatus}){
+  const category=await pool.query(
+    "SELECT id FROM service_categories WHERE active=TRUE ORDER BY sort_order,id LIMIT 1"
+  );
+  if(!category.rowCount)throw new Error('Microbusiness Readiness QA requires one active Local Services category.');
+  const categoryId=Number(category.rows[0].id);
+
+  let application=(await pool.query(
+    "SELECT * FROM profile_applications WHERE account_id=$1 AND role='service_provider' ORDER BY id DESC LIMIT 1",
+    [provider.accountId]
+  )).rows[0]||null;
+
+  if(!application){
+    const started=await requestJson(base,'/api/governance/service-provider/start',{
+      method:'POST',token:provider.token,body:{territory_id:territoryId}
+    });
+    expectStatus(started,201,'Readiness Local Services onboarding start');
+    application=started.json;
+  }
+  if(Number(application.territory_id)!==Number(territoryId)){
+    throw new Error('Readiness Local Services fixture resolved outside the QA pilot territory.');
+  }
+
+  if(['application_started','requirements_pending','rejected'].includes(application.status)){
+    const edited=await requestJson(base,'/api/governance/applications/'+Number(application.id),{
+      method:'PUT',token:provider.token,
+      body:{
+        proposed_business_name:'Business & Life QA Readiness Services',
+        applicant_note:'Controlled internal QA readiness fixture. Not a real provider.',
+        responsibility_acknowledged:true,
+        application_data:{
+          test_fixture:true,
+          professional_headline:'QA Readiness Services',
+          about:'Controlled QA profile for commerce-readiness enforcement.',
+          service_area:'QA Pilot City, Philippines',
+          years_experience:2,
+          requested_category_ids:[categoryId],
+          onboarding_version:'microbusiness-readiness-v1'
+        }
+      }
+    });
+    expectStatus(edited,200,'Readiness Local Services application edit');
+    const submitted=await requestJson(base,'/api/governance/applications/'+Number(application.id)+'/submit',{
+      method:'POST',token:provider.token,body:{}
+    });
+    expectStatus(submitted,200,'Readiness Local Services application submit');
+  }
+
+  application=(await pool.query(
+    "SELECT * FROM profile_applications WHERE account_id=$1 AND role='service_provider' ORDER BY id DESC LIMIT 1",
+    [provider.accountId]
+  )).rows[0]||null;
+  if(['submitted','under_review'].includes(application?.status)){
+    const reviewed=await requestJson(base,'/api/governance/admin/applications/'+Number(application.id)+'/review',{
+      method:'POST',token:adminToken,
+      body:{
+        decision:'approve',
+        reason:'Controlled internal QA Local Services readiness fixture',
+        approved_category_ids:[categoryId]
+      }
+    });
+    expectStatus(reviewed,200,'Readiness Local Services Admin approval');
+  }
+
+  const authorization=await pool.query(
+    "SELECT id FROM profile_authorizations WHERE account_id=$1 AND role='service_provider' AND territory_id=$2 AND status='active' ORDER BY id DESC LIMIT 1",
+    [provider.accountId,territoryId]
+  );
+  if(!authorization.rowCount)throw new Error('Readiness Local Services fixture lacks separate active Profile Authorization.');
+  await ensureActiveRole({base,token:provider.token,role:'service_provider',label:'Readiness Local Services QA'});
+
+  const services=await requestJson(base,'/api/service-provider/services',{
+    method:'PUT',token:provider.token,
+    body:{services:[{category_id:categoryId,service_label:'QA readiness service'}]}
+  });
+  expectStatus(services,200,'Readiness Local Services private service configuration');
+  return{categoryId,authorizationId:Number(authorization.rows[0].id)};
+}
+
+function readinessProviderBody(profile,visibility){
+  const p=profile||{};
+  return{
+    display_name:p.display_name||'Business & Life QA Readiness Services',
+    professional_headline:p.professional_headline||'QA readiness service provider',
+    about:p.about||'Controlled QA profile for readiness enforcement.',
+    service_area:p.service_area||'QA Pilot City, Philippines',
+    years_experience:Number(p.years_experience||2),
+    languages:p.languages||'English, Filipino',
+    availability_text:p.availability_text||'Controlled QA availability only',
+    pricing_model:p.pricing_model||'quotation',
+    price_from:p.price_from==null?300:Number(p.price_from),
+    price_to:p.price_to==null?500:Number(p.price_to),
+    same_day_available:Boolean(p.same_day_available),
+    public_reputation_enabled:Boolean(p.public_reputation_enabled),
+    cv_public_summary:p.cv_public_summary||'Controlled QA profile; no licence claim.',
+    visibility
+  };
+}
+
+async function runMicrobusinessReadinessV1Acceptance({pool,base,secret}){
+  const [admin,merchant,provider,customer]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Readiness Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:MERCHANT_ALIAS,role:'merchant',label:'Readiness Merchant QA'}),
+    qaAccountSession({pool,base,secret,email:SERVICE_PROVIDER_ALIAS,role:'service_provider',label:'Readiness Local Services QA'}),
+    qaAccountSession({pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Readiness Customer QA'})
+  ]);
+
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  const merchantWorkspace=await ensureMerchantApproved({
+    pool,base,merchant,adminToken:admin.token,territoryId
+  });
+  const providerSetup=await ensureReadinessQaServiceProviderApproved({
+    pool,base,provider,adminToken:admin.token,territoryId,requestJson,expectStatus
+  });
+  await ensureActiveRole({base,token:customer.token,role:'customer',label:'Readiness Customer QA'});
+
+  const merchantReadiness=await requestJson(base,'/api/onboarding/readiness',{
+    method:'PUT',token:merchant.token,
+    body:{
+      profile_role:'merchant',
+      business_id:merchantWorkspace.businessId,
+      activity_track:'non_food',
+      operating_context:'commercial_space',
+      readiness_stage:'applying'
+    }
+  });
+  expectStatus(merchantReadiness,200,'Merchant readiness self-service update');
+  if(merchantReadiness.json?.enforcement_enabled!==true){
+    throw new Error('Microbusiness Readiness acceptance requires Preview enforcement enabled.');
+  }
+
+  const merchantSelfGrant=await requestJson(base,'/api/onboarding/readiness',{
+    method:'PUT',token:merchant.token,
+    body:{
+      profile_role:'merchant',
+      business_id:merchantWorkspace.businessId,
+      commerce_state:'eligible_full'
+    }
+  });
+  expectStatus(merchantSelfGrant,403,'Merchant self-grant denial');
+
+  const merchantReadinessOnly=await requestJson(
+    base,
+    '/api/governance/admin/readiness/'+merchant.accountId+'/merchant/review',
+    {
+      method:'POST',token:admin.token,
+      body:{
+        business_id:merchantWorkspace.businessId,
+        commerce_state:'readiness_only',
+        reason:'Controlled QA reset before enforcement checks'
+      }
+    }
+  );
+  expectStatus(merchantReadinessOnly,200,'Merchant governed readiness-only reset');
+
+  const privateStore=await requestJson(
+    base,
+    '/api/merchant/storefront?business_id='+merchantWorkspace.businessId,
+    {token:merchant.token}
+  );
+  expectStatus(privateStore,200,'Merchant private storefront in readiness-only mode');
+
+  await pool.query(
+    "UPDATE merchant_storefronts SET publication_status='published',updated_at=NOW() WHERE business_id=$1",
+    [merchantWorkspace.businessId]
+  );
+  const merchantDiscoveryBlocked=await requestJson(
+    base,
+    '/api/public/marketplace/storefronts/'+merchantWorkspace.businessId
+  );
+  expectStatus(merchantDiscoveryBlocked,404,'Merchant public discovery readiness gate');
+
+  const storefrontBody={
+    business_id:merchantWorkspace.businessId,
+    store_name:privateStore.json?.store_name||merchantWorkspace.businessName||'Business & Life QA Readiness Merchant',
+    description:privateStore.json?.description||'Controlled QA storefront for readiness enforcement.',
+    merchant_domain:'non_food',
+    publication_status:'published',
+    pickup_address:privateStore.json?.pickup_address||'Internal QA — Philippines',
+    presence_type:privateStore.json?.presence_type||'online',
+    public_location_enabled:false,
+    opening_status:'open',
+    preparation_eta_minutes:15,
+    pickup_enabled:true,
+    delivery_enabled:false,
+    cash_enabled:true,
+    online_enabled:false,
+    public_reputation_enabled:false,
+    price_comparison_enabled:false
+  };
+  const merchantPublishBlocked=await requestJson(base,'/api/merchant/storefront',{
+    method:'PUT',token:merchant.token,body:storefrontBody
+  });
+  expectStatus(merchantPublishBlocked,409,'Merchant publication readiness gate');
+
+  const merchantGranted=await requestJson(
+    base,
+    '/api/governance/admin/readiness/'+merchant.accountId+'/merchant/review',
+    {
+      method:'POST',token:admin.token,
+      body:{
+        business_id:merchantWorkspace.businessId,
+        commerce_state:'eligible_full',
+        reason:'Controlled QA governed Merchant eligibility'
+      }
+    }
+  );
+  expectStatus(merchantGranted,200,'Merchant governed eligibility grant');
+  const merchantPublishAllowed=await requestJson(base,'/api/merchant/storefront',{
+    method:'PUT',token:merchant.token,body:storefrontBody
+  });
+  expectStatus(merchantPublishAllowed,200,'Merchant publication after governed eligibility');
+  const merchantDiscoveryAllowed=await requestJson(
+    base,
+    '/api/public/marketplace/storefronts/'+merchantWorkspace.businessId
+  );
+  expectStatus(merchantDiscoveryAllowed,200,'Merchant public discovery after governed eligibility');
+
+  const providerReadiness=await requestJson(base,'/api/onboarding/readiness',{
+    method:'PUT',token:provider.token,
+    body:{
+      profile_role:'service_provider',
+      activity_track:'local_services',
+      operating_context:'customer_locations',
+      readiness_stage:'applying'
+    }
+  });
+  expectStatus(providerReadiness,200,'Local Services readiness self-service update');
+  if(providerReadiness.json?.enforcement_enabled!==true){
+    throw new Error('Local Services readiness did not observe Preview enforcement.');
+  }
+
+  const providerSelfGrant=await requestJson(base,'/api/onboarding/readiness',{
+    method:'PUT',token:provider.token,
+    body:{profile_role:'service_provider',commerce_state:'eligible_full'}
+  });
+  expectStatus(providerSelfGrant,403,'Local Services self-grant denial');
+
+  const providerReadinessOnly=await requestJson(
+    base,
+    '/api/governance/admin/readiness/'+provider.accountId+'/service_provider/review',
+    {
+      method:'POST',token:admin.token,
+      body:{
+        commerce_state:'readiness_only',
+        reason:'Controlled QA reset before Local Services enforcement checks'
+      }
+    }
+  );
+  expectStatus(providerReadinessOnly,200,'Local Services governed readiness-only reset');
+
+  const privateProvider=await requestJson(base,'/api/service-provider/me',{token:provider.token});
+  expectStatus(privateProvider,200,'Local Services private workspace in readiness-only mode');
+
+  await pool.query(
+    "UPDATE profiles SET visibility='public',updated_at=NOW() WHERE account_id=$1 AND role='service_provider'",
+    [provider.accountId]
+  );
+  const providerDiscoveryBlocked=await requestJson(
+    base,
+    '/api/services/providers/'+provider.accountId,
+    {token:customer.token}
+  );
+  expectStatus(providerDiscoveryBlocked,404,'Local Services public discovery readiness gate');
+
+  const blockedJob=await requestJson(base,'/api/services/jobs',{
+    method:'POST',token:customer.token,
+    body:{
+      provider_account_id:provider.accountId,
+      category_id:providerSetup.categoryId,
+      service_label:'QA readiness service',
+      description:'Controlled QA request that must be blocked in readiness-only mode.',
+      service_location:'Internal QA exact service address — never public',
+      requested_window:'Controlled QA only'
+    }
+  });
+  expectStatus(blockedJob,404,'Local Services new-request readiness gate');
+
+  const providerPublishBlocked=await requestJson(base,'/api/service-provider/me',{
+    method:'PUT',token:provider.token,
+    body:readinessProviderBody(privateProvider.json?.profile,'public')
+  });
+  expectStatus(providerPublishBlocked,409,'Local Services public visibility readiness gate');
+
+  const providerGranted=await requestJson(
+    base,
+    '/api/governance/admin/readiness/'+provider.accountId+'/service_provider/review',
+    {
+      method:'POST',token:admin.token,
+      body:{
+        commerce_state:'eligible_full',
+        reason:'Controlled QA governed Local Services eligibility'
+      }
+    }
+  );
+  expectStatus(providerGranted,200,'Local Services governed eligibility grant');
+
+  const providerPublishAllowed=await requestJson(base,'/api/service-provider/me',{
+    method:'PUT',token:provider.token,
+    body:readinessProviderBody(privateProvider.json?.profile,'public')
+  });
+  expectStatus(providerPublishAllowed,200,'Local Services publication after governed eligibility');
+
+  const providerDiscoveryAllowed=await requestJson(
+    base,
+    '/api/services/providers/'+provider.accountId,
+    {token:customer.token}
+  );
+  expectStatus(providerDiscoveryAllowed,200,'Local Services public discovery after governed eligibility');
+
+  const allowedJob=await requestJson(base,'/api/services/jobs',{
+    method:'POST',token:customer.token,
+    body:{
+      provider_account_id:provider.accountId,
+      category_id:providerSetup.categoryId,
+      service_label:'QA readiness service',
+      description:'Controlled QA request after governed readiness eligibility.',
+      service_location:'Internal QA exact service address — never public',
+      requested_window:'Controlled QA only'
+    }
+  });
+  expectStatus(allowedJob,201,'Local Services new request after governed eligibility');
+
+  for(const session of [merchant,provider,customer,admin]){
+    await requestJson(base,'/api/auth/logout',{method:'POST',token:session.token,body:{}}).catch(()=>{});
+  }
+
+  return{
+    status:'PASS',
+    wave:MICROBUSINESS_READINESS_V1_WAVE,
+    enforcement_enabled:true,
+    profile_authorization_separate:true,
+    merchant_self_grant_denied:true,
+    merchant_private_tools_preserved:true,
+    merchant_public_gate:true,
+    merchant_governed_unlock:true,
+    local_services_self_grant_denied:true,
+    local_services_private_tools_preserved:true,
+    local_services_public_gate:true,
+    local_services_request_gate:true,
+    local_services_governed_unlock:true,
+    merchant_business_id:merchantWorkspace.businessId,
+    service_provider_account_id:provider.accountId,
+    service_job_id:Number(allowedJob.json?.id||0)
+  };
+}
+
+async function runOwnerControlTowerV1Acceptance({pool,base,secret}){
+  const [admin,territoryAdmin]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Owner Control Tower Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:TERRITORY_ADMIN_ALIAS,role:'territory_admin',label:'Owner Control Tower Territory Admin QA'})
+  ]);
+
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  await pool.query(
+    "UPDATE platform_admin_assignments SET status='revoked',updated_at=NOW() WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin'",
+    [territoryAdmin.accountId]
+  );
+
+  const assignment=await requestJson(base,'/api/admin/assignments',{
+    method:'POST',
+    token:admin.token,
+    body:{
+      target_email:TERRITORY_ADMIN_ALIAS,
+      admin_role:'territory_admin',
+      territory_id:territoryId,
+      function_codes:['trust_safety'],
+      reason:'Controlled Owner Control Tower delegated-scope acceptance'
+    }
+  });
+  expectStatus(assignment,201,'Owner Control Tower delegated Admin assignment');
+  if(!(assignment.json?.permissions||[]).includes('admin.console')){
+    throw new Error('Owner Control Tower delegated Admin fixture lacks admin.console.');
+  }
+
+  const adminBootstrap=await requestJson(base,'/api/admin/bootstrap',{token:admin.token});
+  expectStatus(adminBootstrap,200,'Owner Control Tower Super Admin bootstrap');
+
+  const owner=await requestJson(base,'/api/admin/owner-control-tower',{token:admin.token});
+  expectStatus(owner,200,'Owner Control Tower Super Admin endpoint');
+  const model=owner.json?.model||{},headline=owner.json?.headline||{},evidence=owner.json?.evidence_status||{};
+  if(model.version!=='owner-control-tower-v1')throw new Error('Owner Control Tower returned an unexpected model version.');
+  if(model.scope?.country_code!=='PH')throw new Error('Owner Control Tower did not preserve the PH platform scope.');
+  for(const domain of ['production','money','support','safety']){
+    const item=model.health?.[domain];
+    if(!item||!['healthy','attention','critical','unknown'].includes(String(item.state))){
+      throw new Error('Owner Control Tower health domain is missing or invalid: '+domain);
+    }
+    if(!String(item.source||'').trim())throw new Error('Owner Control Tower health domain lacks evidence source: '+domain);
+  }
+  if(model.decision_status?.state!=='unknown'||model.decision_status?.open_count!==null){
+    throw new Error('Owner Control Tower invented an Owner decision state without a canonical queue.');
+  }
+  if(evidence.owner_decisions!=='unavailable')throw new Error('Owner decision evidence must remain explicitly unavailable in V1B.');
+  if(!String(headline.title||'').trim())throw new Error('Owner Control Tower headline is missing.');
+
+  const serialized=JSON.stringify(owner.json);
+  for(const forbidden of ['password_hash','password_salt','secret_key','evidence_data_url','last_lat','last_lng','requester_email']){
+    if(serialized.includes(forbidden))throw new Error('Owner Control Tower leaked a forbidden field: '+forbidden);
+  }
+
+  const delegatedBootstrap=await requestJson(base,'/api/admin/bootstrap',{token:territoryAdmin.token});
+  expectStatus(delegatedBootstrap,200,'Owner Control Tower delegated Admin bootstrap');
+  const denied=await requestJson(base,'/api/admin/owner-control-tower',{token:territoryAdmin.token});
+  expectStatus(denied,403,'Owner Control Tower delegated Admin denial');
+  if(!/Super Admin authority/i.test(String(denied.json?.error||''))){
+    throw new Error('Owner Control Tower delegated denial did not enforce the protected Super Admin boundary.');
+  }
+
+  const adminPage=await fetch(base+'/admin',{headers:{Accept:'text/html'}});
+  const adminHtml=await adminPage.text();
+  if(adminPage.status!==200||!adminHtml.includes('/owner-control-tower.css')){
+    throw new Error('Owner Control Tower Admin HTML composition is incomplete.');
+  }
+  const ownerAsset=await fetch(base+'/owner-control-tower.js');
+  const ownerJs=await ownerAsset.text();
+  if(ownerAsset.status!==200||!ownerJs.includes('renderOwnerControlTower')){
+    throw new Error('Owner Control Tower browser asset is unavailable.');
+  }
+
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:territoryAdmin.token,body:{}});
+
+  return{
+    status:'PASS',
+    wave:OWNER_CONTROL_TOWER_V1_WAVE,
+    super_admin_endpoint:true,
+    delegated_admin_denied:true,
+    single_owner_surface:true,
+    decision_truth_preserved:true,
+    pii_boundary:true,
+    mobile_asset_loaded:true,
+    evidence_status:evidence
+  };
+}
+
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled){
@@ -5809,7 +6249,11 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===SESSION_SECURITY_V2_WAVE
+    const result=config.wave===MICROBUSINESS_READINESS_V1_WAVE
+      ?await runMicrobusinessReadinessV1Acceptance({pool,base,secret:config.secret})
+      :config.wave===OWNER_CONTROL_TOWER_V1_WAVE
+      ?await runOwnerControlTowerV1Acceptance({pool,base,secret:config.secret})
+      :config.wave===SESSION_SECURITY_V2_WAVE
       ?await runSessionSecurityV2Acceptance({pool,base,secret:config.secret})
       :config.wave===ADULT_ELIGIBILITY_RUNTIME_WAVE
       ?await runAdultEligibilityRuntimeAcceptance({pool,base,secret:config.secret})
@@ -5928,5 +6372,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE
 };
