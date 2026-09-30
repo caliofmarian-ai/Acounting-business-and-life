@@ -18,8 +18,8 @@ export function deliveryRouteTrackingActive(status=''){
 }
 
 export function normalizeDeliveryRoutePoint(input={}){
-  const latitude=Number(input.lat);
-  const longitude=Number(input.lng);
+  const latitude=Number(input.lat??input.latitude);
+  const longitude=Number(input.lng??input.longitude);
   if(!finite(latitude)||latitude<-90||latitude>90||!finite(longitude)||longitude<-180||longitude>180){
     throw Object.assign(new Error('Valid coordinates required'),{status:400,code:'DELIVERY_ROUTE_COORDINATES_INVALID'});
   }
