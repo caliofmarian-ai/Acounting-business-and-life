@@ -106,7 +106,7 @@ export function microbusinessReadinessReviewRequirements({profile_role='',activi
   const track=clean(activity_track,40);
   const context=clean(operating_context,60);
   if(!ROLES.has(role))return[];
-  if(!track||!allowedTrackForRole(role,track))return[];
+  if(!track||!context||!allowedTrackForRole(role,track))return[];
   const codes=[...REVIEW_COMMON,...(REVIEW_BY_TRACK[track]||[])];
   return codes.map(code=>({
     ...MICROBUSINESS_READINESS_REVIEW_ITEMS[code],
@@ -140,7 +140,10 @@ export function validateMicrobusinessEligibilityEvidence(state,evidenceChecklist
     if(item.outcome==='verified'&&!item.reference){
       throw Object.assign(new Error(requirement.label+' requires an evidence/reference identifier'),{status:400,code:'READINESS_EVIDENCE_REFERENCE_REQUIRED',requirement:requirement.code});
     }
-    if(item.outcome==='not_applicable'&&(!item.source_authority||!item.note)){
+    if(!item.source_authority){
+      throw Object.assign(new Error(requirement.label+' requires the source or authority used for the decision'),{status:400,code:'READINESS_EVIDENCE_SOURCE_REQUIRED',requirement:requirement.code});
+    }
+    if(item.outcome==='not_applicable'&&!item.note){
       throw Object.assign(new Error(requirement.label+' needs a source/authority and reason when marked not applicable'),{status:400,code:'READINESS_EVIDENCE_NA_SOURCE_REQUIRED',requirement:requirement.code});
     }
   }
@@ -283,7 +286,7 @@ export async function ensureMicrobusinessReadinessSchema(pool){
       eligibility_reason TEXT NOT NULL DEFAULT '',
       eligibility_evidence_json JSONB NOT NULL DEFAULT '[]'::jsonb,
       source TEXT NOT NULL DEFAULT 'readiness_runtime',
-      policy_version TEXT NOT NULL DEFAULT 'ph-microbusiness-readiness-v1',
+      policy_version TEXT NOT NULL DEFAULT 'ph-microbusiness-readiness-v2',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK(profile_role IN ('merchant','service_provider')),
@@ -300,6 +303,8 @@ export async function ensureMicrobusinessReadinessSchema(pool){
       WHERE business_id IS NOT NULL;
     ALTER TABLE microbusiness_readiness
       ADD COLUMN IF NOT EXISTS eligibility_evidence_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE microbusiness_readiness
+      ALTER COLUMN policy_version SET DEFAULT 'ph-microbusiness-readiness-v2';
     CREATE INDEX IF NOT EXISTS microbusiness_readiness_commerce_idx
       ON microbusiness_readiness(profile_role,commerce_state,updated_at DESC);
 
