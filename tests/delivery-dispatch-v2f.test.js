@@ -48,7 +48,7 @@ test('Courier may decline without assignment and may accept atomically',()=>{
   const decline=server.slice(declineStart,acceptStart);
   const accept=server.slice(acceptStart,statusStart);
   assert.match(decline,/status='declined'/);
-  assert.doesNotMatch(decline,/courier_account_id=\$|status='courier_assigned'/);
+  assert.doesNotMatch(decline,/UPDATE deliveries[\s\S]*courier_account_id|UPDATE deliveries[\s\S]*status='courier_assigned'/);
   assert.match(accept,/FOR UPDATE OF dof,d/);
   assert.match(accept,/d\.status!=='awaiting_courier'/);
   assert.match(accept,/courierOfferGateFromDb/);
