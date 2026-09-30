@@ -7,6 +7,8 @@ const publicServer=read('server-paymongo.js');
 const payments=read('server-payments.js');
 const legal=read('server-legal.js');
 const notifications=read('server-notifications.js');
+const auth=read('server-auth.js');
+const notificationUi=read('public/notifications-ui.js');
 const qa=read('qa-acceptance.js');
 const workflow=read('.github/workflows/admin-runtime.yml');
 
@@ -63,6 +65,20 @@ test('PayMongo preserves PWA gating without a localhost asset proxy',()=>{
   assert.match(publicServer,/app\.get\('\/sw\.js',allowPwaAsset\)/);
   assert.doesNotMatch(publicServer,/servePwaAsset/);
   assert.doesNotMatch(publicServer,/http:\/\/127\.0\.0\.1/);
+});
+
+test('Notifications polling resolves only lightweight authenticated identity',()=>{
+  assert.match(auth,/app\.get\('\/api\/auth\/session\/identity', auth/);
+  assert.match(auth,/account_id:Number\(req\.accountId\)/);
+  assert.match(notifications,/upstream\('\/api\/auth\/session\/identity'/);
+  assert.doesNotMatch(notifications,/upstream\('\/api\/me'/);
+});
+
+test('Foreground notification refresh performs one unread request per cycle',()=>{
+  assert.match(notificationUi,/async function pollForegroundVoice\(\{refreshBadge=true\}=\{\}\)/);
+  assert.match(notificationUi,/if\(refreshBadge\)await refreshUnread\(\)/);
+  assert.match(notificationUi,/pollForegroundVoice\(\{refreshBadge:false\}\)/);
+  assert.doesNotMatch(notificationUi,/Promise\.allSettled\(\[refreshUnread\(\),pollForegroundVoice\(\)\]\)/);
 });
 
 test('Notifications Runtime V16 acceptance is wired into canonical QA',()=>{
