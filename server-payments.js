@@ -44,6 +44,8 @@ import {notificationsFetch} from './server-notifications.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {resolveV2SessionStepUp} from './auth-session-core.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {geographyAvailabilityForCode} from './account-geography.js';
+import {ensureProfileOperatingLocationSchema,profileOperatingLocation,saveProfileOperatingLocation,normalizeProfileOperatingLocationInput,PROFILE_OPERATING_LOCATION_ROLES} from './profile-operating-location-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -110,7 +112,7 @@ async function canSeeIntent(me,intent){
   if((me.businesses||[]).some(b=>Number(b.id)===Number(intent.business_id)&&b.active!==false))return true;
   try{await requireAdminPermission(pool,me.account.id,'payment.view',intent.territory_id);return true}catch{return false}
 }
-async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileSubscriptionSchema(pool);await ensureProfileFinanceSchema(pool);await ensureAccountMoneySchema(pool);await ensureFinancialDocumentSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
+async function initDb(){await ensurePaymentSchema(pool);await ensureFinanceSchema(pool);await ensureMonetizationSchema(pool);await ensureProfileSubscriptionSchema(pool);await ensureProfileFinanceSchema(pool);await ensureAccountMoneySchema(pool);await ensureFinancialDocumentSchema(pool);await ensureProfileOperatingLocationSchema(pool);await backfillLegacyOrderPayments(pool);await backfillMonetizationHistory(pool)}
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const childAlive=legalReady;res.status(childAlive?200:503).json({ok:childAlive,db:true,legal:childAlive,payments:true,version:'0.13-payment-core'})}catch{res.status(503).json({ok:false,db:false,legal:false,payments:false,version:'0.13-payment-core'})}});
 app.get('/payments.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','payments.css'),'utf8')));
@@ -187,6 +189,49 @@ function financeScope(me,role,businessId){
   }
   return{owner_scope:'account',business_id:null};
 }
+async function operatingLocationScope(me,rawRole,rawBusinessId){
+  const role=clean(rawRole,40);
+  if(!PROFILE_OPERATING_LOCATION_ROLES.includes(role))throw Object.assign(new Error('Operating location is available only for Supplier and Local Services'),{status:400});
+  if(!enabledProfile(me,role))throw Object.assign(new Error('Enable this profile before configuring its operating location'),{status:403});
+  if(role==='supplier'){
+    const businessId=Number(rawBusinessId);
+    if(!Number.isSafeInteger(businessId)||businessId<1)throw Object.assign(new Error('Choose the Supplier business workspace for this operating location'),{status:400});
+    const q=await pool.query(`
+      SELECT 1
+      FROM profile_business_bindings pb
+      JOIN business_memberships bm
+        ON bm.business_id=pb.business_id
+       AND bm.account_id=pb.account_id
+       AND bm.active=TRUE
+      WHERE pb.account_id=$1
+        AND pb.role='supplier'
+        AND pb.business_id=$2
+        AND pb.status='active'
+      LIMIT 1
+    `,[Number(me.account.id),businessId]);
+    if(!q.rowCount)throw Object.assign(new Error('This business workspace is not bound to the Supplier profile'),{status:403});
+    return{role,business_id:businessId};
+  }
+  return{role,business_id:null};
+}
+
+function operatingLocationResponse(me,record){
+  const personalGeo=me?.geography?.assigned?{
+    psgc_code:me.geography.psgc_code||'',
+    name:me.geography.name||'',
+    path_text:me.geography.path_text||'',
+    source_version:me.geography.source_version||''
+  }:null;
+  return{
+    ...record,
+    exact_location_private:true,
+    public_exact_location_enabled:false,
+    personal_address_available:Boolean(clean(me?.account?.address,400)),
+    personal_geography:personalGeo,
+    uses_personal_address:record.location_mode!=='override'
+  };
+}
+
 async function financialDocumentScope(me,rawRole,rawBusinessId){
   const role=normalizeFinancialProfileRole(rawRole);
   if(!enabledProfile(me,role))throw Object.assign(new Error('Enable this profile before opening its financial documents'),{status:403});
@@ -394,6 +439,31 @@ app.post('/api/profile-money/:role/entries/:id/reverse',body,async(req,res,next)
   });
   await synchronizeFinancialDocumentsForScope(pool,{accountId:me.account.id,profileRole:role});
   res.json({...row,provider_balance_effect:false});
+}catch(e){next(e)}});
+
+app.get('/api/settings/operating-location/:role',async(req,res,next)=>{try{
+  const me=await identity(req),scope=await operatingLocationScope(me,req.params.role,req.query?.business_id);
+  const record=await profileOperatingLocation(pool,{accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id});
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(operatingLocationResponse(me,record));
+}catch(e){next(e)}});
+
+app.put('/api/settings/operating-location/:role',body,async(req,res,next)=>{try{
+  const me=await identity(req),scope=await operatingLocationScope(me,req.params.role,req.body?.business_id);
+  const normalized=normalizeProfileOperatingLocationInput(req.body,scope.role);
+  let geography=null;
+  if(normalized.location_mode==='override'){
+    geography=await geographyAvailabilityForCode(pool,normalized.psgc_code);
+    if(!geography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});
+  }else if(!clean(me.account?.address,400)){
+    return res.status(409).json({error:'Add your private personal address in Account Settings before using it as this profile work location'});
+  }
+  const record=await saveProfileOperatingLocation(pool,{
+    accountId:me.account.id,profileRole:scope.role,businessId:scope.business_id,
+    locationMode:normalized.location_mode,exactAddress:normalized.exact_address,
+    geography,serviceRadiusKm:normalized.service_radius_km
+  });
+  res.json(operatingLocationResponse(me,record));
 }catch(e){next(e)}});
 
 app.get('/api/settings/finance',async(req,res,next)=>{try{
