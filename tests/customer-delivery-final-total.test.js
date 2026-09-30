@@ -47,6 +47,6 @@ test('Customer can resolve a private checkout destination without exposing Admin
 
 test('Delivery reuses the existing Marketplace geocoder instead of duplicating a public location service',()=>{
   assert.match(marketplace,/export async function geocodeAddress\(query,countryCode=''/);
-  assert.match(delivery,/import \\{createEmbeddedMarketplaceOrder\\} from '\\.\\/server-marketplace\\.js'/);
-  assert.match(delivery,/import \\{geocodeAddress\\} from '\\.\\/server-marketplace\\.js'/);
+  assert.ok(delivery.includes("import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';"));
+  assert.ok(delivery.includes("import {geocodeAddress} from './server-marketplace.js';"));
 });
