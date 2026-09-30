@@ -79,7 +79,7 @@ test('Delivery journey is explanatory only and never changes availability job st
   const end=ui.indexOf('function profileJourneyDefinition',start);
   const block=ui.slice(start,end);
   assert.doesNotMatch(block,/\.click\(|fetch\(|dapi\(|profileApi\(|active-role|applyActiveRole|toggleProfile/);
-  assert.doesNotMatch(block,/availability.*PUT|status.*POST|location.*POST|complete.*POST|payout.*POST|withdrawal.*POST/i);
+  assert.doesNotMatch(block,/method\s*:\s*['\"](?:POST|PUT|PATCH|DELETE)['\"]|JSON\.stringify\s*\(/i);
 });
 
 test('Delivery copy preserves authorization privacy location handoff and money evidence boundaries',()=>{
