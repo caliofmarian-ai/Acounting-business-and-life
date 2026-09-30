@@ -43,8 +43,10 @@ test('Account/Auth fetch contract is fail-closed for policy protected APIs',()=>
   assert.match(auth,/pathname\.startsWith\('\/api\/context\/'\)/);
   assert.match(auth,/ACCOUNT_AUTH_EMBEDDED_DISPATCH_REQUIRED/);
   assert.match(auth,/pathname\.startsWith\('\/api\/'\)/);
-  assert.match(auth,/resolveAccountToken\(token\)/);
-  assert.match(auth,/profileSnapshot\(resolved\.accountId\)/);
+  assert.match(auth,/authenticatedAccountContext/);
+  assert.match(auth,/pathname==='\/api\/auth\/session\/identity'/);
+  assert.match(auth,/SELECT auth_status,email_verified_at,account_mode FROM accounts/);
+  assert.match(auth,/profileSnapshot\(context\.accountId\)/);
 });
 
 test('Account/Auth route authority remains on server-auth',()=>{
