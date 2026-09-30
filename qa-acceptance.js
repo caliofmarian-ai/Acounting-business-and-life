@@ -5870,14 +5870,27 @@ async function ensureReadinessQaServiceProviderApproved({pool,base,provider,admi
     [provider.accountId,territoryId]
   );
   if(!authorization.rowCount)throw new Error('Readiness Local Services fixture lacks separate active Profile Authorization.');
+
+  const authorizedCategory=await pool.query(
+    `SELECT sc.id
+       FROM service_category_authorizations a
+       JOIN service_categories sc ON sc.id=a.category_id AND sc.active=TRUE
+      WHERE a.account_id=$1 AND a.territory_id=$2 AND a.status='active'
+      ORDER BY CASE WHEN a.category_id=$3 THEN 0 ELSE 1 END,a.category_id
+      LIMIT 1`,
+    [provider.accountId,territoryId,categoryId]
+  );
+  if(!authorizedCategory.rowCount)throw new Error('Readiness Local Services fixture lacks an active authorized service category.');
+  const authorizedCategoryId=Number(authorizedCategory.rows[0].id);
+
   await ensureActiveRole({base,token:provider.token,role:'service_provider',label:'Readiness Local Services QA'});
 
   const services=await requestJson(base,'/api/service-provider/services',{
     method:'PUT',token:provider.token,
-    body:{services:[{category_id:categoryId,service_label:'QA readiness service'}]}
+    body:{services:[{category_id:authorizedCategoryId,service_label:'QA readiness service'}]}
   });
   if(services.status!==200)throw new Error('Readiness Local Services private service configuration status '+services.status+': '+clean(services.json?.error||services.json?.code||'unknown',180));
-  return{categoryId,authorizationId:Number(authorization.rows[0].id)};
+  return{categoryId:authorizedCategoryId,authorizationId:Number(authorization.rows[0].id)};
 }
 
 function readinessProviderBody(profile,visibility){
