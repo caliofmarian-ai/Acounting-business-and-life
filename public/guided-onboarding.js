@@ -851,8 +851,8 @@ function serviceProviderProfileJourneyDefinition(journey,label){
   if(step==='service_visibility_area')return{
     step,
     title:tr('service_tour.visibility_title',{},'Profile visibility and service area'),
-    body:tr('service_tour.visibility_body',{},'Your service area describes where you work; it is not permission to publish a private home or workshop address. If your base is private or home-based, keep its exact address private by default. A Customer job address is separate and belongs only to the accepted job that needs it.'),
-    target:serviceProviderJourneyTarget('#providerProfileForm','#providerArea','#providerVisibility','#serviceOperatingContext'),
+    body:tr('service_tour.visibility_body',{},'Your public service area and optional radius describe where you work. Your exact service base is a separate override: it stays private by default and becomes public only if you explicitly choose Public. If no override is set, your personal/home address stays private and is not copied into the Local Services profile. A Customer job address is a third, separate location that is released only for active fulfilment and remains job-scoped.'),
+    target:serviceProviderJourneyTarget('#providerProfileForm','#serviceBaseLocationForm','#providerArea','#providerRadius','#providerVisibility','#serviceOperatingContext'),
     primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
   };
   if(step==='service_offers_pricing')return{
