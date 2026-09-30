@@ -48,7 +48,7 @@ test('Local Services privacy evidence money and safety education precede Profile
 test('Local Services coachmarks use real profile service quote job money and settings controls',()=>{
   for(const marker of [
     'PROVIDER_SECTION_META','id="serviceReadinessForm"','id="serviceOperatingContext"',
-    'id="providerProfileForm"','id="providerArea"','id="providerVisibility"',
+    'id="providerProfileForm"','id="providerArea"','id="providerVisibility"','id="serviceBaseLocationForm"','id="providerRadius"','id="providerBaseVisibility"',
     'id="providerServicesForm"','data-service-category','data-job-action',
     'id="providerJobs"','id="addCredential"'
   ])assert.ok(services.includes(marker),marker);
@@ -56,7 +56,7 @@ test('Local Services coachmarks use real profile service quote job money and set
   assert.match(shell,/data-service-provider-home-money/);
   assert.match(settings,/data-profile-settings-view="finance"/);
   assert.match(settings,/id="openAccountMoneyFromProfile"/);
-  assert.match(ui,/serviceProviderJourneyTarget\('#providerProfileForm'/);
+  assert.match(ui,/serviceProviderJourneyTarget\('#providerProfileForm','#serviceBaseLocationForm','#providerArea','#providerRadius'/);
   assert.match(ui,/serviceProviderJourneyTarget\('\[data-service-provider-section="Quotes"\]'/);
   assert.match(ui,/serviceProviderJourneyTarget\('\[data-service-provider-section="Jobs"\]'/);
 });
@@ -86,9 +86,9 @@ test('Local Services tutorial does not invent licence requirements and points to
 });
 
 test('Local Services location and media copy preserves private-base, job-address and consent boundaries',()=>{
-  assert.match(en['service_tour.visibility_body'],/private home or workshop address/i);
-  assert.match(en['service_tour.visibility_body'],/exact address private by default/i);
-  assert.match(en['service_tour.visibility_body'],/Customer job address is separate/i);
+  assert.match(en['service_tour.visibility_body'],/public service area and optional radius/i);
+  assert.match(en['service_tour.visibility_body'],/exact service base is a separate override/i);
+  assert.match(en['service_tour.visibility_body'],/Customer job address is a third, separate location/i);
   assert.match(en['service_tour.jobs_body'],/exact Customer service address is released only for active fulfilment/i);
   assert.match(en['service_tour.jobs_body'],/each access is logged/i);
   assert.match(en['service_tour.evidence_body'],/Before\/after photos/i);
