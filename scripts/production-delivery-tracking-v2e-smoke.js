@@ -129,6 +129,16 @@ async function run(){
       pointCount:0
     });
     if(!first.append)fail('First route point was not accepted.');
+    const normalizedRoundtrip=deliveryRoutePointDecision({
+      previous:null,
+      next:first.point,
+      pointCount:0
+    });
+    if(!normalizedRoundtrip.append
+      ||normalizedRoundtrip.point.latitude!==first.point.latitude
+      ||normalizedRoundtrip.point.longitude!==first.point.longitude){
+      fail('Canonical normalized route point could not re-enter the sampling decision.');
+    }
     await client.query(
       `INSERT INTO delivery_location_points(
          delivery_id,courier_account_id,sequence_no,latitude,longitude,
@@ -226,6 +236,7 @@ async function run(){
       environment:'production',
       rollback:true,
       route_points_ordered:2,
+      normalized_point_roundtrip:true,
       near_duplicate_suppressed:true,
       courier_binding_verified:true,
       terminal_tracking_blocked:true,
