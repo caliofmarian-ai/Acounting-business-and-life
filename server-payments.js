@@ -468,7 +468,7 @@ app.put('/api/settings/operating-location/:role',body,async(req,res,next)=>{try{
 
 app.get('/api/settings/finance',async(req,res,next)=>{try{
   const me=await identity(req);
-  const [accounts,preferences,budgets,movements,fundScopes,fundTransfers,accountMoney,providers]=await Promise.all([
+  const [accounts,preferences,budgets,movements,fundScopes,fundTransfers,accountMoney,providers,businessBindings]=await Promise.all([
     listProfileFinancialAccounts(pool,me.account.id),
     listMoneyPreferences(pool,me.account.id),
     listProfileBudgetEnvelopes(pool,me.account.id),
@@ -476,7 +476,8 @@ app.get('/api/settings/finance',async(req,res,next)=>{try{
     listProfileFundScopes(pool,me.account.id),
     listProfileFundTransfers(pool,me.account.id),
     accountMoneySettings(pool,{accountId:me.account.id,legalName:me.account.display_name||''}),
-    pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account FROM payment_provider_configs WHERE country_code='PH' ORDER BY provider_code")
+    pool.query("SELECT provider_code,display_name,adapter_version,status,supported_methods,ledger_account FROM payment_provider_configs WHERE country_code='PH' ORDER BY provider_code"),
+    pool.query("SELECT business_id,role,is_primary,status FROM profile_business_bindings WHERE account_id=$1 AND status='active' ORDER BY role,is_primary DESC,business_id",[me.account.id])
   ]);
   const defaultProvider=clean(process.env.PAYMENT_PROVIDER_DEFAULT,80);
   const selected=providers.rows.find(x=>x.provider_code===defaultProvider&&['sandbox','active'].includes(x.status))||null;
@@ -486,6 +487,7 @@ app.get('/api/settings/finance',async(req,res,next)=>{try{
     active_role:me.account.active_role,
     profiles:(me.profiles||[]).map(p=>({role:p.role,profile_id:p.profile_id||null,enabled:Boolean(p.enabled),status:p.status,visibility:p.visibility})),
     businesses:(me.businesses||[]).map(b=>({id:Number(b.id),name:b.name,active:b.active!==false})),
+    business_bindings:businessBindings.rows.map(b=>({business_id:Number(b.business_id),role:b.role,is_primary:Boolean(b.is_primary),status:b.status})),
     financial_accounts:accounts,legacy_profile_financial_accounts:accounts,preferences,budgets,money_movements:movements,profile_fund_scopes:fundScopes,profile_fund_transfers:fundTransfers,account_money:accountMoney,
     catalog:{roles:PROFILE_FINANCE_ROLES,account_kinds:FINANCIAL_ACCOUNT_KINDS,methods:MONEY_METHODS,payout_schedules:PAYOUT_SCHEDULES,budget_purposes:BUDGET_PURPOSES,movement_types:MONEY_MOVEMENT_TYPES},
     provider:{
