@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs';
 import {
   MICROBUSINESS_READINESS_POLICY_VERSION,
   microbusinessReadinessEnforcementEnabled,
+  microbusinessReadinessEnforcementMode,
+  microbusinessReadinessReviewRequirements,
   microbusinessReadinessState,
   microbusinessCommerceDecision,
   nextMicrobusinessReadinessAction,
@@ -67,6 +69,7 @@ class ReadinessDb{
         eligibility_reviewed_at:null,
         eligibility_reviewed_by_account_id:null,
         eligibility_reason:'',
+        eligibility_evidence_json:[],
         source,
         policy_version:policyVersion,
         created_at:'2026-09-29T00:00:00.000Z',
@@ -88,16 +91,17 @@ class ReadinessDb{
       return{rows:[{...row}],rowCount:1};
     }
     if(q.startsWith('UPDATE microbusiness_readiness SET commerce_state=$1')){
-      const row=this.rows.find(r=>Number(r.id)===Number(args[6]));
+      const row=this.rows.find(r=>Number(r.id)===Number(args[7]));
       Object.assign(row,{
         commerce_state:args[0],
         commerce_scope_json:JSON.parse(args[1]),
+        eligibility_evidence_json:JSON.parse(args[2]),
         eligibility_reviewed_at:'2026-09-29T00:02:00.000Z',
-        eligibility_reviewed_by_account_id:Number(args[2]),
-        eligibility_reason:args[3],
-        readiness_stage:args[4],
+        eligibility_reviewed_by_account_id:Number(args[3]),
+        eligibility_reason:args[4],
+        readiness_stage:args[5],
         source:'governed_review',
-        policy_version:args[5],
+        policy_version:args[6],
         updated_at:'2026-09-29T00:02:00.000Z'
       });
       return{rows:[{...row}],rowCount:1};
@@ -122,11 +126,18 @@ class ReadinessDb{
   }
 }
 
+const evidenceFor=(profile_role,activity_track,operating_context)=>microbusinessReadinessReviewRequirements({profile_role,activity_track,operating_context}).map(item=>({
+  code:item.code,outcome:'verified',reference:'qa:'+item.code,source_authority:'QA policy fixture',note:'Verified in deterministic test'
+}));
+
 test('enforcement is opt-in and tolerant only while explicitly disabled',()=>{
   assert.equal(microbusinessReadinessEnforcementEnabled({}),false);
   assert.equal(microbusinessReadinessEnforcementEnabled({MICROBUSINESS_READINESS_ENFORCEMENT:'true'}),true);
   assert.equal(microbusinessReadinessEnforcementEnabled({MICROBUSINESS_READINESS_ENFORCEMENT:'1'}),true);
   assert.equal(microbusinessReadinessEnforcementEnabled({MICROBUSINESS_READINESS_ENFORCEMENT:'off'}),false);
+  assert.equal(microbusinessReadinessEnforcementEnabled({MICROBUSINESS_READINESS_ENFORCEMENT:'transition'}),true);
+  assert.equal(microbusinessReadinessEnforcementMode({MICROBUSINESS_READINESS_ENFORCEMENT:'transition'}),'transition');
+  assert.equal(microbusinessReadinessEnforcementMode({MICROBUSINESS_READINESS_ENFORCEMENT:'true'}),'full');
 
   const missing=microbusinessReadinessState({profile_role:'merchant'});
   assert.equal(microbusinessCommerceDecision(missing,{enforcementEnabled:false}).allowed,true);
@@ -203,7 +214,8 @@ test('governed review is the only core path that grants commerce eligibility',as
   const reviewed=await setMicrobusinessCommerceState(db,{
     accountId:1,profileRole:'merchant',businessId:10,actorAccountId:99,
     commerceState:'eligible_limited',reason:'Evidence reviewed for limited pilot scope',
-    commerceScope:{territory:'queens-row-west',mode:'pilot'}
+    commerceScope:{territory:'queens-row-west',mode:'pilot'},
+    evidenceChecklist:evidenceFor('merchant','non_food','commercial_space')
   });
   assert.equal(reviewed.commerce_state,'eligible_limited');
   assert.equal(reviewed.readiness_stage,'verified');
@@ -229,6 +241,7 @@ test('schema and integration contract preserve separate authorization and no tax
   assert.match(core,/CREATE TABLE IF NOT EXISTS microbusiness_readiness/);
   assert.match(core,/CREATE TABLE IF NOT EXISTS microbusiness_readiness_events/);
   assert.match(core,/commerce_state TEXT NOT NULL DEFAULT 'readiness_only'/);
+  assert.match(core,/eligibility_evidence_json JSONB NOT NULL DEFAULT '\[\]'::jsonb/);
   assert.match(core,/Commerce eligibility can only be changed through a governed review/);
   assert.match(core,/Verified and Growing stages require governed evidence/);
   assert.doesNotMatch(core,/collect(?:s|ing)? government (?:tax|fee)/i);
@@ -281,7 +294,8 @@ test('Local Services discovery filter is permissive only with enforcement off an
   assert.equal(gated.size,0);
   await setMicrobusinessCommerceState(db,{
     accountId:1,profileRole:'service_provider',actorAccountId:99,
-    commerceState:'eligible_full',reason:'Local Services pilot evidence reviewed'
+    commerceState:'eligible_full',reason:'Local Services pilot evidence reviewed',
+    evidenceChecklist:evidenceFor('service_provider','local_services','customer_locations')
   });
   gated=await filterCommerceEligibleServiceProviderIds(db,[1],{enforcementEnabled:true});
   assert.deepEqual([...gated],[1]);
@@ -332,7 +346,7 @@ test('Super Admin commerce review UI is separate from application approval',()=>
   assert.match(ui,/function commerceReadinessAdmin\(\)/);
   assert.match(ui,/async function openCommerceReadiness\(/);
   assert.match(ui,/Profile Authorization remains a separate gate/);
-  assert.match(ui,/Changing this state does not create or certify any government authorization/);
+  assert.match(ui,/Government agencies or professional regulators remain the authority for their own permits, registrations and licences/);
   assert.match(ui,/Define the limited commerce scope before granting limited eligibility/);
   assert.match(ui,/\/api\/governance\/admin\/readiness\//);
   assert.doesNotMatch(ui,/reviewApp[\s\S]{0,900}commerce_state/);
