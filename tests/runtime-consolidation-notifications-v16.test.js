@@ -70,6 +70,11 @@ test('PayMongo preserves PWA gating without a localhost asset proxy',()=>{
 test('Notifications polling resolves only lightweight authenticated identity',()=>{
   assert.match(auth,/app\.get\('\/api\/auth\/session\/identity', auth/);
   assert.match(auth,/account_id:Number\(req\.accountId\)/);
+  assert.match(auth,/authenticatedAccountContext/);
+  assert.match(auth,/pathname==='\/api\/auth\/session\/identity'/);
+  assert.match(auth,/SELECT auth_status,email_verified_at,account_mode FROM accounts/);
+  assert.match(auth,/ACCOUNT_NOT_ACTIVE/);
+  assert.match(auth,/EMAIL_VERIFICATION_REQUIRED/);
   assert.match(notifications,/upstream\('\/api\/auth\/session\/identity'/);
   assert.doesNotMatch(notifications,/upstream\('\/api\/me'/);
 });
