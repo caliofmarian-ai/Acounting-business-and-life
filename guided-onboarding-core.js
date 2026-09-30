@@ -50,11 +50,24 @@ export const GUIDED_ONBOARDING_SUPPLIER_STEPS=Object.freeze([
   'supplier_support_safety',
   'profile_settings'
 ]);
+export const GUIDED_ONBOARDING_COURIER_STEPS=Object.freeze([
+  'profile_welcome',
+  'courier_eligibility_vehicle',
+  'courier_availability_area',
+  'courier_assignments_workflow',
+  'courier_customer_privacy',
+  'courier_navigation_location',
+  'courier_handoff_evidence',
+  'courier_money_earnings',
+  'courier_settlement_payout',
+  'courier_safety_support',
+  'profile_settings'
+]);
 export const GUIDED_ONBOARDING_PROFILE_DEFINITIONS=Object.freeze({
   customer:Object.freeze({version:2,steps:GUIDED_ONBOARDING_CUSTOMER_STEPS}),
   merchant:Object.freeze({version:2,steps:GUIDED_ONBOARDING_MERCHANT_STEPS}),
   supplier:Object.freeze({version:2,steps:GUIDED_ONBOARDING_SUPPLIER_STEPS}),
-  courier:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS}),
+  courier:Object.freeze({version:2,steps:GUIDED_ONBOARDING_COURIER_STEPS}),
   service_provider:Object.freeze({version:1,steps:GUIDED_ONBOARDING_PROFILE_STEPS})
 });
 
