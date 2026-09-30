@@ -60,7 +60,8 @@ const DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE='delivery_refund_economics_v2d_
 const ADULT_ELIGIBILITY_RUNTIME_WAVE='adult_eligibility_v1';
 const SESSION_SECURITY_V2_WAVE='session_security_v2';
 const PRIVATE_EVIDENCE_STORAGE_V1_WAVE='private_evidence_storage_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE]);
+const OWNER_CONTROL_TOWER_V1_WAVE='owner_control_tower_v1';
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -5798,6 +5799,96 @@ async function runSessionSecurityV2Acceptance({pool,base,secret}){
 }
 
 
+async function runOwnerControlTowerV1Acceptance({pool,base,secret}){
+  const [admin,territoryAdmin]=await Promise.all([
+    qaAccountSession({pool,base,secret,email:SUPER_ADMIN_ALIAS,role:'super_admin',label:'Owner Control Tower Super Admin QA'}),
+    qaAccountSession({pool,base,secret,email:TERRITORY_ADMIN_ALIAS,role:'territory_admin',label:'Owner Control Tower Territory Admin QA'})
+  ]);
+
+  const territoryId=await ensureQaTerritory({pool,base,adminToken:admin.token});
+  await pool.query(
+    "UPDATE platform_admin_assignments SET status='revoked',updated_at=NOW() WHERE account_id=$1 AND COALESCE(NULLIF(authority_rank,''),admin_role)='territory_admin'",
+    [territoryAdmin.accountId]
+  );
+
+  const assignment=await requestJson(base,'/api/admin/assignments',{
+    method:'POST',
+    token:admin.token,
+    body:{
+      target_email:TERRITORY_ADMIN_ALIAS,
+      admin_role:'territory_admin',
+      territory_id:territoryId,
+      function_codes:['trust_safety'],
+      reason:'Controlled Owner Control Tower delegated-scope acceptance'
+    }
+  });
+  expectStatus(assignment,201,'Owner Control Tower delegated Admin assignment');
+  if(!(assignment.json?.permissions||[]).includes('admin.console')){
+    throw new Error('Owner Control Tower delegated Admin fixture lacks admin.console.');
+  }
+
+  const adminBootstrap=await requestJson(base,'/api/admin/bootstrap',{token:admin.token});
+  expectStatus(adminBootstrap,200,'Owner Control Tower Super Admin bootstrap');
+
+  const owner=await requestJson(base,'/api/admin/owner-control-tower',{token:admin.token});
+  expectStatus(owner,200,'Owner Control Tower Super Admin endpoint');
+  const model=owner.json?.model||{},headline=owner.json?.headline||{},evidence=owner.json?.evidence_status||{};
+  if(model.version!=='owner-control-tower-v1')throw new Error('Owner Control Tower returned an unexpected model version.');
+  if(model.scope?.country_code!=='PH')throw new Error('Owner Control Tower did not preserve the PH platform scope.');
+  for(const domain of ['production','money','support','safety']){
+    const item=model.health?.[domain];
+    if(!item||!['healthy','attention','critical','unknown'].includes(String(item.state))){
+      throw new Error('Owner Control Tower health domain is missing or invalid: '+domain);
+    }
+    if(!String(item.source||'').trim())throw new Error('Owner Control Tower health domain lacks evidence source: '+domain);
+  }
+  if(model.decision_status?.state!=='unknown'||model.decision_status?.open_count!==null){
+    throw new Error('Owner Control Tower invented an Owner decision state without a canonical queue.');
+  }
+  if(evidence.owner_decisions!=='unavailable')throw new Error('Owner decision evidence must remain explicitly unavailable in V1B.');
+  if(!String(headline.title||'').trim())throw new Error('Owner Control Tower headline is missing.');
+
+  const serialized=JSON.stringify(owner.json);
+  for(const forbidden of ['password_hash','password_salt','secret_key','evidence_data_url','last_lat','last_lng','requester_email']){
+    if(serialized.includes(forbidden))throw new Error('Owner Control Tower leaked a forbidden field: '+forbidden);
+  }
+
+  const delegatedBootstrap=await requestJson(base,'/api/admin/bootstrap',{token:territoryAdmin.token});
+  expectStatus(delegatedBootstrap,200,'Owner Control Tower delegated Admin bootstrap');
+  const denied=await requestJson(base,'/api/admin/owner-control-tower',{token:territoryAdmin.token});
+  expectStatus(denied,403,'Owner Control Tower delegated Admin denial');
+  if(!/Super Admin authority/i.test(String(denied.json?.error||''))){
+    throw new Error('Owner Control Tower delegated denial did not enforce the protected Super Admin boundary.');
+  }
+
+  const adminPage=await fetch(base+'/admin',{headers:{Accept:'text/html'}});
+  const adminHtml=await adminPage.text();
+  if(adminPage.status!==200||!adminHtml.includes('/owner-control-tower.css')){
+    throw new Error('Owner Control Tower Admin HTML composition is incomplete.');
+  }
+  const ownerAsset=await fetch(base+'/owner-control-tower.js');
+  const ownerJs=await ownerAsset.text();
+  if(ownerAsset.status!==200||!ownerJs.includes('renderOwnerControlTower')){
+    throw new Error('Owner Control Tower browser asset is unavailable.');
+  }
+
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:admin.token,body:{}});
+  await requestJson(base,'/api/auth/logout',{method:'POST',token:territoryAdmin.token,body:{}});
+
+  return{
+    status:'PASS',
+    wave:OWNER_CONTROL_TOWER_V1_WAVE,
+    super_admin_endpoint:true,
+    delegated_admin_denied:true,
+    single_owner_surface:true,
+    decision_truth_preserved:true,
+    pii_boundary:true,
+    mobile_asset_loaded:true,
+    evidence_status:evidence
+  };
+}
+
+
 export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const config=qaAcceptanceConfig(env);
   if(!config.enabled){
@@ -5809,7 +5900,9 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===SESSION_SECURITY_V2_WAVE
+    const result=config.wave===OWNER_CONTROL_TOWER_V1_WAVE
+      ?await runOwnerControlTowerV1Acceptance({pool,base,secret:config.secret})
+      :config.wave===SESSION_SECURITY_V2_WAVE
       ?await runSessionSecurityV2Acceptance({pool,base,secret:config.secret})
       :config.wave===ADULT_ELIGIBILITY_RUNTIME_WAVE
       ?await runAdultEligibilityRuntimeAcceptance({pool,base,secret:config.secret})
@@ -5928,5 +6021,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE
 };

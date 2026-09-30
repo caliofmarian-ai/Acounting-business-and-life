@@ -42,6 +42,10 @@ function highestAssignment(){
   const ranks=new Map((state.catalog?.ranks||[]).map(x=>[x.code,Number(x.level||0)]));
   return [...(state.me?.assignments||[])].sort((a,b)=>(ranks.get(b.effective_rank||b.authority_rank||b.admin_role)||0)-(ranks.get(a.effective_rank||a.authority_rank||a.admin_role)||0))[0]||null;
 }
+function isSuperAdmin(){
+  const a=highestAssignment();
+  return String(a?.effective_rank||a?.authority_rank||a?.admin_role||'')==='super_admin';
+}
 function shell(){
   const visible=modules.filter(m=>hasAny(m.any));
   if(!visible.some(x=>x.id===state.active))state.active=visible[0]?.id||'overview';
@@ -91,11 +95,27 @@ function rows(items,formatter){
   if(!items?.length)return '<div class="empty">Nothing in this scoped view.</div>';
   return '<div class="list">'+items.map(formatter).join('')+'</div>';
 }
-function overviewPanel(){
+function delegatedOverviewPanel(){
   const work=modules.filter(m=>!['overview','settings'].includes(m.id)&&hasAny(m.any));
   return hero()+metrics()+'<div class="sectionTitle"><h3>Available work areas</h3></div>'+(work.length?'<div class="adminOverviewActions">'+work.map(m=>'<button type="button" class="row queueRow" data-overview-module="'+esc(m.id)+'"><strong>'+esc(m.label)+'</strong><span class="muted">'+esc(({members:'Find registered members in your Admin scope',delivery:'Courier, dispatch and delivery pricing',support:'Help users and manage tickets',safety:'Review incidents and safety actions',territories:'Manage operating territory structure',finance:'Company money, budgets and platform economics',audit:'Review activity and operational metrics',team:'Delegate Admin responsibilities'})[m.id]||'Open Admin work area')+'</span><span class="adminRowAction">Open ›</span></button>').join('')+'</div>':'<div class="empty">No operational work areas are delegated to this account.</div>')+'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>TECHNICAL ACCESS</small><strong>Permission references</strong><span>Advanced audit reference only</span></span></summary><div class="adminDisclosureBody"><div class="permissionPills">'+(state.me.permissions||[]).map(p=>'<span>'+esc(p)+'</span>').join('')+'</div></div></details>';
 }
-function wireOverview(){document.querySelectorAll('[data-overview-module]').forEach(button=>button.onclick=()=>activateModule(button.dataset.overviewModule));}
+async function ownerControlTowerPanel(){
+  const payload=await api('/api/admin/owner-control-tower');
+  const module=await import('/owner-control-tower.js');
+  return module.renderOwnerControlTower(payload.model,payload.headline);
+}
+async function overviewPanel(){
+  return isSuperAdmin()?ownerControlTowerPanel():delegatedOverviewPanel();
+}
+function wireOverview(){
+  document.querySelectorAll('[data-overview-module]').forEach(button=>button.onclick=()=>activateModule(button.dataset.overviewModule));
+  document.querySelector('[data-owner-control-refresh]')?.addEventListener('click',()=>renderActive().catch(showError));
+  const sourceModule={payments:'finance',payment_core:'finance',finance:'finance',support:'support',trust_safety:'safety',territory:'territories',territory_governance:'territories'};
+  document.querySelectorAll('[data-owner-decision-source]').forEach(button=>button.onclick=()=>{
+    const target=sourceModule[String(button.dataset.ownerDecisionSource||'')];
+    if(target)activateModule(target);
+  });
+}
 function profileRoleLabel(role){
   return ({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services',customer:'Customer'})[role]||readableCode(role);
 }
@@ -1573,7 +1593,7 @@ async function renderActive(){
   const loading=setTimeout(()=>{if(request===state.renderRequest)p.innerHTML='<div class="adminLoading">Loading '+esc(modules.find(m=>m.id===active)?.label||'Admin data')+'…</div>'},180);
   try{
     let html='',wire=null;
-    if(active==='overview'){html=overviewPanel();wire=wireOverview}
+    if(active==='overview'){html=await overviewPanel();wire=wireOverview}
     else if(active==='members'){html=await membersPanel();wire=wireMembers}
     else if(active==='delivery'){html=await deliveryPanel();wire=wireDelivery}
     else if(active==='support'){html=await queuePanel('support');wire=bindSupportQueue}
