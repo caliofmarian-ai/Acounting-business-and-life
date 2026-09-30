@@ -515,15 +515,21 @@ async function courierTerritoryAuthorized(db,accountId,territoryId){
   return Boolean(q.rowCount);
 }
 async function courierHasActiveDelivery(db,accountId,{excludeDeliveryId=null}={}){
-  const values=[Number(accountId)],extra=excludeDeliveryId==null?'':` AND id<>${values.push(Number(excludeDeliveryId))}`;
-  const q=await db.query(
-    `SELECT 1 FROM deliveries
-      WHERE courier_account_id=$1
-        AND status IN ('courier_assigned','courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer')
-        ${extra}
-      LIMIT 1`,
-    values
-  );
+  const q=excludeDeliveryId==null
+    ?await db.query(
+      `SELECT 1 FROM deliveries
+        WHERE courier_account_id=$1
+          AND status IN ('courier_assigned','courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer')
+        LIMIT 1`,
+      [Number(accountId)]
+    )
+    :await db.query(
+      `SELECT 1 FROM deliveries
+        WHERE courier_account_id=$1 AND id<>$2
+          AND status IN ('courier_assigned','courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer')
+        LIMIT 1`,
+      [Number(accountId),Number(excludeDeliveryId)]
+    );
   return Boolean(q.rowCount);
 }
 async function courierOfferGateFromDb(db,courier,delivery){
@@ -1129,20 +1135,19 @@ app.post('/api/courier/delivery-offers/:offerId/accept',body,async(req,res,next)
     const me=await requireCourier(req),offerId=Number(req.params.offerId);
     await client.query('BEGIN');
     const q=await client.query(`
-      SELECT dof.*,d.*,b.territory_id
+      SELECT dof.id offer_id,dof.delivery_id,dof.offer_round,dof.status offer_status,
+             d.status delivery_status,d.dispatch_round
         FROM delivery_offers dof
         JOIN deliveries d ON d.id=dof.delivery_id
-        JOIN businesses b ON b.id=d.business_id
        WHERE dof.id=$1 AND dof.courier_account_id=$2
        FOR UPDATE OF dof,d
     `,[offerId,me.account.id]);
     if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery offer not found'})}
     const row=q.rows[0],deliveryId=Number(row.delivery_id);
-    if(row.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
-    if(row.delivery_status&&row.delivery_status!=='awaiting_courier'){
+    if(row.offer_status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
+    if(row.delivery_status!=='awaiting_courier'){
       await client.query('ROLLBACK');return res.status(409).json({error:'This delivery has already been taken'});
     }
-    if(row.status==='pending'&&String(row.status)!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
     const delivery=await client.query('SELECT * FROM deliveries WHERE id=$1 FOR UPDATE',[deliveryId]);
     const d=delivery.rows[0];
     if(!d||d.status!=='awaiting_courier'||d.courier_account_id!=null||Number(row.offer_round)!==Number(d.dispatch_round)){
