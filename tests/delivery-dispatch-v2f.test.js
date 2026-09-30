@@ -76,6 +76,9 @@ test('availability can surface already waiting deliveries but active Courier can
   assert.match(block,/offerWaitingDeliveriesToCourier/);
   assert.match(block,/new_offer_count/);
   assert.match(block,/new_offer_delivery_ids/);
+  assert.match(block,/status='withdrawn'/);
+  assert.match(block,/offer_withdrawn_unavailable/);
+  assert.match(block,/withdrawn_offer_count/);
 });
 
 test('Admin assignment is exceptional and cannot override a Courier refusal',()=>{
@@ -88,6 +91,12 @@ test('Admin assignment is exceptional and cannot override a Courier refusal',()=
   assert.match(block,/cannot be force-assigned/);
   assert.match(block,/admin_assignment_override/);
   assert.match(block,/courierOfferGateFromDb/);
+  const adminUi=read('public/admin-console.js');
+  assert.match(adminUi,/Normal dispatch is Courier-controlled/);
+  assert.match(adminUi,/Manual Courier assignment/);
+  assert.match(adminUi,/override_reason/);
+  assert.match(adminUi,/Apply manual override/);
+  assert.doesNotMatch(adminUi,/>Assign<\/button>/);
 });
 
 test('Courier Android UI separates incoming offers from accepted jobs',()=>{
