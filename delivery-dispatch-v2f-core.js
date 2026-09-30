@@ -28,6 +28,7 @@ export function deliveryOfferSafeView(row={}){
     delivery_price:row.delivery_fee==null?null:Number(row.delivery_fee),
     currency_code:clean(row.currency_code||'PHP',10),
     offered_at:row.offered_at||null,
+    expires_at:row.expires_at||null,
     responded_at:row.responded_at||null
   });
 }
