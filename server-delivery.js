@@ -20,6 +20,7 @@ import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocit
 import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routing-v2c.js';
 import {geographyAvailabilityForCode} from './account-geography.js';
 import {DELIVERY_ROUTE_POINT_LIMIT,deliveryRouteTrackingActive,deliveryRoutePointDecision,deliveryProofAllowed} from './delivery-tracking-v2e-core.js';
+import {deliveryOfferSafeView,deliveryOfferCourierGate,deliveryAssignmentActive} from './delivery-dispatch-v2f-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -287,6 +288,39 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivate
   CREATE INDEX IF NOT EXISTS deliveries_business_idx ON deliveries(business_id,status,created_at DESC);
   CREATE INDEX IF NOT EXISTS deliveries_customer_idx ON deliveries(customer_account_id,status,created_at DESC);
   CREATE INDEX IF NOT EXISTS deliveries_courier_idx ON deliveries(courier_account_id,status,created_at DESC);
+  ALTER TABLE deliveries ADD COLUMN IF NOT EXISTS dispatch_round INTEGER NOT NULL DEFAULT 0;
+
+  CREATE TABLE IF NOT EXISTS delivery_offers (
+    id BIGSERIAL PRIMARY KEY,
+    delivery_id BIGINT NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+    courier_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    offer_round INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    offered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    responded_at TIMESTAMPTZ,
+    decline_reason TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(delivery_id,courier_account_id,offer_round),
+    CHECK(status IN ('pending','accepted','declined','withdrawn','expired'))
+  );
+  CREATE INDEX IF NOT EXISTS delivery_offers_courier_idx
+    ON delivery_offers(courier_account_id,status,offered_at DESC);
+  CREATE INDEX IF NOT EXISTS delivery_offers_delivery_idx
+    ON delivery_offers(delivery_id,offer_round,status);
+
+  CREATE TABLE IF NOT EXISTS delivery_dispatch_events (
+    id BIGSERIAL PRIMARY KEY,
+    delivery_id BIGINT NOT NULL REFERENCES deliveries(id) ON DELETE CASCADE,
+    actor_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+    courier_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+    event_code TEXT NOT NULL,
+    offer_round INTEGER,
+    detail_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS delivery_dispatch_events_delivery_idx
+    ON delivery_dispatch_events(delivery_id,created_at DESC);
 
   CREATE TABLE IF NOT EXISTS delivery_location_points (
     id BIGSERIAL PRIMARY KEY,
@@ -460,6 +494,177 @@ async function deliveryProofRows(deliveryId){
     [Number(deliveryId)]
   );
   return rows;
+}
+
+async function deliveryTerritoryId(db,businessId){
+  const q=await db.query('SELECT territory_id FROM businesses WHERE id=$1',[Number(businessId)]);
+  return q.rows[0]?.territory_id==null?null:Number(q.rows[0].territory_id);
+}
+async function courierTerritoryAuthorized(db,accountId,territoryId){
+  const values=[Number(accountId)];
+  let scope='';
+  if(territoryId!=null){values.push(Number(territoryId));scope=' AND territory_id=$2'}
+  const q=await db.query(
+    `SELECT 1
+       FROM profile_authorizations
+      WHERE account_id=$1 AND role='courier' AND status='active'
+        AND (expires_at IS NULL OR expires_at>NOW())${scope}
+      LIMIT 1`,
+    values
+  );
+  return Boolean(q.rowCount);
+}
+async function courierHasActiveDelivery(db,accountId,{excludeDeliveryId=null}={}){
+  const values=[Number(accountId)],extra=excludeDeliveryId==null?'':` AND id<>${values.push(Number(excludeDeliveryId))}`;
+  const q=await db.query(
+    `SELECT 1 FROM deliveries
+      WHERE courier_account_id=$1
+        AND status IN ('courier_assigned','courier_en_route_to_merchant','courier_arrived_at_merchant','picked_up','in_transit','courier_arrived_at_customer')
+        ${extra}
+      LIMIT 1`,
+    values
+  );
+  return Boolean(q.rowCount);
+}
+async function courierOfferGateFromDb(db,courier,delivery){
+  const territoryId=await deliveryTerritoryId(db,delivery.business_id);
+  const [territoryAuthorized,hasActiveDelivery]=await Promise.all([
+    courierTerritoryAuthorized(db,courier.account_id,territoryId),
+    courierHasActiveDelivery(db,courier.account_id,{excludeDeliveryId:delivery.id})
+  ]);
+  return deliveryOfferCourierGate(courier,delivery,{territoryAuthorized,hasActiveDelivery});
+}
+async function eligibleCouriersForDelivery(db,delivery){
+  const q=await db.query(`
+    SELECT c.*,a.display_name courier_name
+      FROM courier_profiles c
+      JOIN accounts a ON a.id=c.account_id
+      JOIN profiles p ON p.account_id=c.account_id AND p.role='courier'
+     WHERE p.enabled=TRUE AND p.status='active'
+       AND c.eligibility_status='approved'
+       AND c.available=TRUE
+       AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW())
+     ORDER BY c.account_id
+  `);
+  const eligible=[];
+  for(const courier of q.rows){
+    const gate=await courierOfferGateFromDb(db,courier,delivery);
+    if(gate.allowed)eligible.push({...courier,dispatch_gate:gate});
+  }
+  return eligible;
+}
+async function pendingCourierOffers(db,accountId,{limit=20}={}){
+  const safeLimit=Math.max(1,Math.min(50,Number(limit)||20));
+  const{rows}=await db.query(`
+    SELECT dof.id,dof.delivery_id,dof.offer_round,dof.status,dof.offered_at,dof.responded_at,
+           o.order_number,b.name business_name,d.route_distance_km,d.estimated_weight_kg,
+           d.estimated_volume_l,d.required_vehicle_class,d.delivery_fee,d.currency_code
+      FROM delivery_offers dof
+      JOIN deliveries d ON d.id=dof.delivery_id
+      JOIN orders o ON o.id=d.order_id
+      JOIN businesses b ON b.id=d.business_id
+     WHERE dof.courier_account_id=$1
+       AND dof.status='pending'
+       AND d.status='awaiting_courier'
+       AND dof.offer_round=d.dispatch_round
+     ORDER BY dof.offered_at ASC,dof.id ASC
+     LIMIT $2
+  `,[Number(accountId),safeLimit]);
+  return rows.map(deliveryOfferSafeView);
+}
+async function recordDispatchEvent(db,{deliveryId,actorAccountId=null,courierAccountId=null,eventCode,offerRound=null,detail={}}){
+  await db.query(`
+    INSERT INTO delivery_dispatch_events(
+      delivery_id,actor_account_id,courier_account_id,event_code,offer_round,detail_json
+    ) VALUES($1,$2,$3,$4,$5,$6::jsonb)
+  `,[
+    Number(deliveryId),actorAccountId==null?null:Number(actorAccountId),
+    courierAccountId==null?null:Number(courierAccountId),
+    clean(eventCode,80),offerRound==null?null:Number(offerRound),JSON.stringify(detail||{})
+  ]);
+}
+async function createOfferRound(db,delivery,{actorAccountId=null}={}){
+  const currentRound=Number(delivery.dispatch_round||0);
+  if(delivery.status==='awaiting_courier'&&currentRound>0){
+    const pending=await db.query(
+      "SELECT COUNT(*)::int count FROM delivery_offers WHERE delivery_id=$1 AND offer_round=$2 AND status='pending'",
+      [Number(delivery.id),currentRound]
+    );
+    if(Number(pending.rows[0]?.count||0)>0){
+      throw Object.assign(new Error('Courier offers are already pending for this delivery'),{status:409,code:'DELIVERY_OFFERS_PENDING'});
+    }
+  }
+  const nextRound=currentRound+1;
+  const candidates=await eligibleCouriersForDelivery(db,delivery);
+  await db.query(`
+    UPDATE deliveries
+       SET status='awaiting_courier',
+           dispatch_round=$1,
+           requested_at=COALESCE(requested_at,NOW()),
+           updated_at=NOW()
+     WHERE id=$2
+  `,[nextRound,Number(delivery.id)]);
+  const offerIds=[],courierIds=[];
+  for(const courier of candidates){
+    const inserted=await db.query(`
+      INSERT INTO delivery_offers(delivery_id,courier_account_id,offer_round,status)
+      VALUES($1,$2,$3,'pending')
+      ON CONFLICT(delivery_id,courier_account_id,offer_round) DO NOTHING
+      RETURNING id
+    `,[Number(delivery.id),Number(courier.account_id),nextRound]);
+    if(inserted.rowCount){
+      offerIds.push(Number(inserted.rows[0].id));
+      courierIds.push(Number(courier.account_id));
+      await recordDispatchEvent(db,{
+        deliveryId:delivery.id,actorAccountId,courierAccountId:courier.account_id,
+        eventCode:'offer_created',offerRound:nextRound,
+        detail:{required_vehicle_class:delivery.required_vehicle_class||'',route_distance_km:Number(delivery.route_distance_km||0)}
+      });
+    }
+  }
+  await recordDispatchEvent(db,{
+    deliveryId:delivery.id,actorAccountId,eventCode:'offer_round_opened',offerRound:nextRound,
+    detail:{offer_count:offerIds.length}
+  });
+  return{round:nextRound,offerIds,courierIds};
+}
+async function offerWaitingDeliveriesToCourier(db,courierAccountId,{limit=5}={}){
+  const courierQ=await db.query('SELECT * FROM courier_profiles WHERE account_id=$1',[Number(courierAccountId)]);
+  if(!courierQ.rowCount)return[];
+  const courier=courierQ.rows[0],q=await db.query(`
+    SELECT d.*
+      FROM deliveries d
+     WHERE d.status='awaiting_courier'
+       AND d.courier_account_id IS NULL
+       AND d.dispatch_round>0
+       AND NOT EXISTS(
+         SELECT 1 FROM delivery_offers dof
+          WHERE dof.delivery_id=d.id
+            AND dof.courier_account_id=$1
+            AND dof.offer_round=d.dispatch_round
+       )
+     ORDER BY d.requested_at ASC NULLS LAST,d.id ASC
+     LIMIT $2
+  `,[Number(courierAccountId),Math.max(1,Math.min(10,Number(limit)||5))]);
+  const created=[];
+  for(const delivery of q.rows){
+    const gate=await courierOfferGateFromDb(db,courier,delivery);
+    if(!gate.allowed)continue;
+    const inserted=await db.query(`
+      INSERT INTO delivery_offers(delivery_id,courier_account_id,offer_round,status)
+      VALUES($1,$2,$3,'pending')
+      ON CONFLICT(delivery_id,courier_account_id,offer_round) DO NOTHING
+      RETURNING id
+    `,[Number(delivery.id),Number(courierAccountId),Number(delivery.dispatch_round)]);
+    if(inserted.rowCount){
+      created.push({offer_id:Number(inserted.rows[0].id),delivery_id:Number(delivery.id)});
+      await recordDispatchEvent(db,{
+        deliveryId:delivery.id,courierAccountId,eventCode:'offer_created_on_availability',
+        offerRound:delivery.dispatch_round,detail:{}
+      });
+    }
+  }
+  return created;
 }
 async function scopedAdminDelivery(req,deliveryId){
   const me=await requireAdmin(req,'delivery.dispatch.manage');
