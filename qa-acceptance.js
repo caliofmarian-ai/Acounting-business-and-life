@@ -4979,6 +4979,26 @@ async function runNotificationsRuntimeV16Acceptance({pool,base,secret}){
   expectStatus(preferences,200,'Notifications Runtime V16 preferences');
   if(!Array.isArray(preferences.json?.categories))throw new Error('Notifications Runtime V16 preference categories are missing.');
 
+  const p50=values=>{const sorted=[...values].sort((a,b)=>a-b);return sorted[Math.floor((sorted.length-1)*0.5)]||0};
+  const timedNotificationRead=async(path,label)=>{
+    const started=performance.now();
+    const response=await requestJson(base,path,{token:customer.token});
+    expectStatus(response,200,label);
+    return performance.now()-started;
+  };
+  for(let i=0;i<2;i++){
+    await timedNotificationRead('/api/notifications?limit=20&threaded=all','Notifications Runtime V16 inbox warmup');
+    await timedNotificationRead('/api/notifications/unread-count?threaded=all','Notifications Runtime V16 unread warmup');
+  }
+  const inboxLatency=[],unreadLatency=[];
+  for(let i=0;i<10;i++){
+    inboxLatency.push(await timedNotificationRead('/api/notifications?limit=20&threaded=all','Notifications Runtime V16 inbox latency sample'));
+    unreadLatency.push(await timedNotificationRead('/api/notifications/unread-count?threaded=all','Notifications Runtime V16 unread latency sample'));
+  }
+  const inboxP50=Math.round(p50(inboxLatency)),unreadP50=Math.round(p50(unreadLatency));
+  if(inboxP50>=750)throw new Error('Notifications Runtime V16 inbox p50 exceeded 750 ms: '+inboxP50+' ms');
+  if(unreadP50>=500)throw new Error('Notifications Runtime V16 unread p50 exceeded 500 ms: '+unreadP50+' ms');
+
   const invalidRaw=JSON.stringify({type:'email.delivered',data:{email_id:'qa-invalid-signature'}});
   const invalidWebhook=await fetch(base+'/api/notifications/webhooks/resend',{
     method:'POST',
@@ -5011,6 +5031,9 @@ async function runNotificationsRuntimeV16Acceptance({pool,base,secret}){
     notification_inbox:true,
     unread_count:true,
     preferences:true,
+    latency_samples:10,
+    inbox_p50_ms:inboxP50,
+    unread_p50_ms:unreadP50,
     transaction_notification_hook:true,
     notification_event_count:eventEvidence.rowCount,
     resend_invalid_signature_fail_closed:true,
