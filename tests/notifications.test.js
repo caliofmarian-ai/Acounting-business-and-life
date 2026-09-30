@@ -34,7 +34,7 @@ test('delivery failure is post-transaction and cannot roll back canonical domain
 test('priority commerce and operations events are wired into one notification gateway',()=>{
   for(const marker of [
     "order.created","order.preparing","order.ready","order.payment_confirmed",
-    "delivery.assigned","delivery.picked_up","delivery.completed",
+    "delivery.offer_received","delivery.assigned","delivery.picked_up","delivery.completed",
     "procurement.po_created","procurement.po_updated","procurement.payment_received",
     "service.request_created","service.quote_created","service.status_changed",
     "support.reply","incident.updated","profile.application_submitted","profile.application_reviewed"
