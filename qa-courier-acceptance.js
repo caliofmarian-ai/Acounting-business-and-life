@@ -411,7 +411,7 @@ async function advanceCourierDelivery({base,courierToken,deliveryId,requestJson,
 async function verifyDeliveryNotifications({base,customerToken,merchantToken,courierToken,deliveryId,requestJson,expectStatus}){
   const requiredCustomer=['delivery.assigned','delivery.picked_up','delivery.in_transit','delivery.arrived','delivery.completed'];
   const requiredMerchant=[...requiredCustomer];
-  const requiredCourier=['delivery.assigned'];
+  const requiredCourier=['delivery.offer_received','delivery.assigned'];
   let customerRows=[],merchantRows=[],courierRows=[];
 
   for(let attempt=0;attempt<25;attempt++){
@@ -619,19 +619,39 @@ export async function runCourierExperienceAcceptance({
   }
 
   if(delivery.status==='awaiting_courier'){
-    const eligible=await requestJson(base,'/api/admin/delivery/eligible-couriers',{token:admin.token});
-    expectStatus(eligible,200,'Admin eligible Courier list');
-    if(!(Array.isArray(eligible.json)?eligible.json:[]).some(x=>Number(x.account_id)===courier.accountId)){
-      throw new Error('Approved QA Courier is missing from eligible dispatch list.');
+    const offers=await requestJson(base,'/api/courier/delivery-offers',{token:courier.token});
+    expectStatus(offers,200,'Courier pending delivery offers');
+    const firstOffer=(Array.isArray(offers.json)?offers.json:[]).find(x=>Number(x.delivery_id)===deliveryId);
+    if(!firstOffer)throw new Error('Approved available QA Courier did not receive the Delivery offer.');
+    if(Object.hasOwn(firstOffer,'dropoff_address')||Object.hasOwn(firstOffer,'dropoff_lat')||Object.hasOwn(firstOffer,'dropoff_lng')){
+      throw new Error('Pre-accept Courier offer leaked the exact Customer destination.');
     }
-    const assigned=await requestJson(base,'/api/admin/deliveries/'+deliveryId+'/assign',{
-      method:'POST',token:admin.token,body:{courier_account_id:courier.accountId}
+
+    const declined=await requestJson(base,'/api/courier/delivery-offers/'+firstOffer.id+'/decline',{
+      method:'POST',token:courier.token,body:{reason:'Controlled QA refusal before re-offer'}
     });
-    expectStatus(assigned,200,'Admin Courier assignment');
-    delivery=assigned.json;
+    expectStatus(declined,200,'Courier Delivery offer refusal');
+
+    const reoffered=await requestJson(base,'/api/delivery/'+deliveryId+'/request-courier',{
+      method:'POST',token:merchant.token,body:{}
+    });
+    expectStatus(reoffered,200,'Merchant Courier re-offer after refusal');
+    if(Number(reoffered.json?.dispatch_offer_count||0)<1)throw new Error('Courier re-offer did not reach an eligible available Courier.');
+
+    const offersAgain=await requestJson(base,'/api/courier/delivery-offers',{token:courier.token});
+    expectStatus(offersAgain,200,'Courier re-offered delivery list');
+    const acceptedOffer=(Array.isArray(offersAgain.json)?offersAgain.json:[]).find(x=>Number(x.delivery_id)===deliveryId);
+    if(!acceptedOffer||Number(acceptedOffer.id)===Number(firstOffer.id))throw new Error('Courier did not receive a new governed offer after refusal.');
+
+    const accepted=await requestJson(base,'/api/courier/delivery-offers/'+acceptedOffer.id+'/accept',{
+      method:'POST',token:courier.token,body:{}
+    });
+    expectStatus(accepted,200,'Courier accepts Delivery offer');
+    delivery=accepted.json;
+    if(delivery.assignment_mode!=='courier_accept')throw new Error('Courier acceptance did not record courier_accept assignment mode.');
   }
-  if(Number(delivery.courier_account_id)!==courier.accountId){
-    throw new Error('Courier QA delivery was assigned to the wrong account.');
+  if(Number(delivery.courier_account_id)!==courier.accountId||delivery.status!=='courier_assigned'){
+    throw new Error('Courier QA delivery was not assigned by Courier acceptance.');
   }
 
   if(delivery.status!=='delivered'){

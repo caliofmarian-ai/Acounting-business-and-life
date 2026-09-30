@@ -771,14 +771,14 @@ function courierProfileJourneyDefinition(journey,label){
   if(step==='courier_availability_area')return{
     step,
     title:tr('courier_tour.availability_title',{},'Availability and operating area'),
-    body:tr('courier_tour.availability_body',{},'After approval, you decide when you are available for assignments. Your operating or start area is coarse work geography, not a public home address. A current job location belongs only to that delivery and must not turn your private home address into a public Courier location.'),
+    body:tr('courier_tour.availability_body',{},'After approval, you decide when you are available for delivery offers. Your operating or start area is coarse work geography, not a public home address. A current job location belongs only to a delivery you accepted and must not turn your private home address into a public Courier location.'),
     target:courierJourneyTarget('#courierHomeAvailabilityAction','[data-courier-home-open="Availability"]','#courierAvailable','[data-hub-feature="Profile Settings"]'),
     primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
   };
   if(step==='courier_assignments_workflow')return{
     step,
-    title:tr('courier_tour.assignments_title',{},'Assigned deliveries and the pickup workflow'),
-    body:tr('courier_tour.assignments_body',{},'Work from the assigned Delivery queue and the recorded status sequence. An offer, message or note is not an accepted job unless the platform records the assignment. Update the real pickup and transit state only when it happens; never use a later status just to move the screen forward.'),
+    title:tr('courier_tour.assignments_title',{},'Delivery offers, acceptance and pickup workflow'),
+    body:tr('courier_tour.assignments_body',{},'When you are Available, eligible delivery offers can arrive. Review each offer and choose Accept or Refuse. Only a successful Accept makes the delivery your assigned job; only then use Start route and the recorded pickup/transit sequence. Never advance a status just to move the screen forward.'),
     target:courierJourneyTarget('#courierHomeWork','[data-courier-nav="deliveries"]','[data-courier-status]','#deliveryWorkspace'),
     primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
   };

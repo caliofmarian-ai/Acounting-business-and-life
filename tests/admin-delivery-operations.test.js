@@ -38,5 +38,10 @@ test('Admin Delivery is a separate permission-driven module',()=>{
   assert.match(adminUi,/adminDeliveryPricingForm/);
   assert.match(adminUi,/data-courier-decision/);
   assert.match(adminUi,/data-delivery-assign/);
+  assert.match(adminUi,/Manual Courier assignment/);
+  assert.match(adminUi,/override_reason/);
+  assert.match(adminUi,/Apply manual override/);
+  assert.match(adminUi,/Normal dispatch is Courier-controlled/);
+  assert.doesNotMatch(adminUi,/>Assign<\/button>/);
   assert.doesNotMatch(merchantUi,/\/api\/admin\//);
 });

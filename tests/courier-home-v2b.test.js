@@ -50,7 +50,11 @@ test('Courier Home prioritizes active route then assigned delivery without inven
   }
   assert.match(block,/destination:'Tracking'/);
   assert.match(block,/destination:'Deliveries'/);
-  assert.match(block,/No assigned delivery right now/);
+  assert.match(block,/No delivery job or offer right now/);
+  assert.match(block,/offers\.length/);
+  assert.match(block,/offer'\+\(offers\.length===1\?'':'s'\)\+' waiting/);
+  assert.match(block,/Review offers/);
+  assert.match(block,/Accept or Refuse/);
 });
 
 test('Courier Home never turns customer delivery fees into Courier earnings',()=>{
