@@ -226,7 +226,7 @@
   "service_tour.readiness_title": "Readiness, categories and credentials",
   "service_tour.readiness_body": "Choose only services you actually offer and keep credentials truthful with their real verification status. Business & Life platform eligibility is not a government or professional licence, and the app must not invent a licence requirement. Requirements depend on the actual service and should be checked through current Compliance & Training guidance.",
   "service_tour.visibility_title": "Profile visibility and service area",
-  "service_tour.visibility_body": "Your service area describes where you work; it is not permission to publish a private home or workshop address. If your base is private or home-based, keep its exact address private by default. A Customer job address is separate and belongs only to the accepted job that needs it.",
+  "service_tour.visibility_body": "Your public service area and optional radius describe where you work. Your exact service base is a separate override: it stays private by default and becomes public only if you explicitly choose Public. If no override is set, your personal/home address stays private and is not copied into the Local Services profile. A Customer job address is a third, separate location that is released only for active fulfilment and remains job-scoped.",
   "service_tour.offers_title": "Services, guide prices and scope",
   "service_tour.offers_body": "Publish only the categories and tasks you really provide. Guide prices, hourly rates, ranges and call-out fees explain how you usually charge; they are not the final job bill. The payable commercial amount comes from the exact itemised quote the Customer accepts.",
   "service_tour.quotes_title": "Quotes and approved changes",
