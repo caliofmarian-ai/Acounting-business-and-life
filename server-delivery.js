@@ -1086,8 +1086,34 @@ app.put('/api/courier/availability',body,async(req,res,next)=>{try{
   if(available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});
   if(available&&await courierHasActiveDelivery(pool,me.account.id))return res.status(409).json({error:'Finish the active delivery before becoming available for another offer'});
   await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[available,me.account.id]);
-  const created=available?await offerWaitingDeliveriesToCourier(pool,me.account.id,{limit:5}):[];
-  res.json({ok:true,available,new_offer_count:created.length,new_offer_delivery_ids:created.map(x=>x.delivery_id)});
+  let created=[],withdrawn=[];
+  if(available){
+    created=await offerWaitingDeliveriesToCourier(pool,me.account.id,{limit:5});
+  }else{
+    const q=await pool.query(`
+      UPDATE delivery_offers
+         SET status='withdrawn',responded_at=NOW(),updated_at=NOW()
+       WHERE courier_account_id=$1 AND status='pending'
+       RETURNING delivery_id,offer_round
+    `,[me.account.id]);
+    withdrawn=q.rows;
+    for(const offer of withdrawn){
+      await recordDispatchEvent(pool,{
+        deliveryId:offer.delivery_id,
+        actorAccountId:me.account.id,
+        courierAccountId:me.account.id,
+        eventCode:'offer_withdrawn_unavailable',
+        offerRound:offer.offer_round,
+        detail:{}
+      });
+    }
+  }
+  res.json({
+    ok:true,available,
+    new_offer_count:created.length,
+    new_offer_delivery_ids:created.map(x=>x.delivery_id),
+    withdrawn_offer_count:withdrawn.length
+  });
 }catch(e){next(e)}})
 app.get('/api/courier/delivery-offers',async(req,res,next)=>{try{
   const me=await requireCourier(req);
