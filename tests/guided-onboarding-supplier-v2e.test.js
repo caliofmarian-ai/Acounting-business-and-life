@@ -77,7 +77,7 @@ test('Supplier coachmarks point at real Supplier, finance and settings controls'
   assert.match(settings,/id="profileFinancialDocuments"/);
   assert.match(settings,/data-profile-settings-view="finance"/);
   assert.match(settings,/id="openAccountMoneyFromProfile"/);
-  assert.match(ui,/supplierJourneyTarget\('#supplierProfile','#catalogAdd','#supplierActivities'/);
+  assert.match(ui,/supplierJourneyTarget\('#supplierProfile','#supplierOperatingLocationForm','#catalogAdd','#supplierActivities'/);
   assert.match(ui,/supplierJourneyTarget\('\[data-sup-respond\]','#supReady','#supDeliveryEta'/);
   assert.match(ui,/supplierJourneyTarget\('\[data-sup-shortage\]'/);
 });
