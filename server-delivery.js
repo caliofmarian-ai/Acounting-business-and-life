@@ -21,6 +21,7 @@ import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routi
 import {geographyAvailabilityForCode} from './account-geography.js';
 import {DELIVERY_ROUTE_POINT_LIMIT,deliveryRouteTrackingActive,deliveryRoutePointDecision,deliveryProofAllowed} from './delivery-tracking-v2e-core.js';
 import {deliveryOfferSafeView,deliveryOfferCourierGate,deliveryAssignmentActive} from './delivery-dispatch-v2f-core.js';
+import {deliveryOfferTtlSeconds,deliveryOfferExpired} from './delivery-dispatch-v2g-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -298,6 +299,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivate
     offer_round INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     offered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
     responded_at TIMESTAMPTZ,
     decline_reason TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -309,6 +311,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivate
     ON delivery_offers(courier_account_id,status,offered_at DESC);
   CREATE INDEX IF NOT EXISTS delivery_offers_delivery_idx
     ON delivery_offers(delivery_id,offer_round,status);
+  ALTER TABLE delivery_offers ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
   CREATE TABLE IF NOT EXISTS delivery_dispatch_events (
     id BIGSERIAL PRIMARY KEY,
@@ -414,7 +417,14 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivate
   UPDATE deliveries SET platform_fee_basis_amount=service_fare WHERE platform_fee_basis_amount=0 AND service_fare>0;
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS merchandise_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
-`)}
+`);
+  const offerTtl=deliveryOfferTtlSeconds(process.env);
+  await pool.query(`
+    UPDATE delivery_offers
+       SET expires_at=offered_at+make_interval(secs=>$1::int),updated_at=NOW()
+     WHERE status='pending' AND expires_at IS NULL
+  `,[offerTtl]);
+}
 
 async function activeRule(){const r=await pool.query(`SELECT * FROM delivery_pricing_rules WHERE country_code='PH' AND active=TRUE ORDER BY version DESC LIMIT 1`);return r.rows[0]||null}
 async function vehicleRulesForPricingRule(pricingRuleId){
@@ -560,10 +570,40 @@ async function eligibleCouriersForDelivery(db,delivery){
   }
   return eligible;
 }
+async function expireStaleDeliveryOffers(db,{deliveryId=null,courierAccountId=null,businessId=null}={}){
+  const values=[],where=["dof.status='pending'","dof.expires_at IS NOT NULL","dof.expires_at<=NOW()"];
+  if(deliveryId!=null){values.push(Number(deliveryId));where.push(`dof.delivery_id=${values.length}`)}
+  if(courierAccountId!=null){values.push(Number(courierAccountId));where.push(`dof.courier_account_id=${values.length}`)}
+  if(businessId!=null){
+    values.push(Number(businessId));
+    where.push(`EXISTS(SELECT 1 FROM deliveries dx WHERE dx.id=dof.delivery_id AND dx.business_id=${values.length})`);
+  }
+  const{rows}=await db.query(`
+    UPDATE delivery_offers dof
+       SET status='expired',
+           responded_at=COALESCE(responded_at,NOW()),
+           updated_at=NOW()
+     WHERE ${where.join(' AND ')}
+     RETURNING id,delivery_id,courier_account_id,offer_round
+  `,values);
+  for(const row of rows){
+    await db.query(`
+      INSERT INTO delivery_dispatch_events(
+        delivery_id,actor_account_id,courier_account_id,event_code,offer_round,detail_json
+      ) VALUES($1,NULL,$2,'offer_expired',$3,$4::jsonb)
+    `,[
+      Number(row.delivery_id),Number(row.courier_account_id),Number(row.offer_round),
+      JSON.stringify({offer_id:Number(row.id)})
+    ]);
+  }
+  return rows;
+}
+
 async function pendingCourierOffers(db,accountId,{limit=20}={}){
+  await expireStaleDeliveryOffers(db,{courierAccountId:accountId});
   const safeLimit=Math.max(1,Math.min(50,Number(limit)||20));
   const{rows}=await db.query(`
-    SELECT dof.id,dof.delivery_id,dof.offer_round,dof.status,dof.offered_at,dof.responded_at,
+    SELECT dof.id,dof.delivery_id,dof.offer_round,dof.status,dof.offered_at,dof.expires_at,dof.responded_at,
            o.order_number,b.name business_name,d.route_distance_km,d.estimated_weight_kg,
            d.estimated_volume_l,d.required_vehicle_class,d.delivery_fee,d.currency_code
       FROM delivery_offers dof
@@ -572,6 +612,7 @@ async function pendingCourierOffers(db,accountId,{limit=20}={}){
       JOIN businesses b ON b.id=d.business_id
      WHERE dof.courier_account_id=$1
        AND dof.status='pending'
+       AND dof.expires_at>NOW()
        AND d.status='awaiting_courier'
        AND dof.offer_round=d.dispatch_round
      ORDER BY dof.offered_at ASC,dof.id ASC
@@ -591,7 +632,8 @@ async function recordDispatchEvent(db,{deliveryId,actorAccountId=null,courierAcc
   ]);
 }
 async function createOfferRound(db,delivery,{actorAccountId=null}={}){
-  const currentRound=Number(delivery.dispatch_round||0);
+  await expireStaleDeliveryOffers(db,{deliveryId:delivery.id});
+  const currentRound=Number(delivery.dispatch_round||0),offerTtl=deliveryOfferTtlSeconds(process.env);
   if(delivery.status==='awaiting_courier'&&currentRound>0){
     const pending=await db.query(
       "SELECT COUNT(*)::int count FROM delivery_offers WHERE delivery_id=$1 AND offer_round=$2 AND status='pending'",
@@ -614,11 +656,11 @@ async function createOfferRound(db,delivery,{actorAccountId=null}={}){
   const offerIds=[],courierIds=[];
   for(const courier of candidates){
     const inserted=await db.query(`
-      INSERT INTO delivery_offers(delivery_id,courier_account_id,offer_round,status)
-      VALUES($1,$2,$3,'pending')
+      INSERT INTO delivery_offers(delivery_id,courier_account_id,offer_round,status,expires_at)
+      VALUES($1,$2,$3,'pending',NOW()+make_interval(secs=>$4::int))
       ON CONFLICT(delivery_id,courier_account_id,offer_round) DO NOTHING
       RETURNING id
-    `,[Number(delivery.id),Number(courier.account_id),nextRound]);
+    `,[Number(delivery.id),Number(courier.account_id),nextRound,offerTtl]);
     if(inserted.rowCount){
       offerIds.push(Number(inserted.rows[0].id));
       courierIds.push(Number(courier.account_id));
@@ -636,6 +678,8 @@ async function createOfferRound(db,delivery,{actorAccountId=null}={}){
   return{round:nextRound,offerIds,courierIds};
 }
 async function offerWaitingDeliveriesToCourier(db,courierAccountId,{limit=5}={}){
+  await expireStaleDeliveryOffers(db,{courierAccountId});
+  const offerTtl=deliveryOfferTtlSeconds(process.env);
   const courierQ=await db.query('SELECT * FROM courier_profiles WHERE account_id=$1',[Number(courierAccountId)]);
   if(!courierQ.rowCount)return[];
   const courier=courierQ.rows[0],q=await db.query(`
@@ -658,11 +702,11 @@ async function offerWaitingDeliveriesToCourier(db,courierAccountId,{limit=5}={})
     const gate=await courierOfferGateFromDb(db,courier,delivery);
     if(!gate.allowed)continue;
     const inserted=await db.query(`
-      INSERT INTO delivery_offers(delivery_id,courier_account_id,offer_round,status)
-      VALUES($1,$2,$3,'pending')
+      INSERT INTO delivery_offers(delivery_id,courier_account_id,offer_round,status,expires_at)
+      VALUES($1,$2,$3,'pending',NOW()+make_interval(secs=>$4::int))
       ON CONFLICT(delivery_id,courier_account_id,offer_round) DO NOTHING
       RETURNING id
-    `,[Number(delivery.id),Number(courierAccountId),Number(delivery.dispatch_round)]);
+    `,[Number(delivery.id),Number(courierAccountId),Number(delivery.dispatch_round),offerTtl]);
     if(inserted.rowCount){
       created.push({offer_id:Number(inserted.rows[0].id),delivery_id:Number(delivery.id)});
       await recordDispatchEvent(db,{
@@ -978,7 +1022,35 @@ app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{
 }catch(e){next(e)}})
 
 app.put('/api/delivery/store-location',body,async(req,res,next)=>{try{const{me,business:b}=await requireMerchant(req,Number(req.body?.business_id||undefined)),lat=Number(req.body?.lat),lng=Number(req.body?.lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid coordinates required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'store_location_change',subjectType:'merchant_storefront',subjectId:b.id});await pool.query(`UPDATE merchant_storefronts SET pickup_lat=$1,pickup_lng=$2,updated_at=NOW() WHERE business_id=$3`,[lat,lng,b.id]);res.json({ok:true,pickup_lat:lat,pickup_lng:lng})}catch(e){next(e)}})
-app.get('/api/delivery/merchant',async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.query.business_id||undefined));const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,cp.display_name courier_name,cp.vehicle_type FROM deliveries d JOIN orders o ON o.id=d.order_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.business_id=$1 ORDER BY d.created_at DESC LIMIT 200`,[b.id]);res.json(rows.map(d=>deliveryPrivacyView(d,'merchant')))}catch(e){next(e)}})
+app.get('/api/delivery/merchant',async(req,res,next)=>{try{
+  const{business:b}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  await expireStaleDeliveryOffers(pool,{businessId:b.id});
+  const{rows}=await pool.query(`
+    SELECT d.*,o.order_number,o.order_status,o.payment_status,
+           cp.display_name courier_name,cp.vehicle_type,
+           (
+             SELECT COUNT(*)::int FROM delivery_offers dof
+              WHERE dof.delivery_id=d.id
+                AND dof.offer_round=d.dispatch_round
+                AND dof.status='pending'
+                AND dof.expires_at>NOW()
+           ) dispatch_pending_offer_count,
+           (
+             SELECT MIN(dof.expires_at) FROM delivery_offers dof
+              WHERE dof.delivery_id=d.id
+                AND dof.offer_round=d.dispatch_round
+                AND dof.status='pending'
+                AND dof.expires_at>NOW()
+           ) dispatch_next_offer_expiry
+      FROM deliveries d
+      JOIN orders o ON o.id=d.order_id
+      LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id
+     WHERE d.business_id=$1
+     ORDER BY d.created_at DESC
+     LIMIT 200
+  `,[b.id]);
+  res.json(rows.map(d=>deliveryPrivacyView(d,'merchant')));
+}catch(e){next(e)}})
 app.post('/api/delivery/:id/request-courier',body,async(req,res,next)=>{
   const client=await pool.connect();
   try{
@@ -1135,6 +1207,12 @@ app.post('/api/courier/delivery-offers/:offerId/decline',body,async(req,res,next
     `,[offerId,me.account.id]);
     if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery offer not found'})}
     const offer=q.rows[0];
+    if(deliveryOfferExpired(offer.expires_at)){
+      await client.query(`UPDATE delivery_offers SET status='expired',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW() WHERE id=$1 AND status='pending'`,[offerId]);
+      await recordDispatchEvent(client,{deliveryId:offer.delivery_id,actorAccountId:me.account.id,courierAccountId:me.account.id,eventCode:'offer_expired',offerRound:offer.offer_round,detail:{offer_id:offerId}});
+      await client.query('COMMIT');
+      return res.status(409).json({error:'This delivery offer has expired',code:'DELIVERY_OFFER_EXPIRED'});
+    }
     if(offer.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
     if(offer.delivery_status!=='awaiting_courier'||Number(offer.offer_round)!==Number(offer.dispatch_round)){
       await client.query(`UPDATE delivery_offers SET status='withdrawn',responded_at=NOW(),updated_at=NOW() WHERE id=$1`,[offerId]);
@@ -1162,7 +1240,7 @@ app.post('/api/courier/delivery-offers/:offerId/accept',body,async(req,res,next)
     const me=await requireCourier(req),offerId=Number(req.params.offerId);
     await client.query('BEGIN');
     const q=await client.query(`
-      SELECT dof.id offer_id,dof.delivery_id,dof.offer_round,dof.status offer_status,
+      SELECT dof.id offer_id,dof.delivery_id,dof.offer_round,dof.status offer_status,dof.expires_at,
              d.status delivery_status,d.dispatch_round
         FROM delivery_offers dof
         JOIN deliveries d ON d.id=dof.delivery_id
@@ -1171,6 +1249,12 @@ app.post('/api/courier/delivery-offers/:offerId/accept',body,async(req,res,next)
     `,[offerId,me.account.id]);
     if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery offer not found'})}
     const row=q.rows[0],deliveryId=Number(row.delivery_id);
+    if(deliveryOfferExpired(row.expires_at)){
+      await client.query(`UPDATE delivery_offers SET status='expired',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW() WHERE id=$1 AND status='pending'`,[offerId]);
+      await recordDispatchEvent(client,{deliveryId,actorAccountId:me.account.id,courierAccountId:me.account.id,eventCode:'offer_expired',offerRound:row.offer_round,detail:{offer_id:offerId}});
+      await client.query('COMMIT');
+      return res.status(409).json({error:'This delivery offer has expired',code:'DELIVERY_OFFER_EXPIRED'});
+    }
     if(row.offer_status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
     if(row.delivery_status!=='awaiting_courier'){
       await client.query('ROLLBACK');return res.status(409).json({error:'This delivery has already been taken'});
