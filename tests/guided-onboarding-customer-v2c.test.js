@@ -22,7 +22,7 @@ test('Customer keeps its own versioned complete journey while unfinished profile
   assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.merchant.version,2);
   assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.supplier.version,2);
   assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.courier.version,2);
-  assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.service_provider.version,1);
+  assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.service_provider.version,2);
   assert.deepEqual(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.customer.steps,GUIDED_ONBOARDING_CUSTOMER_STEPS);
   assert.match(core,/profileDefinition\(role\)/);
   assert.match(core,/journey_version DESC LIMIT 1/);

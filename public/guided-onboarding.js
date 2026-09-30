@@ -827,6 +827,79 @@ function courierProfileJourneyDefinition(journey,label){
   return null;
 }
 
+
+function serviceProviderJourneyTarget(...selectors){
+  return firstVisible(...selectors,'#serviceProviderHomeStatus','#serviceProviderHomeWork','#serviceProviderHomeMoney','.hubHero','#roleHub');
+}
+function serviceProviderProfileJourneyDefinition(journey,label){
+  const role='service_provider',step=journey?.current_step_id||journey?.steps?.find(x=>!(journey?.completed_steps||[]).includes(x))||'profile_welcome';
+  const next=()=>completeProfileTourStep(role,step);
+  if(step==='profile_welcome')return{
+    step,
+    title:tr('profile_tour.welcome_title',{role:label},'{role} tutorial'),
+    body:tr('service_tour.welcome_body',{},'This Local Services tutorial explains readiness, visibility, service area, pricing, quotes, jobs, Customer privacy, work evidence, money and safety before secondary promotion features.'),
+    target:serviceProviderJourneyTarget('.hubHero','#serviceProviderHomeStatus'),
+    primary:tr('action.continue',{},'Continue'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_readiness_credentials')return{
+    step,
+    title:tr('service_tour.readiness_title',{},'Readiness, categories and credentials'),
+    body:tr('service_tour.readiness_body',{},'Choose only services you actually offer and keep credentials truthful with their real verification status. Business & Life platform eligibility is not a government or professional licence, and the app must not invent a licence requirement. Requirements depend on the actual service and should be checked through current Compliance & Training guidance.'),
+    target:serviceProviderJourneyTarget('#serviceReadinessForm','#serviceOperatingContext','[data-service-provider-section="Qualifications"]','#addCredential'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_visibility_area')return{
+    step,
+    title:tr('service_tour.visibility_title',{},'Profile visibility and service area'),
+    body:tr('service_tour.visibility_body',{},'Your service area describes where you work; it is not permission to publish a private home or workshop address. If your base is private or home-based, keep its exact address private by default. A Customer job address is separate and belongs only to the accepted job that needs it.'),
+    target:serviceProviderJourneyTarget('#providerProfileForm','#providerArea','#providerVisibility','#serviceOperatingContext'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_offers_pricing')return{
+    step,
+    title:tr('service_tour.offers_title',{},'Services, guide prices and scope'),
+    body:tr('service_tour.offers_body',{},'Publish only the categories and tasks you really provide. Guide prices, hourly rates, ranges and call-out fees explain how you usually charge; they are not the final job bill. The payable commercial amount comes from the exact itemised quote the Customer accepts.'),
+    target:serviceProviderJourneyTarget('[data-service-provider-section="Services"]','#providerServicesForm','[data-service-category]','[data-service-field="pricing_method"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_quotes_changes')return{
+    step,
+    title:tr('service_tour.quotes_title',{},'Quotes and approved changes'),
+    body:tr('service_tour.quotes_body',{},'Send an itemised quote that matches the requested work. A quote becomes the agreed price only when the Customer accepts that exact version. If scope or price changes later, use a change order and wait for explicit Customer acceptance; silence or continuing the work is not approval.'),
+    target:serviceProviderJourneyTarget('[data-service-provider-section="Quotes"]','#providerJobs','[data-job-action="quote"]','[data-job-action="change_order"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_jobs_privacy')return{
+    step,
+    title:tr('service_tour.jobs_title',{},'Job lifecycle and Customer address privacy'),
+    body:tr('service_tour.jobs_body',{},'Keep job status aligned with what actually happened: accepted, scheduled, in progress and completed. Before quote acceptance you should have only the coarse area. The exact Customer service address is released only for active fulfilment, each access is logged, and it must not be copied into public notes or reused after the job.'),
+    target:serviceProviderJourneyTarget('[data-service-provider-section="Jobs"]','#providerJobs','[data-job-action="view_location"]','[data-job-action="in_progress"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_work_evidence_consent')return{
+    step,
+    title:tr('service_tour.evidence_title',{},'Work evidence and publication consent'),
+    body:tr('service_tour.evidence_body',{},'Before/after photos, job notes, credentials and other work evidence must describe the real work and stay private when they contain Customer or location information. A portfolio example linked to a Customer job may become public only with the Customer publication consent recorded for that job; never treat job completion as media or promotion consent.'),
+    target:serviceProviderJourneyTarget('[data-service-provider-section="Qualifications"]','#addCredential','#editProviderCv','[data-service-provider-section="Jobs"]'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_money_payments')return{
+    step,
+    title:tr('service_tour.money_title',{},'Job value, payments, fees and settlement'),
+    body:tr('service_tour.money_body',{},'A Customer-confirmed completed job value is commercial value, not proof that money was received. Customer payment evidence comes from verified payment records; Provider income and settlement require the separate service_provider_net evidence when configured. Keep outstanding, paid, refunded and settlement states distinct.'),
+    target:serviceProviderJourneyTarget('[data-service-provider-nav="money"]','[data-service-provider-home-money]','#serviceProviderHomeMoney','#profileMoneyWorkspace'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  if(step==='service_safety_compliance')return{
+    step,
+    title:tr('service_tour.safety_title',{},'Safety, incidents, compliance and Support'),
+    body:tr('service_tour.safety_body',{},'For unsafe work, injury, harassment, serious damage, fraud concerns or privacy problems, protect people first and use the appropriate private incident or Help & Support flow. Do not invent legal or licence requirements from the tutorial; use the current versioned Compliance & Training guidance for the specific service and keep Customer data and private evidence out of public notes.'),
+    target:serviceProviderJourneyTarget('#lazySupportBtn','[data-help-support]','[data-service-provider-section="Qualifications"]','#serviceProviderHomeWork'),
+    primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
+  };
+  return null;
+}
+
 function profileJourneyDefinition(journey){
   const role=journey?.profile_role||'',label=roleLabelFor(role),steps=Array.isArray(journey?.steps)&&journey.steps.length?journey.steps:PROFILE_STEP_ORDER,step=journey?.current_step_id||steps.find(x=>!(journey?.completed_steps||[]).includes(x))||steps[0]||'profile_welcome';
   if(!journey?.is_active_profile)return{
@@ -852,6 +925,10 @@ function profileJourneyDefinition(journey){
   if(role==='courier'){
     const courier=courierProfileJourneyDefinition(journey,label);
     if(courier)return courier;
+  }
+  if(role==='service_provider'){
+    const provider=serviceProviderProfileJourneyDefinition(journey,label);
+    if(provider)return provider;
   }
   if(step==='profile_welcome')return{
     step,
