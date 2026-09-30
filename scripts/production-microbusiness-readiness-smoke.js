@@ -12,8 +12,6 @@ import {
 
 const {Pool}=pg;
 const fail=message=>{throw new Error(message)};
-const truthy=value=>Boolean(value);
-
 function evidenceFor(state){
   return microbusinessReadinessReviewRequirements(state).map(item=>({
     code:item.code,
@@ -22,6 +20,68 @@ function evidenceFor(state){
     source_authority:'Business & Life production smoke fixture — transaction rolled back',
     note:'Temporary company_test verification inside rollback-only Production smoke.'
   }));
+}
+
+
+async function createTemporaryCompanyTestFixture(client){
+  const suffix=String(Date.now())+'-'+String(process.pid);
+  const createAccount=async(role,label)=>{
+    const q=await client.query(
+      `INSERT INTO accounts(
+         display_name,email,account_mode,test_role,email_verified_at,auth_status
+       ) VALUES($1,$2,'company_test',$3,NOW(),'active')
+       RETURNING id`,
+      [label,`production-smoke-${role}-${suffix}@business-life.invalid`,role]
+    );
+    const accountId=Number(q.rows[0]?.id);
+    if(!Number.isInteger(accountId)||accountId<1)fail('Could not create temporary '+role+' company_test account.');
+    await client.query(
+      `INSERT INTO profiles(account_id,role,enabled,visibility,status)
+       VALUES($1,$2,TRUE,'private','active')`,
+      [accountId,role]
+    );
+    return accountId;
+  };
+
+  const merchantAccountId=await createAccount('merchant','Production Smoke Merchant');
+  const businessQ=await client.query(
+    `INSERT INTO businesses(name,country_code,currency_code)
+     VALUES('Production Smoke Merchant','PH','PHP')
+     RETURNING id`
+  );
+  const businessId=Number(businessQ.rows[0]?.id);
+  if(!Number.isInteger(businessId)||businessId<1)fail('Could not create temporary Merchant business.');
+  await client.query(
+    `INSERT INTO business_memberships(business_id,account_id,membership_role,active)
+     VALUES($1,$2,'owner',TRUE)`,
+    [businessId,merchantAccountId]
+  );
+  await client.query(
+    `INSERT INTO merchant_storefronts(
+       business_id,store_name,merchant_domain,publication_status,presence_type,
+       public_location_enabled,opening_status,pickup_enabled,delivery_enabled,
+       cash_enabled,online_enabled,public_reputation_enabled,price_comparison_enabled
+     ) VALUES($1,'Production Smoke Store','non_food','published','online',
+       FALSE,'open',TRUE,FALSE,TRUE,FALSE,FALSE,FALSE)`,
+    [businessId]
+  );
+
+  const providerAccountId=await createAccount('service_provider','Production Smoke Local Services');
+  await client.query(
+    `INSERT INTO service_provider_profiles(account_id,display_name)
+     VALUES($1,'Production Smoke Local Services')`,
+    [providerAccountId]
+  );
+  await client.query(
+    `UPDATE profiles SET visibility='public',updated_at=NOW()
+      WHERE account_id=$1 AND role='service_provider'`,
+    [providerAccountId]
+  );
+
+  return{
+    merchant:{accountId:merchantAccountId,businessId},
+    provider:{accountId:providerAccountId}
+  };
 }
 
 async function ensureTestAuthorization(client,{accountId,role}){
@@ -66,17 +126,8 @@ async function run(){
     began=true;
     await ensureMicrobusinessReadinessSchema(client);
 
-    const merchantQ=await client.query(
-      `SELECT a.id account_id,bm.business_id
-         FROM accounts a
-         JOIN business_memberships bm ON bm.account_id=a.id AND bm.active=TRUE
-         JOIN merchant_storefronts ms ON ms.business_id=bm.business_id
-        WHERE a.account_mode='company_test' AND a.test_role='merchant'
-        ORDER BY a.id,bm.business_id
-        LIMIT 1`
-    );
-    if(merchantQ.rowCount!==1)fail('No company_test Merchant with business/storefront is available for Production smoke.');
-    const merchant={accountId:Number(merchantQ.rows[0].account_id),businessId:Number(merchantQ.rows[0].business_id)};
+    const fixture=await createTemporaryCompanyTestFixture(client);
+    const merchant=fixture.merchant;
     await ensureTestAuthorization(client,{accountId:merchant.accountId,role:'merchant'});
     await client.query(
       "UPDATE merchant_storefronts SET publication_status='published',updated_at=NOW() WHERE business_id=$1",
@@ -132,17 +183,7 @@ async function run(){
     });
     if(!merchantAllowed.allowed)fail('Merchant eligible_full requirement did not allow commerce.');
 
-    const providerQ=await client.query(
-      `SELECT a.id account_id
-         FROM accounts a
-         JOIN profiles p ON p.account_id=a.id AND p.role='service_provider'
-         JOIN service_provider_profiles sp ON sp.account_id=a.id
-        WHERE a.account_mode='company_test' AND a.test_role='service_provider'
-        ORDER BY a.id
-        LIMIT 1`
-    );
-    if(providerQ.rowCount!==1)fail('No company_test Local Services profile is available for Production smoke.');
-    const provider={accountId:Number(providerQ.rows[0].account_id)};
+    const provider=fixture.provider;
     await ensureTestAuthorization(client,{accountId:provider.accountId,role:'service_provider'});
     await client.query(
       "UPDATE profiles SET enabled=TRUE,status='active',visibility='public',updated_at=NOW() WHERE account_id=$1 AND role='service_provider'",
