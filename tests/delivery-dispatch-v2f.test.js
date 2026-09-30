@@ -118,6 +118,10 @@ test('notifications distinguish offer from accepted assignment',()=>{
   assert.match(notifications,/app\.post\('\/api\/delivery\/:id\/request-courier'/);
   assert.match(notifications,/app\.post\('\/api\/courier\/delivery-offers\/:offerId\/accept'/);
   assert.match(notifications,/delivery\.assigned/);
+  const notificationUi=read('public/notifications-ui.js');
+  assert.match(notificationUi,/delivery\.offer_received/);
+  assert.match(notificationUi,/openCourierWorkspace\?\.\('Deliveries'\)/);
+  assert.doesNotMatch(notificationUi,/delivery\.offer_received[\s\S]{0,300}openLiveDelivery/);
 });
 
 test('Courier acceptance QA no longer depends on normal Admin assignment',()=>{
