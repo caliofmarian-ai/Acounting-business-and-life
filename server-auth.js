@@ -86,14 +86,13 @@ export async function accountAuthFetch(path,options={}){
   if(pathname==='/'||pathname==='/index.html'){
     return new Response(injectedIndex(),{status:200,headers:{'content-type':'text/html; charset=utf-8'}});
   }
-  if(pathname==='/api/me'&&method==='GET'){
+  if((pathname==='/api/me'||pathname==='/api/auth/session/identity')&&method==='GET'){
     try{
-      const token=sessionCredentialFromHeaders(options.headers||{}).token;
-      const resolved=await resolveAccountToken(token);
-      if(!resolved)return responseJson(401,{error:'Unauthorized'});
-      return responseJson(200,await profileSnapshot(resolved.accountId));
+      const context=await authenticatedAccountContext(options.headers||{},{method,path:pathname});
+      if(pathname==='/api/auth/session/identity')return responseJson(200,{account_id:Number(context.accountId)});
+      return responseJson(200,await profileSnapshot(context.accountId));
     }catch(e){
-      return responseJson(e?.status||500,{error:e?.status?e.message:'Unexpected server error'});
+      return responseJson(e?.status||500,{error:e?.status?e.message:'Unexpected server error',...(e?.code?{code:e.code}:{})});
     }
   }
   if(isAccountAuthOwnedPath(pathname,method)||pathname.startsWith('/api/')){
@@ -163,31 +162,47 @@ async function resolveAccountToken(token = '') {
   if (legacy) return legacy;
   return resolveV2SessionToken(pool,TOKEN_SECRET,token,{ttlMs:TOKEN_TTL_MS});
 }
-function unverifiedSelfServiceAllowed(req){
-  const method=String(req.method||'GET').toUpperCase();
-  if(['GET','HEAD','OPTIONS'].includes(method))return true;
-  const path=String(req.path||'');
-  if(method==='PATCH'&&path==='/api/me')return true;
-  if(method==='PUT'&&path==='/api/me/geography')return true;
-  if(method==='POST'&&['/api/me/address/reverse','/api/auth/password'].includes(path))return true;
+function unverifiedSelfServiceAllowedFor(method='GET',path=''){
+  const verb=String(method||'GET').toUpperCase();
+  if(['GET','HEAD','OPTIONS'].includes(verb))return true;
+  const pathname=String(path||'');
+  if(verb==='PATCH'&&pathname==='/api/me')return true;
+  if(verb==='PUT'&&pathname==='/api/me/geography')return true;
+  if(verb==='POST'&&['/api/me/address/reverse','/api/auth/password'].includes(pathname))return true;
   return false;
+}
+function unverifiedSelfServiceAllowed(req){
+  return unverifiedSelfServiceAllowedFor(req?.method,req?.path);
+}
+async function authenticatedAccountContext(headers={}, {method='GET',path='/api/me',token=''}={}){
+  const credential=token||sessionCredentialFromHeaders(headers||{}).token;
+  const resolved=await resolveAccountToken(credential);
+  if(!resolved)throw Object.assign(new Error('Unauthorized'),{status:401});
+  const state=await pool.query(`SELECT auth_status,email_verified_at,account_mode FROM accounts WHERE id=$1`,[resolved.accountId]);
+  if(!state.rowCount)throw Object.assign(new Error('Unauthorized'),{status:401});
+  const account=state.rows[0];
+  if(['suspended','closed'].includes(String(account.auth_status||''))){
+    throw Object.assign(new Error('This account is not available'),{status:403,code:'ACCOUNT_NOT_ACTIVE'});
+  }
+  const pendingVerification=account.account_mode!=='company_test'&&!account.email_verified_at;
+  if(pendingVerification&&!unverifiedSelfServiceAllowedFor(method,path)){
+    throw Object.assign(new Error('Verify your email before using Business & Life'),{status:403,code:'EMAIL_VERIFICATION_REQUIRED'});
+  }
+  return{accountId:Number(resolved.accountId),authSession:resolved,emailVerificationPending:pendingVerification};
 }
 async function auth(req, res, next) {
   try {
-    const token = req.ablSessionToken || sessionCredentialFromHeaders(req.headers||{}).token;
-    const resolved = await resolveAccountToken(token);
-    if (!resolved) return res.status(401).json({ error: 'Unauthorized' });
-    const state=await pool.query(`SELECT auth_status,email_verified_at,account_mode FROM accounts WHERE id=$1`,[resolved.accountId]);
-    if(!state.rowCount)return res.status(401).json({error:'Unauthorized'});
-    const account=state.rows[0];
-    if(['suspended','closed'].includes(String(account.auth_status||'')))return res.status(403).json({error:'This account is not available',code:'ACCOUNT_NOT_ACTIVE'});
-    const pendingVerification=account.account_mode!=='company_test'&&!account.email_verified_at;
-    if(pendingVerification&&!unverifiedSelfServiceAllowed(req))return res.status(403).json({error:'Verify your email before using Business & Life',code:'EMAIL_VERIFICATION_REQUIRED'});
-    req.accountId = resolved.accountId;
-    req.authSession = resolved;
-    req.emailVerificationPending=pendingVerification;
+    const context=await authenticatedAccountContext(req.headers||{},{
+      method:req.method,path:req.path,token:req.ablSessionToken||''
+    });
+    req.accountId=context.accountId;
+    req.authSession=context.authSession;
+    req.emailVerificationPending=context.emailVerificationPending;
     next();
-  } catch (err) { next(err); }
+  } catch (err) {
+    if(err?.status)return res.status(err.status).json({error:err.message,...(err.code?{code:err.code}:{})});
+    next(err);
+  }
 }
 async function createSession(accountId,{stepUpVerified=true,db=pool}={}) {
   return createV2Session(db,TOKEN_SECRET,accountId,{stepUpVerified});
