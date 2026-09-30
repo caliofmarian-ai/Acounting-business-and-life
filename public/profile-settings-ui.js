@@ -1,4 +1,4 @@
-let settingsData=null,settingsWorkspace=null,settingsMode='profile',profileSettingsView='home',accountMoneyReturn='account',selectedSettingsRole='',selectedSettingsBusinessId=null,editingFinancialAccountId=null;
+let settingsData=null,settingsWorkspace=null,settingsMode='profile',profileSettingsView='home',accountMoneyReturn='account',selectedSettingsRole='',selectedSettingsBusinessId=null,editingFinancialAccountId=null,operatingLocationData=null;
 const stoken=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const sh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const snice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
@@ -36,6 +36,8 @@ function profileSettingsHome(){
     +'<div class="profileSettingsMenu">'
     +'<button type="button" data-profile-settings-view="identity"><span>🪪</span><span><strong>'+sh(copy.identity)+'</strong><small>View the identity and operating context owned by this profile.</small></span><b>›</b></button>'
     +(selectedSettingsRole==='courier'?'<button type="button" data-profile-settings-view="operatingArea"><span>📍</span><span><strong>Operating area</strong><small>Choose the barangay where you normally begin Delivery work. This is not your home address or live GPS.</small></span><b>›</b></button>':'')
+    +(selectedSettingsRole==='supplier'?'<button type="button" data-profile-settings-view="workLocation"><span>📍</span><span><strong>Warehouse / dispatch location</strong><small>Use your private personal address or set a different Supplier work location.</small></span><b>›</b></button>':'')
+    +(selectedSettingsRole==='service_provider'?'<button type="button" data-profile-settings-view="workLocation"><span>📍</span><span><strong>Service base &amp; area</strong><small>Choose where this Local Services profile operates without publishing your exact address.</small></span><b>›</b></button>':'')
     +'<button type="button" data-profile-settings-view="finance"><span>💳</span><span><strong>Money preferences</strong><small>Profile books, budgets, transfers and payout preferences.</small></span><b>›</b></button>'
     +'<button type="button" id="profileFinancialDocuments"><span>🧾</span><span><strong>Statements &amp; documents</strong><small>Open financial statements and traceable documents for this profile.</small></span><b>›</b></button>'
     +'<button type="button" id="profilePromotionCenter"><span>📣</span><span><strong>Promotion Center</strong><small>Referral and promotion tools attributed to this profile.</small></span><b>›</b></button>'
@@ -100,6 +102,89 @@ async function saveCourierOperatingArea(e){
     await refreshSettings();
   }catch(err){if(status)status.textContent=err.message}
 }
+
+function profileOperatingLocationSupported(){return selectedSettingsRole==='supplier'||selectedSettingsRole==='service_provider'}
+function operatingLocationBusinessId(){return selectedSettingsRole==='supplier'?Number(selectedSettingsBusinessId)||null:null}
+async function loadProfileOperatingLocation(){
+  operatingLocationData=null;
+  if(!profileOperatingLocationSupported())return null;
+  const businessId=operatingLocationBusinessId();
+  if(selectedSettingsRole==='supplier'&&!businessId)return null;
+  const query=selectedSettingsRole==='supplier'?'?business_id='+encodeURIComponent(businessId):'';
+  operatingLocationData=await sapi('/api/settings/operating-location/'+encodeURIComponent(selectedSettingsRole)+query);
+  return operatingLocationData;
+}
+function profileOperatingLocationSettings(){
+  const d=operatingLocationData;
+  const supplier=selectedSettingsRole==='supplier';
+  const title=supplier?'Warehouse / dispatch location':'Service base & area';
+  const subtitle=supplier?'Private operating location for the selected Supplier business.':'Private base location for this Local Services profile.';
+  if(!d)return profileSettingsHeader(title,subtitle)+(supplier?'<section class="settingsCard"><div class="settingsForm">'+businessSelector()+'</div><div class="settingsEmpty">Choose a Supplier business workspace to manage its work location.</div></section>':'<div class="settingsEmpty">Loading operating location…</div>');
+  const mode=d.location_mode==='override'?'override':'personal';
+  const area=d.area_path||d.personal_geography?.path_text||d.area_name||d.personal_geography?.name||'Not resolved yet';
+  const current=supplier?(businessForSettings()?.name||'Supplier workspace'):'Local Services';
+  return profileSettingsHeader(title,subtitle)
+    +'<section class="settingsCard">'
+    +(supplier?'<div class="settingsForm settingsBusinessPicker">'+businessSelector()+'</div>':'')
+    +'<div class="settingsSimpleRows"><div><span>Profile / workspace</span><strong>'+sh(current)+'</strong></div><div><span>Current source</span><strong>'+sh(mode==='override'?'Different work address':'Private personal address')+'</strong></div><div><span>Official area</span><strong>'+sh(area)+'</strong></div></div>'
+    +'<p class="settingsPrivacyNote"><strong>Private by default.</strong> Business &amp; Life does not publish the exact address from this screen. This setting never turns on GPS and never captures live location.</p>'
+    +'<form id="profileOperatingLocationForm" class="settingsForm">'
+    +'<label>Work location source<select id="profileOperatingLocationMode"><option value="personal" '+(mode==='personal'?'selected':'')+'>Use my private personal address</option><option value="override" '+(mode==='override'?'selected':'')+'>Use a different work address</option></select></label>'
+    +'<div id="profileOperatingPersonalPanel"><div class="settingsNotice"><strong>'+(d.personal_address_available?'Personal address is configured.':'Personal address is not configured yet.')+'</strong><br>The exact personal address is not copied into this profile. The profile refers back to your private Account address.</div></div>'
+    +'<div id="profileOperatingOverridePanel">'
+    +'<label>Private work address<input id="profileOperatingExactAddress" maxlength="400" autocomplete="street-address" value="'+sh(mode==='override'?d.exact_address||'':'')+'" placeholder="'+sh(supplier?'Warehouse / dispatch address':'Service base address')+'"></label>'
+    +'<label>Search official barangay<input id="profileOperatingAreaSearch" autocomplete="off" placeholder="Barangay or city"></label>'
+    +'<input id="profileOperatingPsgcCode" type="hidden" value="'+sh(mode==='override'?d.psgc_code||'':'')+'">'
+    +'<button id="profileOperatingAreaSearchButton" class="settingsSecondary" type="button">Search area</button>'
+    +'<div id="profileOperatingAreaResults" class="courierOperatingAreaResults"></div>'
+    +(selectedSettingsRole==='service_provider'?'<label>Service radius (km, optional)<input id="profileOperatingRadius" type="number" min="0" max="500" step="0.1" value="'+sh(d.service_radius_km??'')+'"></label>':'')
+    +'</div>'
+    +'<button class="settingsPrimary" type="submit">Save work location</button><div id="profileOperatingLocationStatus" class="settingsInlineStatus"></div>'
+    +'</form></section>';
+}
+function syncProfileOperatingLocationMode(){
+  const mode=document.getElementById('profileOperatingLocationMode')?.value||'personal';
+  const personal=document.getElementById('profileOperatingPersonalPanel'),override=document.getElementById('profileOperatingOverridePanel');
+  if(personal)personal.style.display=mode==='personal'?'block':'none';
+  if(override)override.style.display=mode==='override'?'block':'none';
+}
+async function searchProfileOperatingArea(){
+  const input=document.getElementById('profileOperatingAreaSearch'),results=document.getElementById('profileOperatingAreaResults'),status=document.getElementById('profileOperatingLocationStatus');
+  const query=String(input?.value||'').trim();
+  if(query.length<2){if(status)status.textContent='Type at least 2 characters.';return}
+  if(results)results.innerHTML='<div class="settingsEmpty">Searching…</div>';
+  try{
+    const data=await sapi('/api/auth/geography/search?q='+encodeURIComponent(query));
+    const items=Array.isArray(data?.items)?data.items:[];
+    if(results)results.innerHTML=items.length?items.map(item=>'<button type="button" data-profile-operating-psgc="'+sh(item.psgc_code)+'" data-area-name="'+sh(item.name)+'" data-area-path="'+sh(item.path_text||'')+'"><strong>'+sh(item.name)+'</strong><small>'+sh(item.path_text||'')+'</small></button>').join(''):'<div class="settingsEmpty">No matching official barangay found.</div>';
+    bindProfileOperatingAreaResults();
+  }catch(err){if(results)results.innerHTML='<div class="settingsEmpty">'+sh(err.message)+'</div>'}
+}
+function bindProfileOperatingAreaResults(){
+  settingsWorkspace?.querySelectorAll('[data-profile-operating-psgc]').forEach(button=>button.onclick=()=>{
+    const hidden=document.getElementById('profileOperatingPsgcCode'),status=document.getElementById('profileOperatingLocationStatus');
+    if(hidden)hidden.value=button.dataset.profileOperatingPsgc||'';
+    if(status)status.textContent='Selected: '+(button.dataset.areaName||'')+(button.dataset.areaPath?' · '+button.dataset.areaPath:'');
+    settingsWorkspace?.querySelectorAll('[data-profile-operating-psgc]').forEach(x=>x.classList.toggle('selected',x===button));
+  });
+}
+async function saveProfileOperatingLocation(e){
+  e.preventDefault();
+  const status=document.getElementById('profileOperatingLocationStatus'),mode=document.getElementById('profileOperatingLocationMode')?.value||'personal';
+  const payload={location_mode:mode,business_id:operatingLocationBusinessId()};
+  if(mode==='override'){
+    payload.exact_address=document.getElementById('profileOperatingExactAddress')?.value||'';
+    payload.psgc_code=document.getElementById('profileOperatingPsgcCode')?.value||'';
+    if(selectedSettingsRole==='service_provider')payload.service_radius_km=document.getElementById('profileOperatingRadius')?.value||null;
+    if(!payload.psgc_code){if(status)status.textContent='Choose an official barangay from the search results first.';return}
+  }
+  if(status)status.textContent='Saving…';
+  try{
+    operatingLocationData=await sapi('/api/settings/operating-location/'+encodeURIComponent(selectedSettingsRole),{method:'PUT',body:JSON.stringify(payload)});
+    stoast('Work location saved privately.');
+    renderSettings();
+  }catch(err){if(status)status.textContent=err.message}
+}
 function profileStatusSettings(){
   const profile=selectedProfile();
   return profileSettingsHeader('Profile status','Lifecycle actions are managed separately from account identity and Admin authority.')
@@ -135,7 +220,13 @@ async function saveAccountDestination(e){e.preventDefault();const out=document.g
 async function disableAccountDestination(id){try{await sapi('/api/settings/account-money/destinations/'+id,{method:'PATCH',body:JSON.stringify({status:'inactive'})});stoast('Destination disabled.');await refreshSettings()}catch(err){stoast(err.message)}}
 async function setDefaultAccountPayout(id){try{await sapi('/api/settings/account-money/destinations/'+id+'/default-payout',{method:'POST',body:'{}'});stoast('Default payout destination updated.');await refreshSettings()}catch(err){stoast(err.message)}}
 
-function businessSelector(){if(!BUSINESS_ROLES.has(selectedSettingsRole))return'';const businesses=settingsData?.businesses||[];if(!businesses.length)return'<div class="settingsNotice">This profile does not yet have an approved economic/business workspace. Financial settings remain on HOLD until one exists.</div>';return '<label>Business workspace<select id="settingsBusinessSelect">'+businesses.map(b=>'<option value="'+b.id+'" '+(Number(b.id)===Number(selectedSettingsBusinessId)?'selected':'')+'>'+sh(b.name)+'</option>').join('')+'</select></label>'}
+function businessesForSettingsRole(role=selectedSettingsRole){
+  const all=settingsData?.businesses||[];
+  if(!BUSINESS_ROLES.has(role))return all;
+  const ids=new Set((settingsData?.business_bindings||[]).filter(b=>b.role===role&&b.status==='active').map(b=>Number(b.business_id)));
+  return all.filter(b=>ids.has(Number(b.id)));
+}
+function businessSelector(){if(!BUSINESS_ROLES.has(selectedSettingsRole))return'';const businesses=businessesForSettingsRole();if(!businesses.length)return'<div class="settingsNotice">This profile does not yet have an approved economic/business workspace. Settings remain on HOLD until one exists.</div>';return '<label>Business workspace<select id="settingsBusinessSelect">'+businesses.map(b=>'<option value="'+b.id+'" '+(Number(b.id)===Number(selectedSettingsBusinessId)?'selected':'')+'>'+sh(b.name)+'</option>').join('')+'</select></label>'}
 function accountCard(a){const verifyClass=a.verification_status==='verified'?'verified':a.verification_status==='pending'?'pending':'';return '<article class="financialAccountCard"><div class="financialAccountTop"><div><strong>'+sh(a.display_name||snice(a.account_kind))+'</strong><div>'+sh(a.institution_name||a.provider_code||snice(a.account_kind))+(a.reference_last4?' •••• '+sh(a.reference_last4):'')+'</div></div><span>'+sh(a.currency_code)+'</span></div><div class="financialAccountMeta"><span>'+sh(snice(a.account_kind))+'</span><span class="'+verifyClass+'">'+sh(snice(a.verification_status))+'</span>'+(a.can_pay?'<span>Pay</span>':'')+(a.can_receive?'<span>Receive</span>':'')+(a.can_payout?'<span>Payout</span>':'')+(a.provider_destination_configured?'<span>Provider ref linked</span>':'')+'</div><div class="financialAccountActions"><button class="settingsSecondary" type="button" data-fin-edit="'+a.id+'">Edit</button>'+(a.status==='active'?'<button class="settingsDanger" type="button" data-fin-disable="'+a.id+'">Deactivate</button>':'<button class="settingsSecondary" type="button" data-fin-enable="'+a.id+'">Reactivate</button>')+'</div></article>'}
 function accountForm(existing=null){const a=existing||{};return '<form id="financialAccountForm" class="settingsForm"><h3>'+(existing?'Edit financial destination':'Add financial destination')+'</h3><p>This stores a safe reference used by your profile. Never paste a full bank/card number, PIN, password or CVV here.</p><div class="settingsGrid2"><label>Type<select id="finKind">'+(settingsData.catalog?.account_kinds||[]).map(k=>'<option value="'+k+'" '+(a.account_kind===k?'selected':'')+'>'+sh(snice(k))+'</option>').join('')+'</select></label><label>Display name<input id="finDisplay" maxlength="120" value="'+sh(a.display_name||'')+'" placeholder="Business bank / Personal e-wallet"></label></div><div class="settingsGrid2"><label>Institution / provider<input id="finInstitution" maxlength="120" value="'+sh(a.institution_name||'')+'" placeholder="Bank, PayMongo, GCash…"></label><label>Account holder name<input id="finAccountName" maxlength="160" value="'+sh(a.account_name||'')+'"></label></div><div class="settingsGrid2"><label>Last 4 only<input id="finLast4" maxlength="4" value="'+sh(a.reference_last4||'')+'" placeholder="1234"></label><label>Provider code<input id="finProvider" maxlength="80" value="'+sh(a.provider_code||'')+'" placeholder="paymongo"></label></div><label>Provider destination reference<input id="finProviderRef" maxlength="220" placeholder="'+(a.provider_destination_configured?'Leave blank to keep current provider reference':'Opaque provider destination ID — never account number')+'"></label><div class="settingsChecks"><label><input id="finPay" type="checkbox" '+(a.can_pay?'checked':'')+'> Pay from</label><label><input id="finReceive" type="checkbox" '+(a.can_receive?'checked':'')+'> Receive into</label><label><input id="finPayout" type="checkbox" '+(a.can_payout?'checked':'')+'> Payout to</label></div><div class="settingsGrid2"><button class="settingsPrimary" type="submit">'+(existing?'Save changes':'Add destination')+'</button>'+(existing?'<button id="cancelFinEdit" class="settingsSecondary" type="button">Cancel edit</button>':'')+'</div><div id="financialAccountStatus" class="settingsStatus"></div></form>'}
 function budgetCard(b){return '<article class="budgetCard"><div class="financialAccountTop"><div><strong>'+sh(b.label)+'</strong><div>'+sh(snice(b.purpose))+' · '+sh(ROLE_LABELS[b.profile_role]||b.profile_role)+'</div></div><span>'+smoney(b.allocated_budget)+'</span></div><div class="budgetTruth"><strong>Allocated budget</strong><small>This is a planning allocation, not a provider-confirmed cash balance.</small></div>'+(b.linked_financial_account_id?'<div class="financialAccountMeta"><span>Linked: '+sh(b.linked_account_display_name||snice(b.linked_account_kind))+'</span><span>'+sh(snice(b.linked_account_verification_status||'unknown'))+'</span></div>':'<div class="financialAccountMeta"><span>No financial account linked</span></div>')+'<div class="financialAccountMeta"><span>Provider cash balance: unavailable without provider evidence</span></div></article>'}
@@ -215,7 +306,7 @@ function renderProfileFinanceSettings(profileTransfer=profileFundTransferForm(),
   if(!settingsData||!ensureSettingsWorkspace())return;
   const enabled=(settingsData.profiles||[]).filter(p=>p.enabled&&ROLE_LABELS[p.role]);
   if(!selectedSettingsRole||!enabled.some(p=>p.role===selectedSettingsRole))selectedSettingsRole=enabled.some(p=>p.role===settingsData.active_role)?settingsData.active_role:(enabled[0]?.role||'customer');
-  if(BUSINESS_ROLES.has(selectedSettingsRole)&&!selectedSettingsBusinessId)selectedSettingsBusinessId=settingsData.businesses?.[0]?.id||null;
+  if(BUSINESS_ROLES.has(selectedSettingsRole)&&!selectedSettingsBusinessId)selectedSettingsBusinessId=businessesForSettingsRole()[0]?.id||null;
   if(!BUSINESS_ROLES.has(selectedSettingsRole))selectedSettingsBusinessId=null;
   const accounts=scopeAccounts(),budgets=scopeBudgets(),business=businessForSettings(),provider=settingsData.provider||{};
   settingsWorkspace.innerHTML=profileSettingsHeader(settingsRoleTitle(),settingsRoleIntro())
@@ -235,15 +326,15 @@ function renderSettings(){
   const enabled=(settingsData.profiles||[]).filter(p=>p.enabled&&ROLE_LABELS[p.role]);
   if(!selectedSettingsRole||!enabled.some(p=>p.role===selectedSettingsRole))selectedSettingsRole=enabled.some(p=>p.role===settingsData.active_role)?settingsData.active_role:(enabled[0]?.role||'');
   if(!selectedSettingsRole){settingsWorkspace.innerHTML=profileSettingsHeader('Profile settings','Activate a profile before opening its settings.')+'<div class="settingsEmpty">No active profile is available.</div>';bindSettings();return}
-  if(BUSINESS_ROLES.has(selectedSettingsRole)&&!selectedSettingsBusinessId)selectedSettingsBusinessId=settingsData.businesses?.[0]?.id||null;
+  if(BUSINESS_ROLES.has(selectedSettingsRole)&&!selectedSettingsBusinessId)selectedSettingsBusinessId=businessesForSettingsRole()[0]?.id||null;
   if(!BUSINESS_ROLES.has(selectedSettingsRole))selectedSettingsBusinessId=null;
   const profileTransfer=profileSettingsView==='finance'?profileFundTransferForm():null;
   const withdrawalPolicy='Withdraw will use the default payout destination configured above in Avatar → Money & Banking. Business & Life will not reduce the external/provider balance or mark a withdrawal succeeded until the provider confirms.';
   if(profileSettingsView==='finance')return renderProfileFinanceSettings(profileTransfer,withdrawalPolicy);
-  settingsWorkspace.innerHTML=profileSettingsView==='identity'?profileIdentitySettings():profileSettingsView==='operatingArea'&&selectedSettingsRole==='courier'?courierOperatingAreaSettings():profileSettingsView==='status'?profileStatusSettings():profileSettingsHome();
+  settingsWorkspace.innerHTML=profileSettingsView==='identity'?profileIdentitySettings():profileSettingsView==='operatingArea'&&selectedSettingsRole==='courier'?courierOperatingAreaSettings():profileSettingsView==='workLocation'&&profileOperatingLocationSupported()?profileOperatingLocationSettings():profileSettingsView==='status'?profileStatusSettings():profileSettingsHome();
   bindSettings();
   if(profileSettingsView==='home')settingsWorkspace.querySelector('[data-profile-settings-view="finance"]')?.insertAdjacentHTML('afterend','<button type="button" id="openAccountMoneyFromProfile"><span>🏦</span><span><strong>Account Money &amp; Banking</strong><small>Shared external payment methods and payout destinations for your account.</small></span><b>›</b></button>');
-  settingsWorkspace.querySelectorAll('[data-profile-settings-view]').forEach(button=>button.onclick=()=>{profileSettingsView=button.dataset.profileSettingsView;renderSettings();window.scrollTo({top:0,behavior:'auto'})});
+  settingsWorkspace.querySelectorAll('[data-profile-settings-view]').forEach(button=>button.onclick=async()=>{profileSettingsView=button.dataset.profileSettingsView;if(profileSettingsView==='workLocation'){operatingLocationData=null;renderSettings();try{await loadProfileOperatingLocation()}catch(err){operatingLocationData={load_error:err.message};}renderSettings()}else renderSettings();window.scrollTo({top:0,behavior:'auto'})});
   document.getElementById('openAccountMoneyFromProfile')?.addEventListener('click',()=>openAccountMoneySettings('profile'));
   document.getElementById('profilePromotionCenter')?.addEventListener('click',()=>{location.href='/referral/promotion-center.html?profile='+encodeURIComponent(selectedSettingsRole)});
   document.getElementById('profileFinancialDocuments')?.addEventListener('click',()=>window.BusinessLifeFinancialDocuments?.open?.());
@@ -251,7 +342,7 @@ function renderSettings(){
   document.getElementById('manageProfileLifecycle')?.addEventListener('click',()=>{settingsWorkspace.classList.add('hidden');profileSettingsView='home';window.BusinessLifeShell?.openAccountSettings?.('profiles')});
 }
 function profileSettingsBack(){if(profileSettingsView!=='home'){profileSettingsView='home';renderSettings();window.scrollTo({top:0,behavior:'auto'});return}closeProfileSettings()}
-function bindSettings(){document.getElementById('courierOperatingAreaSearchButton')?.addEventListener('click',searchCourierOperatingArea);const courierAreaForm=document.getElementById('courierOperatingAreaForm');if(courierAreaForm)courierAreaForm.onsubmit=saveCourierOperatingArea;bindCourierOperatingAreaResults();document.getElementById('openPayoutSecurity')?.addEventListener('click',()=>{settingsWorkspace?.classList.add('hidden');settingsMode='profile';window.BusinessLifeShell?.openAccountSettings?.('security')});const ami=document.getElementById('accountMoneyIdentityForm');if(ami)ami.onsubmit=saveAccountMoneyIdentity;const adf=document.getElementById('accountDestinationForm');if(adf)adf.onsubmit=saveAccountDestination;settingsWorkspace.querySelectorAll('[data-account-destination-disable]').forEach(b=>b.onclick=()=>disableAccountDestination(Number(b.dataset.accountDestinationDisable)));settingsWorkspace.querySelectorAll('[data-account-payout-default]').forEach(b=>b.onclick=()=>setDefaultAccountPayout(Number(b.dataset.accountPayoutDefault)));document.getElementById('settingsBack').onclick=settingsMode==='account'?closeAccountMoneySettings:profileSettingsBack;const business=document.getElementById('settingsBusinessSelect');if(business)business.onchange=()=>{selectedSettingsBusinessId=Number(business.value);editingFinancialAccountId=null;renderSettings()};settingsWorkspace.querySelectorAll('[data-fin-edit]').forEach(b=>b.onclick=()=>{editingFinancialAccountId=Number(b.dataset.finEdit);renderSettings();settingsWorkspace.querySelector('#financialAccountForm')?.scrollIntoView({behavior:'smooth',block:'start'})});settingsWorkspace.querySelectorAll('[data-fin-disable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finDisable),'inactive'));settingsWorkspace.querySelectorAll('[data-fin-enable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finEnable),'active'));document.getElementById('cancelFinEdit')?.addEventListener('click',()=>{editingFinancialAccountId=null;renderSettings()});const legacyFa=document.getElementById('financialAccountForm');if(legacyFa)legacyFa.onsubmit=saveFinancialAccount;const legacyMp=document.getElementById('moneyPreferencesForm');if(legacyMp)legacyMp.onsubmit=saveMoneyPreferences;const budgetCreate=document.getElementById('budgetCreateForm');if(budgetCreate)budgetCreate.onsubmit=saveBudgetEnvelope;const budgetAdjust=document.getElementById('budgetAdjustForm');if(budgetAdjust)budgetAdjust.onsubmit=saveBudgetAllocation;const pft=document.getElementById('profileFundTransferForm');if(pft){pft.onsubmit=saveProfileFundTransfer;document.getElementById('profileFundFrom').onchange=syncProfileFundTransfer;document.getElementById('profileFundTo').onchange=syncProfileFundTransfer;syncProfileFundTransfer()}const legacyMovement=document.getElementById('moneyMovementForm');if(legacyMovement){legacyMovement.onsubmit=saveMoneyMovement;document.getElementById('movementType').onchange=syncMovementDestinationOptions;syncMovementDestinationOptions()}}
+function bindSettings(){document.getElementById('courierOperatingAreaSearchButton')?.addEventListener('click',searchCourierOperatingArea);const courierAreaForm=document.getElementById('courierOperatingAreaForm');if(courierAreaForm)courierAreaForm.onsubmit=saveCourierOperatingArea;bindCourierOperatingAreaResults();document.getElementById('profileOperatingAreaSearchButton')?.addEventListener('click',searchProfileOperatingArea);document.getElementById('profileOperatingLocationMode')?.addEventListener('change',syncProfileOperatingLocationMode);const profileOperatingForm=document.getElementById('profileOperatingLocationForm');if(profileOperatingForm)profileOperatingForm.onsubmit=saveProfileOperatingLocation;bindProfileOperatingAreaResults();syncProfileOperatingLocationMode();document.getElementById('openPayoutSecurity')?.addEventListener('click',()=>{settingsWorkspace?.classList.add('hidden');settingsMode='profile';window.BusinessLifeShell?.openAccountSettings?.('security')});const ami=document.getElementById('accountMoneyIdentityForm');if(ami)ami.onsubmit=saveAccountMoneyIdentity;const adf=document.getElementById('accountDestinationForm');if(adf)adf.onsubmit=saveAccountDestination;settingsWorkspace.querySelectorAll('[data-account-destination-disable]').forEach(b=>b.onclick=()=>disableAccountDestination(Number(b.dataset.accountDestinationDisable)));settingsWorkspace.querySelectorAll('[data-account-payout-default]').forEach(b=>b.onclick=()=>setDefaultAccountPayout(Number(b.dataset.accountPayoutDefault)));document.getElementById('settingsBack').onclick=settingsMode==='account'?closeAccountMoneySettings:profileSettingsBack;const business=document.getElementById('settingsBusinessSelect');if(business)business.onchange=async()=>{selectedSettingsBusinessId=Number(business.value);editingFinancialAccountId=null;if(profileSettingsView==='workLocation'){operatingLocationData=null;renderSettings();try{await loadProfileOperatingLocation()}catch(err){operatingLocationData={load_error:err.message}}}renderSettings()};settingsWorkspace.querySelectorAll('[data-fin-edit]').forEach(b=>b.onclick=()=>{editingFinancialAccountId=Number(b.dataset.finEdit);renderSettings();settingsWorkspace.querySelector('#financialAccountForm')?.scrollIntoView({behavior:'smooth',block:'start'})});settingsWorkspace.querySelectorAll('[data-fin-disable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finDisable),'inactive'));settingsWorkspace.querySelectorAll('[data-fin-enable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finEnable),'active'));document.getElementById('cancelFinEdit')?.addEventListener('click',()=>{editingFinancialAccountId=null;renderSettings()});const legacyFa=document.getElementById('financialAccountForm');if(legacyFa)legacyFa.onsubmit=saveFinancialAccount;const legacyMp=document.getElementById('moneyPreferencesForm');if(legacyMp)legacyMp.onsubmit=saveMoneyPreferences;const budgetCreate=document.getElementById('budgetCreateForm');if(budgetCreate)budgetCreate.onsubmit=saveBudgetEnvelope;const budgetAdjust=document.getElementById('budgetAdjustForm');if(budgetAdjust)budgetAdjust.onsubmit=saveBudgetAllocation;const pft=document.getElementById('profileFundTransferForm');if(pft){pft.onsubmit=saveProfileFundTransfer;document.getElementById('profileFundFrom').onchange=syncProfileFundTransfer;document.getElementById('profileFundTo').onchange=syncProfileFundTransfer;syncProfileFundTransfer()}const legacyMovement=document.getElementById('moneyMovementForm');if(legacyMovement){legacyMovement.onsubmit=saveMoneyMovement;document.getElementById('movementType').onchange=syncMovementDestinationOptions;syncMovementDestinationOptions()}}
 function renderAccountMoneySettings(){if(!settingsData||!ensureSettingsWorkspace())return;settingsWorkspace.innerHTML='<div class="settingsHeader"><button class="settingsBack" type="button" id="settingsBack">‹</button><div><h1>Money &amp; Banking</h1><p>Shared external payment identity and payout destinations for your personal account.</p></div></div>'+accountMoneySettingsCard();bindSettings()}
 async function refreshSettings(){
   settingsData=await sapi('/api/settings/finance');
@@ -260,7 +351,7 @@ async function refreshSettings(){
   }
   if(settingsMode==='account')renderAccountMoneySettings();else renderSettings();
 }
-async function openProfileSettings(role=''){if(!stoken())return stoast('Sign in first.');const state=window.BusinessLifeShell?.getProfileState?.();const requested=role&&ROLE_LABELS[role]?role:state?.activeRole;if(state?.surface!=='profile'||!requested||requested!==state.activeRole)return stoast('Open the profile first, then use its Settings card.');settingsMode='profile';profileSettingsView='home';selectedSettingsRole=requested;selectedSettingsBusinessId=null;editingFinancialAccountId=null;document.getElementById('drawerClose')?.click();ensureSettingsWorkspace();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('profileSettingsWorkspace')){hideSettingsBase();settingsWorkspace.classList.remove('hidden')}settingsWorkspace.innerHTML='<div class="settingsEmpty">Loading settings…</div>';try{await refreshSettings()}catch(e){settingsWorkspace.innerHTML='<div class="settingsEmpty">'+sh(e.message)+'</div>'}}
+async function openProfileSettings(role=''){if(!stoken())return stoast('Sign in first.');const state=window.BusinessLifeShell?.getProfileState?.();const requested=role&&ROLE_LABELS[role]?role:state?.activeRole;if(state?.surface!=='profile'||!requested||requested!==state.activeRole)return stoast('Open the profile first, then use its Settings card.');settingsMode='profile';profileSettingsView='home';selectedSettingsRole=requested;selectedSettingsBusinessId=null;editingFinancialAccountId=null;operatingLocationData=null;document.getElementById('drawerClose')?.click();ensureSettingsWorkspace();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('profileSettingsWorkspace')){hideSettingsBase();settingsWorkspace.classList.remove('hidden')}settingsWorkspace.innerHTML='<div class="settingsEmpty">Loading settings…</div>';try{await refreshSettings()}catch(e){settingsWorkspace.innerHTML='<div class="settingsEmpty">'+sh(e.message)+'</div>'}}
 async function openAccountMoneySettings(returnTo='account'){if(!stoken())return stoast('Sign in first.');settingsMode='account';accountMoneyReturn=returnTo==='profile'?'profile':'account';document.getElementById('drawerClose')?.click();ensureSettingsWorkspace();hideSettingsBase();settingsWorkspace.classList.remove('hidden');settingsWorkspace.innerHTML='<div class="settingsEmpty">Loading Money &amp; Banking…</div>';try{await refreshSettings()}catch(e){settingsWorkspace.innerHTML='<div class="settingsEmpty">'+sh(e.message)+'</div>'}}
 function closeAccountMoneySettings(){settingsWorkspace?.classList.add('hidden');settingsMode='profile';if(accountMoneyReturn==='profile')openProfileSettings(selectedSettingsRole);else window.BusinessLifeShell?.openAccountSettings?.()}
 async function setFinancialAccountStatus(id,status){try{await sapi('/api/settings/financial-accounts/'+id,{method:'PATCH',body:JSON.stringify({status})});stoast(status==='active'?'Financial destination reactivated.':'Financial destination deactivated.');editingFinancialAccountId=null;await refreshSettings()}catch(e){stoast(e.message)}}
