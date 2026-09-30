@@ -698,8 +698,8 @@ function supplierProfileJourneyDefinition(journey,label){
   if(step==='supplier_catalog_availability')return{
     step,
     title:tr('supplier_tour.catalog_title',{},'Catalog and availability'),
-    body:tr('supplier_tour.catalog_body',{},'Keep products, pack sizes, pricing and availability factual. Your sourcing visibility is private by default; only items you explicitly publish may appear to approved Merchants in Directory mode. RFQ acceptance is also an explicit control. Business activities describe what the Supplier does and do not claim a government licence.'),
-    target:supplierJourneyTarget('#supplierProfile','#catalogAdd','#supplierActivities','#supplierSourcingSettingsForm','[data-hub-feature="Catalog"]'),
+    body:tr('supplier_tour.catalog_body',{},'Keep products, pack sizes, pricing and availability factual. Your sourcing visibility is private by default; only items you explicitly publish may appear to approved Merchants in Directory mode. The selected Supplier business may also have an optional warehouse, dispatch or pickup override: it stays private unless you explicitly share that exact work address with accepted Merchant relationships. Your personal address is never published as the Supplier location. RFQ acceptance is also explicit, and business activities do not claim a government licence.'),
+    target:supplierJourneyTarget('#supplierProfile','#supplierOperatingLocationForm','#catalogAdd','#supplierActivities','#supplierSourcingSettingsForm','[data-hub-feature="Catalog"]'),
     primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
   };
   if(step==='supplier_relationships_quotes')return{
