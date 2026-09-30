@@ -78,7 +78,14 @@ export async function notificationsFetch(path,options={}){
   }
   return upstream(path,options);
 }
-async function identity(req){const r=await upstream('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
+async function identity(req){
+  const r=await upstream('/api/auth/session/identity',{headers:{Authorization:authHeader(req)}});
+  const b=await r.json().catch(()=>({}));
+  if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});
+  const accountId=Number(b.account_id);
+  if(!Number.isInteger(accountId)||accountId<1)throw Object.assign(new Error('Authenticated account context is unavailable'),{status:502});
+  return{account:{id:accountId}};
+}
 const uniqueRecipients=(...groups)=>[...new Map(groups.flat().filter(Boolean).map(x=>[Number(x.accountId),x])).values()];
 async function safeEmit(spec){try{return await emitNotificationEvent(pool,spec)}catch(e){console.error('Notification event failed:',e.message);return null}}
 
