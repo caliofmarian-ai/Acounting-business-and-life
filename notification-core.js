@@ -119,6 +119,10 @@ export async function ensureNotificationSchema(pool){
       UNIQUE(event_id,account_id)
     );
     CREATE INDEX IF NOT EXISTS notification_recipients_account_idx ON notification_recipients(account_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS notification_recipients_active_account_idx
+      ON notification_recipients(account_id,created_at DESC,event_id,id) WHERE dismissed_at IS NULL;
+    CREATE INDEX IF NOT EXISTS notification_recipients_unread_account_idx
+      ON notification_recipients(account_id,event_id,id) WHERE dismissed_at IS NULL AND read_at IS NULL;
 
     CREATE TABLE IF NOT EXISTS notification_deliveries (
       id BIGSERIAL PRIMARY KEY,
@@ -138,6 +142,8 @@ export async function ensureNotificationSchema(pool){
       CHECK(status IN ('queued','delivering','delivered','retry','failed','not_configured','skipped'))
     );
     CREATE INDEX IF NOT EXISTS notification_deliveries_due_idx ON notification_deliveries(status,next_attempt_at,id);
+    CREATE INDEX IF NOT EXISTS notification_deliveries_in_app_delivered_idx
+      ON notification_deliveries(recipient_id) WHERE channel='in_app' AND status='delivered';
 
     CREATE TABLE IF NOT EXISTS notification_preferences (
       account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -540,8 +546,43 @@ export async function processNotificationDeliveries(pool,{limit=20}={}){
   return rows.length;
 }
 
+export async function renderNotifications(pool,rows=[],channel='in_app'){
+  const list=Array.isArray(rows)?rows:[];
+  if(!list.length)return[];
+  const eventCodes=[...new Set(list.map(row=>clean(row?.event_code,120)).filter(Boolean))];
+  const templateMap=new Map();
+  if(eventCodes.length){
+    const q=await pool.query(`
+      SELECT DISTINCT ON (event_code,locale)
+        event_code,locale,title_template,body_template
+      FROM notification_templates
+      WHERE event_code=ANY($1::text[])
+        AND country_code='PH'
+        AND locale IN ('en-PH','fil-PH')
+        AND channel=$2
+        AND active=TRUE
+      ORDER BY event_code,locale,version DESC
+    `,[eventCodes,channel]);
+    for(const row of q.rows){
+      templateMap.set(clean(row.event_code,120)+'|'+normalizeNotificationLocale(row.locale),row);
+    }
+  }
+  return list.map(row=>{
+    const data=row?.data_json&&typeof row.data_json==='object'?row.data_json:{};
+    const eventCode=clean(row?.event_code,120),locale=normalizeNotificationLocale(row?.locale||'en-PH');
+    const template=templateMap.get(eventCode+'|'+locale)||templateMap.get(eventCode+'|en-PH');
+    const message=template
+      ?{title:renderText(template.title_template,data),body:renderText(template.body_template,data)}
+      :{title:clean(data?.title||'Business & Life update',180),body:clean(data?.body||'There is a new update in Business & Life.',1000)};
+    return{
+      ...message,
+      attention:notificationAttention({
+        eventCode:row?.event_code,roleHint:row?.role_hint,priority:row?.priority,category:row?.category,data
+      })
+    };
+  });
+}
+
 export async function renderNotification(pool,row,channel='in_app'){
-  const data=row.data_json&&typeof row.data_json==='object'?row.data_json:{};
-  const message=await loadTemplate(pool,row.event_code,row.locale||'en-PH',channel,data);
-  return {...message,attention:notificationAttention({eventCode:row.event_code,roleHint:row.role_hint,priority:row.priority,category:row.category,data})};
+  return (await renderNotifications(pool,[row],channel))[0];
 }
