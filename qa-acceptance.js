@@ -4996,6 +4996,10 @@ async function runNotificationsRuntimeV16Acceptance({pool,base,secret}){
     unreadLatency.push(await timedNotificationRead('/api/notifications/unread-count?threaded=all','Notifications Runtime V16 unread latency sample'));
   }
   const inboxP50=Math.round(p50(inboxLatency)),unreadP50=Math.round(p50(unreadLatency));
+  console.log('QA_NOTIFICATIONS_LATENCY '+JSON.stringify({
+    samples:10,inbox_p50_ms:inboxP50,unread_p50_ms:unreadP50,
+    inbox_max_ms:Math.round(Math.max(...inboxLatency)),unread_max_ms:Math.round(Math.max(...unreadLatency))
+  }));
   if(inboxP50>=750)throw new Error('Notifications Runtime V16 inbox p50 exceeded 750 ms: '+inboxP50+' ms');
   if(unreadP50>=500)throw new Error('Notifications Runtime V16 unread p50 exceeded 500 ms: '+unreadP50+' ms');
 
