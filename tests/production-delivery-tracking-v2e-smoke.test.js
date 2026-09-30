@@ -18,6 +18,8 @@ test('Delivery V2E Production smoke is rollback-only and company-test scoped',()
 
 test('Delivery V2E Production smoke verifies route order, dedup and terminal privacy',()=>{
   assert.match(script,/deliveryRoutePointDecision/);
+  assert.match(script,/Canonical normalized route point could not re-enter the sampling decision/);
+  assert.match(script,/normalized_point_roundtrip:true/);
   assert.match(script,/Near duplicate route point was not deduplicated/);
   assert.match(script,/ORDER BY sequence_no/);
   assert.match(script,/Route point Courier binding is incorrect/);
