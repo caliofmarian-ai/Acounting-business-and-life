@@ -9,7 +9,8 @@ import {selectDeliveryVehicleQuote,courierCanServeDelivery,normalizeVehiclePrici
 import {allocateCourierCompensation} from './courier-compensation-core.js';
 import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
-import {createEmbeddedMarketplaceOrder,geocodeAddress} from './server-marketplace.js';
+import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
+import {geocodeAddress} from './server-marketplace.js';
 import {readOrderDetail} from './orders-read-core.js';
 import {
   bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
