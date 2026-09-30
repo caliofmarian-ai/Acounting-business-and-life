@@ -21,7 +21,7 @@ test('Supplier has its own versioned complete journey while unfinished roles rem
   assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.merchant.version,2);
   assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.supplier.version,2);
   assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.courier.version,2);
-  assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.service_provider.version,1);
+  assert.equal(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.service_provider.version,2);
   assert.deepEqual(GUIDED_ONBOARDING_PROFILE_DEFINITIONS.supplier.steps,GUIDED_ONBOARDING_SUPPLIER_STEPS);
   assert.match(core,/journey_version DESC LIMIT 1/);
   assert.match(core,/normalizeProfileCompleted\(previousRow\.completed_steps,role\)/);
