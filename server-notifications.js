@@ -304,9 +304,7 @@ async function root(req,res){const r=await notificationsFetch(req.path,{headers:
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/notifications',async(req,res,next)=>{try{
-  const qaTiming=process.env.APP_ENV==='qa';
-  const started=Date.now();
-  const me=await identity(req),identityAt=Date.now(),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50)),threaded=String(req.query.threaded||'')==='all';
+  const me=await identity(req),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50)),threaded=String(req.query.threaded||'')==='all';
   const{rows}=await pool.query(`
     WITH base AS (
       SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,r.role_hint,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
@@ -324,24 +322,14 @@ app.get('/api/notifications',async(req,res,next)=>{try{
     ) SELECT recipient_id,read_at,dismissed_at,locale,role_hint,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at,thread_key,thread_count,unread_count
       FROM inbox WHERE thread_rank=1 ORDER BY created_at DESC LIMIT $2
   `,[me.account.id,limit,threaded]);
-  const queryAt=Date.now();
   const [soundPreferences,messages]=await Promise.all([
     notificationSoundPreferences(pool,me.account.id),
     renderNotifications(pool,rows,'in_app')
   ]);
-  const renderAt=Date.now();
   const out=rows.map((row,index)=>{
     const msg=messages[index],attention={...msg.attention,soundVariant:soundPreferences[msg.attention.soundSlot]??DEFAULT_NOTIFICATION_SOUND_VARIANT};
     return{...row,title:msg.title,body:msg.body,attention};
   });
-  if(qaTiming)console.log('QA_NOTIFICATION_INBOX_STAGE '+JSON.stringify({
-    identity_ms:identityAt-started,
-    inbox_query_ms:queryAt-identityAt,
-    enrich_ms:renderAt-queryAt,
-    total_ms:renderAt-started,
-    rows:rows.length,
-    threaded
-  }));
   res.json(out)
 }catch(e){next(e)}});
 app.get('/api/notifications/unread-count',async(req,res,next)=>{try{
