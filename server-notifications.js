@@ -6,7 +6,7 @@ import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensureNotificationSchema,emitNotificationEvent,businessNotificationRecipients,
-  adminNotificationRecipients,processNotificationDeliveries,renderNotification,
+  adminNotificationRecipients,processNotificationDeliveries,renderNotification,renderNotifications,
   normalizeNotificationLocale,notificationAttentionPreference,saveNotificationAttentionPreference,
   notificationSoundPreferences,saveNotificationSoundPreference
 } from './notification-core.js';
@@ -305,7 +305,6 @@ app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/notifications',async(req,res,next)=>{try{
   const me=await identity(req),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50)),threaded=String(req.query.threaded||'')==='all';
-  const soundPreferences=await notificationSoundPreferences(pool,me.account.id);
   const{rows}=await pool.query(`
     WITH base AS (
       SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,r.role_hint,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
@@ -323,24 +322,28 @@ app.get('/api/notifications',async(req,res,next)=>{try{
     ) SELECT recipient_id,read_at,dismissed_at,locale,role_hint,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at,thread_key,thread_count,unread_count
       FROM inbox WHERE thread_rank=1 ORDER BY created_at DESC LIMIT $2
   `,[me.account.id,limit,threaded]);
-  const out=[];for(const row of rows){const msg=await renderNotification(pool,row,'in_app');const attention={...msg.attention,soundVariant:soundPreferences[msg.attention.soundSlot]??DEFAULT_NOTIFICATION_SOUND_VARIANT};out.push({...row,title:msg.title,body:msg.body,attention})}
+  const [soundPreferences,messages]=await Promise.all([
+    notificationSoundPreferences(pool,me.account.id),
+    renderNotifications(pool,rows,'in_app')
+  ]);
+  const out=rows.map((row,index)=>{
+    const msg=messages[index],attention={...msg.attention,soundVariant:soundPreferences[msg.attention.soundSlot]??DEFAULT_NOTIFICATION_SOUND_VARIANT};
+    return{...row,title:msg.title,body:msg.body,attention};
+  });
   res.json(out)
 }catch(e){next(e)}});
 app.get('/api/notifications/unread-count',async(req,res,next)=>{try{
   const me=await identity(req),threaded=String(req.query.threaded||'')==='all';
   const q=await pool.query(`
-    WITH base AS (
-      SELECT r.id recipient_id,r.read_at,e.id event_id,e.entity_type,e.entity_id,e.created_at,
-        CASE WHEN (e.entity_type='support_ticket' OR ($2::boolean AND e.entity_type IN ('order','delivery','purchase_order','service_job'))) AND e.entity_id<>''
-          THEN e.entity_type||':'||e.entity_id ELSE 'recipient:'||r.id::text END thread_key
-      FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id
-      JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
-      WHERE r.account_id=$1 AND r.dismissed_at IS NULL
-    ), inbox AS (
-      SELECT base.*,ROW_NUMBER() OVER(PARTITION BY thread_key ORDER BY created_at DESC,event_id DESC) thread_rank,
-        (COUNT(*) FILTER (WHERE read_at IS NULL) OVER(PARTITION BY thread_key))::int unread_count
-      FROM base
-    ) SELECT COUNT(*)::int n FROM inbox WHERE thread_rank=1 AND unread_count>0
+    SELECT COUNT(DISTINCT CASE
+      WHEN (e.entity_type='support_ticket' OR ($2::boolean AND e.entity_type IN ('order','delivery','purchase_order','service_job'))) AND e.entity_id<>''
+        THEN e.entity_type||':'||e.entity_id
+      ELSE 'recipient:'||r.id::text
+    END)::int n
+    FROM notification_recipients r
+    JOIN notification_events e ON e.id=r.event_id
+    JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
+    WHERE r.account_id=$1 AND r.dismissed_at IS NULL AND r.read_at IS NULL
   `,[me.account.id,threaded]);
   res.json({unread:Number(q.rows[0].n)})
 }catch(e){next(e)}});
