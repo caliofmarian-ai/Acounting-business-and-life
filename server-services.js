@@ -116,6 +116,19 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensureTrustSa
   ALTER TABLE service_provider_profiles ALTER COLUMN cv_private_data_url DROP NOT NULL;
   ALTER TABLE service_provider_profiles ADD COLUMN IF NOT EXISTS cv_private_evidence_object_id BIGINT REFERENCES private_evidence_objects(id);
 
+  CREATE TABLE IF NOT EXISTS service_provider_operating_locations (
+    account_id BIGINT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    location_mode TEXT NOT NULL DEFAULT 'personal_default',
+    location_label TEXT NOT NULL DEFAULT '',
+    exact_address TEXT NOT NULL DEFAULT '',
+    visibility TEXT NOT NULL DEFAULT 'private',
+    service_radius_km NUMERIC(8,2),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (location_mode IN ('personal_default','separate')),
+    CHECK (visibility IN ('private','public')),
+    CHECK (service_radius_km IS NULL OR (service_radius_km>=0 AND service_radius_km<=500))
+  );
+
   CREATE TABLE IF NOT EXISTS service_categories (
     id BIGSERIAL PRIMARY KEY,
     code TEXT UNIQUE NOT NULL,
@@ -353,15 +366,65 @@ async function rating(accountId){const r=await pool.query(`SELECT COUNT(*)::int 
 const serviceOfferSelect=`s.category_id,c.code,c.name,c.credential_gate,s.service_label,s.active,
   s.pricing_method,s.rate_unit,s.price_from,s.price_to,s.minimum_charge,s.callout_fee,
   s.materials_policy,s.service_mode,s.pricing_note`;
-async function publicProvider(accountId){const q=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url,pr.visibility FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE WHERE a.id=$1 AND pr.visibility='public'`,[accountId]);if(!q.rowCount)return null;const eligible=await filterCommerceEligibleServiceProviderIds(pool,[accountId]);if(!eligible.has(Number(accountId)))return null;const [services,credentials,portfolio,rate]=await Promise.all([pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name,s.service_label`,[accountId]),pool.query(`SELECT credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status FROM profile_credentials WHERE account_id=$1 AND verification_status IN ('verified','submitted','unverified','expired') ORDER BY verification_status='verified' DESC,created_at DESC`,[accountId]),pool.query(`SELECT p.id,p.title,p.description,p.image_data_url,p.approximate_date,p.linked_job_id,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 AND (p.linked_job_id IS NULL OR p.customer_publication_consent=TRUE) ORDER BY p.created_at DESC LIMIT 20`,[accountId]),rating(accountId)]);const base=q.rows[0];return{...base,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,...(base.public_reputation_enabled?rate:{rating:null,review_count:0})}}
-async function privateProfile(accountId){const p=await pool.query(`
-  SELECT account_id,display_name,professional_headline,about,service_area,years_experience,
-         public_reputation_enabled,profile_image_data_url,languages,availability_text,pricing_model,
-         price_from,price_to,same_day_available,cv_public_summary,
-         (cv_private_evidence_object_id IS NOT NULL OR NULLIF(cv_private_data_url,'') IS NOT NULL) has_private_cv,
-         updated_at
-    FROM service_provider_profiles WHERE account_id=$1
-`,[accountId]);const [services,credentials,portfolio,rate,reviews]=await Promise.all([pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[accountId]),pool.query(`SELECT id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[accountId]),pool.query(`SELECT p.*,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 ORDER BY p.created_at DESC`,[accountId]),rating(accountId),pool.query(`SELECT r.id,r.job_id,r.overall,r.workmanship,r.reliability,r.communication,r.professionalism,r.property_care,r.price_transparency,r.review_text,r.created_at,a.display_name reviewer_name,j.service_label FROM service_reviews r JOIN accounts a ON a.id=r.reviewer_account_id JOIN service_jobs j ON j.id=r.job_id WHERE r.provider_account_id=$1 AND r.moderation_status='published' ORDER BY r.created_at DESC LIMIT 50`,[accountId])]);const readiness=await microbusinessReadinessSnapshot(pool,{accountId,profileRole:'service_provider'});return{profile:p.rows[0]||null,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,reviews:reviews.rows,readiness,...rate}}
+async function providerOperatingLocation(accountId){
+  const q=await pool.query(
+    `SELECT account_id,location_mode,location_label,exact_address,visibility,service_radius_km,updated_at
+       FROM service_provider_operating_locations WHERE account_id=$1`,
+    [Number(accountId)]
+  );
+  const row=q.rows[0];
+  if(row)return{...row,use_override:row.location_mode==='separate'};
+  return{
+    account_id:Number(accountId),location_mode:'personal_default',location_label:'',
+    exact_address:'',visibility:'private',service_radius_km:null,updated_at:null,use_override:false
+  };
+}
+async function publicProvider(accountId){
+  const q=await pool.query(`
+    SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,
+           p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,
+           p.public_reputation_enabled,p.profile_image_data_url,pr.visibility,
+           loc.service_radius_km,
+           CASE WHEN loc.location_mode='separate' AND loc.visibility='public' THEN loc.location_label ELSE NULL END service_base_label,
+           CASE WHEN loc.location_mode='separate' AND loc.visibility='public' THEN loc.exact_address ELSE NULL END service_base_address
+      FROM accounts a
+      JOIN service_provider_profiles p ON p.account_id=a.id
+      JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE
+      LEFT JOIN service_provider_operating_locations loc ON loc.account_id=a.id
+     WHERE a.id=$1 AND pr.visibility='public'
+  `,[accountId]);
+  if(!q.rowCount)return null;
+  const eligible=await filterCommerceEligibleServiceProviderIds(pool,[accountId]);
+  if(!eligible.has(Number(accountId)))return null;
+  const [services,credentials,portfolio,rate]=await Promise.all([
+    pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order,c.name,s.service_label`,[accountId]),
+    pool.query(`SELECT credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status FROM profile_credentials WHERE account_id=$1 AND verification_status IN ('verified','submitted','unverified','expired') ORDER BY verification_status='verified' DESC,created_at DESC`,[accountId]),
+    pool.query(`SELECT p.id,p.title,p.description,p.image_data_url,p.approximate_date,p.linked_job_id,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 AND (p.linked_job_id IS NULL OR p.customer_publication_consent=TRUE) ORDER BY p.created_at DESC LIMIT 20`,[accountId]),
+    rating(accountId)
+  ]);
+  const base=q.rows[0];
+  return{...base,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,...(base.public_reputation_enabled?rate:{rating:null,review_count:0})};
+}
+async function privateProfile(accountId){
+  const p=await pool.query(`
+    SELECT account_id,display_name,professional_headline,about,service_area,years_experience,
+           public_reputation_enabled,profile_image_data_url,languages,availability_text,pricing_model,
+           price_from,price_to,same_day_available,cv_public_summary,
+           (cv_private_evidence_object_id IS NOT NULL OR NULLIF(cv_private_data_url,'') IS NOT NULL) has_private_cv,
+           updated_at
+      FROM service_provider_profiles WHERE account_id=$1
+  `,[accountId]);
+  const [services,credentials,portfolio,rate,reviews,operatingLocation]=await Promise.all([
+    pool.query(`SELECT ${serviceOfferSelect} FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[accountId]),
+    pool.query(`SELECT id,credential_type,title,issuing_body,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[accountId]),
+    pool.query(`SELECT p.*,c.name category FROM service_portfolio p LEFT JOIN service_categories c ON c.id=p.category_id WHERE p.account_id=$1 ORDER BY p.created_at DESC`,[accountId]),
+    rating(accountId),
+    pool.query(`SELECT r.id,r.job_id,r.overall,r.workmanship,r.reliability,r.communication,r.professionalism,r.property_care,r.price_transparency,r.review_text,r.created_at,a.display_name reviewer_name,j.service_label FROM service_reviews r JOIN accounts a ON a.id=r.reviewer_account_id JOIN service_jobs j ON j.id=r.job_id WHERE r.provider_account_id=$1 AND r.moderation_status='published' ORDER BY r.created_at DESC LIMIT 50`,[accountId]),
+    providerOperatingLocation(accountId)
+  ]);
+  const readiness=await microbusinessReadinessSnapshot(pool,{accountId,profileRole:'service_provider'});
+  return{profile:p.rows[0]||null,operating_location:operatingLocation,services:services.rows,credentials:credentials.rows,portfolio:portfolio.rows,reviews:reviews.rows,readiness,...rate};
+}
 async function privateProfileHome(accountId){
   const [profile,services]=await Promise.all([
     pool.query(`SELECT account_id,display_name,professional_headline,service_area,availability_text,pricing_model,price_from,price_to,same_day_available,public_reputation_enabled,updated_at FROM service_provider_profiles WHERE account_id=$1`,[accountId]),
@@ -481,10 +544,34 @@ app.get('/api/user-blocks',async(req,res,next)=>{try{const me=await identity(req
 app.get('/api/user-blocks/:accountId/status',async(req,res,next)=>{try{const me=await identity(req),targetId=Number(req.params.accountId);res.json({blocked_by_me:await hasActiveBlock(pool,{blockerAccountId:me.account.id,blockedAccountId:targetId,blockScope:'local_services'}),scope:'local_services'})}catch(e){next(e)}})
 app.post('/api/user-blocks',body,async(req,res,next)=>{try{const me=await identity(req);res.json(await blockAccount(pool,{blockerAccountId:me.account.id,blockedAccountId:req.body?.blocked_account_id,reasonCategory:req.body?.reason_category,blockScope:'local_services'}))}catch(e){next(e)}})
 app.delete('/api/user-blocks/:accountId',async(req,res,next)=>{try{const me=await identity(req);res.json(await unblockAccount(pool,{blockerAccountId:me.account.id,blockedAccountId:req.params.accountId,blockScope:'local_services'}))}catch(e){next(e)}})
-app.get('/api/services/providers',async(req,res,next)=>{try{await requireCustomer(req);const category=clean(req.query.category,80);const args=[];let clause='';if(category){args.push(category);clause=` AND EXISTS(SELECT 1 FROM service_provider_services ss JOIN service_categories c ON c.id=ss.category_id WHERE ss.account_id=a.id AND ss.active=TRUE AND c.code=$1)`}const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE AND pr.visibility='public' WHERE 1=1${clause} ORDER BY p.same_day_available DESC,a.display_name`,args);const eligible=await filterCommerceEligibleServiceProviderIds(pool,rows.map(row=>row.account_id));const out=[];for(const row of rows){if(!eligible.has(Number(row.account_id)))continue;const svc=await pool.query(`SELECT c.code,c.name,s.service_label,s.pricing_method,s.rate_unit,s.price_from,s.price_to,s.minimum_charge,s.callout_fee,s.materials_policy,s.service_mode,s.pricing_note FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order LIMIT 8`,[row.account_id]);const cred=await pool.query(`SELECT title,credential_type FROM profile_credentials WHERE account_id=$1 AND verification_status='verified' ORDER BY created_at DESC LIMIT 3`,[row.account_id]);const rate=row.public_reputation_enabled?await rating(row.account_id):{rating:null,review_count:0};out.push({...row,services:svc.rows,verified_credentials:cred.rows,...rate})}res.json(out)}catch(e){next(e)}})
+app.get('/api/services/providers',async(req,res,next)=>{try{await requireCustomer(req);const category=clean(req.query.category,80);const args=[];let clause='';if(category){args.push(category);clause=` AND EXISTS(SELECT 1 FROM service_provider_services ss JOIN service_categories c ON c.id=ss.category_id WHERE ss.account_id=a.id AND ss.active=TRUE AND c.code=$1)`}const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,p.professional_headline,p.about,p.service_area,p.years_experience,p.languages,p.availability_text,p.pricing_model,p.price_from,p.price_to,p.same_day_available,p.public_reputation_enabled,p.profile_image_data_url,loc.service_radius_km FROM accounts a JOIN service_provider_profiles p ON p.account_id=a.id JOIN profiles pr ON pr.account_id=a.id AND pr.role='service_provider' AND pr.enabled=TRUE AND pr.visibility='public' LEFT JOIN service_provider_operating_locations loc ON loc.account_id=a.id WHERE 1=1${clause} ORDER BY p.same_day_available DESC,a.display_name`,args);const eligible=await filterCommerceEligibleServiceProviderIds(pool,rows.map(row=>row.account_id));const out=[];for(const row of rows){if(!eligible.has(Number(row.account_id)))continue;const svc=await pool.query(`SELECT c.code,c.name,s.service_label,s.pricing_method,s.rate_unit,s.price_from,s.price_to,s.minimum_charge,s.callout_fee,s.materials_policy,s.service_mode,s.pricing_note FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 AND s.active=TRUE ORDER BY c.sort_order LIMIT 8`,[row.account_id]);const cred=await pool.query(`SELECT title,credential_type FROM profile_credentials WHERE account_id=$1 AND verification_status='verified' ORDER BY created_at DESC LIMIT 3`,[row.account_id]);const rate=row.public_reputation_enabled?await rating(row.account_id):{rating:null,review_count:0};out.push({...row,services:svc.rows,verified_credentials:cred.rows,...rate})}res.json(out)}catch(e){next(e)}})
 app.get('/api/services/providers/:accountId',async(req,res,next)=>{try{await requireCustomer(req);const p=await publicProvider(Number(req.params.accountId));if(!p)return res.status(404).json({error:'Public Service Provider profile not found'});res.json(p)}catch(e){next(e)}})
 
 app.get('/api/service-provider/me',async(req,res,next)=>{try{const me=await requireProvider(req);if(String(req.query.view||'')==='home')return res.json(await privateProfileHome(Number(me.account.id)));res.json(await privateProfile(Number(me.account.id)))}catch(e){next(e)}})
+app.get('/api/service-provider/operating-location',async(req,res,next)=>{try{
+  const me=await requireProvider(req);
+  res.json({operating_location:await providerOperatingLocation(Number(me.account.id))});
+}catch(e){next(e)}})
+app.put('/api/service-provider/operating-location',body,async(req,res,next)=>{try{
+  const me=await requireProvider(req),id=Number(me.account.id);
+  const mode=req.body?.use_override===true||req.body?.location_mode==='separate'?'separate':'personal_default';
+  let label=clean(req.body?.location_label,120),address=clean(req.body?.exact_address,500);
+  let visibility=clean(req.body?.visibility,20)||'private';
+  const radius=req.body?.service_radius_km===''||req.body?.service_radius_km==null?null:Number(req.body.service_radius_km);
+  if(radius!=null&&(!Number.isFinite(radius)||radius<0||radius>500))return res.status(400).json({error:'Service radius must be between 0 and 500 km'});
+  if(!['private','public'].includes(visibility))return res.status(400).json({error:'Choose a valid service-base visibility'});
+  if(mode==='separate'&&!address)return res.status(400).json({error:'Enter the separate service-base address'});
+  if(mode==='personal_default'){label='';address='';visibility='private'}
+  const {rows}=await pool.query(`
+    INSERT INTO service_provider_operating_locations(account_id,location_mode,location_label,exact_address,visibility,service_radius_km,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,NOW())
+    ON CONFLICT(account_id) DO UPDATE SET
+      location_mode=EXCLUDED.location_mode,location_label=EXCLUDED.location_label,exact_address=EXCLUDED.exact_address,
+      visibility=EXCLUDED.visibility,service_radius_km=EXCLUDED.service_radius_km,updated_at=NOW()
+    RETURNING *
+  `,[id,mode,label,address,visibility,radius]);
+  res.json({operating_location:{...rows[0],use_override:rows[0].location_mode==='separate'}});
+}catch(e){next(e)}})
 app.put('/api/service-provider/me',body,async(req,res,next)=>{
   let storedCv=null,me=null,previousCvObjectId=null;
   try{
