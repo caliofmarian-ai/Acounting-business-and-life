@@ -5876,7 +5876,7 @@ async function ensureReadinessQaServiceProviderApproved({pool,base,provider,admi
     method:'PUT',token:provider.token,
     body:{services:[{category_id:categoryId,service_label:'QA readiness service'}]}
   });
-  expectStatus(services,200,'Readiness Local Services private service configuration');
+  if(services.status!==200)throw new Error('Readiness Local Services private service configuration status '+services.status+': '+clean(services.json?.error||services.json?.code||'unknown',180));
   return{categoryId,authorizationId:Number(authorization.rows[0].id)};
 }
 
