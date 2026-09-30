@@ -7,9 +7,13 @@ const script=readFileSync(new URL('../scripts/production-microbusiness-readiness
 test('Production readiness smoke is rollback-only and company-test scoped',()=>{
   assert.match(script,/RAILWAY_ENVIRONMENT_NAME!=='production'/);
   assert.match(script,/NODE_ENV!=='production'/);
-  assert.match(script,/account_mode='company_test'/);
-  assert.match(script,/test_role='merchant'/);
-  assert.match(script,/test_role='service_provider'/);
+  assert.match(script,/account_mode,test_role,email_verified_at/);
+  assert.match(script,/createAccount\('merchant'/);
+  assert.match(script,/createAccount\('service_provider'/);
+  assert.match(script,/@business-life\.invalid/);
+  assert.match(script,/INSERT INTO businesses/);
+  assert.match(script,/INSERT INTO merchant_storefronts/);
+  assert.match(script,/INSERT INTO service_provider_profiles/);
   assert.match(script,/client\.query\('BEGIN'\)/);
   assert.match(script,/client\.query\('ROLLBACK'\)/);
   assert.doesNotMatch(script,/client\.query\('COMMIT'\)/);
