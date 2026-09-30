@@ -169,6 +169,48 @@ async function emitDeliveryEvent(req,id,eventCode,{courier=false}={}){
   const recipients=uniqueRecipients({accountId:Number(d.customer_account_id),roleHint:'customer'},...merchant,courier&&d.courier_account_id?{accountId:Number(d.courier_account_id),roleHint:'courier'}:null);
   await safeEmit({eventKey:`delivery:${d.id}:${eventCode}:${d.status}`,eventCode,sourceService:'delivery',entityType:'delivery',entityId:String(d.id),correlationId:correlation(req),category:'operational',priority:eventCode==='delivery.completed'?'normal':'high',emailDefault:false,pushDefault:true,data:{order_number:d.order_number||d.order_id,business_name:d.business_name||'',status:d.status},recipients});
 }
+
+async function emitDeliveryOffers(req,deliveryId,{courierId=null}={}){
+  const values=[Number(deliveryId)];
+  let courierScope='';
+  if(courierId!=null){values.push(Number(courierId));courierScope=' AND dof.courier_account_id=$2'}
+  const{rows}=await pool.query(`
+    SELECT dof.id offer_id,dof.courier_account_id,dof.offer_round,
+           d.id delivery_id,d.route_distance_km,d.required_vehicle_class,
+           o.order_number,b.name business_name
+      FROM delivery_offers dof
+      JOIN deliveries d ON d.id=dof.delivery_id
+      JOIN orders o ON o.id=d.order_id
+      JOIN businesses b ON b.id=d.business_id
+     WHERE dof.delivery_id=$1
+       AND dof.status='pending'
+       AND dof.offer_round=d.dispatch_round
+       AND d.status='awaiting_courier'
+       ${courierScope}
+     ORDER BY dof.id
+  `,values);
+  for(const offer of rows){
+    await safeEmit({
+      eventKey:`delivery-offer:${offer.offer_id}:received`,
+      eventCode:'delivery.offer_received',
+      sourceService:'delivery',
+      entityType:'delivery_offer',
+      entityId:String(offer.offer_id),
+      correlationId:correlation(req),
+      category:'operational',
+      priority:'high',
+      emailDefault:false,
+      pushDefault:true,
+      data:{
+        order_number:offer.order_number||offer.delivery_id,
+        business_name:offer.business_name||'Merchant',
+        route_distance_km:Number(offer.route_distance_km||0),
+        required_vehicle_class:offer.required_vehicle_class||''
+      },
+      recipients:[{accountId:Number(offer.courier_account_id),roleHint:'courier'}]
+    });
+  }
+}
 async function emitPoEvent(req,id,eventCode,{toSupplier=false,toMerchant=true,emailDefault=false}={}){
   const p=await poInfo(id);if(!p)return;
   const recipients=[];
@@ -221,6 +263,17 @@ app.post('/api/orders/merchant/:id/complete',body,(req,res)=>forwardJson(req,res
 app.post('/api/orders/merchant/:id/cancel',body,(req,res)=>forwardJson(req,res,()=>emitOrderEvent(req,req.params.id,'order.cancelled',{customer:true,emailDefault:true,priority:'high'})));
 
 // Delivery
+app.post('/api/delivery/:id/request-courier',body,(req,res)=>forwardJson(req,res,()=>emitDeliveryOffers(req,req.params.id)));
+app.put('/api/courier/availability',body,(req,res)=>forwardJson(req,res,async data=>{
+  if(!data?.available||!Array.isArray(data.new_offer_delivery_ids)||!data.new_offer_delivery_ids.length)return;
+  const me=await identity(req);
+  for(const id of data.new_offer_delivery_ids)await emitDeliveryOffers(req,id,{courierId:me.account.id});
+}));
+app.post('/api/courier/delivery-offers/:offerId/decline',body,(req,res)=>forwardJson(req,res));
+app.post('/api/courier/delivery-offers/:offerId/accept',body,(req,res)=>forwardJson(req,res,async data=>{
+  const id=Number(data?.id||data?.delivery_id);
+  if(id)await emitDeliveryEvent(req,id,'delivery.assigned',{courier:true});
+}));
 app.post('/api/admin/deliveries/:id/assign',body,(req,res)=>forwardJson(req,res,()=>emitDeliveryEvent(req,req.params.id,'delivery.assigned',{courier:true})));
 app.post('/api/courier/deliveries/:id/status',body,(req,res)=>forwardJson(req,res,async data=>{
   const status=data.status||data.delivery?.status||(await deliveryInfo(req.params.id))?.status;
