@@ -27,6 +27,20 @@ test('route point normalization bounds optional device telemetry',()=>{
   assert.throws(()=>normalizeDeliveryRoutePoint({lat:100,lng:120}),/Valid coordinates/);
 });
 
+test('normalized route point can safely pass through the dedup decision again',()=>{
+  const normalized=normalizeDeliveryRoutePoint({
+    lat:14.4,lng:120.9,accuracy_m:12,heading_deg:45,speed_mps:3
+  });
+  const result=deliveryRoutePointDecision({
+    previous:null,
+    next:normalized,
+    pointCount:0
+  });
+  assert.equal(result.append,true);
+  assert.equal(result.point.latitude,14.4);
+  assert.equal(result.point.longitude,120.9);
+});
+
 test('near-duplicate route points are not appended',()=>{
   const previous={latitude:14.400000,longitude:120.900000,recorded_at:'2026-09-30T10:00:00.000Z'};
   const result=deliveryRoutePointDecision({
