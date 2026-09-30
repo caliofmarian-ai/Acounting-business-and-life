@@ -91,6 +91,22 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   ALTER TABLE supplier_profiles ADD COLUMN IF NOT EXISTS minimum_order_value NUMERIC(12,2);
   ALTER TABLE supplier_profiles ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
 
+  CREATE TABLE IF NOT EXISTS supplier_operating_locations (
+    business_id BIGINT PRIMARY KEY REFERENCES businesses(id) ON DELETE CASCADE,
+    account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    location_mode TEXT NOT NULL DEFAULT 'personal_default',
+    location_type TEXT NOT NULL DEFAULT 'warehouse_dispatch_pickup',
+    location_label TEXT NOT NULL DEFAULT '',
+    exact_address TEXT NOT NULL DEFAULT '',
+    visibility TEXT NOT NULL DEFAULT 'private',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (location_mode IN ('personal_default','separate')),
+    CHECK (location_type IN ('warehouse','dispatch','pickup','warehouse_dispatch_pickup')),
+    CHECK (visibility IN ('private','relationships'))
+  );
+  CREATE INDEX IF NOT EXISTS supplier_operating_locations_account_idx
+    ON supplier_operating_locations(account_id,business_id);
+
   CREATE TABLE IF NOT EXISTS supplier_relationships (
     business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
     supplier_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -206,7 +222,16 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   CREATE UNIQUE INDEX IF NOT EXISTS supplier_receipt_tx_unique ON transactions(source,source_id) WHERE source='supplier_receipt';
 `);await ensureCatalogMediaSchema(pool);await ensureSupplierDomainV2Schema(pool);await ensureSupplierCommercialV3Schema(pool);await ensureSupplierSourcingV4Schema(pool);await ensureSupplierDailyV5Schema(pool);await ensureSupplierExceptionsV5Schema(pool);const tenancy=await pool.query(`SELECT to_regclass('public.profile_business_bindings') profile_business_bindings`);if(tenancy.rows[0]?.profile_business_bindings)await pool.query(`WITH one_supplier_business AS (SELECT account_id,MIN(business_id) business_id FROM profile_business_bindings WHERE role='supplier' AND status='active' GROUP BY account_id HAVING COUNT(*)=1) UPDATE supplier_relationships r SET supplier_business_id=o.business_id FROM one_supplier_business o WHERE r.supplier_business_id IS NULL AND r.supplier_account_id=o.account_id`)}
 
-async function relationship(businessId,supplierId){const r=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value,sb.name supplier_business_name FROM supplier_relationships r JOIN accounts a ON a.id=r.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=r.supplier_account_id LEFT JOIN businesses sb ON sb.id=r.supplier_business_id WHERE r.business_id=$1 AND r.supplier_account_id=$2`,[businessId,supplierId]);return r.rows[0]||null}
+async function relationship(businessId,supplierId){const r=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value,sb.name supplier_business_name,
+    CASE WHEN r.state='accepted' AND sol.location_mode='separate' AND sol.visibility='relationships' THEN sol.location_type ELSE NULL END operating_location_type,
+    CASE WHEN r.state='accepted' AND sol.location_mode='separate' AND sol.visibility='relationships' THEN sol.location_label ELSE NULL END operating_location_label,
+    CASE WHEN r.state='accepted' AND sol.location_mode='separate' AND sol.visibility='relationships' THEN sol.exact_address ELSE NULL END operating_location_address
+    FROM supplier_relationships r
+    JOIN accounts a ON a.id=r.supplier_account_id
+    LEFT JOIN supplier_profiles s ON s.account_id=r.supplier_account_id
+    LEFT JOIN businesses sb ON sb.id=r.supplier_business_id
+    LEFT JOIN supplier_operating_locations sol ON sol.business_id=r.supplier_business_id AND sol.account_id=r.supplier_account_id
+    WHERE r.business_id=$1 AND r.supplier_account_id=$2`,[businessId,supplierId]);return r.rows[0]||null}
 async function resolveSupplierBusinessForPo(supplierAccountId,requestedBusinessId=null,{allowActivePreference=false,allowUnresolved=false}={}){
   const {rows}=await pool.query(
     `SELECT pb.business_id,pb.is_primary
@@ -246,6 +271,36 @@ async function resolveSupplierBusinessForPo(supplierAccountId,requestedBusinessI
   }
   throw Object.assign(new Error('Supplier has no active economic workspace'),{status:409,code:'SUPPLIER_BUSINESS_UNAVAILABLE'});
 }
+const SUPPLIER_LOCATION_TYPES=new Set(['warehouse','dispatch','pickup','warehouse_dispatch_pickup']);
+const SUPPLIER_LOCATION_VISIBILITY=new Set(['private','relationships']);
+async function supplierOperatingLocation(accountId,businessId){
+  const {rows}=await pool.query(
+    `SELECT business_id,account_id,location_mode,location_type,location_label,exact_address,visibility,updated_at
+       FROM supplier_operating_locations
+      WHERE business_id=$1 AND account_id=$2`,
+    [Number(businessId),Number(accountId)]
+  );
+  const row=rows[0];
+  if(row)return{...row,use_override:row.location_mode==='separate'};
+  return{
+    business_id:Number(businessId),account_id:Number(accountId),
+    location_mode:'personal_default',location_type:'warehouse_dispatch_pickup',
+    location_label:'',exact_address:'',visibility:'private',updated_at:null,use_override:false
+  };
+}
+async function supplierBusinessContext(accountId,requestedBusinessId=null){
+  const businessId=await resolveSupplierBusinessForPo(accountId,requestedBusinessId,{allowActivePreference:true});
+  const q=await pool.query(
+    `SELECT b.id,b.name,b.country_code,b.currency_code
+       FROM businesses b
+       JOIN profile_business_bindings pb ON pb.business_id=b.id
+      WHERE b.id=$1 AND pb.account_id=$2 AND pb.role='supplier' AND pb.status='active'`,
+    [businessId,Number(accountId)]
+  );
+  if(!q.rowCount)throw Object.assign(new Error('Supplier business workspace unavailable'),{status:409,code:'SUPPLIER_BUSINESS_UNAVAILABLE'});
+  return q.rows[0];
+}
+
 async function catalog(supplierId,supplierBusinessId=null){
   const bindingCountQ=await pool.query(
     `SELECT COUNT(*)::int c FROM profile_business_bindings
@@ -300,14 +355,48 @@ app.get('/suppliers-ui.js',(_q,r)=>r.type('application/javascript').send(readFil
 async function root(req,res){const r=await suppliersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root)
 
-app.get('/api/supplier/me',async(req,res,next)=>{try{const me=await requireSupplier(req);res.json({profile:me.supplier||null,catalog:await catalog(me.account.id)})}catch(e){next(e)}})
-app.put('/api/supplier/me',body,async(req,res,next)=>{try{const me=await requireSupplier(req);await pool.query(`INSERT INTO supplier_profiles(account_id,supplier_name,description,delivery_available,service_area,normal_lead_days,minimum_order_value,notes,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT(account_id) DO UPDATE SET supplier_name=EXCLUDED.supplier_name,description=EXCLUDED.description,delivery_available=EXCLUDED.delivery_available,service_area=EXCLUDED.service_area,normal_lead_days=EXCLUDED.normal_lead_days,minimum_order_value=EXCLUDED.minimum_order_value,notes=EXCLUDED.notes,updated_at=NOW()`,[me.account.id,clean(req.body?.supplier_name,150)||me.account.display_name,clean(req.body?.description,1200),Boolean(req.body?.delivery_available),clean(req.body?.service_area,300),Math.max(0,Math.min(365,Number(req.body?.normal_lead_days)||1)),req.body?.minimum_order_value===''||req.body?.minimum_order_value==null?null:Number(req.body.minimum_order_value),clean(req.body?.notes,1000)]);res.json({profile:(await identity(req)).supplier,catalog:await catalog(me.account.id)})}catch(e){next(e)}})
+app.get('/api/supplier/me',async(req,res,next)=>{try{const me=await requireSupplier(req);const business=await supplierBusinessContext(me.account.id,req.query.business_id||null);res.json({profile:me.supplier||null,business,operating_location:await supplierOperatingLocation(me.account.id,business.id),catalog:await catalog(me.account.id,business.id)})}catch(e){next(e)}})
+app.put('/api/supplier/me',body,async(req,res,next)=>{try{const me=await requireSupplier(req);await pool.query(`INSERT INTO supplier_profiles(account_id,supplier_name,description,delivery_available,service_area,normal_lead_days,minimum_order_value,notes,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW()) ON CONFLICT(account_id) DO UPDATE SET supplier_name=EXCLUDED.supplier_name,description=EXCLUDED.description,delivery_available=EXCLUDED.delivery_available,service_area=EXCLUDED.service_area,normal_lead_days=EXCLUDED.normal_lead_days,minimum_order_value=EXCLUDED.minimum_order_value,notes=EXCLUDED.notes,updated_at=NOW()`,[me.account.id,clean(req.body?.supplier_name,150)||me.account.display_name,clean(req.body?.description,1200),Boolean(req.body?.delivery_available),clean(req.body?.service_area,300),Math.max(0,Math.min(365,Number(req.body?.normal_lead_days)||1)),req.body?.minimum_order_value===''||req.body?.minimum_order_value==null?null:Number(req.body.minimum_order_value),clean(req.body?.notes,1000)]);const business=await supplierBusinessContext(me.account.id,req.body?.business_id||null);res.json({profile:(await identity(req)).supplier,business,operating_location:await supplierOperatingLocation(me.account.id,business.id),catalog:await catalog(me.account.id,business.id)})}catch(e){next(e)}})
+app.get('/api/supplier/operating-location',async(req,res,next)=>{try{
+  const me=await requireSupplier(req),business=await supplierBusinessContext(me.account.id,req.query.business_id||null);
+  res.json({business,operating_location:await supplierOperatingLocation(me.account.id,business.id)});
+}catch(e){next(e)}})
+app.put('/api/supplier/operating-location',body,async(req,res,next)=>{try{
+  const me=await requireSupplier(req),business=await supplierBusinessContext(me.account.id,req.body?.business_id||null);
+  const mode=req.body?.use_override===true||req.body?.location_mode==='separate'?'separate':'personal_default';
+  let type=clean(req.body?.location_type,40)||'warehouse_dispatch_pickup';
+  let label=clean(req.body?.location_label,120),address=clean(req.body?.exact_address,500);
+  let visibility=clean(req.body?.visibility,30)||'private';
+  if(!SUPPLIER_LOCATION_TYPES.has(type))return res.status(400).json({error:'Choose a valid Supplier location type'});
+  if(!SUPPLIER_LOCATION_VISIBILITY.has(visibility))return res.status(400).json({error:'Choose a valid Supplier location visibility'});
+  if(mode==='separate'&&!address)return res.status(400).json({error:'Enter the separate Supplier work address'});
+  if(mode==='personal_default'){type='warehouse_dispatch_pickup';label='';address='';visibility='private'}
+  const {rows}=await pool.query(
+    `INSERT INTO supplier_operating_locations(business_id,account_id,location_mode,location_type,location_label,exact_address,visibility,updated_at)
+     VALUES($1,$2,$3,$4,$5,$6,$7,NOW())
+     ON CONFLICT(business_id) DO UPDATE SET
+       account_id=EXCLUDED.account_id,location_mode=EXCLUDED.location_mode,location_type=EXCLUDED.location_type,
+       location_label=EXCLUDED.location_label,exact_address=EXCLUDED.exact_address,visibility=EXCLUDED.visibility,updated_at=NOW()
+     RETURNING *`,
+    [Number(business.id),Number(me.account.id),mode,type,label,address,visibility]
+  );
+  res.json({business,operating_location:{...rows[0],use_override:rows[0].location_mode==='separate'}});
+}catch(e){next(e)}})
+
 app.post('/api/supplier/catalog',body,async(req,res,next)=>{try{const me=await requireSupplier(req);if(!clean(req.body?.product_name,160)||!finite(req.body?.price_per_pack)||Number(req.body.price_per_pack)<0||!positive(req.body?.base_units_per_pack))return res.status(400).json({error:'Product name, pack conversion and price are required'});const{rows}=await pool.query(`INSERT INTO supplier_catalog_items(supplier_account_id,product_name,sku,unit_name,base_unit,base_units_per_pack,price_per_pack,minimum_packs,availability_status,lead_time_days,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE) RETURNING *`,[me.account.id,clean(req.body.product_name,160),clean(req.body?.sku,80),clean(req.body?.unit_name,50)||'pack',clean(req.body?.base_unit,50)||'unit',Number(req.body.base_units_per_pack),Number(req.body.price_per_pack),positive(req.body?.minimum_packs)?Number(req.body.minimum_packs):1,['available','limited','unavailable'].includes(req.body?.availability_status)?req.body.availability_status:'available',Math.max(0,Math.min(365,Number(req.body?.lead_time_days)||1))]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'This catalog item already exists'});next(e)}})
 app.patch('/api/supplier/catalog/:id',body,async(req,res,next)=>{try{const me=await requireSupplier(req);const old=await pool.query(`SELECT * FROM supplier_catalog_items WHERE id=$1 AND supplier_account_id=$2`,[Number(req.params.id),me.account.id]);if(!old.rowCount)return res.status(404).json({error:'Catalog item not found'});const x=old.rows[0];const{rows}=await pool.query(`UPDATE supplier_catalog_items SET product_name=$1,sku=$2,unit_name=$3,base_unit=$4,base_units_per_pack=$5,price_per_pack=$6,minimum_packs=$7,availability_status=$8,lead_time_days=$9,active=$10,updated_at=NOW() WHERE id=$11 RETURNING *`,[clean(req.body?.product_name??x.product_name,160),clean(req.body?.sku??x.sku,80),clean(req.body?.unit_name??x.unit_name,50),clean(req.body?.base_unit??x.base_unit,50),Number(req.body?.base_units_per_pack??x.base_units_per_pack),Number(req.body?.price_per_pack??x.price_per_pack),Number(req.body?.minimum_packs??x.minimum_packs),['available','limited','unavailable'].includes(req.body?.availability_status)?req.body.availability_status:x.availability_status,Number(req.body?.lead_time_days??x.lead_time_days),req.body?.active??x.active,x.id]);res.json(rows[0])}catch(e){next(e)}})
 
 app.post('/api/procurement/relationships/invite',body,async(req,_res,next)=>{try{const{me,business:b}=await requireMerchant(req,Number(req.body?.business_id||undefined));if(clean(req.body?.supplier_email,160))await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'invitation_create',subjectType:'supplier_relationship',subjectId:b.id});next()}catch(e){next(e)}})
 app.post('/api/procurement/relationships/invite',body,async(req,res,next)=>{try{const{me,business:b}=await requireMerchant(req,Number(req.body?.business_id||undefined));const email=clean(req.body?.supplier_email,160).toLowerCase();const a=await pool.query(`SELECT a.id,a.display_name FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='supplier' AND p.enabled=TRUE WHERE LOWER(a.email)=$1`,[email]);if(!a.rowCount)return res.status(404).json({error:'No active Supplier profile uses that email yet'});if(Number(a.rows[0].id)===Number(me.account.id))return res.status(409).json({error:'Use a different Supplier account for this relationship'});const invitedSupplierBusinessId=await resolveSupplierBusinessForPo(a.rows[0].id,req.body?.supplier_business_id,{allowUnresolved:true});await pool.query(`INSERT INTO supplier_relationships(business_id,supplier_account_id,supplier_business_id,state,invited_by_account_id,note) VALUES($1,$2,$3,'invited',$4,$5) ON CONFLICT(business_id,supplier_account_id) DO UPDATE SET supplier_business_id=EXCLUDED.supplier_business_id,state='invited',invited_by_account_id=EXCLUDED.invited_by_account_id,invited_at=NOW(),revoked_at=NULL,note=EXCLUDED.note`,[b.id,a.rows[0].id,invitedSupplierBusinessId,me.account.id,clean(req.body?.note,500)]);res.status(201).json(await relationship(b.id,a.rows[0].id))}catch(e){next(e)}})
-app.get('/api/procurement/relationships',async(req,res,next)=>{try{const me=await identity(req);if(enabled(me,'merchant')){const b=business(me,Number(req.query.business_id||undefined));if(!b)return res.status(403).json({error:'Business unavailable'});const{rows}=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value,sb.name supplier_business_name FROM supplier_relationships r JOIN accounts a ON a.id=r.supplier_account_id LEFT JOIN supplier_profiles s ON s.account_id=a.id LEFT JOIN businesses sb ON sb.id=r.supplier_business_id WHERE r.business_id=$1 ORDER BY r.state='accepted' DESC,COALESCE(s.supplier_name,a.display_name)`,[b.id]);return res.json(rows)}if(enabled(me,'supplier')){const{rows}=await pool.query(`SELECT r.*,b.name business_name,sb.name supplier_business_name FROM supplier_relationships r JOIN businesses b ON b.id=r.business_id LEFT JOIN businesses sb ON sb.id=r.supplier_business_id WHERE r.supplier_account_id=$1 ORDER BY r.invited_at DESC`,[me.account.id]);return res.json(rows)}res.status(403).json({error:'Merchant or Supplier profile required'})}catch(e){next(e)}})
+app.get('/api/procurement/relationships',async(req,res,next)=>{try{const me=await identity(req);if(enabled(me,'merchant')){const b=business(me,Number(req.query.business_id||undefined));if(!b)return res.status(403).json({error:'Business unavailable'});const{rows}=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value,sb.name supplier_business_name,
+      CASE WHEN r.state='accepted' AND sol.location_mode='separate' AND sol.visibility='relationships' THEN sol.location_type ELSE NULL END operating_location_type,
+      CASE WHEN r.state='accepted' AND sol.location_mode='separate' AND sol.visibility='relationships' THEN sol.location_label ELSE NULL END operating_location_label,
+      CASE WHEN r.state='accepted' AND sol.location_mode='separate' AND sol.visibility='relationships' THEN sol.exact_address ELSE NULL END operating_location_address
+      FROM supplier_relationships r JOIN accounts a ON a.id=r.supplier_account_id
+      LEFT JOIN supplier_profiles s ON s.account_id=a.id
+      LEFT JOIN businesses sb ON sb.id=r.supplier_business_id
+      LEFT JOIN supplier_operating_locations sol ON sol.business_id=r.supplier_business_id AND sol.account_id=r.supplier_account_id
+      WHERE r.business_id=$1 ORDER BY r.state='accepted' DESC,COALESCE(s.supplier_name,a.display_name)`,[b.id]);return res.json(rows)}if(enabled(me,'supplier')){const{rows}=await pool.query(`SELECT r.*,b.name business_name,sb.name supplier_business_name FROM supplier_relationships r JOIN businesses b ON b.id=r.business_id LEFT JOIN businesses sb ON sb.id=r.supplier_business_id WHERE r.supplier_account_id=$1 ORDER BY r.invited_at DESC`,[me.account.id]);return res.json(rows)}res.status(403).json({error:'Merchant or Supplier profile required'})}catch(e){next(e)}})
 app.post('/api/supplier/relationships/:businessId/respond',body,async(req,res,next)=>{try{const me=await requireSupplier(req);const state=req.body?.accept?'accepted':'revoked';const current=await pool.query(`SELECT * FROM supplier_relationships WHERE business_id=$1 AND supplier_account_id=$2 AND state IN ('invited','pending','accepted')`,[Number(req.params.businessId),me.account.id]);if(!current.rowCount)return res.status(404).json({error:'Relationship invitation not found'});let supplierBusinessId=current.rows[0].supplier_business_id;if(state==='accepted'&&supplierBusinessId==null)supplierBusinessId=await resolveSupplierBusinessForPo(me.account.id,req.body?.supplier_business_id,{allowActivePreference:true});const{rows}=await pool.query(`UPDATE supplier_relationships SET supplier_business_id=COALESCE($1,supplier_business_id),state=$2,accepted_at=CASE WHEN $2='accepted' THEN NOW() ELSE accepted_at END,revoked_at=CASE WHEN $2='revoked' THEN NOW() ELSE NULL END WHERE business_id=$3 AND supplier_account_id=$4 AND state IN ('invited','pending','accepted') RETURNING *`,[supplierBusinessId,state,Number(req.params.businessId),me.account.id]);res.json(rows[0])}catch(e){next(e)}})
 app.get('/api/procurement/suppliers/:supplierId/catalog',async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.query.business_id||undefined));const rel=await relationship(b.id,Number(req.params.supplierId));if(!rel||rel.state!=='accepted')return res.status(403).json({error:'Accepted Supplier relationship required'});if(rel.supplier_business_id==null)return res.status(409).json({error:'Supplier relationship must be assigned to a Supplier business before catalog ordering',code:'SUPPLIER_BUSINESS_REQUIRED'});const items=await catalog(Number(req.params.supplierId),Number(rel.supplier_business_id));const links=await pool.query(`SELECT * FROM merchant_supplier_item_links WHERE business_id=$1`,[b.id]);const map=new Map(links.rows.map(x=>[Number(x.catalog_item_id),x]));res.json({supplier:rel,items:items.map(x=>({...x,link:map.get(Number(x.id))||null}))})}catch(e){next(e)}})
 app.put('/api/procurement/catalog/:catalogId/link',body,async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.body?.business_id||undefined));const catalogId=Number(req.params.catalogId);const item=await pool.query(`SELECT supplier_account_id,product_name FROM supplier_catalog_items WHERE id=$1`,[catalogId]);if(!item.rowCount)return res.status(404).json({error:'Catalog item not found'});const rel=await relationship(b.id,item.rows[0].supplier_account_id);if(!rel||rel.state!=='accepted')return res.status(403).json({error:'Accepted relationship required'});const inventoryId=req.body?.legacy_inventory_id?Number(req.body.legacy_inventory_id):null;if(inventoryId){const inv=await pool.query(`SELECT id FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,b.id]);if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found for this business'})}await pool.query(`INSERT INTO merchant_supplier_item_links(business_id,catalog_item_id,legacy_inventory_id,merchant_item_name) VALUES($1,$2,$3,$4) ON CONFLICT(business_id,catalog_item_id) DO UPDATE SET legacy_inventory_id=EXCLUDED.legacy_inventory_id,merchant_item_name=EXCLUDED.merchant_item_name`,[b.id,catalogId,inventoryId,clean(req.body?.merchant_item_name,150)||item.rows[0].product_name]);res.json({ok:true})}catch(e){next(e)}})
