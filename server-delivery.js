@@ -717,6 +717,7 @@ async function courierHomeSnapshot(accountId,profile=null){
     `,[Number(accountId)])
   ]);
   const compliance=complianceResult.rows[0]||{};
+  const offers=await pendingCourierOffers(pool,accountId,{limit:3});
   return{
     detail_mode:'home',
     profile:profile?{
@@ -730,6 +731,8 @@ async function courierHomeSnapshot(accountId,profile=null){
       operating_area_path:profile.operating_area_path||''
     }:null,
     deliveries:workResult.rows,
+    offers,
+    offer_count:offers.length,
     compliance:{
       blocking_count:Number(compliance.blocking_count||0),
       pending_count:Number(compliance.pending_count||0),
@@ -969,10 +972,44 @@ app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{
 
 app.put('/api/delivery/store-location',body,async(req,res,next)=>{try{const{me,business:b}=await requireMerchant(req,Number(req.body?.business_id||undefined)),lat=Number(req.body?.lat),lng=Number(req.body?.lng);if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid coordinates required'});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'store_location_change',subjectType:'merchant_storefront',subjectId:b.id});await pool.query(`UPDATE merchant_storefronts SET pickup_lat=$1,pickup_lng=$2,updated_at=NOW() WHERE business_id=$3`,[lat,lng,b.id]);res.json({ok:true,pickup_lat:lat,pickup_lng:lng})}catch(e){next(e)}})
 app.get('/api/delivery/merchant',async(req,res,next)=>{try{const{business:b}=await requireMerchant(req,Number(req.query.business_id||undefined));const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,cp.display_name courier_name,cp.vehicle_type FROM deliveries d JOIN orders o ON o.id=d.order_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id WHERE d.business_id=$1 ORDER BY d.created_at DESC LIMIT 200`,[b.id]);res.json(rows.map(d=>deliveryPrivacyView(d,'merchant')))}catch(e){next(e)}})
-app.post('/api/delivery/:id/request-courier',body,async(req,res,next)=>{try{const id=Number(req.params.id),d=await deliveryDetail(id);if(!d)return res.status(404).json({error:'Delivery not found'});const{me}=await requireMerchant(req,d.business_id);if(d.order_status!=='ready')return res.status(409).json({error:'Order must be ready before courier dispatch'});if(d.payment_status!=='paid')return res.status(409).json({error:'Delivery order must be paid before dispatch'});if(!['quoted','requested'].includes(d.status))return res.status(409).json({error:'Delivery is already in dispatch'});await pool.query(`UPDATE deliveries SET status='awaiting_courier',requested_at=COALESCE(requested_at,NOW()),updated_at=NOW() WHERE id=$1`,[id]);res.json(deliveryPrivacyView(await deliveryDetail(id),'merchant'))}catch(e){next(e)}})
+app.post('/api/delivery/:id/request-courier',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const id=Number(req.params.id),initial=await deliveryDetail(id);
+    if(!initial)return res.status(404).json({error:'Delivery not found'});
+    const{me}=await requireMerchant(req,initial.business_id);
+    await client.query('BEGIN');
+    const locked=await client.query(`
+      SELECT d.*,o.order_status,o.payment_status
+        FROM deliveries d
+        JOIN orders o ON o.id=d.order_id
+       WHERE d.id=$1
+       FOR UPDATE OF d
+    `,[id]);
+    if(!locked.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery not found'})}
+    const d=locked.rows[0];
+    if(d.order_status!=='ready'){await client.query('ROLLBACK');return res.status(409).json({error:'Order must be ready before courier dispatch'})}
+    if(d.payment_status!=='paid'){await client.query('ROLLBACK');return res.status(409).json({error:'Delivery order must be paid before dispatch'})}
+    if(!['quoted','requested','awaiting_courier'].includes(d.status)){await client.query('ROLLBACK');return res.status(409).json({error:'Delivery is already assigned or active'})}
+    const round=await createOfferRound(client,d,{actorAccountId:me.account.id});
+    await client.query('COMMIT');
+    const out=deliveryPrivacyView(await deliveryDetail(id),'merchant');
+    res.json({...out,dispatch_round:round.round,dispatch_offer_count:round.offerIds.length,dispatch_state:round.offerIds.length?'offers_sent':'waiting_for_available_courier'});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
+  finally{client.release()}
+})
 
 app.get('/api/courier/home',async(req,res,next)=>{try{const me=await requireCourier(req);res.json(await courierHomeSnapshot(me.account.id,me.courier))}catch(e){next(e)}})
-app.get('/api/courier/delivery-profile',async(req,res,next)=>{try{const me=await requireCourier(req);const [p,docs,deliveries]=await Promise.all([pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[me.account.id]),pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM courier_documents WHERE account_id=$1 ORDER BY created_at DESC`,[me.account.id]),pool.query(`SELECT d.*,o.order_number,b.name business_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id WHERE d.courier_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id])]);res.json({profile:p.rows[0]||null,documents:docs.rows,deliveries:deliveries.rows.map(d=>deliveryPrivacyView(d,'courier'))})}catch(e){next(e)}})
+app.get('/api/courier/delivery-profile',async(req,res,next)=>{try{
+  const me=await requireCourier(req);
+  const [p,docs,deliveries,offers]=await Promise.all([
+    pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[me.account.id]),
+    pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM courier_documents WHERE account_id=$1 ORDER BY created_at DESC`,[me.account.id]),
+    pool.query(`SELECT d.*,o.order_number,b.name business_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id WHERE d.courier_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id]),
+    pendingCourierOffers(pool,me.account.id,{limit:20})
+  ]);
+  res.json({profile:p.rows[0]||null,documents:docs.rows,deliveries:deliveries.rows.map(d=>deliveryPrivacyView(d,'courier')),offers})
+}catch(e){next(e)}})
 app.put('/api/courier/operating-area',body,async(req,res,next)=>{try{
   const me=await requireCourier(req);
   const psgcCode=clean(req.body?.psgc_code,20);
@@ -1034,7 +1071,118 @@ app.post('/api/courier/documents',body,async(req,res,next)=>{
     next(e);
   }
 })
-app.put('/api/courier/availability',body,async(req,res,next)=>{try{const me=await requireCourier(req);const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();if(req.body?.available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[Boolean(req.body?.available),me.account.id]);res.json({ok:true,available:Boolean(req.body?.available)})}catch(e){next(e)}})
+app.put('/api/courier/availability',body,async(req,res,next)=>{try{
+  const me=await requireCourier(req),available=Boolean(req.body?.available);
+  const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);
+  if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});
+  const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();
+  if(available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});
+  if(available&&await courierHasActiveDelivery(pool,me.account.id))return res.status(409).json({error:'Finish the active delivery before becoming available for another offer'});
+  await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[available,me.account.id]);
+  const created=available?await offerWaitingDeliveriesToCourier(pool,me.account.id,{limit:5}):[];
+  res.json({ok:true,available,new_offer_count:created.length,new_offer_delivery_ids:created.map(x=>x.delivery_id)});
+}catch(e){next(e)}})
+app.get('/api/courier/delivery-offers',async(req,res,next)=>{try{
+  const me=await requireCourier(req);
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json(await pendingCourierOffers(pool,me.account.id,{limit:req.query?.limit}));
+}catch(e){next(e)}})
+
+app.post('/api/courier/delivery-offers/:offerId/decline',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireCourier(req),offerId=Number(req.params.offerId);
+    await client.query('BEGIN');
+    const q=await client.query(`
+      SELECT dof.*,d.status delivery_status,d.dispatch_round
+        FROM delivery_offers dof
+        JOIN deliveries d ON d.id=dof.delivery_id
+       WHERE dof.id=$1 AND dof.courier_account_id=$2
+       FOR UPDATE OF dof,d
+    `,[offerId,me.account.id]);
+    if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery offer not found'})}
+    const offer=q.rows[0];
+    if(offer.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
+    if(offer.delivery_status!=='awaiting_courier'||Number(offer.offer_round)!==Number(offer.dispatch_round)){
+      await client.query(`UPDATE delivery_offers SET status='withdrawn',responded_at=NOW(),updated_at=NOW() WHERE id=$1`,[offerId]);
+      await client.query('COMMIT');
+      return res.status(409).json({error:'This delivery offer is no longer available'});
+    }
+    await client.query(`
+      UPDATE delivery_offers
+         SET status='declined',decline_reason=$1,responded_at=NOW(),updated_at=NOW()
+       WHERE id=$2
+    `,[clean(req.body?.reason,300),offerId]);
+    await recordDispatchEvent(client,{
+      deliveryId:offer.delivery_id,actorAccountId:me.account.id,courierAccountId:me.account.id,
+      eventCode:'offer_declined',offerRound:offer.offer_round,detail:{reason:clean(req.body?.reason,300)}
+    });
+    await client.query('COMMIT');
+    res.json({ok:true,offer_id:offerId,delivery_id:Number(offer.delivery_id),status:'declined'});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
+  finally{client.release()}
+})
+
+app.post('/api/courier/delivery-offers/:offerId/accept',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireCourier(req),offerId=Number(req.params.offerId);
+    await client.query('BEGIN');
+    const q=await client.query(`
+      SELECT dof.*,d.*,b.territory_id
+        FROM delivery_offers dof
+        JOIN deliveries d ON d.id=dof.delivery_id
+        JOIN businesses b ON b.id=d.business_id
+       WHERE dof.id=$1 AND dof.courier_account_id=$2
+       FOR UPDATE OF dof,d
+    `,[offerId,me.account.id]);
+    if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery offer not found'})}
+    const row=q.rows[0],deliveryId=Number(row.delivery_id);
+    if(row.status!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
+    if(row.delivery_status&&row.delivery_status!=='awaiting_courier'){
+      await client.query('ROLLBACK');return res.status(409).json({error:'This delivery has already been taken'});
+    }
+    if(row.status==='pending'&&String(row.status)!=='pending'){await client.query('ROLLBACK');return res.status(409).json({error:'This delivery offer is no longer pending'})}
+    const delivery=await client.query('SELECT * FROM deliveries WHERE id=$1 FOR UPDATE',[deliveryId]);
+    const d=delivery.rows[0];
+    if(!d||d.status!=='awaiting_courier'||d.courier_account_id!=null||Number(row.offer_round)!==Number(d.dispatch_round)){
+      await client.query(`UPDATE delivery_offers SET status='withdrawn',responded_at=NOW(),updated_at=NOW() WHERE id=$1`,[offerId]);
+      await client.query('COMMIT');
+      return res.status(409).json({error:'This delivery has already been taken or re-offered'});
+    }
+    const courierQ=await client.query('SELECT * FROM courier_profiles WHERE account_id=$1 FOR UPDATE',[me.account.id]);
+    if(!courierQ.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Courier profile missing'})}
+    const courier=courierQ.rows[0];
+    const gate=await courierOfferGateFromDb(client,courier,d);
+    if(!gate.allowed){await client.query('ROLLBACK');return res.status(409).json({error:'You are no longer eligible for this delivery',code:gate.reason})}
+    await client.query(`
+      UPDATE deliveries
+         SET courier_account_id=$1,vehicle_class=$2,status='courier_assigned',
+             assigned_at=NOW(),updated_at=NOW()
+       WHERE id=$3
+    `,[me.account.id,gate.approved_vehicle_class,deliveryId]);
+    await client.query(`
+      UPDATE delivery_offers
+         SET status=CASE WHEN id=$1 THEN 'accepted' ELSE 'withdrawn' END,
+             responded_at=NOW(),updated_at=NOW()
+       WHERE delivery_id=$2 AND offer_round=$3 AND status='pending'
+    `,[offerId,deliveryId,d.dispatch_round]);
+    await client.query(`
+      UPDATE delivery_offers
+         SET status='withdrawn',responded_at=NOW(),updated_at=NOW()
+       WHERE courier_account_id=$1 AND delivery_id<>$2 AND status='pending'
+    `,[me.account.id,deliveryId]);
+    await client.query('UPDATE courier_profiles SET available=FALSE,updated_at=NOW() WHERE account_id=$1',[me.account.id]);
+    await recordDispatchEvent(client,{
+      deliveryId,actorAccountId:me.account.id,courierAccountId:me.account.id,
+      eventCode:'offer_accepted',offerRound:d.dispatch_round,detail:{offer_id:offerId}
+    });
+    await client.query('COMMIT');
+    res.json({...deliveryPrivacyView(await deliveryDetail(deliveryId),'courier'),assignment_mode:'courier_accept'});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
+  finally{client.release()}
+})
+
 app.post('/api/courier/deliveries/:id/status',body,async(req,res,next)=>{try{const me=await requireCourier(req),id=Number(req.params.id),nextStatus=clean(req.body?.status,60);const d=await deliveryDetail(id);if(!d||Number(d.courier_account_id)!==Number(me.account.id))return res.status(404).json({error:'Assigned delivery not found'});const flow={courier_assigned:['courier_en_route_to_merchant'],courier_en_route_to_merchant:['courier_arrived_at_merchant'],courier_arrived_at_merchant:['picked_up'],picked_up:['in_transit'],in_transit:['courier_arrived_at_customer']}[d.status]||[];if(!flow.includes(nextStatus))return res.status(409).json({error:`Cannot move delivery from ${d.status} to ${nextStatus}`});const stamp={courier_en_route_to_merchant:'en_route_to_merchant_at',courier_arrived_at_merchant:'arrived_merchant_at',picked_up:'picked_up_at',in_transit:'in_transit_at',courier_arrived_at_customer:'arrived_customer_at'}[nextStatus];const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE deliveries SET status=$1,${stamp}=NOW(),updated_at=NOW() WHERE id=$2`,[nextStatus,id]);if(nextStatus==='picked_up'){await client.query(`UPDATE orders SET order_status='handoff_to_delivery',handoff_at=COALESCE(handoff_at,NOW()),updated_at=NOW() WHERE id=$1 AND order_status='ready'`,[d.order_id]);await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) SELECT id,'ready','handoff_to_delivery',$1,'Courier picked up order' FROM orders WHERE id=$2`,[me.account.id,d.order_id])}await client.query('COMMIT');res.json(deliveryPrivacyView(await deliveryDetail(id),'courier'))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 app.post('/api/courier/deliveries/:id/location',body,async(req,res,next)=>{
   const client=await pool.connect();
@@ -1532,48 +1680,54 @@ app.get('/api/admin/deliveries/:id/proofs/:proofId/file',async(req,res,next)=>{t
 
 app.get('/api/admin/deliveries',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId,status=clean(req.query?.status,40);const values=[],where=[];if(territoryId!=null){values.push(territoryId);where.push(`b.territory_id=$${values.length}`)}if(status){values.push(status);where.push(`d.status=$${values.length}`)}const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,b.name business_name,b.territory_id,cp.display_name courier_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY d.updated_at DESC LIMIT 150`,values);res.json(rows.map(d=>deliveryPrivacyView(d,'admin')))}catch(e){next(e)}})
 app.get('/api/admin/delivery/eligible-couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=c.account_id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT c.account_id,c.display_name courier_name,c.vehicle_type,c.approved_vehicle_class,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path FROM courier_profiles c WHERE c.eligibility_status='approved' AND c.available=TRUE AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW()) AND ${scope} ORDER BY c.display_name`,values);res.json(rows)}catch(e){next(e)}})
-app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{try{
-  const me=await requireAdmin(req,'delivery.dispatch.manage');
-  const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),d=await deliveryDetail(id);
-  if(!d)return res.status(404).json({error:'Delivery not found'});
-  if(me.admin_assertion.territoryId!=null){const scoped=await pool.query(`SELECT 1 FROM businesses WHERE id=$1 AND territory_id=$2`,[d.business_id,me.admin_assertion.territoryId]);if(!scoped.rowCount)return res.status(403).json({error:'Delivery is outside your delegated territory'})}
-  if(!['awaiting_courier','requested'].includes(d.status))return res.status(409).json({error:'Delivery is not waiting for assignment'});
-  const cq=await pool.query(`
-    SELECT * FROM courier_profiles
-    WHERE account_id=$1
-      AND eligibility_status='approved'
-      AND available=TRUE
-      AND (eligibility_expires_at IS NULL OR eligibility_expires_at>NOW())
-  `,[courierId]);
-  if(!cq.rowCount)return res.status(409).json({error:'Courier is not approved and available'});
-  const courier=cq.rows[0];
-  let approvedClass=clean(courier.approved_vehicle_class||courier.vehicle_type,40);
-  if(approvedClass){try{approvedClass=canonicalDeliveryVehicleClass(approvedClass)}catch(e){return res.status(e.status||409).json({error:e.message})}}
-  if(d.required_vehicle_class){
-    let gate;
-    try{gate=courierCanServeDelivery(courier,d)}
-    catch(e){return res.status(e.status||409).json({error:e.message})}
-    if(!gate.allowed){
-      const copy={
-        VEHICLE_CLASS_MISMATCH:`Delivery requires ${d.required_vehicle_class}; this Courier is approved for ${approvedClass||'no vehicle class'}`,
-        COURIER_WEIGHT_CAPACITY_EXCEEDED:'Courier weight capacity is below this delivery requirement',
-        COURIER_VOLUME_CAPACITY_EXCEEDED:'Courier volume capacity is below this delivery requirement',
-        COURIER_SERVICE_RADIUS_EXCEEDED:'Delivery distance exceeds this Courier service radius'
-      };
-      return res.status(409).json({error:copy[gate.reason]||'Courier cannot serve this delivery',code:gate.reason});
+app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireAdmin(req,'delivery.dispatch.manage');
+    const id=Number(req.params.id),courierId=Number(req.body?.courier_account_id),reason=clean(req.body?.override_reason,500);
+    if(!reason)return res.status(400).json({error:'Admin manual assignment is an exception and requires an override reason'});
+    const initial=await deliveryDetail(id);
+    if(!initial)return res.status(404).json({error:'Delivery not found'});
+    if(me.admin_assertion.territoryId!=null){
+      const scoped=await pool.query(`SELECT 1 FROM businesses WHERE id=$1 AND territory_id=$2`,[initial.business_id,me.admin_assertion.territoryId]);
+      if(!scoped.rowCount)return res.status(403).json({error:'Delivery is outside your delegated territory'});
     }
-  }
-  await pool.query(`
-    UPDATE deliveries
-       SET courier_account_id=$1,
-           vehicle_class=$2,
-           status='courier_assigned',
-           assigned_at=NOW(),
-           updated_at=NOW()
-     WHERE id=$3
-  `,[courierId,approvedClass,id]);
-  res.json(deliveryPrivacyView(await deliveryDetail(id),'admin'));
-}catch(e){next(e)}})
+    await client.query('BEGIN');
+    const locked=await client.query('SELECT * FROM deliveries WHERE id=$1 FOR UPDATE',[id]);
+    if(!locked.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Delivery not found'})}
+    const d=locked.rows[0];
+    if(d.status!=='awaiting_courier'||d.courier_account_id!=null){await client.query('ROLLBACK');return res.status(409).json({error:'Admin override is available only while the delivery is awaiting Courier acceptance'})}
+    const cq=await client.query('SELECT * FROM courier_profiles WHERE account_id=$1 FOR UPDATE',[courierId]);
+    if(!cq.rowCount){await client.query('ROLLBACK');return res.status(409).json({error:'Courier profile missing'})}
+    const gate=await courierOfferGateFromDb(client,cq.rows[0],d);
+    if(!gate.allowed){await client.query('ROLLBACK');return res.status(409).json({error:'Courier is not currently eligible and available for this delivery',code:gate.reason})}
+    await client.query(`
+      UPDATE deliveries
+         SET courier_account_id=$1,vehicle_class=$2,status='courier_assigned',
+             assigned_at=NOW(),updated_at=NOW()
+       WHERE id=$3
+    `,[courierId,gate.approved_vehicle_class,id]);
+    await client.query(`
+      UPDATE delivery_offers
+         SET status='withdrawn',responded_at=NOW(),updated_at=NOW()
+       WHERE delivery_id=$1 AND status='pending'
+    `,[id]);
+    await client.query(`
+      UPDATE delivery_offers
+         SET status='withdrawn',responded_at=NOW(),updated_at=NOW()
+       WHERE courier_account_id=$1 AND delivery_id<>$2 AND status='pending'
+    `,[courierId,id]);
+    await client.query('UPDATE courier_profiles SET available=FALSE,updated_at=NOW() WHERE account_id=$1',[courierId]);
+    await recordDispatchEvent(client,{
+      deliveryId:id,actorAccountId:me.account.id,courierAccountId:courierId,
+      eventCode:'admin_assignment_override',offerRound:d.dispatch_round,
+      detail:{reason}
+    });
+    await client.query('COMMIT');
+    res.json({...deliveryPrivacyView(await deliveryDetail(id),'admin'),assignment_mode:'admin_override',override_reason:reason});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
+  finally{client.release()}
+})
 
 function proxy(req,res,next){
   if(!suppliersApp)return res.status(503).json({error:'Supplier runtime is not ready'});
