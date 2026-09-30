@@ -9,6 +9,7 @@ const legal=read('server-legal.js');
 const notifications=read('server-notifications.js');
 const auth=read('server-auth.js');
 const notificationUi=read('public/notifications-ui.js');
+const notificationCore=read('notification-core.js');
 const qa=read('qa-acceptance.js');
 const workflow=read('.github/workflows/admin-runtime.yml');
 
@@ -79,6 +80,16 @@ test('Notifications polling resolves only lightweight authenticated identity',()
   assert.doesNotMatch(notifications,/upstream\('\/api\/me'/);
 });
 
+test('Notification inbox rendering is batched and unread counting avoids window scans',()=>{
+  assert.match(notifications,/renderNotifications\(pool,rows,'in_app'\)/);
+  assert.doesNotMatch(notifications,/for\(const row of rows\)\{const msg=await renderNotification/);
+  assert.match(notifications,/COUNT\(DISTINCT CASE/);
+  assert.match(notificationCore,/notification_recipients_active_account_idx/);
+  assert.match(notificationCore,/notification_recipients_unread_account_idx/);
+  assert.match(notificationCore,/notification_deliveries_in_app_delivered_idx/);
+  assert.match(notificationCore,/export async function renderNotifications/);
+});
+
 test('Foreground notification refresh performs one unread request per cycle',()=>{
   assert.match(notificationUi,/async function pollForegroundVoice\(\{refreshBadge=true\}=\{\}\)/);
   assert.match(notificationUi,/if\(refreshBadge\)await refreshUnread\(\)/);
@@ -96,6 +107,7 @@ test('Notifications Runtime V16 acceptance is wired into canonical QA',()=>{
   assert.match(qa,/unread_p50_ms:unreadP50/);
   assert.match(qa,/inbox p50 exceeded 750 ms/);
   assert.match(qa,/unread p50 exceeded 500 ms/);
+  assert.match(qa,/QA_NOTIFICATIONS_LATENCY/);
   assert.match(qa,/resend_invalid_signature_fail_closed:true/);
   assert.match(qa,/legacy_port_4407_retired:true/);
 });
