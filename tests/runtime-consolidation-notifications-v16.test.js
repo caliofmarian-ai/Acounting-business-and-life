@@ -86,6 +86,11 @@ test('Notifications Runtime V16 acceptance is wired into canonical QA',()=>{
   assert.match(qa,/runNotificationsRuntimeV16Acceptance/);
   assert.match(qa,/config\.wave===NOTIFICATIONS_RUNTIME_V16_WAVE/);
   assert.match(qa,/transaction_notification_hook:true/);
+  assert.match(qa,/latency_samples:10/);
+  assert.match(qa,/inbox_p50_ms:inboxP50/);
+  assert.match(qa,/unread_p50_ms:unreadP50/);
+  assert.match(qa,/inbox p50 exceeded 750 ms/);
+  assert.match(qa,/unread p50 exceeded 500 ms/);
   assert.match(qa,/resend_invalid_signature_fail_closed:true/);
   assert.match(qa,/legacy_port_4407_retired:true/);
 });
