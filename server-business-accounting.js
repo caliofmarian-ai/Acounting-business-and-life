@@ -172,6 +172,21 @@ async function initAccountingTenancyDb() {
     );
     CREATE INDEX IF NOT EXISTS inventory_purchases_business_idx ON inventory_purchases(business_id,created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS merchant_order_consumable_rules (
+      id BIGSERIAL PRIMARY KEY,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE CASCADE,
+      fulfilment_scope TEXT NOT NULL DEFAULT 'all' CHECK(fulfilment_scope IN ('all','pickup','delivery')),
+      usage_basis TEXT NOT NULL DEFAULT 'per_order' CHECK(usage_basis IN ('per_order','per_item')),
+      quantity_used NUMERIC(14,4) NOT NULL CHECK(quantity_used>0),
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(business_id,inventory_id,fulfilment_scope,usage_basis)
+    );
+    CREATE INDEX IF NOT EXISTS merchant_order_consumable_rules_business_idx
+      ON merchant_order_consumable_rules(business_id,active,fulfilment_scope);
+
     ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS business_id BIGINT;
     UPDATE product_sales SET business_id=1 WHERE business_id IS NULL;
     ALTER TABLE product_sales ALTER COLUMN business_id SET DEFAULT 1;
@@ -543,6 +558,53 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
       await client.query('ROLLBACK').catch(()=>{});
       throw error;
     }finally{client.release()}
+  }catch(error){next(error)}
+});
+
+app.get('/api/inventory/consumable-rules',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const {rows}=await pool.query(`
+      SELECT r.id,r.inventory_id,r.fulfilment_scope,r.usage_basis,r.quantity_used,r.active,
+             i.item,i.unit,i.inventory_type,i.quantity stock_quantity,i.reorder_level
+        FROM merchant_order_consumable_rules r
+        JOIN inventory i ON i.id=r.inventory_id AND i.business_id=r.business_id
+       WHERE r.business_id=$1 AND r.active=TRUE
+       ORDER BY i.item,r.fulfilment_scope,r.usage_basis
+    `,[ctx.business.id]);
+    res.json(rows);
+  }catch(error){next(error)}
+});
+app.post('/api/inventory/consumable-rules',jsonBody,async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const inventoryId=Number(req.body?.inventory_id),scope=clean(req.body?.fulfilment_scope||'all',20),basis=clean(req.body?.usage_basis||'per_order',20),quantity=Number(req.body?.quantity_used);
+    if(!Number.isInteger(inventoryId)||!['all','pickup','delivery'].includes(scope)||!['per_order','per_item'].includes(basis)||!positive(quantity)){
+      return res.status(400).json({error:'Choose a consumable, fulfilment scope, usage basis and quantity greater than zero.'});
+    }
+    const inv=await pool.query(`SELECT * FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,ctx.business.id]);
+    if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found'});
+    if((inv.rows[0].inventory_type||'ingredient')==='ingredient')return res.status(409).json({error:'Recipe ingredients cannot be configured as order consumables. Choose Packaging, Kitchen consumable, Cleaning, Hygiene or Operational supply.'});
+    const {rows}=await pool.query(`
+      INSERT INTO merchant_order_consumable_rules(business_id,inventory_id,fulfilment_scope,usage_basis,quantity_used,active)
+      VALUES($1,$2,$3,$4,$5,TRUE)
+      ON CONFLICT(business_id,inventory_id,fulfilment_scope,usage_basis)
+      DO UPDATE SET quantity_used=EXCLUDED.quantity_used,active=TRUE,updated_at=NOW()
+      RETURNING *
+    `,[ctx.business.id,inventoryId,scope,basis,quantity]);
+    res.status(201).json(rows[0]);
+  }catch(error){next(error)}
+});
+app.delete('/api/inventory/consumable-rules/:id',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const id=Number(req.params.id);
+    const {rows}=await pool.query(`UPDATE merchant_order_consumable_rules SET active=FALSE,updated_at=NOW() WHERE id=$1 AND business_id=$2 RETURNING id`,[id,ctx.business.id]);
+    if(!rows.length)return res.status(404).json({error:'Consumable rule not found'});
+    res.json({ok:true,id});
   }catch(error){next(error)}
 });
 
