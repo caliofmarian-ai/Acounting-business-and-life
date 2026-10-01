@@ -11,7 +11,7 @@ const suppliers=read('public/suppliers-ui.js');
 const delivery=read('public/delivery-ui.js');
 const mobile=read('public/mobile-feature-loader.js');
 
-test('Merchant desktop navigation has a dedicated shell row with five primary destinations',()=>{
+test('Merchant desktop navigation has a dedicated shell row with six primary destinations including Settings',()=>{
   assert.match(shell,/id='merchantWorkspaceNav'/);
   assert.match(shell,/id="merchantWorkspaceActions"/);
   assert.match(shell,/id="merchantHomeButton"/);
