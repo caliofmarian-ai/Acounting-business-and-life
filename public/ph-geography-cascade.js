@@ -19,9 +19,10 @@ if(!document.getElementById(styleId)){
 }
 
 const LOCALITY_LEVELS=new Set(['city','municipality','submunicipality','special_geographic_unit']);
+const DIRECT_REGION_LOCALITY='__direct_region_locality__';
 const cleanCode=value=>String(value||'').replace(/\D/g,'').slice(0,10);
 
-export function phGeographyCascadeMarkup(prefix,{legend='Official home area',statusText='Choose Region, Province, City / Municipality, then Barangay.'}={}){
+export function phGeographyCascadeMarkup(prefix,{legend='Official home area',statusText='Choose Region, Province when applicable, City / Municipality, then Barangay.'}={}){
   const p=String(prefix||'phGeo').replace(/[^A-Za-z0-9_-]/g,'')||'phGeo';
   return `<fieldset class="phGeoCascade" data-ph-geo-cascade="${p}">
     <legend>${legend}</legend>
@@ -62,7 +63,7 @@ export async function bindPhGeographyCascade({prefix,fetchJson,selectedCode='',o
     select.disabled=disabled;
     select.required=required;
   };
-  const clearSelection=(message='Choose Region, Province, City / Municipality, then Barangay.')=>{
+  const clearSelection=(message='Choose Region, Province when applicable, City / Municipality, then Barangay.')=>{
     hidden.value='';
     if(typeof onSelected==='function')onSelected(null);
     setStatus(message);
@@ -126,24 +127,40 @@ export async function bindPhGeographyCascade({prefix,fetchJson,selectedCode='',o
     if(!regionCode){resetSelect(province,'Choose region first');return}
     const children=await options(regionCode);
     const provinces=children.filter(item=>item.geographic_level==='province');
+    const directLocalities=children.filter(item=>LOCALITY_LEVELS.has(item.geographic_level));
     if(provinces.length){
-      setOptions(province,provinces,'Choose province');
+      const provinceChoices=directLocalities.length
+        ?[{psgc_code:DIRECT_REGION_LOCALITY,name:'No province — independent city'},...provinces]
+        :provinces;
+      setOptions(province,provinceChoices,'Choose province');
       province.required=true;
       if(provinceCode&&provinces.some(x=>x.psgc_code===provinceCode)){
         province.value=provinceCode;
         await loadLocalities(provinceCode,localityCode,barangayCode);
+        return;
+      }
+      if(!provinceCode&&localityCode&&directLocalities.some(x=>x.psgc_code===localityCode)){
+        province.value=DIRECT_REGION_LOCALITY;
+        await loadLocalitiesFromRows(directLocalities,localityCode,barangayCode);
       }
       return;
     }
     resetSelect(province,'Not applicable in this region',{disabled:true,required:false});
-    await loadLocalitiesFromRows(children,localityCode,barangayCode);
+    await loadLocalitiesFromRows(directLocalities,localityCode,barangayCode);
   };
 
   region.addEventListener('change',async()=>{
     try{await loadAfterRegion(region.value)}catch(error){setStatus(error?.message||'Could not load provinces.','warn')}
   });
   province.addEventListener('change',async()=>{
-    try{await loadLocalities(province.value)}catch(error){setStatus(error?.message||'Could not load cities / municipalities.','warn')}
+    try{
+      if(province.value===DIRECT_REGION_LOCALITY){
+        const children=await options(region.value);
+        await loadLocalitiesFromRows(children.filter(item=>LOCALITY_LEVELS.has(item.geographic_level)));
+      }else{
+        await loadLocalities(province.value);
+      }
+    }catch(error){setStatus(error?.message||'Could not load cities / municipalities.','warn')}
   });
   locality.addEventListener('change',async()=>{
     try{await loadBarangays(locality.value)}catch(error){setStatus(error?.message||'Could not load barangays.','warn')}
