@@ -1,7 +1,7 @@
 let govMe=null,govState=null,govTerritories=[],govCategories=[],govOverview=null,govFetchedAt=0,govRefreshPromise=null;
 const GOV_CACHE_MS=30000;
 const GOV_ROLES=['merchant','supplier','courier','service_provider'];
-const GOV_META={merchant:{label:'Merchant',icon:'🏪',invite:true},supplier:{label:'Supplier',icon:'📦',invite:true},courier:{label:'Delivery',icon:'🛵',invite:true},service_provider:{label:'Local Services',icon:'🛠️',invite:false}};
+const GOV_META={merchant:{label:'Merchant',icon:'🏪',invite:false},supplier:{label:'Supplier',icon:'📦',invite:true},courier:{label:'Delivery',icon:'🛵',invite:true},service_provider:{label:'Local Services',icon:'🛠️',invite:false}};
 const gtok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const gh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const gn=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
