@@ -619,8 +619,8 @@ function merchantProfileJourneyDefinition(journey,label){
   if(step==='merchant_catalog_ai')return{
     step,
     title:tr('merchant_tour.catalog_title',{},'Catalog and AI drafts'),
-    body:tr('merchant_tour.catalog_body',{},'Food, packaged resale, fresh/direct and non-food products use different stock rules. AI-generated media is always a draft: review it before choosing it as primary, and publishing remains a separate Merchant action.'),
-    target:merchantJourneyTarget('.merchantCatalogList','#directProductForm','#directKind','#marketQuickButton','[data-merchant-mobile-action="marketQuickButton"]'),
+    body:tr('merchant_tour.catalog_body',{},'Prepared, packaged resale, fresh/direct and non-food products use different stock rules. Add direct-sale products from Orders; review catalog media and publication here in My Storefront. AI-generated media is always a draft until you approve it.'),
+    target:merchantJourneyTarget('.merchantCatalogList','.merchantProductRow','#marketQuickButton','[data-merchant-mobile-action="marketQuickButton"]'),
     primary:tr('action.got_it',{},'Got it'),secondary:tr('action.pause',{},'Pause tutorial'),next
   };
   if(step==='merchant_orders_fulfilment')return{
