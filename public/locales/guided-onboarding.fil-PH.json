@@ -146,7 +146,7 @@
   "merchant_tour.storefront_title": "Storefront, address at public visibility",
   "merchant_tour.storefront_body": "Maaaring Food, Non-food o Mixed ang Storefront. Magkahiwalay na control ang business presence, pickup address, map pin, logo, cover at gallery. Pribado ang eksaktong lokasyon maliban kung malinaw mong i-on ang public location sharing.",
   "merchant_tour.catalog_title": "Catalog at AI drafts",
-  "merchant_tour.catalog_body": "Magkakaiba ang stock rules ng food, packaged resale, fresh/direct at non-food products. Draft lang palagi ang AI-generated media: suriin muna bago piliing primary, at hiwalay pa rin ang Merchant action para mag-publish.",
+  "merchant_tour.catalog_body": "Magkakaiba ang stock rules ng prepared, packaged resale, fresh/direct at non-food products. Magdagdag ng direct-sale product sa Orders; dito sa My Storefront nire-review ang catalog media at publication. Draft lang palagi ang AI-generated media hanggang aprubahan mo ito.",
   "merchant_tour.orders_title": "Orders at fulfilment",
   "merchant_tour.orders_body": "Dumadaan ang orders sa waiting, accepted, preparing at ready. I-record lamang ang payment kapag talagang natanggap. Customer commitments ang Ready, pickup completion at delivery handoff, kaya tunay na status ang i-update.",
   "merchant_tour.delivery_title": "Delivery price at handoff",
