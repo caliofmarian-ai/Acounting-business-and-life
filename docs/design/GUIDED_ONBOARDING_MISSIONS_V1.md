@@ -108,7 +108,7 @@ If the barangay is:
 - onboarding / active — profile onboarding can continue;
 - planned / paused / suspended / closed / not opened — the guide explains the real state and waits without pretending the territory is available.
 
-Private street address and PSGC operating area remain separate.
+The official PSGC barangay is selected through Region → Province (when applicable) → City / Municipality → Barangay. Free-text address input never decides territory availability.
 
 ## Google registration
 
@@ -116,7 +116,7 @@ Google may create an account before an official barangay is known. The guide the
 
 ## Company-managed test accounts
 
-Company test identities do not receive personal-address tutorial requirements and are excluded from automatic personal first-run guidance.
+Company test identities do not receive personal-area tutorial requirements and are excluded from automatic personal first-run guidance.
 
 ## Accessibility and control
 
@@ -130,7 +130,7 @@ Company test identities do not receive personal-address tutorial requirements an
 
 ## Registration reconciliation
 
-V1 also reconciles the modern registration surface with Account Geographic Assignment V1: email registration in the modern auth card includes official PSGC barangay search and submits `home_psgc_code`.
+V1 also reconciles the registration surface with Account Geographic Assignment V1: email registration uses an official PSGC cascade — Region → Province when applicable → City / Municipality → Barangay — and submits the selected `home_psgc_code`. The user cannot type arbitrary geography text.
 
 
 ## Figma mobile review correction
