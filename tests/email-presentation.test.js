@@ -34,6 +34,13 @@ test('support email CTA deep-links to the exact ticket',()=>{
   );
 });
 
+test('Admin profile application email CTA deep-links to the exact review',()=>{
+  assert.equal(
+    emailTargetUrl({baseUrl:'https://caliof.com',entityType:'profile_application',entityId:'91',roleHint:'admin'}),
+    'https://caliof.com/admin?application=91'
+  );
+});
+
 test('transactional email presents Business & Life as a Caliof product',()=>{
   const out=renderTransactionalEmail({
     subject:'Payment confirmed',
