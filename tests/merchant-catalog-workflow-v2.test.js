@@ -42,15 +42,19 @@ test('Merchant mobile UI asks for purchase facts and batch yield rather than man
   assert.match(ui,/Batch makes/);
 });
 
-test('Storefront can create fresh, packaged and non-food resale products from Merchant inventory',()=>{
-  const ui=read('public/marketplace-ui.js');
-  assert.match(ui,/Add a direct-sale product/);
-  assert.match(ui,/Fresh \/ direct food/);
-  assert.match(ui,/Packaged food resale/);
-  assert.match(ui,/Non-food resale/);
-  assert.match(ui,/inventory_id:Number\(inventory\.value\)/);
-  assert.match(ui,/Each sale consumes/);
-  assert.match(ui,/Create private product/);
+test('Merchant Orders owns direct-sale product creation while Storefront only manages publication',()=>{
+  const orders=read('public/orders-ui.js');
+  const storefront=read('public/marketplace-ui.js');
+  assert.match(orders,/Add a direct-sale product/);
+  assert.match(orders,/Fresh \/ direct food/);
+  assert.match(orders,/Packaged food resale/);
+  assert.match(orders,/Non-food resale/);
+  assert.match(orders,/inventory_id:inventoryId/);
+  assert.match(orders,/Each sale consumes/);
+  assert.match(orders,/published:false/);
+  assert.match(orders,/Publish it from My Storefront when ready/);
+  assert.doesNotMatch(storefront,/Add a direct-sale product/);
+  assert.doesNotMatch(storefront,/directProductForm/);
 });
 
 test('Supplier pack receiving normalizes into the linked Merchant base unit',()=>{
