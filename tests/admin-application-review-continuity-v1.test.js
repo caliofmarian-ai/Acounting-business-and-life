@@ -21,9 +21,15 @@ test('application review URL survives refresh until Admin intentionally leaves t
   assert.match(admin,/profileReviewBack'[\s\S]{0,200}setAdminApplicationRoute\(null\)/);
 });
 
-test('Keep under review preserves the exact application page',()=>{
+test('Keep under review preserves the exact application page without requiring a final-decision confirmation',()=>{
   assert.match(admin,/if\(decision==='under_review'\)\{state\.active='members';state\.memberHubTab='requests';shell\(\);await openAdminApplication\(a\.id\)\}/);
   assert.match(admin,/else\{setAdminApplicationRoute\(null\)/);
+  assert.match(admin,/decision!==['"]under_review['"]&&!form\.confirmed\.checked/);
+  assert.match(admin,/approve or reject access decision/);
+});
+
+test('leaving the review through Admin navigation clears the stale application deep link',()=>{
+  assert.match(admin,/function activateModule\(id\)\{[\s\S]{0,220}setAdminApplicationRoute\(null\)/);
 });
 
 test('Merchant review hides empty professional credentials and explains their purpose for Local Services',()=>{
