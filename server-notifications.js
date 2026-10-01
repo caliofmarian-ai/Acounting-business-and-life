@@ -121,6 +121,55 @@ async function applicationInfo(id){
   const key=positiveId(id);if(!key)return null;
   const q=await pool.query(`SELECT pa.*,a.display_name applicant_name,t.name territory_name FROM profile_applications pa JOIN accounts a ON a.id=pa.account_id JOIN territories t ON t.id=pa.territory_id WHERE pa.id=$1`,[key]);return q.rows[0]||null;
 }
+function profileRoleLabel(role){
+  return({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'})[String(role||'')]||clean(role,60)||'Profile';
+}
+function profileApplicationLabel(a){
+  const role=profileRoleLabel(a?.role),business=clean(a?.proposed_business_name,180);
+  return business?`${role} application for ${business}`:`${role} profile application`;
+}
+function profileReviewNotificationData(a){
+  const roleLabel=profileRoleLabel(a?.role),applicationLabel=profileApplicationLabel(a),note=clean(a?.decision_reason,500);
+  const status=clean(a?.status,40);
+  const copy={
+    under_review:{
+      title:`${roleLabel} application is under review`,
+      summary:`An Admin is reviewing your ${applicationLabel}.`,
+      explanation:'Your profile remains locked until a decision is made. You can still add supporting documents while the review is open.',
+      next:'Open your application to see the current status, reviewer note and uploaded documents.'
+    },
+    requirements_pending:{
+      title:`More information is needed for your ${roleLabel} application`,
+      summary:`Admin needs more information before your ${applicationLabel} can be approved.`,
+      explanation:'The application is open again for editing and document uploads.',
+      next:'Open the application, read the Admin note, make the requested changes and submit it again.'
+    },
+    approved:{
+      title:`${roleLabel} profile approved`,
+      summary:`Your ${applicationLabel} was approved.`,
+      explanation:'The governed profile is now authorized for the approved scope.',
+      next:'Open Business & Life to continue with your profile.'
+    },
+    rejected:{
+      title:`${roleLabel} application needs changes`,
+      summary:`This review did not approve your ${applicationLabel}.`,
+      explanation:'Your application is open for correction and resubmission.',
+      next:'Open the application, read the Admin reason, correct the information or documents and submit it again.'
+    }
+  }[status]||{
+    title:`${roleLabel} application updated`,
+    summary:`Your ${applicationLabel} status changed.`,
+    explanation:`Current status: ${status.replaceAll('_',' ')}.`,
+    next:'Open your application for the latest details.'
+  };
+  return{
+    role:a.role,role_label:roleLabel,status,status_label:status.replaceAll('_',' '),
+    status_title:copy.title,status_summary:copy.summary,status_explanation:copy.explanation,next_step:copy.next,
+    reviewer_note:note,reviewer_note_text:note?`Admin note: ${note}`:'',
+    business_name:clean(a?.proposed_business_name,180),territory_name:clean(a?.territory_name,180),
+    application_label:applicationLabel
+  };
+}
 async function authorizationInfo(id){
   const key=positiveId(id);if(!key)return null;
   const q=await pool.query(`SELECT * FROM profile_authorizations WHERE id=$1`,[key]);return q.rows[0]||null;
@@ -307,8 +356,9 @@ app.post('/api/admin/support/:id/messages',body,(req,res)=>forwardJson(req,res,a
 app.patch('/api/admin/incidents/:id',body,(req,res)=>forwardJson(req,res,async()=>{const i=await incidentInfo(req.params.id);if(!i)return;const action=await pool.query(`SELECT id FROM incident_actions WHERE incident_id=$1 ORDER BY id DESC LIMIT 1`,[i.id]);await safeEmit({eventKey:`incident:${i.id}:update:${action.rows[0]?.id||i.status}`,eventCode:'incident.updated',sourceService:'incidents',entityType:'incident',entityId:String(i.id),correlationId:correlation(req),category:'support',priority:i.status==='escalated'?'urgent':'high',emailDefault:true,pushDefault:true,data:{incident_id:i.id,status:i.status},recipients:[{accountId:Number(i.reporter_account_id),roleHint:''}]})}));
 
 // Profile governance
+app.post('/api/governance/applications/:id/documents',body,(req,res)=>forwardJson(req,res,async data=>{const a=await applicationInfo(req.params.id);if(!a||!['submitted','under_review'].includes(String(a.status||'')))return;const perm=a.role==='merchant'?'merchant.approve':a.role==='supplier'?'supplier.approve':a.role==='courier'?'courier.verify':'profiles.review_service_provider';const admins=await adminNotificationRecipients(pool,{territoryId:a.territory_id,permission:perm,destination:'support'});await safeEmit({eventKey:`profile-app:${a.id}:evidence:${data.id||Date.now()}`,eventCode:'profile.application_evidence_added',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:false,pushDefault:true,data:{application_id:a.id,role:a.role,role_label:profileRoleLabel(a.role),applicant_name:a.applicant_name||'Applicant',application_label:profileApplicationLabel(a),business_name:clean(a.proposed_business_name,180),territory_name:a.territory_name||''},recipients:admins})}));
 app.post('/api/governance/applications/:id/submit',body,(req,res)=>forwardJson(req,res,async data=>{const a=await applicationInfo(data.id||req.params.id);if(!a)return;const perm=a.role==='merchant'?'merchant.approve':a.role==='supplier'?'supplier.approve':a.role==='courier'?'courier.verify':'profiles.review_service_provider';const admins=await adminNotificationRecipients(pool,{territoryId:a.territory_id,permission:perm,destination:'support'});const roleLabel=({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'})[a.role]||a.role;const businessName=clean(a.proposed_business_name,180);await safeEmit({eventKey:`profile-app:${a.id}:submitted`,eventCode:'profile.application_submitted',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:false,pushDefault:true,data:{application_id:a.id,role:a.role,role_label:roleLabel,status:a.status,applicant_name:a.applicant_name||'Applicant',territory_name:a.territory_name||'assigned area',business_name:businessName,business_context:businessName?'Business: '+businessName+'. ':''},recipients:admins})}));
-app.post('/api/governance/admin/applications/:id/review',body,(req,res)=>forwardJson(req,res,async()=>{const a=await applicationInfo(req.params.id);if(!a)return;await safeEmit({eventKey:`profile-app:${a.id}:review:${a.status}`,eventCode:'profile.application_reviewed',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:true,pushDefault:true,data:{role:a.role,status:a.status},recipients:[{accountId:Number(a.account_id),roleHint:a.role}]})}));
+app.post('/api/governance/admin/applications/:id/review',body,(req,res)=>forwardJson(req,res,async()=>{const a=await applicationInfo(req.params.id);if(!a)return;await safeEmit({eventKey:`profile-app:${a.id}:review:${a.status}:${clean(a.updated_at,80)}`,eventCode:'profile.application_reviewed',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:true,pushDefault:true,data:{application_id:a.id,...profileReviewNotificationData(a)},recipients:[{accountId:Number(a.account_id),roleHint:a.role}]})}));
 app.post('/api/governance/admin/authorizations/:id/status',body,(req,res)=>forwardJson(req,res,async()=>{const a=await authorizationInfo(req.params.id);if(!a)return;await safeEmit({eventKey:`profile-auth:${a.id}:${a.status}`,eventCode:'profile.authorization_changed',sourceService:'governance',entityType:'profile_authorization',entityId:String(a.id),correlationId:correlation(req),category:'security',priority:'high',mandatory:true,emailDefault:true,pushDefault:true,data:{role:a.role,status:a.status},recipients:[{accountId:Number(a.account_id),roleHint:a.role}]})}));
 
 // Notification APIs

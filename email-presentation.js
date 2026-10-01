@@ -59,10 +59,15 @@ export function emailTargetUrl({baseUrl='/',entityType='',entityId='',roleHint='
     base.pathname='/';
     base.search='';
     base.searchParams.set('support_ticket',id);
-  }else if(entityType==='profile_application'&&id&&String(roleHint||'').toLowerCase()==='admin'){
-    base.pathname='/admin';
+  }else if(entityType==='profile_application'&&id){
     base.search='';
-    base.searchParams.set('application',id);
+    if(String(roleHint||'').toLowerCase()==='admin'){
+      base.pathname='/admin';
+      base.searchParams.set('application',id);
+    }else{
+      base.pathname='/';
+      base.searchParams.set('profile_application',id);
+    }
   }
   return base.toString();
 }

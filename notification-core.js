@@ -72,8 +72,10 @@ const templates=[
   ['incident.updated','fil-PH','Na-update ang incident','Ang incident report #{{incident_id}} ay {{status}} na.'],
   ['profile.application_submitted','en-PH','Profile application awaiting review','A {{role}} profile application is awaiting Admin review. Open it to inspect the application details and uploaded documents.'],
   ['profile.application_submitted','fil-PH','Profile application na naghihintay ng review','May {{role}} profile application na naghihintay ng Admin review. Buksan ito para suriin ang detalye at mga dokumentong na-upload.'],
-  ['profile.application_reviewed','en-PH','Profile application updated','Your {{role}} application is now {{status}}.'],
-  ['profile.application_reviewed','fil-PH','Na-update ang profile application','Ang {{role}} application mo ay {{status}} na.'],
+  ['profile.application_reviewed','en-PH','{{status_title}}','{{status_summary}} {{status_explanation}} {{next_step}} {{reviewer_note_text}}'],
+  ['profile.application_reviewed','fil-PH','{{status_title}}','{{status_summary}} {{status_explanation}} {{next_step}} {{reviewer_note_text}}'],
+  ['profile.application_evidence_added','en-PH','Additional application document uploaded','{{applicant_name}} added a supporting document to {{application_label}}. Open the application to review the new evidence.'],
+  ['profile.application_evidence_added','fil-PH','May idinagdag na dokumento sa application','Nagdagdag si {{applicant_name}} ng supporting document sa {{application_label}}. Buksan ang application para suriin ang bagong ebidensya.'],
   ['profile.authorization_changed','en-PH','Profile authorization updated','Your {{role}} authorization is now {{status}}.'],
   ['profile.authorization_changed','fil-PH','Na-update ang profile authorization','Ang {{role}} authorization mo ay {{status}} na.'],
   ['legal.reconsent_required','en-PH','Legal document updated','A reviewed Business & Life legal document was updated. Open Legal & Privacy to review version {{version_label}}.'],
@@ -461,6 +463,26 @@ export async function sendTransientEmailNotification(pool,{
   return{sent:Boolean(sent.ok),reference:sent.reference||'',not_configured:Boolean(sent.notConfigured)};
 }
 
+function profileReviewEmailHtml(data={}){
+  const summary=escapeHtml(data.status_summary||'Your profile application was updated.');
+  const explanation=escapeHtml(data.status_explanation||'Open Business & Life for the latest review details.');
+  const next=escapeHtml(data.next_step||'Open your application for the latest details.');
+  const status=escapeHtml(data.status_label||data.status||'updated');
+  const business=escapeHtml(data.business_name||'');
+  const territory=escapeHtml(data.territory_name||'');
+  const note=escapeHtml(data.reviewer_note||'');
+  return '<p style="margin:0 0 18px">'+summary+'</p>'
+    +'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 18px;border:1px solid #dbe7e3;border-radius:14px;background:#f7fbfa"><tr><td style="padding:16px">'
+    +'<div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#0a7c66">Current review status</div>'
+    +'<div style="margin-top:6px;font-size:18px;font-weight:800;color:#0f172a">'+status+'</div>'
+    +(business?'<div style="margin-top:8px;color:#475569">Business: '+business+'</div>':'')
+    +(territory?'<div style="margin-top:4px;color:#475569">Area: '+territory+'</div>':'')
+    +'</td></tr></table>'
+    +'<div style="margin:0 0 16px"><strong style="color:#0f172a">What this means</strong><p style="margin:6px 0 0">'+explanation+'</p></div>'
+    +'<div style="margin:0 0 16px"><strong style="color:#0f172a">What you can do now</strong><p style="margin:6px 0 0">'+next+'</p></div>'
+    +(note?'<div style="margin:18px 0 0;padding:14px 16px;border-left:4px solid #0a7c66;background:#f4f8f7"><strong style="color:#0f172a">Admin note</strong><p style="margin:6px 0 0">'+note+'</p></div>':'');
+}
+
 async function sendQueuedEmail(pool,row){
   const account=await pool.query(`SELECT email FROM accounts WHERE id=$1`,[row.account_id]);
   const email=clean(account.rows[0]?.email,180).toLowerCase();
@@ -469,7 +491,9 @@ async function sendQueuedEmail(pool,row){
   const category=row.category||'operational';
   const department=emailDepartment(row.event_code,category);
   const actionUrl=emailTargetUrl({baseUrl:process.env.AUTH_PUBLIC_BASE_URL||'/',entityType:row.entity_type,entityId:row.entity_id,roleHint:row.role_hint});
-  const presentation=renderTransactionalEmail({subject:template.title,body:template.body,department,roleHint:row.role_hint,actionUrl,actionLabel:'Open Business & Life'});
+  const actionLabel=row.entity_type==='profile_application'?(String(row.role_hint||'').toLowerCase()==='admin'?'Review application':'Open your application'):'Open Business & Life';
+  const bodyHtml=row.event_code==='profile.application_reviewed'?profileReviewEmailHtml(row.data_json):'';
+  const presentation=renderTransactionalEmail({subject:template.title,body:template.body,bodyHtml,department,roleHint:row.role_hint,actionUrl,actionLabel});
   return resendEmail({to:email,subject:presentation.subject,html:presentation.html,text:presentation.text,eventCode:row.event_code,category});
 }
 
@@ -495,7 +519,11 @@ async function sendQueuedPush(pool,row){
     renotify:attentionPref.important_alerts_enabled?baseAttention.renotify:false,
     requireInteraction:attentionPref.important_alerts_enabled?baseAttention.requireInteraction:false
   };
-  const targetUrl=row.entity_type==='support_ticket'&&row.entity_id?`/?support_ticket=${encodeURIComponent(row.entity_id)}`:row.entity_type==='profile_application'&&row.entity_id&&String(row.role_hint||'').toLowerCase()==='admin'?`/admin?application=${encodeURIComponent(row.entity_id)}`:'/';
+  const targetUrl=row.entity_type==='support_ticket'&&row.entity_id
+    ?`/?support_ticket=${encodeURIComponent(row.entity_id)}`
+    :row.entity_type==='profile_application'&&row.entity_id
+      ?(String(row.role_hint||'').toLowerCase()==='admin'?`/admin?application=${encodeURIComponent(row.entity_id)}`:`/?profile_application=${encodeURIComponent(row.entity_id)}`)
+      :'/';
   const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id,attention});
   let successes=0,lastError='';
   for(const sub of subs){
