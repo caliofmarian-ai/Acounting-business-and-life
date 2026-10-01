@@ -15,7 +15,7 @@ import { bindReferralSignupConversion } from './growth/referral-conversion-bindi
 import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
 import { companyTestAccountForEmail, companyTestContact, companyTestProfileRole } from './company-test-accounts.js';
 import {AUTH_SESSION_TTL_MS,createV2Session,resolveV2SessionToken} from './auth-session-core.js';
-import {ensureAccountGeographySchema,searchOfficialBarangays,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage,resolveAddressBarangayCandidate} from './account-geography.js';
+import {ensureAccountGeographySchema,searchOfficialBarangays,listOfficialGeographyChildren,geographyAvailabilityForCode,saveAccountGeography,accountGeographySnapshot,requireAssignedOpenBarangay,geographyAvailabilityMessage,resolveAddressBarangayCandidate} from './account-geography.js';
 import {emitNotificationEvent,sendDirectSecurityEmail} from './notification-core.js';
 import {ensureGuidedOnboardingSchema,guidedOnboardingSnapshot,updateGuidedOnboarding} from './guided-onboarding-core.js';
 import {ensureTerritoryDemandSchema,recordUnavailableProfileInterest} from './territory-demand-core.js';
@@ -576,6 +576,12 @@ app.get('/api/auth/geography/search',async(req,res,next)=>{try{
   res.json(result);
 }catch(e){next(e)}});
 
+app.get('/api/auth/geography/options',async(req,res,next)=>{try{
+  const result=await listOfficialGeographyChildren(pool,{parentPsgcCode:req.query.parent_psgc_code});
+  res.set('Cache-Control','public, max-age=300');
+  res.json(result);
+}catch(e){next(e)}});
+
 app.get('/api/auth/geography/status',async(req,res,next)=>{try{
   const result=await geographyAvailabilityForCode(pool,req.query.psgc_code);
   if(!result)return res.status(404).json({error:'Official barangay not found'});
@@ -607,8 +613,8 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   const companyTest = companyTestAccountForEmail(email);
   const qaBypass=qaBearerRequested(req);
   const phone = companyTest ? '' : clean(req.body?.phone, 40);
-  const address = companyTest ? '' : clean(req.body?.address, 300);
-  const homePsgcCode=clean(req.body?.home_psgc_code,32);
+  let address = '';
+  const homePsgcCode=clean(req.body?.home_psgc_code,32).replace(/\D/g,'');
   const qaRemoteRequested=Boolean(req.body?.qa_remote_test);
   if (!name) return res.status(400).json({ error: 'Name is required' });
   if (!validEmail(email)) return res.status(400).json({ error: 'A valid email is required' });
@@ -622,9 +628,10 @@ app.post('/api/auth/register', body, async (req, res, next) => {
   if(homePsgcCode){
     geography=await geographyAvailabilityForCode(pool,homePsgcCode);
     if(!geography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});
-  }else if(!companyTest&&address){
-    geography=await deriveRegistrationGeography(address);
+  }else if(!companyTest&&!qaBypass){
+    return res.status(422).json({error:'Choose your official home area: Region, Province, City / Municipality and Barangay.'});
   }
+  if(!companyTest&&geography?.path_text)address=geography.path_text;
 
   // Controlled QA identities keep the direct path in isolated Preview only.
   if(companyTest||qaBypass){
@@ -639,7 +646,7 @@ app.post('/api/auth/register', body, async (req, res, next) => {
       const accountId = Number(account.rows[0].id);
       if(companyTest)await recordCompanyTestEligibilityExemption(client,{accountId,source:'company_test_registration'});
       else await recordAdultEligibilityAttestation(client,{accountId,actorAccountId:accountId,attested:true,policyVersion:req.body?.adult_eligibility_policy_version,source:'qa_password_registration'});
-      if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':'qa_registration_address'});
+      if(geography)await saveAccountGeography(client,accountId,geography.psgc_code,{source:companyTest?'company_test_selected_psgc':'qa_registration_selected_psgc'});
       await client.query('COMMIT');
       clearThrottle(req, email);
       const session = await createSession(accountId);
@@ -998,7 +1005,7 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
   const name = clean(req.body?.display_name, 120);
   const phone = clean(req.body?.phone, 40);
   const email = normalizeEmail(req.body?.email);
-  const address = clean(req.body?.address, 300);
+  const requestedAddress = clean(req.body?.address, 300);
   let homePsgcCode = clean(req.body?.home_psgc_code, 32).replace(/\D/g,'');
   if (!name) return res.status(400).json({ error: 'Display name is required' });
   if (email && !validEmail(email)) return res.status(400).json({ error: 'Email is invalid' });
@@ -1020,24 +1027,19 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
       if (duplicate.rowCount) return res.status(409).json({ error: 'That email is already used by another account' });
     }
     const existingGeo=await accountGeographySnapshot(pool,req.accountId).catch(()=>({assigned:false}));
-    const addressChanged=Object.prototype.hasOwnProperty.call(req.body||{},'address')&&address!==clean(current.address,300);
-    if(addressChanged){
-      await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'account_location_change',subjectType:'account',subjectId:req.accountId});
-    }
-    if(!companyTest&&!/^\d{10}$/.test(homePsgcCode)&&(addressChanged||!existingGeo?.assigned)&&address){
-      const derived=await deriveRegistrationGeography(address);
-      if(derived?.psgc_code)homePsgcCode=derived.psgc_code;
-    }
-    if(!companyTest&&(addressChanged||!existingGeo?.assigned)&&address&&!/^\d{10}$/.test(homePsgcCode)){
-      return res.status(422).json({error:'Business & Life could not confidently detect your barangay from this address. Use Search personal address or confirm the detected area below.'});
+    const geographyChanged=!companyTest&&/^\d{10}$/.test(homePsgcCode)&&existingGeo?.psgc_code!==homePsgcCode;
+    if(geographyChanged){
+      await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'account_location_change',subjectType:'account_geography',subjectId:req.accountId});
     }
     if(avatar!==undefined&&avatar!==current.avatar_data_url){
       await enforceHighRiskVelocity(pool,{actorAccountId:req.accountId,actionCode:'upload_public',subjectType:'account_avatar',subjectId:req.accountId});
     }
+    let selectedGeography=null;
     if(!companyTest&&homePsgcCode){
-      const resolved=await geographyAvailabilityForCode(pool,homePsgcCode);
-      if(!resolved)return res.status(400).json({error:'The detected barangay is not in the current official PSGC registry. Search the address again or correct the area manually.'});
+      selectedGeography=await geographyAvailabilityForCode(pool,homePsgcCode);
+      if(!selectedGeography)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list.'});
     }
+    const savedAddress=companyTest?'':(selectedGeography?.path_text||clean(current.address,300)||requestedAddress);
     const client=await pool.connect();
     try{
       await client.query('BEGIN');
@@ -1045,8 +1047,8 @@ app.patch('/api/me', body, auth, async (req, res, next) => {
         display_name=$1,phone=$2,email=$3,address=$4,avatar_data_url=COALESCE($5,avatar_data_url),
         email_verified_at=CASE WHEN account_mode<>'company_test' AND LOWER(COALESCE(email,''))<>LOWER(COALESCE($3,'')) THEN NULL ELSE email_verified_at END,
         auth_status=CASE WHEN account_mode<>'company_test' AND LOWER(COALESCE(email,''))<>LOWER(COALESCE($3,'')) THEN 'pending_verification' ELSE auth_status END,
-        updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, companyTest?'':address, avatar === undefined ? null : avatar, req.accountId]);
-      if(!companyTest&&homePsgcCode)await saveAccountGeography(client,req.accountId,homePsgcCode,{source:'address_derived_psgc'});
+        updated_at=NOW() WHERE id=$6`, [name, companyTest?'':phone, savedEmail, savedAddress, avatar === undefined ? null : avatar, req.accountId]);
+      if(!companyTest&&homePsgcCode)await saveAccountGeography(client,req.accountId,homePsgcCode,{source:'account_settings_selected_psgc'});
       await client.query('COMMIT');
     }catch(error){
       await client.query('ROLLBACK').catch(()=>{});
