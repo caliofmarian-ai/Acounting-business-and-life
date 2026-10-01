@@ -27,6 +27,9 @@ test('cascade loads children only from the selected PSGC parent and supports reg
   assert.match(server,/app\.get\('\/api\/auth\/geography\/options'/);
   assert.match(cascade,/Not applicable in this region/);
   assert.match(cascade,/LOCALITY_LEVELS/);
+  assert.match(cascade,/No province — independent city/);
+  assert.match(cascade,/DIRECT_REGION_LOCALITY/);
+  assert.match(cascade,/directLocalities/);
 });
 
 test('selected barangay PSGC is authoritative for account save and free text cannot decide territory availability',()=>{
