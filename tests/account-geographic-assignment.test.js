@@ -52,27 +52,28 @@ test('availability copy explains planned paused restricted closed and unopened a
   assert.match(geographyAvailabilityMessage({...base,exact_territory:null,nearest_opened_scope:{name:'Parent City',status:'planned'}}),/nearest Business & Life scope.*Parent City.*planned/i);
 });
 
-test('email registration derives private geography before verification and persists it only when the verified account is created',()=>{
+test('email registration requires an official selected PSGC barangay and persists it only when the verified account is created',()=>{
   const start=auth.indexOf("app.post('/api/auth/register'");
   const block=auth.slice(start,auth.indexOf("app.post('/api/auth/login'",start));
-  assert.match(block,/deriveRegistrationGeography\(address\)/);
+  assert.match(block,/geographyAvailabilityForCode\(pool,homePsgcCode\)/);
+  assert.match(block,/Choose your official home area: Region, Province, City \/ Municipality and Barangay/);
   assert.match(block,/geography_psgc_code/);
   assert.match(block,/INSERT INTO account_registration_intents/);
   assert.match(block,/saveAccountGeography\(client,accountId,geographyCode,\{source:'verified_registration'\}\)/);
-  assert.doesNotMatch(block,/Choose your official barangay before creating your account/);
+  assert.doesNotMatch(block,/deriveRegistrationGeography\(address\)/);
   assert.doesNotMatch(block,/INSERT INTO profiles/);
-  assert.match(authUi,/Personal \/ home address \(private\)/);
-  assert.match(authUi,/Enter your home address\. We will check whether Business & Life is available in your area/);
-  assert.doesNotMatch(authUi,/id="authBarangaySearch"/);
-  assert.doesNotMatch(authUi,/id="authHomePsgcCode"/);
+  assert.match(authUi,/phGeographyCascadeMarkup\('auth'/);
+  assert.match(authUi,/authHomePsgcCode/);
+  assert.match(authUi,/home_psgc_code:document\.getElementById\('authHomePsgcCode'\)/);
+  assert.doesNotMatch(authUi,/id="authAddress"/);
 });
 
 test('Google-created personal accounts can complete geography in Account Settings before profiles',()=>{
   const google=read('server-auth-hardening.js');
   assert.match(google,/INSERT INTO accounts\(display_name,email,active_role,email_verified_at,auth_status\)/);
-  assert.match(shell,/accountGeographyEditor/);
+  assert.match(shell,/phGeographyCascadeMarkup\('shell'/);
   assert.match(shell,/\/api\/me\/geography/);
-  assert.match(shell,/Add your name, email and home address before activating a profile/);
+  assert.match(shell,/Add your name, email and official home area before activating a profile/);
   assert.match(shell,/snapshot\?\.geography\?\.assigned/);
   assert.match(shell,/Business & Life is not available in your area yet/);
   assert.match(shell,/We will notify you when onboarding opens/);
@@ -107,12 +108,15 @@ test('account and territory lifecycle emit in-app area status notifications',()=
   assert.match(notifications,/territory\.area_status/);
 });
 
-test('one private home address drives internal geography while customer UI shows only availability',()=>{
-  assert.match(authUi,/Personal \/ home address \(private\)/);
-  assert.match(authUi,/We will check whether Business & Life is available in your area/);
-  assert.match(shell,/Home address <span>Private<\/span>/);
+test('official selected barangay drives internal geography while customer UI shows only availability',()=>{
+  const cascade=read('public/ph-geography-cascade.js');
+  assert.match(authUi,/official barangay you select/);
+  assert.match(shell,/Territory eligibility is based only on the selected PSGC barangay/);
+  assert.match(cascade,/Region/);
+  assert.match(cascade,/Province/);
+  assert.match(cascade,/City \/ Municipality/);
+  assert.match(cascade,/Barangay/);
   assert.match(shell,/Business & Life is available in your area/);
   assert.match(shell,/Business & Life is not available in your area yet/);
-  assert.doesNotMatch(shell,/aggregate territory-demand signal/);
   assert.doesNotMatch(governance,/address.*account_geography_assignments/);
 });
