@@ -257,6 +257,23 @@
           <div id="restockList" class="list"></div>
           <small class="muted">When a preferred Supplier is linked, you can send a restock request so they can prepare the supply. Sending a request does not record a purchase, payment or received stock.</small>
         </div>
+        <div class="card stack">
+          <div><h2>Order consumables</h2><p class="muted">Automatically deduct packaging and other consumables when food preparation starts. These rules are separate from recipes.</p></div>
+          <form id="consumableRuleForm" class="stack">
+            <label>Consumable<select id="consumableInventoryId"><option value="">Add non-ingredient stock first</option></select></label>
+            <div class="grid2">
+              <label>Use for<select id="consumableScope"><option value="all">Pickup & delivery</option><option value="pickup">Pickup only</option><option value="delivery">Delivery only</option></select></label>
+              <label>Consumption basis<select id="consumableBasis"><option value="per_order">Per order</option><option value="per_item">Per ordered item</option></select></label>
+            </div>
+            <div class="grid2">
+              <label>Quantity used<input id="consumableQty" type="number" min="0.0001" step="0.0001" value="1" required /></label>
+              <div class="salePreview"><strong>Example</strong><br><span class="muted">1 takeout box per item, or 1 paper bag per order.</span></div>
+            </div>
+            <button class="secondary">Add consumable rule</button><div id="consumableRuleMessage"></div>
+          </form>
+          <div id="consumableRuleList" class="list"></div>
+          <small class="muted">When an order starts preparation, configured consumables are deducted together with recipe ingredients. Cancelling after consumption restores both.</small>
+        </div>
       </section>
 
       <section id="viewHistory" class="view hidden"><div class="sectionHead"><div><h1>History</h1><p class="muted">Corrections are logged; linked remittance/menu sales are protected from separate edits.</p></div><a id="exportLink" class="linkBtn" href="#">Export CSV</a></div><div class="card"><div id="historyList" class="list"></div></div><button data-view-link="Dashboard" class="secondary">Back home</button></section>
