@@ -200,16 +200,30 @@ function renderMerchantToday(data){
     :'New customer work will appear here.';
 
   $('todayInventoryTotal').textContent=String(Number(data.inventory?.attention_total||0));
-  $('todayInventoryHeadline').textContent=Number(data.inventory?.out_of_stock||0)>0
-    ?'Out-of-stock items need action'
+  $('todayInventoryHeadline').textContent=Number(data.inventory?.expired_lots||0)>0
+    ?'Expired stock needs action'
+    :Number(data.inventory?.held_lots||0)>0?'Held stock needs review'
+    :Number(data.inventory?.out_of_stock||0)>0?'Out-of-stock items need action'
+    :Number(data.inventory?.expiring_soon||0)>0?'Stock is expiring soon'
     :Number(data.inventory?.low_stock||0)>0?'Low stock needs attention':'Stock looks clear';
   const inv=Array.isArray(data.inventory?.items)?data.inventory.items:[];
-  $('todayInventoryItems').innerHTML=inv.length
-    ?inv.map(x=>'<div><strong>'+esc(x.item)+'</strong><span>'+num(x.quantity,4)+' '+esc(x.unit)+' · reorder '+num(x.reorder_level,4)+'</span></div>').join('')
-    :'<div class="todayEmpty">No low-stock inventory evidence.</div>';
-  $('todayInventoryCopy').textContent=Number(data.inventory?.source_attention||0)>0
-    ?String(Number(data.inventory.source_attention))+' low-stock item(s) already have supplier-source evidence.'
-    :'Only recorded Inventory is shown; catalog items never create fake stock.';
+  const exp=Array.isArray(data.inventory?.expiry_items)?data.inventory.expiry_items:[];
+  const lowRows=inv.map(x=>'<div><strong>'+esc(x.item)+'</strong><span>'+num(x.quantity,4)+' '+esc(x.unit)+' · reorder '+num(x.reorder_level,4)+'</span></div>');
+  const expiryRows=exp.map(x=>{
+    const date=x.expires_at?new Date(x.expires_at).toLocaleDateString('en-PH',{timeZone:'Asia/Manila'}):'';
+    const status=x.expiry_status==='expired'?'EXPIRED':x.expiry_status==='held'?'HELD':'EXPIRING SOON';
+    return '<div><strong>'+esc(x.item)+(x.lot_code?' · '+esc(x.lot_code):'')+'</strong><span>'+esc(status)+(date?' · '+esc(date):'')+' · '+num(x.quantity,4)+' '+esc(x.unit)+'</span></div>';
+  });
+  const inventoryRows=[...expiryRows,...lowRows].slice(0,8);
+  $('todayInventoryItems').innerHTML=inventoryRows.length
+    ?inventoryRows.join('')
+    :'<div class="todayEmpty">No low-stock or expiry attention.</div>';
+  const expiryAttention=Number(data.inventory?.expired_lots||0)+Number(data.inventory?.expiring_soon||0)+Number(data.inventory?.held_lots||0);
+  $('todayInventoryCopy').textContent=expiryAttention>0
+    ?String(expiryAttention)+' lot attention signal(s) · '+String(Number(data.inventory?.low_stock||0))+' low-stock item(s).'
+    :Number(data.inventory?.source_attention||0)>0
+      ?String(Number(data.inventory.source_attention))+' low-stock item(s) already have supplier-source evidence.'
+      :'Only recorded Inventory is shown; catalog items never create fake stock.';
 
   $('todaySupplierTotal').textContent=String(Number(data.supplier?.attention_total||0));
   $('todaySupplierHeadline').textContent=Number(data.supplier?.decisions_required||0)>0

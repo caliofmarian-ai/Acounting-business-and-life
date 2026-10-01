@@ -15,6 +15,7 @@ export function merchantTodayViewModel({
   orderRow={},
   inventoryRow={},
   inventoryItems=[],
+  expiryItems=[],
   supplierRow={},
   rfqRow={},
   exceptionRow={},
@@ -35,6 +36,9 @@ export function merchantTodayViewModel({
   const lowStock=n(inventoryRow.low_stock);
   const outOfStock=n(inventoryRow.out_of_stock);
   const sourceAttention=n(inventoryRow.source_attention);
+  const expiringSoon=n(inventoryRow.expiring_soon);
+  const expiredLots=n(inventoryRow.expired_lots);
+  const heldLots=n(inventoryRow.held_lots);
 
   const supplierDecisions=n(exceptionRow.backorder_decisions)+n(exceptionRow.substitution_decisions);
   const quotedRfqs=n(rfqRow.quoted_rfqs);
@@ -65,13 +69,26 @@ export function merchantTodayViewModel({
       low_stock:lowStock,
       out_of_stock:outOfStock,
       source_attention:sourceAttention,
-      attention_total:lowStock,
+      expiring_soon:expiringSoon,
+      expired_lots:expiredLots,
+      held_lots:heldLots,
+      attention_total:lowStock+expiringSoon+expiredLots+heldLots,
       items:(inventoryItems||[]).slice(0,5).map(x=>({
         id:Number(x.id),
         item:String(x.item||''),
         quantity:n(x.quantity),
         reorder_level:n(x.reorder_level),
         unit:String(x.base_unit||x.unit||'unit')
+      })),
+      expiry_items:(expiryItems||[]).slice(0,5).map(x=>({
+        id:Number(x.id),
+        item:String(x.item_name||''),
+        lot_code:String(x.supplier_lot_code||x.internal_lot_code||''),
+        lot_state:String(x.lot_state||'available'),
+        quantity:n(x.quantity_remaining_base),
+        unit:String(x.base_unit||'unit'),
+        expires_at:x.expires_at||null,
+        expiry_status:String(x.expiry_status||'')
       }))
     },
     supplier:{
@@ -171,6 +188,8 @@ export async function loadMerchantToday(pool,ctx){
     inventory,
     inventoryItems,
     sourceAttention,
+    lotAttention,
+    expiryItems,
     supplier,
     rfqs,
     exceptions,
@@ -208,6 +227,51 @@ export async function loadMerchantToday(pool,ctx){
         ON s.business_id=i.business_id AND s.inventory_id=i.id AND s.active=TRUE
       WHERE i.business_id=$1 AND i.quantity<=i.reorder_level
     `,[bid],[{source_attention:0}]),
+    optionalQuery(pool,`
+      SELECT
+        COUNT(*) FILTER(
+          WHERE quantity_remaining_base>0
+            AND expires_at IS NOT NULL
+            AND expires_at<=NOW()
+        )::int expired_lots,
+        COUNT(*) FILTER(
+          WHERE quantity_remaining_base>0
+            AND lot_state='available'
+            AND expires_at>NOW()
+            AND expires_at<=NOW()+INTERVAL '3 days'
+        )::int expiring_soon,
+        COUNT(*) FILTER(
+          WHERE quantity_remaining_base>0
+            AND lot_state NOT IN ('available','depleted')
+        )::int held_lots
+      FROM supply_lots
+      WHERE business_id=$1
+    `,[bid],[{expired_lots:0,expiring_soon:0,held_lots:0}]),
+    optionalQuery(pool,`
+      SELECT id,item_name,internal_lot_code,supplier_lot_code,lot_state,
+             quantity_remaining_base,base_unit,expires_at,
+             CASE
+               WHEN lot_state NOT IN ('available','depleted') THEN 'held'
+               WHEN expires_at IS NOT NULL AND expires_at<=NOW() THEN 'expired'
+               WHEN expires_at IS NOT NULL AND expires_at<=NOW()+INTERVAL '3 days' THEN 'expiring_soon'
+               ELSE 'ok'
+             END expiry_status
+      FROM supply_lots
+      WHERE business_id=$1
+        AND quantity_remaining_base>0
+        AND (
+          lot_state NOT IN ('available','depleted')
+          OR (expires_at IS NOT NULL AND expires_at<=NOW()+INTERVAL '3 days')
+        )
+      ORDER BY
+        CASE
+          WHEN lot_state NOT IN ('available','depleted') THEN 0
+          WHEN expires_at<=NOW() THEN 1
+          ELSE 2
+        END,
+        expires_at NULLS LAST,created_at
+      LIMIT 5
+    `,[bid],[]),
     optionalQuery(pool,`
       SELECT
         COUNT(*) FILTER(WHERE status NOT IN ('received','cancelled','rejected'))::int open_purchase_orders,
@@ -265,13 +329,14 @@ export async function loadMerchantToday(pool,ctx){
     `,[bid],[{total:0,unpublished:0,unavailable:0,missing_media:0,ai_drafts_to_review:0,recipe_attention:0}])
   ]);
 
-  const inventoryRow={...(inventory.rows[0]||{}),...(sourceAttention.rows[0]||{})};
+  const inventoryRow={...(inventory.rows[0]||{}),...(sourceAttention.rows[0]||{}),...(lotAttention.rows[0]||{})};
   return merchantTodayViewModel({
     business:{id:bid,name:ctx.business.name,currency_code:ctx.business.currency_code||'PHP'},
     presentation:finance.presentation||{},
     orderRow:orders.rows[0]||{},
     inventoryRow,
     inventoryItems:inventoryItems.rows,
+    expiryItems:expiryItems.rows,
     supplierRow:supplier.rows[0]||{},
     rfqRow:rfqs.rows[0]||{},
     exceptionRow:exceptions.rows[0]||{},
