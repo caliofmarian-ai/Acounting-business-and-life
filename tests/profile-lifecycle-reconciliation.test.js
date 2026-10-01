@@ -31,6 +31,16 @@ test('approved governed profiles can be reactivated without repeating onboarding
   assert.match(shell,/Profile reactivated\./);
 });
 
+test('manage profile cards explain what each role can do before onboarding',()=>{
+  assert.match(shell,/manageDesc: 'Sell products or food, manage orders, stock, pricing and business finances\.'/);
+  assert.match(shell,/manageDesc: 'Shop from local businesses, place orders, choose delivery and track purchases\.'/);
+  assert.match(shell,/manageDesc: 'Sell supplies to businesses, manage a B2B catalog, quotes and procurement orders\.'/);
+  assert.match(shell,/manageDesc: 'Go available, accept or decline assigned delivery requests, follow routes and track earnings\.'/);
+  assert.match(shell,/manageDesc: 'Offer local services, receive requests, send quotes, schedule jobs and manage earnings\.'/);
+  assert.match(shell,/class="rolePurpose"/);
+  assert.match(shell,/Status ·/);
+});
+
 test('profile cards expose one lifecycle action for each state',()=>{
   assert.match(shell,/Disabled · ID and history preserved/);
   assert.match(shell,/Continue onboarding/);
