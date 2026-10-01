@@ -11,7 +11,8 @@ test('submitted profile applications explain review timing and next steps',()=>{
   assert.match(ui,/What happens next/);
   assert.match(ui,/Typical review time/);
   assert.match(ui,/1–3 business days/);
-  assert.match(ui,/Business & Life and by email/);
+  assert.match(ui,/The decision will show the reason/);
+  assert.match(ui,/correct the application and submit it again/);
   assert.match(ui,/profile unlocks/);
   assert.match(ui,/Your profile remains locked while the review is pending/);
 });
