@@ -18,7 +18,7 @@ The Philippines Edition uses a controlled PSGC cascade:
 
 Region → Province (when applicable) → City / Municipality → Barangay.
 
-Each choice is loaded from the official PSGC parent-child hierarchy. The next level is enabled only after the preceding level is selected. Regions that do not use a province level skip that step instead of inventing one.
+Each choice is loaded from the official PSGC parent-child hierarchy. The next level is enabled only after the preceding level is selected. Regions that do not use a province level skip that step instead of inventing one. If a region contains both provinces and cities that are administratively independent of any province, the Province step offers `No province — independent city` so those official cities remain selectable.
 
 The selected barangay PSGC code is the sole authority for territory availability. Free-text address spelling, abbreviations, omissions or typographical errors never decide whether an area is active.
 
