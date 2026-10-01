@@ -283,6 +283,7 @@ app.post('/api/governance/applications/:id/documents',body,async(req,res,next)=>
       objectId:stored.id,sourceType:'profile_application_document',sourceId:String(rows[0].id),
       actorAccountId:me.account.id,purpose:'profile_application_document_bind',correlationId:correlation(req)
     });
+    await pool.query(`UPDATE profile_applications SET updated_at=NOW() WHERE id=$1`,[id]);
     await audit(me.account.id,'application_evidence_added',me.account.id,a.rows[0].role,a.rows[0].territory_id,{application_id:id,document_id:rows[0].id,status:a.rows[0].status});
     res.status(201).json({...rows[0],application_status:a.rows[0].status});
   }catch(e){
