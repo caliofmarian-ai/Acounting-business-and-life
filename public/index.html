@@ -217,7 +217,7 @@
             <label>Paid from<select id="stockAccount"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label>
           </div>
           <div class="grid2">
-            <label>Reorder when below<input id="stockReorderQty" type="number" min="0" step="0.0001" value="0" /></label>
+            <label>Notify me when stock falls below<input id="stockReorderQty" type="number" min="0" step="0.0001" value="0" /></label>
             <label>Reorder unit<select id="stockReorderUnit"><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="L">L</option><option value="unit">unit / piece</option></select></label>
           </div>
           <label>Note<input id="stockNote" placeholder="Optional supplier / receipt note" /></label>
@@ -225,6 +225,12 @@
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
         <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
+        <div class="card stack">
+          <div class="sectionHead"><div><h2>Restock list</h2><p class="muted">Business & Life automatically collects every item that has reached its low-stock alert level.</p></div><button id="restockRefresh" type="button" class="secondary">Refresh list</button></div>
+          <div id="restockSummary" class="salePreview">No items currently need restocking.</div>
+          <div id="restockList" class="list"></div>
+          <small class="muted">When a preferred Supplier is linked, you can send a restock request so they can prepare the supply. Sending a request does not record a purchase, payment or received stock.</small>
+        </div>
       </section>
 
       <section id="viewHistory" class="view hidden"><div class="sectionHead"><div><h1>History</h1><p class="muted">Corrections are logged; linked remittance/menu sales are protected from separate edits.</p></div><a id="exportLink" class="linkBtn" href="#">Export CSV</a></div><div class="card"><div id="historyList" class="list"></div></div><button data-view-link="Dashboard" class="secondary">Back home</button></section>

@@ -790,13 +790,13 @@ export async function supplierReorderSuggestions(pool,businessId){
   const {rows}=await pool.query(
     `SELECT
        i.id inventory_id,i.item,i.quantity,i.reorder_level,i.unit,i.unit_cost,i.base_unit inventory_base_unit,
-       src.catalog_item_id,src.preference_rank,
+       src.catalog_item_id,src.preference_rank,src.supplier_business_id,
        c.product_name,c.unit_name,c.base_unit,c.base_units_per_pack,c.price_per_pack,c.minimum_packs,
        c.lead_time_days,c.supplier_account_id,c.availability_status,
        COALESCE(sp.supplier_name,a.display_name) supplier_name
      FROM inventory i
      LEFT JOIN LATERAL (
-       SELECT ms.catalog_item_id,ms.preference_rank,ms.supplier_account_id
+       SELECT ms.catalog_item_id,ms.preference_rank,ms.supplier_account_id,spi.business_id supplier_business_id
        FROM merchant_inventory_supplier_sources ms
        JOIN supplier_catalog_items sc
          ON sc.id=ms.catalog_item_id
