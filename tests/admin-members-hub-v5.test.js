@@ -14,6 +14,17 @@ function between(source,start,end){
   return source.slice(a,b);
 }
 
+test('Commerce readiness is reachable from the current Admin Members Hub and keeps the second gate explicit',()=>{
+  assert.match(ui,/function commerceReadinessRowsFromAuthorizations/);
+  assert.match(ui,/function commerceReadinessRow/);
+  assert.match(ui,/async function openAdminCommerceReadiness/);
+  assert.match(ui,/\/api\/governance\/admin\/readiness\//);
+  assert.match(ui,/eligible_limited/);
+  assert.match(ui,/eligible_full/);
+  assert.match(ui,/Profile approval does not publish a business/);
+  assert.match(ui,/state\.memberHubTab=decision==='approve'&&isSuperAdmin\(\)&&\['merchant','service_provider'\]\.includes\(a\.role\)\?'commerce':'requests'/);
+});
+
 test('Members Hub V5 removes Profiles as a separate sidebar module',()=>{
   const modules=between(ui,'const modules=[','function hasAny');
   assert.doesNotMatch(modules,/id:'profiles'/);
