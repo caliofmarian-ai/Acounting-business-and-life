@@ -1,0 +1,53 @@
+name: Production Merchant #668
+
+on:
+  push:
+    branches:
+      - qa/production-merchant-668
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Production revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --retry-delay 2 https://caliof.com/health -o health.json
+          cat health.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const h=JSON.parse(fs.readFileSync('health.json','utf8'));
+          if(h?.deployment?.environment!=='production') throw new Error('Not Production');
+          if(h?.deployment?.revision!=='a8a636931761') throw new Error('Unexpected revision: '+h?.deployment?.revision);
+          console.log('PRODUCTION_REVISION_PASS',h.deployment.revision);
+          NODE
+
+      - name: Verify Merchant self-start UI is served
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 https://caliof.com/profile-governance-ui.js -o profile-governance-ui.js
+          grep -Fq "merchant:{label:'Merchant',icon:'🏪',invite:false}" profile-governance-ui.js
+          grep -Fq "supplier:{label:'Supplier',icon:'📦',invite:true}" profile-governance-ui.js
+          grep -Fq "courier:{label:'Delivery',icon:'🛵',invite:true}" profile-governance-ui.js
+          grep -Fq "Start onboarding" profile-governance-ui.js
+          echo "MERCHANT_SELF_START_UI_PASS"
+
+      - name: Verify governed route is mounted
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl --silent --show-error --output body.json --write-out "%{http_code}"             -H "Content-Type: application/json"             -d '{"territory_id":1}'             https://caliof.com/api/governance/profiles/merchant/start)
+          echo "HTTP_STATUS $code"
+          cat body.json || true
+          case "$code" in
+            401|403) ;;
+            404) echo "Merchant onboarding route is not mounted"; exit 1 ;;
+            5*) echo "Merchant onboarding route returned server error"; exit 1 ;;
+            *) echo "Unexpected unauthenticated status: $code"; exit 1 ;;
+          esac
+          echo "MERCHANT_ONBOARDING_ROUTE_MOUNTED_PASS"
