@@ -188,6 +188,21 @@ async function initDb() {
       PRIMARY KEY(order_id, inventory_id)
     );
 
+    CREATE TABLE IF NOT EXISTS merchant_order_consumable_rules (
+      id BIGSERIAL PRIMARY KEY,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE CASCADE,
+      fulfilment_scope TEXT NOT NULL DEFAULT 'all' CHECK(fulfilment_scope IN ('all','pickup','delivery')),
+      usage_basis TEXT NOT NULL DEFAULT 'per_order' CHECK(usage_basis IN ('per_order','per_item')),
+      quantity_used NUMERIC(14,4) NOT NULL CHECK(quantity_used>0),
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(business_id,inventory_id,fulfilment_scope,usage_basis)
+    );
+    CREATE INDEX IF NOT EXISTS merchant_order_consumable_rules_business_idx
+      ON merchant_order_consumable_rules(business_id,active,fulfilment_scope);
+
     CREATE TABLE IF NOT EXISTS order_payments (
       id BIGSERIAL PRIMARY KEY,
       order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -279,10 +294,34 @@ async function consumeStock(client, order) {
   if(order.stock_consumed_at) return;
   const rows=await client.query(`SELECT oi.source_id product_id,oi.quantity order_quantity,r.inventory_id,r.quantity recipe_quantity,i.item,i.quantity stock_quantity,i.unit_cost FROM order_items oi JOIN recipes r ON r.product_id=oi.source_id JOIN inventory i ON i.id=r.inventory_id WHERE oi.order_id=$1 AND oi.source_kind='product' AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i`,[order.id,order.business_id]);
   const needs=new Map();
-  for(const r of rows.rows){const id=Number(r.inventory_id),used=Number(r.order_quantity)*Number(r.recipe_quantity),existing=needs.get(id)||{inventory_id:id,item:r.item,stock:Number(r.stock_quantity),unit_cost:Number(r.unit_cost),used:0};existing.used+=used;needs.set(id,existing)}
+  for(const r of rows.rows){
+    const id=Number(r.inventory_id),used=Number(r.order_quantity)*Number(r.recipe_quantity);
+    const existing=needs.get(id)||{inventory_id:id,item:r.item,stock:Number(r.stock_quantity),unit_cost:Number(r.unit_cost),used:0};
+    existing.used+=used;needs.set(id,existing);
+  }
+  const itemCount=Number((await client.query(`SELECT COALESCE(SUM(quantity),0) item_count FROM order_items WHERE order_id=$1`,[order.id])).rows[0]?.item_count||0);
+  const consumables=await client.query(`
+    SELECT r.inventory_id,r.quantity_used,r.usage_basis,i.item,i.quantity stock_quantity,i.unit_cost
+      FROM merchant_order_consumable_rules r
+      JOIN inventory i ON i.id=r.inventory_id AND i.business_id=r.business_id
+     WHERE r.business_id=$1 AND r.active=TRUE
+       AND (r.fulfilment_scope='all' OR r.fulfilment_scope=$2)
+     ORDER BY i.id
+     FOR UPDATE OF i
+  `,[order.business_id,order.fulfilment_method]);
+  for(const r of consumables.rows){
+    const id=Number(r.inventory_id);
+    const multiplier=r.usage_basis==='per_item'?itemCount:1;
+    const used=Number(r.quantity_used)*multiplier;
+    const existing=needs.get(id)||{inventory_id:id,item:r.item,stock:Number(r.stock_quantity),unit_cost:Number(r.unit_cost),used:0};
+    existing.used+=used;needs.set(id,existing);
+  }
   const shortages=[...needs.values()].filter(n=>n.stock+1e-9<n.used).map(n=>({item:n.item,required:n.used,available:n.stock,short:n.used-n.stock}));
   if(shortages.length) throw Object.assign(new Error('Not enough stock to start preparation'),{status:409,shortages});
-  for(const n of needs.values()){await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2`,[n.used,n.inventory_id]);await client.query(`INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(order_id,inventory_id) DO NOTHING`,[order.id,n.inventory_id,n.item,n.used,n.unit_cost,n.used*n.unit_cost])}
+  for(const n of needs.values()){
+    await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2`,[n.used,n.inventory_id]);
+    await client.query(`INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(order_id,inventory_id) DO NOTHING`,[order.id,n.inventory_id,n.item,n.used,n.unit_cost,n.used*n.unit_cost]);
+  }
   await client.query(`UPDATE orders SET stock_consumed_at=NOW(),updated_at=NOW() WHERE id=$1 AND stock_consumed_at IS NULL`,[order.id]);
 }
 async function reverseStock(client, order) {
@@ -317,7 +356,7 @@ app.get('/api/orders/inventory',async(req,res,next)=>{try{
   if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});
   const{business}=await requireMerchant(req,businessId);
   const{rows}=await pool.query(
-    `SELECT id,item,unit,quantity,reorder_level,unit_cost
+    `SELECT id,item,unit,quantity,reorder_level,unit_cost,inventory_type
        FROM inventory
       WHERE business_id=$1
       ORDER BY (quantity<=reorder_level) DESC,item`,

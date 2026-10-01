@@ -376,7 +376,40 @@ async function loadStock(){
   const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${num(i.quantity,4)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
   $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
   if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.quantity)<=Number(i.reorder_level)).length);
-  fillIngredientSelect()
+  fillIngredientSelect();
+  fillConsumableRuleInventory();
+  await loadConsumableRules();
+}
+function fillConsumableRuleInventory(){
+  const select=$('consumableInventoryId');if(!select)return;
+  const items=inventory.filter(i=>(i.inventory_type||'ingredient')!=='ingredient');
+  select.innerHTML=items.length
+    ?'<option value="">Choose a consumable</option>'+items.map(i=>`<option value="${i.id}">${esc(i.item)} — ${num(i.quantity,4)} ${esc(i.unit)}</option>`).join('')
+    :'<option value="">Add non-ingredient stock first</option>';
+}
+function consumableRuleLabel(r){
+  const scope={all:'Pickup & delivery',pickup:'Pickup only',delivery:'Delivery only'}[r.fulfilment_scope]||r.fulfilment_scope;
+  const basis=r.usage_basis==='per_item'?'per ordered item':'per order';
+  return `${num(r.quantity_used,4)} ${esc(r.unit)} ${basis} • ${esc(scope)}`;
+}
+async function loadConsumableRules(){
+  const list=$('consumableRuleList');if(!list)return[];
+  try{
+    const rows=await api('/api/inventory/consumable-rules');
+    const nodes=rows.map(r=>{
+      const d=document.createElement('div');d.className='listRow';
+      d.innerHTML=`<div class="rowMain"><strong>${esc(r.item)}</strong><small>${consumableRuleLabel(r)} • stock ${num(r.stock_quantity,4)} ${esc(r.unit)}</small></div><button type="button" class="miniBtn">Remove</button>`;
+      d.querySelector('button').onclick=async()=>{
+        try{await api(`/api/inventory/consumable-rules/${r.id}`,{method:'DELETE'});await loadConsumableRules()}catch(error){alert(error.message)}
+      };
+      return d;
+    });
+    list.replaceChildren(...(nodes.length?nodes:[emptyRow('No automatic consumable rules yet.')]));
+    return rows;
+  }catch(error){
+    list.replaceChildren(emptyRow(error.message||'Consumable rules could not be loaded.'));
+    return[];
+  }
 }
 async function loadRemittances(){const rows=await cachedJson('/api/remittances','remittances');$('remittanceList').replaceChildren(...(rows.length?rows.map(remitRow):[emptyRow('No remittances recorded yet.')]))}
 async function loadDay(){const d=await cachedJson('/api/day-status','day_status');$('dayStatusDate').textContent=d.business_date;$('openingCashShown').textContent=money(d.opening_cash);$('expectedCashShown').textContent=money(d.expected_cash);$('openResult').textContent=d.has_opening?'Opening cash is recorded for today.':'Set opening cash before closing the day.';if(d.closing)$('closeResult').innerHTML=`Closed: actual ${money(d.closing.actual_cash)} • <strong class="${Number(d.closing.variance)<0?'negative':Number(d.closing.variance)>0?'positive':''}">difference ${money(d.closing.variance)}</strong>`}
@@ -450,6 +483,20 @@ if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
 if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
 
 $('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';invalidateMerchantToday();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
+$('consumableRuleForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();const out=$('consumableRuleMessage');if(out)out.textContent='Saving…';
+  try{
+    await api('/api/inventory/consumable-rules',{method:'POST',body:JSON.stringify({
+      inventory_id:Number($('consumableInventoryId').value),
+      fulfilment_scope:$('consumableScope').value,
+      usage_basis:$('consumableBasis').value,
+      quantity_used:Number($('consumableQty').value)
+    })});
+    if(out)out.textContent='Consumable rule saved.';
+    $('consumableQty').value=1;
+    await loadConsumableRules();
+  }catch(error){if(out)out.textContent=error.message}
+});
 $('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';$('stockInventoryType').value='ingredient';$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
