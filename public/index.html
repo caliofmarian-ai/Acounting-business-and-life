@@ -220,6 +220,19 @@
             </label>
           </div>
           <small class="muted">Choose an item from the lists to fill the form faster, or type your own item below.</small>
+          <div class="grid2">
+            <label>Stock type
+              <select id="stockInventoryType">
+                <option value="ingredient">Ingredient</option>
+                <option value="packaging">Packaging / delivery</option>
+                <option value="kitchen_consumable">Kitchen consumable</option>
+                <option value="cleaning_sanitation">Cleaning & sanitation</option>
+                <option value="hygiene">Food handling & hygiene</option>
+                <option value="operational_supply">Operational supply</option>
+              </select>
+            </label>
+            <div class="salePreview"><strong>Why this matters</strong><br><span class="muted">Only Ingredients can be added to recipes. Other stock stays tracked for purchasing and low-stock alerts.</span></div>
+          </div>
           <label>Item / ingredient<input id="stockItem" required placeholder="Carrot" /></label>
           <div class="grid2">
             <label>Bought quantity<input id="stockPurchaseQty" type="number" min="0.0001" step="0.0001" value="1" required /></label>
