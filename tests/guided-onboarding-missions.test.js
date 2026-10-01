@@ -100,13 +100,14 @@ test('real governance actions notify the guide only after successful transitions
   assert.match(ui,/abl:guided-onboarding-refresh/);
 });
 
-test('modern registration collects one private address and leaves area derivation to the canonical account flow',()=>{
-  assert.match(modernAuth,/Personal \/ home address <span>private<\/span>/);
-  assert.match(modernAuth,/Enter your home address\. We will check whether Business & Life is available in your area/);
-  assert.doesNotMatch(modernAuth,/id="regBarangaySearch"/);
-  assert.doesNotMatch(modernAuth,/id="regHomePsgcCode"/);
-  assert.doesNotMatch(modernAuth,/home_psgc_code:document\.getElementById\('regHomePsgcCode'\)/);
-  assert.match(server,/deriveRegistrationGeography/);
+test('modern registration uses the official PH geography cascade and submits selected PSGC',()=>{
+  assert.match(modernAuth,/phGeographyCascadeMarkup\('reg'/);
+  assert.match(modernAuth,/bindPhGeographyCascade/);
+  assert.match(modernAuth,/home_psgc_code:document\.getElementById\('regHomePsgcCode'\)/);
+  assert.doesNotMatch(modernAuth,/id="regAddress"/);
+  const registration=server.slice(server.indexOf("app.post('/api/auth/register'"),server.indexOf("app.post('/api/auth/login'"));
+  assert.match(registration,/geographyAvailabilityForCode\(pool,homePsgcCode\)/);
+  assert.doesNotMatch(registration,/deriveRegistrationGeography\(address\)/);
 });
 
 test('Figma reference is canonical for the coachmark and mission visual direction',()=>{
