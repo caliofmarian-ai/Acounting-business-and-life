@@ -245,6 +245,18 @@ app.post('/api/governance/applications/:id/documents',body,async(req,res,next)=>
       purpose:'profile_application_document_upload',classification:'profile_application_document',
       correlationId:correlation(req)
     });
+    const duplicate=await pool.query(`
+      SELECT d.id
+        FROM profile_application_documents d
+        JOIN private_evidence_objects pe ON pe.id=d.private_evidence_object_id
+       WHERE d.application_id=$1
+         AND pe.sha256=$2
+         AND pe.scan_status='clean'
+         AND pe.retention_state='active'
+       ORDER BY d.id
+       LIMIT 1
+    `,[id,stored.sha256]);
+    if(duplicate.rowCount)throw Object.assign(new Error('This exact document is already uploaded to this application.'),{status:409,code:'DUPLICATE_APPLICATION_EVIDENCE'});
     const{rows}=await pool.query(`
       INSERT INTO profile_application_documents(
         application_id,document_type,label,evidence_data_url,private_evidence_object_id
@@ -341,7 +353,59 @@ app.post('/api/governance/admin/invitations',body,async(req,res,next)=>{try{cons
 app.get('/api/governance/invite/:token',async(req,res,next)=>{try{const me=await identity(req),tokenHash=hash(clean(req.params.token,300));const q=await pool.query(`SELECT i.id,i.target_email,i.role,i.territory_id,i.status,i.note,i.expires_at,t.name territory_name FROM profile_invitations i JOIN territories t ON t.id=i.territory_id WHERE i.token_hash=$1 AND i.status='invited' AND i.expires_at>NOW()`,[tokenHash]);if(!q.rowCount)return res.status(404).json({error:'Invitation is invalid or expired'});if(email(q.rows[0].target_email)!==email(me.account.email))return res.status(403).json({error:'Sign in with the invited email address'});res.json(q.rows[0])}catch(e){next(e)}})
 app.post('/api/governance/invite/:token/accept',body,async(req,res,next)=>{try{const me=await identity(req),tokenHash=hash(clean(req.params.token,300)),q=await pool.query(`SELECT i.id FROM profile_invitations i JOIN territories t ON t.id=i.territory_id WHERE i.token_hash=$1 AND i.status='invited' AND i.expires_at>NOW() AND t.country_code='PH' AND t.status IN ('onboarding','active')`,[tokenHash]);if(!q.rowCount)return res.status(409).json({error:'Invitation is invalid, expired or its operating territory is no longer open for onboarding'});req.params.id=String(q.rows[0].id);const fake={...req,params:{id:String(q.rows[0].id)}};const inv=await pool.query(`SELECT * FROM profile_invitations WHERE id=$1`,[q.rows[0].id]);const geo=await accountGeographySnapshot(pool,me.account.id);if(geo.assigned){const assigned=await requireAssignedOpenBarangay(pool,me.account.id);if(Number(inv.rows[0].territory_id)!==Number(assigned.id))return res.status(409).json({error:'This invitation is for a different Business & Life area than your assigned barangay'})}else if(me.account.account_mode!=='company_test')await requireAssignedOpenBarangay(pool,me.account.id);if(email(inv.rows[0].target_email)!==email(me.account.email))return res.status(403).json({error:'Sign in with the invited email address'});const client=await pool.connect();try{await client.query('BEGIN');await client.query(`UPDATE profile_invitations SET status='accepted',accepted_by_account_id=$1,accepted_at=NOW() WHERE id=$2`,[me.account.id,q.rows[0].id]);const a=await client.query(`INSERT INTO profile_applications(account_id,role,territory_id,invitation_id,status) VALUES($1,$2,$3,$4,'application_started') ON CONFLICT(account_id,role,territory_id) WHERE status NOT IN ('rejected','revoked') DO UPDATE SET invitation_id=EXCLUDED.invitation_id,updated_at=NOW() RETURNING *`,[me.account.id,inv.rows[0].role,inv.rows[0].territory_id,q.rows[0].id]);await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,$2,FALSE,'private','application_started') ON CONFLICT(account_id,role) DO UPDATE SET enabled=FALSE,visibility='private',status='application_started',updated_at=NOW()`,[me.account.id,inv.rows[0].role]);await client.query('COMMIT');await audit(me.account.id,'invitation_accepted',me.account.id,inv.rows[0].role,inv.rows[0].territory_id,{invitation_id:q.rows[0].id});res.json(a.rows[0])}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
-app.get('/api/governance/admin/applications/:id',async(req,res,next)=>{try{await requireAdmin(req);const id=Number(req.params.id);const a=await pool.query(`SELECT pa.*,ac.display_name,ac.email,t.name territory_name FROM profile_applications pa JOIN accounts ac ON ac.id=pa.account_id JOIN territories t ON t.id=pa.territory_id WHERE pa.id=$1`,[id]);if(!a.rowCount)return res.status(404).json({error:'Application not found'});const requestedIds=Array.isArray(a.rows[0].application_data?.requested_category_ids)?a.rows[0].application_data.requested_category_ids.map(Number).filter(Number.isInteger):[];const[docs,services,credentials,requestedCategories,adultEligibility]=await Promise.all([pool.query(`SELECT d.id,d.document_type,d.label,d.created_at,pe.original_file_name,pe.detected_mime,pe.byte_size,pe.scan_status FROM profile_application_documents d LEFT JOIN private_evidence_objects pe ON pe.id=d.private_evidence_object_id WHERE d.application_id=$1 ORDER BY d.created_at`,[id]),pool.query(`SELECT s.category_id,c.code,c.name,c.credential_gate,s.service_label FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[a.rows[0].account_id]),pool.query(`SELECT id,credential_type,title,issuing_body,verification_status,expiry_date FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[a.rows[0].account_id]),requestedIds.length?pool.query(`SELECT id,code,name,credential_gate FROM service_categories WHERE id=ANY($1::bigint[]) AND active=TRUE ORDER BY sort_order,name`,[requestedIds]):Promise.resolve({rows:[]}),accountAdultEligibilitySnapshot(pool,a.rows[0].account_id)]);res.json({...a.rows[0],adult_eligibility:adultEligibility,documents:docs.rows,existing_services:services.rows,credentials:credentials.rows,requested_categories:requestedCategories.rows})}catch(e){next(e)}})
+app.get('/api/governance/admin/applications/:id',async(req,res,next)=>{
+  try{
+    await requireAdmin(req);
+    const id=Number(req.params.id);
+    const a=await pool.query(`
+      SELECT pa.*,ac.display_name,ac.email,t.name territory_name
+        FROM profile_applications pa
+        JOIN accounts ac ON ac.id=pa.account_id
+        JOIN territories t ON t.id=pa.territory_id
+       WHERE pa.id=$1
+    `,[id]);
+    if(!a.rowCount)return res.status(404).json({error:'Application not found'});
+    const application=a.rows[0],serviceProvider=application.role==='service_provider';
+    const requestedIds=serviceProvider&&Array.isArray(application.application_data?.requested_category_ids)
+      ?application.application_data.requested_category_ids.map(Number).filter(Number.isInteger)
+      :[];
+    const docsPromise=pool.query(`
+      SELECT d.id,d.document_type,d.label,d.created_at,
+             pe.original_file_name,pe.detected_mime,pe.byte_size,pe.scan_status,
+             (
+               SELECT d2.id
+                 FROM profile_application_documents d2
+                 JOIN private_evidence_objects pe2 ON pe2.id=d2.private_evidence_object_id
+                WHERE d2.application_id=d.application_id
+                  AND d2.id<d.id
+                  AND pe.sha256 IS NOT NULL
+                  AND pe2.sha256=pe.sha256
+                  AND pe2.scan_status='clean'
+                  AND pe2.retention_state='active'
+                ORDER BY d2.id
+                LIMIT 1
+             ) duplicate_of_id
+        FROM profile_application_documents d
+        LEFT JOIN private_evidence_objects pe ON pe.id=d.private_evidence_object_id
+       WHERE d.application_id=$1
+       ORDER BY d.created_at,d.id
+    `,[id]);
+    const servicesPromise=serviceProvider
+      ?pool.query(`SELECT s.category_id,c.code,c.name,c.credential_gate,s.service_label FROM service_provider_services s JOIN service_categories c ON c.id=s.category_id WHERE s.account_id=$1 ORDER BY c.sort_order,c.name`,[application.account_id])
+      :Promise.resolve({rows:[]});
+    const credentialsPromise=serviceProvider
+      ?pool.query(`SELECT id,credential_type,title,issuing_body,verification_status,expiry_date FROM profile_credentials WHERE account_id=$1 ORDER BY created_at DESC`,[application.account_id])
+      :Promise.resolve({rows:[]});
+    const requestedCategoriesPromise=serviceProvider&&requestedIds.length
+      ?pool.query(`SELECT id,code,name,credential_gate FROM service_categories WHERE id=ANY($1::bigint[]) AND active=TRUE ORDER BY sort_order,name`,[requestedIds])
+      :Promise.resolve({rows:[]});
+    const[docs,services,credentials,requestedCategories,adultEligibility]=await Promise.all([
+      docsPromise,servicesPromise,credentialsPromise,requestedCategoriesPromise,
+      accountAdultEligibilitySnapshot(pool,application.account_id)
+    ]);
+    res.json({...application,adult_eligibility:adultEligibility,documents:docs.rows,existing_services:services.rows,credentials:credentials.rows,requested_categories:requestedCategories.rows});
+  }catch(e){next(e)}
+})
 app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{
   try{
     const me=await requireAdmin(req);
