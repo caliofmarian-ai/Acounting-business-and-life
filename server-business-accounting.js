@@ -25,6 +25,7 @@ const ACCOUNTS = new Set(['cash','gcash','bank','other']);
 const TYPES = new Set(['sale','business_expense','money_received','personal_withdrawal','adjustment']);
 const INVENTORY_TYPES = new Set(['ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply']);
 const normalizeInventoryType=value=>INVENTORY_TYPES.has(clean(value,40))?clean(value,40):'ingredient';
+const INVENTORY_ADJUSTMENT_KINDS = new Set(['waste','spoilage','expired','damaged','count_correction','other_loss']);
 let profileGovernanceApp=null;
 let profileGovernanceReady=false;
 let shuttingDown = false;
@@ -171,6 +172,26 @@ async function initAccountingTenancyDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS inventory_purchases_business_idx ON inventory_purchases(business_id,created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS inventory_adjustments (
+      id BIGSERIAL PRIMARY KEY,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      adjustment_kind TEXT NOT NULL CHECK(adjustment_kind IN ('waste','spoilage','expired','damaged','count_correction','other_loss')),
+      before_quantity NUMERIC(14,4) NOT NULL,
+      quantity_delta NUMERIC(14,4) NOT NULL,
+      after_quantity NUMERIC(14,4) NOT NULL CHECK(after_quantity>=0),
+      unit TEXT NOT NULL,
+      unit_cost_snapshot NUMERIC(14,6) NOT NULL DEFAULT 0,
+      estimated_value_delta NUMERIC(14,4) NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      actor_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS inventory_adjustments_business_idx
+      ON inventory_adjustments(business_id,created_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS inventory_adjustments_inventory_idx
+      ON inventory_adjustments(inventory_id,created_at DESC,id DESC);
 
     CREATE TABLE IF NOT EXISTS merchant_order_consumable_rules (
       id BIGSERIAL PRIMARY KEY,
@@ -559,6 +580,62 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
       throw error;
     }finally{client.release()}
   }catch(error){next(error)}
+});
+
+app.get('/api/inventory/adjustments',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const {rows}=await pool.query(`
+      SELECT a.*,i.item,i.inventory_type
+        FROM inventory_adjustments a
+        JOIN inventory i ON i.id=a.inventory_id
+       WHERE a.business_id=$1
+       ORDER BY a.created_at DESC,a.id DESC
+       LIMIT 100
+    `,[ctx.business.id]);
+    res.json(rows);
+  }catch(error){next(error)}
+});
+app.post('/api/inventory/adjustments',jsonBody,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const inventoryId=Number(req.body?.inventory_id);
+    const kind=clean(req.body?.adjustment_kind,40);
+    const entered=Number(req.body?.quantity);
+    if(!Number.isInteger(inventoryId)||!INVENTORY_ADJUSTMENT_KINDS.has(kind)||!Number.isFinite(entered)||entered<0){
+      return res.status(400).json({error:'Choose an inventory item, adjustment type and valid quantity.'});
+    }
+    if(kind!=='count_correction'&&entered<=0)return res.status(400).json({error:'Loss quantity must be greater than zero.'});
+    await client.query('BEGIN');
+    const inv=await client.query(`SELECT * FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,[inventoryId,ctx.business.id]);
+    if(!inv.rowCount)throw Object.assign(new Error('Inventory item not found'),{status:404});
+    const row=inv.rows[0],before=Number(row.quantity),after=kind==='count_correction'?entered:before-entered;
+    if(after<-1e-9)throw Object.assign(new Error('Adjustment cannot remove more stock than is currently available.'),{status:409});
+    const safeAfter=Math.max(0,after),delta=safeAfter-before,unitCost=Number(row.unit_cost||0);
+    await client.query(`UPDATE inventory SET quantity=$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[safeAfter,inventoryId,ctx.business.id]);
+    const saved=await client.query(`
+      INSERT INTO inventory_adjustments(
+        business_id,inventory_id,adjustment_kind,before_quantity,quantity_delta,after_quantity,
+        unit,unit_cost_snapshot,estimated_value_delta,note,actor_account_id
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      RETURNING *
+    `,[
+      ctx.business.id,inventoryId,kind,before,delta,safeAfter,row.unit,unitCost,
+      delta*unitCost,clean(req.body?.note,300),ctx.me.account.id
+    ]);
+    await client.query('COMMIT');
+    res.status(201).json({
+      adjustment:{...saved.rows[0],item:row.item,inventory_type:row.inventory_type},
+      inventory:{...row,quantity:safeAfter},
+      accounting_effect:'inventory_only_no_cash_movement'
+    });
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    next(error);
+  }finally{client.release()}
 });
 
 app.get('/api/inventory/consumable-rules',async(req,res,next)=>{
