@@ -379,7 +379,41 @@ async function loadStock(){
   fillIngredientSelect();
   fillConsumableRuleInventory();
   fillStockAdjustmentInventory();
-  await Promise.all([loadConsumableRules(),loadStockAdjustments()]);
+  await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots()]);
+}
+function lotExpiryCopy(row){
+  if(row.lot_state&&row.lot_state!=='available'&&row.lot_state!=='depleted')return 'Held: '+String(row.lot_state).replaceAll('_',' ');
+  if(row.expiry_status==='expired')return 'Expired';
+  if(row.expiry_status==='expiring_soon')return row.days_to_expiry===0?'Expires today':`Expires in ${Math.max(0,Number(row.days_to_expiry))} day(s)`;
+  if(row.expires_at)return 'Expires '+new Date(row.expires_at).toLocaleDateString('en-PH',{timeZone:'Asia/Manila'});
+  return 'No expiry date';
+}
+async function loadInventoryLots(){
+  const list=$('lotList'),summary=$('lotSummary');if(!list||!summary)return[];
+  try{
+    const rows=await api('/api/inventory/lots');
+    const active=rows.filter(r=>Number(r.quantity_remaining_base)>0);
+    const expired=active.filter(r=>r.expiry_status==='expired').length;
+    const soon=active.filter(r=>r.expiry_status==='expiring_soon').length;
+    const held=active.filter(r=>!['available','depleted'].includes(String(r.lot_state||'available'))).length;
+    const usable=active.filter(r=>r.usable).length;
+    summary.innerHTML=active.length
+      ?`<strong>${active.length} open lot(s)</strong> • ${usable} usable • ${soon} expiring soon • ${expired} expired • ${held} held`
+      :'No open tracked lots yet.';
+    const nodes=rows.slice(0,120).map(r=>{
+      const d=document.createElement('div');d.className='listRow';
+      const status=lotExpiryCopy(r),bad=r.expiry_status==='expired'||!['available','depleted'].includes(String(r.lot_state||'available'));
+      const code=r.supplier_lot_code||r.internal_lot_code||('Lot '+r.id);
+      d.innerHTML=`<div class="rowMain"><strong>${esc(r.item_name)} · ${esc(code)}</strong><small>${num(r.quantity_remaining_base,4)} ${esc(r.base_unit)} remaining • ${esc(status)}${r.supplier_lot_code&&r.internal_lot_code?' • internal '+esc(r.internal_lot_code):''}</small></div><span class="${bad?'negative':r.expiry_status==='expiring_soon'?'negative':''}">${r.usable?'FEFO':'HOLD'}</span>`;
+      return d;
+    });
+    list.replaceChildren(...(nodes.length?nodes:[emptyRow('No lot or expiry records yet.')]));
+    return rows;
+  }catch(error){
+    summary.textContent='Lot information could not be loaded.';
+    list.replaceChildren(emptyRow(error.message||'Lot information is unavailable.'));
+    return[];
+  }
 }
 function fillStockAdjustmentInventory(){
   const select=$('stockAdjustmentInventory');if(!select)return;
@@ -521,6 +555,7 @@ async function refreshCurrentMerchantView(){
 }
 if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
 if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
+if($('lotRefresh'))$('lotRefresh').onclick=()=>loadInventoryLots();
 
 $('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';invalidateMerchantToday();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
 $('stockAdjustmentInventory')?.addEventListener('change',updateStockAdjustmentPreview);
@@ -557,7 +592,7 @@ $('consumableRuleForm')?.addEventListener('submit',async e=>{
     await loadConsumableRules();
   }catch(error){if(out)out.textContent=error.message}
 });
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';$('stockInventoryType').value='ingredient';$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});
