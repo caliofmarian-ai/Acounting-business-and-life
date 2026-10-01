@@ -589,23 +589,6 @@ app.get('/api/auth/geography/status',async(req,res,next)=>{try{
   res.json({...result,message:geographyAvailabilityMessage(result)});
 }catch(e){next(e)}});
 
-async function deriveRegistrationGeography(address){
-  const value=clean(address,300);
-  if(value.length<3)return null;
-  try{
-    const results=await privateAddressGeocoder.search(value,'PH');
-    for(const item of results){
-      const resolved=await resolveAddressBarangayCandidate(pool,item);
-      if(resolved.matched&&resolved.candidate?.psgc_code){
-        return geographyAvailabilityForCode(pool,resolved.candidate.psgc_code);
-      }
-    }
-  }catch(_error){
-    // Registration must remain available when the external address provider is temporarily unavailable.
-  }
-  return null;
-}
-
 app.post('/api/auth/register', body, async (req, res, next) => {
   const email = normalizeEmail(req.body?.email);
   const name = clean(req.body?.display_name, 120);
