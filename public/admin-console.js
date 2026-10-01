@@ -14,9 +14,9 @@ async function adminPrivateBlob(path){
   return r.blob();
 }
 async function openAdminPrivateBlob(path,popup){
-  if(!popup)throw new Error('Allow a new tab to view this private evidence file.');
+  if(!popup)throw new Error('Your browser blocked the evidence preview. Allow pop-ups for caliof.com and try again.');
   const blob=await adminPrivateBlob(path),url=URL.createObjectURL(blob);
-  popup.location.href=url;
+  popup.location.replace(url);
   setTimeout(()=>URL.revokeObjectURL(url),120000);
 }
 const root=document.getElementById('adminRoot');
@@ -55,6 +55,7 @@ function shell(){
 }
 function activateModule(id){
   const module=modules.find(m=>m.id===id&&hasAny(m.any));if(!module)return;
+  setAdminApplicationRoute(null);
   state.active=id;
   root.querySelectorAll('[data-module]').forEach(button=>button.classList.toggle('active',button.dataset.module===id));
   renderActive().catch(showError);
@@ -164,14 +165,24 @@ function applicationEvidenceType(mime=''){
 }
 function applicationEvidenceHtml(a){
   const docs=Array.isArray(a.documents)?a.documents:[],credentials=Array.isArray(a.credentials)?a.credentials:[],services=Array.isArray(a.existing_services)?a.existing_services:[];
-  return '<div class="adminEvidenceGrid"><section class="card"><h3>Documents</h3><p class="muted">Check the detected file type and scan status, then open the original evidence before making a decision.</p>'+(docs.length?docs.map(d=>'<div class="adminEvidenceLine"><strong>'+esc(d.label||d.document_type||('Document '+d.id))+'</strong><span>'+esc(d.original_file_name||'Uploaded evidence')+'</span><span class="muted">'+esc(applicationEvidenceType(d.detected_mime))+' · '+esc(applicationEvidenceFileSize(d.byte_size))+' · scan '+esc(d.scan_status||'unknown')+'</span><button class="secondary adminEvidenceButton" type="button" data-application-document="'+Number(d.id)+'">Open document</button></div>').join(''):'<p class="muted">No uploaded application documents.</p>')+'</section><section class="card"><h3>Credentials</h3>'+(credentials.length?credentials.map(c=>'<div class="adminEvidenceLine"><strong>'+esc(c.title||c.credential_type)+'</strong><span class="muted">'+esc(c.issuing_body||'')+' · '+esc(c.verification_status||'unknown')+(c.expiry_date?' · '+esc(String(c.expiry_date).slice(0,10)):'')+'</span></div>').join(''):'<p class="muted">No credential records.</p>')+'</section></div>'+(services.length?'<section class="card"><h3>Existing services</h3>'+services.map(s=>'<div class="adminEvidenceLine"><strong>'+esc(s.name||s.service_label||s.code)+'</strong><span class="muted">'+esc(s.service_label||s.code||'')+'</span></div>').join('')+'</section>':'');
+  const documents='<section class="card"><h3>Documents</h3><p class="muted">Business permits, registrations and other application evidence belong here. Check the detected file type and scan status, then open the original evidence before making a decision.</p>'+(docs.length?docs.map(d=>'<div class="adminEvidenceLine"><strong>'+esc(d.label||d.document_type||('Document '+d.id))+'</strong><span>'+esc(d.original_file_name||'Uploaded evidence')+'</span><span class="muted">'+esc(applicationEvidenceType(d.detected_mime))+' · '+esc(applicationEvidenceFileSize(d.byte_size))+' · scan '+esc(d.scan_status||'unknown')+'</span>'+(d.duplicate_of_id?'<span class="status">Duplicate of document #'+Number(d.duplicate_of_id)+'</span>':'')+'<button class="secondary adminEvidenceButton" type="button" data-application-document="'+Number(d.id)+'">Open document</button></div>').join(''):'<p class="muted">No uploaded application documents.</p>')+'</section>';
+  const credentialsCard=(credentials.length||a.role==='service_provider')?'<section class="card"><h3>Qualifications / credentials</h3><p class="muted">Professional licences, certificates or qualifications used for credential-gated Local Services. Merchant business permits stay under Documents.</p>'+(credentials.length?credentials.map(c=>'<div class="adminEvidenceLine"><strong>'+esc(c.title||c.credential_type)+'</strong><span class="muted">'+esc(c.issuing_body||'')+' · '+esc(c.verification_status||'unknown')+(c.expiry_date?' · '+esc(String(c.expiry_date).slice(0,10)):'')+'</span></div>').join(''):'<p class="muted">No professional credential records.</p>')+'</section>':'';
+  return '<div class="adminEvidenceGrid">'+documents+credentialsCard+'</div>'+(services.length?'<section class="card"><h3>Existing services</h3>'+services.map(s=>'<div class="adminEvidenceLine"><strong>'+esc(s.name||s.service_label||s.code)+'</strong><span class="muted">'+esc(s.service_label||s.code||'')+'</span></div>').join('')+'</section>':'');
 }
 async function viewAdminApplicationDocument(id){
-  const popup=window.open('about:blank','_blank','noopener,noreferrer');
+  const popup=window.open('about:blank','_blank');
+  if(popup){try{popup.opener=null;popup.document.title='Loading evidence…';popup.document.body.textContent='Loading private evidence…'}catch{}}
   try{await openAdminPrivateBlob('/api/governance/admin/application-documents/'+Number(id),popup)}
   catch(error){if(popup)popup.close();showError(error)}
 }
+function setAdminApplicationRoute(id=null){
+  const url=new URL(location.href);url.pathname='/admin';url.search='';
+  if(Number.isSafeInteger(Number(id))&&Number(id)>0)url.searchParams.set('application',String(Number(id)));
+  history.replaceState({application:id?Number(id):null},'',url.pathname+url.search);
+}
 async function openAdminApplication(id){
+  const applicationId=Number(id);if(!Number.isSafeInteger(applicationId)||applicationId<1)return showError(new Error('Application ID is invalid.'));
+  setAdminApplicationRoute(applicationId);
   const p=document.getElementById('adminPanel');if(!p)return;
   p.innerHTML='<div class="adminLoading">Loading application…</div>';
   try{
@@ -182,13 +193,13 @@ async function openAdminApplication(id){
     const adultEligibilityReview=adultEligibility.company_test_exempt
       ?'<section class="card"><h3>Adult eligibility</h3><p><strong>Controlled QA exemption.</strong> This company-managed test identity is not a personal applicant.</p></section>'
       :'<section class="card"><h3>Adult eligibility</h3><p>Status: <strong>'+esc(String(adultEligibility.status||'pending').replaceAll('_',' '))+'</strong>. Self-declaration is not represented as verified age.</p>'+(reviewable?'<label class="inlineChoice"><input type="checkbox" name="adult_eligibility_reviewed"><span>I completed a human review of the available eligibility and identity context and confirm this applicant may enter the adult-only PH pilot. I am not recording a date of birth or claiming automated verification.</span></label>':'')+'</section>';
-    p.innerHTML='<button type="button" class="secondary supportBack" id="profileReviewBack">← Back to Profile requests</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">APPLICATION #'+Number(a.id)+'</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Scoped territory')+'</span><span>'+esc(a.email||'')+'</span></div>'+(a.proposed_business_name?'<section class="card"><h3>Proposed business</h3><p>'+esc(a.proposed_business_name)+'</p></section>':'')+(a.applicant_note?'<section class="card"><h3>Applicant note</h3><p>'+esc(a.applicant_note)+'</p></section>':'')+(data.professional_headline||data.about||data.service_area?'<section class="card"><h3>Application details</h3>'+(data.professional_headline?'<p><strong>'+esc(data.professional_headline)+'</strong></p>':'')+(data.about?'<p>'+esc(data.about)+'</p>':'')+(data.service_area?'<p class="muted">Service area: '+esc(data.service_area)+'</p>':'')+'</section>':'')+applicationEvidenceHtml(a)+adultEligibilityReview+(reviewable?'<form id="adminApplicationReview" class="adminForm">'+applicationCategoryChoices(a)+'<label>Review reason / note<textarea name="reason" maxlength="1000" placeholder="What was reviewed and why"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed" required><span>I reviewed the available evidence and understand this changes profile access.</span></label><div class="adminDecisionGrid"><button class="secondary" type="button" data-review-decision="under_review">Keep under review</button><button class="secondary adminDanger" type="button" data-review-decision="reject">Reject</button><button class="primary" type="button" data-review-decision="approve">Approve profile</button></div><div id="applicationReviewResult"></div></form>':'<div class="notice">This application is not awaiting a review decision.</div>')+'</section>';
-    document.getElementById('profileReviewBack').onclick=async()=>{state.active='members';state.memberHubTab='requests';shell();await renderActive()};
+    p.innerHTML='<button type="button" class="secondary supportBack" id="profileReviewBack">← Back to Profile requests</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">APPLICATION #'+Number(a.id)+'</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Scoped territory')+'</span><span>'+esc(a.email||'')+'</span></div>'+(a.proposed_business_name?'<section class="card"><h3>Proposed business</h3><p>'+esc(a.proposed_business_name)+'</p></section>':'')+(a.applicant_note?'<section class="card"><h3>Applicant note</h3><p>'+esc(a.applicant_note)+'</p></section>':'')+(data.professional_headline||data.about||data.service_area?'<section class="card"><h3>Application details</h3>'+(data.professional_headline?'<p><strong>'+esc(data.professional_headline)+'</strong></p>':'')+(data.about?'<p>'+esc(data.about)+'</p>':'')+(data.service_area?'<p class="muted">Service area: '+esc(data.service_area)+'</p>':'')+'</section>':'')+applicationEvidenceHtml(a)+adultEligibilityReview+(reviewable?'<form id="adminApplicationReview" class="adminForm">'+applicationCategoryChoices(a)+'<label>Review reason / note<textarea name="reason" maxlength="1000" placeholder="What was reviewed and why"></textarea></label><label class="inlineChoice"><input type="checkbox" name="confirmed"><span>I reviewed enough evidence to make an approve or reject access decision.</span></label><div class="adminDecisionGrid"><button class="secondary" type="button" data-review-decision="under_review">Keep under review</button><button class="secondary adminDanger" type="button" data-review-decision="reject">Reject</button><button class="primary" type="button" data-review-decision="approve">Approve profile</button></div><div id="applicationReviewResult"></div></form>':'<div class="notice">This application is not awaiting a review decision.</div>')+'</section>';
+    document.getElementById('profileReviewBack').onclick=async()=>{setAdminApplicationRoute(null);state.active='members';state.memberHubTab='requests';shell();await renderActive()};
     p.querySelectorAll('[data-application-document]').forEach(b=>b.onclick=()=>viewAdminApplicationDocument(b.dataset.applicationDocument));
     const form=document.getElementById('adminApplicationReview');
     if(form)form.querySelectorAll('[data-review-decision]').forEach(button=>button.onclick=async()=>{
       const out=document.getElementById('applicationReviewResult'),decision=button.dataset.reviewDecision,reason=form.reason.value.trim();
-      if(!form.confirmed.checked){out.innerHTML='<div class="error">Confirm that you reviewed the available evidence first.</div>';return}
+      if(decision!=='under_review'&&!form.confirmed.checked){out.innerHTML='<div class="error">Confirm that you reviewed enough evidence before approving or rejecting this profile.</div>';return}
       const adultEligibilityReviewed=Boolean(p.querySelector('[name="adult_eligibility_reviewed"]')?.checked);
       if(decision==='approve'&&!adultEligibility.company_test_exempt&&!adultEligibilityReviewed){out.innerHTML='<div class="error">Complete and confirm the adult eligibility review before approving this profile.</div>';return}
       if(decision==='reject'&&!reason){out.innerHTML='<div class="error">Add a reason before rejecting an application.</div>';return}
@@ -196,7 +207,9 @@ async function openAdminApplication(id){
       button.disabled=true;
       try{
         await api('/api/governance/admin/applications/'+Number(a.id)+'/review',{method:'POST',body:JSON.stringify({decision,reason,approved_category_ids:approvedCategoryIds,adult_eligibility_reviewed:adultEligibilityReviewed})});
-        await loadBase();state.active='members';state.memberHubTab='requests';shell();await renderActive();
+        await loadBase();
+        if(decision==='under_review'){state.active='members';state.memberHubTab='requests';shell();await openAdminApplication(a.id)}
+        else{setAdminApplicationRoute(null);state.active='members';state.memberHubTab='requests';shell();await renderActive()}
       }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
     });
   }catch(error){showError(error)}
@@ -1645,7 +1658,6 @@ async function boot(){
     await loadBase();
     const applicationId=Number(new URLSearchParams(location.search).get('application'));
     if(Number.isSafeInteger(applicationId)&&applicationId>0){
-      history.replaceState({},'',location.pathname);
       await openProfileApplicationFromContext(applicationId);
       return;
     }
