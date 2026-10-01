@@ -50,11 +50,42 @@ const STOCK_PICKER_CATALOG=[
   {category:'Drinks & beverage supplies',items:[
     ['Bottled water','unit'],['Soft drinks','unit'],['Coffee','kg'],['Tea','unit'],['Ice','kg']
   ]},
-  {category:'Packaging & service supplies',items:[
-    ['Food containers','unit'],['Paper bags','unit'],['Plastic cups','unit'],['Cup lids','unit'],['Straws','unit'],
-    ['Napkins','unit'],['Disposable spoons','unit'],['Disposable forks','unit']
+  {category:'Takeout & delivery packaging',items:[
+    ['Meal boxes / takeout boxes','unit'],['Microwavable food containers','unit'],['Container lids','unit'],
+    ['Paper bowls','unit'],['Soup cups / tubs','unit'],['Sauce cups','unit'],['Sauce cup lids','unit'],
+    ['Paper bags','unit'],['Takeout carrier bags','unit'],['Pizza boxes','unit'],['Aluminum trays','unit'],
+    ['Clamshell containers','unit'],['Ziplock bags','unit'],['Sealing film','unit'],['Packaging tape','unit']
+  ]},
+  {category:'Disposable service items',items:[
+    ['Napkins / tissue','unit'],['Disposable spoons','unit'],['Disposable forks','unit'],['Disposable knives','unit'],
+    ['Chopsticks','unit'],['Straws','unit'],['Wooden stirrers','unit'],['Paper plates','unit'],
+    ['Plastic cups','unit'],['Paper cups','unit'],['Cup lids','unit']
+  ]},
+  {category:'Kitchen prep consumables',items:[
+    ['Cling wrap','unit'],['Aluminum foil','unit'],['Wax paper','unit'],['Greaseproof paper','unit'],
+    ['Parchment / baking paper','unit'],['Food storage bags','unit'],['Food labels','unit'],
+    ['Date labels / stickers','unit'],['Permanent markers','unit'],['Disposable piping bags','unit']
+  ]},
+  {category:'Cleaning & sanitation',items:[
+    ['Dishwashing liquid','L'],['Food-safe sanitizer','L'],['Bleach / disinfectant','L'],['Hand soap','L'],
+    ['Degreaser','L'],['Glass cleaner','L'],['Floor cleaner','L'],['Sponges','unit'],['Scouring pads','unit'],
+    ['Dishcloths','unit'],['Cleaning towels','unit'],['Paper towels','unit'],['Mop heads','unit'],
+    ['Trash bags - black','unit'],['Trash bags - green','unit'],['Trash bags - yellow','unit']
+  ]},
+  {category:'Food handling & hygiene',items:[
+    ['Disposable food gloves','unit'],['Hairnets','unit'],['Face masks','unit'],['Aprons','unit'],
+    ['Sleeve covers','unit'],['Disposable caps','unit']
+  ]},
+  {category:'Storage & organization supplies',items:[
+    ['Food storage containers','unit'],['Ingredient bins','unit'],['Cambro-style containers','unit'],
+    ['Storage container lids','unit'],['Shelf labels','unit'],['FIFO labels','unit']
+  ]},
+  {category:'Front counter & operations',items:[
+    ['Receipt paper rolls','unit'],['Order paper / kitchen tickets','unit'],['Pens','unit'],
+    ['Thermal labels','unit'],['Delivery stickers / tamper seals','unit']
   ]}
 ];
+
 function initStockPicker(){
   const category=$('stockCategoryPicker'),item=$('stockItemPicker');
   if(!category||!item)return;

@@ -16,7 +16,7 @@ test('Stock picker includes Filipino restaurant ingredient categories',()=>{
     'Meat & poultry','Fish & seafood','Vegetables & herbs','Fruit & citrus',
     'Rice, noodles & dry goods','Sauces, condiments & seasonings',
     'Eggs, dairy & canned milk','Cooking oils & fats',
-    'Wrappers, canned & packaged ingredients','Packaging & service supplies'
+    'Wrappers, canned & packaged ingredients','Takeout & delivery packaging','Disposable service items','Kitchen prep consumables','Cleaning & sanitation','Food handling & hygiene','Storage & organization supplies','Front counter & operations'
   ]) assert.match(ui,new RegExp(category.replace(/[&]/g,'\\&')));
 });
 
