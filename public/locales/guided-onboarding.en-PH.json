@@ -146,7 +146,7 @@
   "merchant_tour.storefront_title": "Storefront, address and public visibility",
   "merchant_tour.storefront_body": "Your Storefront can be Food, Non-food or Mixed. Business presence, pickup address, map pin, logo, cover and gallery are separate controls. Exact location stays private unless you explicitly turn on public location sharing.",
   "merchant_tour.catalog_title": "Catalog and AI drafts",
-  "merchant_tour.catalog_body": "Food, packaged resale, fresh/direct and non-food products use different stock rules. AI-generated media is always a draft: review it before choosing it as primary, and publishing remains a separate Merchant action.",
+  "merchant_tour.catalog_body": "Prepared, packaged resale, fresh/direct and non-food products use different stock rules. Add direct-sale products from Orders; review catalog media and publication here in My Storefront. AI-generated media is always a draft until you approve it.",
   "merchant_tour.orders_title": "Orders and fulfilment",
   "merchant_tour.orders_body": "Orders move through waiting, accepted, preparing and ready states. Record payment only when you actually received it. Ready, pickup completion and delivery handoff are customer commitments, so update the real state rather than using them as notes.",
   "merchant_tour.delivery_title": "Delivery price and handoff",
