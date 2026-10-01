@@ -463,6 +463,26 @@ export async function sendTransientEmailNotification(pool,{
   return{sent:Boolean(sent.ok),reference:sent.reference||'',not_configured:Boolean(sent.notConfigured)};
 }
 
+function profileReviewEmailHtml(data={}){
+  const summary=escapeHtml(data.status_summary||'Your profile application was updated.');
+  const explanation=escapeHtml(data.status_explanation||'Open Business & Life for the latest review details.');
+  const next=escapeHtml(data.next_step||'Open your application for the latest details.');
+  const status=escapeHtml(data.status_label||data.status||'updated');
+  const business=escapeHtml(data.business_name||'');
+  const territory=escapeHtml(data.territory_name||'');
+  const note=escapeHtml(data.reviewer_note||'');
+  return '<p style="margin:0 0 18px">'+summary+'</p>'
+    +'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 18px;border:1px solid #dbe7e3;border-radius:14px;background:#f7fbfa"><tr><td style="padding:16px">'
+    +'<div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#0a7c66">Current review status</div>'
+    +'<div style="margin-top:6px;font-size:18px;font-weight:800;color:#0f172a">'+status+'</div>'
+    +(business?'<div style="margin-top:8px;color:#475569">Business: '+business+'</div>':'')
+    +(territory?'<div style="margin-top:4px;color:#475569">Area: '+territory+'</div>':'')
+    +'</td></tr></table>'
+    +'<div style="margin:0 0 16px"><strong style="color:#0f172a">What this means</strong><p style="margin:6px 0 0">'+explanation+'</p></div>'
+    +'<div style="margin:0 0 16px"><strong style="color:#0f172a">What you can do now</strong><p style="margin:6px 0 0">'+next+'</p></div>'
+    +(note?'<div style="margin:18px 0 0;padding:14px 16px;border-left:4px solid #0a7c66;background:#f4f8f7"><strong style="color:#0f172a">Admin note</strong><p style="margin:6px 0 0">'+note+'</p></div>':'');
+}
+
 async function sendQueuedEmail(pool,row){
   const account=await pool.query(`SELECT email FROM accounts WHERE id=$1`,[row.account_id]);
   const email=clean(account.rows[0]?.email,180).toLowerCase();
@@ -472,7 +492,8 @@ async function sendQueuedEmail(pool,row){
   const department=emailDepartment(row.event_code,category);
   const actionUrl=emailTargetUrl({baseUrl:process.env.AUTH_PUBLIC_BASE_URL||'/',entityType:row.entity_type,entityId:row.entity_id,roleHint:row.role_hint});
   const actionLabel=row.entity_type==='profile_application'?(String(row.role_hint||'').toLowerCase()==='admin'?'Review application':'Open your application'):'Open Business & Life';
-  const presentation=renderTransactionalEmail({subject:template.title,body:template.body,department,roleHint:row.role_hint,actionUrl,actionLabel});
+  const bodyHtml=row.event_code==='profile.application_reviewed'?profileReviewEmailHtml(row.data_json):'';
+  const presentation=renderTransactionalEmail({subject:template.title,body:template.body,bodyHtml,department,roleHint:row.role_hint,actionUrl,actionLabel});
   return resendEmail({to:email,subject:presentation.subject,html:presentation.html,text:presentation.text,eventCode:row.event_code,category});
 }
 
