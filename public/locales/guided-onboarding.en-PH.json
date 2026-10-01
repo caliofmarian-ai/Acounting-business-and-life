@@ -41,7 +41,7 @@
   "welcome.body": "Your account is separate from every profile. This guide will show you how to finish setup and start the first profile you actually need.",
   "account.missing_email": "verify your email",
   "account.missing_details": "complete your private account details",
-  "account.missing_area": "add your home address",
+  "account.missing_area": "select your official home area",
   "account.missing_finish": "finish account setup",
   "account.complete_body": "Next, {action}. We will check whether Business & Life is available in your area.",
   "area.title": "Availability in your area",

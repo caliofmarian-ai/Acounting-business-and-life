@@ -300,10 +300,10 @@ function missingAccountTarget(){
     return firstVisible('#sendVerify','[data-account-settings-view="security"]','#accountHomeSettings','#openFirstAccountSettings');
   }
   if(!facts.personal_details_ready){
-    return firstVisible('#shellAddress','#accountIdentityForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
+    return firstVisible('#accountIdentityForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
   }
   if(!facts.area_assigned){
-    return firstVisible('#shellAddress','#accountAddressArea','#accountGeographyForm','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
+    return firstVisible('[data-ph-geo-cascade="shell"]','#shellRegion','#shellBarangay','[data-account-settings-view="personal"]','#accountHomeSettings','#openFirstAccountSettings');
   }
   return firstVisible('#accountHomeSettings','#openFirstAccountSettings');
 }
@@ -425,7 +425,7 @@ function stepDefinition(step){
       :!facts.personal_details_ready
         ?tr('account.missing_details',{},'complete your private account details')
         :!facts.area_assigned
-          ?tr('account.missing_area',{},'add your home address')
+          ?tr('account.missing_area',{},'select your official home area')
           :tr('account.missing_finish',{},'finish account setup');
     return{
       title:tr('step.complete_account',{},'Complete your account'),
@@ -449,7 +449,7 @@ function stepDefinition(step){
         :['suspended','closed'].includes(status)
           ?tr('area.closed',{},'Business & Life is not currently available in your area. We will notify you if availability changes.')
           :tr('area.not_open',{},'Business & Life is not available in your area yet. We will notify you when onboarding opens.');
-    const target=firstVisible('.accountGeographyNotice','.accountAddressArea','#accountHomeSettings','#openFirstAccountSettings');
+    const target=firstVisible('.accountGeographyNotice','[data-ph-geo-cascade="shell"]','#accountHomeSettings','#openFirstAccountSettings');
     return{
       title:tr('area.title',{},'Availability in your area'),
       body:message,

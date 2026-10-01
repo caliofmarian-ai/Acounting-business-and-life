@@ -166,7 +166,7 @@ async function accountFacts(pool,accountId){
     supported_locales:GUIDED_ONBOARDING_LOCALES,
     active_role:ROLE_SET.has(a.active_role)?a.active_role:'',
     email_verified:companyTest||Boolean(a.email_verified_at),
-    personal_details_ready:companyTest||Boolean(clean(a.display_name,120)&&clean(a.email,160)&&clean(a.address,300)),
+    personal_details_ready:companyTest||Boolean(clean(a.display_name,120)&&clean(a.email,160)),
     area_assigned:companyTest||Boolean(geo?.assigned),
     area_operational:companyTest||Boolean(geo?.operational_onboarding_available),
     geography:geo,

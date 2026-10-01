@@ -85,7 +85,7 @@ test('Complete account targets Verify email before geography and never requires 
   assert.match(target,/if\(!facts\.email_verified\)/);
   assert.match(target,/#sendVerify/);
   assert.match(target,/if\(!facts\.area_assigned\)/);
-  assert.match(target,/#accountGeographyForm/);
+  assert.match(target,/data-ph-geo-cascade="shell"/);
   assert.doesNotMatch(target,/password/i);
   assert.doesNotMatch(core,/has_password/);
 });

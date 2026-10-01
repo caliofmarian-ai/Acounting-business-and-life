@@ -390,7 +390,8 @@
       "steps": [
         "Open Create account.",
         "Enter your name, email and password.",
-        "Add phone/address only if you want to provide them at this stage.",
+        "Add a phone number if you want to provide one at this stage.",
+        "Select Region, Province when applicable, City / Municipality and Barangay from the official Philippine geography list.",
         "Submit the form and continue to the app."
       ],
       "notes": [

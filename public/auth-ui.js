@@ -1,4 +1,5 @@
 import { captureReferralEvent, referralCorrelationId } from './referral/referral-analytics.js';
+import {phGeographyCascadeMarkup,bindPhGeographyCascade} from './ph-geography-cascade.js';
 
 const authStyle = document.createElement('style');
 authStyle.textContent = `
@@ -124,32 +125,7 @@ function bindRegistrationEmailPreflight(){
 }
 
 function bindAuthBarangayPicker(){
-  const input=document.getElementById('authBarangaySearch'),hidden=document.getElementById('authHomePsgcCode'),results=document.getElementById('authBarangayResults'),status=document.getElementById('authBarangayStatus');
-  if(!input||!hidden||!results||!status)return;
-  const renderItems=items=>{
-    results.innerHTML=items.length?items.map(x=>'<button type="button" class="authGeoResult" data-auth-geo="'+authEsc(x.psgc_code)+'" data-auth-geo-name="'+authEsc(x.name||'')+'"><strong>'+authEsc(x.name||'')+'</strong><small>'+authEsc(x.path_text||'')+' · PSGC '+authEsc(x.psgc_code)+(x.operating_status?' · '+authEsc(String(x.operating_status).replaceAll('_',' ')):'')+'</small></button>').join(''):'<div class="authGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
-    results.querySelectorAll('[data-auth-geo]').forEach(btn=>btn.onclick=async()=>{
-      hidden.value=btn.dataset.authGeo;input.value=btn.dataset.authGeoName;results.innerHTML='';
-      try{
-        const availability=await authGeographyStatus(btn.dataset.authGeo);
-        status.textContent=availability.message||'Official barangay selected.';
-        status.className='authGeoStatus '+(availability.operational_onboarding_available?'ok':'warn');
-      }catch{status.textContent='Official barangay selected.';status.className='authGeoStatus'}
-    });
-  };
-  const load=async(query='')=>{
-    results.innerHTML='<div class="authGeoStatus">'+'Searching official PSGC…'+'</div>';
-    try{renderItems(await searchAuthBarangays(query))}
-    catch(error){results.innerHTML='<div class="authGeoStatus warn">'+authEsc(error.message)+'</div>'}
-  };
-    input.addEventListener('input',()=>{
-    hidden.value='';status.textContent='Choose an official barangay from the results.';status.className='authGeoStatus';
-    clearTimeout(authGeoTimer);
-    const q=input.value.trim();
-    if(q.length===0){results.innerHTML='';return}
-    if(q.length<2){results.innerHTML='';return}
-    authGeoTimer=setTimeout(()=>load(q),250);
-  });
+  return bindPhGeographyCascade({prefix:'auth',fetchJson:authFetch});
 }
 
 function ensureAuthChoices(){
@@ -164,9 +140,9 @@ function openAuth(nextMode){ensureModal();renderAuth(nextMode);document.getEleme
 function closeAuth(){document.getElementById('authModalBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
 function renderAuth(nextMode){
   mode=nextMode;document.getElementById('authTabLogin')?.classList.toggle('active',mode==='login');document.getElementById('authTabRegister')?.classList.toggle('active',mode==='register');document.getElementById('authTitle').textContent=mode==='login'?'Welcome back':'Create your account';const host=document.getElementById('authFormHost');if(!host)return;
-  host.innerHTML=mode==='login'?`<form id="accountAuthForm" class="authForm"><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Password<input id="authPassword" type="password" autocomplete="current-password" required></label><button>Sign in</button><div id="authError" class="authError"></div></form>`:`<form id="accountAuthForm" class="authForm"><label>Name<input id="authName" autocomplete="name" required></label><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><div id="authEmailStatus" class="authGeoStatus">Enter your real email address. No account is created until you verify it.</div><label>Phone (optional)<input id="authPhone" inputmode="tel" autocomplete="tel"></label><label>Personal / home address (private)<textarea id="authAddress" rows="2" autocomplete="street-address"></textarea></label><div class="authGeoStatus">Enter your home address. We will check whether Business & Life is available in your area.</div><label>Password<input id="authPassword" type="password" autocomplete="new-password" minlength="8" required></label><label class="authEligibilityChoice"><input id="authAdultEligibility" type="checkbox" required><span>I confirm that I am 18 or older. The Philippines pilot is adult-only because it includes commerce, payments, Delivery and Local Services.</span></label><button id="authCreateButton" disabled>Create person account</button><div class="authLegal">No date of birth is collected for this declaration. No account or operational profile is created until the email address is verified.</div><div id="authError" class="authError"></div></form>`;
+  host.innerHTML=mode==='login'?`<form id="accountAuthForm" class="authForm"><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><label>Password<input id="authPassword" type="password" autocomplete="current-password" required></label><button>Sign in</button><div id="authError" class="authError"></div></form>`:`<form id="accountAuthForm" class="authForm"><label>Name<input id="authName" autocomplete="name" required></label><label>Email<input id="authEmail" type="email" autocomplete="email" required></label><div id="authEmailStatus" class="authGeoStatus">Enter your real email address. No account is created until you verify it.</div><label>Phone (optional)<input id="authPhone" inputmode="tel" autocomplete="tel"></label>${phGeographyCascadeMarkup('auth',{legend:'Official home area'})}<div class="authGeoStatus">Your area is determined by the official barangay you select, not by typed address text.</div><label>Password<input id="authPassword" type="password" autocomplete="new-password" minlength="8" required></label><label class="authEligibilityChoice"><input id="authAdultEligibility" type="checkbox" required><span>I confirm that I am 18 or older. The Philippines pilot is adult-only because it includes commerce, payments, Delivery and Local Services.</span></label><button id="authCreateButton" disabled>Create person account</button><div class="authLegal">No date of birth is collected for this declaration. No account or operational profile is created until the email address is verified.</div><div id="authError" class="authError"></div></form>`;
   host.querySelector('#accountAuthForm').onsubmit=submitAuth;
-  if(mode==='register')bindRegistrationEmailPreflight();
+  if(mode==='register'){bindRegistrationEmailPreflight();bindAuthBarangayPicker().catch(error=>{const err=document.getElementById('authError');if(err)err.textContent=error.message})}
 }
 function registrationMessage(verification){
   if(verification?.registration_pending)return 'Verification email sent. No account exists yet; open the link to create it.';
@@ -204,7 +180,7 @@ async function submitAuth(e){
     const referralConversion=isRegistration?referralRegistrationContext():null;
     const payload=isRegistration?{
       display_name:document.getElementById('authName').value,email,password,
-      phone:document.getElementById('authPhone').value,address:document.getElementById('authAddress').value,
+      phone:document.getElementById('authPhone').value,home_psgc_code:document.getElementById('authHomePsgcCode')?.value||'',
       adult_eligibility_attested:Boolean(document.getElementById('authAdultEligibility')?.checked),
       adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,
       ...(referralConversion?{referral_conversion:referralConversion}:{})

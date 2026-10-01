@@ -14,20 +14,13 @@ It does **not** control whether a person is allowed to create an account.
 
 ## Registration geography
 
-The barangay picker searches the full PSGC registry only after the person types.
+The Philippines Edition uses a controlled PSGC cascade:
 
-It does not preload all barangays and does not show onboarding territories merely because the field received focus.
+Region → Province (when applicable) → City / Municipality → Barangay.
 
-Search characteristics:
+Each choice is loaded from the official PSGC parent-child hierarchy. The next level is enabled only after the preceding level is selected. Regions that do not use a province level skip that step instead of inventing one.
 
-- minimum two meaningful characters/tokens;
-- punctuation/whitespace tolerant;
-- official barangay name, hierarchy path and PSGC code;
-- maximum 15 results;
-- exact name matches rank first;
-- current operating status may be shown after/with the result, but does not filter out unopened geography.
-
-Free text is never stored as canonical geography. The hidden PSGC code is set only after selecting an official result.
+The selected barangay PSGC code is the sole authority for territory availability. Free-text address spelling, abbreviations, omissions or typographical errors never decide whether an area is active.
 
 ## Availability after selection
 
@@ -122,7 +115,7 @@ No marketing email is sent by default.
 
 Demand analytics contain aggregate counts only.
 
-Private street addresses remain in personal account data and never enter the territory-demand dashboard.
+Territory Demand uses only the selected PSGC assignment and never exposes a free-text street address.
 
 ## PH pilot example
 

@@ -1,3 +1,4 @@
+import {phGeographyCascadeMarkup,bindPhGeographyCascade} from './ph-geography-cascade.js';
 const ROLE_META = {
   merchant: { label: 'Merchant', icon: '🏪', desc: 'Accounting, products and business', hero: 'Run your business with every peso visible.' },
   customer: { label: 'Customer', icon: '🛍️', desc: 'Discover, order and track', hero: 'Discover local. Order with confidence.' },
@@ -95,7 +96,7 @@ function avatarMarkup(account, extraClass = '') {
 function roleProfile(role) { return snapshot?.profiles?.find(p => p.role === role); }
 function isEnabled(role) { const profile=roleProfile(role);return Boolean(profile?.enabled&&profile?.status==='active'); }
 function isCompanyTestAccount(account=snapshot?.account){return Boolean(account?.is_test_account&&account?.account_mode==='company_test')}
-function accountDetailsReady(account=snapshot?.account){return Boolean(String(account?.display_name||'').trim()&&String(account?.email||'').trim()&&(isCompanyTestAccount(account)||String(account?.address||'').trim())&&(isCompanyTestAccount(account)||Boolean(snapshot?.geography?.assigned)))}
+function accountDetailsReady(account=snapshot?.account){return Boolean(String(account?.display_name||'').trim()&&String(account?.email||'').trim()&&(isCompanyTestAccount(account)||Boolean(snapshot?.geography?.assigned)))}
 function accountIdentityLabel(account=snapshot?.account){return isCompanyTestAccount(account)?'Test Account ID':'Personal ID'}
 function testAccountRoleLabel(account=snapshot?.account){return account?.test_role_label||ROLE_META[account?.test_role]?.label||String(account?.test_role||'Test').replaceAll('_',' ')}
 function adminRank(assignment){ return assignment?.effective_rank || assignment?.authority_rank || assignment?.admin_role || 'admin'; }
@@ -377,7 +378,7 @@ function accountAvailabilityMessage(geo=snapshot?.geography){
 function accountGeographyBanner(test=false){
   const geo=snapshot?.geography||{};
   if(test)return'';
-  if(!geo.assigned)return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Add your home address</strong><p>We will check whether Business & Life is available in your area.</p></div></section>';
+  if(!geo.assigned)return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Select your official home area</strong><p>Choose Region, Province when applicable, City / Municipality and Barangay from the official Philippine geography list.</p></div></section>';
   const message=accountAvailabilityMessage(geo);
   return '<section class="accountGeographyNotice '+message.tone+'"><span aria-hidden="true">📍</span><div><strong>'+escapeHtml(message.title)+'</strong><p>'+escapeHtml(message.body)+'</p></div></section>';
 }
@@ -453,7 +454,7 @@ function renderAccountSettings(view=accountSettingsView){
   accountSettingsView=view;
   if(view==='home'){
     workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountAdultEligibilityBanner(test)+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
-      <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and home address'}</small><b>›</b></button>
+      <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and official home area'}</small><b>›</b></button>
       <button type="button" data-account-settings-view="security"><span>🔐</span><strong>Security & access</strong><small>Password, email verification and signed-in devices</small><b>›</b></button>
       ${test?'':`<button type="button" class="accountDeleteTile" data-account-settings-view="security" data-account-delete-shortcut="1"><span>🗑️</span><strong>Delete account</strong><small>Delete this account and sign out all devices</small><b>›</b></button>`}
       <button type="button" data-account-settings-view="profiles"><span>🧩</span><strong>Manage profiles</strong><small>Start onboarding or deactivate profiles you own</small><b>›</b></button>
@@ -471,12 +472,12 @@ function renderAccountSettings(view=accountSettingsView){
       <div class="avatarHint">Photo is compressed on your phone before it is saved.</div>
       <label>${test?'Test account name':'Name'}<input id="shellDisplayName" value="${escapeHtml(account.display_name || '')}" required></label>
       <label>Email${test?' · protected company alias':''}<input id="shellEmail" type="email" value="${escapeHtml(account.email || '')}" ${test?'readonly aria-readonly="true"':''}></label>
-      ${test?'<div class="companyContactPolicy"><div><span>Personal phone</span><strong>Not required</strong></div><div><span>Personal address</span><strong>Not required</strong></div><div><span>Contact source</span><strong>Company / test scenario</strong></div></div>':`<label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label><div class="accountAddressPicker"><label>Home address <span>Private</span><textarea id="shellAddress" rows="2" autocomplete="street-address" placeholder="House / street, barangay or city, province">${escapeHtml(account.address || '')}</textarea></label><p>Enter your home address. We will check whether Business & Life is available in your area.</p><input id="shellAddressPsgcCode" type="hidden" value="${escapeHtml(snapshot?.geography?.psgc_code||'')}"><div id="accountAddressArea" class="accountAddressArea ${snapshot?.geography?.assigned?'':'hidden'}">${snapshot?.geography?.assigned?'<strong>'+escapeHtml(accountAvailabilityMessage(snapshot.geography).title)+'</strong><small>'+escapeHtml(accountAvailabilityMessage(snapshot.geography).body)+'</small>':''}</div><div class="accountAddressActions"><button id="accountAddressSearch" type="button">Search address</button><button id="accountAddressGps" type="button">Use my location</button></div><div id="accountAddressStatus" class="accountAddressStatus" role="status" aria-live="polite"></div><div id="accountAddressResults" class="accountAddressResults"></div><small class="accountAddressPrivacy">Your home address is private.</small></div>`}
+      ${test?'<div class="companyContactPolicy"><div><span>Personal phone</span><strong>Not required</strong></div><div><span>Personal address</span><strong>Not required</strong></div><div><span>Contact source</span><strong>Company / test scenario</strong></div></div>':`<label>Phone<input id="shellPhone" inputmode="tel" value="${escapeHtml(account.phone || '')}"></label>${phGeographyCascadeMarkup('shell',{legend:'Official home area'})}<div class="accountGeoHint">Select your official Philippine area. Territory eligibility is based only on the selected PSGC barangay, never on typed address text.</div>`}
       <div class="formActions"><button class="primary" type="submit">Save account</button></div>
-    </form></section>${accountAdultEligibilityCard(test)}${accountGeographyEditor(test)}`;
+    </form></section>${accountAdultEligibilityCard(test)}`;
   }else if(view==='profiles'){
     const detailsReady=accountDetailsReady(account),superAdmin=isSuperAdminAccount(),adultReady=Boolean(snapshot?.adult_eligibility?.eligible),areaReady=test||Boolean(snapshot?.geography?.operational_onboarding_available);
-    const activationGate=!adultReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Confirm adult eligibility first</strong><p>The Philippines pilot is adult-only. Confirm that you are 18 or older before activating, entering or onboarding a profile.</p></div><button id="completeAdultEligibility" type="button">Open eligibility declaration</button></section>`:superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and home address before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Business & Life is not available in your area yet</strong><p>We will notify you when onboarding opens.</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
+    const activationGate=!adultReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Confirm adult eligibility first</strong><p>The Philippines pilot is adult-only. Confirm that you are 18 or older before activating, entering or onboarding a profile.</p></div><button id="completeAdultEligibility" type="button">Open eligibility declaration</button></section>`:superAdmin?`<section class="profileActivationGate" role="status"><span aria-hidden="true">🛡️</span><div><strong>Super Admin direct profile access</strong><p>Email verification, invitation, onboarding and document checks are skipped only for this Super Admin account so you can test every profile. Newly activated profiles stay private until you intentionally configure live/public operation.</p></div></section>`:!account.email_verified_at?`<section class="profileActivationGate" role="status"><span aria-hidden="true">✉️</span><div><strong>Verify your email before activating a profile</strong><p>This protects your ${test?'Test Account ID':'Personal ID'}. After verification, you can start or continue the assigned profile onboarding here.</p></div><button id="verifyProfilesEmail" type="button">Open Security &amp; access</button></section>`:!detailsReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">👤</span><div><strong>Complete your personal details first</strong><p>Add your name, email and official home area before activating a profile.</p></div><button id="completeProfilesIdentity" type="button">Open Personal details</button></section>`:!areaReady?`<section class="profileActivationGate" role="status"><span aria-hidden="true">📍</span><div><strong>Business & Life is not available in your area yet</strong><p>We will notify you when onboarding opens.</p></div><button id="completeProfilesIdentity" type="button">View area details</button></section>`:'';
     workspace.innerHTML=accountSettingsHeader(test?'Assigned test role':'Manage profiles',test?`This account is reserved for ${testAccountRoleLabel(account)} testing and does not require personal contact details.`:'Profiles derive from your Personal ID and keep their IDs after deactivation.')+activationGate+`<section class="accountSettingsCard"><div class="profileRoleList">${profileManagementMarkup()}</div></section>`;
   }else{
     workspace.innerHTML=accountSettingsHeader('Security & access','Protect the personal account used by all your profiles.')+`<div id="accountSecurityMount" class="accountSecurityStack">
@@ -508,7 +509,13 @@ function renderAccountSettings(view=accountSettingsView){
     showToast('Support is still loading. Try again in a moment.');
   });
   workspace.querySelector('#accountIdentityForm')?.addEventListener('submit',saveIdentity);
-  bindPrimaryAddressPicker(workspace);
+  if(view==='personal'&&!test){
+    bindPhGeographyCascade({
+      prefix:'shell',
+      fetchJson:profileApi,
+      selectedCode:snapshot?.geography?.psgc_code||''
+    }).catch(error=>showToast(error.message));
+  }
   workspace.querySelector('#adultEligibilityForm')?.addEventListener('submit',async event=>{
     event.preventDefault();
     const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),out=form.querySelector('#adultEligibilityResult');
@@ -519,7 +526,6 @@ function renderAccountSettings(view=accountSettingsView){
       snapshot=result.profile;profileFetchedAt=Date.now();renderTopAccount();renderAccountSettings('personal');publishProfileState();showToast('Adult eligibility declaration recorded.');
     }catch(error){if(out)out.textContent=error.message;button.disabled=false}
   });
-  bindAccountGeographyControls(workspace);
   workspace.querySelector('#avatarFile')?.addEventListener('change',uploadAvatar);
   workspace.querySelector('#removeAvatar')?.addEventListener('click',removeAvatar);
   workspace.querySelectorAll('[data-profile-toggle]').forEach(btn=>btn.onclick=()=>toggleProfile(btn.dataset.profileToggle,btn.dataset.enabled!=='1'));
@@ -731,8 +737,7 @@ async function saveIdentity(event) {
       display_name: document.getElementById('shellDisplayName').value,
       email: document.getElementById('shellEmail').value,
       phone: document.getElementById('shellPhone')?.value || '',
-      address: document.getElementById('shellAddress')?.value || '',
-      home_psgc_code: document.getElementById('shellAddressPsgcCode')?.value || snapshot?.geography?.psgc_code || ''
+      home_psgc_code: document.getElementById('shellHomePsgcCode')?.value || snapshot?.geography?.psgc_code || ''
     }) });
     profileFetchedAt=Date.now(); renderTopAccount(); renderAccountSettings(); showToast('Account saved.');
   } catch (err) { showToast(err.message); }

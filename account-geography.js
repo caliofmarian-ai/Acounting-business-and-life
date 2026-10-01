@@ -154,6 +154,30 @@ export async function searchOfficialBarangays(pool,{query='',limit=15}={}){
   return{source_version:version,items:rows.rows};
 }
 
+
+export async function listOfficialGeographyChildren(pool,{parentPsgcCode=''}={}){
+  const version=await latestRegistryVersion(pool);
+  if(!version)return{source_version:null,items:[]};
+  const parent=normalizeHomePsgcCode(parentPsgcCode);
+  const params=[version];
+  let scope="COALESCE(g.parent_psgc_code,'')='' AND g.geographic_level='region'";
+  if(parent){
+    params.push(parent);
+    scope="g.parent_psgc_code=$2";
+  }
+  const rows=await pool.query(
+    "SELECT g.psgc_code,g.name,g.path_text,g.geographic_level,g.parent_psgc_code,g.source_version,"+
+      "t.id operating_territory_id,t.status operating_status "+
+    "FROM ph_geographic_registry g LEFT JOIN territories t ON t.country_code='PH' AND t.psgc_code=g.psgc_code "+
+    "WHERE g.country_code='PH' AND g.source_version=$1 AND "+scope+" "+
+    "ORDER BY CASE g.geographic_level "+
+      "WHEN 'region' THEN 1 WHEN 'province' THEN 2 WHEN 'city' THEN 3 WHEN 'municipality' THEN 4 "+
+      "WHEN 'submunicipality' THEN 5 WHEN 'special_geographic_unit' THEN 6 WHEN 'barangay' THEN 7 ELSE 8 END,g.name",
+    params
+  );
+  return{source_version:version,parent_psgc_code:parent,items:rows.rows};
+}
+
 export async function geographyAvailabilityForCode(pool,psgcCode){
   const unit=await resolveOfficialBarangay(pool,psgcCode);
   if(!unit)return null;
@@ -177,6 +201,13 @@ export async function geographyAvailabilityForCode(pool,psgcCode){
     geographic_level:'barangay',name:unit.name,path_text:unit.path_text,
     exact_territory:exact?{id:Number(exact.territory_id),name:exact.territory_name,type:exact.territory_type,status:exact.territory_status}:null,
     nearest_opened_scope:nearest?{id:Number(nearest.territory_id),name:nearest.territory_name,type:nearest.territory_type,status:nearest.territory_status,exact:Number(nearest.depth)===0}:null,
+    hierarchy:[...chain.rows].reverse().map(row=>({
+      psgc_code:row.psgc_code,
+      parent_psgc_code:row.parent_psgc_code||'',
+      name:row.name,
+      geographic_level:row.geographic_level,
+      path_text:row.path_text
+    })),
     operational_onboarding_available:Boolean(exact&&['onboarding','active'].includes(exact.territory_status))
   };
 }
