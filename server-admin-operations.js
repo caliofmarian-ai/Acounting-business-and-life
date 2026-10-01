@@ -655,7 +655,13 @@ async function adminOverview(accountId,seedContext=null){
     const args=role==='*'?(scope.countryWide?[]:[ids]):(scope.countryWide?[role]:[role,ids]);
     const q=await pool.query(
       `SELECT a.id,a.account_id,a.role,a.territory_id,a.status,a.approved_at,a.reason,
-              ac.display_name,ac.email,t.name territory_name
+              ac.display_name,ac.email,t.name territory_name,
+              CASE WHEN a.role='merchant' THEN COALESCE((
+                SELECT jsonb_agg(jsonb_build_object('id',b.id,'name',b.name) ORDER BY b.name,b.id)
+                  FROM business_memberships bm
+                  JOIN businesses b ON b.id=bm.business_id
+                 WHERE bm.account_id=a.account_id AND bm.active=TRUE
+              ),'[]'::jsonb) ELSE '[]'::jsonb END businesses
        FROM profile_authorizations a
        JOIN accounts ac ON ac.id=a.account_id
        LEFT JOIN territories t ON t.id=a.territory_id
