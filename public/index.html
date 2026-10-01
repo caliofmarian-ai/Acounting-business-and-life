@@ -252,6 +252,28 @@
         </form>
         <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
         <div class="card stack">
+          <div><h2>Waste & stock count</h2><p class="muted">Record real losses or correct stock after a physical count. These changes adjust Inventory only; they do not pretend cash moved.</p></div>
+          <form id="stockAdjustmentForm" class="stack">
+            <label>Inventory item<select id="stockAdjustmentInventory"><option value="">Add stock first</option></select></label>
+            <div class="grid2">
+              <label>Adjustment type<select id="stockAdjustmentKind">
+                <option value="waste">Waste</option>
+                <option value="spoilage">Spoilage</option>
+                <option value="expired">Expired</option>
+                <option value="damaged">Damaged / broken</option>
+                <option value="count_correction">Physical stock count</option>
+                <option value="other_loss">Other loss</option>
+              </select></label>
+              <label><span id="stockAdjustmentQtyLabel">Quantity to remove</span><input id="stockAdjustmentQty" type="number" min="0" step="0.0001" required /></label>
+            </div>
+            <label>Reason / note<input id="stockAdjustmentNote" maxlength="300" placeholder="Optional explanation, count note, spoilage reason…" /></label>
+            <div id="stockAdjustmentPreview" class="salePreview">Choose an item and enter the quantity.</div>
+            <button class="secondary">Record stock adjustment</button><div id="stockAdjustmentMessage"></div>
+          </form>
+          <div class="sectionHead"><h3>Recent adjustments</h3><small class="muted">Audit trail</small></div>
+          <div id="stockAdjustmentList" class="list"></div>
+        </div>
+        <div class="card stack">
           <div class="sectionHead"><div><h2>Restock list</h2><p class="muted">Business & Life automatically collects every item that has reached its low-stock alert level.</p></div><button id="restockRefresh" type="button" class="secondary">Refresh list</button></div>
           <div id="restockSummary" class="salePreview">No items currently need restocking.</div>
           <div id="restockList" class="list"></div>
