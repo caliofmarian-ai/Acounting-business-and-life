@@ -378,7 +378,7 @@ function accountAvailabilityMessage(geo=snapshot?.geography){
 function accountGeographyBanner(test=false){
   const geo=snapshot?.geography||{};
   if(test)return'';
-  if(!geo.assigned)return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Add your home address</strong><p>We will check whether Business & Life is available in your area.</p></div></section>';
+  if(!geo.assigned)return '<section class="accountGeographyNotice warn"><span aria-hidden="true">📍</span><div><strong>Select your official home area</strong><p>Choose Region, Province when applicable, City / Municipality and Barangay from the official Philippine geography list.</p></div></section>';
   const message=accountAvailabilityMessage(geo);
   return '<section class="accountGeographyNotice '+message.tone+'"><span aria-hidden="true">📍</span><div><strong>'+escapeHtml(message.title)+'</strong><p>'+escapeHtml(message.body)+'</p></div></section>';
 }
