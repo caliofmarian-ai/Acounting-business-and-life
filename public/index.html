@@ -207,6 +207,19 @@
         <div class="sectionHead"><div><h1>Stock & purchases</h1><p class="muted"><span id="lowStock">0</span> low-stock items · enter what you actually bought</p></div></div>
         <form id="stockForm" class="card stack">
           <div><h2>Add stock from a purchase</h2><p class="muted">Example: 1 kg carrots for ₱80 becomes 1000 g at ₱0.08/g automatically.</p></div>
+          <div class="grid2">
+            <label>Category
+              <select id="stockCategoryPicker">
+                <option value="">Choose a category</option>
+              </select>
+            </label>
+            <label>Choose item
+              <select id="stockItemPicker" disabled>
+                <option value="">Choose a category first</option>
+              </select>
+            </label>
+          </div>
+          <small class="muted">Choose an item from the lists to fill the form faster, or type your own item below.</small>
           <label>Item / ingredient<input id="stockItem" required placeholder="Carrot" /></label>
           <div class="grid2">
             <label>Bought quantity<input id="stockPurchaseQty" type="number" min="0.0001" step="0.0001" value="1" required /></label>
