@@ -11,18 +11,21 @@ const suppliers=read('public/suppliers-ui.js');
 const delivery=read('public/delivery-ui.js');
 const mobile=read('public/mobile-feature-loader.js');
 
-test('Merchant desktop navigation has a dedicated shell row with five primary destinations',()=>{
+test('Merchant desktop navigation has a dedicated shell row with six primary destinations including Settings',()=>{
   assert.match(shell,/id='merchantWorkspaceNav'/);
   assert.match(shell,/id="merchantWorkspaceActions"/);
   assert.match(shell,/id="merchantHomeButton"/);
   assert.match(shell,/>Today<\/button>/);
+  assert.match(shell,/id="profileSettingsQuickButton"/);
+  assert.match(shell,/>Settings<\/button>/);
   assert.doesNotMatch(shell,/merchantWorkspaceHost/);
-  assert.match(css,/\.merchantWorkspaceActions\{[^}]*grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/);
+  assert.match(css,/\.merchantWorkspaceActions\{[^}]*grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/);
   assert.match(css,/#merchantHomeButton\{order:0\}/);
   assert.match(css,/#ordersQuickButton\{order:1\}/);
   assert.match(css,/#marketQuickButton\{order:2\}/);
   assert.match(css,/#supQuickButton\{order:3\}/);
   assert.match(css,/#deliveryQuickButton\{order:4\}/);
+  assert.match(css,/#profileSettingsQuickButton\{order:5\}/);
 });
 
 test('Merchant feature launchers are shell-owned and modules never create or remove canonical nav destinations',()=>{
@@ -48,6 +51,8 @@ test('Merchant nav visibility follows active profile surface and Today is canoni
   assert.match(shell,/function syncMerchantWorkspaceNavVisibility\(\)/);
   assert.match(shell,/activeSurface==='profile'&&activeRole==='merchant'/);
   assert.match(shell,/if\(destination==='merchantHome'\)return showActiveWorkspace\(\)/);
+  assert.match(shell,/profileSettingsQuickButton:'profileSettings'/);
+  assert.match(shell,/if\(destination==='profileSettings'\)return openProfileSettingsForRole\('merchant'\)/);
   assert.match(shell,/const home=document\.getElementById\('merchantHomeButton'\)/);
   assert.match(shell,/const active=!activeWorkspaceId/);
 });
