@@ -192,14 +192,15 @@ function ensureShellChrome() {
     nav.id='merchantWorkspaceNav';
     nav.className='merchantWorkspaceNav hidden';
     nav.setAttribute('aria-label','Merchant workspace navigation');
-    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button></div>';
+    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button><button id="profileSettingsQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="settings">Settings</button></div>';
     shell.querySelector('.topbar')?.insertAdjacentElement('afterend',nav);
     const merchantDesktopRoutes={
       merchantHomeButton:'merchantHome',
       ordersQuickButton:'ordersQuickButton',
       marketQuickButton:'marketQuickButton',
       supQuickButton:'supQuickButton',
-      deliveryQuickButton:'deliveryQuickButton'
+      deliveryQuickButton:'deliveryQuickButton',
+      profileSettingsQuickButton:'profileSettings'
     };
     for(const [buttonId,destination] of Object.entries(merchantDesktopRoutes)){
       const button=nav.querySelector('#'+buttonId);
