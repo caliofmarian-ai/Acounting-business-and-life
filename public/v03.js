@@ -11,6 +11,82 @@ const UNIT_META={
   ml:{family:'volume',base:'ml',factor:1},L:{family:'volume',base:'ml',factor:1000},
   unit:{family:'count',base:'unit',factor:1}
 };
+const STOCK_PICKER_CATALOG=[
+  {category:'Meat & poultry',items:[
+    ['Chicken thighs / drumsticks','kg'],['Chicken leg quarters','kg'],['Chicken breast','kg'],['Whole chicken','kg'],
+    ['Pork belly','kg'],['Pork shoulder','kg'],['Ground pork','kg'],['Pork ribs','kg'],['Beef brisket','kg'],['Beef sirloin','kg'],
+    ['Ground beef','kg'],['Chicken liver','kg']
+  ]},
+  {category:'Fish & seafood',items:[
+    ['Bangus (milkfish)','kg'],['Tilapia','kg'],['Galunggong','kg'],['Tuna','kg'],['Squid','kg'],['Shrimp','kg'],['Mussels','kg']
+  ]},
+  {category:'Vegetables & herbs',items:[
+    ['Onion','kg'],['Garlic','kg'],['Ginger','kg'],['Tomato','kg'],['Carrot','kg'],['Cabbage','kg'],['Eggplant','kg'],
+    ['Green papaya','kg'],['Radish','kg'],['String beans','kg'],['Pechay','kg'],['Kangkong','kg'],['Malunggay leaves','kg'],
+    ['Green chili','kg'],['Bell pepper','kg'],['Potato','kg'],['Sweet potato','kg'],['Lemongrass','kg'],['Spring onion','kg']
+  ]},
+  {category:'Fruit & citrus',items:[
+    ['Calamansi','kg'],['Banana','kg'],['Mango','kg'],['Pineapple','kg'],['Coconut','unit'],['Lime','kg']
+  ]},
+  {category:'Rice, noodles & dry goods',items:[
+    ['Rice','kg'],['Canton noodles','kg'],['Rice noodles','kg'],['Flour','kg'],['Cornstarch','kg'],['Breadcrumbs','kg'],
+    ['Ground toasted rice','kg'],['White sugar','kg'],['Brown sugar','kg'],['Salt','kg'],['Black pepper','kg'],['Bay leaves','unit']
+  ]},
+  {category:'Sauces, condiments & seasonings',items:[
+    ['Soy sauce','L'],['Cane vinegar','L'],['Fish sauce','L'],['Oyster sauce','L'],['Sweet chili sauce','L'],
+    ['Banana ketchup','L'],['Mayonnaise','kg'],['Peanut butter','kg'],['Shrimp paste (bagoong)','kg'],['Annatto oil','L'],
+    ['Annatto powder','kg'],['Sinigang mix','unit'],['Vanilla extract','L']
+  ]},
+  {category:'Eggs, dairy & canned milk',items:[
+    ['Eggs','unit'],['Condensed milk','unit'],['Evaporated milk','unit'],['Fresh milk','L'],['Butter','kg'],['Cheese','kg']
+  ]},
+  {category:'Cooking oils & fats',items:[
+    ['Cooking oil','L'],['Coconut oil','L'],['Margarine','kg']
+  ]},
+  {category:'Wrappers, canned & packaged ingredients',items:[
+    ['Lumpia wrappers','unit'],['Coconut milk','L'],['Canned sardines','unit'],['Canned tuna','unit'],['Tomato sauce','L'],
+    ['Tomato paste','kg']
+  ]},
+  {category:'Drinks & beverage supplies',items:[
+    ['Bottled water','unit'],['Soft drinks','unit'],['Coffee','kg'],['Tea','unit'],['Ice','kg']
+  ]},
+  {category:'Packaging & service supplies',items:[
+    ['Food containers','unit'],['Paper bags','unit'],['Plastic cups','unit'],['Cup lids','unit'],['Straws','unit'],
+    ['Napkins','unit'],['Disposable spoons','unit'],['Disposable forks','unit']
+  ]}
+];
+function initStockPicker(){
+  const category=$('stockCategoryPicker'),item=$('stockItemPicker');
+  if(!category||!item)return;
+  category.replaceChildren(new Option('Choose a category',''),...STOCK_PICKER_CATALOG.map(group=>new Option(group.category,group.category)));
+  const renderItems=()=>{
+    const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
+    item.replaceChildren();
+    if(!group){
+      item.append(new Option('Choose a category first',''));
+      item.disabled=true;
+      return;
+    }
+    item.disabled=false;
+    item.append(new Option('Choose an item',''));
+    for(const [name,unit] of group.items){
+      const option=new Option(name,name);
+      option.dataset.unit=unit;
+      item.append(option);
+    }
+  };
+  category.addEventListener('change',renderItems);
+  item.addEventListener('change',()=>{
+    const option=item.selectedOptions?.[0];
+    if(!option?.value)return;
+    $('stockItem').value=option.value;
+    const unit=option.dataset.unit||'unit';
+    syncUnitSelect('stockPurchaseUnit',unit);
+    syncUnitSelect('stockReorderUnit',unit);
+    stockPurchasePreview();
+  });
+  renderItems();
+}
 function unitMeta(unit){return UNIT_META[unit]||UNIT_META[String(unit||'').toLowerCase()]||null}
 function toBase(qty,unit){const m=unitMeta(unit),q=Number(qty);return m&&Number.isFinite(q)&&q>0?{family:m.family,base:m.base,qty:q*m.factor}:null}
 function syncUnitSelect(selectId,unit){const el=$(selectId);if(!el)return;const candidate=String(unit||'');if([...el.options].some(o=>o.value===candidate))el.value=candidate}
@@ -399,6 +475,7 @@ window.addEventListener('online',()=>{
 window.addEventListener('offline',()=>setOnline(false));
 setOnline(navigator.onLine);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+initStockPicker();
 (window.ABLSession?.ready||Promise.resolve()).then(()=>{
   token=Boolean(window.ABLSession?.authenticated());
   if(token){
