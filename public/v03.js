@@ -207,7 +207,67 @@ async function loadSummary(){
   const box=$('warningBox'),warnings=s.warnings||[];box.classList.toggle('hidden',!warnings.length);box.innerHTML=warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join('');
 }
 async function loadTransactions(){const tx=await cachedJson('/api/transactions','transactions');transactions=tx;$('recentList').replaceChildren(...(tx.length?tx.slice(0,8).map(t=>txRow(t,false)):[emptyRow('No transactions yet.')]));$('historyList').replaceChildren(...(tx.length?tx.map(t=>txRow(t,true)):[emptyRow('No transactions yet.')]))}
-async function loadStock(){inventory=await cachedJson('/api/inventory','inventory');const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${num(i.quantity,4)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • reorder at ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});$('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));fillIngredientSelect()}
+function restockNeedLabel(x){
+  const current=Number(x.quantity||0),threshold=Number(x.reorder_level||0),unit=x.inventory_base_unit||x.unit||'unit';
+  const gap=Math.max(0,threshold-current);
+  return gap>0?`${num(gap,4)} ${esc(unit)} below alert level`:`At the ${num(threshold,4)} ${esc(unit)} alert level`;
+}
+function renderRestockList(rows=[]){
+  const list=$('restockList'),summary=$('restockSummary');if(!list||!summary)return;
+  const items=Array.isArray(rows)?rows:[];
+  summary.textContent=items.length?`${items.length} item${items.length===1?'':'s'} need restocking.`:'No items currently need restocking.';
+  const nodes=items.map(x=>{
+    const d=document.createElement('div');d.className='listRow';
+    const preferred=x.source_status==='PREFERRED_SOURCE'&&Number(x.supplier_business_id)>0&&Number(x.suggested_packs)>0;
+    const supplier=preferred?`${esc(x.supplier_name||'Preferred Supplier')} • suggested ${num(x.suggested_packs,4)} ${esc(x.unit_name||'pack')}`:'No preferred Supplier linked yet';
+    const estimated=preferred&&Number.isFinite(Number(x.price_per_pack))?` • approx. ${money(Number(x.suggested_packs)*Number(x.price_per_pack))}`:'';
+    d.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • current ${num(x.quantity,4)} ${esc(x.unit||'')}, alert at ${num(x.reorder_level,4)} ${esc(x.unit||'')}<br>${supplier}${estimated}</small></div><div class="rowRight">${preferred?'<button type="button" class="miniBtn restockRequestBtn">Ask Supplier to prepare</button>':'<span class="negative">Supplier needed</span>'}</div>`;
+    if(preferred)d.querySelector('.restockRequestBtn').onclick=()=>sendRestockRequest(x,d);
+    return d;
+  });
+  list.replaceChildren(...(nodes.length?nodes:[emptyRow('Nothing is below its low-stock alert level.')]));
+}
+async function loadRestockSuggestions(){
+  try{
+    const rows=await api('/api/procurement/reorder-suggestions');
+    renderRestockList(rows);
+    return rows;
+  }catch(error){
+    const list=$('restockList'),summary=$('restockSummary');
+    if(summary)summary.textContent='Restock list could not be loaded.';
+    if(list)list.replaceChildren(emptyRow(error.message||'Supplier restock information is unavailable.'));
+    return [];
+  }
+}
+async function sendRestockRequest(x,row){
+  const button=row?.querySelector('.restockRequestBtn');if(button){button.disabled=true;button.textContent='Sending…'}
+  try{
+    const packs=Number(x.suggested_packs);
+    const result=await api('/api/procurement/sourcing/rfqs',{method:'POST',body:JSON.stringify({
+      item_specification:x.item,
+      requested_quantity:packs,
+      requested_unit:x.unit_name||'pack',
+      fulfilment_mode:'either',
+      substitution_policy:'approval_required',
+      currency_code:'PHP',
+      supplier_business_ids:[Number(x.supplier_business_id)],
+      note:`Low-stock restock request from Inventory. Current stock: ${num(x.quantity,4)} ${x.unit||''}; alert level: ${num(x.reorder_level,4)} ${x.unit||''}.`
+    })});
+    if(button){button.textContent='Request sent';button.disabled=true}
+    const small=row?.querySelector('.rowMain small');if(small)small.insertAdjacentHTML('beforeend',`<br><strong>Supplier request #${esc(result.id||'created')} sent.</strong>`);
+  }catch(error){
+    if(button){button.disabled=false;button.textContent='Ask Supplier to prepare'}
+    alert(error.message||'Could not send the Supplier request.');
+  }
+}
+async function loadStock(){
+  const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
+  inventory=results[0];
+  const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${num(i.quantity,4)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
+  $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
+  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.quantity)<=Number(i.reorder_level)).length);
+  fillIngredientSelect()
+}
 async function loadRemittances(){const rows=await cachedJson('/api/remittances','remittances');$('remittanceList').replaceChildren(...(rows.length?rows.map(remitRow):[emptyRow('No remittances recorded yet.')]))}
 async function loadDay(){const d=await cachedJson('/api/day-status','day_status');$('dayStatusDate').textContent=d.business_date;$('openingCashShown').textContent=money(d.opening_cash);$('expectedCashShown').textContent=money(d.expected_cash);$('openResult').textContent=d.has_opening?'Opening cash is recorded for today.':'Set opening cash before closing the day.';if(d.closing)$('closeResult').innerHTML=`Closed: actual ${money(d.closing.actual_cash)} • <strong class="${Number(d.closing.variance)<0?'negative':Number(d.closing.variance)>0?'positive':''}">difference ${money(d.closing.variance)}</strong>`}
 async function loadBudget(){const b=await cachedJson('/api/budget','budget');$('budgetPersonalDaily').value=Number(b.personal_daily_limit||0);$('budgetPersonalWeekly').value=Number(b.personal_weekly_limit||0);$('budgetBusinessDaily').value=Number(b.business_daily_limit||0);$('budgetMinimum').value=Number(b.min_available_warning||0)}
@@ -277,6 +337,7 @@ async function refreshCurrentMerchantView(){
   }catch(error){console.error(error)}
 }
 if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
+if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
 
 $('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';invalidateMerchantToday();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
 $('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
