@@ -1,3 +1,4 @@
+import {phGeographyCascadeMarkup,bindPhGeographyCascade} from './ph-geography-cascade.js';
 const ADULT_ELIGIBILITY_POLICY_VERSION='ph-adult-eligibility-v1';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 function sessionActive(){return Boolean(window.ABLSession?.authenticated())}
@@ -6,36 +7,8 @@ function clearQuery(){history.replaceState({},'',location.pathname)}
 function msg(text,kind=''){const el=document.getElementById('modernAuthMessage');if(el){el.textContent=text||'';el.className=`modernAuthMessage ${kind}`}}
 let status={google_enabled:false,email_delivery_configured:false,preview_link_enabled:false,qa_preview_context:{enabled:false}};
 
-let modernGeoSearchTimer=null;
 function bindModernBarangayPicker(){
-  const input=document.getElementById('regBarangaySearch'),hidden=document.getElementById('regHomePsgcCode'),results=document.getElementById('regBarangayResults'),state=document.getElementById('regBarangayStatus');
-  if(!input||!hidden||!results||!state)return;
-  const renderItems=items=>{
-    results.innerHTML=items.length?items.map(x=>'<button type="button" class="modernGeoResult" data-geo="'+esc(x.psgc_code)+'"><strong>'+esc(x.name)+'</strong><small>'+esc(x.path_text)+' · PSGC '+esc(x.psgc_code)+(x.operating_status?' · '+esc(String(x.operating_status).replaceAll('_',' ')):'')+'</small></button>').join(''):'<div class="modernGeoStatus warn">No official barangay matched. Search by barangay or city name.</div>';
-    results.querySelectorAll('[data-geo]').forEach(button=>button.onclick=async()=>{
-      hidden.value=button.dataset.geo;input.value=button.querySelector('strong')?.textContent||'';results.innerHTML='';
-      try{
-        const availability=await api('/api/auth/geography/status?psgc_code='+encodeURIComponent(hidden.value));
-        state.textContent=availability.message||'Official barangay selected.';
-        state.className='modernGeoStatus '+(availability.operational_onboarding_available?'ok':'warn');
-      }catch(error){state.textContent=error.message;state.className='modernGeoStatus warn'}
-    });
-  };
-  const load=async(query='')=>{
-    results.innerHTML='<div class="modernGeoStatus">'+'Searching official PSGC…'+'</div>';
-    try{
-      const data=await api('/api/auth/geography/search?q='+encodeURIComponent(query)+'&limit=15');
-      renderItems(data.items||[]);
-    }catch(error){results.innerHTML='<div class="modernGeoStatus warn">'+esc(error.message)+'</div>'}
-  };
-    input.addEventListener('input',()=>{
-    hidden.value='';state.textContent='Choose an official barangay from the results.';state.className='modernGeoStatus';
-    clearTimeout(modernGeoSearchTimer);
-    const query=input.value.trim();
-    if(query.length===0){results.innerHTML='';return}
-    if(query.length<2){results.innerHTML='';return}
-    modernGeoSearchTimer=setTimeout(()=>load(query),250);
-  });
+  return bindPhGeographyCascade({prefix:'reg',fetchJson:api});
 }
 
 
@@ -51,12 +24,12 @@ function qaPreviewBanner(){const qa=status.qa_preview_context;if(!qa?.enabled)re
 function render(mode){
   const body=document.getElementById('modernAuthBody');if(!body)return;setTab(mode);msg('');
   if(mode==='login')body.innerHTML=qaPreviewBanner()+`<form id="modernLogin" class="modernAuthForm"><label>Email<input id="modernEmail" type="email" autocomplete="email" required></label><label>Password<input id="modernPassword" type="password" autocomplete="current-password" required></label><button class="modernPrimary">Sign in</button><button id="forgotBtn" class="modernLinkBtn" type="button">Forgot password?</button></form>${googleButton()}`;
-  else body.innerHTML=qaPreviewBanner()+`<form id="modernRegister" class="modernAuthForm"><label>Name<input id="regName" autocomplete="name" required></label><label>Email<input id="regEmail" type="email" autocomplete="email" required></label><label>Password<input id="regPassword" type="password" minlength="8" autocomplete="new-password" required></label><label>Phone <span>optional</span><input id="regPhone" inputmode="tel" autocomplete="tel"></label><label>Personal / home address <span>private</span><textarea id="regAddress" rows="2" autocomplete="street-address"></textarea></label><div class="modernGeoStatus">Enter your home address. We will check whether Business & Life is available in your area.</div><label class="modernQaRemoteToggle"><input id="regAdultEligibility" type="checkbox" required> I confirm that I am 18 or older. The Philippines pilot is adult-only because it includes commerce, payments, Delivery and Local Services.</label>${status.qa_preview_context?.remote_override_configured?'<label class="modernQaRemoteToggle"><input id="regQaRemoteTest" type="checkbox"> Use the designated remote PH QA test override for this account</label>':''}<button class="modernPrimary">Create person account</button><small class="modernFine">No date of birth is collected for this declaration. No operational profile is activated automatically.</small></form>${googleButton()}`;
+  else body.innerHTML=qaPreviewBanner()+`<form id="modernRegister" class="modernAuthForm"><label>Name<input id="regName" autocomplete="name" required></label><label>Email<input id="regEmail" type="email" autocomplete="email" required></label><label>Password<input id="regPassword" type="password" minlength="8" autocomplete="new-password" required></label><label>Phone <span>optional</span><input id="regPhone" inputmode="tel" autocomplete="tel"></label>${phGeographyCascadeMarkup('reg',{legend:'Official home area'})}<div class="modernGeoStatus">Your operating area is determined only by the official barangay you select, not by typed address text.</div><label class="modernQaRemoteToggle"><input id="regAdultEligibility" type="checkbox" required> I confirm that I am 18 or older. The Philippines pilot is adult-only because it includes commerce, payments, Delivery and Local Services.</label>${status.qa_preview_context?.remote_override_configured?'<label class="modernQaRemoteToggle"><input id="regQaRemoteTest" type="checkbox"> Use the designated remote PH QA test override for this account</label>':''}<button class="modernPrimary">Create person account</button><small class="modernFine">No date of birth is collected for this declaration. No operational profile is activated automatically.</small></form>${googleButton()}`;
   if(mode==='login'){document.getElementById('modernLogin').onsubmit=login;document.getElementById('forgotBtn').onclick=()=>renderForgot()}
-  else{document.getElementById('modernRegister').onsubmit=register}
+  else{document.getElementById('modernRegister').onsubmit=register;bindModernBarangayPicker().catch(error=>msg(error.message,'error'))}
 }
 async function login(e){e.preventDefault();msg('Signing in…');try{await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:document.getElementById('modernEmail').value,password:document.getElementById('modernPassword').value})});location.reload()}catch(e){msg(e.message,'error')}}
-async function register(e){e.preventDefault();msg('Creating account…');try{await api('/api/auth/register',{method:'POST',body:JSON.stringify({display_name:document.getElementById('regName').value,email:document.getElementById('regEmail').value,password:document.getElementById('regPassword').value,phone:document.getElementById('regPhone').value,address:document.getElementById('regAddress').value,adult_eligibility_attested:Boolean(document.getElementById('regAdultEligibility')?.checked),adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,qa_remote_test:Boolean(document.getElementById('regQaRemoteTest')?.checked)})});const v=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);if(v?.preview_verify_url){document.getElementById('modernAuthBody').innerHTML=`<div class="modernSuccess"><h2>Account created</h2><p>For this preview you can open the verification link directly.</p><a href="${esc(v.preview_verify_url)}">Verify email</a><button id="continueApp" class="modernPrimary">Continue to app</button></div>`;document.getElementById('continueApp').onclick=()=>location.reload()}else location.reload()}catch(e){msg(e.message,'error')}}
+async function register(e){e.preventDefault();msg('Creating account…');try{await api('/api/auth/register',{method:'POST',body:JSON.stringify({display_name:document.getElementById('regName').value,email:document.getElementById('regEmail').value,password:document.getElementById('regPassword').value,phone:document.getElementById('regPhone').value,home_psgc_code:document.getElementById('regHomePsgcCode')?.value||'',adult_eligibility_attested:Boolean(document.getElementById('regAdultEligibility')?.checked),adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,qa_remote_test:Boolean(document.getElementById('regQaRemoteTest')?.checked)})});const v=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);if(v?.preview_verify_url){document.getElementById('modernAuthBody').innerHTML=`<div class="modernSuccess"><h2>Account created</h2><p>For this preview you can open the verification link directly.</p><a href="${esc(v.preview_verify_url)}">Verify email</a><button id="continueApp" class="modernPrimary">Continue to app</button></div>`;document.getElementById('continueApp').onclick=()=>location.reload()}else location.reload()}catch(e){msg(e.message,'error')}}
 function renderForgot({email='',returnToApp=false}={}){const body=document.getElementById('modernAuthBody');setTab('none');body.innerHTML=`<div class="modernBackRow"><button id="backLogin" class="modernBack">‹</button><div><h2>Reset password</h2><p>Enter the email used for your account.</p></div></div><form id="forgotForm" class="modernAuthForm"><label>Email<input id="forgotEmail" type="email" autocomplete="email" value="${esc(email)}" required></label><button class="modernPrimary">Send reset instructions</button></form>`;document.getElementById('backLogin').onclick=()=>returnToApp?location.reload():render('login');document.getElementById('forgotForm').onsubmit=async e=>{e.preventDefault();msg('Preparing reset…');try{const r=await api('/api/auth/forgot-password',{method:'POST',body:JSON.stringify({email:document.getElementById('forgotEmail').value})});if(r.preview_reset_url){body.innerHTML=`<div class="modernSuccess"><h2>Reset prepared</h2><p>${esc(r.message)}</p><a href="${esc(r.preview_reset_url)}">Open preview reset link</a></div>`}else{body.innerHTML=`<div class="modernSuccess"><h2>Check your email</h2><p>${esc(r.message)}</p></div>`}msg('')}catch(e){msg(e.message,'error')}}}
 function openPasswordRecovery(email=''){
   document.getElementById('shell')?.classList.add('hidden');
