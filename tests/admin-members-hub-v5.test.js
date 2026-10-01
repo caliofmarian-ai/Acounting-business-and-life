@@ -6,6 +6,7 @@ const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 const ui=read('public/admin-console.js');
 const css=read('public/admin-console.css');
 const functions=read('admin-functions.js');
+const adminServer=read('server-admin-operations.js');
 
 function between(source,start,end){
   const a=source.indexOf(start),b=source.indexOf(end,a);
@@ -13,6 +14,17 @@ function between(source,start,end){
   assert.ok(b>a,'Missing end marker: '+end);
   return source.slice(a,b);
 }
+
+test('Admin overview supplies active Merchant businesses to Commerce readiness',()=>{
+  assert.match(adminServer,/CASE WHEN a\.role='merchant' THEN COALESCE\(\(/);
+  assert.match(adminServer,/FROM business_memberships bm/);
+  assert.match(adminServer,/JOIN businesses b ON b\.id=bm\.business_id/);
+  assert.match(adminServer,/WHERE bm\.account_id=a\.account_id AND bm\.active=TRUE/);
+  assert.match(adminServer,/jsonb_build_object\('id',b\.id,'name',b\.name\)/);
+  assert.match(adminServer,/END businesses/);
+  assert.match(ui,/Array\.isArray\(a\.businesses\)/);
+  assert.match(ui,/Review commerce/);
+});
 
 test('Commerce readiness is reachable from the current Admin Members Hub and keeps the second gate explicit',()=>{
   assert.match(ui,/function commerceReadinessRowsFromAuthorizations/);
