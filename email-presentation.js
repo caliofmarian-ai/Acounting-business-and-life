@@ -51,13 +51,18 @@ function absoluteBase(baseUrl='/'){
   }catch{return null}
 }
 
-export function emailTargetUrl({baseUrl='/',entityType='',entityId=''}={}){
+export function emailTargetUrl({baseUrl='/',entityType='',entityId='',roleHint=''}={}){
   const base=absoluteBase(baseUrl);
   if(!base)return String(baseUrl||'/');
-  if(entityType==='support_ticket'&&String(entityId||'').trim()){
+  const id=String(entityId||'').trim();
+  if(entityType==='support_ticket'&&id){
     base.pathname='/';
     base.search='';
-    base.searchParams.set('support_ticket',String(entityId).trim());
+    base.searchParams.set('support_ticket',id);
+  }else if(entityType==='profile_application'&&id&&String(roleHint||'').toLowerCase()==='admin'){
+    base.pathname='/admin';
+    base.search='';
+    base.searchParams.set('application',id);
   }
   return base.toString();
 }
