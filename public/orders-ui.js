@@ -1,5 +1,5 @@
 const ORDER_PROGRESS=['accepted','preparing','ready','completed'];
-let orderMe=null,orderWorkspace=null,productsCache=[],productsLoadError='',merchantBusinessId=null,ordersMode=null;
+let orderMe=null,orderWorkspace=null,productsCache=[],productsLoadError='',directSaleInventory=[],directSaleInventoryError='',merchantBusinessId=null,ordersMode=null;
 const orderToken=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const h=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const php=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -76,19 +76,75 @@ async function loadProducts(businessId){
   }
   return productsCache
 }
+async function loadDirectSaleInventory(businessId){
+  try{
+    directSaleInventory=await oapi(`/api/orders/inventory?business_id=${encodeURIComponent(businessId)}`);
+    directSaleInventoryError='';
+  }catch(error){
+    directSaleInventory=[];
+    directSaleInventoryError=error?.message||'Inventory could not be loaded.';
+  }
+  return directSaleInventory
+}
 async function renderMerchantOrders(showLoading=true){
   if(showLoading)orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+'<div class="ordersEmpty" role="status">Loading order board…</div>';
   try{
     const businessId=await resolveMerchantBusiness();
     const [orders]=await Promise.all([
       oapi(`/api/orders/merchant/list?business_id=${encodeURIComponent(businessId)}`),
-      loadProducts(businessId)
+      loadProducts(businessId),
+      loadDirectSaleInventory(businessId)
     ]);
     const active=orders.filter(o=>!['completed','cancelled'].includes(o.order_status));const due=orders.reduce((s,o)=>s+Number(o.outstanding_amount||0),0);
     const lanes=[['Waiting',['awaiting_customer_presence','awaiting_payment']],['Accepted',['accepted']],['Preparing',['preparing']],['Ready',['ready','handoff_to_delivery']]];
-    orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active.length}</strong></div><div class="orderSummaryMetric"><small>Ready</small><strong>${orders.filter(o=>o.order_status==='ready').length}</strong></div><div class="orderSummaryMetric"><small>Receivable</small><strong>${php(due)}</strong></div></div>${counterForm()}<div class="ordersBoard">${lanes.map(([name,statuses])=>lane(name,orders.filter(o=>statuses.includes(o.order_status)))).join('')}</div>`;
-    bindHeader(()=>renderMerchantOrders());bindCounterForm();bindMerchantActions();
+    orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active.length}</strong></div><div class="orderSummaryMetric"><small>Ready</small><strong>${orders.filter(o=>o.order_status==='ready').length}</strong></div><div class="orderSummaryMetric"><small>Receivable</small><strong>${php(due)}</strong></div></div>${directSaleProductForm()}${counterForm()}<div class="ordersBoard">${lanes.map(([name,statuses])=>lane(name,orders.filter(o=>statuses.includes(o.order_status)))).join('')}</div>`;
+    bindHeader(()=>renderMerchantOrders());bindDirectSaleProductForm();bindCounterForm();bindMerchantActions();
   }catch(error){merchantOrdersError(error)}
+}
+function directSaleProductForm(){
+  const options=directSaleInventory.map(i=>`<option value="${i.id}" data-unit="${h(i.unit)}">${h(i.item)} — ${Number(i.quantity).toLocaleString('en-PH',{maximumFractionDigits:4})} ${h(i.unit)}</option>`).join('');
+  const unavailable=!directSaleInventory.length;
+  const inventoryMessage=directSaleInventoryError?`<div class="ordersInlineError" role="alert">${h(directSaleInventoryError)}</div>`:unavailable?'<div class="directSaleHint">Add stock in Inventory before creating a direct-sale product.</div>':'<div class="directSaleHint">The product is created as Private. Publish it later from My Storefront when you are ready.</div>';
+  return `<details class="orderCreateCard orderDirectSaleCard"><summary class="orderDirectSaleSummary"><span><strong>+ Add a direct-sale product</strong><small>Fresh, packaged or non-food resale from existing stock</small></span><b>Add</b></summary><form id="ordersDirectProductForm" class="orderCreateGrid"><label>Product type<select id="ordersDirectKind"><option value="fresh_direct">Fresh / direct food</option><option value="packaged_resale">Packaged food resale</option><option value="non_food_resale">Non-food resale</option></select></label><label>Product name<input id="ordersDirectName" required placeholder="Carrots"></label><label>Stock source<select id="ordersDirectInventory" required ${unavailable?'disabled':''}>${options||'<option value="">Add stock first</option>'}</select></label><div class="orderCreateGrid two"><label>Stock used per sold unit<input id="ordersDirectStockQty" type="number" min="0.0001" step="0.0001" value="1" required></label><label>Stored unit<input id="ordersDirectStockUnit" value="${h(directSaleInventory[0]?.unit||'unit')}" readonly></label></div><div class="orderCreateGrid two"><label>Category<input id="ordersDirectCategory" value="General"></label><label>Selling price ₱<input id="ordersDirectPrice" type="number" min="0" step="0.01" required></label></div><label>Customer description<textarea id="ordersDirectDescription" rows="2"></textarea></label><div id="ordersDirectProductPreview" class="directSaleHint"></div>${inventoryMessage}<div class="orderCreateActions"><button class="createOrderPrimary" type="submit" ${unavailable?'disabled':''}>Add product</button></div><div id="ordersDirectProductMessage" class="directSaleHint"></div></form></details>`
+}
+function bindDirectSaleProductForm(){
+  const form=document.getElementById('ordersDirectProductForm'),inventory=document.getElementById('ordersDirectInventory');
+  if(!form||!inventory)return;
+  const sync=()=>{
+    const option=inventory.selectedOptions?.[0],unit=option?.dataset?.unit||'unit';
+    const stored=document.getElementById('ordersDirectStockUnit');if(stored)stored.value=unit;
+    const qty=Number(document.getElementById('ordersDirectStockQty')?.value||0);
+    const preview=document.getElementById('ordersDirectProductPreview');
+    if(preview)preview.textContent=qty>0?`Each sale consumes ${qty} ${unit} from ${option?.textContent?.split(' — ')[0]||'stock'}.`:'Enter how much stock one sold unit consumes.'
+  };
+  inventory.onchange=sync;
+  document.getElementById('ordersDirectStockQty')?.addEventListener('input',sync);
+  sync();
+  form.onsubmit=async e=>{
+    e.preventDefault();
+    const msg=document.getElementById('ordersDirectProductMessage');
+    if(msg)msg.textContent='';
+    const inventoryId=Number(inventory.value),quantityPerUnit=Number(document.getElementById('ordersDirectStockQty')?.value);
+    if(!Number.isInteger(inventoryId)||inventoryId<1){if(msg)msg.textContent='Choose a stock item first.';return}
+    if(!Number.isFinite(quantityPerUnit)||quantityPerUnit<=0){if(msg)msg.textContent='Enter a valid stock quantity per sold unit.';return}
+    try{
+      const option=inventory.selectedOptions?.[0],unit=option?.dataset?.unit||'unit';
+      await oapi('/api/merchant/storefront/products',{method:'POST',body:JSON.stringify({
+        business_id:merchantBusinessId,
+        product_kind:document.getElementById('ordersDirectKind').value,
+        name:document.getElementById('ordersDirectName').value,
+        inventory_id:inventoryId,
+        quantity_per_unit:quantityPerUnit,
+        unit_code:`${quantityPerUnit} ${unit}`,
+        category:document.getElementById('ordersDirectCategory').value,
+        selling_price:Number(document.getElementById('ordersDirectPrice').value),
+        description:document.getElementById('ordersDirectDescription').value,
+        published:false
+      })});
+      toast('Direct-sale product added as Private. Publish it from My Storefront when ready.');
+      await renderMerchantOrders(false)
+    }catch(err){if(msg)msg.textContent=err.message}
+  }
 }
 function counterForm(){return `<section class="orderCreateCard"><h2>+ New counter order</h2><p>Create a present/walk-in order without leaving the Merchant workspace.</p><form id="counterOrderForm" class="orderCreateGrid"><div class="orderCreateGrid two"><label>Customer name<input id="counterCustomer" placeholder="Walk-in customer"></label><label>Payment<select id="counterPayment"><option value="cash">Cash</option><option value="online">Online / digital</option></select></label></div><div class="counterProducts">${productsCache.length?productsCache.map(p=>`<div class="counterProduct"><div><strong>${h(p.name)}</strong><small>${h(p.category)} • ${php(p.selling_price)}</small></div><input type="number" min="0" step="1" value="0" data-counter-product="${p.id}" aria-label="Quantity for ${h(p.name)}"></div>`).join(''):productsLoadError?`<div class="ordersEmpty ordersInlineError" role="alert">Counter catalog could not be loaded. Use Refresh to try again.<small>${h(productsLoadError)}</small></div>`:'<div class="ordersEmpty">Create active products in Catalog first.</div>'}</div><label>Order note<textarea id="counterNote" rows="2" placeholder="No onions, extra sauce…"></textarea></label><div class="orderCreateActions"><button class="createOrderPrimary" type="submit">Create order</button></div><div id="counterMessage" class="avatarHint"></div></form></section>`}
 function bindCounterForm(){const f=document.getElementById('counterOrderForm');if(!f)return;f.onsubmit=async e=>{e.preventDefault();const items=[...f.querySelectorAll('[data-counter-product]')].map(i=>({product_id:Number(i.dataset.counterProduct),quantity:Number(i.value)})).filter(i=>i.quantity>0);const msg=document.getElementById('counterMessage');msg.textContent='';if(!items.length){msg.textContent='Choose at least one product.';return}try{await oapi('/api/orders/merchant/create',{method:'POST',body:JSON.stringify({business_id:merchantBusinessId,customer_name:document.getElementById('counterCustomer').value||'Walk-in customer',items,fulfilment_method:'pickup',payment_method:document.getElementById('counterPayment').value,counter_presence:true,note:document.getElementById('counterNote').value})});toast('Order created.');await renderMerchantOrders(false)}catch(err){msg.textContent=err.message}}}
@@ -113,7 +169,7 @@ function observe(){
   document.addEventListener('abl:profile-state',e=>decorate(e.detail).catch(()=>{}),{passive:true});
   document.addEventListener('abl:business-workspace-changed',e=>{
     const id=Number(e.detail?.activeBusinessId);
-    if(Number.isInteger(id)&&id>0){merchantBusinessId=id;productsCache=[];productsLoadError=''}
+    if(Number.isInteger(id)&&id>0){merchantBusinessId=id;productsCache=[];productsLoadError='';directSaleInventory=[];directSaleInventoryError=''}
     if(ordersMode==='merchant'&&ordersVisible())renderMerchantOrders().catch(()=>{});
   },{passive:true});
   document.addEventListener('visibilitychange',refreshVisibleOrders,{passive:true});
