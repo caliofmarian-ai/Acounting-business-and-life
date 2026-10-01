@@ -7,9 +7,13 @@ const admin=read('public/admin-console.js');
 const governance=read('server-profile-governance.js');
 
 test('Admin evidence preview keeps a usable popup handle before async private fetch',()=>{
-  assert.match(admin,/window\.open\('about:blank','_blank'\)/);
-  assert.match(admin,/popup\.opener=null/);
-  assert.doesNotMatch(admin,/window\.open\('about:blank','_blank','noopener,noreferrer'\)/);
+  const start=admin.indexOf('async function viewAdminApplicationDocument');
+  const end=admin.indexOf('async function openAdminApplication',start);
+  const block=admin.slice(start,end);
+  assert.ok(start>=0&&end>start);
+  assert.match(block,/window\.open\('about:blank','_blank'\)/);
+  assert.match(block,/popup\.opener=null/);
+  assert.doesNotMatch(block,/noopener,noreferrer/);
   assert.match(admin,/popup\.location\.replace\(url\)/);
 });
 
