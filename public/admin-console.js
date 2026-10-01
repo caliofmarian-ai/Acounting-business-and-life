@@ -218,6 +218,97 @@ async function openAdminApplication(id){
     });
   }catch(error){showError(error)}
 }
+
+const COMMERCE_REVIEW_GUIDE=Object.freeze({
+  activity_scope_confirmed:Object.freeze({
+    question:'Does the declared activity match what this business actually does?',
+    plain:'Confirm that the activity shown in Business & Life matches the real business you are reviewing.',
+    checks:['Compare the declared activity with the application, storefront and products/services.','Make sure the business is not being reviewed under the wrong activity type.'],
+    evidence:['Merchant application or Local Services application.','Storefront, menu, catalog, requested service categories or other platform records.']
+  }),
+  operating_context_confirmed:Object.freeze({
+    question:'Does the declared operating context match how and where this business actually operates?',
+    plain:'Confirm that the operating setup recorded in Business & Life reflects the real location or working model.',
+    checks:['Compare the selected operating context with the business location/setup described by the applicant.','Make sure a different location model is not being used in practice.'],
+    evidence:['Platform address / operating-area record.','Applicant-provided location or operating-context evidence.']
+  }),
+  business_registration_requirements:Object.freeze({
+    question:'Are the applicable business-registration requirements resolved?',
+    plain:'Identify which business-registration requirement applies to this exact activity and location, then verify the supporting evidence or a sourced reason that it does not apply.',
+    checks:['Determine which business-registration requirement applies to this business.','Verify the evidence, or record why the requirement is not applicable.'],
+    evidence:['Uploaded business registration / permit evidence.','Official registration record or other competent-authority reference.']
+  }),
+  tax_record_requirements:Object.freeze({
+    question:'Are the applicable tax / receipt record requirements resolved?',
+    plain:'Check the applicable tax, invoice, receipt or record-keeping requirement without treating Business & Life as the filing authority.',
+    checks:['Identify the tax / receipt / record-keeping requirement that applies.','Verify the record, or document a sourced reason that it is not applicable.'],
+    evidence:['Tax registration, invoice/receipt record or official reference.','Official source describing the applicable record-keeping requirement.']
+  }),
+  location_permission_requirements:Object.freeze({
+    question:'Is the business allowed to operate or vend at this location?',
+    plain:'Resolve the location, property, market, vending-space or other location-authority requirement that applies to the declared operating context.',
+    checks:['Confirm the declared location type matches the real operating location.','Verify the relevant permission/authority evidence, or record why no additional location authority applies.'],
+    evidence:['Location / vending / property / market permission evidence.','Competent local authority or property/market source.']
+  }),
+  food_safety_requirements:Object.freeze({
+    question:'Are the applicable food-safety / sanitary requirements resolved?',
+    plain:'For Food activity, identify and resolve the food-safety, sanitary or health requirements that apply to this business.',
+    checks:['Identify the food-safety / sanitary requirement that applies to this Food business.','Verify supporting evidence, or record a sourced not-applicable decision where policy permits it.'],
+    evidence:['Food-safety, sanitary, health or inspection evidence.','Relevant competent health / sanitary authority source.']
+  }),
+  regulated_goods_requirements:Object.freeze({
+    question:'Are the applicable regulated-goods requirements resolved?',
+    plain:'For Non-food activity, determine whether the goods/category needs a permit, licence or restricted-goods control.',
+    checks:['Identify whether the listed goods fall into a regulated/restricted category.','Verify the applicable evidence, or record why no regulated-goods requirement applies.'],
+    evidence:['Product/category permit, licence or restriction evidence.','Official product-regulation source.']
+  }),
+  service_category_requirements:Object.freeze({
+    question:'Does the approved Local Services scope match the service being reviewed?',
+    plain:'Confirm the exact service categories/tasks being enabled and their existing platform category authorization.',
+    checks:['Compare requested and approved categories.','Make sure the review is not enabling a service outside the approved category scope.'],
+    evidence:['Approved Local Services categories in Business & Life.','Application/service records already held by the platform.']
+  }),
+  professional_licence_requirements:Object.freeze({
+    question:'Are the applicable professional / regulatory credential requirements resolved?',
+    plain:'Determine whether this exact service task requires a professional or government credential, then verify it or document why it does not apply.',
+    checks:['Identify whether the task is credential-gated or professionally regulated.','Verify the relevant credential, or record a sourced reason that none is required.'],
+    evidence:['Professional licence, qualification or credential record.','Competent professional/regulatory authority source.']
+  })
+});
+function commerceReviewGuide(code,readiness={}){
+  const guide=COMMERCE_REVIEW_GUIDE[code]||{
+    question:'Is this requirement resolved?',
+    plain:'Review the requirement and record the evidence/source used for the decision.',
+    checks:['Confirm the requirement is satisfied for this exact business/activity.'],
+    evidence:['Relevant uploaded evidence or official source.']
+  };
+  let current='';
+  if(code==='activity_scope_confirmed')current='Declared activity: '+readableCode(readiness.activity_track||'not set');
+  if(code==='operating_context_confirmed')current='Declared operating context: '+readableCode(readiness.operating_context||'not set');
+  return{...guide,current};
+}
+function commerceReviewItemMarkup(req,index,total,item,readiness){
+  const guide=commerceReviewGuide(String(req.code||''),readiness);
+  const resolved=['verified','not_applicable'].includes(String(item.outcome||''));
+  const setupCheck=['activity_scope_confirmed','operating_context_confirmed'].includes(String(req.code||''));
+  const outcomeHelp=req.allow_not_applicable
+    ?'<strong>Verified</strong> = you checked evidence and it resolves this item. <strong>Not applicable</strong> = the requirement truly does not apply; name the official source and explain why.'
+    :'<strong>Verified is required.</strong> Confirm that the platform record matches the real business before continuing.';
+  const renderList=items=>'<ul>'+items.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>';
+  return '<section class="card commerceReviewItem '+(resolved?'resolved':'')+'" data-commerce-evidence="'+esc(req.code||'')+'">'
+    +'<div class="commerceReviewItemHead"><span class="commerceReviewStep">Check '+(index+1)+' of '+total+'</span>'+(resolved?'<span class="commerceReviewResolved">Resolved</span>':'')+'</div>'
+    +'<h3>'+esc(guide.question)+'</h3><p class="commerceReviewPlain">'+esc(guide.plain)+'</p>'
+    +(guide.current?'<div class="commerceCurrentValue"><small>Current platform value</small><strong>'+esc(guide.current)+'</strong></div>':'')
+    +'<div class="commerceReviewHelpGrid"><div><h4>What to check</h4>'+renderList(guide.checks)+'</div><div><h4>Useful evidence</h4>'+renderList(guide.evidence)+'</div></div>'
+    +'<div class="commerceOutcomeGuide">'+outcomeHelp+'</div>'
+    +'<label>Decision for this check<select data-commerce-outcome><option value="">Choose…</option><option value="verified" '+(item.outcome==='verified'?'selected':'')+'>Verified — evidence checked</option>'+(req.allow_not_applicable?'<option value="not_applicable" '+(item.outcome==='not_applicable'?'selected':'')+'>Not applicable — sourced decision</option>':'')+'</select></label>'
+    +(setupCheck?'<div class="commerceFieldHint">Record the platform record or other evidence you relied on. Confirming the setup does not automatically grant commerce eligibility.</div>':'')
+    +'<label>Evidence / record you checked<input data-commerce-reference value="'+esc(item.reference||'')+'" placeholder="Example: Uploaded document #3, platform record or official record reference"><small class="commerceFieldHelp">Identify the actual evidence or record you reviewed.</small></label>'
+    +'<label>Official source / authority<input data-commerce-source value="'+esc(item.source_authority||'')+'" placeholder="Name the authority, issuer, official source or Business & Life platform record"><small class="commerceFieldHelp">Record who issued the evidence or which official/platform source supports the decision.</small></label>'
+    +'<label>Reviewer explanation<textarea data-commerce-note rows="3" placeholder="Explain briefly why this evidence resolves the check, or why it is not applicable">'+esc(item.note||'')+'</textarea><small class="commerceFieldHelp">For Not applicable, state why it does not apply to this exact business.</small></label>'
+    +'</section>';
+}
+
 async function openAdminCommerceReadiness(accountId,role,businessId,label=''){
   if(!isSuperAdmin())return showError(new Error('Commerce readiness review requires active Super Admin authority.'));
   const account=Number(accountId);
@@ -231,23 +322,30 @@ async function openAdminCommerceReadiness(accountId,role,businessId,label=''){
     const readiness=await api('/api/governance/admin/readiness/'+account+'/'+encodeURIComponent(role)+qs);
     const existing=new Map((Array.isArray(readiness.eligibility_evidence)?readiness.eligibility_evidence:[]).map(item=>[String(item.code||''),item]));
     const requirements=Array.isArray(readiness.review_requirements)?readiness.review_requirements:[];
-    const checklist=requirements.length?requirements.map((req,index)=>{
-      const item=existing.get(String(req.code||''))||{},verified=item.outcome==='verified',na=item.outcome==='not_applicable';
-      return '<section class="card" data-commerce-evidence="'+esc(req.code||'')+'"><small class="muted">REVIEW ITEM '+(index+1)+'</small><h3>'+esc(req.label||req.code||'Requirement')+'</h3><p>'+esc(req.description||'')+'</p>'
-        +'<label>Outcome<select data-commerce-outcome><option value="">Choose…</option><option value="verified" '+(verified?'selected':'')+'>Verified</option>'+(req.allow_not_applicable?'<option value="not_applicable" '+(na?'selected':'')+'>Not applicable — sourced decision</option>':'')+'</select></label>'
-        +'<label>Evidence / record reference<input data-commerce-reference value="'+esc(item.reference||'')+'" placeholder="Document ID, credential ID, official record or internal evidence reference"></label>'
-        +'<label>Source / authority<input data-commerce-source value="'+esc(item.source_authority||'')+'" placeholder="e.g. Bacoor BPLO, BIR, DTI, platform record"></label>'
-        +'<label>Reviewer note<textarea data-commerce-note rows="2" placeholder="Why this satisfies the requirement, or why it is not applicable">'+esc(item.note||'')+'</textarea></label></section>';
-    }).join(''):'<div class="notice">Set the Merchant activity track and operating context before commerce eligibility can be reviewed.</div>';
+    const resolvedCount=requirements.filter(req=>['verified','not_applicable'].includes(String(existing.get(String(req.code||''))?.outcome||''))).length;
+    const setupCodes=new Set(['activity_scope_confirmed','operating_context_confirmed']);
+    const setupRequirements=requirements.filter(req=>setupCodes.has(String(req.code||'')));
+    const evidenceRequirements=requirements.filter(req=>!setupCodes.has(String(req.code||'')));
+    const renderItems=items=>items.map(req=>{
+      const index=requirements.findIndex(x=>String(x.code||'')===String(req.code||''));
+      return commerceReviewItemMarkup(req,index,requirements.length,existing.get(String(req.code||''))||{},readiness);
+    }).join('');
+    const checklist=requirements.length
+      ?'<div class="commerceReviewSections">'
+        +(setupRequirements.length?'<section class="commerceReviewGroup"><div class="commerceReviewGroupHead"><small>PART 1 · BUSINESS SETUP</small><h3>Confirm the business setup</h3><p>These checks confirm that the activity and operating context recorded in Business & Life match the real business you are reviewing.</p></div>'+renderItems(setupRequirements)+'</section>':'')
+        +(evidenceRequirements.length?'<section class="commerceReviewGroup"><div class="commerceReviewGroupHead"><small>PART 2 · BUSINESS EVIDENCE</small><h3>Resolve the requirements that apply</h3><p>Review the evidence or official source that applies to this exact business, activity and operating context.</p></div>'+renderItems(evidenceRequirements)+'</section>':'')
+       +'</div>'
+      :'<div class="notice">Set the Merchant activity track and operating context before commerce eligibility can be reviewed.</div>';
+    const progressPct=requirements.length?Math.round((resolvedCount/requirements.length)*100):0;
     p.innerHTML='<button type="button" class="secondary supportBack" id="commerceReviewBack">← Back to Commerce readiness</button>'
-      +'<section class="adminDetail"><div class="sectionTitle"><div><small class="muted">GOVERNED COMMERCE REVIEW</small><h2>'+esc(label||profileRoleLabel(role))+'</h2></div><span class="status">'+esc(readableCode(readiness.commerce_state||'readiness_only'))+'</span></div>'
-      +'<section class="card"><h3>Current readiness</h3><div class="supportMeta"><span>Stage: '+esc(readableCode(readiness.readiness_stage||'starting'))+'</span><span>Track: '+esc(readableCode(readiness.activity_track||'not set'))+'</span><span>Operating context: '+esc(readableCode(readiness.operating_context||'not set'))+'</span></div><p class="muted">Profile Authorization remains a separate gate. Business & Life records whether the applicable requirements were resolved; it does not issue or replace government permits, tax registrations or professional licences.</p></section>'
-      +'<section class="card"><h3>Evidence checklist</h3><p class="muted">Every required item must be resolved before eligibility is granted. Not applicable is allowed only where policy permits it and requires a source/authority plus a reason.</p></section>'
+      +'<section class="adminDetail commerceReviewDetail"><div class="sectionTitle"><div><small class="muted">GOVERNED COMMERCE REVIEW</small><h2>'+esc(label||profileRoleLabel(role))+'</h2><p class="muted">Review what the business does, how it operates and the evidence that applies before allowing public commerce.</p></div><span class="status">'+esc(readableCode(readiness.commerce_state||'readiness_only'))+'</span></div>'
+      +'<section class="card commerceReviewSummary"><div class="commerceReviewSummaryTop"><div><small>REVIEW PROGRESS</small><strong>'+resolvedCount+' of '+requirements.length+' checks resolved</strong></div><span>'+progressPct+'%</span></div><div class="commerceReviewProgress"><i style="width:'+progressPct+'%"></i></div><div class="commerceReviewFacts"><span><small>Stage</small><b>'+esc(readableCode(readiness.readiness_stage||'starting'))+'</b></span><span><small>Activity</small><b>'+esc(readableCode(readiness.activity_track||'not set'))+'</b></span><span><small>Operating context</small><b>'+esc(readableCode(readiness.operating_context||'not set'))+'</b></span><span><small>Commerce state</small><b>'+esc(readableCode(readiness.commerce_state||'readiness_only'))+'</b></span></div></section>'
+      +'<section class="card commerceReviewHow"><h3>How to review this business</h3><ol><li>Read what each check means.</li><li>Compare the platform data with the evidence or official source.</li><li>Choose <strong>Verified</strong>, or <strong>Not applicable</strong> only where the policy allows it.</li><li>Record the evidence/reference and source you relied on.</li><li>Grant commerce eligibility only after every required check is resolved.</li></ol><p>Profile Authorization remains a separate gate. Business & Life records whether requirements were resolved; it does not issue or replace government permits, tax registrations or professional licences.</p></section>'
       +checklist
-      +'<form id="adminCommerceReviewForm" class="adminForm"><section class="card"><h3>Super Admin commerce decision</h3>'
-      +'<label>Decision<select name="commerce_state"><option value="readiness_only" '+(readiness.commerce_state==='readiness_only'?'selected':'')+'>Readiness only</option><option value="eligible_limited" '+(readiness.commerce_state==='eligible_limited'?'selected':'')+'>Eligible — limited scope</option><option value="eligible_full" '+(readiness.commerce_state==='eligible_full'?'selected':'')+'>Eligible — full platform scope</option></select></label>'
-      +'<label>Review reason<textarea name="reason" rows="3" maxlength="500" placeholder="Summarise what was reviewed and why this decision is justified"></textarea></label>'
-      +'<label>Limited-scope note<textarea name="scope_note" rows="2" maxlength="500" placeholder="Required only for limited eligibility: territory, activity/category or capability limits"></textarea></label>'
+      +'<form id="adminCommerceReviewForm" class="adminForm commerceDecisionForm"><section class="card commerceDecisionCard"><small class="commerceDecisionEyebrow">FINAL STEP</small><h3>Super Admin commerce decision</h3><p>Choose the level of public commerce this business may use after you finish the checks above.</p>'
+      +'<label>Commerce decision<select name="commerce_state"><option value="readiness_only" '+(readiness.commerce_state==='readiness_only'?'selected':'')+'>Readiness only — keep public commerce locked</option><option value="eligible_limited" '+(readiness.commerce_state==='eligible_limited'?'selected':'')+'>Eligible — limited scope</option><option value="eligible_full" '+(readiness.commerce_state==='eligible_full'?'selected':'')+'>Eligible — full platform scope</option></select><small class="commerceFieldHelp">Eligible does not mean government-approved; it means the Business & Life commerce gate has been satisfied for the recorded scope.</small></label>'
+      +'<label>Why are you making this decision?<textarea name="reason" rows="3" maxlength="500" placeholder="Summarise what you reviewed and why this platform decision is justified"></textarea></label>'
+      +'<label>Limited-scope restrictions<textarea name="scope_note" rows="2" maxlength="500" placeholder="Required only for limited eligibility: territory, activity/category or capability limits"></textarea><small class="commerceFieldHelp">Leave this blank for Readiness only or Eligible — full platform scope.</small></label>'
       +'<button class="primary" type="submit">Save commerce decision</button><div id="adminCommerceReviewResult"></div></section></form></section>';
     document.getElementById('commerceReviewBack').onclick=async()=>{state.active='members';state.memberHubTab='commerce';shell();await renderActive()};
     document.getElementById('adminCommerceReviewForm').onsubmit=async e=>{

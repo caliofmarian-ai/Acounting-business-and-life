@@ -26,6 +26,29 @@ test('Admin overview supplies active Merchant businesses to Commerce readiness',
   assert.match(ui,/Review commerce/);
 });
 
+test('Commerce readiness explains every review item in plain language without weakening governed validation',()=>{
+  assert.match(ui,/const COMMERCE_REVIEW_GUIDE=Object\.freeze/);
+  assert.match(ui,/Does the declared activity match what this business actually does\?/);
+  assert.match(ui,/Does the declared operating context match how and where this business actually operates\?/);
+  assert.match(ui,/Are the applicable business-registration requirements resolved\?/);
+  assert.match(ui,/Are the applicable tax \/ receipt record requirements resolved\?/);
+  assert.match(ui,/Is the business allowed to operate or vend at this location\?/);
+  assert.match(ui,/Are the applicable food-safety \/ sanitary requirements resolved\?/);
+  assert.match(ui,/What to check/);
+  assert.match(ui,/Useful evidence/);
+  assert.match(ui,/Decision for this check/);
+  assert.match(ui,/Evidence \/ record you checked/);
+  assert.match(ui,/Official source \/ authority/);
+  assert.match(ui,/Reviewer explanation/);
+  assert.match(ui,/Verified — evidence checked/);
+  assert.match(ui,/Not applicable — sourced decision/);
+  assert.match(ui,/Confirm the business setup/);
+  assert.match(ui,/Resolve the requirements that apply/);
+  assert.match(ui,/checks resolved/);
+  assert.match(ui,/Eligible does not mean government-approved/);
+  assert.doesNotMatch(ui,/data-commerce-outcome[^\n]{0,250}selected="selected"/);
+});
+
 test('Commerce readiness is reachable from the current Admin Members Hub and keeps the second gate explicit',()=>{
   assert.match(ui,/function commerceReadinessRowsFromAuthorizations/);
   assert.match(ui,/function commerceReadinessRow/);
