@@ -1,0 +1,88 @@
+name: Production Customer Delivery #666
+
+on:
+  push:
+    branches:
+      - qa/production-customer-delivery-666
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Production health revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://caliof.com"
+          EXPECTED_REV="f7636b287ffe"
+          curl --fail --silent --show-error --retry 3 --retry-delay 2 "$BASE/health" -o health.json
+          cat health.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const h=JSON.parse(fs.readFileSync('health.json','utf8'));
+          if(h?.deployment?.environment!=='production') throw new Error('Production environment evidence missing');
+          if(h?.deployment?.revision!=='f7636b287ffe') throw new Error('Unexpected Production revision: '+h?.deployment?.revision);
+          console.log('HEALTH_REVISION_PASS', h.deployment);
+          NODE
+
+      - name: Verify served Customer checkout assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://caliof.com"
+          curl --fail --silent --show-error --retry 3 "$BASE/marketplace-ui.js" -o marketplace-ui.js
+          curl --fail --silent --show-error --retry 3 "$BASE/marketplace.css" -o marketplace.css
+          curl --fail --silent --show-error --retry 3 "$BASE/" -o index.html
+
+          for marker in             "Final total"             "/api/delivery/quote"             "delivery_quote_id"             "Confirm address & calculate price"             "checkoutFinalAmount"             "checkoutAddressSearch"             "Delivery price is missing or expired"
+          do
+            grep -Fq "$marker" marketplace-ui.js || { echo "Missing UI marker: $marker"; exit 1; }
+            echo "UI_MARKER_PASS $marker"
+          done
+
+          grep -Fq "checkoutGrandTotal" marketplace.css
+          echo "CSS_MARKER_PASS checkoutGrandTotal"
+
+          grep -Fq "/marketplace-ui.js" index.html
+          echo "ROOT_ASSET_REFERENCE_PASS /marketplace-ui.js"
+
+      - name: Verify Delivery routes are mounted without creating an order
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://caliof.com"
+
+          status_address=$(curl --silent --show-error --output address.json --write-out "%{http_code}"             "$BASE/api/delivery/address-search?q=Bacoor")
+          echo "ADDRESS_SEARCH_HTTP $status_address"
+          cat address.json || true
+          case "$status_address" in
+            400|401|403) ;;
+            404) echo "Customer Delivery address-search route is not mounted"; exit 1 ;;
+            5*) echo "Customer Delivery address-search returned server error"; exit 1 ;;
+            *) echo "Unexpected unauthenticated address-search status: $status_address"; exit 1 ;;
+          esac
+
+          status_quote=$(curl --silent --show-error --output quote.json --write-out "%{http_code}"             -H "Content-Type: application/json"             -d '{"business_id":1,"items":[],"dropoff_lat":14.4,"dropoff_lng":120.9}'             "$BASE/api/delivery/quote")
+          echo "DELIVERY_QUOTE_HTTP $status_quote"
+          cat quote.json || true
+          case "$status_quote" in
+            400|401|403|409) ;;
+            404) echo "Delivery quote route is not mounted"; exit 1 ;;
+            5*) echo "Delivery quote returned server error"; exit 1 ;;
+            *) echo "Unexpected unauthenticated quote status: $status_quote"; exit 1 ;;
+          esac
+
+          status_checkout=$(curl --silent --show-error --output checkout.json --write-out "%{http_code}"             -H "Content-Type: application/json"             -d '{"business_id":1,"items":[],"fulfilment_method":"delivery","payment_method":"online","delivery_quote_id":1,"delivery_address":"QA only"}'             "$BASE/api/marketplace/checkout")
+          echo "DELIVERY_CHECKOUT_HTTP $status_checkout"
+          cat checkout.json || true
+          case "$status_checkout" in
+            400|401|403|409) ;;
+            404) echo "Delivery checkout route is not mounted"; exit 1 ;;
+            5*) echo "Delivery checkout returned server error"; exit 1 ;;
+            *) echo "Unexpected unauthenticated checkout status: $status_checkout"; exit 1 ;;
+          esac
+
+          echo "PRODUCTION_CUSTOMER_DELIVERY_666_SMOKE PASS"
