@@ -47,6 +47,20 @@ test('counter-order product list is private to the selected Merchant business',(
   assert.doesNotMatch(server,/if\(businessId!==1\) return res\.json\(\[\]\)/);
 });
 
+test('direct-sale inventory is private to the selected Merchant business',()=>{
+  assert.match(server,/\/api\/orders\/inventory'[\s\S]*requireMerchant\(req,businessId\)/);
+  assert.match(server,/FROM inventory[\s\S]*WHERE business_id=\$1/);
+  assert.match(ui,/\/api\/orders\/inventory\?business_id=\$\{encodeURIComponent\(businessId\)\}/);
+});
+
+test('Merchant Orders exposes direct-sale product creation and keeps it private until Storefront publication',()=>{
+  assert.match(ui,/Add a direct-sale product/);
+  assert.match(ui,/ordersDirectProductForm/);
+  assert.match(ui,/\/api\/merchant\/storefront\/products/);
+  assert.match(ui,/published:false/);
+  assert.match(ui,/Add product/);
+});
+
 test('Orders boards do not use timer polling',()=>{
   assert.doesNotMatch(ui,/setInterval\(/);
   assert.match(ui,/data-orders-refresh/);
