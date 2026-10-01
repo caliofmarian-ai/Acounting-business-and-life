@@ -23,6 +23,8 @@ const jsonBody = express.json({ limit: '14mb' });
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const ACCOUNTS = new Set(['cash','gcash','bank','other']);
 const TYPES = new Set(['sale','business_expense','money_received','personal_withdrawal','adjustment']);
+const INVENTORY_TYPES = new Set(['ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply']);
+const normalizeInventoryType=value=>INVENTORY_TYPES.has(clean(value,40))?clean(value,40):'ingredient';
 let profileGovernanceApp=null;
 let profileGovernanceReady=false;
 let shuttingDown = false;
@@ -59,6 +61,9 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ALTER COLUMN business_id SET NOT NULL;
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_item_key;
     CREATE UNIQUE INDEX IF NOT EXISTS inventory_business_item_unique ON inventory(business_id,item);
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS inventory_type TEXT NOT NULL DEFAULT 'ingredient';
+    ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_inventory_type_check;
+    ALTER TABLE inventory ADD CONSTRAINT inventory_inventory_type_check CHECK(inventory_type IN ('ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply'));
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS measurement_family TEXT;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS base_unit TEXT;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS last_purchase_quantity NUMERIC(14,4);
@@ -438,13 +443,14 @@ app.patch('/api/transactions/:id',jsonBody,async(req,res,next)=>{try{const{busin
 app.get('/api/transactions/:id/audit',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT * FROM audit_events WHERE business_id=$1 AND entity_type='transaction' AND entity_id=$2 ORDER BY created_at DESC`,[business.id,Number(req.params.id)]);res.json(rows)}catch(e){next(e)}});
 
 app.get('/api/inventory',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT * FROM inventory WHERE business_id=$1 ORDER BY (quantity<=reorder_level) DESC,item`,[business.id]);res.json(rows)}catch(e){next(e)}});
-app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,unit_cost=0}=req.body||{};if(!clean(item,100))return res.status(400).json({error:'Item is required'});const{rows}=await pool.query(`INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(business_id,item) DO UPDATE SET unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,unit_cost=EXCLUDED.unit_cost,updated_at=NOW() RETURNING *`,[business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(unit_cost)||0]);res.status(201).json(rows[0])}catch(e){next(e)}});
+app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,unit_cost=0}=req.body||{},inventoryType=normalizeInventoryType(req.body?.inventory_type);if(!clean(item,100))return res.status(400).json({error:'Item is required'});const{rows}=await pool.query(`INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(business_id,item) DO UPDATE SET unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,unit_cost=EXCLUDED.unit_cost,inventory_type=EXCLUDED.inventory_type,updated_at=NOW() RETURNING *`,[business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(unit_cost)||0,inventoryType]);res.status(201).json(rows[0])}catch(e){next(e)}});
 app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
   try{
     const ctx=await accountingContext(req);
     if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
     const itemName=clean(req.body?.item,100);
     if(!itemName)return res.status(400).json({error:'Item is required'});
+    const inventoryType=normalizeInventoryType(req.body?.inventory_type);
     const account=clean(req.body?.account||'cash',30);
     if(!ACCOUNTS.has(account))return res.status(400).json({error:'Choose where the purchase was paid from'});
     let purchase;
@@ -481,24 +487,25 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
                  base_unit=$2,
                  measurement_family=$3,
                  unit_cost=$4,
-                 reorder_level=CASE WHEN $5>0 THEN $5 ELSE reorder_level END,
-                 last_purchase_quantity=$6,
-                 last_purchase_unit=$7,
-                 last_purchase_total_cost=$8,
+                 inventory_type=$5,
+                 reorder_level=CASE WHEN $6>0 THEN $6 ELSE reorder_level END,
+                 last_purchase_quantity=$7,
+                 last_purchase_unit=$8,
+                 last_purchase_total_cost=$9,
                  last_purchase_at=NOW(),
                  updated_at=NOW()
-           WHERE id=$9 AND business_id=$10
+           WHERE id=$10 AND business_id=$11
            RETURNING *
-        `,[purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,purchase.reorder_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id]);
+        `,[purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,inventoryType,purchase.reorder_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id]);
         inventoryRow=updated.rows[0];
       }else{
         const inserted=await client.query(`
           INSERT INTO inventory(
-            business_id,item,unit,quantity,reorder_level,unit_cost,
+            business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
             measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at
-          ) VALUES($1,$2,$3,$4,$5,$6,$7,$3,$8,$9,$10,NOW())
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$3,$9,$10,$11,NOW())
           RETURNING *
-        `,[ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.base_unit_cost,purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost]);
+        `,[ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.base_unit_cost,inventoryType,purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost]);
         inventoryRow=inserted.rows[0];
       }
 
@@ -554,7 +561,7 @@ app.get('/api/analysis',async(req,res,next)=>{try{const{business}=await accounti
 app.get('/api/products',async(req,res,next)=>{try{const{business}=await accountingContext(req);res.json(await productsWithRecipes(Number(business.id)))}catch(e){next(e)}});
 app.post('/api/products',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),name=clean(req.body?.name,120),category=clean(req.body?.category||'Food',80)||'Food',price=Number(req.body?.selling_price),kind=normalizedProductKind(req.body?.product_kind||'prepared_recipe','food');if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Product name and valid selling price are required.'});const{rows}=await pool.query(`INSERT INTO products(business_id,name,category,selling_price,active,product_kind) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[business.id,name,category,price,req.body?.active!==false,kind]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
 app.patch('/api/products/:id',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),id=Number(req.params.id),old=await pool.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2`,[id,business.id]);if(!old.rowCount)return res.status(404).json({error:'Product not found'});const prev=old.rows[0],name=clean(req.body?.name??prev.name,120),category=clean(req.body?.category??prev.category,80)||'Food',price=Number(req.body?.selling_price??prev.selling_price),active=req.body?.active??prev.active,kind=normalizedProductKind(req.body?.product_kind??prev.product_kind,'food');if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Invalid product'});const{rows}=await pool.query(`UPDATE products SET name=$1,category=$2,selling_price=$3,active=$4,product_kind=$5,updated_at=NOW() WHERE id=$6 AND business_id=$7 RETURNING *`,[name,category,price,Boolean(active),kind,id,business.id]);res.json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
-app.put('/api/products/:id/recipe',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),productId=Number(req.params.id),components=Array.isArray(req.body?.components)?req.body.components:[];const exists=await pool.query(`SELECT id FROM products WHERE id=$1 AND business_id=$2`,[productId,business.id]);if(!exists.rowCount)return res.status(404).json({error:'Product not found'});const normalized=[],seen=new Set();for(const c of components){const inventoryId=Number(c.inventory_id),quantity=Number(c.quantity);if(!Number.isInteger(inventoryId)||!positive(quantity))return res.status(400).json({error:'Every recipe component needs an inventory item and quantity greater than zero.'});if(seen.has(inventoryId))return res.status(400).json({error:'The same ingredient cannot appear twice in one recipe.'});seen.add(inventoryId);normalized.push({inventoryId,quantity})}if(normalized.length){const check=await pool.query(`SELECT id FROM inventory WHERE business_id=$1 AND id=ANY($2::bigint[])`,[business.id,normalized.map(x=>x.inventoryId)]);if(check.rowCount!==normalized.length)return res.status(400).json({error:'One or more inventory ingredients do not belong to this business.'})}const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM recipes WHERE product_id=$1`,[productId]);for(const c of normalized)await client.query(`INSERT INTO recipes(product_id,inventory_id,quantity) VALUES($1,$2,$3)`,[productId,c.inventoryId,c.quantity]);await client.query('COMMIT');res.json((await productsWithRecipes(Number(business.id))).find(p=>p.id===productId))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}});
+app.put('/api/products/:id/recipe',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),productId=Number(req.params.id),components=Array.isArray(req.body?.components)?req.body.components:[];const exists=await pool.query(`SELECT id FROM products WHERE id=$1 AND business_id=$2`,[productId,business.id]);if(!exists.rowCount)return res.status(404).json({error:'Product not found'});const normalized=[],seen=new Set();for(const c of components){const inventoryId=Number(c.inventory_id),quantity=Number(c.quantity);if(!Number.isInteger(inventoryId)||!positive(quantity))return res.status(400).json({error:'Every recipe component needs an inventory item and quantity greater than zero.'});if(seen.has(inventoryId))return res.status(400).json({error:'The same ingredient cannot appear twice in one recipe.'});seen.add(inventoryId);normalized.push({inventoryId,quantity})}if(normalized.length){const check=await pool.query(`SELECT id,inventory_type FROM inventory WHERE business_id=$1 AND id=ANY($2::bigint[])`,[business.id,normalized.map(x=>x.inventoryId)]);if(check.rowCount!==normalized.length)return res.status(400).json({error:'One or more inventory ingredients do not belong to this business.'});if(check.rows.some(x=>(x.inventory_type||'ingredient')!=='ingredient'))return res.status(400).json({error:'Only Inventory items classified as Ingredient can be used in recipes.'})}const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM recipes WHERE product_id=$1`,[productId]);for(const c of normalized)await client.query(`INSERT INTO recipes(product_id,inventory_id,quantity) VALUES($1,$2,$3)`,[productId,c.inventoryId,c.quantity]);await client.query('COMMIT');res.json((await productsWithRecipes(Number(business.id))).find(p=>p.id===productId))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}});
 
 
 app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
@@ -571,6 +578,9 @@ app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
     const inventory=inventoryIds.length
       ?(await pool.query(`SELECT * FROM inventory WHERE business_id=$1 AND id=ANY($2::bigint[])`,[ctx.business.id,inventoryIds])).rows
       :[];
+    if(inventory.some(x=>(x.inventory_type||'ingredient')!=='ingredient')){
+      return res.status(400).json({error:'Only Inventory items classified as Ingredient can be used in recipes.'});
+    }
     let batch;
     try{
       batch=computeRecipeBatch({
