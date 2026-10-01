@@ -612,3 +612,21 @@
   .commerceReviewHelpGrid{gap:8px}
   .commerceReviewItem input,.commerceReviewItem select,.commerceReviewItem textarea,.commerceDecisionCard select,.commerceDecisionCard textarea{font-size:16px;min-height:44px}
 }
+
+
+/* MEMBER DETAIL COMMERCE READINESS SHORTCUT V1 */
+.memberCommerceReadinessCard{display:grid;gap:12px}
+.memberCommerceIntro{display:grid;gap:4px;padding:14px;border:1px solid rgba(96,214,180,.32);border-radius:15px;background:linear-gradient(145deg,#10243a,#10332f)}
+.memberCommerceIntro h3{margin:0;font-size:17px}
+.memberCommerceIntro p{margin:0;color:var(--muted);font-size:11px;line-height:1.5}
+.memberCommerceList{display:grid;gap:9px}
+.memberCommerceRow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--panel2)}
+.memberCommerceRow>div{display:grid;gap:3px;min-width:0}
+.memberCommerceRow strong{font-size:13px;overflow-wrap:anywhere}
+.memberCommerceRow span{font-size:10px;color:var(--muted)}
+.memberCommerceRow button{flex:0 0 auto}
+@media(max-width:520px){
+  .memberCommerceIntro{padding:12px}
+  .memberCommerceRow{display:grid;gap:9px}
+  .memberCommerceRow button{width:100%;min-height:42px}
+}
