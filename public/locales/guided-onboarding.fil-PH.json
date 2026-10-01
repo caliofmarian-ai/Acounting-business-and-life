@@ -41,7 +41,7 @@
   "welcome.body": "Hiwalay ang iyong account sa bawat profile. Ipapakita ng gabay na ito kung paano kumpletuhin ang setup at simulan ang profile na kailangan mo.",
   "account.missing_email": "i-verify ang iyong email",
   "account.missing_details": "kumpletuhin ang pribadong detalye ng iyong account",
-  "account.missing_area": "ilagay ang iyong home address",
+  "account.missing_area": "piliin ang iyong opisyal na home area",
   "account.missing_finish": "tapusin ang account setup",
   "account.complete_body": "Susunod, {action}. Titingnan namin kung available ang Business & Life sa iyong lugar.",
   "area.title": "Availability sa iyong lugar",
