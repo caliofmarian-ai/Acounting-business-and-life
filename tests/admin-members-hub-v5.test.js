@@ -49,6 +49,20 @@ test('Commerce readiness explains every review item in plain language without we
   assert.doesNotMatch(ui,/data-commerce-outcome[^\n]{0,250}selected="selected"/);
 });
 
+test('Super Admin Member Details exposes contextual Commerce readiness routing',()=>{
+  assert.match(ui,/function memberCommerceReadinessMarkup\(data\)/);
+  assert.match(ui,/if\(!isSuperAdmin\(\)\)return''/);
+  assert.match(ui,/data-member-jump="memberCommerceSection"/);
+  assert.match(ui,/title:'Commerce readiness'/);
+  assert.match(ui,/data-member-commerce-review/);
+  assert.match(ui,/Merchant · Business #/);
+  assert.match(ui,/Local Services profile/);
+  assert.match(ui,/openAdminCommerceReadiness\(Number\(button\.dataset\.memberCommerceReview\)/);
+  assert.match(ui,/async function openAdminCommerceReadiness\(accountId,role,businessId,label='',returnMemberId=null\)/);
+  assert.match(ui,/if\(returnMemberId\)\{/);
+  assert.match(ui,/state\.memberDetailId=Number\(returnMemberId\)/);
+});
+
 test('Commerce readiness is reachable from the current Admin Members Hub and keeps the second gate explicit',()=>{
   assert.match(ui,/function commerceReadinessRowsFromAuthorizations/);
   assert.match(ui,/function commerceReadinessRow/);
