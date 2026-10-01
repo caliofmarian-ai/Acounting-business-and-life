@@ -485,7 +485,7 @@ function commerceReadinessRowsFromAuthorizations(auths=state.overview?.authoriza
   return rows;
 }
 function commerceReadinessRow(x){
-  const noBusiness=x.role==='merchant'&&!Number.isInteger(Number(x.business_id));
+  const noBusiness=x.role==='merchant'&&(!Number.isSafeInteger(Number(x.business_id))||Number(x.business_id)<1);
   return '<div class="row adminReviewRow"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">Profile authorized</span></div>'
     +'<span>'+esc(profileRoleLabel(x.role))+' · '+esc(x.business_name||'Profile')+'</span>'
     +'<span class="muted">'+(x.role==='merchant'&&x.business_id?'Business #'+Number(x.business_id)+' · ':'')+'Commerce eligibility is reviewed separately from profile access.</span>'
