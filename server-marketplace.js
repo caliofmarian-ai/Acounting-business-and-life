@@ -33,7 +33,7 @@ const geocodeCache=new Map();
 let geocodeQueue=Promise.resolve();
 let geocodeLastAt=0;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-async function geocodeAddress(query,countryCode=''){
+export async function geocodeAddress(query,countryCode=''){
   const q=clean(query,180),country=clean(countryCode,2).toLowerCase();
   if(q.length<3)throw Object.assign(new Error('Enter at least 3 characters to search for an address.'),{status:400});
   const key=country+'|'+q.toLowerCase(),cached=geocodeCache.get(key);

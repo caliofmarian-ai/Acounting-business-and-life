@@ -1,4 +1,5 @@
 let marketMe=null,marketWorkspace=null,marketMode='food',currentStore=null,basket=new Map(),merchantStore=null,merchantInventory=[];
+let activeDeliveryQuote=null,activeDeliveryDestination=null,deliveryQuoteSeq=0;
 const mtok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const mh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const mphp=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -235,8 +236,146 @@ function clearBasket(){basket.clear();updateBasket()}
 function basketTotals(){let count=0,total=0;if(!currentStore)return{count,total};for(const[id,q]of basket){const p=currentStore.products.find(x=>Number(x.id)===id);if(p){count+=q;total+=Number(p.selling_price)*q}}return{count,total}}
 function updateBasket(){const bar=document.getElementById('basketBar');const t=basketTotals();if(!bar)return;if(!t.count){bar.classList.add('hidden');return}bar.classList.remove('hidden');document.getElementById('basketStore').textContent=currentStore?.store_name||'Basket';document.getElementById('basketText').textContent=`${t.count} item${t.count===1?'':'s'} • ${mphp(t.total)}`}
 function closeCheckout(){document.getElementById('checkoutBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
-function openCheckout(){if(!currentStore||!basket.size)return;const c=document.getElementById('checkoutBackdrop'),p=document.getElementById('checkoutPanel');const t=basketTotals();const items=[...basket].map(([id,q])=>({p:currentStore.products.find(x=>Number(x.id)===id),q})).filter(x=>x.p);const fulfil=[];if(currentStore.pickup_enabled)fulfil.push('<option value="pickup">Pickup at merchant</option>');if(currentStore.delivery_enabled)fulfil.push('<option value="delivery">Delivery</option>');const pays=[];if(currentStore.cash_enabled)pays.push('<option value="cash">Cash</option>');if(currentStore.online_enabled)pays.push('<option value="online">Online / digital</option>');p.innerHTML=`<h2>Checkout</h2><p>${mh(currentStore.store_name)} • prices in PHP</p><div data-bl-pricing="customer_checkout"></div><div class="checkoutItems">${items.map(x=>`<div class="checkoutLine"><span>${x.q} × ${mh(x.p.name)}</span><strong>${mphp(Number(x.p.selling_price)*x.q)}</strong></div>`).join('')}<div class="checkoutLine checkoutTotal"><span>Total products</span><strong>${mphp(t.total)}</strong></div></div><form id="marketCheckoutForm" class="checkoutForm"><label>Fulfilment<select id="checkoutFulfil">${fulfil.join('')}</select></label><label>Payment<select id="checkoutPayment">${pays.join('')}</select></label><label id="checkoutAddressLabel" style="display:none">Delivery address<textarea id="checkoutAddress" rows="2">${mh(marketMe?.account?.address||'')}</textarea></label><label>Order note<textarea id="checkoutNote" rows="2" placeholder="Optional preparation note"></textarea></label><div id="checkoutMessage" class="checkoutMessage"></div><div class="checkoutActions"><button class="closeCheckout" type="button">Back</button><button class="placeOrder">Place order</button></div></form>`;c.classList.remove('hidden');document.body.style.overflow='hidden';const f=p.querySelector('#marketCheckoutForm'),ful=p.querySelector('#checkoutFulfil');const sync=()=>{p.querySelector('#checkoutAddressLabel').style.display=ful.value==='delivery'?'block':'none';if(ful.value==='delivery'&&p.querySelector('#checkoutPayment').value==='cash'){const online=[...p.querySelector('#checkoutPayment').options].find(o=>o.value==='online');if(online)p.querySelector('#checkoutPayment').value='online'}};ful.onchange=sync;sync();p.querySelector('.closeCheckout').onclick=closeCheckout;f.onsubmit=submitCheckout;document.dispatchEvent(new CustomEvent('abl:marketplace-checkout-rendered',{detail:{businessId:Number(currentStore.business_id)}}))}
-async function submitCheckout(e){e.preventDefault();const msg=document.getElementById('checkoutMessage');msg.textContent='';try{const items=[...basket].map(([product_id,quantity])=>({product_id,quantity}));const o=await mapi('/api/marketplace/checkout',{method:'POST',body:JSON.stringify({business_id:currentStore.business_id,items,fulfilment_method:document.getElementById('checkoutFulfil').value,payment_method:document.getElementById('checkoutPayment').value,delivery_address:document.getElementById('checkoutAddress')?.value||'',note:document.getElementById('checkoutNote').value})});basket.clear();updateBasket();closeCheckout();mtoast(`Order ${o.order_number} placed.`);setTimeout(()=>closeMarket(),1100)}catch(err){msg.textContent=err.message}}
+function checkoutItemsPayload(){return [...basket].map(([product_id,quantity])=>({product_id,quantity}))}
+function checkoutDeliverySelected(){return document.getElementById('checkoutFulfil')?.value==='delivery'}
+function checkoutDeliveryFee(quote=activeDeliveryQuote){return Number(quote?.customer_delivery_total??quote?.fee??0)||0}
+function checkoutQuoteExpired(quote=activeDeliveryQuote){const expiry=Date.parse(quote?.expires_at||'');return !Number.isFinite(expiry)||expiry<=Date.now()}
+function checkoutQuoteExpiryLabel(quote=activeDeliveryQuote){const expiry=new Date(quote?.expires_at||'');return Number.isFinite(expiry.getTime())?expiry.toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'}):''}
+function invalidateCheckoutDeliveryQuote(message=''){
+  activeDeliveryQuote=null;activeDeliveryDestination=null;deliveryQuoteSeq++;
+  const results=document.getElementById('checkoutAddressResults');if(results)results.innerHTML='';
+  const quote=document.getElementById('checkoutDeliveryQuote');if(quote)quote.innerHTML='<span>Delivery price will appear here before you place the order.</span>';
+  const msg=document.getElementById('checkoutMessage');if(msg&&message)msg.textContent=message;
+  updateCheckoutTotals();
+}
+function updateCheckoutTotals(){
+  const t=basketTotals(),delivery=checkoutDeliverySelected(),feeRow=document.getElementById('checkoutDeliveryLine'),fee=document.getElementById('checkoutDeliveryAmount'),final=document.getElementById('checkoutFinalAmount'),place=document.querySelector('#marketCheckoutForm .placeOrder');
+  if(!final||!place)return;
+  if(!delivery){
+    feeRow?.classList.add('hidden');final.textContent=mphp(t.total);place.disabled=false;return;
+  }
+  feeRow?.classList.remove('hidden');
+  if(activeDeliveryQuote&&!checkoutQuoteExpired(activeDeliveryQuote)){
+    const deliveryFee=checkoutDeliveryFee(activeDeliveryQuote);if(fee)fee.textContent=mphp(deliveryFee);final.textContent=mphp(t.total+deliveryFee);place.disabled=false;
+  }else{
+    if(activeDeliveryQuote&&checkoutQuoteExpired(activeDeliveryQuote)){activeDeliveryQuote=null;activeDeliveryDestination=null}
+    if(fee)fee.textContent='Calculate delivery';final.textContent='—';place.disabled=true;
+  }
+}
+function renderCheckoutAddressResults(results=[]){
+  const host=document.getElementById('checkoutAddressResults');if(!host)return;
+  if(!results.length){host.innerHTML='';return}
+  host.innerHTML=results.map((item,index)=>'<button type="button" class="checkoutAddressResult" data-delivery-address="'+index+'"><strong>'+mh(item.label||'')+'</strong><small>Select this delivery address</small></button>').join('');
+  host.querySelectorAll('[data-delivery-address]').forEach(button=>button.onclick=async()=>{
+    const item=results[Number(button.dataset.deliveryAddress)];if(!item)return;
+    const address=document.getElementById('checkoutAddress');if(address)address.value=item.label||'';
+    host.innerHTML='';await requestCheckoutDeliveryQuote(item);
+  });
+}
+async function requestCheckoutDeliveryQuote(destination){
+  const msg=document.getElementById('checkoutMessage'),quoteBox=document.getElementById('checkoutDeliveryQuote');
+  const lat=Number(destination?.lat),lng=Number(destination?.lng);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)){if(msg)msg.textContent='Choose a valid delivery address first.';return}
+  const seq=++deliveryQuoteSeq;activeDeliveryQuote=null;activeDeliveryDestination=null;updateCheckoutTotals();
+  if(msg)msg.textContent='Calculating delivery price…';
+  if(quoteBox)quoteBox.innerHTML='<span>Calculating the current Delivery price…</span>';
+  try{
+    const quote=await mapi('/api/delivery/quote',{method:'POST',body:JSON.stringify({
+      business_id:Number(currentStore.business_id),items:checkoutItemsPayload(),dropoff_lat:lat,dropoff_lng:lng
+    })});
+    if(seq!==deliveryQuoteSeq)return;
+    activeDeliveryQuote=quote;activeDeliveryDestination={label:String(destination.label||document.getElementById('checkoutAddress')?.value||''),lat,lng};
+    const distance=Number(quote.route_distance_km),expiry=checkoutQuoteExpiryLabel(quote);
+    if(quoteBox)quoteBox.innerHTML='<div><span>Delivery</span><strong>'+mphp(checkoutDeliveryFee(quote))+'</strong></div><small>'+(Number.isFinite(distance)?distance.toFixed(1)+' km · ':'')+(expiry?'Price valid until '+mh(expiry):'Current quote')+'</small>';
+    if(msg)msg.textContent='Final price calculated. Review the total before placing the order.';
+    updateCheckoutTotals();
+  }catch(error){
+    if(seq!==deliveryQuoteSeq)return;
+    activeDeliveryQuote=null;activeDeliveryDestination=null;
+    if(quoteBox)quoteBox.innerHTML='<span>Delivery price could not be calculated yet.</span>';
+    if(msg)msg.textContent=error.message;updateCheckoutTotals();
+  }
+}
+async function searchCheckoutDeliveryAddress(){
+  const address=document.getElementById('checkoutAddress'),button=document.getElementById('checkoutAddressSearch'),msg=document.getElementById('checkoutMessage');
+  const query=String(address?.value||'').trim();
+  if(query.length<3){if(msg)msg.textContent='Enter at least 3 characters for the delivery address.';return}
+  invalidateCheckoutDeliveryQuote();
+  if(button)button.disabled=true;if(msg)msg.textContent='Searching for the delivery address…';
+  try{
+    const data=await mapi('/api/delivery/address-search?q='+encodeURIComponent(query));
+    const results=Array.isArray(data?.results)?data.results:[];
+    if(!results.length){if(msg)msg.textContent='No matching delivery address was found. Add more street, city or province detail and try again.';return}
+    renderCheckoutAddressResults(results);if(msg)msg.textContent='Choose the matching address to calculate the delivery price.';
+  }catch(error){if(msg)msg.textContent=error.message}finally{if(button)button.disabled=false}
+}
+function useCheckoutDeliveryGps(){
+  const button=document.getElementById('checkoutUseGps'),msg=document.getElementById('checkoutMessage');
+  if(!window.isSecureContext||!navigator.geolocation){if(msg)msg.textContent='Current location is not available. Search the delivery address instead.';return}
+  invalidateCheckoutDeliveryQuote();if(button)button.disabled=true;if(msg)msg.textContent='Waiting for location permission…';
+  navigator.geolocation.getCurrentPosition(async position=>{
+    try{
+      const lat=position.coords.latitude,lng=position.coords.longitude;
+      const data=await mapi('/api/me/address/reverse',{method:'POST',body:JSON.stringify({latitude:lat,longitude:lng})});
+      const label=String(data?.address||'Current location');const address=document.getElementById('checkoutAddress');if(address)address.value=label;
+      await requestCheckoutDeliveryQuote({label,lat,lng});
+    }catch(error){if(msg)msg.textContent=error.message}finally{if(button)button.disabled=false}
+  },error=>{
+    if(button)button.disabled=false;
+    if(msg)msg.textContent=error?.code===1?'Location permission was not granted. Search the delivery address instead.':'Current location could not be read. Search the delivery address instead.';
+  },{enableHighAccuracy:true,timeout:12000,maximumAge:30000});
+}
+function openCheckout(){
+  if(!currentStore||!basket.size)return;
+  activeDeliveryQuote=null;activeDeliveryDestination=null;deliveryQuoteSeq++;
+  const c=document.getElementById('checkoutBackdrop'),p=document.getElementById('checkoutPanel'),t=basketTotals();
+  const items=[...basket].map(([id,q])=>({p:currentStore.products.find(x=>Number(x.id)===id),q})).filter(x=>x.p);
+  const fulfil=[];if(currentStore.pickup_enabled)fulfil.push('<option value="pickup">Pickup at merchant</option>');if(currentStore.delivery_enabled)fulfil.push('<option value="delivery">Delivery</option>');
+  const pays=[];if(currentStore.cash_enabled)pays.push('<option value="cash">Cash</option>');if(currentStore.online_enabled)pays.push('<option value="online">Online / digital</option>');
+  p.innerHTML='<h2>Checkout</h2><p>'+mh(currentStore.store_name)+' • prices in PHP</p><div data-bl-pricing="customer_checkout"></div><div class="checkoutItems">'+items.map(x=>'<div class="checkoutLine"><span>'+x.q+' × '+mh(x.p.name)+'</span><strong>'+mphp(Number(x.p.selling_price)*x.q)+'</strong></div>').join('')+'<div class="checkoutLine checkoutTotal"><span>Total products</span><strong>'+mphp(t.total)+'</strong></div><div id="checkoutDeliveryLine" class="checkoutLine hidden"><span>Delivery</span><strong id="checkoutDeliveryAmount">Calculate delivery</strong></div><div id="checkoutFinalLine" class="checkoutLine checkoutGrandTotal"><span>Final total</span><strong id="checkoutFinalAmount">'+mphp(t.total)+'</strong></div></div><form id="marketCheckoutForm" class="checkoutForm"><label>Fulfilment<select id="checkoutFulfil">'+fulfil.join('')+'</select></label><label>Payment<select id="checkoutPayment">'+pays.join('')+'</select></label><section id="checkoutDeliveryBox" class="checkoutDeliveryBox hidden"><label>Delivery address<textarea id="checkoutAddress" rows="2">'+mh(marketMe?.account?.address||'')+'</textarea></label><div class="checkoutDeliveryActions"><button id="checkoutAddressSearch" type="button">Confirm address & calculate price</button><button id="checkoutUseGps" type="button">Use current location</button></div><div id="checkoutAddressResults" class="checkoutAddressResults" aria-live="polite"></div><div id="checkoutDeliveryQuote" class="checkoutDeliveryQuote"><span>Delivery price will appear here before you place the order.</span></div></section><label>Order note<textarea id="checkoutNote" rows="2" placeholder="Optional preparation note"></textarea></label><div id="checkoutMessage" class="checkoutMessage"></div><div class="checkoutActions"><button class="closeCheckout" type="button">Back</button><button class="placeOrder" type="submit">Place order</button></div></form>';
+  c.classList.remove('hidden');document.body.style.overflow='hidden';
+  const form=p.querySelector('#marketCheckoutForm'),ful=p.querySelector('#checkoutFulfil'),payment=p.querySelector('#checkoutPayment'),deliveryBox=p.querySelector('#checkoutDeliveryBox'),address=p.querySelector('#checkoutAddress');
+  const sync=()=>{
+    const delivery=ful.value==='delivery';deliveryBox.classList.toggle('hidden',!delivery);
+    [...payment.options].forEach(option=>{if(option.value==='cash')option.disabled=delivery});
+    if(delivery&&payment.value==='cash'){const online=[...payment.options].find(o=>o.value==='online');if(online)payment.value='online'}
+    if(!delivery){activeDeliveryQuote=null;activeDeliveryDestination=null;deliveryQuoteSeq++;document.getElementById('checkoutMessage').textContent=''}
+    updateCheckoutTotals();
+  };
+  ful.onchange=()=>{invalidateCheckoutDeliveryQuote();sync()};sync();
+  if(address)address.oninput=()=>invalidateCheckoutDeliveryQuote('Address changed. Confirm it again to calculate Delivery.');
+  p.querySelector('#checkoutAddressSearch').onclick=()=>searchCheckoutDeliveryAddress();
+  p.querySelector('#checkoutUseGps').onclick=()=>useCheckoutDeliveryGps();
+  p.querySelector('.closeCheckout').onclick=closeCheckout;
+  form.onsubmit=submitCheckout;
+  updateCheckoutTotals();
+  document.dispatchEvent(new CustomEvent('abl:marketplace-checkout-rendered',{detail:{businessId:Number(currentStore.business_id)}}));
+}
+async function submitCheckout(e){
+  e.preventDefault();
+  const msg=document.getElementById('checkoutMessage');msg.textContent='';
+  try{
+    const delivery=checkoutDeliverySelected();
+    if(delivery&&(!activeDeliveryQuote||checkoutQuoteExpired(activeDeliveryQuote))){
+      invalidateCheckoutDeliveryQuote('Delivery price is missing or expired. Confirm the delivery address to calculate a current final total.');
+      return;
+    }
+    const body={
+      business_id:currentStore.business_id,
+      items:checkoutItemsPayload(),
+      fulfilment_method:document.getElementById('checkoutFulfil').value,
+      payment_method:document.getElementById('checkoutPayment').value,
+      delivery_address:document.getElementById('checkoutAddress')?.value||'',
+      note:document.getElementById('checkoutNote').value
+    };
+    if(delivery)body.delivery_quote_id=Number(activeDeliveryQuote.id);
+    const o=await mapi('/api/marketplace/checkout',{method:'POST',body:JSON.stringify(body)});
+    basket.clear();activeDeliveryQuote=null;activeDeliveryDestination=null;deliveryQuoteSeq++;updateBasket();closeCheckout();mtoast('Order '+o.order_number+' placed.');setTimeout(()=>closeMarket(),1100);
+  }catch(err){
+    if(/quote.*expired|quote.*missing/i.test(String(err.message||'')))invalidateCheckoutDeliveryQuote(err.message);
+    else msg.textContent=err.message;
+  }
+}
 
 async function openMerchantStore(){ensureMarket();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('marketWorkspace')){hideBase();marketWorkspace.classList.remove('hidden')}document.getElementById('basketBar').classList.add('hidden');await renderMerchantStore()}
 async function renderMerchantStore(){marketWorkspace.innerHTML=marketHeader('My Storefront','Publish your business into the local Marketplace')+'<div class="marketEmpty">Loading storefront…</div>';bindBack();try{[merchantStore,merchantInventory]=await Promise.all([mapi('/api/merchant/storefront'),mapi('/api/inventory')]);marketWorkspace.innerHTML=marketHeader('My Storefront','What customers see in Food / Non-food Marketplace')+merchantReadinessForm(merchantStore)+storeForm(merchantStore)+directProductForm(merchantInventory)+catalogSection(merchantStore.products||[]);bindBack();bindMerchantReadiness(merchantStore);upgradeStorefrontFormV2(merchantStore);bindStoreForm();bindStorefrontV2Controls(merchantStore);bindDirectProductForm();bindCatalog()}catch(e){marketWorkspace.innerHTML=marketHeader('My Storefront','Marketplace settings')+`<div class="marketEmpty">${mh(e.message)}</div>`;bindBack()}}

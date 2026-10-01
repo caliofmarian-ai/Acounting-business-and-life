@@ -10,6 +10,7 @@ import {allocateCourierCompensation} from './courier-compensation-core.js';
 import {verifyAdminAssertion} from './admin-authorization.js';
 import {suppliersFetch,startEmbeddedSuppliers,stopEmbeddedSuppliers} from './server-suppliers.js';
 import {createEmbeddedMarketplaceOrder} from './server-marketplace.js';
+import {geocodeAddress} from './server-marketplace.js';
 import {readOrderDetail} from './orders-read-core.js';
 import {
   bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
@@ -805,6 +806,13 @@ async function root(req,res){const r=await deliveryFetch(req.path,{headers:req.h
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/delivery/config',async(req,res,next)=>{try{await identity(req);const rule=await activeRule(),routing=deliveryRoutingPublicConfig();res.json({enabled:Boolean(rule),pricing_rule_version:rule?.version||null,routing_provider:routing.provider,routing_requested_provider:routing.requested_provider,routing_configured:routing.configured,routing_reason:routing.reason,live_map_provider:'OpenStreetMap/Leaflet preview'})}catch(e){next(e)}})
+app.get('/api/delivery/address-search',async(req,res,next)=>{try{
+  const me=await requireCustomer(req);
+  const country=clean(me.account?.identity_country_code||me.account?.country_code||'PH',2)||'PH';
+  const results=await geocodeAddress(req.query?.q,country);
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.json({provider:'OpenStreetMap Nominatim',results});
+}catch(e){next(e)}})
 app.post('/api/delivery/quote',body,async(req,res,next)=>{try{
   const me=await requireCustomer(req),businessId=Number(req.body?.business_id),lat=Number(req.body?.dropoff_lat),lng=Number(req.body?.dropoff_lng);
   if(!finite(lat)||!finite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Valid delivery coordinates are required'});
