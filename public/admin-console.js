@@ -210,11 +210,73 @@ async function openAdminApplication(id){
         await api('/api/governance/admin/applications/'+Number(a.id)+'/review',{method:'POST',body:JSON.stringify({decision,reason,approved_category_ids:approvedCategoryIds,adult_eligibility_reviewed:adultEligibilityReviewed})});
         await loadBase();
         if(decision==='under_review'){state.active='members';state.memberHubTab='requests';shell();await openAdminApplication(a.id)}
-        else{setAdminApplicationRoute(null);state.active='members';state.memberHubTab='requests';shell();await renderActive()}
+        else{
+          setAdminApplicationRoute(null);state.active='members';
+          state.memberHubTab=decision==='approve'&&isSuperAdmin()&&['merchant','service_provider'].includes(a.role)?'commerce':'requests';
+          shell();await renderActive()
+        }
       }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
     });
   }catch(error){showError(error)}
 }
+async function openAdminCommerceReadiness(accountId,role,businessId,label=''){
+  if(!isSuperAdmin())return showError(new Error('Commerce readiness review requires active Super Admin authority.'));
+  const account=Number(accountId);
+  if(!Number.isSafeInteger(account)||account<1)return showError(new Error('Account ID is invalid.'));
+  if(!['merchant','service_provider'].includes(role))return showError(new Error('Commerce readiness is available only for Merchant or Local Services.'));
+  if(role==='merchant'&&(!Number.isSafeInteger(Number(businessId))||Number(businessId)<1))return showError(new Error('Merchant business is required for commerce review.'));
+  const p=document.getElementById('adminPanel');if(!p)return;
+  p.innerHTML='<div class="adminLoading">Loading commerce readiness…</div>';
+  try{
+    const qs=role==='merchant'?('?business_id='+encodeURIComponent(Number(businessId))):'';
+    const readiness=await api('/api/governance/admin/readiness/'+account+'/'+encodeURIComponent(role)+qs);
+    const existing=new Map((Array.isArray(readiness.eligibility_evidence)?readiness.eligibility_evidence:[]).map(item=>[String(item.code||''),item]));
+    const requirements=Array.isArray(readiness.review_requirements)?readiness.review_requirements:[];
+    const checklist=requirements.length?requirements.map((req,index)=>{
+      const item=existing.get(String(req.code||''))||{},verified=item.outcome==='verified',na=item.outcome==='not_applicable';
+      return '<section class="card" data-commerce-evidence="'+esc(req.code||'')+'"><small class="muted">REVIEW ITEM '+(index+1)+'</small><h3>'+esc(req.label||req.code||'Requirement')+'</h3><p>'+esc(req.description||'')+'</p>'
+        +'<label>Outcome<select data-commerce-outcome><option value="">Choose…</option><option value="verified" '+(verified?'selected':'')+'>Verified</option>'+(req.allow_not_applicable?'<option value="not_applicable" '+(na?'selected':'')+'>Not applicable — sourced decision</option>':'')+'</select></label>'
+        +'<label>Evidence / record reference<input data-commerce-reference value="'+esc(item.reference||'')+'" placeholder="Document ID, credential ID, official record or internal evidence reference"></label>'
+        +'<label>Source / authority<input data-commerce-source value="'+esc(item.source_authority||'')+'" placeholder="e.g. Bacoor BPLO, BIR, DTI, platform record"></label>'
+        +'<label>Reviewer note<textarea data-commerce-note rows="2" placeholder="Why this satisfies the requirement, or why it is not applicable">'+esc(item.note||'')+'</textarea></label></section>';
+    }).join(''):'<div class="notice">Set the Merchant activity track and operating context before commerce eligibility can be reviewed.</div>';
+    p.innerHTML='<button type="button" class="secondary supportBack" id="commerceReviewBack">← Back to Commerce readiness</button>'
+      +'<section class="adminDetail"><div class="sectionTitle"><div><small class="muted">GOVERNED COMMERCE REVIEW</small><h2>'+esc(label||profileRoleLabel(role))+'</h2></div><span class="status">'+esc(readableCode(readiness.commerce_state||'readiness_only'))+'</span></div>'
+      +'<section class="card"><h3>Current readiness</h3><div class="supportMeta"><span>Stage: '+esc(readableCode(readiness.readiness_stage||'starting'))+'</span><span>Track: '+esc(readableCode(readiness.activity_track||'not set'))+'</span><span>Operating context: '+esc(readableCode(readiness.operating_context||'not set'))+'</span></div><p class="muted">Profile Authorization remains a separate gate. Business & Life records whether the applicable requirements were resolved; it does not issue or replace government permits, tax registrations or professional licences.</p></section>'
+      +'<section class="card"><h3>Evidence checklist</h3><p class="muted">Every required item must be resolved before eligibility is granted. Not applicable is allowed only where policy permits it and requires a source/authority plus a reason.</p></section>'
+      +checklist
+      +'<form id="adminCommerceReviewForm" class="adminForm"><section class="card"><h3>Super Admin commerce decision</h3>'
+      +'<label>Decision<select name="commerce_state"><option value="readiness_only" '+(readiness.commerce_state==='readiness_only'?'selected':'')+'>Readiness only</option><option value="eligible_limited" '+(readiness.commerce_state==='eligible_limited'?'selected':'')+'>Eligible — limited scope</option><option value="eligible_full" '+(readiness.commerce_state==='eligible_full'?'selected':'')+'>Eligible — full platform scope</option></select></label>'
+      +'<label>Review reason<textarea name="reason" rows="3" maxlength="500" placeholder="Summarise what was reviewed and why this decision is justified"></textarea></label>'
+      +'<label>Limited-scope note<textarea name="scope_note" rows="2" maxlength="500" placeholder="Required only for limited eligibility: territory, activity/category or capability limits"></textarea></label>'
+      +'<button class="primary" type="submit">Save commerce decision</button><div id="adminCommerceReviewResult"></div></section></form></section>';
+    document.getElementById('commerceReviewBack').onclick=async()=>{state.active='members';state.memberHubTab='commerce';shell();await renderActive()};
+    document.getElementById('adminCommerceReviewForm').onsubmit=async e=>{
+      e.preventDefault();
+      const form=e.currentTarget,out=document.getElementById('adminCommerceReviewResult'),button=form.querySelector('button[type="submit"]');
+      const commerceState=String(form.commerce_state.value||''),reason=String(form.reason.value||'').trim(),scopeNote=String(form.scope_note.value||'').trim();
+      if(commerceState!=='readiness_only'&&!reason)return out.innerHTML='<div class="error">Record the review reason before granting commerce eligibility.</div>';
+      if(commerceState==='eligible_limited'&&!scopeNote)return out.innerHTML='<div class="error">Define the limited commerce scope before granting limited eligibility.</div>';
+      const eligibilityEvidence=[...p.querySelectorAll('[data-commerce-evidence]')].map(card=>({
+        code:String(card.dataset.commerceEvidence||''),
+        outcome:String(card.querySelector('[data-commerce-outcome]')?.value||''),
+        reference:String(card.querySelector('[data-commerce-reference]')?.value||'').trim(),
+        source_authority:String(card.querySelector('[data-commerce-source]')?.value||'').trim(),
+        note:String(card.querySelector('[data-commerce-note]')?.value||'').trim()
+      }));
+      if(commerceState!=='readiness_only'&&eligibilityEvidence.some(item=>!item.outcome))return out.innerHTML='<div class="error">Resolve every evidence checklist item before granting commerce eligibility.</div>';
+      const payload={commerce_state:commerceState,reason,eligibility_evidence:commerceState==='readiness_only'?[]:eligibilityEvidence,commerce_scope:commerceState==='eligible_limited'?{note:scopeNote}:{}};
+      if(role==='merchant')payload.business_id=Number(businessId);
+      button.disabled=true;out.innerHTML='<div class="notice">Saving governed commerce decision…</div>';
+      try{
+        await api('/api/governance/admin/readiness/'+account+'/'+encodeURIComponent(role)+'/review',{method:'POST',body:JSON.stringify(payload)});
+        await loadBase();
+        await openAdminCommerceReadiness(account,role,businessId,label);
+      }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+    };
+  }catch(error){showError(error)}
+}
+
 async function openAdminAuthorization(id){
   const a=(state.overview?.authorizations||[]).find(x=>Number(x.id)===Number(id));
   if(!a)return showError(new Error('Authorization is no longer available in this scope.'));
@@ -252,6 +314,7 @@ function wireProfiles(){
   };
   document.querySelectorAll('[data-admin-application]').forEach(button=>button.onclick=()=>openAdminApplication(Number(button.dataset.adminApplication)));
   document.querySelectorAll('[data-admin-authorization]').forEach(button=>button.onclick=()=>openAdminAuthorization(Number(button.dataset.adminAuthorization)));
+  document.querySelectorAll('[data-admin-commerce-review]').forEach(button=>button.onclick=()=>openAdminCommerceReadiness(Number(button.dataset.adminCommerceReview),String(button.dataset.commerceRole||''),button.dataset.commerceBusiness?Number(button.dataset.commerceBusiness):null,String(button.dataset.commerceLabel||'')));
 }
 function memberDate(value){
   if(!value)return'—';
@@ -389,6 +452,7 @@ function memberHubTabs(){
   if(hasAny(MEMBER_PROFILE_REVIEW_PERMISSIONS))tabs.push({id:'requests',label:'Profile requests'});
   if(inviteRolesForAdmin().length)tabs.push({id:'invitations',label:'Invitations'});
   if(hasAny(MEMBER_PROFILE_GOVERNANCE_PERMISSIONS))tabs.push({id:'authorizations',label:'Authorizations'});
+  if(isSuperAdmin())tabs.push({id:'commerce',label:'Commerce readiness'});
   return tabs;
 }
 function activeMemberHubTab(){
@@ -409,11 +473,32 @@ function memberHubNav(tabs,counts={}){
 function memberHubHeader(tabs,counts={},subtitle='People, profile governance and authorizations in one place.'){
   return '<header class="memberDirectoryHeader memberHubHeader"><div><span class="memberEyebrow">ADMIN MEMBERS HUB</span><h2>Members</h2><p>'+esc(subtitle)+'</p></div></header>'+memberHubNav(tabs,counts);
 }
+function commerceReadinessRowsFromAuthorizations(auths=state.overview?.authorizations||[]){
+  const rows=[];
+  (auths||[]).filter(a=>a.status==='active'&&['merchant','service_provider'].includes(a.role)).forEach(a=>{
+    if(a.role==='merchant'){
+      const businesses=Array.isArray(a.businesses)?a.businesses:[];
+      if(!businesses.length)rows.push({...a,business_id:null,business_name:'No active Merchant business'});
+      else businesses.forEach(b=>rows.push({...a,business_id:Number(b.id),business_name:b.name||('Business #'+b.id)}));
+    }else rows.push({...a,business_id:null,business_name:'Local Services profile'});
+  });
+  return rows;
+}
+function commerceReadinessRow(x){
+  const noBusiness=x.role==='merchant'&&!Number.isInteger(Number(x.business_id));
+  return '<div class="row adminReviewRow"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">Profile authorized</span></div>'
+    +'<span>'+esc(profileRoleLabel(x.role))+' · '+esc(x.business_name||'Profile')+'</span>'
+    +'<span class="muted">'+(x.role==='merchant'&&x.business_id?'Business #'+Number(x.business_id)+' · ':'')+'Commerce eligibility is reviewed separately from profile access.</span>'
+    +(noBusiness?'<span class="error">No active Merchant business is available for commerce review.</span>':'<button class="secondary adminInlineAction" type="button" data-admin-commerce-review="'+Number(x.account_id)+'" data-commerce-role="'+esc(x.role)+'" data-commerce-business="'+(x.business_id?Number(x.business_id):'')+'" data-commerce-label="'+esc(x.business_name||x.display_name||'Profile')+'">Review commerce</button>')
+    +'</div>';
+}
+
 async function memberGovernancePanel(tab,tabs){
   await ensureAdminOverviewDetail();
   const apps=state.overview?.applications||[],auths=state.overview?.authorizations||[],invites=state.overview?.invitations||[];
   const pendingApps=apps.filter(x=>['submitted','under_review'].includes(String(x.status||''))).length;
-  const counts={requests:pendingApps,invitations:invites.length,authorizations:auths.length};
+  const commerceRows=commerceReadinessRowsFromAuthorizations(auths);
+  const counts={requests:pendingApps,invitations:invites.length,authorizations:auths.length,commerce:commerceRows.length};
   const header=memberHubHeader(tabs,counts);
   if(tab==='requests'){
     const pending=apps.filter(x=>['submitted','under_review'].includes(String(x.status||'')));
@@ -434,6 +519,13 @@ async function memberGovernancePanel(tab,tabs){
     return '<div class="memberV4 memberHubV5">'+header
       +'<section class="memberGovernanceIntro"><div><span class="memberEyebrow">PROFILE GOVERNANCE</span><h3>Authorizations</h3><p>Profile authorization remains separate from the person account. Access changes keep the existing confirmation and audit requirements.</p></div><span class="memberScopePill">'+auths.length+' records</span></section>'
       +rows(auths,profileAuthorizationRow)+'</div>';
+  }
+  if(tab==='commerce'){
+    if(!isSuperAdmin())throw new Error('Commerce readiness review requires active Super Admin authority.');
+    return '<div class="memberV4 memberHubV5">'+header
+      +'<section class="memberGovernanceIntro"><div><span class="memberEyebrow">COMMERCE GOVERNANCE</span><h3>Commerce readiness</h3><p>This is the second gate after Profile Authorization. Review the business activity, operating context and applicable evidence before allowing public commerce.</p></div><span class="memberScopePill">'+commerceRows.length+' reviewable</span></section>'
+      +'<div class="notice"><strong>Profile approval does not publish a business.</strong><br>Only a governed commerce decision can move Merchant or Local Services from readiness-only into eligible public commerce.</div>'
+      +rows(commerceRows,commerceReadinessRow)+'</div>';
   }
   throw new Error('This Members section is not available for the current Admin permission set.');
 }
