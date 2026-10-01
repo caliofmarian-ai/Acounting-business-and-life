@@ -312,6 +312,21 @@ app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 
 app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);const{rows}=await pool.query(`SELECT p.id,p.name,p.category,p.selling_price,p.active,COALESCE(SUM(r.quantity*i.unit_cost),0) unit_cost FROM products p LEFT JOIN recipes r ON r.product_id=p.id LEFT JOIN inventory i ON i.id=r.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 AND p.active=TRUE GROUP BY p.id ORDER BY p.category,p.name`,[business.id]);res.json(rows)}catch(e){next(e)}});
 
+app.get('/api/orders/inventory',async(req,res,next)=>{try{
+  const businessId=Number(req.query.business_id);
+  if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});
+  const{business}=await requireMerchant(req,businessId);
+  const{rows}=await pool.query(
+    `SELECT id,item,unit,quantity,reorder_level,unit_cost
+       FROM inventory
+      WHERE business_id=$1
+      ORDER BY (quantity<=reorder_level) DESC,item`,
+    [business.id]
+  );
+  res.json(rows)
+}catch(e){next(e)}})
+
+
 app.post('/api/orders',body,async(req,res,next)=>{try{const me=await requireCustomer(req);const a=me.account;await enforceHighRiskVelocity(pool,{actorAccountId:a.id,actionCode:'order_create',subjectType:'business',subjectId:req.body?.business_id});const result=await createOrder({businessId:Number(req.body?.business_id),customerAccountId:Number(a.id),customerName:a.display_name,customerContact:a.email||a.phone,items:req.body?.items,fulfilmentMethod:req.body?.fulfilment_method,paymentMethod:req.body?.payment_method,deliveryAddress:req.body?.delivery_address||a.address,note:req.body?.note,preparationEtaMinutes:req.body?.preparation_eta_minutes});res.status(201).json(result)}catch(e){next(e)}});
 app.get('/api/orders/mine',async(req,res,next)=>{try{
   const me=await requireCustomer(req);
