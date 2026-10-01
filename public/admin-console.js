@@ -210,8 +210,7 @@ async function openAdminApplication(id){
         await api('/api/governance/admin/applications/'+Number(a.id)+'/review',{method:'POST',body:JSON.stringify({decision,reason,approved_category_ids:approvedCategoryIds,adult_eligibility_reviewed:adultEligibilityReviewed})});
         await loadBase();
         if(decision==='under_review'){state.active='members';state.memberHubTab='requests';shell();await openAdminApplication(a.id)}
-        else{
-          setAdminApplicationRoute(null);state.active='members';
+        else{setAdminApplicationRoute(null);state.active='members';
           state.memberHubTab=decision==='approve'&&isSuperAdmin()&&['merchant','service_provider'].includes(a.role)?'commerce':'requests';
           shell();await renderActive()
         }
