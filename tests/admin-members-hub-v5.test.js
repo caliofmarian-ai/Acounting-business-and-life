@@ -70,7 +70,7 @@ test('Application and authorization detail routes return to the correct Members 
 });
 
 test('Members Hub V5 reuses existing Profile Governance rendering and wiring',()=>{
-  assert.match(ui,/rows\(apps,profileApplicationRow\)/);
+  assert.match(ui,/rows\(pending,profileApplicationRow\)/);
   assert.match(ui,/invitationAction\(\)/);
   assert.match(ui,/rows\(auths,profileAuthorizationRow\)/);
   assert.match(ui,/if\(state\.memberHubTab&&state\.memberHubTab!=='directory'\)\{\s*wireProfiles\(\)/);
