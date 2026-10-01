@@ -50,7 +50,7 @@ function shell(){
   const visible=modules.filter(m=>hasAny(m.any));
   if(!visible.some(x=>x.id===state.active))state.active=visible[0]?.id||'overview';
   root.className='workspace';
-  root.innerHTML='<nav class="adminNav">'+visible.map(m=>'<button type="button" data-module="'+m.id+'" class="'+(m.id===state.active?'active':'')+'">'+esc(m.label)+'</button>').join('')+'</nav><section class="adminMain"><div id="adminPanel"></div></section>';
+  root.innerHTML='<nav class="adminNav">'+visible.map(m=>{const pending=m.id==='members'?Number(state.overview?.summary?.pending_applications||0):0;const label=pending?m.label+' · '+pending+' approval'+(pending===1?'':'s'):m.label;return '<button type="button" data-module="'+m.id+'" class="'+(m.id===state.active?'active':'')+'">'+esc(label)+'</button>'}).join('')+'</nav><section class="adminMain"><div id="adminPanel"></div></section>';
   root.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>activateModule(b.dataset.module));
 }
 function activateModule(id){
@@ -137,8 +137,8 @@ function invitationAction(){
   return '<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>PROFILE ACTION</small><strong>Invite operational profile</strong><span>Create one private, territory-scoped onboarding invitation</span></span></summary><div class="adminDisclosureBody"><form id="profileInviteForm" class="adminForm"><div class="financeFormGrid"><label>Email<input name="target_email" type="email" autocomplete="off" required placeholder="person@example.com"></label><label>Profile<select name="role" required>'+roles.map(role=>'<option value="'+esc(role)+'">'+esc(profileRoleLabel(role))+'</option>').join('')+'</select></label><label>Operating territory<select name="territory_id" required>'+territories.map(t=>'<option value="'+Number(t.id)+'">'+esc(t.name)+' · '+esc(readableCode(t.status))+'</option>').join('')+'</select></label><label>Link expires in days<input name="expires_days" type="number" min="1" max="30" step="1" value="7" required></label></div><label>Invitation note<textarea name="note" maxlength="700" placeholder="Optional context for the invited person"></textarea></label><div class="notice">This creates an invitation to apply. It does not approve the profile or replace required evidence.</div><button class="primary" type="submit">Create private invitation</button><div id="profileInviteResult"></div></form></div></details>';
 }
 function profileApplicationRow(x){
-  const waiting=['submitted','under_review'].includes(x.status);
-  return '<button type="button" class="row queueRow adminReviewRow" data-admin-application="'+Number(x.id)+'"><div class="rowHeader"><strong>'+esc(x.display_name||x.email||('Account '+x.account_id))+'</strong><span class="status">'+esc(x.status)+'</span></div><span class="muted">'+esc(profileRoleLabel(x.role))+' · '+esc(x.territory_name||'Scoped territory')+' · '+Number(x.document_count||0)+' document'+(Number(x.document_count||0)===1?'':'s')+'</span><span class="adminRowAction">'+(waiting?'Review application':'Open details')+' ›</span></button>';
+  const waiting=['submitted','under_review'].includes(x.status),business=String(x.proposed_business_name||'').trim(),applicant=x.display_name||x.email||('Account '+x.account_id);
+  return '<button type="button" class="row queueRow adminReviewRow" data-admin-application="'+Number(x.id)+'"><div class="rowHeader"><strong>'+esc(business||applicant)+'</strong><span class="status">'+esc(x.status)+'</span></div>'+(business?'<span>'+esc(applicant)+'</span>':'')+'<span class="muted">'+esc(profileRoleLabel(x.role))+' · '+esc(x.territory_name||'Scoped territory')+' · '+Number(x.document_count||0)+' document'+(Number(x.document_count||0)===1?'':'s')+'</span><span class="adminRowAction">'+(waiting?'Review application':'Open details')+' ›</span></button>';
 }
 function profileAuthorizationRow(x){
   const canManage=hasAny(['profile.suspend']);
@@ -150,9 +150,21 @@ function applicationCategoryChoices(a){
   if(!cats.length)return '<div class="notice"><strong>No service category approval requested.</strong><br>Approving the profile will not invent or auto-authorize a service category.</div>';
   return '<fieldset class="adminEvidenceGroup"><legend>Requested Local Services categories</legend><p class="muted">Choose the categories you are approving. Credential-gated categories remain protected by server verification even if selected here.</p>'+cats.map(c=>'<label class="inlineChoice"><input type="checkbox" name="approved_category_ids" value="'+Number(c.id)+'" '+(!c.credential_gate?'checked':'')+'><span><strong>'+esc(c.name)+'</strong><small class="muted">'+(c.credential_gate?'Credential evidence required':'No credential gate')+'</small></span></label>').join('')+'</fieldset>';
 }
+function applicationEvidenceFileSize(bytes){
+  const n=Number(bytes||0);if(!Number.isFinite(n)||n<=0)return'Unknown size';
+  if(n<1024)return Math.round(n)+' B';
+  if(n<1024*1024)return (n/1024).toFixed(n<10240?1:0)+' KB';
+  return (n/(1024*1024)).toFixed(1)+' MB';
+}
+function applicationEvidenceType(mime=''){
+  const value=String(mime||'').toLowerCase();
+  if(value==='application/pdf')return'PDF document';
+  if(value.startsWith('image/'))return value==='image/jpeg'?'JPEG image':value==='image/png'?'PNG image':value==='image/webp'?'WebP image':'Image';
+  return value||'Unknown file type';
+}
 function applicationEvidenceHtml(a){
   const docs=Array.isArray(a.documents)?a.documents:[],credentials=Array.isArray(a.credentials)?a.credentials:[],services=Array.isArray(a.existing_services)?a.existing_services:[];
-  return '<div class="adminEvidenceGrid"><section class="card"><h3>Documents</h3>'+(docs.length?docs.map(d=>'<button class="secondary adminEvidenceButton" type="button" data-application-document="'+Number(d.id)+'">'+esc(d.label||d.document_type||('Document '+d.id))+'</button>').join(''):'<p class="muted">No uploaded application documents.</p>')+'</section><section class="card"><h3>Credentials</h3>'+(credentials.length?credentials.map(c=>'<div class="adminEvidenceLine"><strong>'+esc(c.title||c.credential_type)+'</strong><span class="muted">'+esc(c.issuing_body||'')+' · '+esc(c.verification_status||'unknown')+(c.expiry_date?' · '+esc(String(c.expiry_date).slice(0,10)):'')+'</span></div>').join(''):'<p class="muted">No credential records.</p>')+'</section></div>'+(services.length?'<section class="card"><h3>Existing services</h3>'+services.map(s=>'<div class="adminEvidenceLine"><strong>'+esc(s.name||s.service_label||s.code)+'</strong><span class="muted">'+esc(s.service_label||s.code||'')+'</span></div>').join('')+'</section>':'');
+  return '<div class="adminEvidenceGrid"><section class="card"><h3>Documents</h3><p class="muted">Check the detected file type and scan status, then open the original evidence before making a decision.</p>'+(docs.length?docs.map(d=>'<div class="adminEvidenceLine"><strong>'+esc(d.label||d.document_type||('Document '+d.id))+'</strong><span>'+esc(d.original_file_name||'Uploaded evidence')+'</span><span class="muted">'+esc(applicationEvidenceType(d.detected_mime))+' · '+esc(applicationEvidenceFileSize(d.byte_size))+' · scan '+esc(d.scan_status||'unknown')+'</span><button class="secondary adminEvidenceButton" type="button" data-application-document="'+Number(d.id)+'">Open document</button></div>').join(''):'<p class="muted">No uploaded application documents.</p>')+'</section><section class="card"><h3>Credentials</h3>'+(credentials.length?credentials.map(c=>'<div class="adminEvidenceLine"><strong>'+esc(c.title||c.credential_type)+'</strong><span class="muted">'+esc(c.issuing_body||'')+' · '+esc(c.verification_status||'unknown')+(c.expiry_date?' · '+esc(String(c.expiry_date).slice(0,10)):'')+'</span></div>').join(''):'<p class="muted">No credential records.</p>')+'</section></div>'+(services.length?'<section class="card"><h3>Existing services</h3>'+services.map(s=>'<div class="adminEvidenceLine"><strong>'+esc(s.name||s.service_label||s.code)+'</strong><span class="muted">'+esc(s.service_label||s.code||'')+'</span></div>').join('')+'</section>':'');
 }
 async function viewAdminApplicationDocument(id){
   const popup=window.open('about:blank','_blank','noopener,noreferrer');
@@ -368,7 +380,10 @@ function memberHubTabs(){
 function activeMemberHubTab(){
   const tabs=memberHubTabs();
   if(!tabs.length)return{tabs,active:null};
-  if(!tabs.some(x=>x.id===state.memberHubTab))state.memberHubTab=tabs[0].id;
+  if(!tabs.some(x=>x.id===state.memberHubTab)){
+    const pending=Number(state.overview?.summary?.pending_applications||0);
+    state.memberHubTab=pending>0&&tabs.some(x=>x.id==='requests')?'requests':tabs[0].id;
+  }
   return{tabs,active:state.memberHubTab};
 }
 function memberHubNav(tabs,counts={}){
@@ -387,9 +402,13 @@ async function memberGovernancePanel(tab,tabs){
   const counts={requests:pendingApps,invitations:invites.length,authorizations:auths.length};
   const header=memberHubHeader(tabs,counts);
   if(tab==='requests'){
+    const pending=apps.filter(x=>['submitted','under_review'].includes(String(x.status||'')));
+    const history=apps.filter(x=>!['submitted','under_review'].includes(String(x.status||'')));
     return '<div class="memberV4 memberHubV5">'+header
-      +'<section class="memberGovernanceIntro"><div><span class="memberEyebrow">PROFILE GOVERNANCE</span><h3>Profile requests</h3><p>Review governed onboarding applications inside your delegated scope. Evidence access and approval authority remain permission-gated.</p></div><span class="memberScopePill">'+pendingApps+' pending</span></section>'
-      +rows(apps,profileApplicationRow)+'</div>';
+      +'<section class="memberGovernanceIntro"><div><span class="memberEyebrow">PROFILE GOVERNANCE</span><h3>Profile requests</h3><p>Applications awaiting a decision are shown first. Open an application to inspect its details and private uploaded evidence before approving or rejecting it.</p></div><span class="memberScopePill">'+pendingApps+' pending</span></section>'
+      +'<div class="sectionTitle"><h3>Awaiting review</h3></div>'+rows(pending,profileApplicationRow)
+      +(history.length?'<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>HISTORY</small><strong>Previous applications</strong><span>'+history.length+' record'+(history.length===1?'':'s')+'</span></span></summary><div class="adminDisclosureBody">'+rows(history,profileApplicationRow)+'</div></details>':'')
+      +'</div>';
   }
   if(tab==='invitations'){
     return '<div class="memberV4 memberHubV5">'+header
@@ -1615,12 +1634,27 @@ async function loadBase(){
   if(!me.is_admin)throw Object.assign(new Error('No delegated Admin workspace is available for this account.'),{code:'NOT_ADMIN'});
   state.me=me;state.catalog=bootstrap.catalog||{};state.overview=bootstrap.overview||{};state.memberSummary=null;
 }
+async function openProfileApplicationFromContext(applicationId){
+  const id=Number(applicationId);
+  if(!Number.isSafeInteger(id)||id<1)throw new Error('Application ID is invalid.');
+  state.active='members';state.memberHubTab='requests';shell();await openAdminApplication(id);
+}
 async function boot(){
   if(!token()){root.className='adminDenied';root.innerHTML='<h2>Admin sign-in required</h2><p>Open the main app and sign in with the account that received delegated Admin authority.</p><a class="adminButton" href="/">Return to app</a>';return}
-  try{await loadBase();shell();await renderActive()}catch(e){root.className='adminDenied';root.innerHTML='<h2>Admin workspace unavailable</h2><p>'+esc(e.message)+'</p><a class="adminButton" href="/">Return to app</a>'}
+  try{
+    await loadBase();
+    const applicationId=Number(new URLSearchParams(location.search).get('application'));
+    if(Number.isSafeInteger(applicationId)&&applicationId>0){
+      history.replaceState({},'',location.pathname);
+      await openProfileApplicationFromContext(applicationId);
+      return;
+    }
+    shell();await renderActive();
+  }catch(e){root.className='adminDenied';root.innerHTML='<h2>Admin workspace unavailable</h2><p>'+esc(e.message)+'</p><a class="adminButton" href="/">Return to app</a>'}
 }
 window.BusinessLifeAdminConsole=Object.freeze({
   openSupportTicket:async ticketId=>{state.active='support';shell();await openAdminSupportTicket(Number(ticketId))},
+  openProfileApplication:openProfileApplicationFromContext,
   openIncident:async incidentId=>{state.active='safety';shell();await openAdminIncident(Number(incidentId))},
   openCase:async caseId=>{state.active='safety';shell();await openAdminTrustCase(Number(caseId))}
 });
