@@ -540,3 +540,75 @@
   .memberInsightChips>span{padding:6px 8px}
   .memberProfileDistributionBody{grid-template-columns:1fr}
 }
+
+
+/* COMMERCE READINESS ADMIN GUIDANCE UX V1 */
+.commerceReviewDetail{display:grid;gap:14px}
+.commerceReviewDetail>.sectionTitle{align-items:flex-start;margin-top:8px}
+.commerceReviewDetail>.sectionTitle h2{margin:3px 0 5px;font-size:25px}
+.commerceReviewDetail>.sectionTitle p{margin:0;max-width:760px;line-height:1.5}
+.commerceReviewSummary{display:grid;gap:12px;background:linear-gradient(145deg,#11253a,#0c2f35)}
+.commerceReviewSummaryTop{display:flex;align-items:flex-end;justify-content:space-between;gap:14px}
+.commerceReviewSummaryTop>div{display:grid;gap:3px}
+.commerceReviewSummaryTop small,.commerceDecisionEyebrow,.commerceReviewGroupHead>small{color:var(--accent);font-size:9px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+.commerceReviewSummaryTop strong{font-size:16px}
+.commerceReviewSummaryTop>span{font-size:18px;font-weight:900;color:var(--accent)}
+.commerceReviewProgress{height:7px;border-radius:999px;overflow:hidden;background:#07101d;border:1px solid #2a4059}
+.commerceReviewProgress i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#42c6a8,#60d6b4)}
+.commerceReviewFacts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.commerceReviewFacts>span{display:grid;gap:3px;padding:10px;border:1px solid #2a4059;border-radius:12px;background:#0b1928}
+.commerceReviewFacts small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.commerceReviewFacts b{font-size:11px;overflow-wrap:anywhere}
+.commerceReviewHow{background:#11253a}
+.commerceReviewHow h3{margin:0 0 8px;font-size:16px}
+.commerceReviewHow ol{margin:0;padding-left:20px;display:grid;gap:6px;color:#d7e1ec;font-size:12px;line-height:1.45}
+.commerceReviewHow>p{margin:11px 0 0;padding-top:11px;border-top:1px solid var(--line);color:var(--muted);font-size:11px;line-height:1.5}
+.commerceReviewSections{display:grid;gap:18px}
+.commerceReviewGroup{display:grid;gap:10px}
+.commerceReviewGroupHead{padding:2px 2px 0}
+.commerceReviewGroupHead h3{margin:4px 0 4px;font-size:18px}
+.commerceReviewGroupHead p{margin:0;color:var(--muted);font-size:12px;line-height:1.5;max-width:820px}
+.commerceReviewItem{display:grid;gap:12px;padding:16px;border-radius:18px}
+.commerceReviewItem.resolved{border-color:rgba(96,214,180,.55);box-shadow:inset 3px 0 0 rgba(96,214,180,.75)}
+.commerceReviewItemHead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.commerceReviewStep,.commerceReviewResolved{display:inline-flex;align-items:center;min-height:26px;padding:5px 9px;border-radius:999px;font-size:9px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
+.commerceReviewStep{background:#142c43;color:#a9d5ff;border:1px solid #31506d}
+.commerceReviewResolved{background:rgba(96,214,180,.12);color:var(--accent);border:1px solid rgba(96,214,180,.45)}
+.commerceReviewItem h3{margin:0;font-size:17px;line-height:1.35}
+.commerceReviewPlain{margin:-4px 0 0;color:#b8c6d6;font-size:12px;line-height:1.55}
+.commerceCurrentValue{display:grid;gap:3px;padding:11px 12px;border-radius:12px;border:1px solid rgba(96,214,180,.35);background:rgba(96,214,180,.07)}
+.commerceCurrentValue small{font-size:9px;color:var(--accent);font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.commerceCurrentValue strong{font-size:12px}
+.commerceReviewHelpGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.commerceReviewHelpGrid>div{padding:11px 12px;border-radius:13px;border:1px solid var(--line);background:#0c1826}
+.commerceReviewHelpGrid h4{margin:0 0 7px;font-size:11px}
+.commerceReviewHelpGrid ul{margin:0;padding-left:17px;display:grid;gap:5px;color:var(--muted);font-size:11px;line-height:1.45}
+.commerceOutcomeGuide{padding:10px 11px;border-radius:12px;background:#111f31;border:1px solid #2b415c;color:#c9d6e4;font-size:11px;line-height:1.5}
+.commerceReviewItem label,.commerceDecisionCard label{display:grid;gap:5px;font-weight:800;font-size:11px}
+.commerceReviewItem input,.commerceReviewItem select,.commerceReviewItem textarea,.commerceDecisionCard select,.commerceDecisionCard textarea{width:100%;border:1px solid #31465f;background:#0a1624;color:#e9f0f7;border-radius:11px;padding:10px 11px;font:inherit;font-size:14px;line-height:1.35;min-height:42px}
+.commerceReviewItem textarea,.commerceDecisionCard textarea{resize:vertical}
+.commerceReviewItem select option,.commerceDecisionCard select option{background:#0a1624;color:#e9f0f7}
+.commerceFieldHelp,.commerceFieldHint{font-size:10px;line-height:1.45;color:var(--muted);font-weight:500}
+.commerceFieldHint{padding:9px 10px;border-left:3px solid var(--accent);background:#0c1b29;border-radius:0 10px 10px 0}
+.commerceDecisionForm{margin:0}
+.commerceDecisionCard{display:grid;gap:11px;border-color:rgba(96,214,180,.45);background:linear-gradient(145deg,#102637,#102e2d)}
+.commerceDecisionCard h3{margin:0;font-size:18px}
+.commerceDecisionCard>p{margin:-4px 0 2px;color:var(--muted);font-size:12px;line-height:1.45}
+.commerceDecisionCard .primary{min-height:46px;font-weight:900}
+@media(max-width:760px){
+  .commerceReviewFacts{grid-template-columns:1fr 1fr}
+  .commerceReviewHelpGrid{grid-template-columns:1fr}
+}
+@media(max-width:520px){
+  .commerceReviewDetail{gap:11px}
+  .commerceReviewDetail>.sectionTitle{display:grid;gap:8px}
+  .commerceReviewDetail>.sectionTitle h2{font-size:21px}
+  .commerceReviewSummary,.commerceReviewHow,.commerceReviewItem,.commerceDecisionCard{padding:13px;border-radius:15px}
+  .commerceReviewSummaryTop{align-items:flex-start}
+  .commerceReviewSummaryTop strong{font-size:14px}
+  .commerceReviewFacts{grid-template-columns:1fr}
+  .commerceReviewGroupHead h3{font-size:16px}
+  .commerceReviewItem h3{font-size:15px}
+  .commerceReviewHelpGrid{gap:8px}
+  .commerceReviewItem input,.commerceReviewItem select,.commerceReviewItem textarea,.commerceDecisionCard select,.commerceDecisionCard textarea{font-size:16px;min-height:44px}
+}
