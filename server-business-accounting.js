@@ -13,6 +13,8 @@ import {startEmbeddedProfileGovernance,stopEmbeddedProfileGovernance} from './se
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
 import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
+import { inventoryLotExpiryStatus } from './inventory-lot-core.js';
+import { planInventoryFefo,applyLotAllocations,canUseSupplyLots } from './inventory-lot-runtime.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +37,14 @@ const money = value => Math.round((Number(value)+Number.EPSILON)*100)/100;
 const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
 const authHeader = req => req.headers.authorization || '';
 const roleEnabled = (me,role) => Boolean(me?.profiles?.some(p=>p.role===role && p.enabled));
+function inventoryExpiryTimestamp(value){
+  const raw=clean(value,40);
+  if(!raw)return null;
+  const normalized=/^\d{4}-\d{2}-\d{2}$/.test(raw)?raw+'T23:59:59+08:00':raw;
+  const date=new Date(normalized);
+  if(Number.isNaN(date.getTime()))throw Object.assign(new Error('Expiry / best-before date is invalid'),{status:400});
+  return date.toISOString();
+}
 
 async function upstream(path,options={}){return authHardeningFetch(path,options)}
 async function identity(req) {
@@ -192,6 +202,18 @@ async function initAccountingTenancyDb() {
       ON inventory_adjustments(business_id,created_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS inventory_adjustments_inventory_idx
       ON inventory_adjustments(inventory_id,created_at DESC,id DESC);
+
+    CREATE TABLE IF NOT EXISTS product_sale_lot_allocations (
+      sale_id BIGINT NOT NULL REFERENCES product_sales(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      lot_id BIGINT NOT NULL,
+      quantity_used NUMERIC(16,6) NOT NULL CHECK(quantity_used>0),
+      expires_at_snapshot TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(sale_id,inventory_id,lot_id)
+    );
+    CREATE INDEX IF NOT EXISTS product_sale_lot_allocations_lot_idx
+      ON product_sale_lot_allocations(lot_id,created_at DESC);
 
     CREATE TABLE IF NOT EXISTS merchant_order_consumable_rules (
       id BIGSERIAL PRIMARY KEY,
@@ -487,6 +509,8 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
     const itemName=clean(req.body?.item,100);
     if(!itemName)return res.status(400).json({error:'Item is required'});
     const inventoryType=normalizeInventoryType(req.body?.inventory_type);
+    const expiryAt=inventoryExpiryTimestamp(req.body?.expires_at);
+    const supplierLotCode=clean(req.body?.lot_code,90);
     const account=clean(req.body?.account||'cash',30);
     if(!ACCOUNTS.has(account))return res.status(400).json({error:'Choose where the purchase was paid from'});
     let purchase;
@@ -552,6 +576,28 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         RETURNING *
       `,[ctx.business.id,inventoryRow.id,purchase.purchase_quantity,purchase.purchase_unit,purchase.base_quantity,purchase.base_unit,purchase.total_cost,account,clean(req.body?.note,300)]);
 
+      let lot=null;
+      if(await canUseSupplyLots(client)){
+        const internalLot=`INV-${ctx.business.id}-${purchaseRecord.rows[0].id}`;
+        const lotInsert=await client.query(`
+          INSERT INTO supply_lots(
+            business_id,supply_party_id,purchase_order_id,purchase_receipt_id,purchase_order_item_id,
+            inventory_id,item_name,internal_lot_code,supplier_lot_code,handling_mode,base_unit,
+            quantity_received_base,quantity_remaining_base,unit_cost_base,package_unit_name,
+            package_size_base,package_count_received,expires_at,received_at,note,created_by_account_id
+          ) VALUES(
+            $1,NULL,NULL,NULL,NULL,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$13,NOW(),$14,$15
+          ) RETURNING *
+        `,[
+          ctx.business.id,inventoryRow.id,itemName,internalLot,supplierLotCode,
+          inventoryType==='ingredient'?'bulk':'sealed_resale',purchase.base_unit,purchase.base_quantity,
+          purchase.base_unit_cost,purchase.purchase_unit,
+          purchase.purchase_quantity>0?purchase.base_quantity/purchase.purchase_quantity:null,
+          purchase.purchase_quantity,expiryAt,clean(req.body?.note,1000),ctx.me.account.id
+        ]);
+        lot=lotInsert.rows[0];
+      }
+
       let transaction=null;
       if(purchase.total_cost>0&&req.body?.record_expense!==false){
         const tx=await client.query(`
@@ -568,6 +614,7 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
       res.status(201).json({
         inventory:inventoryRow,
         purchase:purchaseRecord.rows[0],
+        lot,
         transaction,
         conversion:{
           entered:`${purchase.purchase_quantity} ${purchase.purchase_unit}`,
@@ -579,6 +626,40 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
       await client.query('ROLLBACK').catch(()=>{});
       throw error;
     }finally{client.release()}
+  }catch(error){next(error)}
+});
+
+app.get('/api/inventory/lots',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    if(!(await canUseSupplyLots(pool)))return res.json([]);
+    const params=[ctx.business.id];
+    let inventoryFilter='';
+    if(req.query.inventory_id){
+      const inventoryId=Number(req.query.inventory_id);
+      if(!Number.isInteger(inventoryId))return res.status(400).json({error:'Invalid inventory_id'});
+      params.push(inventoryId);inventoryFilter=' AND l.inventory_id=$2';
+    }
+    const {rows}=await pool.query(`
+      SELECT l.id,l.business_id,l.inventory_id,l.item_name,l.internal_lot_code,l.supplier_lot_code,
+             COALESCE(to_jsonb(l)->>'lot_state','available') lot_state,
+             l.base_unit,l.quantity_received_base,l.quantity_remaining_base,l.unit_cost_base,
+             l.expires_at,l.received_at,l.created_at,i.inventory_type
+        FROM supply_lots l
+        JOIN inventory i ON i.id=l.inventory_id AND i.business_id=l.business_id
+       WHERE l.business_id=$1 ${inventoryFilter}
+       ORDER BY l.expires_at NULLS LAST,l.received_at DESC,l.id DESC
+       LIMIT 500
+    `,params);
+    const now=Date.now();
+    res.json(rows.map(row=>{
+      const expiry_status=inventoryLotExpiryStatus(row.expires_at,{now,soonDays:3});
+      const expiryMs=row.expires_at?new Date(row.expires_at).getTime():null;
+      const days_to_expiry=expiryMs==null||!Number.isFinite(expiryMs)?null:Math.ceil((expiryMs-now)/(24*60*60*1000));
+      const state=String(row.lot_state||'available');
+      return{...row,expiry_status,days_to_expiry,usable:state==='available'&&expiry_status!=='expired'&&Number(row.quantity_remaining_base)>0};
+    }));
   }catch(error){next(error)}
 });
 
@@ -771,7 +852,78 @@ app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
   }catch(error){next(error)}
 });
 
-app.post('/api/product-sales',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),productId=Number(req.body?.product_id),quantity=Number(req.body?.quantity),account=req.body?.account||'cash',note=clean(req.body?.note||'',250),occurredAt=req.body?.occurred_at||null;if(!Number.isInteger(productId)||!positive(quantity)||!ACCOUNTS.has(account))return res.status(400).json({error:'Product, quantity and valid account are required.'});const client=await pool.connect();try{await client.query('BEGIN');const pr=await client.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2 FOR SHARE`,[productId,business.id]);if(!pr.rowCount)throw Object.assign(new Error('Product not found.'),{status:404});const product=pr.rows[0];if(!product.active)throw Object.assign(new Error('This product is inactive.'),{status:409});const recipe=await client.query(`SELECT r.inventory_id,r.quantity recipe_quantity,i.item,i.unit,i.quantity stock_quantity,i.unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i`,[productId,business.id]);const shortages=[];let unitCost=0;for(const row of recipe.rows){const needed=Number(row.recipe_quantity)*quantity,stock=Number(row.stock_quantity);unitCost+=Number(row.recipe_quantity)*Number(row.unit_cost);if(stock+1e-9<needed)shortages.push({item:row.item,unit:row.unit,required:needed,available:stock,short:needed-stock})}if(shortages.length)throw Object.assign(new Error('Not enough stock for this sale.'),{status:409,shortages});const unitPrice=Number(product.selling_price),revenue=money(unitPrice*quantity),cogs=money(unitCost*quantity),gross=money(revenue-cogs);const tx=await client.query(`INSERT INTO transactions(business_id,type,category,amount,payment_method,account,note,source,occurred_at) VALUES($1,'sale',$2,$3,$4,$4,$5,'product_sale',COALESCE($6::timestamptz,NOW())) RETURNING *`,[business.id,product.name,revenue,account,clean(`${quantity} × ${product.name}${note?` • ${note}`:''}`,250),occurredAt]);const sale=await client.query(`INSERT INTO product_sales(business_id,product_id,product_name_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,revenue,estimated_cogs,gross_profit,account,transaction_id,note,occurred_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13::timestamptz,NOW())) RETURNING *`,[business.id,productId,product.name,quantity,unitPrice,unitCost,revenue,cogs,gross,account,tx.rows[0].id,note,occurredAt]);const saleId=sale.rows[0].id;await client.query(`UPDATE transactions SET source_id=$1 WHERE id=$2`,[saleId,tx.rows[0].id]);for(const row of recipe.rows){const used=Number(row.recipe_quantity)*quantity,componentCost=used*Number(row.unit_cost);await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[used,row.inventory_id,business.id]);await client.query(`INSERT INTO product_sale_ingredients(sale_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6)`,[saleId,row.inventory_id,row.item,used,Number(row.unit_cost),componentCost])}await client.query('COMMIT');res.status(201).json({...sale.rows[0],margin_pct:revenue>0?Math.round((gross/revenue)*1000)/10:0})}catch(e){await client.query('ROLLBACK').catch(()=>{});if(e.shortages)return res.status(e.status||409).json({error:e.message,shortages:e.shortages});throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/product-sales',jsonBody,async(req,res,next)=>{
+  try{
+    const{business}=await accountingContext(req);
+    const productId=Number(req.body?.product_id),quantity=Number(req.body?.quantity);
+    const account=req.body?.account||'cash',note=clean(req.body?.note||'',250),occurredAt=req.body?.occurred_at||null;
+    if(!Number.isInteger(productId)||!positive(quantity)||!ACCOUNTS.has(account))return res.status(400).json({error:'Product, quantity and valid account are required.'});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const pr=await client.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2 FOR SHARE`,[productId,business.id]);
+      if(!pr.rowCount)throw Object.assign(new Error('Product not found.'),{status:404});
+      const product=pr.rows[0];
+      if(!product.active)throw Object.assign(new Error('This product is inactive.'),{status:409});
+      const recipe=await client.query(`
+        SELECT r.inventory_id,r.quantity recipe_quantity,i.item,i.unit,i.quantity stock_quantity,i.unit_cost
+          FROM recipes r
+          JOIN inventory i ON i.id=r.inventory_id
+         WHERE r.product_id=$1 AND i.business_id=$2
+         ORDER BY i.id
+         FOR UPDATE OF i
+      `,[productId,business.id]);
+      const shortages=[],plans=new Map();let unitCost=0;
+      for(const row of recipe.rows){
+        const needed=Number(row.recipe_quantity)*quantity,stock=Number(row.stock_quantity);
+        unitCost+=Number(row.recipe_quantity)*Number(row.unit_cost);
+        const plan=await planInventoryFefo(client,{
+          businessId:business.id,inventoryId:row.inventory_id,inventoryQuantity:stock,quantityNeeded:needed,lock:true
+        });
+        plans.set(Number(row.inventory_id),plan);
+        if(!plan.ok)shortages.push({
+          item:row.item,unit:row.unit,required:needed,available:plan.usable_quantity,
+          short:Math.max(0,needed-plan.usable_quantity),reason:'expired_or_held_lot_stock'
+        });
+      }
+      if(shortages.length)throw Object.assign(new Error('Not enough usable stock for this sale. Expired or held lots are excluded.'),{status:409,shortages});
+      const unitPrice=Number(product.selling_price),revenue=money(unitPrice*quantity),cogs=money(unitCost*quantity),gross=money(revenue-cogs);
+      const tx=await client.query(`
+        INSERT INTO transactions(business_id,type,category,amount,payment_method,account,note,source,occurred_at)
+        VALUES($1,'sale',$2,$3,$4,$4,$5,'product_sale',COALESCE($6::timestamptz,NOW())) RETURNING *
+      `,[business.id,product.name,revenue,account,clean(`${quantity} × ${product.name}${note?` • ${note}`:''}`,250),occurredAt]);
+      const sale=await client.query(`
+        INSERT INTO product_sales(business_id,product_id,product_name_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,revenue,estimated_cogs,gross_profit,account,transaction_id,note,occurred_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13::timestamptz,NOW())) RETURNING *
+      `,[business.id,productId,product.name,quantity,unitPrice,unitCost,revenue,cogs,gross,account,tx.rows[0].id,note,occurredAt]);
+      const saleId=sale.rows[0].id;
+      await client.query(`UPDATE transactions SET source_id=$1 WHERE id=$2`,[saleId,tx.rows[0].id]);
+      for(const row of recipe.rows){
+        const used=Number(row.recipe_quantity)*quantity,componentCost=used*Number(row.unit_cost);
+        const plan=plans.get(Number(row.inventory_id));
+        await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[used,row.inventory_id,business.id]);
+        await client.query(`
+          INSERT INTO product_sale_ingredients(sale_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot)
+          VALUES($1,$2,$3,$4,$5,$6)
+        `,[saleId,row.inventory_id,row.item,used,Number(row.unit_cost),componentCost]);
+        await applyLotAllocations(client,plan?.allocations||[]);
+        for(const allocation of plan?.allocations||[]){
+          await client.query(`
+            INSERT INTO product_sale_lot_allocations(sale_id,inventory_id,lot_id,quantity_used,expires_at_snapshot)
+            VALUES($1,$2,$3,$4,$5)
+            ON CONFLICT(sale_id,inventory_id,lot_id) DO UPDATE SET quantity_used=product_sale_lot_allocations.quantity_used+EXCLUDED.quantity_used
+          `,[saleId,row.inventory_id,allocation.lot_id,allocation.quantity,allocation.expires_at]);
+        }
+      }
+      await client.query('COMMIT');
+      res.status(201).json({...sale.rows[0],margin_pct:revenue>0?Math.round((gross/revenue)*1000)/10:0});
+    }catch(e){
+      await client.query('ROLLBACK').catch(()=>{});
+      if(e.shortages)return res.status(e.status||409).json({error:e.message,shortages:e.shortages});
+      throw e;
+    }finally{client.release()}
+  }catch(e){next(e)}
+});
 app.get('/api/product-sales',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT ps.*,t.created_at transaction_created_at FROM product_sales ps JOIN transactions t ON t.id=ps.transaction_id WHERE ps.business_id=$1 ORDER BY ps.occurred_at DESC,ps.id DESC LIMIT 250`,[business.id]);res.json(rows)}catch(e){next(e)}});
 app.get('/api/product-profitability',async(req,res,next)=>{try{const{business}=await accountingContext(req),days=Number(req.query.days)===30?30:7;const totals=await pool.query(`SELECT COALESCE(SUM(quantity),0) portions,COALESCE(SUM(revenue),0) revenue,COALESCE(SUM(estimated_cogs),0) cogs,COALESCE(SUM(gross_profit),0) gross_profit FROM product_sales WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day')`,[business.id,days]);const products=await pool.query(`SELECT product_id,product_name_snapshot name,COALESCE(SUM(quantity),0) quantity,COALESCE(SUM(revenue),0) revenue,COALESCE(SUM(estimated_cogs),0) cogs,COALESCE(SUM(gross_profit),0) gross_profit FROM product_sales WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day') GROUP BY product_id,product_name_snapshot ORDER BY gross_profit DESC,revenue DESC`,[business.id,days]);const t=totals.rows[0],revenue=Number(t.revenue),gross=Number(t.gross_profit);res.json({days,totals:{portions:Number(t.portions),revenue,cogs:Number(t.cogs),gross_profit:gross,margin_pct:revenue>0?Math.round((gross/revenue)*1000)/10:0},products:products.rows.map(r=>{const rev=Number(r.revenue),gp=Number(r.gross_profit);return{...r,product_id:Number(r.product_id),quantity:Number(r.quantity),revenue:rev,cogs:Number(r.cogs),gross_profit:gp,margin_pct:rev>0?Math.round((gp/rev)*1000)/10:0}})})}catch(e){next(e)}});
 

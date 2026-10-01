@@ -8,6 +8,7 @@ import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetiza
 import { readOrderDetail } from './orders-read-core.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
+import {planInventoryFefo,applyLotAllocations,restoreLotAllocation} from './inventory-lot-runtime.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -188,6 +189,19 @@ async function initDb() {
       PRIMARY KEY(order_id, inventory_id)
     );
 
+    CREATE TABLE IF NOT EXISTS order_stock_lot_allocations (
+      order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      lot_id BIGINT NOT NULL,
+      quantity_used NUMERIC(16,6) NOT NULL CHECK(quantity_used>0),
+      expires_at_snapshot TIMESTAMPTZ,
+      reversed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(order_id,inventory_id,lot_id)
+    );
+    CREATE INDEX IF NOT EXISTS order_stock_lot_allocations_lot_idx
+      ON order_stock_lot_allocations(lot_id,created_at DESC);
+
     CREATE TABLE IF NOT EXISTS merchant_order_consumable_rules (
       id BIGSERIAL PRIMARY KEY,
       business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
@@ -292,7 +306,16 @@ async function createOrder({ businessId, customerAccountId=null, customerName=''
 
 async function consumeStock(client, order) {
   if(order.stock_consumed_at) return;
-  const rows=await client.query(`SELECT oi.source_id product_id,oi.quantity order_quantity,r.inventory_id,r.quantity recipe_quantity,i.item,i.quantity stock_quantity,i.unit_cost FROM order_items oi JOIN recipes r ON r.product_id=oi.source_id JOIN inventory i ON i.id=r.inventory_id WHERE oi.order_id=$1 AND oi.source_kind='product' AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i`,[order.id,order.business_id]);
+  const rows=await client.query(`
+    SELECT oi.source_id product_id,oi.quantity order_quantity,r.inventory_id,r.quantity recipe_quantity,
+           i.item,i.quantity stock_quantity,i.unit_cost
+      FROM order_items oi
+      JOIN recipes r ON r.product_id=oi.source_id
+      JOIN inventory i ON i.id=r.inventory_id
+     WHERE oi.order_id=$1 AND oi.source_kind='product' AND i.business_id=$2
+     ORDER BY i.id
+     FOR UPDATE OF i
+  `,[order.id,order.business_id]);
   const needs=new Map();
   for(const r of rows.rows){
     const id=Number(r.inventory_id),used=Number(r.order_quantity)*Number(r.recipe_quantity);
@@ -310,24 +333,59 @@ async function consumeStock(client, order) {
      FOR UPDATE OF i
   `,[order.business_id,order.fulfilment_method]);
   for(const r of consumables.rows){
-    const id=Number(r.inventory_id);
-    const multiplier=r.usage_basis==='per_item'?itemCount:1;
+    const id=Number(r.inventory_id),multiplier=r.usage_basis==='per_item'?itemCount:1;
     const used=Number(r.quantity_used)*multiplier;
     const existing=needs.get(id)||{inventory_id:id,item:r.item,stock:Number(r.stock_quantity),unit_cost:Number(r.unit_cost),used:0};
     existing.used+=used;needs.set(id,existing);
   }
-  const shortages=[...needs.values()].filter(n=>n.stock+1e-9<n.used).map(n=>({item:n.item,required:n.used,available:n.stock,short:n.used-n.stock}));
-  if(shortages.length) throw Object.assign(new Error('Not enough stock to start preparation'),{status:409,shortages});
+
+  const plans=new Map(),shortages=[];
   for(const n of needs.values()){
+    const plan=await planInventoryFefo(client,{
+      businessId:order.business_id,inventoryId:n.inventory_id,inventoryQuantity:n.stock,quantityNeeded:n.used,lock:true
+    });
+    plans.set(n.inventory_id,plan);
+    if(!plan.ok)shortages.push({
+      item:n.item,required:n.used,available:plan.usable_quantity,
+      short:Math.max(0,n.used-plan.usable_quantity),reason:'expired_or_held_lot_stock'
+    });
+  }
+  if(shortages.length)throw Object.assign(new Error('Not enough usable stock to start preparation. Expired or held lots are excluded.'),{status:409,shortages});
+
+  for(const n of needs.values()){
+    const plan=plans.get(n.inventory_id);
     await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2`,[n.used,n.inventory_id]);
-    await client.query(`INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(order_id,inventory_id) DO NOTHING`,[order.id,n.inventory_id,n.item,n.used,n.unit_cost,n.used*n.unit_cost]);
+    await client.query(`
+      INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot)
+      VALUES($1,$2,$3,$4,$5,$6)
+      ON CONFLICT(order_id,inventory_id) DO UPDATE SET
+        quantity_used=order_stock_consumptions.quantity_used+EXCLUDED.quantity_used,
+        cost_snapshot=order_stock_consumptions.cost_snapshot+EXCLUDED.cost_snapshot
+    `,[order.id,n.inventory_id,n.item,n.used,n.unit_cost,n.used*n.unit_cost]);
+    await applyLotAllocations(client,plan?.allocations||[]);
+    for(const allocation of plan?.allocations||[]){
+      await client.query(`
+        INSERT INTO order_stock_lot_allocations(order_id,inventory_id,lot_id,quantity_used,expires_at_snapshot)
+        VALUES($1,$2,$3,$4,$5)
+        ON CONFLICT(order_id,inventory_id,lot_id) DO UPDATE SET
+          quantity_used=order_stock_lot_allocations.quantity_used+EXCLUDED.quantity_used
+      `,[order.id,n.inventory_id,allocation.lot_id,allocation.quantity,allocation.expires_at]);
+    }
   }
   await client.query(`UPDATE orders SET stock_consumed_at=NOW(),updated_at=NOW() WHERE id=$1 AND stock_consumed_at IS NULL`,[order.id]);
 }
 async function reverseStock(client, order) {
   if(!order.stock_consumed_at||order.stock_reversed_at) return;
   const c=await client.query(`SELECT * FROM order_stock_consumptions WHERE order_id=$1 AND reversed_at IS NULL FOR UPDATE`,[order.id]);
-  for(const row of c.rows){await client.query(`UPDATE inventory SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2`,[row.quantity_used,row.inventory_id]);await client.query(`UPDATE order_stock_consumptions SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2 AND reversed_at IS NULL`,[order.id,row.inventory_id])}
+  for(const row of c.rows){
+    await client.query(`UPDATE inventory SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2`,[row.quantity_used,row.inventory_id]);
+    await client.query(`UPDATE order_stock_consumptions SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2 AND reversed_at IS NULL`,[order.id,row.inventory_id]);
+  }
+  const lotRows=await client.query(`SELECT * FROM order_stock_lot_allocations WHERE order_id=$1 AND reversed_at IS NULL FOR UPDATE`,[order.id]);
+  for(const allocation of lotRows.rows){
+    await restoreLotAllocation(client,{lotId:allocation.lot_id,quantity:allocation.quantity_used});
+    await client.query(`UPDATE order_stock_lot_allocations SET reversed_at=NOW() WHERE order_id=$1 AND inventory_id=$2 AND lot_id=$3 AND reversed_at IS NULL`,[order.id,allocation.inventory_id,allocation.lot_id]);
+  }
   await client.query(`UPDATE orders SET stock_reversed_at=NOW(),updated_at=NOW() WHERE id=$1`,[order.id]);
 }
 

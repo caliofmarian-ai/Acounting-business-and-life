@@ -246,11 +246,21 @@
             <label>Notify me when stock falls below<input id="stockReorderQty" type="number" min="0" step="0.0001" value="0" /></label>
             <label>Reorder unit<select id="stockReorderUnit"><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="L">L</option><option value="unit">unit / piece</option></select></label>
           </div>
+          <div class="grid2">
+            <label>Lot / batch code<input id="stockLotCode" maxlength="90" placeholder="Optional supplier or batch code" /></label>
+            <label>Expiry / best before<input id="stockExpiry" type="date" /></label>
+          </div>
+          <small class="muted">Every new purchase is tracked as a lot. Expiry is optional, but adding it lets Business & Life warn you and use the earliest-expiring safe stock first.</small>
           <label>Note<input id="stockNote" placeholder="Optional supplier / receipt note" /></label>
           <div id="stockPurchasePreview" class="salePreview"></div>
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
         <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
+        <div class="card stack">
+          <div class="sectionHead"><div><h2>Lots & expiry</h2><p class="muted">Earliest expiry first. Expired or held lots are not considered usable FEFO stock.</p></div><button id="lotRefresh" type="button" class="secondary">Refresh lots</button></div>
+          <div id="lotSummary" class="salePreview">No tracked lots yet.</div>
+          <div id="lotList" class="list"></div>
+        </div>
         <div class="card stack">
           <div><h2>Waste & stock count</h2><p class="muted">Record real losses or correct stock after a physical count. These changes adjust Inventory only; they do not pretend cash moved.</p></div>
           <form id="stockAdjustmentForm" class="stack">
