@@ -12,75 +12,75 @@ const UNIT_META={
   unit:{family:'count',base:'unit',factor:1}
 };
 const STOCK_PICKER_CATALOG=[
-  {category:'Meat & poultry',items:[
+  {category:'Meat & poultry',type:'ingredient',items:[
     ['Chicken thighs / drumsticks','kg'],['Chicken leg quarters','kg'],['Chicken breast','kg'],['Whole chicken','kg'],
     ['Pork belly','kg'],['Pork shoulder','kg'],['Ground pork','kg'],['Pork ribs','kg'],['Beef brisket','kg'],['Beef sirloin','kg'],
     ['Ground beef','kg'],['Chicken liver','kg']
   ]},
-  {category:'Fish & seafood',items:[
+  {category:'Fish & seafood',type:'ingredient',items:[
     ['Bangus (milkfish)','kg'],['Tilapia','kg'],['Galunggong','kg'],['Tuna','kg'],['Squid','kg'],['Shrimp','kg'],['Mussels','kg']
   ]},
-  {category:'Vegetables & herbs',items:[
+  {category:'Vegetables & herbs',type:'ingredient',items:[
     ['Onion','kg'],['Garlic','kg'],['Ginger','kg'],['Tomato','kg'],['Carrot','kg'],['Cabbage','kg'],['Eggplant','kg'],
     ['Green papaya','kg'],['Radish','kg'],['String beans','kg'],['Pechay','kg'],['Kangkong','kg'],['Malunggay leaves','kg'],
     ['Green chili','kg'],['Bell pepper','kg'],['Potato','kg'],['Sweet potato','kg'],['Lemongrass','kg'],['Spring onion','kg']
   ]},
-  {category:'Fruit & citrus',items:[
+  {category:'Fruit & citrus',type:'ingredient',items:[
     ['Calamansi','kg'],['Banana','kg'],['Mango','kg'],['Pineapple','kg'],['Coconut','unit'],['Lime','kg']
   ]},
-  {category:'Rice, noodles & dry goods',items:[
+  {category:'Rice, noodles & dry goods',type:'ingredient',items:[
     ['Rice','kg'],['Canton noodles','kg'],['Rice noodles','kg'],['Flour','kg'],['Cornstarch','kg'],['Breadcrumbs','kg'],
     ['Ground toasted rice','kg'],['White sugar','kg'],['Brown sugar','kg'],['Salt','kg'],['Black pepper','kg'],['Bay leaves','unit']
   ]},
-  {category:'Sauces, condiments & seasonings',items:[
+  {category:'Sauces, condiments & seasonings',type:'ingredient',items:[
     ['Soy sauce','L'],['Cane vinegar','L'],['Fish sauce','L'],['Oyster sauce','L'],['Sweet chili sauce','L'],
     ['Banana ketchup','L'],['Mayonnaise','kg'],['Peanut butter','kg'],['Shrimp paste (bagoong)','kg'],['Annatto oil','L'],
     ['Annatto powder','kg'],['Sinigang mix','unit'],['Vanilla extract','L']
   ]},
-  {category:'Eggs, dairy & canned milk',items:[
+  {category:'Eggs, dairy & canned milk',type:'ingredient',items:[
     ['Eggs','unit'],['Condensed milk','unit'],['Evaporated milk','unit'],['Fresh milk','L'],['Butter','kg'],['Cheese','kg']
   ]},
-  {category:'Cooking oils & fats',items:[
+  {category:'Cooking oils & fats',type:'ingredient',items:[
     ['Cooking oil','L'],['Coconut oil','L'],['Margarine','kg']
   ]},
-  {category:'Wrappers, canned & packaged ingredients',items:[
+  {category:'Wrappers, canned & packaged ingredients',type:'ingredient',items:[
     ['Lumpia wrappers','unit'],['Coconut milk','L'],['Canned sardines','unit'],['Canned tuna','unit'],['Tomato sauce','L'],
     ['Tomato paste','kg']
   ]},
-  {category:'Drinks & beverage supplies',items:[
+  {category:'Drinks & beverage supplies',type:'ingredient',items:[
     ['Bottled water','unit'],['Soft drinks','unit'],['Coffee','kg'],['Tea','unit'],['Ice','kg']
   ]},
-  {category:'Takeout & delivery packaging',items:[
+  {category:'Takeout & delivery packaging',type:'packaging',items:[
     ['Meal boxes / takeout boxes','unit'],['Microwavable food containers','unit'],['Container lids','unit'],
     ['Paper bowls','unit'],['Soup cups / tubs','unit'],['Sauce cups','unit'],['Sauce cup lids','unit'],
     ['Paper bags','unit'],['Takeout carrier bags','unit'],['Pizza boxes','unit'],['Aluminum trays','unit'],
     ['Clamshell containers','unit'],['Ziplock bags','unit'],['Sealing film','unit'],['Packaging tape','unit']
   ]},
-  {category:'Disposable service items',items:[
+  {category:'Disposable service items',type:'packaging',items:[
     ['Napkins / tissue','unit'],['Disposable spoons','unit'],['Disposable forks','unit'],['Disposable knives','unit'],
     ['Chopsticks','unit'],['Straws','unit'],['Wooden stirrers','unit'],['Paper plates','unit'],
     ['Plastic cups','unit'],['Paper cups','unit'],['Cup lids','unit']
   ]},
-  {category:'Kitchen prep consumables',items:[
+  {category:'Kitchen prep consumables',type:'kitchen_consumable',items:[
     ['Cling wrap','unit'],['Aluminum foil','unit'],['Wax paper','unit'],['Greaseproof paper','unit'],
     ['Parchment / baking paper','unit'],['Food storage bags','unit'],['Food labels','unit'],
     ['Date labels / stickers','unit'],['Permanent markers','unit'],['Disposable piping bags','unit']
   ]},
-  {category:'Cleaning & sanitation',items:[
+  {category:'Cleaning & sanitation',type:'cleaning_sanitation',items:[
     ['Dishwashing liquid','L'],['Food-safe sanitizer','L'],['Bleach / disinfectant','L'],['Hand soap','L'],
     ['Degreaser','L'],['Glass cleaner','L'],['Floor cleaner','L'],['Sponges','unit'],['Scouring pads','unit'],
     ['Dishcloths','unit'],['Cleaning towels','unit'],['Paper towels','unit'],['Mop heads','unit'],
     ['Trash bags - black','unit'],['Trash bags - green','unit'],['Trash bags - yellow','unit']
   ]},
-  {category:'Food handling & hygiene',items:[
+  {category:'Food handling & hygiene',type:'hygiene',items:[
     ['Disposable food gloves','unit'],['Hairnets','unit'],['Face masks','unit'],['Aprons','unit'],
     ['Sleeve covers','unit'],['Disposable caps','unit']
   ]},
-  {category:'Storage & organization supplies',items:[
+  {category:'Storage & organization supplies',type:'operational_supply',items:[
     ['Food storage containers','unit'],['Ingredient bins','unit'],['Cambro-style containers','unit'],
     ['Storage container lids','unit'],['Shelf labels','unit'],['FIFO labels','unit']
   ]},
-  {category:'Front counter & operations',items:[
+  {category:'Front counter & operations',type:'operational_supply',items:[
     ['Receipt paper rolls','unit'],['Order paper / kitchen tickets','unit'],['Pens','unit'],
     ['Thermal labels','unit'],['Delivery stickers / tamper seals','unit']
   ]}
@@ -93,6 +93,7 @@ function initStockPicker(){
   const renderItems=()=>{
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
     item.replaceChildren();
+    if(group&&$('stockInventoryType'))$('stockInventoryType').value=group.type||'ingredient';
     if(!group){
       item.append(new Option('Choose a category first',''));
       item.disabled=true;
@@ -112,6 +113,8 @@ function initStockPicker(){
     if(!option?.value)return;
     $('stockItem').value=option.value;
     const unit=option.dataset.unit||'unit';
+    const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
+    if($('stockInventoryType'))$('stockInventoryType').value=group?.type||'ingredient';
     syncUnitSelect('stockPurchaseUnit',unit);
     syncUnitSelect('stockReorderUnit',unit);
     stockPurchasePreview();
@@ -370,7 +373,7 @@ async function sendRestockRequest(x,row){
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
   inventory=results[0];
-  const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${num(i.quantity,4)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
+  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${num(i.quantity,4)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
   $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
   if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect()
@@ -393,7 +396,7 @@ function fillProductSelects(){
   $('recipeProduct').innerHTML=prepared.length?prepared.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join(''):'<option value="">Create a prepared product first</option>';
   updateSellPreview();if(prepared.length&&!$('recipeProduct').value)$('recipeProduct').value=String(prepared[0].id);
 }
-function fillIngredientSelect(){$('recipeIngredient').innerHTML=inventory.length?inventory.map(i=>`<option value="${i.id}">${esc(i.item)} — ${num(i.quantity)} ${esc(i.unit)}</option>`).join(''):'<option value="">Add stock items first</option>'}
+function fillIngredientSelect(){const ingredients=inventory.filter(i=>(i.inventory_type||'ingredient')==='ingredient');$('recipeIngredient').innerHTML=ingredients.length?ingredients.map(i=>`<option value="${i.id}">${esc(i.item)} — ${num(i.quantity)} ${esc(i.unit)}</option>`).join(''):'<option value="">Add ingredient stock first</option>'}
 async function loadProducts(){products=await cachedJson('/api/products','products');const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');$('productList').replaceChildren(...(prepared.length?prepared.map(productCard):[emptyRow('Create the first prepared product.') ]));fillProductSelects();syncRecipeDraftFromSelected()}
 function updateSellPreview(){const p=products.find(x=>x.id===Number($('sellProduct').value));const q=Math.max(0,Number($('sellQty').value||1));if(!p){$('sellPreview').textContent='Create a menu product first.';return}const rev=p.selling_price*q,cost=p.estimated_unit_cost*q,gross=rev-cost;$('sellPreview').innerHTML=`Revenue <strong>${money(rev)}</strong> • ingredient cost <strong>${money(cost)}</strong> • estimated gross <strong class="${gross>=0?'positive':'negative'}">${money(gross)}</strong>`}
 function recipeState(){
@@ -447,7 +450,7 @@ if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
 if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
 
 $('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';invalidateMerchantToday();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';$('stockInventoryType').value='ingredient';$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});
