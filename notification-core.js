@@ -70,8 +70,8 @@ const templates=[
   ['support.user_reply','fil-PH','Sumagot ang user sa Support','May bagong sagot ang customer sa ticket #{{ticket_id}}.'],
   ['incident.updated','en-PH','Incident updated','Your incident report #{{incident_id}} is now {{status}}.'],
   ['incident.updated','fil-PH','Na-update ang incident','Ang incident report #{{incident_id}} ay {{status}} na.'],
-  ['profile.application_submitted','en-PH','Profile application submitted','A {{role}} application is awaiting review.'],
-  ['profile.application_submitted','fil-PH','Na-submit ang profile application','May {{role}} application na naghihintay ng review.'],
+  ['profile.application_submitted','en-PH','New {{role_label}} profile application','{{applicant_name}} submitted a {{role_label}} profile application in {{territory_name}}. {{business_context}}Open it to review the details and uploaded documents.'],
+  ['profile.application_submitted','fil-PH','Bagong {{role_label}} profile application','Nagsumite si {{applicant_name}} ng {{role_label}} profile application sa {{territory_name}}. {{business_context}}Buksan ito para suriin ang detalye at mga dokumentong na-upload.'],
   ['profile.application_reviewed','en-PH','Profile application updated','Your {{role}} application is now {{status}}.'],
   ['profile.application_reviewed','fil-PH','Na-update ang profile application','Ang {{role}} application mo ay {{status}} na.'],
   ['profile.authorization_changed','en-PH','Profile authorization updated','Your {{role}} authorization is now {{status}}.'],
@@ -468,7 +468,7 @@ async function sendQueuedEmail(pool,row){
   const template=await loadTemplate(pool,row.event_code,row.locale,'email',row.data_json);
   const category=row.category||'operational';
   const department=emailDepartment(row.event_code,category);
-  const actionUrl=emailTargetUrl({baseUrl:process.env.AUTH_PUBLIC_BASE_URL||'/',entityType:row.entity_type,entityId:row.entity_id});
+  const actionUrl=emailTargetUrl({baseUrl:process.env.AUTH_PUBLIC_BASE_URL||'/',entityType:row.entity_type,entityId:row.entity_id,roleHint:row.role_hint});
   const presentation=renderTransactionalEmail({subject:template.title,body:template.body,department,roleHint:row.role_hint,actionUrl,actionLabel:'Open Business & Life'});
   return resendEmail({to:email,subject:presentation.subject,html:presentation.html,text:presentation.text,eventCode:row.event_code,category});
 }
@@ -495,7 +495,7 @@ async function sendQueuedPush(pool,row){
     renotify:attentionPref.important_alerts_enabled?baseAttention.renotify:false,
     requireInteraction:attentionPref.important_alerts_enabled?baseAttention.requireInteraction:false
   };
-  const targetUrl=row.entity_type==='support_ticket'&&row.entity_id?`/?support_ticket=${encodeURIComponent(row.entity_id)}`:'/';
+  const targetUrl=row.entity_type==='support_ticket'&&row.entity_id?`/?support_ticket=${encodeURIComponent(row.entity_id)}`:row.entity_type==='profile_application'&&row.entity_id&&String(row.role_hint||'').toLowerCase()==='admin'?`/admin?application=${encodeURIComponent(row.entity_id)}`:'/';
   const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id,attention});
   let successes=0,lastError='';
   for(const sub of subs){
