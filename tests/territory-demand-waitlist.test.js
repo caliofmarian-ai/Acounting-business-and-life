@@ -20,10 +20,10 @@ test('registration remains allowed for any official barangay regardless of opera
   assert.doesNotMatch(block,/operational_onboarding_available.*return res\.status/);
 });
 
-test('address-derived barangay feeds aggregate expansion demand without exposing the street address',()=>{
+test('selected PSGC barangay feeds aggregate expansion demand without exposing free-text address data',()=>{
   const geo=read('account-geography.js');
-  assert.match(auth,/source:'address_derived_psgc'/);
-  assert.match(geo,/resolveAddressBarangayCandidate/);
+  assert.match(auth,/source:'account_settings_selected_psgc'/);
+  assert.match(geo,/saveAccountGeography/);
   assert.match(demand,/FROM account_geography_assignments a JOIN ph_geographic_registry/);
   assert.match(demand,/registered_accounts/);
   assert.match(demand,/new_accounts_7d/);
@@ -58,8 +58,8 @@ test('Admin demand view is aggregate only and rolls account demand through geogr
   assert.match(governance,/\/api\/governance\/admin\/territory-demand/);
   assert.match(adminProxy,/\/api\/governance\/admin\/territory-demand/);
   assert.match(adminUi,/Territory Demand/);
-  assert.match(adminUi,/Accounts by detected PSGC area plus profile interest, aggregated without street addresses/);
-  assert.match(adminUi,/When a user confirms one personal address, Business & Life derives the PSGC area and counts that account here/);
+  assert.match(adminUi,/Accounts by selected PSGC area plus profile interest, aggregated without street addresses/);
+  assert.match(adminUi,/When a user selects an official PSGC barangay, Business & Life counts that account here/);
   assert.match(adminUi,/Demand informs expansion\. It never opens a territory automatically/);
 });
 
@@ -71,8 +71,10 @@ test('area-opening notification carries a Manage profiles action but no marketin
   assert.match(notificationsUi,/openAccountSettings\?\.\('profiles'\)/);
 });
 
-test('typed barangay search does not preload onboarding territories',()=>{
+test('registration geography options follow the official parent-child PSGC hierarchy',()=>{
   const geo=read('account-geography.js');
-  assert.match(geo,/if\(!q\)return\{source_version:version,items:\[\]\}/);
-  assert.doesNotMatch(geo,/if\(!q\)\{[\s\S]*t\.status IN \('onboarding','active'\)/);
+  assert.match(geo,/listOfficialGeographyChildren/);
+  assert.match(geo,/g\.parent_psgc_code=\$2/);
+  assert.match(auth,/\/api\/auth\/geography\/options/);
+  assert.doesNotMatch(geo,/listOfficialGeographyChildren[\s\S]*t\.status IN \('onboarding','active'\)/);
 });
