@@ -573,11 +573,11 @@ async function eligibleCouriersForDelivery(db,delivery){
 }
 async function expireStaleDeliveryOffers(db,{deliveryId=null,courierAccountId=null,businessId=null}={}){
   const values=[],where=["dof.status='pending'","dof.expires_at IS NOT NULL","dof.expires_at<=NOW()"];
-  if(deliveryId!=null){values.push(Number(deliveryId));where.push(`dof.delivery_id=${values.length}`)}
-  if(courierAccountId!=null){values.push(Number(courierAccountId));where.push(`dof.courier_account_id=${values.length}`)}
+  if(deliveryId!=null){values.push(Number(deliveryId));where.push(`dof.delivery_id=$${values.length}`)}
+  if(courierAccountId!=null){values.push(Number(courierAccountId));where.push(`dof.courier_account_id=$${values.length}`)}
   if(businessId!=null){
     values.push(Number(businessId));
-    where.push(`EXISTS(SELECT 1 FROM deliveries dx WHERE dx.id=dof.delivery_id AND dx.business_id=${values.length})`);
+    where.push(`EXISTS(SELECT 1 FROM deliveries dx WHERE dx.id=dof.delivery_id AND dx.business_id=$${values.length})`);
   }
   const{rows}=await db.query(`
     UPDATE delivery_offers dof
