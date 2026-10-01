@@ -309,7 +309,7 @@ function commerceReviewItemMarkup(req,index,total,item,readiness){
     +'</section>';
 }
 
-async function openAdminCommerceReadiness(accountId,role,businessId,label=''){
+async function openAdminCommerceReadiness(accountId,role,businessId,label='',returnMemberId=null){
   if(!isSuperAdmin())return showError(new Error('Commerce readiness review requires active Super Admin authority.'));
   const account=Number(accountId);
   if(!Number.isSafeInteger(account)||account<1)return showError(new Error('Account ID is invalid.'));
@@ -347,7 +347,15 @@ async function openAdminCommerceReadiness(accountId,role,businessId,label=''){
       +'<label>Why are you making this decision?<textarea name="reason" rows="3" maxlength="500" placeholder="Summarise what you reviewed and why this platform decision is justified"></textarea></label>'
       +'<label>Limited-scope restrictions<textarea name="scope_note" rows="2" maxlength="500" placeholder="Required only for limited eligibility: territory, activity/category or capability limits"></textarea><small class="commerceFieldHelp">Leave this blank for Readiness only or Eligible — full platform scope.</small></label>'
       +'<button class="primary" type="submit">Save commerce decision</button><div id="adminCommerceReviewResult"></div></section></form></section>';
-    document.getElementById('commerceReviewBack').onclick=async()=>{state.active='members';state.memberHubTab='commerce';shell();await renderActive()};
+    document.getElementById('commerceReviewBack').onclick=async()=>{
+      state.active='members';
+      if(returnMemberId){
+        state.memberHubTab='directory';state.memberDetailId=Number(returnMemberId);state.memberDetail=null;
+      }else{
+        state.memberHubTab='commerce';state.memberDetailId=null;state.memberDetail=null;
+      }
+      shell();await renderActive()
+    };
     document.getElementById('adminCommerceReviewForm').onsubmit=async e=>{
       e.preventDefault();
       const form=e.currentTarget,out=document.getElementById('adminCommerceReviewResult'),button=form.querySelector('button[type="submit"]');
@@ -368,7 +376,7 @@ async function openAdminCommerceReadiness(accountId,role,businessId,label=''){
       try{
         await api('/api/governance/admin/readiness/'+account+'/'+encodeURIComponent(role)+'/review',{method:'POST',body:JSON.stringify(payload)});
         await loadBase();
-        await openAdminCommerceReadiness(account,role,businessId,label);
+        await openAdminCommerceReadiness(account,role,businessId,label,returnMemberId);
       }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
     };
   }catch(error){showError(error)}
@@ -493,6 +501,30 @@ function memberCompactContextSummary(data){
   if(legal!==null)parts.push(legal+' legal record'+(legal===1?'':'s'));
   return parts.join(' · ')||'No additional operational context available';
 }
+function memberCommerceReadinessMarkup(data){
+  if(!isSuperAdmin())return'';
+  const auths=(data?.authorizations||[]).filter(a=>a.status==='active'&&['merchant','service_provider'].includes(a.role));
+  if(!auths.length)return'';
+  const merchantAuthorized=auths.some(a=>a.role==='merchant');
+  const localServicesAuthorized=auths.some(a=>a.role==='service_provider');
+  const rows=[];
+  if(merchantAuthorized){
+    const businesses=(data?.businesses||[]).filter(b=>b.active);
+    if(businesses.length){
+      businesses.forEach(b=>rows.push(
+        '<article class="memberCommerceRow"><div><strong>'+esc(b.name||('Business '+b.business_id))+'</strong><span>Merchant · Business #'+Number(b.business_id)+'</span></div>'
+        +'<button class="secondary" type="button" data-member-commerce-review="'+Number(data.member?.account_id||0)+'" data-commerce-role="merchant" data-commerce-business="'+Number(b.business_id)+'" data-commerce-label="'+esc(b.name||('Business '+b.business_id))+'">Review commerce</button></article>'
+      ));
+    }else{
+      rows.push('<div class="notice"><strong>Merchant profile authorized, but no active Merchant business is linked.</strong><br>Commerce readiness requires a real active business membership before review.</div>');
+    }
+  }
+  if(localServicesAuthorized){
+    rows.push('<article class="memberCommerceRow"><div><strong>Local Services profile</strong><span>Profile-scoped commerce readiness</span></div><button class="secondary" type="button" data-member-commerce-review="'+Number(data.member?.account_id||0)+'" data-commerce-role="service_provider" data-commerce-business="" data-commerce-label="Local Services profile">Review commerce</button></article>');
+  }
+  return '<section class="memberCommerceReadinessCard"><div class="memberCommerceIntro"><span class="memberEyebrow">COMMERCE GOVERNANCE</span><h3>Commerce readiness</h3><p>Profile authorization and public-commerce eligibility are separate. Review the selected business/profile here without leaving this member.</p></div><div class="memberCommerceList">'+rows.join('')+'</div></section>';
+}
+
 async function memberDetailPanel(accountId){
   const data=await api('/api/admin/members/'+Number(accountId));
   state.memberDetail=data;
@@ -510,6 +542,7 @@ async function memberDetailPanel(accountId){
   const identity='<div class="memberFacts"><span><b>Registered</b>'+esc(memberDate(m.created_at))+'</span><span><b>Last sign-in</b>'+esc(memberDate(s.last_session_at))+'</span><span><b>Country</b>'+esc(m.country_code||'Unknown')+'</span><span><b>Area</b>'+esc(m.path_text||m.geographic_name||'Not assigned')+'</span>'
     +(m.account_mode==='company_test'?'<span><b>Account type</b>Company test'+(m.test_role?' · '+esc(profileRoleLabel(m.test_role)):'')+'</span>':'')+'</div>';
   const adminAuthority='<div class="memberSubsection"><h4>Admin authority</h4><p class="muted">Admin authority stays separate from marketplace profiles.</p>'+memberAdminRoles(data.admin_roles)+'</div>';
+  const commerceBody=memberCommerceReadinessMarkup(data);
   const profileBody='<div class="memberSectionGrid"><div><h4>Profiles</h4>'+memberDetailProfiles(data.profiles)+'</div><div><h4>Businesses & memberships</h4><p class="muted">Financial balances and payment credentials are not exposed here.</p>'+memberBusinesses(data.businesses)+'</div></div>'
     +'<div class="memberSectionGrid memberGovernanceGrid"><div><h4>Applications</h4>'+memberDetailApplications(data.applications)+'</div><div><h4>Authorizations</h4>'+memberDetailAuthorizations(data.authorizations)+'</div></div>';
   const contextBody=memberSupportContextMarkup(data.context?.support)+memberSafetyContextMarkup(data.context?.safety)+memberLegalContextMarkup(data.context?.legal);
@@ -519,6 +552,7 @@ async function memberDetailPanel(accountId){
   const detailNav='<nav class="memberDetailNav" aria-label="Member sections">'
     +'<button type="button" data-member-jump="memberOverviewSection">Overview</button>'
     +'<button type="button" data-member-jump="memberProfilesSection">Profiles & business</button>'
+    +(commerceBody?'<button type="button" data-member-jump="memberCommerceSection">Commerce readiness</button>':'')
     +(contextBody?'<button type="button" data-member-jump="memberContextSection">Support & safety</button>':'')
     +(notesBody?'<button type="button" data-member-jump="memberNotesSection">Notes</button>':'')
     +'<button type="button" data-member-jump="memberActivitySection">Activity</button></nav>';
@@ -526,6 +560,7 @@ async function memberDetailPanel(accountId){
   const mainSections=
     memberDisclosure({id:'memberOverviewSection',title:'Overview',summary:'Identity, area and Admin relationship',body:identity+adminAuthority,open:true})
     +memberDisclosure({id:'memberProfilesSection',title:'Profiles & business',summary:(data.profiles||[]).length+' profile record(s) · '+(data.businesses||[]).length+' business membership(s)',count:String((data.profiles||[]).length+(data.businesses||[]).length),body:profileBody})
+    +(commerceBody?memberDisclosure({id:'memberCommerceSection',title:'Commerce readiness',summary:'Review public-commerce eligibility for this member’s Merchant business or Local Services profile',body:commerceBody}):'')
     +(contextBody?memberDisclosure({id:'memberContextSection',title:'Support & safety',summary:memberCompactContextSummary(data),body:contextBody}):'')
     +(notesBody?memberDisclosure({id:'memberNotesSection',title:'Internal notes & tags',summary:(data.context?.internal?.notes||[]).length+' note(s) · '+(data.context?.internal?.tags||[]).length+' tag(s)',count:String((data.context?.internal?.notes||[]).length+(data.context?.internal?.tags||[]).length),body:notesBody}):'')
     +memberDisclosure({id:'memberActivitySection',title:'Activity timeline',summary:(data.timeline||[]).length+' recent event(s)',count:String((data.timeline||[]).length),body:activityBody});
@@ -746,6 +781,7 @@ async function wireMembers(){
     if(sessionsForm)sessionsForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(sessionsForm),out=sessionsForm.querySelector('[data-member-control-result]');try{const result=await api('/api/admin/members/'+Number(state.memberDetailId)+'/sessions/revoke',{method:'POST',body:JSON.stringify({reason:String(fd.get('reason')||'').trim(),confirm:fd.get('confirm')==='on'})});if(out)out.innerHTML='<div class="notice">'+Number(result.sessions_revoked||0)+' active session(s) revoked and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     document.querySelectorAll('[data-member-support-ticket]').forEach(button=>button.onclick=()=>window.BusinessLifeAdminConsole?.openSupportTicket(Number(button.dataset.memberSupportTicket)));
     document.querySelectorAll('[data-member-trust-case]').forEach(button=>button.onclick=()=>window.BusinessLifeAdminConsole?.openCase(Number(button.dataset.memberTrustCase)));
+    document.querySelectorAll('[data-member-commerce-review]').forEach(button=>button.onclick=()=>openAdminCommerceReadiness(Number(button.dataset.memberCommerceReview),String(button.dataset.commerceRole||''),button.dataset.commerceBusiness?Number(button.dataset.commerceBusiness):null,String(button.dataset.commerceLabel||''),Number(state.memberDetailId)));
     const noteForm=document.getElementById('memberNoteForm');
     if(noteForm)noteForm.onsubmit=async e=>{e.preventDefault();const fd=new FormData(noteForm),out=noteForm.querySelector('[data-member-note-result]');try{await api('/api/admin/members/'+Number(state.memberDetailId)+'/notes',{method:'POST',body:JSON.stringify({note:String(fd.get('note')||'').trim()})});if(out)out.innerHTML='<div class="notice">Internal note added and audited.</div>';await renderActive()}catch(err){if(out)out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}};
     const tagForm=document.getElementById('memberTagForm');
