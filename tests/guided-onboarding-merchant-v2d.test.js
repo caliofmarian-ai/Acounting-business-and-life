@@ -78,7 +78,9 @@ test('Merchant tour points to real operational controls already present in the p
   assert.match(market,/storePresence/);
   assert.match(market,/storePublicLocation/);
   assert.match(market,/storefrontV2Media/);
-  assert.match(market,/directProductForm/);
+  assert.doesNotMatch(market,/directProductForm/);
+  assert.match(orders,/ordersDirectProductForm/);
+  assert.match(orders,/Add a direct-sale product/);
   assert.match(market,/class="merchantCatalogList"/);
   assert.match(market,/AI image draft · review before use/);
   assert.match(market,/storeReputation/);
