@@ -378,7 +378,47 @@ async function loadStock(){
   if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
   fillConsumableRuleInventory();
-  await loadConsumableRules();
+  fillStockAdjustmentInventory();
+  await Promise.all([loadConsumableRules(),loadStockAdjustments()]);
+}
+function fillStockAdjustmentInventory(){
+  const select=$('stockAdjustmentInventory');if(!select)return;
+  select.innerHTML=inventory.length
+    ?'<option value="">Choose an inventory item</option>'+inventory.map(i=>`<option value="${i.id}">${esc(i.item)} — ${num(i.quantity,4)} ${esc(i.unit)}</option>`).join('')
+    :'<option value="">Add stock first</option>';
+}
+function stockAdjustmentKindLabel(kind){
+  return({waste:'Waste',spoilage:'Spoilage',expired:'Expired',damaged:'Damaged / broken',count_correction:'Physical stock count',other_loss:'Other loss'})[kind]||kind;
+}
+function updateStockAdjustmentPreview(){
+  const out=$('stockAdjustmentPreview');if(!out)return;
+  const item=inventory.find(i=>Number(i.id)===Number($('stockAdjustmentInventory')?.value));
+  const kind=$('stockAdjustmentKind')?.value||'waste';
+  const entered=Number($('stockAdjustmentQty')?.value);
+  if($('stockAdjustmentQtyLabel'))$('stockAdjustmentQtyLabel').textContent=kind==='count_correction'?'Counted stock quantity':'Quantity to remove';
+  if(!item||!Number.isFinite(entered)||entered<0){out.textContent='Choose an item and enter the quantity.';return}
+  const before=Number(item.quantity),after=kind==='count_correction'?entered:before-entered;
+  if(after<0){out.innerHTML='<strong class="negative">This would remove more than the available stock.</strong>';return}
+  const delta=after-before,impact=delta*Number(item.unit_cost||0);
+  out.innerHTML=`Current <strong>${num(before,4)} ${esc(item.unit)}</strong> → after adjustment <strong>${num(after,4)} ${esc(item.unit)}</strong> • estimated stock-value change <strong class="${impact<0?'negative':impact>0?'positive':''}">${money(impact)}</strong>`;
+}
+async function loadStockAdjustments(){
+  const list=$('stockAdjustmentList');if(!list)return[];
+  try{
+    const rows=await api('/api/inventory/adjustments');
+    const nodes=rows.map(r=>{
+      const d=document.createElement('div');d.className='listRow';
+      const delta=Number(r.quantity_delta);
+      const when=r.created_at?new Date(r.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'}):'';
+      d.innerHTML=`<div class="rowMain"><strong>${esc(r.item)} · ${esc(stockAdjustmentKindLabel(r.adjustment_kind))}</strong><small>${num(r.before_quantity,4)} → ${num(r.after_quantity,4)} ${esc(r.unit)}${r.note?' • '+esc(r.note):''}${when?' • '+esc(when):''}</small></div><div class="rowRight"><span class="${delta<0?'negative':delta>0?'positive':''}">${delta>0?'+':''}${num(delta,4)} ${esc(r.unit)}</span><small>${money(r.estimated_value_delta)}</small></div>`;
+      return d;
+    });
+    list.replaceChildren(...(nodes.length?nodes:[emptyRow('No stock adjustments recorded yet.')]));
+    return rows;
+  }catch(error){
+    list.replaceChildren(emptyRow(error.message||'Stock adjustment history could not be loaded.'));
+    return[];
+  }
 }
 function fillConsumableRuleInventory(){
   const select=$('consumableInventoryId');if(!select)return;
@@ -483,6 +523,26 @@ if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
 if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
 
 $('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';invalidateMerchantToday();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
+$('stockAdjustmentInventory')?.addEventListener('change',updateStockAdjustmentPreview);
+$('stockAdjustmentKind')?.addEventListener('change',updateStockAdjustmentPreview);
+$('stockAdjustmentQty')?.addEventListener('input',updateStockAdjustmentPreview);
+$('stockAdjustmentForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();const out=$('stockAdjustmentMessage');if(out)out.textContent='Saving…';
+  try{
+    const result=await api('/api/inventory/adjustments',{method:'POST',body:JSON.stringify({
+      inventory_id:Number($('stockAdjustmentInventory').value),
+      adjustment_kind:$('stockAdjustmentKind').value,
+      quantity:Number($('stockAdjustmentQty').value),
+      note:$('stockAdjustmentNote').value
+    })});
+    if(out)out.textContent=`Saved. New stock: ${num(result.inventory.quantity,4)} ${result.inventory.unit}.`;
+    $('stockAdjustmentQty').value='';
+    $('stockAdjustmentNote').value='';
+    await loadStock();
+    invalidateMerchantToday();
+    updateStockAdjustmentPreview();
+  }catch(error){if(out)out.textContent=error.message}
+});
 $('consumableRuleForm')?.addEventListener('submit',async e=>{
   e.preventDefault();const out=$('consumableRuleMessage');if(out)out.textContent='Saving…';
   try{
