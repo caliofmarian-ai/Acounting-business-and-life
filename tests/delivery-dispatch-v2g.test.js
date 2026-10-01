@@ -22,6 +22,12 @@ test('stale pending offers are expired lazily without background polling',()=>{
   assert.match(block,/status='expired'/);
   assert.match(block,/expires_at<=NOW\(\)/);
   assert.match(block,/offer_expired/);
+  assert.match(block,/dof\.delivery_id=\$\$\{values\.length\}/);
+  assert.match(block,/dof\.courier_account_id=\$\$\{values\.length\}/);
+  assert.match(block,/dx\.business_id=\$\$\{values\.length\}/);
+  assert.doesNotMatch(block,/dof\.delivery_id=\$\{values\.length\}/);
+  assert.doesNotMatch(block,/dof\.courier_account_id=\$\{values\.length\}/);
+  assert.doesNotMatch(block,/dx\.business_id=\$\{values\.length\}/);
   assert.doesNotMatch(block,/setInterval|setTimeout/);
 });
 
