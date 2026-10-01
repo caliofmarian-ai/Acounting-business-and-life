@@ -1,10 +1,10 @@
 import {phGeographyCascadeMarkup,bindPhGeographyCascade} from './ph-geography-cascade.js';
 const ROLE_META = {
-  merchant: { label: 'Merchant', icon: '🏪', desc: 'Accounting, products and business', hero: 'Run your business with every peso visible.' },
-  customer: { label: 'Customer', icon: '🛍️', desc: 'Discover, order and track', hero: 'Discover local. Order with confidence.' },
-  supplier: { label: 'Supplier', icon: '📦', desc: 'Catalog and procurement orders', hero: 'Supply local businesses from one place.' },
-  courier: { label: 'Delivery', icon: '🛵', desc: 'Approved delivery operations', hero: 'Deliver safely with a clear active route.' },
-  service_provider: { label: 'Local Services', icon: '🛠️', desc: 'Skills, quotes and service jobs', hero: 'Turn your skills into trusted local work.' }
+  merchant: { label: 'Merchant', icon: '🏪', desc: 'Accounting, products and business', manageDesc: 'Sell products or food, manage orders, stock, pricing and business finances.', hero: 'Run your business with every peso visible.' },
+  customer: { label: 'Customer', icon: '🛍️', desc: 'Discover, order and track', manageDesc: 'Shop from local businesses, place orders, choose delivery and track purchases.', hero: 'Discover local. Order with confidence.' },
+  supplier: { label: 'Supplier', icon: '📦', desc: 'Catalog and procurement orders', manageDesc: 'Sell supplies to businesses, manage a B2B catalog, quotes and procurement orders.', hero: 'Supply local businesses from one place.' },
+  courier: { label: 'Delivery', icon: '🛵', desc: 'Approved delivery operations', manageDesc: 'Go available, accept or decline assigned delivery requests, follow routes and track earnings.', hero: 'Deliver safely with a clear active route.' },
+  service_provider: { label: 'Local Services', icon: '🛠️', desc: 'Skills, quotes and service jobs', manageDesc: 'Offer local services, receive requests, send quotes, schedule jobs and manage earnings.', hero: 'Turn your skills into trusted local work.' }
 };
 const ROLE_ORDER = ['merchant', 'customer', 'supplier', 'courier', 'service_provider'];
 const ADMIN_RANK_LABELS = { super_admin:'Super Admin', country_admin:'Country Admin', territory_admin:'Territory Admin', specialist:'Specialist' };
@@ -353,7 +353,7 @@ function profileManagementMarkup(){
     else if(reactivable){action=`data-profile-reactivate="${role}"`;label='Reactivate'}
     else{action=`data-role-action="${role}"`;label=superAdmin?'Activate':inProgress?'Continue onboarding':'Start onboarding'}
     const status=enabled?'Active profile':reactivable?'Disabled · ID and history preserved':!adultReady?'Adult eligibility confirmation required':superAdmin?'Ready for Super Admin testing':inProgress?state.replaceAll('_',' '):!emailReady?'Email verification required':!detailsReady?'Personal details required':!areaReady?(snapshot?.geography?.message||'Area not open for onboarding'):'Not active';
-    return `<div class="profileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small>${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`
+    return `<div class="profileRole manageProfileRole"><span class="roleIcon">${meta.icon}</span><span class="roleCopy"><strong>${meta.label}</strong><small class="rolePurpose">${escapeHtml(meta.manageDesc||meta.desc)}</small><small class="roleStatus">Status · ${escapeHtml(status)}</small><code>${escapeHtml(profile?.profile_id||`${account.personal_id}-${({merchant:'ME',customer:'CU',supplier:'SU',courier:'DE',service_provider:'LS'})[role]}`)}</code></span><button class="roleAction ${enabled?'active':'enable'}" type="button" ${action}>${label}</button></div>`
   }).join('');
 }
 
