@@ -28,3 +28,17 @@ test('Help & Support retains public guides inside the canonical Support workspac
   assert.match(block,/data-tab="mine"/);
   assert.match(css,/\.supportHelpCenterLink\{[^}]*min-height:62px/);
 });
+
+
+test('canonical Help launcher does not compete with a floating button over fixed navigation',()=>{
+  const start=support.indexOf('function addButtons()');
+  const end=support.indexOf('function openOps(',start);
+  assert.ok(start>=0&&end>start);
+  const block=support.slice(start,end);
+  assert.match(block,/lazySupportBtn/);
+  assert.match(block,/primaryLauncher/);
+  assert.match(block,/floating\?\.remove\(\)/);
+  assert.match(block,/if\(!floating\).*supportFloating/s);
+  assert.match(css,/\.supportFloating\{[^}]*bottom:calc\(82px \+ env\(safe-area-inset-bottom\)\)/);
+  assert.doesNotMatch(css,/\.supportFloating\{bottom:20px\}/);
+});

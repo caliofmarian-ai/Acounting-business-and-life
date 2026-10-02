@@ -23,8 +23,14 @@ function ensureUi(){
 function addButtons(){
   if(lazyFeatureMode||!token())return;
   const top=document.querySelector('.topActions');
-  if(top&&!document.getElementById('supportOpsBtn')){const b=document.createElement('button');b.id='supportOpsBtn';b.className='supportOpsBtn';b.type='button';b.textContent='Help';b.onclick=openSupport;top.prepend(b)}
-  if(!document.getElementById('supportFloating')){const b=document.createElement('button');b.id='supportFloating';b.className='supportFloating';b.type='button';b.textContent='?';b.setAttribute('aria-label','Help and Support');b.onclick=openSupport;document.body.appendChild(b)}
+  let primaryLauncher=document.getElementById('lazySupportBtn')||document.getElementById('supportOpsBtn');
+  if(top&&!primaryLauncher){const b=document.createElement('button');b.id='supportOpsBtn';b.className='supportOpsBtn';b.type='button';b.textContent='Help';b.onclick=openSupport;top.prepend(b);primaryLauncher=b}
+  const floating=document.getElementById('supportFloating');
+  if(primaryLauncher){
+    floating?.remove();
+    return;
+  }
+  if(!floating){const b=document.createElement('button');b.id='supportFloating';b.className='supportFloating';b.type='button';b.textContent='?';b.setAttribute('aria-label','Help and Support');b.onclick=openSupport;document.body.appendChild(b)}
 }
 function openOps(title,html){ensureUi();document.getElementById('opsTitle').textContent=title;document.getElementById('opsBody').innerHTML=html;document.getElementById('supportOpsBackdrop').classList.remove('hidden');document.body.style.overflow='hidden'}
 function closeOps(){stopVoice(true);document.getElementById('supportOpsBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
