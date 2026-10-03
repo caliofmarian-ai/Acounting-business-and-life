@@ -138,6 +138,40 @@ async function activeReservationSums(client,{businessId,kind,refId,excludeOrderI
   return{reserved:Number(total.rows[0]?.reserved||0),untrackedReserved:Number(total.rows[0]?.untracked_reserved||0)};
 }
 
+export function planInventoryReservationAllocation({
+  quantityNeeded,
+  physicalQuantity,
+  lots=[],
+  reservedByLot=new Map(),
+  untrackedReserved=0,
+  now=Date.now()
+}={}){
+  const required=Number(quantityNeeded),physical=Math.max(0,Number(physicalQuantity||0));
+  if(!Number.isFinite(required)||required<=0)return{ok:false,required,available:0,short:Math.max(0,required||0),reason:'invalid_quantity'};
+  const reservedMap=reservedByLot instanceof Map?reservedByLot:new Map(Object.entries(reservedByLot||{}).map(([k,v])=>[Number(k),Number(v)]));
+  const trackedTotal=(Array.isArray(lots)?lots:[]).reduce((sum,l)=>sum+Math.max(0,Number(l.quantity_remaining_base||0)),0);
+  const untrackedTotal=Math.max(0,physical-trackedTotal);
+  const untrackedAvailable=Math.max(0,untrackedTotal-Math.max(0,Number(untrackedReserved||0)));
+  const eligible=sortFefoLots((Array.isArray(lots)?lots:[])
+    .filter(l=>String(l.lot_state||'available')==='available'&&inventoryLotExpiryStatus(l.expires_at,{now})!=='expired'))
+    .map(l=>({...l,available_quantity:Math.max(0,Number(l.quantity_remaining_base||0)-Math.max(0,Number(reservedMap.get(Number(l.id))||0)))}))
+    .filter(l=>l.available_quantity>EPS);
+  const eligibleTotal=eligible.reduce((sum,l)=>sum+l.available_quantity,0);
+  const totalAvailable=untrackedAvailable+eligibleTotal;
+  if(required>totalAvailable+EPS){
+    return{ok:false,required,available:totalAvailable,short:required-totalAvailable,reason:'reserved_or_unusable_stock',allocations:[],untrackedUsed:0};
+  }
+  let remaining=required;const allocations=[];
+  for(const lot of eligible){
+    if(remaining<=EPS)break;
+    const qty=Math.min(remaining,lot.available_quantity);
+    if(qty>EPS)allocations.push({lot_id:Number(lot.id),quantity:qty,expires_at:lot.expires_at||null});
+    remaining-=qty;
+  }
+  const untrackedUsed=Math.max(0,remaining);
+  return{ok:true,required,available:totalAvailable,allocations,untrackedUsed,trackedAvailable:eligibleTotal,untrackedAvailable};
+}
+
 async function planInventoryReservation(client,{order,need}){
   const inv=await client.query(`
     SELECT id,item,quantity,unit,unit_cost FROM inventory
@@ -161,28 +195,16 @@ async function planInventoryReservation(client,{order,need}){
     `,[Number(order.business_id),Number(need.stock_ref_id),Number(order.id),ids]);
     reservedByLot=new Map(q.rows.map(x=>[Number(x.lot_id),Number(x.reserved||0)]));
   }
-  const trackedTotal=lots.reduce((sum,l)=>sum+Number(l.quantity_remaining_base||0),0);
-  const untrackedTotal=Math.max(0,physical-trackedTotal);
-  const untrackedAvailable=Math.max(0,untrackedTotal-active.untrackedReserved);
-  const now=Date.now();
-  const eligible=sortFefoLots(lots.filter(l=>String(l.lot_state||'available')==='available'&&inventoryLotExpiryStatus(l.expires_at,{now})!=='expired'))
-    .map(l=>({...l,available_quantity:Math.max(0,Number(l.quantity_remaining_base||0)-Number(reservedByLot.get(Number(l.id))||0))}))
-    .filter(l=>l.available_quantity>EPS);
-  const eligibleTotal=eligible.reduce((sum,l)=>sum+l.available_quantity,0);
-  const totalAvailable=untrackedAvailable+eligibleTotal;
-  const required=Number(need.quantity);
-  if(required>totalAvailable+EPS){
-    return{ok:false,item:inventory.item,required,available:totalAvailable,short:required-totalAvailable,reason:'reserved_or_unusable_stock'};
-  }
-  let remaining=required;const allocations=[];
-  for(const lot of eligible){
-    if(remaining<=EPS)break;
-    const qty=Math.min(remaining,lot.available_quantity);
-    if(qty>EPS)allocations.push({lot_id:Number(lot.id),quantity:qty,expires_at:lot.expires_at||null});
-    remaining-=qty;
-  }
-  const untrackedUsed=Math.max(0,remaining);
-  return{ok:true,inventory,required,allocations,untrackedUsed,available:totalAvailable};
+  const planned=planInventoryReservationAllocation({
+    quantityNeeded:Number(need.quantity),
+    physicalQuantity:physical,
+    lots,
+    reservedByLot,
+    untrackedReserved:active.untrackedReserved,
+    now:Date.now()
+  });
+  if(!planned.ok)return{...planned,item:inventory.item};
+  return{...planned,inventory};
 }
 
 async function planMarketplaceReservation(client,{order,need}){
