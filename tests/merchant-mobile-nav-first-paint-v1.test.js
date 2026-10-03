@@ -16,9 +16,9 @@ test('Merchant Android navigation exists in shell before profile-state feature h
   const chrome=between(shell,'function ensureShellChrome','function syncMerchantWorkspaceNavVisibility');
   assert.match(chrome,/id='merchantMobileTools'/);
   assert.match(chrome,/className='merchantMobileTools hidden'/);
-  const actions=['merchantHome','ordersQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton','profileSettings'];
+  const actions=['merchantHome','ordersQuickButton','catalogQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton','profileSettings'];
   for(const action of actions)assert.match(chrome,new RegExp('data-merchant-mobile-action="'+action+'"'));
-  const labels=['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'];
+  const labels=['Today','Orders','Catalog','Storefront','Suppliers','Delivery','Profile Settings'];
   for(const label of labels)assert.match(chrome,new RegExp('<strong>'+label+'<\\/strong>'));
 });
 
@@ -27,7 +27,7 @@ test('shell owns mobile Merchant routing without eager data requests',()=>{
   assert.match(route,/destination==='merchantHome'/);
   assert.match(route,/destination==='profileSettings'/);
   assert.match(route,/BusinessLifeOrders\?\.openMerchantOrders/);
-  assert.match(route,/BusinessLifeMarketplace\?\.openMerchantStore/);
+  assert.match(route,/BusinessLifeMarketplace\?\.openMerchantCatalog/);\n  assert.match(route,/BusinessLifeMarketplace\?\.openMerchantStore/);
   assert.match(route,/BusinessLifeSuppliers\?\.openMerchantProcurement/);
   assert.match(route,/BusinessLifeDelivery\?\.openMerchantDelivery/);
   assert.doesNotMatch(route,/fetch\(|\/api\//);
