@@ -496,6 +496,15 @@ async function ensurePreparedFishSoup({base,token,inventoryByName}){
   });
   expectStatus(batch,200,'Fish Soup batch recipe');
   if(Number(batch.json?.recipe_batch?.sale_units_per_batch)!==4)throw new Error('Fish Soup batch did not compile to four 250 ml sale units.');
+
+  const allergenReview=await requestJson(base,`/api/products/${Number(product.id)}/allergens/review`,{
+    method:'POST',
+    token,
+    body:{note:'Controlled QA review for the current prepared-recipe revision.'}
+  });
+  expectStatus(allergenReview,200,'Fish Soup allergen review');
+  if(allergenReview.json?.review_current!==true)throw new Error('Fish Soup allergen review did not become current.');
+
   return batch.json;
 }
 
