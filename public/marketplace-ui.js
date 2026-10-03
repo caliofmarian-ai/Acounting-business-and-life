@@ -419,13 +419,12 @@ async function renderMerchantCatalog(){
       mapi('/api/merchant/catalog-v3/items?'+retailCatalogQuery()),
       mapi('/api/merchant/catalog-v3/collections?business_id='+encodeURIComponent(Number(store.business_id)))
     ]);
-    const foodProducts=(store.products||[]).filter(product=>product.product_domain==='food');
     marketWorkspace.innerHTML=
       marketHeader('Catalog','Food menus and Retail products share one Catalog engine')+
       catalogCreateSection(inventory||[])+
       retailMerchandisingSection(retailPage,collections||[])+
       ((store.merchant_domain==='food'||store.merchant_domain==='mixed')?preparedImportSection():'')+
-      (foodProducts.length?catalogSection(foodProducts):'');
+      catalogSection(store.products||[]);
     bindBack();
     bindCatalogCreate(inventory||[]);
     bindRetailMerchandising(retailPage,collections||[],inventory||[]);
@@ -770,7 +769,8 @@ function preparedImportSection(){
   return `<section class="merchantStoreCard merchantPreparedImport"><h2>Prepared recipes</h2><p>Recipes are created in Products & recipes, then imported here as private Catalog products. Importing never publishes automatically.</p><button class="importProducts catalogImportPrepared" id="importLegacy" type="button">Import prepared products</button><div id="catalogImportMessage" class="avatarHint"></div></section>`;
 }
 function catalogSection(products){
-  const all=Array.isArray(products)?products:[];
+  const all=(Array.isArray(products)?products:[]).filter(product=>product.product_domain==='food');
+  if(!all.length)return '';
   const active=all.filter(p=>p.active!==false),archived=all.filter(p=>p.active===false);
   const rows=active.length?active.map(p=>{const images=Array.isArray(p.images)?p.images:[];const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible);const draft=images.find(x=>x.source_type==='ai_generated'&&x.approval_status==='draft');const visual=primary?.data_url||draft?.data_url||p.image_data_url||'';const aiPrimary=primary?.source_type==='ai_generated';const canGenerate=p.product_domain==='food'&&p.product_kind==='prepared_food'&&Boolean(p.legacy_product_id);const allergenState=canGenerate?(p.allergen_review_current?'<span class="allergenReviewBadge current">Ingredient disclosure reviewed</span>':'<span class="allergenReviewBadge required">Ingredient disclosure review required</span>'):'';return `<div class="merchantProductRow merchantProductMediaRow"><div class="merchantProductVisual">${visual?`<img src="${visual}" alt="${mh(p.name)}">`:'<span>＋ photo</span>'}</div><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • ${p.legacy_product_id?'Prepared recipe':p.inventory_id?`${mnice(p.product_kind)} · ${Number(p.quantity_per_unit).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(p.inventory_unit||'stock')}/sale`:'Marketplace product'}</small>${aiPrimary?'<span class="aiReferenceLabel">AI-generated reference image</span>':''}${draft?'<span class="aiDraftLabel">AI image draft · review before use</span>':''}${allergenState}<div class="merchantImageActions">${canGenerate?`<button class="imageAction" type="button" data-generate-image="${p.id}">${draft?'Generate another':'Generate AI image'}</button>`:''}${draft?`<button class="imageAction primary" type="button" data-approve-image="${p.id}" data-media-id="${draft.id}">Use as primary</button><button class="imageAction danger" type="button" data-archive-image="${p.id}" data-media-id="${draft.id}">Discard image</button>`:''}<button class="imageAction danger" type="button" data-archive-product="${p.id}">Archive product</button></div></div><button class="publishButton ${p.published?'on':''}" type="button" data-toggle-product="${p.id}" data-published="${p.published?'1':'0'}">${p.published?'Published':'Private'}</button></div>`}).join(''):'<div class="marketEmpty">No active Catalog products yet. Add one from Inventory or import prepared recipes above.</div>';
   const archivedHtml=archived.length?`<details class="catalogArchived"><summary>Archived products (${archived.length})</summary><div class="merchantCatalogList">${archived.map(p=>`<div class="merchantProductRow"><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • archived</small></div><button class="publishButton" type="button" data-restore-product="${p.id}">Restore</button></div>`).join('')}</div></details>`:'';
