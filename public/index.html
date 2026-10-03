@@ -380,6 +380,59 @@
             <button class="secondary">Save storage settings</button><div id="storageMessage"></div>
           </form>
         </div>
+        <div class="card stack" id="inventoryLocationsCard">
+          <div class="sectionHead"><div><h2>Storage locations & internal transfers</h2><p class="muted">Split physical stock across Pantry, Fridge, Freezer or Prep. Transfers never create purchase, sale or cash movement.</p></div><button id="inventoryLocationsRefresh" type="button" class="secondary">Refresh</button></div>
+
+          <details id="inventoryLocationCreate">
+            <summary><strong>Add storage location</strong></summary>
+            <form id="inventoryLocationForm" class="stack inventoryLocationEditor">
+              <label>Location name<input id="inventoryLocationName" maxlength="120" placeholder="Example: Fridge 1 · Shelf B" required /></label>
+              <div class="grid2">
+                <label>Condition<select id="inventoryLocationCondition">
+                  <option value="other">Not set / other</option>
+                  <option value="ambient">Ambient</option>
+                  <option value="dry">Dry</option>
+                  <option value="chilled">Chilled</option>
+                  <option value="frozen">Frozen</option>
+                </select></label>
+                <label>Area<select id="inventoryLocationArea">
+                  <option value="other">Other</option>
+                  <option value="pantry">Pantry</option>
+                  <option value="fridge">Fridge / chiller</option>
+                  <option value="freezer">Freezer</option>
+                  <option value="prep_station">Prep station</option>
+                  <option value="chemical_storage">Chemical storage</option>
+                  <option value="service_storage">Service / supplies storage</option>
+                </select></label>
+              </div>
+              <label>Location label<input id="inventoryLocationLabel" maxlength="120" placeholder="Optional shelf / cabinet label" /></label>
+              <label class="checkLabel"><input id="inventoryLocationSegregated" type="checkbox" /> Segregated from food</label>
+              <button class="secondary">Add location</button>
+              <div id="inventoryLocationMessage" aria-live="polite"></div>
+            </form>
+          </details>
+
+          <div class="sectionHead"><h3>Location balances</h3><small class="muted">Sum remains equal to business-total Inventory</small></div>
+          <div id="inventoryLocationBalanceList" class="list"></div>
+
+          <form id="inventoryTransferForm" class="stack">
+            <div><h3>Transfer stock</h3><p class="muted">Auto mode moves safe earliest-expiring tracked stock first, then untracked stock.</p></div>
+            <label>Inventory item<select id="inventoryTransferItem"><option value="">Choose an item</option></select></label>
+            <div class="grid2">
+              <label>From<select id="inventoryTransferSource"><option value="">Choose source</option></select></label>
+              <label>To<select id="inventoryTransferDestination"><option value="">Choose destination</option></select></label>
+            </div>
+            <label>Quantity<input id="inventoryTransferQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" required /></label>
+            <label>Note<input id="inventoryTransferNote" maxlength="300" placeholder="Optional internal transfer note" /></label>
+            <div id="inventoryTransferPreview" class="salePreview">Choose an item and two different locations.</div>
+            <button class="primary">Transfer stock</button>
+            <div id="inventoryTransferMessage" aria-live="polite"></div>
+          </form>
+
+          <div class="sectionHead"><h3>Recent internal transfers</h3><small class="muted">Actor/time/source/destination audit</small></div>
+          <div id="inventoryTransferList" class="list"></div>
+        </div>
+
         <div class="card stack">
           <div class="sectionHead"><div><h2>Lots & expiry</h2><p class="muted">Earliest expiry first. Expired or held lots are not considered usable FEFO stock.</p></div><button id="lotRefresh" type="button" class="secondary">Refresh lots</button></div>
           <div id="lotSummary" class="salePreview">No tracked lots yet.</div>
@@ -416,6 +469,7 @@
                 <select id="countSessionScopeType">
                   <option value="inventory_type">Inventory category</option>
                   <option value="storage_area_type">Storage area</option>
+                  <option value="location_id">Storage location</option>
                 </select>
               </label>
             </div>
