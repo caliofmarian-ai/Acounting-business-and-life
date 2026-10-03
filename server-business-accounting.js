@@ -563,8 +563,9 @@ app.get('/api/inventory',async(req,res,next)=>{try{
   res.json(rows);
 }catch(e){next(e)}});
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
-  const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,unit_cost=0}=req.body||{};
+  const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,target_level=0,unit_cost=0}=req.body||{};
   const inventoryType=normalizeInventoryType(req.body?.inventory_type);
+  if(Number(target_level)>0&&Number(target_level)+1e-9<Number(reorder_level||0))return res.status(400).json({error:'Target stock must be equal to or higher than the low-stock alert level.'});
   if(!clean(item,100))return res.status(400).json({error:'Item is required'});
   const defaults=inventoryStorageDefaults(inventoryType);
   const hasStorage=['storage_condition','storage_area_type','storage_location_label','storage_segregated'].some(key=>Object.prototype.hasOwnProperty.call(req.body||{},key));
@@ -576,20 +577,20 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
     storageSegregated:req.body?.storage_segregated??defaults.storage_segregated
   });
   const{rows}=await pool.query(`
-    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
+    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
       storage_condition,storage_area_type,storage_location_label,storage_segregated)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT(business_id,item) DO UPDATE SET
-      unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,
+      unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,target_level=EXCLUDED.target_level,
       unit_cost=EXCLUDED.unit_cost,inventory_type=EXCLUDED.inventory_type,
-      storage_condition=CASE WHEN $12 THEN EXCLUDED.storage_condition ELSE inventory.storage_condition END,
-      storage_area_type=CASE WHEN $12 THEN EXCLUDED.storage_area_type ELSE inventory.storage_area_type END,
-      storage_location_label=CASE WHEN $12 THEN EXCLUDED.storage_location_label ELSE inventory.storage_location_label END,
-      storage_segregated=CASE WHEN $12 THEN EXCLUDED.storage_segregated ELSE inventory.storage_segregated END,
+      storage_condition=CASE WHEN $13 THEN EXCLUDED.storage_condition ELSE inventory.storage_condition END,
+      storage_area_type=CASE WHEN $13 THEN EXCLUDED.storage_area_type ELSE inventory.storage_area_type END,
+      storage_location_label=CASE WHEN $13 THEN EXCLUDED.storage_location_label ELSE inventory.storage_location_label END,
+      storage_segregated=CASE WHEN $13 THEN EXCLUDED.storage_segregated ELSE inventory.storage_segregated END,
       updated_at=NOW()
     RETURNING *
   `,[
-    business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(unit_cost)||0,inventoryType,
+    business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(target_level)||0,Number(unit_cost)||0,inventoryType,
     storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,hasStorage
   ]);
   res.status(201).json(rows[0])
