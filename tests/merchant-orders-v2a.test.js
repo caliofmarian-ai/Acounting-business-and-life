@@ -47,9 +47,10 @@ test('counter-order product list is private to the selected Merchant business',(
   assert.doesNotMatch(server,/if\(businessId!==1\) return res\.json\(\[\]\)/);
 });
 
-test('direct-sale inventory is private to the selected Merchant business',()=>{
+test('direct-sale inventory is private to the selected Merchant business and exposes availability after reservations',()=>{
   assert.match(server,/\/api\/orders\/inventory'[\s\S]*requireMerchant\(req,businessId\)/);
-  assert.match(server,/FROM inventory[\s\S]*WHERE business_id=\$1/);
+  assert.match(server,/inventoryAvailabilityRows\(pool,\{businessId:business\.id\}\)/);
+  assert.match(server,/available_quantity/);
   assert.match(ui,/\/api\/orders\/inventory\?business_id=\$\{encodeURIComponent\(businessId\)\}/);
 });
 
