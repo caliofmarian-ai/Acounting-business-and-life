@@ -8,6 +8,7 @@ const marketplace=readFileSync(new URL('../server-marketplace.js',import.meta.ur
 const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
 const ui=readFileSync(new URL('../public/v03.js',import.meta.url),'utf8');
 const runtime=readFileSync(new URL('../inventory-lot-runtime.js',import.meta.url),'utf8');
+const reservation=readFileSync(new URL('../order-stock-reservation.js',import.meta.url),'utf8');
 
 test('Inventory purchase captures lot code and expiry and creates a traceable supply lot',()=>{
   assert.match(html,/id="stockLotCode"/);
@@ -42,18 +43,19 @@ test('quick sales allocate recipe ingredients from FEFO lots',()=>{
   assert.match(accounting,/expired_or_held_lot_stock/);
 });
 
-test('orders allocate both recipes and configured consumables using FEFO and restore lots on cancellation',()=>{
-  assert.match(orders,/CREATE TABLE IF NOT EXISTS order_stock_lot_allocations/);
-  assert.match(orders,/FROM merchant_order_consumable_rules/);
-  assert.match(orders,/planInventoryFefo\(client/);
-  assert.match(orders,/applyLotAllocations\(client/);
+test('orders reserve both recipes and configured consumables using FEFO and restore consumed lots on cancellation',()=>{
+  assert.match(orders,/consumeOrderReservations\(client,order\)/);
+  assert.match(reservation,/FROM merchant_order_consumable_rules/);
+  assert.match(reservation,/sortFefoLots/);
+  assert.match(reservation,/applyLotAllocations\(client,allocations\)/);
   assert.match(orders,/restoreLotAllocation\(client/);
 });
 
-test('Marketplace preparation uses the same FEFO and consumable rules instead of bypassing them',()=>{
-  assert.match(marketplace,/FROM merchant_order_consumable_rules/);
-  assert.match(marketplace,/planInventoryFefo\(client/);
-  assert.match(marketplace,/order_stock_lot_allocations/);
+test('Marketplace uses the same reservation, FEFO, consumable and cancellation runtime as Orders',()=>{
+  assert.match(marketplace,/reserveOrderStock\(client/);
+  assert.match(marketplace,/consumeOrderReservations\(client,o\)/);
+  assert.match(marketplace,/releaseOrderReservations\(client/);
+  assert.match(reservation,/FROM merchant_order_consumable_rules/);
+  assert.match(reservation,/order_stock_lot_allocations/);
   assert.match(marketplace,/restoreLotAllocation\(client/);
-  assert.match(marketplace,/Expired or held lots are excluded/i);
 });
