@@ -852,12 +852,12 @@ async function renderMerchantCatalog(){
     merchantCatalogSchema=schema;
     marketWorkspace.innerHTML=
       marketHeader('Catalog','Food menus and Retail products share one Catalog engine')+
-      catalogCreateSection(inventory||[],schema)+
+      catalogCreateSection(inventory||[])+
       retailMerchandisingSection(retailPage,collections||[])+
       ((store.merchant_domain==='food'||store.merchant_domain==='mixed')?preparedImportSection():'')+
       catalogSection(store.products||[]);
     bindBack();
-    bindCatalogCreate(inventory||[],schema);
+    bindCatalogCreate(inventory||[]);
     bindRetailMerchandising(retailPage,collections||[],inventory||[]);
     bindCatalog();
   }catch(e){
