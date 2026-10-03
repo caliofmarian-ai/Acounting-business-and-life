@@ -623,8 +623,10 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
   try{
     const ctx=await accountingContext(req);
     if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
-    const itemName=clean(req.body?.item,100);
-    if(!itemName)return res.status(400).json({error:'Item is required'});
+    let itemName=clean(req.body?.item,100);
+    const requestedInventoryId=req.body?.inventory_id==null||req.body?.inventory_id===''?null:Number(req.body.inventory_id);
+    if(requestedInventoryId!=null&&!Number.isInteger(requestedInventoryId))return res.status(400).json({error:'Choose a valid Inventory item.'});
+    if(!itemName&&requestedInventoryId==null)return res.status(400).json({error:'Item is required'});
     const inventoryType=normalizeInventoryType(req.body?.inventory_type);
     const expiryAt=inventoryExpiryTimestamp(req.body?.expires_at);
     const supplierLotCode=clean(req.body?.lot_code,90);
@@ -646,7 +648,11 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
     const client=await pool.connect();
     try{
       await client.query('BEGIN');
-      const current=await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND LOWER(item)=LOWER($2) FOR UPDATE`,[ctx.business.id,itemName]);
+      const current=requestedInventoryId==null
+        ?await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND LOWER(item)=LOWER($2) FOR UPDATE`,[ctx.business.id,itemName])
+        :await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND id=$2 FOR UPDATE`,[ctx.business.id,requestedInventoryId]);
+      if(requestedInventoryId!=null&&!current.rowCount)throw Object.assign(new Error('Inventory item not found.'),{status:404});
+      if(requestedInventoryId!=null)itemName=current.rows[0].item;
       const defaults=inventoryStorageDefaults(inventoryType);
       const fallback=current.rows[0]||defaults;
       const storage=requireValidInventoryStorage({
