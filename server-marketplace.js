@@ -287,10 +287,35 @@ async function guestPublicStorefront(businessId){
     gallery_images:row.gallery_images,country_code:row.country_code,currency_code:row.currency_code
   };
 }
+async function attachGuestPublicAllergens(rows,businessId){
+  const ids=(rows||[]).map(x=>Number(x.id)).filter(Number.isInteger);
+  if(!ids.length)return rows||[];
+  const privateLinks=await pool.query(
+    `SELECT id,legacy_product_id,product_domain,product_kind
+       FROM marketplace_products
+      WHERE business_id=$1 AND id=ANY($2::bigint[])`,
+    [Number(businessId),ids]
+  );
+  const links=new Map(privateLinks.rows.map(x=>[Number(x.id),x]));
+  return Promise.all((rows||[]).map(async row=>{
+    const link=links.get(Number(row.id));
+    if(!link||link.product_domain!=='food'||link.product_kind!=='prepared_food'||!link.legacy_product_id){
+      return{...row,allergen_information:null,allergen_review_current:null};
+    }
+    const summary=await deriveProductAllergenSummary(pool,{businessId:Number(businessId),productId:Number(link.legacy_product_id)});
+    const reviewed=Boolean(summary?.review_current);
+    return{
+      ...row,
+      allergen_information:reviewed?allergenPublicProjection(summary):null,
+      allergen_review_current:reviewed
+    };
+  }));
+}
+
 async function guestPublicProducts(businessId){
-  const {rows}=await pool.query(`SELECT id,business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
+  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
   const media=await attachProductMedia(rows,true);
-  return attachMarketplaceAllergens(media,{publicOnly:true});
+  return attachGuestPublicAllergens(media,businessId);
 }
 
 async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
