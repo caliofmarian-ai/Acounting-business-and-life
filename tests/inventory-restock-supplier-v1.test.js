@@ -26,7 +26,7 @@ test('Supplier prepare action creates grouped sourcing RFQs without recording pu
   assert.match(sourcing,/INSERT INTO supplier_rfqs/);
   assert.match(sourcing,/substitution_policy,currency_code,note,status,expires_at/);
   assert.match(sourcing,/INSERT INTO supplier_rfq_targets/);
-  assert.match(html,/does not create a purchase order, payment or received stock/i);
+  assert.match(html,/never a purchase order, payment or received stock/i);
 });
 
 test('Reorder suggestions expose the connected Supplier business target',()=>{
