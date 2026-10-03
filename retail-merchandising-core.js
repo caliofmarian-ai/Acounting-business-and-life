@@ -148,6 +148,40 @@ export async function replaceCollectionProducts(db,{businessId,collectionId,prod
   return ids;
 }
 
+function inventoryAvailableSql(alias,{lotsAvailable=true}={}){
+  const lotBlocked=lotsAvailable?`COALESCE((
+    SELECT SUM(GREATEST(0,sl.quantity_remaining_base))
+      FROM supply_lots sl
+     WHERE sl.business_id=${alias}.business_id
+       AND sl.inventory_id=${alias}.id
+       AND sl.quantity_remaining_base>0
+       AND (
+         COALESCE(sl.lot_state,'available')<>'available'
+         OR (sl.expires_at IS NOT NULL AND sl.expires_at<=NOW())
+       )
+  ),0)`:'0';
+  return `GREATEST(0,
+    COALESCE(${alias}.quantity,0)
+    - COALESCE((
+        SELECT SUM(r.quantity_reserved)
+          FROM order_stock_reservations r
+         WHERE r.business_id=${alias}.business_id
+           AND r.stock_kind='inventory'
+           AND r.stock_ref_id=${alias}.id
+           AND r.state='reserved'
+           AND (r.expires_at IS NULL OR r.expires_at>NOW())
+      ),0)
+    - COALESCE((
+        SELECT SUM(h.quantity)
+          FROM inventory_unavailable_allocations h
+         WHERE h.business_id=${alias}.business_id
+           AND h.inventory_id=${alias}.id
+           AND h.state='active'
+      ),0)
+    - ${lotBlocked}
+  )`;
+}
+
 function catalogListFilters(input={}){
   const q=clean(input.q,120);
   const category=clean(input.category,100);
@@ -170,6 +204,14 @@ function catalogListFilters(input={}){
 export async function retailCatalogPage(db,{businessId,filters={}}={}){
   const bid=Number(businessId);
   if(!positiveInt(bid))throw new TypeError('A valid Merchant business is required.');
+  let lotsAvailable=true;
+  try{
+    const rel=await db.query("SELECT to_regclass('public.supply_lots') rel");
+    lotsAvailable=Boolean(rel.rows[0]?.rel);
+  }catch(error){
+    if(!['42P01','42703'].includes(String(error?.code||'')))throw error;
+    lotsAvailable=false;
+  }
   const f=catalogListFilters(filters);
   const args=[bid];
   const where=["p.business_id=$1","p.product_domain='non_food'"];
@@ -202,13 +244,15 @@ export async function retailCatalogPage(db,{businessId,filters={}}={}){
     )`);
   }
 
+  const directAvailableExpr=inventoryAvailableSql('i',{lotsAvailable});
+  const variantAvailableExpr=inventoryAvailableSql('vi',{lotsAvailable});
   const sellableExpr=`CASE
     WHEN p.variant_mode THEN EXISTS(
       SELECT 1 FROM catalog_product_variants v
       JOIN inventory vi ON vi.id=v.inventory_id AND vi.business_id=p.business_id
-      WHERE v.product_id=p.id AND v.active=TRUE AND COALESCE(vi.quantity,0)>0
+      WHERE v.product_id=p.id AND v.active=TRUE AND (${variantAvailableExpr})>0
     )
-    WHEN p.inventory_id IS NOT NULL THEN COALESCE(i.quantity,0)>0
+    WHEN p.inventory_id IS NOT NULL THEN (${directAvailableExpr})>0
     WHEN p.stock_tracked THEN COALESCE(p.stock_quantity,0)>0
     ELSE TRUE
   END`;
@@ -230,7 +274,9 @@ export async function retailCatalogPage(db,{businessId,filters={}}={}){
   const {rows}=await db.query(`
     SELECT p.*,
            i.item inventory_item_name,i.internal_sku,i.barcode,
-           COALESCE(i.quantity,0) direct_inventory_quantity,i.unit inventory_unit,
+           COALESCE(i.quantity,0) direct_inventory_quantity,
+           CASE WHEN i.id IS NULL THEN 0 ELSE ${directAvailableExpr} END direct_available_quantity,
+           i.unit inventory_unit,
            ${sellableExpr} in_stock,
            ${hasMediaExpr} has_public_media,
            (SELECT COUNT(*)::int FROM catalog_product_variants v WHERE v.product_id=p.id) variant_count,
@@ -241,6 +287,12 @@ export async function retailCatalogPage(db,{businessId,filters={}}={}){
                LEFT JOIN inventory vi ON vi.id=v.inventory_id AND vi.business_id=p.business_id
               WHERE v.product_id=p.id AND v.active=TRUE
            ),0) variant_on_hand,
+           COALESCE((
+             SELECT SUM(${variantAvailableExpr})
+               FROM catalog_product_variants v
+               JOIN inventory vi ON vi.id=v.inventory_id AND vi.business_id=p.business_id
+              WHERE v.product_id=p.id AND v.active=TRUE
+           ),0) variant_available,
            COALESCE((
              SELECT json_agg(ci.collection_id ORDER BY ci.collection_id)
                FROM merchant_catalog_collection_items ci
@@ -264,9 +316,11 @@ export async function retailCatalogPage(db,{businessId,filters={}}={}){
       selling_price:Number(row.selling_price),
       quantity_per_unit:Number(row.quantity_per_unit),
       direct_inventory_quantity:Number(row.direct_inventory_quantity||0),
+      direct_available_quantity:Number(row.direct_available_quantity||0),
       variant_count:Number(row.variant_count||0),
       active_variant_count:Number(row.active_variant_count||0),
       variant_on_hand:Number(row.variant_on_hand||0),
+      variant_available:Number(row.variant_available||0),
       collection_ids:(row.collection_ids||[]).map(Number),
       total_count:Number(row.total_count||0)
     })),
@@ -384,6 +438,16 @@ export async function scanRetailCatalogBarcode(db,{businessId,barcode}={}){
     };
   }
   const inventory=inv.rows[0];
+  if(inventory.inventory_domain&&inventory.inventory_domain!=='non_food'){
+    return{
+      status:'inventory_non_retail',
+      barcode:normalized,
+      inventory:{
+        ...inventory,id:Number(inventory.id),business_id:Number(inventory.business_id),
+        quantity:Number(inventory.quantity||0),unit_cost:Number(inventory.unit_cost||0)
+      }
+    };
+  }
 
   const variant=await db.query(`
     SELECT v.id variant_id,v.product_id,v.variant_key,v.price_override,v.active,
