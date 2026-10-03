@@ -368,6 +368,19 @@ export function registerInventoryCountSessionRoutes(app,deps){
       for(const row of variances){
         const inventoryId=Number(row.inventory_id),before=Number(row.expected_quantity);
         const safeAfter=Math.max(0,Number(row.counted_quantity)),delta=safeAfter-before;
+        if(delta<0){
+          const reserved=await client.query(`
+            SELECT COALESCE(SUM(quantity_reserved),0) reserved
+              FROM order_stock_reservations
+             WHERE business_id=$1 AND stock_kind='inventory' AND stock_ref_id=$2
+               AND state='reserved' AND (expires_at IS NULL OR expires_at>NOW())
+          `,[ctx.business.id,inventoryId]);
+          if(Number(reserved.rows[0]?.reserved||0)>1e-6){
+            throw Object.assign(new Error('This item has stock reserved for an active order. Finish or release that reservation, then recount before reducing physical stock.'),{
+              status:409,inventory_id:inventoryId,reserved_quantity:Number(reserved.rows[0].reserved)
+            });
+          }
+        }
         let physicalPlan={ok:true,allocations:[],untracked_used:0},appliedLots=[];
         if(delta<0&&lotTracking){
           const lots=await inventoryLotRows(client,{businessId:ctx.business.id,inventoryId,lock:true});
