@@ -208,7 +208,7 @@ function renderMerchantToday(data){
     :Number(data.inventory?.low_stock||0)>0?'Low stock needs attention':'Stock looks clear';
   const inv=Array.isArray(data.inventory?.items)?data.inventory.items:[];
   const exp=Array.isArray(data.inventory?.expiry_items)?data.inventory.expiry_items:[];
-  const lowRows=inv.map(x=>'<div><strong>'+esc(x.item)+'</strong><span>'+num(x.quantity,4)+' '+esc(x.unit)+' · reorder '+num(x.reorder_level,4)+'</span></div>');
+  const lowRows=inv.map(x=>{const blocked=Number(x.blocked_quantity||0),stock=blocked>0?'usable '+num(x.usable_quantity??x.quantity,4)+' / physical '+num(x.physical_quantity??x.quantity,4):num(x.usable_quantity??x.quantity,4);return '<div><strong>'+esc(x.item)+'</strong><span>'+stock+' '+esc(x.unit)+' · reorder '+num(x.reorder_level,4)+'</span></div>'});
   const expiryRows=exp.map(x=>{
     const date=x.expires_at?new Date(x.expires_at).toLocaleDateString('en-PH',{timeZone:'Asia/Manila'}):'';
     const status=x.expiry_status==='expired'?'EXPIRED':x.expiry_status==='held'?'HELD':'EXPIRING SOON';
@@ -332,7 +332,7 @@ async function loadSummary(){
 }
 async function loadTransactions(){const tx=await cachedJson('/api/transactions','transactions');transactions=tx;$('recentList').replaceChildren(...(tx.length?tx.slice(0,8).map(t=>txRow(t,false)):[emptyRow('No transactions yet.')]));$('historyList').replaceChildren(...(tx.length?tx.map(t=>txRow(t,true)):[emptyRow('No transactions yet.')]))}
 function restockNeedLabel(x){
-  const current=Number(x.quantity||0),threshold=Number(x.reorder_level||0),unit=x.inventory_base_unit||x.unit||'unit';
+  const current=Number(x.usable_quantity??x.quantity??0),threshold=Number(x.reorder_level||0),unit=x.inventory_base_unit||x.unit||'unit';
   const gap=Math.max(0,threshold-current);
   return gap>0?`${num(gap,4)} ${esc(unit)} below alert level`:`At the ${num(threshold,4)} ${esc(unit)} alert level`;
 }
@@ -345,7 +345,9 @@ function renderRestockList(rows=[]){
     const preferred=x.source_status==='PREFERRED_SOURCE'&&Number(x.supplier_business_id)>0&&Number(x.suggested_packs)>0;
     const supplier=preferred?`${esc(x.supplier_name||'Preferred Supplier')} • suggested ${num(x.suggested_packs,4)} ${esc(x.unit_name||'pack')}`:'No preferred Supplier linked yet';
     const estimated=preferred&&Number.isFinite(Number(x.price_per_pack))?` • approx. ${money(Number(x.suggested_packs)*Number(x.price_per_pack))}`:'';
-    d.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • current ${num(x.quantity,4)} ${esc(x.unit||'')}, alert at ${num(x.reorder_level,4)} ${esc(x.unit||'')}<br>${supplier}${estimated}</small></div><div class="rowRight">${preferred?'<button type="button" class="miniBtn restockRequestBtn">Ask Supplier to prepare</button>':'<span class="negative">Supplier needed</span>'}</div>`;
+    const usable=Number(x.usable_quantity??x.quantity??0),physical=Number(x.physical_quantity??x.quantity??0),blocked=Number(x.blocked_quantity||0);
+    const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(x.unit||'')} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`usable ${num(usable,4)} ${esc(x.unit||'')}`;
+    d.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • ${stockCopy}, alert at ${num(x.reorder_level,4)} ${esc(x.unit||'')}<br>${supplier}${estimated}</small></div><div class="rowRight">${preferred?'<button type="button" class="miniBtn restockRequestBtn">Ask Supplier to prepare</button>':'<span class="negative">Supplier needed</span>'}</div>`;
     if(preferred)d.querySelector('.restockRequestBtn').onclick=()=>sendRestockRequest(x,d);
     return d;
   });
@@ -375,7 +377,7 @@ async function sendRestockRequest(x,row){
       substitution_policy:'approval_required',
       currency_code:'PHP',
       supplier_business_ids:[Number(x.supplier_business_id)],
-      note:`Low-stock restock request from Inventory. Current stock: ${num(x.quantity,4)} ${x.unit||''}; alert level: ${num(x.reorder_level,4)} ${x.unit||''}.`
+      note:`Low-stock restock request from Inventory. Usable stock: ${num(x.usable_quantity??x.quantity,4)} ${x.unit||''}; physical stock: ${num(x.physical_quantity??x.quantity,4)} ${x.unit||''}; alert level: ${num(x.reorder_level,4)} ${x.unit||''}.`
     })});
     if(button){button.textContent='Request sent';button.disabled=true}
     const small=row?.querySelector('.rowMain small');if(small)small.insertAdjacentHTML('beforeend',`<br><strong>Supplier request #${esc(result.id||'created')} sent.</strong>`);
@@ -387,9 +389,9 @@ async function sendRestockRequest(x,row){
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
   inventory=results[0];
-  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const low=Number(i.quantity)<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${num(i.quantity,4)} ${esc(i.unit)} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
+  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
   $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
-  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.quantity)<=Number(i.reorder_level)).length);
+  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
   fillConsumableRuleInventory();
   fillStockAdjustmentInventory();
