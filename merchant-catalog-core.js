@@ -46,16 +46,23 @@ export function toBaseQuantity(quantity,unit){
 }
 
 export function deriveStockPurchase({
-  purchase_quantity,purchase_unit,total_cost,reorder_quantity=0,reorder_unit=''
+  purchase_quantity,purchase_unit,total_cost,reorder_quantity=0,reorder_unit='',
+  target_quantity=0,target_unit=''
 }={}){
   const q=toBaseQuantity(purchase_quantity,purchase_unit);
   if(!finite(total_cost)||Number(total_cost)<0)throw new TypeError('Total purchase cost must be zero or greater.');
-  let reorderBase=0;
+  let reorderBase=0,targetBase=0;
   if(Number(reorder_quantity)>0){
     const r=toBaseQuantity(reorder_quantity,reorder_unit||purchase_unit);
     if(r.family!==q.family)throw new TypeError('Reorder quantity must use the same measurement family as the stock item.');
     reorderBase=r.base_quantity;
   }
+  if(Number(target_quantity)>0){
+    const t=toBaseQuantity(target_quantity,target_unit||reorder_unit||purchase_unit);
+    if(t.family!==q.family)throw new TypeError('Target stock must use the same measurement family as the stock item.');
+    targetBase=t.base_quantity;
+  }
+  if(targetBase>0&&targetBase+1e-9<reorderBase)throw new TypeError('Target stock must be equal to or higher than the low-stock alert level.');
   return{
     measurement_family:q.family,
     base_unit:q.base_unit,
@@ -64,7 +71,8 @@ export function deriveStockPurchase({
     base_quantity:q.base_quantity,
     total_cost:round(Number(total_cost),2),
     base_unit_cost:q.base_quantity>0?round(Number(total_cost)/q.base_quantity,8):0,
-    reorder_base_quantity:reorderBase
+    reorder_base_quantity:reorderBase,
+    target_base_quantity:targetBase
   };
 }
 
