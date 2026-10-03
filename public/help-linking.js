@@ -49,9 +49,8 @@
     dock.id='contextHelpDock';
     dock.className='contextHelpDock';
     dock.setAttribute('aria-live','polite');
-    dock.innerHTML='<button class="contextHelpGlobal" type="button" aria-label="Open Help Center">?</button><div class="contextHelpNotice hidden"><div><strong>Need help?</strong><span></span></div><a href="/help">Learn more</a><button class="contextHelpClose" type="button" aria-label="Dismiss help suggestion">×</button></div>';
+    dock.innerHTML='<div class="contextHelpNotice hidden"><div><strong>Need help?</strong><span></span></div><a href="/help">Learn more</a><button class="contextHelpClose" type="button" aria-label="Dismiss help suggestion">×</button></div>';
     document.body.appendChild(dock);
-    dock.querySelector('.contextHelpGlobal').onclick=()=>location.assign('/help');
     dock.querySelector('.contextHelpClose').onclick=()=>dock.querySelector('.contextHelpNotice').classList.add('hidden');
     return dock;
   }
