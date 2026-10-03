@@ -5,6 +5,8 @@ let inventory = [];
 let stockAdjustmentLots = [];
 let products = [];
 let recipeDraft = [];
+let allergenCatalog = [];
+let currentProductAllergenSummary = null;
 const money = (v) => new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP',maximumFractionDigits:2}).format(Number(v||0));
 const num = (v,d=3) => Number(v||0).toLocaleString('en-PH',{maximumFractionDigits:d});
 const UNIT_META={
@@ -449,6 +451,7 @@ async function loadStock(){
   $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
   if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
+  await fillIngredientAllergenEditor();
   fillConsumableRuleInventory();
   fillStockAdjustmentInventory();
   fillStorageEditor();
@@ -676,7 +679,82 @@ function fillProductSelects(){
   updateSellPreview();if(prepared.length&&!$('recipeProduct').value)$('recipeProduct').value=String(prepared[0].id);
 }
 function fillIngredientSelect(){const ingredients=inventory.filter(i=>(i.inventory_type||'ingredient')==='ingredient');$('recipeIngredient').innerHTML=ingredients.length?ingredients.map(i=>`<option value="${i.id}">${esc(i.item)} — ${num(i.quantity)} ${esc(i.unit)}</option>`).join(''):'<option value="">Add ingredient stock first</option>'}
-async function loadProducts(){products=await cachedJson('/api/products','products');const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');$('productList').replaceChildren(...(prepared.length?prepared.map(productCard):[emptyRow('Create the first prepared product.') ]));fillProductSelects();syncRecipeDraftFromSelected()}
+async function ensureAllergenCatalog(){
+  if(allergenCatalog.length)return allergenCatalog;
+  const data=await api('/api/food/allergens/catalog');
+  allergenCatalog=Array.isArray(data?.allergens)?data.allergens:[];
+  return allergenCatalog;
+}
+function renderAllergenChecks(hostId,name,selected=[]){
+  const host=$(hostId);if(!host)return;
+  const set=new Set(selected||[]);
+  host.innerHTML=allergenCatalog.map(a=>`<label class="allergenCheck"><input type="checkbox" name="${esc(name)}" value="${esc(a.code)}" ${set.has(a.code)?'checked':''}><span>${esc(a.label)}</span></label>`).join('');
+}
+function checkedAllergens(name){
+  return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(x=>x.value);
+}
+function allergenNames(codes=[]){
+  const byCode=new Map(allergenCatalog.map(x=>[x.code,x.label]));
+  return (codes||[]).map(code=>byCode.get(code)||code);
+}
+async function fillIngredientAllergenEditor(){
+  const select=$('ingredientAllergenInventory');if(!select)return;
+  await ensureAllergenCatalog();
+  const ingredients=inventory.filter(i=>(i.inventory_type||'ingredient')==='ingredient');
+  const previous=select.value;
+  select.innerHTML=ingredients.length?'<option value="">Choose an ingredient</option>'+ingredients.map(i=>`<option value="${i.id}">${esc(i.item)}</option>`).join(''):'<option value="">Add Ingredient stock first</option>';
+  if(previous&&ingredients.some(i=>String(i.id)===String(previous)))select.value=previous;
+  renderAllergenChecks('ingredientContainsGrid','ingredientContains',[]);
+  renderAllergenChecks('ingredientMayContainGrid','ingredientMayContain',[]);
+  if(select.value)await loadIngredientAllergens();
+}
+async function loadIngredientAllergens(){
+  const id=Number($('ingredientAllergenInventory')?.value);
+  if(!Number.isInteger(id)){
+    renderAllergenChecks('ingredientContainsGrid','ingredientContains',[]);
+    renderAllergenChecks('ingredientMayContainGrid','ingredientMayContain',[]);
+    if($('ingredientAllergenNote'))$('ingredientAllergenNote').value='';
+    return;
+  }
+  const data=await api(`/api/inventory/${id}/allergens`);
+  renderAllergenChecks('ingredientContainsGrid','ingredientContains',data.contains||[]);
+  renderAllergenChecks('ingredientMayContainGrid','ingredientMayContain',data.may_contain||[]);
+  $('ingredientAllergenNote').value=data.note||'';
+}
+function fillProductAllergenSelect(){
+  const select=$('allergenProduct');if(!select)return;
+  const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');
+  const previous=select.value;
+  select.innerHTML=prepared.length?'<option value="">Choose a product</option>'+prepared.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join(''):'<option value="">Create a prepared product first</option>';
+  if(previous&&prepared.some(p=>String(p.id)===String(previous)))select.value=previous;
+}
+function renderProductAllergenSummary(summary){
+  currentProductAllergenSummary=summary||null;
+  const out=$('productAllergenDerived'),state=$('productAllergenReviewState');
+  if(!out||!state)return;
+  if(!summary){
+    out.textContent='Choose a prepared product to review its allergen information.';
+    state.textContent='Allergen review status will appear here.';
+    renderAllergenChecks('productCrossContactGrid','productCrossContact',[]);
+    return;
+  }
+  const contains=allergenNames(summary.contains),may=allergenNames(summary.may_contain),cross=allergenNames(summary.cross_contact);
+  out.innerHTML=`<strong>Derived from recipe evidence</strong><br>Contains: <b>${esc(contains.join(', ')||'None declared')}</b><br>May contain: <b>${esc(may.join(', ')||'None declared')}</b><br>Cross-contact risk: <b>${esc(cross.join(', ')||'None declared')}</b><br><span class="muted">No allergen is inferred from an ingredient or product name.</span>`;
+  state.innerHTML=summary.review_current
+    ?`<strong class="positive">Reviewed for revision ${Number(summary.revision)}</strong><br><span class="muted">This allergen evidence is current. A later recipe/evidence change requires another review.</span>`
+    :`<strong class="negative">Review required · revision ${Number(summary.revision)}</strong><br><span class="muted">Review this evidence before publishing prepared food to the Storefront.</span>`;
+  renderAllergenChecks('productCrossContactGrid','productCrossContact',summary.cross_contact||[]);
+  if($('productCrossContactNote'))$('productCrossContactNote').value=summary.cross_contact_note||'';
+}
+async function loadProductAllergens(){
+  const id=Number($('allergenProduct')?.value);
+  await ensureAllergenCatalog();
+  if(!Number.isInteger(id)){renderProductAllergenSummary(null);return}
+  const summary=await api(`/api/products/${id}/allergens`);
+  renderProductAllergenSummary(summary);
+}
+
+async function loadProducts(){products=await cachedJson('/api/products','products');const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');$('productList').replaceChildren(...(prepared.length?prepared.map(productCard):[emptyRow('Create the first prepared product.') ]));fillProductSelects();fillProductAllergenSelect();syncRecipeDraftFromSelected();if($('allergenProduct')?.value)await loadProductAllergens()}
 function updateSellPreview(){const p=products.find(x=>x.id===Number($('sellProduct').value));const q=Math.max(0,Number($('sellQty').value||1));if(!p){$('sellPreview').textContent='Create a menu product first.';return}const rev=p.selling_price*q,cost=p.estimated_unit_cost*q,gross=rev-cost;$('sellPreview').innerHTML=`Revenue <strong>${money(rev)}</strong> • ingredient cost <strong>${money(cost)}</strong> • estimated gross <strong class="${gross>=0?'positive':'negative'}">${money(gross)}</strong>`}
 function recipeState(){
   const yieldBase=toBase($('recipeYieldQty')?.value,$('recipeYieldUnit')?.value);
@@ -795,6 +873,36 @@ $('budgetForm').addEventListener('submit',async e=>{e.preventDefault();$('budget
 
 $('productForm').addEventListener('submit',async e=>{e.preventDefault();$('productMessage').textContent='Saving…';const id=$('productId').value;const body={name:$('productName').value,category:$('productCategory').value||'Food',selling_price:Number($('productPrice').value),active:$('productActive').checked,product_kind:'prepared_recipe'};try{if(id)await api(`/api/products/${id}`,{method:'PATCH',body:JSON.stringify(body)});else await api('/api/products',{method:'POST',body:JSON.stringify(body)});resetProductForm();await loadProducts();$('productMessage').textContent='Saved. Add or update the batch recipe below.'}catch(err){$('productMessage').textContent=err.message}});
 $('productCancel').onclick=resetProductForm;
+$('ingredientAllergenInventory')?.addEventListener('change',()=>loadIngredientAllergens().catch(error=>{$('ingredientAllergenMessage').textContent=error.message}));
+$('ingredientAllergenForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();const out=$('ingredientAllergenMessage');if(out)out.textContent='Saving…';
+  try{
+    const id=Number($('ingredientAllergenInventory').value);
+    if(!Number.isInteger(id))throw new Error('Choose an ingredient.');
+    const contains=checkedAllergens('ingredientContains');
+    const may=checkedAllergens('ingredientMayContain').filter(code=>!contains.includes(code));
+    await api(`/api/inventory/${id}/allergens`,{method:'PUT',body:JSON.stringify({contains,may_contain:may,note:$('ingredientAllergenNote').value})});
+    if(out)out.textContent='Ingredient allergen evidence saved. Affected prepared products now require review.';
+    await loadProducts();
+  }catch(error){if(out)out.textContent=error.message}
+});
+$('allergenProduct')?.addEventListener('change',()=>loadProductAllergens().catch(error=>{$('productAllergenMessage').textContent=error.message}));
+$('saveProductCrossContact')?.addEventListener('click',async()=>{
+  const out=$('productAllergenMessage');if(out)out.textContent='Saving…';
+  try{
+    const id=Number($('allergenProduct').value);if(!Number.isInteger(id))throw new Error('Choose a prepared product.');
+    const summary=await api(`/api/products/${id}/allergens/cross-contact`,{method:'PUT',body:JSON.stringify({cross_contact:checkedAllergens('productCrossContact'),note:$('productCrossContactNote').value})});
+    renderProductAllergenSummary(summary);if(out)out.textContent='Cross-contact risk saved. Review is required again.';
+  }catch(error){if(out)out.textContent=error.message}
+});
+$('reviewProductAllergens')?.addEventListener('click',async()=>{
+  const out=$('productAllergenMessage');if(out)out.textContent='Reviewing…';
+  try{
+    const id=Number($('allergenProduct').value);if(!Number.isInteger(id))throw new Error('Choose a prepared product.');
+    const summary=await api(`/api/products/${id}/allergens/review`,{method:'POST',body:JSON.stringify({note:$('productAllergenReviewNote').value})});
+    renderProductAllergenSummary(summary);if(out)out.textContent='Allergen information reviewed and confirmed for the current recipe revision.';
+  }catch(error){if(out)out.textContent=error.message}
+});
 $('recipeProduct').onchange=syncRecipeDraftFromSelected;
 $('recipeIngredient').onchange=()=>{const inv=inventory.find(i=>Number(i.id)===Number($('recipeIngredient').value));syncUnitSelect('recipeUnit',inv?.unit||inv?.base_unit||'g')};
 for(const id of ['recipeYieldQty','recipeYieldUnit','recipeSellQty','recipeSellUnit'])$(id).addEventListener('input',updateRecipeCost);
