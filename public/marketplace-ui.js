@@ -492,7 +492,11 @@ function variantSelectionMap(variant){
 }
 function selectedDetailVariant(product,panel=document.getElementById('productDetailPanel')){
   const axes=productVariantAxes(product);if(!axes.length)return null;
-  const selected=Object.fromEntries(axes.map(axis=>[axis.code,String(panel?.querySelector('[data-variant-axis="'+CSS.escape(axis.code)+'"]')?.value||'')]));
+  const controls=[...(panel?.querySelectorAll('[data-variant-axis]')||[])];
+  const selected=Object.fromEntries(axes.map(axis=>{
+    const control=controls.find(item=>String(item.dataset.variantAxis||'')===String(axis.code));
+    return[axis.code,String(control?.value||'')];
+  }));
   return (product.variants||[]).find(variant=>(variant.option_values||[]).every(option=>selected[String(option.option_code)]===String(option.value_code)))||null;
 }
 function modifierOptionLookup(product){
