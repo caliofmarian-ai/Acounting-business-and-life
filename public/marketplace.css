@@ -224,7 +224,7 @@
 .adaptiveStoreTabs::-webkit-scrollbar,.foodMenuBar::-webkit-scrollbar{display:none}
 .adaptiveStoreTabs button,.foodMenuBar button{flex:0 0 auto;min-height:42px;border:1px solid #dce6e2;border-radius:999px;background:#fff;color:#536071;padding:8px 13px;font-size:10px;font-weight:900;white-space:nowrap}
 .adaptiveStoreTabs button.active,.foodMenuBar button.active{background:#17233c;color:#fff;border-color:#17233c}
-.foodMenuBar{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;position:sticky;top:54px;z-index:7;padding:5px 0 10px;background:linear-gradient(#f8fbfa 78%,rgba(248,251,250,.84))}
+.foodMenuBar{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;position:sticky;top:0;z-index:7;padding:5px 0 10px;background:linear-gradient(#f8fbfa 78%,rgba(248,251,250,.84))}\n.adaptiveStoreTabs + .foodMenuBar{top:54px}
 .retailDiscovery{display:grid;grid-template-columns:minmax(220px,2fr) repeat(4,minmax(125px,1fr)) auto;gap:8px;align-items:end;border:1px solid #dfe9e5;border-radius:17px;background:#fff;padding:10px;margin-bottom:10px}
 .retailDiscovery label{display:grid;gap:5px;min-width:0;color:#536071;font-size:9px;font-weight:900}
 .retailDiscovery input,.retailDiscovery select,.retailDiscovery button{min-height:42px;border:1px solid #d7e1de;border-radius:11px;background:#fff;padding:8px 10px;font:inherit;color:#17233c}
