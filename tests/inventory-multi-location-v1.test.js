@@ -110,7 +110,7 @@ test('Merchant mobile UI exposes locations, transfers, reversal and location cou
     'inventoryLocationsCard','inventoryLocationForm','inventoryLocationBalanceList',
     'inventoryTransferForm','inventoryTransferItem','inventoryTransferSource',
     'inventoryTransferDestination','inventoryTransferQuantity','inventoryTransferList'
-  ])assert.match(html,new RegExp('id=["\\']'+id+'["\\']'));
+  ])assert.ok(html.includes('id="'+id+'"'));
   assert.match(html,/value="location_id">Storage location/);
   assert.match(ui,/createInventoryLocationUi/);
   assert.match(ui,/inventoryLocationUi\.load\(\)/);
