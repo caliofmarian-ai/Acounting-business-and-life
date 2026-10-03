@@ -355,12 +355,18 @@ async function createMarketplaceOrder(req){
   for(const raw of rawItems){
     const id=Number(raw.product_id),q=Number(raw.quantity);
     const variantId=raw.variant_id==null||raw.variant_id===''?null:Number(raw.variant_id);
+    const modifierOptionIds=[...new Set((Array.isArray(raw.modifier_option_ids)?raw.modifier_option_ids:[])
+      .map(Number).filter(value=>Number.isInteger(value)&&value>0))].sort((a,b)=>a-b);
     if(!Number.isInteger(id)||!positive(q))throw Object.assign(new Error('Every basket item needs a valid quantity'),{status:400});
     if(variantId!=null&&(!Number.isInteger(variantId)||variantId<1))throw Object.assign(new Error('Choose a valid product variant'),{status:400});
+    if(Array.isArray(raw.modifier_option_ids)&&modifierOptionIds.length!==raw.modifier_option_ids.length){
+      throw Object.assign(new Error('Choose valid product options'),{status:400});
+    }
     ids.push(id);
-    const key=`${id}:${variantId||0}`,existing=basketLines.get(key);
+    const modifierKey=modifierOptionIds.join(',');
+    const key=`${id}:${variantId||0}:${modifierKey}`,existing=basketLines.get(key);
     if(existing)existing.quantity+=q;
-    else basketLines.set(key,{product_id:id,variant_id:variantId,quantity:q});
+    else basketLines.set(key,{product_id:id,variant_id:variantId,modifier_option_ids:modifierOptionIds,quantity:q});
   }
   if(!rawItems.length||rawItems.length>50)throw Object.assign(new Error('Basket needs 1–50 items'),{status:400});
   const store=await storefront(businessId,false);
@@ -388,8 +394,25 @@ async function createMarketplaceOrder(req){
     for(const basketLine of basketLines.values()){
       const row=productById.get(Number(basketLine.product_id)),q=Number(basketLine.quantity);
       if(!row)throw Object.assign(new Error('One or more basket items are unavailable'),{status:409});
-      let unitCost=0,unitPrice=Number(row.selling_price),variantId=null,variantSnapshot={};
+      let unitCost=0,unitPrice=Number(row.selling_price),variantId=null,variantSnapshot={},modifierSnapshot={groups:[]};
       let nameSnapshot=row.name;
+
+      if(row.product_domain==='food'){
+        const orderability=await foodProductOrderability(client,{businessId,productId:Number(row.id)});
+        if(!orderability.orderable){
+          const message=orderability.reason==='outside_menu_schedule'
+            ?`${row.name} is not available in the current menu schedule`
+            :`${row.name} is currently unavailable`;
+          throw Object.assign(new Error(message),{status:409,code:'FOOD_ITEM_UNAVAILABLE'});
+        }
+        const modifiers=await validateProductModifierSelections(client,{
+          businessId,productId:Number(row.id),optionIds:basketLine.modifier_option_ids||[]
+        });
+        unitPrice=money(unitPrice+Number(modifiers.price_delta||0));
+        modifierSnapshot=modifiers.snapshot||{groups:[]};
+      }else if((basketLine.modifier_option_ids||[]).length){
+        throw Object.assign(new Error(`${row.name} does not use Food menu options`),{status:409});
+      }
 
       if(row.variant_mode){
         if(!basketLine.variant_id)throw Object.assign(new Error(`Choose a variant for ${row.name}`),{status:409});
@@ -442,7 +465,7 @@ async function createMarketplaceOrder(req){
 
       const line=money(unitPrice*q),cogs=money(unitCost*q),gross=money(line-cogs);
       subtotal+=line;
-      snapshots.push({row,q,line,unitCost,unitPrice,cogs,gross,variantId,variantSnapshot,nameSnapshot});
+      snapshots.push({row,q,line,unitCost,unitPrice,cogs,gross,variantId,variantSnapshot,modifierSnapshot,nameSnapshot});
     }
     subtotal=money(subtotal);
 
@@ -458,11 +481,11 @@ async function createMarketplaceOrder(req){
     for(const x of snapshots){
       await client.query(`
         INSERT INTO order_items(
-          order_id,source_kind,source_id,catalog_variant_id,variant_snapshot_json,
+          order_id,source_kind,source_id,catalog_variant_id,variant_snapshot_json,modifier_snapshot_json,
           name_snapshot,category_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,
           line_total,estimated_cogs,estimated_gross_profit
-        ) VALUES($1,'marketplace_product',$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12)
-      `,[orderId,x.row.id,x.variantId,JSON.stringify(x.variantSnapshot||{}),x.nameSnapshot,x.row.category,x.q,x.unitPrice,x.unitCost,x.line,x.cogs,x.gross]);
+        ) VALUES($1,'marketplace_product',$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)
+      `,[orderId,x.row.id,x.variantId,JSON.stringify(x.variantSnapshot||{}),JSON.stringify(x.modifierSnapshot||{groups:[]}),x.nameSnapshot,x.row.category,x.q,x.unitPrice,x.unitCost,x.line,x.cogs,x.gross]);
     }
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Marketplace checkout')`,[orderId,status,customerId]);
     await reserveOrderStock(client,{...o.rows[0],id:orderId,order_number:number,order_status:status,business_id:businessId,fulfilment_method:fulfilment});
