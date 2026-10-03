@@ -265,10 +265,21 @@ async function attachMarketplaceAllergens(rows,{publicOnly=false}={}){
 async function attachFoodCommerce(rows,{businessId,publicOnly=false}={}){
   const foodIds=(rows||[]).filter(row=>row.product_domain==='food').map(row=>Number(row.id));
   const modifierMap=await modifierProjectionForProducts(pool,{businessId:Number(businessId),productIds:foodIds,publicOnly});
+  const orderabilityMap=new Map();
+  if(publicOnly){
+    await Promise.all(foodIds.map(async productId=>{
+      orderabilityMap.set(productId,await foodProductOrderability(pool,{businessId:Number(businessId),productId}));
+    }));
+  }
   return (rows||[]).map(row=>{
-    if(row.product_domain!=='food')return{...row,modifier_groups:[],availability:null};
+    if(row.product_domain!=='food')return{...row,modifier_groups:[],availability:null,orderability:null};
     const availability=effectiveFoodAvailability(row);
-    return{...row,modifier_groups:modifierMap.get(Number(row.id))||[],availability};
+    return{
+      ...row,
+      modifier_groups:modifierMap.get(Number(row.id))||[],
+      availability,
+      orderability:publicOnly?(orderabilityMap.get(Number(row.id))||{orderable:availability.orderable,reason:availability.state}):null
+    };
   }).filter(row=>!publicOnly||row.product_domain!=='food'||!row.availability?.hidden);
 }
 async function products(businessId,includePrivate=false){
