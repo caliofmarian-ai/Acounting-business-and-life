@@ -25,7 +25,7 @@ export function normalizeInventoryCountScope(body={},inventoryTypes=new Set()){
     if(!Number.isInteger(locationId)||locationId<=0)throw Object.assign(new Error('Choose a valid internal storage location for this cycle count.'),{status:400});
     return{count_type:'cycle',scope_type:'location_id',scope_value:String(locationId),location_id:locationId};
   }
-  return{count_type:'cycle',scope_type:scopeType,scope_value:scopeValue,location_id:null};
+  return{count_type:'cycle',scope_type:scopeType,scope_value:scopeValue};
 }
 
 export function serializeInventoryCountSession(session,items=[]){
