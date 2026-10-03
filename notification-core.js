@@ -590,26 +590,12 @@ export async function processNotificationDeliveries(pool,{limit=20}={}){
   return rows.length;
 }
 
-export async function renderNotifications(pool,rows=[],channel='in_app'){
+export function renderNotificationsWithTemplates(rows=[],templateRows=[]){
   const list=Array.isArray(rows)?rows:[];
   if(!list.length)return[];
-  const eventCodes=[...new Set(list.map(row=>clean(row?.event_code,120)).filter(Boolean))];
   const templateMap=new Map();
-  if(eventCodes.length){
-    const q=await pool.query(`
-      SELECT DISTINCT ON (event_code,locale)
-        event_code,locale,title_template,body_template
-      FROM notification_templates
-      WHERE event_code=ANY($1::text[])
-        AND country_code='PH'
-        AND locale IN ('en-PH','fil-PH')
-        AND channel=$2
-        AND active=TRUE
-      ORDER BY event_code,locale,version DESC
-    `,[eventCodes,channel]);
-    for(const row of q.rows){
-      templateMap.set(clean(row.event_code,120)+'|'+normalizeNotificationLocale(row.locale),row);
-    }
+  for(const row of Array.isArray(templateRows)?templateRows:[]){
+    templateMap.set(clean(row?.event_code,120)+'|'+normalizeNotificationLocale(row?.locale),row);
   }
   return list.map(row=>{
     const data=row?.data_json&&typeof row.data_json==='object'?row.data_json:{};
@@ -625,6 +611,28 @@ export async function renderNotifications(pool,rows=[],channel='in_app'){
       })
     };
   });
+}
+
+export async function renderNotifications(pool,rows=[],channel='in_app'){
+  const list=Array.isArray(rows)?rows:[];
+  if(!list.length)return[];
+  const eventCodes=[...new Set(list.map(row=>clean(row?.event_code,120)).filter(Boolean))];
+  let templateRows=[];
+  if(eventCodes.length){
+    const q=await pool.query(`
+      SELECT DISTINCT ON (event_code,locale)
+        event_code,locale,title_template,body_template
+      FROM notification_templates
+      WHERE event_code=ANY($1::text[])
+        AND country_code='PH'
+        AND locale IN ('en-PH','fil-PH')
+        AND channel=$2
+        AND active=TRUE
+      ORDER BY event_code,locale,version DESC
+    `,[eventCodes,channel]);
+    templateRows=q.rows;
+  }
+  return renderNotificationsWithTemplates(list,templateRows);
 }
 
 export async function renderNotification(pool,row,channel='in_app'){

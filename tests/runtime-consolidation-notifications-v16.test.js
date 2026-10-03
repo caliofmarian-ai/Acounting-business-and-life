@@ -68,25 +68,29 @@ test('PayMongo preserves PWA gating without a localhost asset proxy',()=>{
   assert.doesNotMatch(publicServer,/http:\/\/127\.0\.0\.1/);
 });
 
-test('Notifications polling resolves only lightweight authenticated identity',()=>{
+test('Notifications polling verifies the signed session locally and runs read policy with data in parallel',()=>{
   assert.match(auth,/app\.get\('\/api\/auth\/session\/identity', auth/);
-  assert.match(auth,/account_id:Number\(req\.accountId\)/);
   assert.match(auth,/authenticatedAccountContext/);
-  assert.match(auth,/pathname==='\/api\/auth\/session\/identity'/);
-  assert.match(auth,/SELECT auth_status,email_verified_at,account_mode FROM accounts/);
-  assert.match(auth,/ACCOUNT_NOT_ACTIVE/);
-  assert.match(auth,/EMAIL_VERIFICATION_REQUIRED/);
-  assert.match(notifications,/upstream\('\/api\/auth\/session\/identity'/);
+  assert.match(notifications,/verifyV2SessionTokenSignature/);
+  assert.match(notifications,/sessionCredentialFromHeaders/);
+  assert.match(notifications,/validateNotificationReadIdentity/);
+  assert.match(notifications,/JOIN accounts a ON a\.id=s\.account_id/);
+  assert.match(notifications,/s\.revoked_at IS NULL AND s\.expires_at>NOW\(\)/);
+  assert.match(notifications,/ACCOUNT_NOT_ACTIVE/);
+  assert.match(notifications,/const \[me,q\]=await Promise\.all/);
+  assert.match(notifications,/const \[me,inbox,soundPreferences,templates\]=await Promise\.all/);
   assert.doesNotMatch(notifications,/upstream\('\/api\/me'/);
 });
 
-test('Notification inbox rendering is batched and unread counting avoids window scans',()=>{
-  assert.match(notifications,/renderNotifications\(pool,rows,'in_app'\)/);
+test('Notification inbox rendering is batched and templates are prefetched in the same parallel DB round',()=>{
+  assert.match(notifications,/activeInAppTemplateRows/);
+  assert.match(notifications,/renderNotificationsWithTemplates\(rows,templates\.rows\)/);
   assert.doesNotMatch(notifications,/for\(const row of rows\)\{const msg=await renderNotification/);
   assert.match(notifications,/COUNT\(DISTINCT CASE/);
   assert.match(notificationCore,/notification_recipients_active_account_idx/);
   assert.match(notificationCore,/notification_recipients_unread_account_idx/);
   assert.match(notificationCore,/notification_deliveries_in_app_delivered_idx/);
+  assert.match(notificationCore,/export function renderNotificationsWithTemplates/);
   assert.match(notificationCore,/export async function renderNotifications/);
 });
 

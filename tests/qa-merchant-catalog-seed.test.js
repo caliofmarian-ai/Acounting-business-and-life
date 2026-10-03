@@ -40,6 +40,9 @@ test('Merchant seed builds all catalog behavior fixtures and AI reference media'
   assert.match(source,/fresh_direct/);
   assert.match(source,/packaged_resale/);
   assert.match(source,/non_food_resale/);
+  assert.match(source,/\/api\/products\/\$\{Number\(product\.id\)\}\/allergens\/review/);
+  assert.match(source,/Fish Soup allergen review/);
+  assert.match(source,/review_current/);
   assert.match(source,/\/images\/generate/);
   assert.match(source,/\/approve/);
   assert.match(source,/image_source_type!=='ai_generated'/);

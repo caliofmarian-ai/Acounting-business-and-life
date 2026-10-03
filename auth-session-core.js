@@ -23,8 +23,8 @@ export function signV2SessionToken(tokenSecret,accountId,sessionId,{issued=Date.
   return `${payload}.${sig}`;
 }
 
-export async function resolveV2SessionToken(pool,tokenSecret,token='',{now=Date.now(),ttlMs=AUTH_SESSION_TTL_MS}={}){
-  if(!pool||!tokenSecret||!token)return null;
+export function verifyV2SessionTokenSignature(tokenSecret,token='',{now=Date.now(),ttlMs=AUTH_SESSION_TTL_MS}={}){
+  if(!tokenSecret||!token)return null;
   const parts=String(token).split('.');
   if(parts.length!==5||parts[0]!=='v2')return null;
   const issued=Number(parts[1]),accountId=Number(parts[2]),sessionId=parts[3];
@@ -33,12 +33,19 @@ export async function resolveV2SessionToken(pool,tokenSecret,token='',{now=Date.
   const payload=parts.slice(0,4).join('.');
   const expected=crypto.createHmac('sha256',String(tokenSecret)).update(payload).digest('hex');
   if(!safeEqualHex(parts[4],expected))return null;
+  return{accountId,sessionId,issued,legacy:false};
+}
+
+export async function resolveV2SessionToken(pool,tokenSecret,token='',{now=Date.now(),ttlMs=AUTH_SESSION_TTL_MS}={}){
+  if(!pool)return null;
+  const parsed=verifyV2SessionTokenSignature(tokenSecret,token,{now,ttlMs});
+  if(!parsed)return null;
   const session=await pool.query(
     `SELECT account_id FROM account_sessions WHERE session_id=$1 AND account_id=$2 AND revoked_at IS NULL AND expires_at>NOW()`,
-    [sessionId,accountId]
+    [parsed.sessionId,parsed.accountId]
   );
   if(!session.rowCount)return null;
-  return{accountId,sessionId,issued,legacy:false};
+  return parsed;
 }
 
 export async function createV2Session(pool,tokenSecret,accountId,{
