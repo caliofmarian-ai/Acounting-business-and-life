@@ -298,6 +298,10 @@ export async function ensureSupplierCommercialV3Schema(pool){
 
     ALTER TABLE supply_lots
       ADD COLUMN IF NOT EXISTS catalog_item_id BIGINT REFERENCES supplier_catalog_items(id) ON DELETE SET NULL;
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_condition_snapshot TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_area_type_snapshot TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_location_label_snapshot TEXT NOT NULL DEFAULT '';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_segregated_snapshot BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE supply_lots
       ADD COLUMN IF NOT EXISTS lot_state TEXT NOT NULL DEFAULT 'available';
     ALTER TABLE supply_lots
