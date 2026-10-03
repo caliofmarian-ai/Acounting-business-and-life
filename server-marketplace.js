@@ -14,6 +14,7 @@ import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requir
 import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';
 import {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} from './catalog-v3-core.js';
 import {ensureCatalogVariantSchema,readRetailVariantConfiguration,replaceRetailVariantConfiguration,variantProjectionForProducts} from './catalog-variants-core.js';
+import {ensureFoodMenuSchema,readFoodMenus,readModifierGroups,modifierProjectionForProducts,createFoodMenu,replaceFoodMenu,createModifierGroup,replaceModifierGroup,setFoodProductAvailability,effectiveFoodAvailability,validateProductModifierSelections,foodProductOrderability} from './food-menu-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -206,7 +207,7 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool);await ensureCatalogVariantSchema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool);await ensureCatalogVariantSchema(pool);await ensureFoodMenuSchema(pool)}
 
 async function storefrontMedia(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
