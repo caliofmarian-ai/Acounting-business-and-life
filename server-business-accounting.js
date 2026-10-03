@@ -1687,8 +1687,7 @@ app.post('/api/merchant/storefront/import-legacy',jsonBody,async(req,res,next)=>
     )
     SELECT $1,p.id,p.name,'',p.category,'food','prepared_food','item',
            1,p.selling_price,FALSE,NULL,p.active,FALSE,'prepared_food',$2
-      FROM products p
-     WHERE p.business_id=$1
+      FROM products p WHERE p.business_id=$1
     ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL
     DO UPDATE SET
       name=EXCLUDED.name,
