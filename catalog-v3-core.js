@@ -2,6 +2,13 @@ const CATALOG_V3_SCHEMA_VERSION='catalog-v3a-2026-10-03';
 
 const clean=(value,max=200)=>String(value??'').trim().slice(0,max);
 const isFiniteNumber=value=>Number.isFinite(Number(value));
+const positiveId=value=>Number.isInteger(Number(value))&&Number(value)>0;
+const plainObject=value=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+const packageNumber=(value,label)=>{
+  if(value==null||value==='')return null;
+  if(!isFiniteNumber(value)||Number(value)<0)throw new TypeError(`${label} must be a valid zero-or-greater number.`);
+  return Number(value);
+};
 
 const categories=[
   {code:'prepared_food',parent_code:null,label:'Prepared food',domain_hint:'food',sort_order:10},
@@ -125,6 +132,15 @@ export function normalizeCatalogIdentity(input={},context={}){
   };
 }
 
+export function normalizeCatalogPackage(input={}){
+  return{
+    package_length_cm:packageNumber(input.package_length_cm,'Package length'),
+    package_width_cm:packageNumber(input.package_width_cm,'Package width'),
+    package_height_cm:packageNumber(input.package_height_cm,'Package height'),
+    package_weight_kg:packageNumber(input.package_weight_kg,'Package weight')
+  };
+}
+
 function normalizeBoolean(value,label){
   if(value===true||value===false)return value;
   if(value==='true')return true;
@@ -207,6 +223,11 @@ export async function ensureCatalogV3Schema(db){
     ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS condition_code TEXT NOT NULL DEFAULT '';
     ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS manufacturer_part_number TEXT NOT NULL DEFAULT '';
     ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS catalog_schema_version TEXT NOT NULL DEFAULT '';
+    ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS package_length_cm NUMERIC(12,4);
+    ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS package_width_cm NUMERIC(12,4);
+    ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS package_height_cm NUMERIC(12,4);
+    ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS package_weight_kg NUMERIC(12,4);
+    ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS catalog_review_required BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE INDEX IF NOT EXISTS marketplace_products_catalog_category_idx
       ON marketplace_products(business_id,catalog_category_code,published,active);
@@ -221,6 +242,21 @@ export async function ensureCatalogV3Schema(db){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY(product_id,attribute_code)
     );
+
+    CREATE TABLE IF NOT EXISTS catalog_product_attribute_review_queue (
+      id BIGSERIAL PRIMARY KEY,
+      product_id BIGINT NOT NULL REFERENCES marketplace_products(id) ON DELETE CASCADE,
+      previous_category_code TEXT,
+      next_category_code TEXT,
+      attribute_code TEXT NOT NULL,
+      value_json JSONB NOT NULL,
+      review_state TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      resolved_at TIMESTAMPTZ,
+      CHECK(review_state IN ('pending','resolved','discarded'))
+    );
+    CREATE INDEX IF NOT EXISTS catalog_product_attribute_review_product_idx
+      ON catalog_product_attribute_review_queue(product_id,review_state,id);
   `);
 
   await db.query(`
@@ -279,3 +315,124 @@ export async function readCatalogProductAttributes(db,productId){
   `,[id]);
   return Object.fromEntries(rows.map(row=>[row.attribute_code,row.value_json]));
 }
+
+export function catalogCategoryTransition({
+  previousCategoryCode='',
+  nextCategoryCode='',
+  currentAttributes={},
+  incomingAttributes={}
+}={}){
+  const previous=clean(previousCategoryCode,80),next=clean(nextCategoryCode,80);
+  if(next&&!categoryByCode.has(next))throw new TypeError('Choose a supported product category.');
+  const current=plainObject(currentAttributes),incoming=plainObject(incomingAttributes);
+  const allowed=new Set((mappingsByCategory.get(next)||[]).map(row=>row.attribute_code));
+  const merged={};
+  const review=[];
+
+  for(const [code,value] of Object.entries(current)){
+    if(allowed.has(code))merged[code]=value;
+    else if(previous&&previous!==next){
+      review.push({attribute_code:code,value});
+    }
+  }
+  for(const [code,value] of Object.entries(incoming)){
+    if(value==null||value===''){delete merged[code];continue}
+    merged[code]=value;
+  }
+
+  return{
+    attributes:normalizeCatalogAttributes(next,merged),
+    review,
+    previous_category_code:previous||null,
+    next_category_code:next||null,
+    category_changed:previous!==next
+  };
+}
+
+export async function listCatalogAttributeReviews(db,{productId,state='pending'}={}){
+  const id=Number(productId);
+  if(!positiveId(id))return[];
+  const requested=clean(state,20);
+  const args=[id];let stateSql='';
+  if(['pending','resolved','discarded'].includes(requested)){args.push(requested);stateSql=' AND review_state=$2'}
+  const {rows}=await db.query(`
+    SELECT id,product_id,previous_category_code,next_category_code,attribute_code,value_json,review_state,created_at,resolved_at
+      FROM catalog_product_attribute_review_queue
+     WHERE product_id=$1${stateSql}
+     ORDER BY id
+  `,args);
+  return rows.map(row=>({...row,id:Number(row.id),product_id:Number(row.product_id)}));
+}
+
+export async function reconcileCatalogProductAttributes(db,{
+  productId,
+  previousCategoryCode='',
+  nextCategoryCode='',
+  incomingAttributes={}
+}={}){
+  const id=Number(productId);
+  if(!positiveId(id))throw new TypeError('A valid product is required.');
+  const current=await readCatalogProductAttributes(db,id);
+  const transition=catalogCategoryTransition({
+    previousCategoryCode,
+    nextCategoryCode,
+    currentAttributes:current,
+    incomingAttributes
+  });
+
+  await db.query('DELETE FROM catalog_product_attribute_values WHERE product_id=$1',[id]);
+  for(const [attributeCode,value] of Object.entries(transition.attributes)){
+    await db.query(`
+      INSERT INTO catalog_product_attribute_values(product_id,attribute_code,value_json)
+      VALUES($1,$2,$3::jsonb)
+      ON CONFLICT(product_id,attribute_code) DO UPDATE SET value_json=EXCLUDED.value_json,updated_at=NOW()
+    `,[id,attributeCode,JSON.stringify(value)]);
+  }
+
+  if(transition.category_changed&&transition.review.length){
+    for(const row of transition.review){
+      await db.query(`
+        INSERT INTO catalog_product_attribute_review_queue(
+          product_id,previous_category_code,next_category_code,attribute_code,value_json,review_state
+        ) VALUES($1,$2,$3,$4,$5::jsonb,'pending')
+      `,[id,transition.previous_category_code,transition.next_category_code,row.attribute_code,JSON.stringify(row.value)]);
+    }
+  }
+
+  const pending=await db.query(`
+    SELECT COUNT(*)::int count
+      FROM catalog_product_attribute_review_queue
+     WHERE product_id=$1 AND review_state='pending'
+  `,[id]);
+  const reviewRequired=Number(pending.rows[0]?.count||0)>0;
+  await db.query('UPDATE marketplace_products SET catalog_review_required=$1,updated_at=NOW() WHERE id=$2',[reviewRequired,id]);
+  return{
+    ...transition,
+    review_required:reviewRequired,
+    pending_review_count:Number(pending.rows[0]?.count||0)
+  };
+}
+
+export async function resolveCatalogAttributeReviews(db,{productId,reviewIds=[],decision='resolved'}={}){
+  const id=Number(productId);
+  if(!positiveId(id))throw new TypeError('A valid product is required.');
+  const state=clean(decision,20);
+  if(!['resolved','discarded'].includes(state))throw new TypeError('Review decision must be resolved or discarded.');
+  const ids=[...new Set((Array.isArray(reviewIds)?reviewIds:[]).map(Number).filter(positiveId))];
+  const args=[state,id];let idSql='';
+  if(ids.length){args.push(ids);idSql=' AND id=ANY($3::bigint[])'}
+  await db.query(`
+    UPDATE catalog_product_attribute_review_queue
+       SET review_state=$1,resolved_at=NOW()
+     WHERE product_id=$2 AND review_state='pending'${idSql}
+  `,args);
+  const pending=await db.query(`
+    SELECT COUNT(*)::int count
+      FROM catalog_product_attribute_review_queue
+     WHERE product_id=$1 AND review_state='pending'
+  `,[id]);
+  const reviewRequired=Number(pending.rows[0]?.count||0)>0;
+  await db.query('UPDATE marketplace_products SET catalog_review_required=$1,updated_at=NOW() WHERE id=$2',[reviewRequired,id]);
+  return{review_required:reviewRequired,pending_review_count:Number(pending.rows[0]?.count||0)};
+}
+
