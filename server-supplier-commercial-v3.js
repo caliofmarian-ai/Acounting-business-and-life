@@ -286,10 +286,12 @@ export async function recordPoReceiptLot(client,{
       inventory_id,catalog_item_id,item_name,internal_lot_code,supplier_lot_code,
       handling_mode,lot_state,base_unit,quantity_received_base,quantity_remaining_base,
       unit_cost_base,package_unit_name,package_size_base,package_count_received,
-      manufactured_at,packed_at,expires_at,received_at,note,created_by_account_id
+      manufactured_at,packed_at,expires_at,
+      storage_condition_snapshot,storage_area_type_snapshot,storage_location_label_snapshot,storage_segregated_snapshot,
+      received_at,note,created_by_account_id
     ) VALUES(
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'available',$11,$12,$12,$13,$14,$15,$16,
-      $17,$18,$19,NOW(),$20,$21
+      $17,$18,$19,$20,$21,$22,$23,NOW(),$24,$25
     ) RETURNING *`,
     [
       Number(businessId),Number(purchaseOrderId),Number(receiptId),Number(itemRow.id),
@@ -298,7 +300,9 @@ export async function recordPoReceiptLot(client,{
       clean(itemRow.name_snapshot,180),internal,supplierLot,handling,
       effectiveBaseUnit,quantity,Number(unitCost),
       clean(itemRow.unit_name_snapshot,50),effectiveBasePerPack,Number(packs),
-      manufactured,packed,expires,clean(receiptInput?.lot_note,1000),Number(actorAccountId)
+      manufactured,packed,expires,
+      storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
+      clean(receiptInput?.lot_note,1000),Number(actorAccountId)
     ]
   );
   return rows[0];
