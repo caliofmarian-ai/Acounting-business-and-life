@@ -614,9 +614,10 @@ app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
     const price=Number(req.body?.selling_price);
     const quantityPerUnit=positive(req.body?.quantity_per_unit)?Number(req.body.quantity_per_unit):1;
     if(!clean(req.body?.name,120)||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Name and valid selling price are required'});
+    const variantMode=kind==='non_food_resale'&&Boolean(req.body?.variant_mode);
     let inventoryId=req.body?.inventory_id?Number(req.body.inventory_id):null;
     const direct=kind!=='prepared_food';
-    if(direct){
+    if(direct&&!variantMode){
       if(!Number.isInteger(inventoryId))return res.status(400).json({error:'Choose the stock item this product sells from.'});
       const inv=await pool.query(`SELECT id,item,unit FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,business.id]);
       if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found in this business'});
@@ -625,10 +626,10 @@ app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
     const{rows}=await pool.query(`
       INSERT INTO marketplace_products(
         business_id,inventory_id,name,description,category,product_domain,product_kind,unit_code,
-        quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,price_comparison_override
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,TRUE,$12,$13)
+        quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,price_comparison_override,variant_mode
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,TRUE,$12,$13,$14)
       RETURNING *
-    `,[business.id,inventoryId,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',domain,kind,unitCode,quantityPerUnit,price,direct,Boolean(req.body?.published),req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override)]);
+    `,[business.id,inventoryId,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',domain,kind,unitCode,quantityPerUnit,price,direct&&!variantMode,variantMode?false:Boolean(req.body?.published),req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override),variantMode]);
     res.status(201).json(rows[0]);
   }catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this store'});next(e)}
 })
@@ -640,8 +641,9 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
     const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind??old.product_kind,40))?clean(req.body?.product_kind??old.product_kind,40):old.product_kind;
     const domain=kind==='non_food_resale'?'non_food':'food';
     const direct=kind!=='prepared_food';
+    const variantMode=kind==='non_food_resale'&&(req.body?.variant_mode===undefined?Boolean(old.variant_mode):Boolean(req.body.variant_mode));
     let inventoryId=req.body?.inventory_id===undefined?old.inventory_id:(req.body.inventory_id?Number(req.body.inventory_id):null);
-    if(direct){
+    if(direct&&!variantMode){
       if(!Number.isInteger(Number(inventoryId)))return res.status(400).json({error:'Choose the stock item this product sells from.'});
       const inv=await pool.query(`SELECT id FROM inventory WHERE id=$1 AND business_id=$2`,[Number(inventoryId),business.id]);
       if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found in this business'});
@@ -649,6 +651,15 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
     const quantityPerUnit=Number(req.body?.quantity_per_unit??old.quantity_per_unit);
     if(!positive(quantityPerUnit))return res.status(400).json({error:'Stock quantity per sold unit must be greater than zero'});
     const publishRequested=req.body?.published===true&&old.published!==true;
+    if(publishRequested&&variantMode){
+      const variants=await pool.query(`
+        SELECT COUNT(*)::int count
+          FROM catalog_product_variants v
+          JOIN inventory i ON i.id=v.inventory_id AND i.business_id=$2
+         WHERE v.product_id=$1 AND v.active=TRUE
+      `,[id,business.id]);
+      if(Number(variants.rows[0]?.count||0)<1)return res.status(409).json({error:'Add at least one active retail variant linked to Inventory before publishing this product.'});
+    }
     if(publishRequested&&kind==='prepared_food'){
       if(!old.legacy_product_id)return res.status(409).json({error:'Prepared food must be linked to a confirmed prepared product before publication.'});
       const allergen=await deriveProductAllergenSummary(pool,{businessId:business.id,productId:old.legacy_product_id});
@@ -658,9 +669,9 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
       UPDATE marketplace_products SET
         inventory_id=$1,name=$2,description=$3,category=$4,product_domain=$5,product_kind=$6,
         unit_code=$7,quantity_per_unit=$8,selling_price=$9,stock_tracked=$10,stock_quantity=$11,
-        active=$12,published=$13,price_comparison_override=$14,updated_at=NOW()
-      WHERE id=$15 RETURNING *
-    `,[inventoryId,clean(req.body?.name??old.name,120),clean(req.body?.description??old.description,800),clean(req.body?.category??old.category,100),domain,kind,clean(req.body?.unit_code??old.unit_code,40),quantityPerUnit,Number(req.body?.selling_price??old.selling_price),direct?true:(req.body?.stock_tracked??old.stock_tracked),direct?null:(req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity),req.body?.active??old.active,req.body?.published??old.published,req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,id]);
+        active=$12,published=$13,price_comparison_override=$14,variant_mode=$15,updated_at=NOW()
+      WHERE id=$16 RETURNING *
+    `,[inventoryId,clean(req.body?.name??old.name,120),clean(req.body?.description??old.description,800),clean(req.body?.category??old.category,100),domain,kind,clean(req.body?.unit_code??old.unit_code,40),quantityPerUnit,Number(req.body?.selling_price??old.selling_price),variantMode?false:(direct?true:(req.body?.stock_tracked??old.stock_tracked)),direct?null:(req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity),req.body?.active??old.active,req.body?.published??old.published,req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,variantMode,id]);
     res.json(rows[0]);
   }catch(e){next(e)}
 })
