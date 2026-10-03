@@ -25,6 +25,7 @@ import {directProductCostEstimate} from './food-cost-core.js';
 import {buildWasteAnalytics} from './inventory-waste-core.js';
 import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
 import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
+import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -312,6 +313,7 @@ async function initAccountingTenancyDb() {
     );
   `);
   await ensureInventoryIdentifierSchema(pool);
+  await ensureInventoryLocationSchema(pool);
   await ensureInventoryCountSessionSchema(pool);
   await addBusinessForeignKeys();
   await provisionExistingBindings();
@@ -567,6 +569,12 @@ app.get('/api/inventory',async(req,res,next)=>{try{
   });
   res.json(rows);
 }catch(e){next(e)}});
+registerInventoryLocationRoutes(app,{
+  pool,
+  jsonBody,
+  accountingContext
+});
+
 registerInventoryIdentifierRoutes(app,{
   pool,
   jsonBody,
@@ -582,7 +590,11 @@ registerInventoryCountSessionRoutes(app,{
   canUseSupplyLots,
   inventoryLotRows,
   planPhysicalStockReduction,
-  applyPhysicalLotReductions
+  applyPhysicalLotReductions,
+  reconcileBusinessInventoryLocations,
+  planLocationStockReduction,
+  applyLocationLotReductions,
+  reconcileInventoryLocationBalance
 });
 
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
@@ -763,6 +775,13 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         transaction=tx.rows[0];
         await client.query(`UPDATE inventory_purchases SET transaction_id=$1 WHERE id=$2`,[transaction.id,purchaseRecord.rows[0].id]);
       }
+
+      await reconcileInventoryLocationBalance(client,{
+        businessId:ctx.business.id,inventoryId:Number(inventoryRow.id),actorAccountId:ctx.me.account.id
+      });
+      if(lot)await reconcileLotLocationBalance(client,{
+        businessId:ctx.business.id,inventoryId:Number(inventoryRow.id),lotId:Number(lot.id),actorAccountId:ctx.me.account.id
+      });
 
       await client.query('COMMIT');
       res.status(201).json({

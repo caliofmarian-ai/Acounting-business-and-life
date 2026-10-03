@@ -357,3 +357,31 @@
   .inventoryLookupActions{width:100%;justify-content:flex-start}
   .inventoryLookupActions .miniBtn{min-height:42px}
 }
+
+
+/* Inventory storage locations · issue #720 */
+#inventoryLocationsCard>details{
+  border:1px solid var(--line,#e0e5e8);
+  border-radius:14px;
+  overflow:hidden
+}
+#inventoryLocationsCard>details>summary{
+  min-height:44px;
+  padding:10px 12px;
+  display:flex;
+  align-items:center;
+  cursor:pointer
+}
+.inventoryLocationEditor{padding:0 12px 12px}
+.inventoryLocationBalanceRow,.inventoryTransferRow{align-items:flex-start;gap:12px}
+#inventoryTransferForm{
+  padding:14px;
+  border:1px solid var(--line,#e0e5e8);
+  border-radius:16px;
+  background:var(--card,#fff)
+}
+#inventoryTransferForm h3{margin:0}
+@media(max-width:560px){
+  .inventoryLocationBalanceRow,.inventoryTransferRow{flex-direction:column}
+  .inventoryTransferRow .miniBtn{min-height:42px}
+}
