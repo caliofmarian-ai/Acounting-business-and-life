@@ -143,13 +143,10 @@ function ensureLauncher(){
   return launcher;
 }
 function syncLauncher(){
-  const button=ensureLauncher(),remaining=incompleteJourneyCount();
-  if(!guide?.eligible||remaining===0){button.classList.add('hidden');return}
-  button.classList.remove('hidden');
-  button.querySelector('strong').textContent=tr('launcher.title',{},'Getting started');
-  button.querySelector('small').textContent=tr('mission.remaining',{count:remaining},remaining+' journey'+(remaining===1?'':'s')+' left');
-  const activeProfile=activeProfileJourney();
-  button.classList.toggle('paused',guide.status==='paused'||Boolean(activeProfile?.status==='paused'));
+  const button=ensureLauncher();
+  button.classList.add('hidden');
+  button.setAttribute('aria-hidden','true');
+  button.tabIndex=-1;
 }
 function overlayShell(){
   removeOverlay();

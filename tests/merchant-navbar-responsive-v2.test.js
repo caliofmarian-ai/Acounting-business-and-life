@@ -11,7 +11,7 @@ const suppliers=read('public/suppliers-ui.js');
 const delivery=read('public/delivery-ui.js');
 const mobile=read('public/mobile-feature-loader.js');
 
-test('Merchant desktop navigation has a dedicated shell row with six primary destinations including Settings',()=>{
+test('Merchant desktop navigation has a dedicated shell row with seven primary destinations including Settings',()=>{
   assert.match(shell,/id='merchantWorkspaceNav'/);
   assert.match(shell,/id="merchantWorkspaceActions"/);
   assert.match(shell,/id="merchantHomeButton"/);
@@ -19,13 +19,14 @@ test('Merchant desktop navigation has a dedicated shell row with six primary des
   assert.match(shell,/id="profileSettingsQuickButton"/);
   assert.match(shell,/>Settings<\/button>/);
   assert.doesNotMatch(shell,/merchantWorkspaceHost/);
-  assert.match(css,/\.merchantWorkspaceActions\{[^}]*grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/);
+  assert.match(css,/\.merchantWorkspaceActions\{[^}]*grid-template-columns:repeat\(7,minmax\(0,1fr\)\)/);
   assert.match(css,/#merchantHomeButton\{order:0\}/);
   assert.match(css,/#ordersQuickButton\{order:1\}/);
-  assert.match(css,/#marketQuickButton\{order:2\}/);
-  assert.match(css,/#supQuickButton\{order:3\}/);
-  assert.match(css,/#deliveryQuickButton\{order:4\}/);
-  assert.match(css,/#profileSettingsQuickButton\{order:5\}/);
+  assert.match(css,/#catalogQuickButton\{order:2\}/);
+  assert.match(css,/#marketQuickButton\{order:3\}/);
+  assert.match(css,/#supQuickButton\{order:4\}/);
+  assert.match(css,/#deliveryQuickButton\{order:5\}/);
+  assert.match(css,/#profileSettingsQuickButton\{order:6\}/);
 });
 
 test('Merchant feature launchers are shell-owned and modules never create or remove canonical nav destinations',()=>{
@@ -57,8 +58,8 @@ test('Merchant nav visibility follows active profile surface and Today is canoni
   assert.match(shell,/const active=!activeWorkspaceId/);
 });
 
-test('narrow screens keep six shell-owned Merchant mobile destinations instead of desktop nav',()=>{
-  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>|>'+label+'<\\/button>'));
+test('narrow screens keep seven shell-owned Merchant mobile destinations instead of desktop nav',()=>{
+  for(const label of ['Today','Orders','Catalog','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>|>'+label+'<\\/button>'));
   assert.match(shell,/id='merchantMobileTools'/);
   assert.doesNotMatch(mobile,/mountMerchantMobileTools|MERCHANT_MOBILE_ACTIONS/);
   assert.match(css,/@media\(max-width:649px\)/);

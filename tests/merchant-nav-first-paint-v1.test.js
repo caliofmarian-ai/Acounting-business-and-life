@@ -15,18 +15,19 @@ function slice(source,start,end){
   return a<0?'':source.slice(a,b>a?b:undefined);
 }
 
-test('all five Merchant desktop destinations exist in shell before feature modules hydrate',()=>{
+test('Catalog and Storefront are separate Merchant desktop destinations before feature modules hydrate',()=>{
   const chrome=slice(shell,'function ensureShellChrome','function syncMerchantWorkspaceNavVisibility');
-  const ordered=['merchantHomeButton','ordersQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton'];
+  const ordered=['merchantHomeButton','ordersQuickButton','catalogQuickButton','marketQuickButton','supQuickButton','deliveryQuickButton'];
   for(const id of ordered)assert.ok(chrome.includes('id="'+id+'"'),id+' must be shell-owned');
   const positions=ordered.map(id=>chrome.indexOf('id="'+id+'"'));
   for(let i=1;i<positions.length;i++)assert.ok(positions[i]>positions[i-1],'Merchant destination order must be stable');
-  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery'])assert.ok(chrome.includes('>'+label+'</button>'));
+  for(const label of ['Today','Orders','Catalog','Storefront','Suppliers','Delivery'])assert.ok(chrome.includes('>'+label+'</button>'));
 });
 
 test('shell routes reserved Merchant destinations without eager domain data requests',()=>{
   const route=slice(shell,'function openMerchantDestination','function ensureShellChrome');
   assert.match(route,/destination==='ordersQuickButton'\?window\.BusinessLifeOrders\?\.openMerchantOrders/);
+  assert.match(route,/destination==='catalogQuickButton'\?window\.BusinessLifeMarketplace\?\.openMerchantCatalog/);
   assert.match(route,/destination==='marketQuickButton'\?window\.BusinessLifeMarketplace\?\.openMerchantStore/);
   assert.match(route,/destination==='supQuickButton'\?window\.BusinessLifeSuppliers\?\.openMerchantProcurement/);
   assert.match(route,/destination==='deliveryQuickButton'\?window\.BusinessLifeDelivery\?\.openMerchantDelivery/);
@@ -49,6 +50,7 @@ test('feature decorators never append remove or recreate canonical Merchant nav 
 test('all Merchant destination modules expose the action expected by shell routing',()=>{
   assert.match(orders,/BusinessLifeOrders=Object\.freeze\(\{[^}]*openMerchantOrders/);
   assert.match(marketplace,/BusinessLifeMarketplace=Object\.freeze\(\{[^}]*openMerchantStore/);
+  assert.match(marketplace,/BusinessLifeMarketplace=Object\.freeze\(\{[^}]*openMerchantCatalog/);
   assert.match(suppliers,/BusinessLifeSuppliers=Object\.freeze\(\{[^}]*openMerchantProcurement/);
   assert.match(delivery,/BusinessLifeDelivery=Object\.freeze\(\{[^}]*openMerchantDelivery/);
 });
@@ -60,7 +62,7 @@ test('active workspace synchronization still targets the reserved shell buttons'
 });
 
 test('mobile Merchant navigation remains separate complete and shell-owned',()=>{
-  for(const label of ['Today','Orders','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>|>'+label+'<\\/button>'));
+  for(const label of ['Today','Orders','Catalog','Storefront','Suppliers','Delivery','Profile Settings'])assert.match(shell,new RegExp('<strong>'+label+'<\\/strong>|>'+label+'<\\/button>'));
   assert.match(shell,/id='merchantMobileTools'/);
   assert.doesNotMatch(mobile,/MERCHANT_MOBILE_ACTIONS|mountMerchantMobileTools/);
 });

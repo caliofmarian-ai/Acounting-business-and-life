@@ -705,14 +705,15 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
    Primary Merchant navigation has its own row; global actions never have to carry workspace buttons. */
 .merchantWorkspaceNav{display:none;background:rgba(255,255,255,.97);border-bottom:1px solid var(--bl-border);box-shadow:0 5px 16px rgba(23,35,60,.035);padding:9px 18px}
 .merchantWorkspaceNav.hidden{display:none!important}
-.merchantWorkspaceActions{width:min(100%,820px);margin:0 auto;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;align-items:stretch}
+.merchantWorkspaceActions{width:min(100%,920px);margin:0 auto;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;align-items:stretch}
 .merchantWorkspaceNav .merchantWorkspaceButton{display:flex;width:100%;min-width:0;min-height:46px;padding:9px 10px;border-radius:14px;font-size:13px;overflow:hidden;text-overflow:ellipsis}
 #merchantHomeButton{order:0}
 #ordersQuickButton{order:1}
-#marketQuickButton{order:2}
-#supQuickButton{order:3}
-#deliveryQuickButton{order:4}
-#profileSettingsQuickButton{order:5}
+#catalogQuickButton{order:2}
+#marketQuickButton{order:3}
+#supQuickButton{order:4}
+#deliveryQuickButton{order:5}
+#profileSettingsQuickButton{order:6}
 
 @media(min-width:650px){
   .merchantWorkspaceNav:not(.hidden){display:block}

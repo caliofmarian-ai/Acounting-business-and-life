@@ -366,8 +366,8 @@ async function openMerchantAction(action){
     return document.getElementById('ordersQuickButton')?.click();
   }
   if(action==='catalog'){
-    if(window.BusinessLifeMarketplace?.openMerchantStore)return window.BusinessLifeMarketplace.openMerchantStore();
-    return document.getElementById('marketQuickButton')?.click();
+    if(window.BusinessLifeMarketplace?.openMerchantCatalog)return window.BusinessLifeMarketplace.openMerchantCatalog();
+    return document.getElementById('catalogQuickButton')?.click()||document.getElementById('marketQuickButton')?.click();
   }
   if(action==='suppliers'){
     if(window.BusinessLifeSuppliers?.openMerchantProcurement)return window.BusinessLifeSuppliers.openMerchantProcurement();
