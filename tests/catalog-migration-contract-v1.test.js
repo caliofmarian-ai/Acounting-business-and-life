@@ -132,7 +132,8 @@ test('prepared recipe and direct resale stock contracts remain linked through le
   assert.match(reservation,/row\.legacy_product_id/);
   assert.match(reservation,/row\.inventory_id/);
   assert.match(reservation,/quantity_per_unit/);
-  assert.match(reservation,/source_kind='marketplace_product'/);
+  assert.match(reservation,/item\.source_kind!=='marketplace_product'/);
+  assert.match(reservation,/stock_kind:'marketplace_product'/);
 });
 
 test('Supplier receiving remains business-scoped and does not resolve stock by catalog name',()=>{
