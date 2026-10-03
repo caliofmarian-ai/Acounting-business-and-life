@@ -793,7 +793,7 @@ export async function supplierReorderSuggestions(pool,businessId){
   const availabilityById=new Map(availabilityRows.map(x=>[Number(x.id),x]));
   const {rows}=await pool.query(
     `SELECT
-       i.id inventory_id,i.item,i.quantity,i.reorder_level,i.unit,i.unit_cost,i.base_unit inventory_base_unit,
+       i.id inventory_id,i.item,i.quantity,i.reorder_level,i.target_level,i.unit,i.unit_cost,i.base_unit inventory_base_unit,
        src.catalog_item_id,src.preference_rank,src.supplier_business_id,
        c.product_name,c.unit_name,c.base_unit,c.base_units_per_pack,c.price_per_pack,c.minimum_packs,
        c.lead_time_days,c.supplier_account_id,c.availability_status,
@@ -838,15 +838,18 @@ export async function supplierReorderSuggestions(pool,businessId){
   }).filter(x=>Number(x.usable_quantity)<=Number(x.reorder_level))
     .sort((a,b)=>(Number(b.reorder_level)-Number(b.usable_quantity))-(Number(a.reorder_level)-Number(a.usable_quantity))||String(a.item).localeCompare(String(b.item)))
     .map(x=>{
-      if(!x.catalog_item_id)return{...x,source_status:'NO_CONFIGURED_SOURCE',suggested_packs:null};
+      if(!x.catalog_item_id){const effectiveTarget=Number(x.target_level)>0?Number(x.target_level):Number(x.reorder_level);return{...x,effective_target_level:effectiveTarget,suggested_base_quantity:Math.max(0,effectiveTarget-Number(x.usable_quantity)),source_status:'NO_CONFIGURED_SOURCE',suggested_packs:null}};
+      const effectiveTarget=Number(x.target_level)>0?Number(x.target_level):Number(x.reorder_level);
       const suggestion=reorderPackSuggestion({
-        quantity:Number(x.usable_quantity),reorderLevel:Number(x.reorder_level),
+        quantity:Number(x.usable_quantity),reorderLevel:Number(x.reorder_level),targetLevel:effectiveTarget,
         inventoryUnit:x.inventory_base_unit||x.unit,
         baseUnitsPerPack:Number(x.base_units_per_pack),supplierBaseUnit:x.base_unit,
         minimumPacks:Number(x.minimum_packs||1)
       });
       return{
         ...x,
+        effective_target_level:effectiveTarget,
+        suggested_base_quantity:Math.max(0,effectiveTarget-Number(x.usable_quantity)),
         source_status:suggestion.status==='COMPARABLE'?'PREFERRED_SOURCE':suggestion.status,
         suggested_packs:suggestion.suggested_packs
       };
