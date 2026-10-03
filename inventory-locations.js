@@ -302,6 +302,47 @@ function planTransferLots(rows,quantity,{lotId=null,now=Date.now()}={}){
   return{allocations,tracked:Math.max(0,Number(quantity)-remaining),remaining:Math.max(0,remaining)};
 }
 
+export async function planLocationStockReduction(client,{
+  businessId,inventoryId,locationId,quantityToRemove,actorAccountId=null
+}={}){
+  const required=Number(quantityToRemove);
+  if(!Number.isFinite(required)||required<0)return{ok:false,reason:'invalid_quantity',required};
+  await reconcileBusinessInventoryLocations(client,{businessId,actorAccountId});
+  const source=await client.query(`
+    SELECT quantity FROM inventory_location_balances
+     WHERE business_id=$1 AND inventory_id=$2 AND location_id=$3
+     FOR UPDATE
+  `,[businessId,inventoryId,locationId]);
+  const available=Number(source.rows[0]?.quantity||0);
+  if(required>available+EPS)return{ok:false,reason:'location_shortage',required,available,allocations:[],untracked_used:0};
+  const lots=await sourceLotRows(client,{businessId,inventoryId,locationId});
+  let remaining=required;const allocations=[];
+  for(const lot of lots){
+    if(remaining<=EPS)break;
+    const qty=Math.min(remaining,Number(lot.quantity||0));
+    if(qty>EPS)allocations.push({lot_id:Number(lot.lot_id),quantity:qty,expires_at:lot.expires_at||null});
+    remaining-=qty;
+  }
+  return{ok:true,required,available,allocations,untracked_used:Math.max(0,remaining)};
+}
+
+export async function applyLocationLotReductions(client,{
+  businessId,inventoryId,locationId,allocations=[]
+}={}){
+  for(const allocation of allocations){
+    const qty=Number(allocation.quantity);
+    if(!Number.isFinite(qty)||qty<=0)continue;
+    const updated=await client.query(`
+      UPDATE inventory_lot_location_balances
+         SET quantity=quantity-$1,updated_at=NOW()
+       WHERE business_id=$2 AND inventory_id=$3 AND lot_id=$4 AND location_id=$5
+         AND quantity+$6>=$1
+       RETURNING lot_id,quantity
+    `,[qty,businessId,inventoryId,Number(allocation.lot_id),locationId,EPS]);
+    if(!updated.rowCount)throw Object.assign(new Error('Lot-location quantity changed while the count was being posted.'),{status:409});
+  }
+}
+
 export function registerInventoryLocationRoutes(app,{pool,jsonBody,accountingContext}){
   async function merchantContext(req){
     const ctx=await accountingContext(req);
