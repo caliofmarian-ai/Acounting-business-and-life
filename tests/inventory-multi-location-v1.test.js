@@ -101,7 +101,7 @@ test('location count posts only the real variance into canonical Inventory and s
   assert.match(block,/UPDATE inventory_location_balances/);
   assert.match(block,/Location count posting must conserve business-total stock across locations/);
   assert.match(block,/count_correction/);
-  assert.match(block,/Inventory location count session/);
+  assert.match(block,/Inventory \$\{locationId!=null\?'location ':''\}count session/);
 });
 
 test('Merchant mobile UI exposes locations, transfers, reversal and location counts',()=>{
