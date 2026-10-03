@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {inventoryLotExpiryStatus,planFefoAllocation,sortFefoLots} from '../inventory-lot-core.js';
+import {inventoryLotExpiryStatus,planFefoAllocation,planPhysicalStockReduction,sortFefoLots} from '../inventory-lot-core.js';
 
 const now=Date.parse('2026-10-02T00:00:00Z');
 
@@ -56,4 +56,61 @@ test('expired tracked stock can make aggregate inventory unusable',()=>{
   assert.equal(plan.ok,false);
   assert.equal(plan.usable_quantity,0);
   assert.equal(plan.blocked_quantity,6);
+});
+
+
+test('physical waste defaults to FEFO across tracked lots',()=>{
+  const plan=planPhysicalStockReduction({
+    quantityToRemove:4,
+    inventoryQuantity:10,
+    now,
+    lots:[
+      {id:2,quantity_remaining_base:5,expires_at:'2026-10-08T00:00:00Z',lot_state:'available'},
+      {id:1,quantity_remaining_base:5,expires_at:'2026-10-04T00:00:00Z',lot_state:'available'}
+    ]
+  });
+  assert.equal(plan.ok,true);
+  assert.deepEqual(plan.allocations.map(x=>[x.lot_id,x.quantity]),[[1,4]]);
+  assert.equal(plan.untracked_used,0);
+});
+
+test('physical count reduces legacy untracked balance before exact lots',()=>{
+  const plan=planPhysicalStockReduction({
+    quantityToRemove:3,
+    inventoryQuantity:10,
+    now,
+    mode:'count',
+    lots:[{id:1,quantity_remaining_base:6,expires_at:'2026-10-04T00:00:00Z',lot_state:'available'}]
+  });
+  assert.equal(plan.ok,true);
+  assert.equal(plan.untracked_used,3);
+  assert.deepEqual(plan.allocations,[]);
+});
+
+test('expired disposal never consumes a fresh tracked lot automatically',()=>{
+  const plan=planPhysicalStockReduction({
+    quantityToRemove:4,
+    inventoryQuantity:8,
+    now,
+    expiredOnly:true,
+    lots:[
+      {id:1,quantity_remaining_base:2,expires_at:'2026-10-01T00:00:00Z',lot_state:'available'},
+      {id:2,quantity_remaining_base:5,expires_at:'2026-10-10T00:00:00Z',lot_state:'available'}
+    ]
+  });
+  assert.equal(plan.ok,false);
+  assert.equal(plan.reason,'expired_stock_shortage');
+});
+
+test('explicit expired disposal rejects a non-expired lot',()=>{
+  const plan=planPhysicalStockReduction({
+    quantityToRemove:1,
+    inventoryQuantity:5,
+    now,
+    expiredOnly:true,
+    explicitLotId:2,
+    lots:[{id:2,quantity_remaining_base:5,expires_at:'2026-10-10T00:00:00Z',lot_state:'available'}]
+  });
+  assert.equal(plan.ok,false);
+  assert.equal(plan.reason,'lot_not_expired');
 });
