@@ -6,6 +6,7 @@ import {
   commercialPosition,
   returnCreditAmount
 } from './supplier-commercial-core.js';
+import {requireValidInventoryStorage} from './inventory-storage-core.js';
 
 const {exactProfileBusiness}=supplierDomainV2Internals;
 
@@ -261,6 +262,23 @@ export async function recordPoReceiptLot(client,{
   const effectiveBaseUnit=clean(lotBaseUnit||itemRow.base_unit_snapshot,50);
   const handling=clean(itemRow.handling_mode_snapshot||'sealed_resale',30);
   const internal=clean(receiptInput?.internal_lot_code,90)||lotCode();
+  let storage={storage_condition:'other',storage_area_type:'other',storage_location_label:'',storage_segregated:false};
+  if(itemRow.legacy_inventory_id){
+    const inventory=await client.query(
+      `SELECT inventory_type,storage_condition,storage_area_type,storage_location_label,storage_segregated
+         FROM inventory WHERE id=$1 AND business_id=$2`,
+      [Number(itemRow.legacy_inventory_id),Number(businessId)]
+    );
+    if(!inventory.rowCount)throw httpError(409,'Linked Inventory item is unavailable for lot storage validation.');
+    const inv=inventory.rows[0];
+    storage=requireValidInventoryStorage({
+      inventoryType:inv.inventory_type||'ingredient',
+      storageCondition:inv.storage_condition,
+      storageAreaType:inv.storage_area_type,
+      storageLocationLabel:inv.storage_location_label,
+      storageSegregated:inv.storage_segregated
+    });
+  }
 
   const {rows}=await client.query(
     `INSERT INTO supply_lots(
