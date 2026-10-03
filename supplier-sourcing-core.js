@@ -145,24 +145,24 @@ export function reorderPackSuggestion({
 }={}){
   const current=nonNegative(quantity,'quantity');
   const alert=nonNegative(reorderLevel,'reorderLevel');
-  const targetRaw=targetLevel==null?alert:nonNegative(targetLevel,'targetLevel');
+  const explicitTarget=targetLevel!=null;
+  const targetRaw=explicitTarget?nonNegative(targetLevel,'targetLevel'):alert;
   const target=targetRaw>0?targetRaw:alert;
   if(target+1e-9<alert)throw new RangeError('targetLevel must be equal to or higher than reorderLevel');
   const minimum=positive(minimumPacks,'minimumPacks');
-  if(current>alert)return{status:'NO_REORDER_NEEDED',suggested_packs:0,target_level:target};
+  const decorate=result=>explicitTarget?{...result,target_level:target,target_deficit:Math.max(0,target-current)}:result;
+  if(current>alert)return decorate({status:'NO_REORDER_NEEDED',suggested_packs:0});
   const deficit=Math.max(0,target-current);
-  if(deficit<=0)return{status:'NO_REORDER_NEEDED',suggested_packs:0,target_level:target};
+  if(deficit<=0)return decorate({status:'NO_REORDER_NEEDED',suggested_packs:0});
   const inventory=normalizedQuantity(deficit,inventoryUnit);
   const supplier=normalizedQuantity(baseUnitsPerPack,supplierBaseUnit);
   if(!inventory.ok||!supplier.ok||inventory.family!==supplier.family||inventory.base_unit!==supplier.base_unit){
-    return{status:'NOT_COMPARABLE',suggested_packs:null,target_level:target};
+    return decorate({status:'NOT_COMPARABLE',suggested_packs:null});
   }
-  return{
+  return decorate({
     status:'COMPARABLE',
-    suggested_packs:Math.max(minimum,Math.ceil(inventory.base_quantity/supplier.base_quantity)),
-    target_level:target,
-    target_deficit:deficit
-  };
+    suggested_packs:Math.max(minimum,Math.ceil(inventory.base_quantity/supplier.base_quantity))
+  });
 }
 
 export function validatePreferenceRanks(sources=[]){
