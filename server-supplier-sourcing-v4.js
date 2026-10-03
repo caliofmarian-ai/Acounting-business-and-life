@@ -4,6 +4,7 @@ import {
   normalizeDiscoverySettings,normalizeRfq,compareQuotes,validatePreferenceRanks,reorderPackSuggestion
 } from './supplier-sourcing-core.js';
 import {enforceHighRiskVelocity} from './abuse-velocity-core.js';
+import {inventoryAvailabilityRows} from './inventory-lot-runtime.js';
 
 const {exactProfileBusiness}=supplierDomainV2Internals;
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
@@ -787,6 +788,9 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
 }
 
 export async function supplierReorderSuggestions(pool,businessId){
+  const bid=Number(businessId);
+  const availabilityRows=await inventoryAvailabilityRows(pool,{businessId:bid});
+  const availabilityById=new Map(availabilityRows.map(x=>[Number(x.id),x]));
   const {rows}=await pool.query(
     `SELECT
        i.id inventory_id,i.item,i.quantity,i.reorder_level,i.unit,i.unit_cost,i.base_unit inventory_base_unit,
@@ -818,25 +822,35 @@ export async function supplierReorderSuggestions(pool,businessId){
      LEFT JOIN supplier_catalog_items c ON c.id=src.catalog_item_id
      LEFT JOIN accounts a ON a.id=c.supplier_account_id
      LEFT JOIN supplier_profiles sp ON sp.account_id=c.supplier_account_id
-     WHERE i.business_id=$1
-       AND i.quantity<=i.reorder_level
-     ORDER BY (i.reorder_level-i.quantity) DESC,i.item,i.id`,
-    [Number(businessId)]
+     WHERE i.business_id=$1`,
+    [bid]
   );
   return rows.map(x=>{
-    if(!x.catalog_item_id)return{...x,source_status:'NO_CONFIGURED_SOURCE',suggested_packs:null};
-    const suggestion=reorderPackSuggestion({
-      quantity:Number(x.quantity),reorderLevel:Number(x.reorder_level),
-      inventoryUnit:x.inventory_base_unit||x.unit,
-      baseUnitsPerPack:Number(x.base_units_per_pack),supplierBaseUnit:x.base_unit,
-      minimumPacks:Number(x.minimum_packs||1)
-    });
+    const availability=availabilityById.get(Number(x.inventory_id))||{};
     return{
       ...x,
-      source_status:suggestion.status==='COMPARABLE'?'PREFERRED_SOURCE':suggestion.status,
-      suggested_packs:suggestion.suggested_packs
+      physical_quantity:Number(availability.physical_quantity??x.quantity??0),
+      usable_quantity:Number(availability.usable_quantity??x.quantity??0),
+      blocked_quantity:Number(availability.blocked_quantity||0),
+      tracked_quantity:Number(availability.tracked_quantity||0),
+      untracked_quantity:Number(availability.untracked_quantity??x.quantity??0)
     };
-  });
+  }).filter(x=>Number(x.usable_quantity)<=Number(x.reorder_level))
+    .sort((a,b)=>(Number(b.reorder_level)-Number(b.usable_quantity))-(Number(a.reorder_level)-Number(a.usable_quantity))||String(a.item).localeCompare(String(b.item)))
+    .map(x=>{
+      if(!x.catalog_item_id)return{...x,source_status:'NO_CONFIGURED_SOURCE',suggested_packs:null};
+      const suggestion=reorderPackSuggestion({
+        quantity:Number(x.usable_quantity),reorderLevel:Number(x.reorder_level),
+        inventoryUnit:x.inventory_base_unit||x.unit,
+        baseUnitsPerPack:Number(x.base_units_per_pack),supplierBaseUnit:x.base_unit,
+        minimumPacks:Number(x.minimum_packs||1)
+      });
+      return{
+        ...x,
+        source_status:suggestion.status==='COMPARABLE'?'PREFERRED_SOURCE':suggestion.status,
+        suggested_packs:suggestion.suggested_packs
+      };
+    });
 }
 
 export const supplierSourcingV4Internals={

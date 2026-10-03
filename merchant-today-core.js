@@ -1,3 +1,5 @@
+import {inventoryAvailabilityRows} from './inventory-lot-runtime.js';
+
 const n=v=>Number(v||0);
 const money=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
 
@@ -76,7 +78,10 @@ export function merchantTodayViewModel({
       items:(inventoryItems||[]).slice(0,5).map(x=>({
         id:Number(x.id),
         item:String(x.item||''),
-        quantity:n(x.quantity),
+        quantity:n(x.usable_quantity??x.quantity),
+        physical_quantity:n(x.physical_quantity??x.quantity),
+        usable_quantity:n(x.usable_quantity??x.quantity),
+        blocked_quantity:n(x.blocked_quantity),
         reorder_level:n(x.reorder_level),
         unit:String(x.base_unit||x.unit||'unit')
       })),
@@ -185,9 +190,8 @@ export async function loadMerchantToday(pool,ctx){
   const [
     finance,
     orders,
-    inventory,
-    inventoryItems,
-    sourceAttention,
+    availabilityRows,
+    sourceRows,
     lotAttention,
     expiryItems,
     supplier,
@@ -207,26 +211,14 @@ export async function loadMerchantToday(pool,ctx){
       FROM orders
       WHERE business_id=$1 AND order_status NOT IN ('completed','cancelled')
     `,[bid]),
-    pool.query(`
-      SELECT
-        COUNT(*) FILTER(WHERE quantity<=reorder_level)::int low_stock,
-        COUNT(*) FILTER(WHERE quantity<=0)::int out_of_stock
-      FROM inventory WHERE business_id=$1
-    `,[bid]),
-    pool.query(`
-      SELECT id,item,quantity,reorder_level,unit,base_unit
-      FROM inventory
-      WHERE business_id=$1 AND quantity<=reorder_level
-      ORDER BY quantity<=0 DESC,(reorder_level-quantity) DESC,item
-      LIMIT 5
-    `,[bid]),
+    inventoryAvailabilityRows(pool,{businessId:bid}),
     optionalQuery(pool,`
-      SELECT COUNT(DISTINCT i.id)::int source_attention
+      SELECT DISTINCT i.id
       FROM inventory i
       JOIN merchant_inventory_supplier_sources s
         ON s.business_id=i.business_id AND s.inventory_id=i.id AND s.active=TRUE
-      WHERE i.business_id=$1 AND i.quantity<=i.reorder_level
-    `,[bid],[{source_attention:0}]),
+      WHERE i.business_id=$1
+    `,[bid],[]),
     optionalQuery(pool,`
       SELECT
         COUNT(*) FILTER(
@@ -329,13 +321,27 @@ export async function loadMerchantToday(pool,ctx){
     `,[bid],[{total:0,unpublished:0,unavailable:0,missing_media:0,ai_drafts_to_review:0,recipe_attention:0}])
   ]);
 
-  const inventoryRow={...(inventory.rows[0]||{}),...(sourceAttention.rows[0]||{}),...(lotAttention.rows[0]||{})};
+  const lowRows=(availabilityRows||[])
+    .filter(x=>Number(x.usable_quantity)<=Number(x.reorder_level))
+    .sort((a,b)=>{
+      const ao=Number(a.usable_quantity)<=0,bo=Number(b.usable_quantity)<=0;
+      if(ao!==bo)return ao?-1:1;
+      const deficit=(Number(b.reorder_level)-Number(b.usable_quantity))-(Number(a.reorder_level)-Number(a.usable_quantity));
+      return deficit||String(a.item||'').localeCompare(String(b.item||''));
+    });
+  const sourceSet=new Set((sourceRows.rows||[]).map(x=>Number(x.id)));
+  const inventoryRow={
+    low_stock:lowRows.length,
+    out_of_stock:lowRows.filter(x=>Number(x.usable_quantity)<=0).length,
+    source_attention:lowRows.filter(x=>sourceSet.has(Number(x.id))).length,
+    ...(lotAttention.rows[0]||{})
+  };
   return merchantTodayViewModel({
     business:{id:bid,name:ctx.business.name,currency_code:ctx.business.currency_code||'PHP'},
     presentation:finance.presentation||{},
     orderRow:orders.rows[0]||{},
     inventoryRow,
-    inventoryItems:inventoryItems.rows,
+    inventoryItems:lowRows.slice(0,5),
     expiryItems:expiryItems.rows,
     supplierRow:supplier.rows[0]||{},
     rfqRow:rfqs.rows[0]||{},
