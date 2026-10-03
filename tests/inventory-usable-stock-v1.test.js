@@ -43,5 +43,5 @@ test('Inventory and restock UI explain physical versus usable stock when blocked
   assert.match(ui,/usable_quantity\?\?i\.quantity/);
   assert.match(ui,/physical_quantity\?\?i\.quantity/);
   assert.match(ui,/blocked_quantity/);
-  assert.match(ui,/Usable stock:/);
+  assert.match(ui,/function restockNeedLabel/);
 });

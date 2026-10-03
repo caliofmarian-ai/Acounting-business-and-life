@@ -241,3 +241,42 @@
 .allergenCheck{display:flex;align-items:center;gap:8px;min-height:44px;padding:9px 10px;border:1px solid var(--line,#e3e6ea);border-radius:12px;background:var(--card,#fff);font-size:12px;font-weight:650}
 .allergenCheck input{width:18px;height:18px;flex:0 0 auto}
 @media(max-width:520px){.allergenGrid{grid-template-columns:1fr}}
+
+
+.restockSupplierGroup{
+  margin:10px 0;
+  border:1px solid var(--line,#e3e6ea);
+  border-radius:16px;
+  background:var(--card,#fff)
+}
+.restockReviewRow{
+  align-items:center
+}
+.restockPackEditor{
+  min-width:76px;
+  display:grid;
+  gap:4px;
+  font-size:10px;
+  color:var(--muted,#687386)
+}
+.restockPackEditor input{
+  width:76px;
+  min-height:42px;
+  box-sizing:border-box;
+  border:1px solid var(--line,#d7e1de);
+  border-radius:10px;
+  padding:8px;
+  font:inherit;
+  background:#fff
+}
+@media(max-width:520px){
+  .restockReviewRow{
+    align-items:flex-start
+  }
+  .restockPackEditor{
+    min-width:70px
+  }
+  .restockPackEditor input{
+    width:70px
+  }
+}

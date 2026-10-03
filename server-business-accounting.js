@@ -79,6 +79,7 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ALTER COLUMN business_id SET NOT NULL;
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_item_key;
     CREATE UNIQUE INDEX IF NOT EXISTS inventory_business_item_unique ON inventory(business_id,item);
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS target_level NUMERIC(14,4) NOT NULL DEFAULT 0;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS inventory_type TEXT NOT NULL DEFAULT 'ingredient';
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_inventory_type_check;
     ALTER TABLE inventory ADD CONSTRAINT inventory_inventory_type_check CHECK(inventory_type IN ('ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply'));
@@ -562,8 +563,9 @@ app.get('/api/inventory',async(req,res,next)=>{try{
   res.json(rows);
 }catch(e){next(e)}});
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
-  const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,unit_cost=0}=req.body||{};
+  const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,target_level=0,unit_cost=0}=req.body||{};
   const inventoryType=normalizeInventoryType(req.body?.inventory_type);
+  if(Number(target_level)>0&&Number(target_level)+1e-9<Number(reorder_level||0))return res.status(400).json({error:'Target stock must be equal to or higher than the low-stock alert level.'});
   if(!clean(item,100))return res.status(400).json({error:'Item is required'});
   const defaults=inventoryStorageDefaults(inventoryType);
   const hasStorage=['storage_condition','storage_area_type','storage_location_label','storage_segregated'].some(key=>Object.prototype.hasOwnProperty.call(req.body||{},key));
@@ -575,20 +577,20 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
     storageSegregated:req.body?.storage_segregated??defaults.storage_segregated
   });
   const{rows}=await pool.query(`
-    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
+    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
       storage_condition,storage_area_type,storage_location_label,storage_segregated)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT(business_id,item) DO UPDATE SET
-      unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,
+      unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,target_level=EXCLUDED.target_level,
       unit_cost=EXCLUDED.unit_cost,inventory_type=EXCLUDED.inventory_type,
-      storage_condition=CASE WHEN $12 THEN EXCLUDED.storage_condition ELSE inventory.storage_condition END,
-      storage_area_type=CASE WHEN $12 THEN EXCLUDED.storage_area_type ELSE inventory.storage_area_type END,
-      storage_location_label=CASE WHEN $12 THEN EXCLUDED.storage_location_label ELSE inventory.storage_location_label END,
-      storage_segregated=CASE WHEN $12 THEN EXCLUDED.storage_segregated ELSE inventory.storage_segregated END,
+      storage_condition=CASE WHEN $13 THEN EXCLUDED.storage_condition ELSE inventory.storage_condition END,
+      storage_area_type=CASE WHEN $13 THEN EXCLUDED.storage_area_type ELSE inventory.storage_area_type END,
+      storage_location_label=CASE WHEN $13 THEN EXCLUDED.storage_location_label ELSE inventory.storage_location_label END,
+      storage_segregated=CASE WHEN $13 THEN EXCLUDED.storage_segregated ELSE inventory.storage_segregated END,
       updated_at=NOW()
     RETURNING *
   `,[
-    business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(unit_cost)||0,inventoryType,
+    business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(target_level)||0,Number(unit_cost)||0,inventoryType,
     storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,hasStorage
   ]);
   res.status(201).json(rows[0])
@@ -612,7 +614,9 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         purchase_unit:req.body?.purchase_unit,
         total_cost:req.body?.total_cost,
         reorder_quantity:req.body?.reorder_quantity||0,
-        reorder_unit:req.body?.reorder_unit||req.body?.purchase_unit
+        reorder_unit:req.body?.reorder_unit||req.body?.purchase_unit,
+        target_quantity:req.body?.target_quantity||0,
+        target_unit:req.body?.target_unit||req.body?.reorder_unit||req.body?.purchase_unit
       });
     }catch(error){return res.status(400).json({error:error.message})}
 
@@ -655,29 +659,30 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
                  storage_location_label=$8,
                  storage_segregated=$9,
                  reorder_level=CASE WHEN $10>0 THEN $10 ELSE reorder_level END,
-                 last_purchase_quantity=$11,
-                 last_purchase_unit=$12,
-                 last_purchase_total_cost=$13,
+                 target_level=CASE WHEN $11>0 THEN $11 ELSE target_level END,
+                 last_purchase_quantity=$12,
+                 last_purchase_unit=$13,
+                 last_purchase_total_cost=$14,
                  last_purchase_at=NOW(),
                  updated_at=NOW()
-           WHERE id=$14 AND business_id=$15
+           WHERE id=$15 AND business_id=$16
            RETURNING *
         `,[
           purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,inventoryType,
           storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
-          purchase.reorder_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id
+          purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id
         ]);
         inventoryRow=updated.rows[0];
       }else{
         const inserted=await client.query(`
           INSERT INTO inventory(
-            business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
+            business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
             storage_condition,storage_area_type,storage_location_label,storage_segregated,
             measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at
-          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$3,$13,$14,$15,NOW())
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$3,$14,$15,$16,NOW())
           RETURNING *
         `,[
-          ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.base_unit_cost,inventoryType,
+          ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.base_unit_cost,inventoryType,
           storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
           purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost
         ]);
@@ -748,6 +753,33 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
     }finally{client.release()}
   }catch(error){next(error)}
 });
+
+app.put('/api/inventory/:id/reorder-settings',jsonBody,async(req,res,next)=>{try{
+  const ctx=await accountingContext(req);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  const id=Number(req.params.id);
+  if(!Number.isInteger(id))return res.status(400).json({error:'Invalid Inventory item'});
+  const q=await pool.query(`SELECT * FROM inventory WHERE id=$1 AND business_id=$2`,[id,ctx.business.id]);
+  if(!q.rowCount)return res.status(404).json({error:'Inventory item not found'});
+  const row=q.rows[0],unit=clean(req.body?.unit||row.base_unit||row.unit,20);
+  let alertBase=0,targetBase=0,levelFamily=null;
+  try{
+    if(Number(req.body?.reorder_quantity)>0){
+      const alert=toBaseQuantity(req.body.reorder_quantity,unit);alertBase=alert.base_quantity;levelFamily=alert.family;
+    }
+    if(Number(req.body?.target_quantity)>0){
+      const target=toBaseQuantity(req.body.target_quantity,unit);targetBase=target.base_quantity;levelFamily=levelFamily||target.family;
+    }
+  }catch(error){return res.status(400).json({error:error.message})}
+  const family=clean(row.measurement_family,20);
+  if(family&&family!=='custom'&&levelFamily&&levelFamily!==family)return res.status(400).json({error:'Stock levels must use the same measurement type as this Inventory item.'});
+  if(targetBase>0&&targetBase+1e-9<alertBase)return res.status(400).json({error:'Restock target must be equal to or higher than the low-stock alert level.'});
+  const {rows}=await pool.query(`
+    UPDATE inventory SET reorder_level=$1,target_level=$2,updated_at=NOW()
+     WHERE id=$3 AND business_id=$4 RETURNING *
+  `,[alertBase,targetBase,id,ctx.business.id]);
+  res.json(rows[0]);
+}catch(e){next(e)}});
 
 app.put('/api/inventory/:id/storage',jsonBody,async(req,res,next)=>{
   try{

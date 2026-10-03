@@ -19,11 +19,14 @@ test('Inventory renders a complete restock list and supplier action',()=>{
   assert.match(ui,/source_status==='PREFERRED_SOURCE'/);
 });
 
-test('Supplier prepare action creates an RFQ without recording purchase or receipt',()=>{
-  assert.match(ui,/\/api\/procurement\/sourcing\/rfqs/);
-  assert.match(ui,/substitution_policy:'approval_required'/);
-  assert.match(ui,/supplier_business_ids:\[Number\(x\.supplier_business_id\)\]/);
-  assert.match(html,/Sending a request does not record a purchase, payment or received stock/);
+test('Supplier prepare action creates grouped sourcing RFQs without recording purchase or receipt',()=>{
+  assert.match(ui,/\/api\/procurement\/restock-requests/);
+  assert.match(ui,/supplier_business_id:supplierBusinessId/);
+  assert.match(ui,/requested_packs:Number\(input\.value\)/);
+  assert.match(sourcing,/INSERT INTO supplier_rfqs/);
+  assert.match(sourcing,/substitution_policy,currency_code,note,status,expires_at/);
+  assert.match(sourcing,/INSERT INTO supplier_rfq_targets/);
+  assert.match(html,/never a purchase order, payment or received stock/i);
 });
 
 test('Reorder suggestions expose the connected Supplier business target',()=>{

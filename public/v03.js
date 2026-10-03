@@ -3,6 +3,7 @@ let token = false;
 let transactions = [];
 let inventory = [];
 let stockAdjustmentLots = [];
+let restockSuggestions = [];
 let products = [];
 let recipeDraft = [];
 let allergenCatalog = [];
@@ -186,8 +187,9 @@ function stockPurchasePreview(){
   const out=$('stockPurchasePreview');if(!out)return;
   const x=toBase($('stockPurchaseQty')?.value,$('stockPurchaseUnit')?.value),cost=Number($('stockTotalCost')?.value||0);
   if(!x||!Number.isFinite(cost)||cost<0){out.textContent='Enter a purchase quantity and total cost.';return}
-  const unitCost=x.qty>0?cost/x.qty:0;
-  out.innerHTML=`Stored as <strong>${num(x.qty,4)} ${esc(x.base)}</strong> • calculated cost <strong>${money(unitCost)} / ${esc(x.base)}</strong>`;
+  const unitCost=x.qty>0?cost/x.qty:0,alert=Math.max(0,Number($('stockReorderQty')?.value||0)),targetInput=Math.max(0,Number($('stockTargetQty')?.value||0)),target=targetInput>0?targetInput:alert,levelUnit=$('stockReorderUnit')?.value||x.base;
+  if(targetInput>0&&targetInput<alert){out.innerHTML='<strong class="negative">Restock target must be equal to or higher than the low-stock alert.</strong>';return}
+  out.innerHTML=`Stored as <strong>${num(x.qty,4)} ${esc(x.base)}</strong> • calculated cost <strong>${money(unitCost)} / ${esc(x.base)}</strong> • notify below <strong>${num(alert,4)} ${esc(levelUnit)}</strong> • target <strong>${num(target,4)} ${esc(levelUnit)}</strong>`;
 }
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cacheKey = (key) => `abl_cache_${key}`;
@@ -390,25 +392,56 @@ async function loadSummary(){
 }
 async function loadTransactions(){const tx=await cachedJson('/api/transactions','transactions');transactions=tx;$('recentList').replaceChildren(...(tx.length?tx.slice(0,8).map(t=>txRow(t,false)):[emptyRow('No transactions yet.')]));$('historyList').replaceChildren(...(tx.length?tx.map(t=>txRow(t,true)):[emptyRow('No transactions yet.')]))}
 function restockNeedLabel(x){
-  const current=Number(x.usable_quantity??x.quantity??0),threshold=Number(x.reorder_level||0),unit=x.inventory_base_unit||x.unit||'unit';
-  const gap=Math.max(0,threshold-current);
-  return gap>0?`${num(gap,4)} ${esc(unit)} below alert level`:`At the ${num(threshold,4)} ${esc(unit)} alert level`;
+  const current=Number(x.usable_quantity??x.quantity??0),threshold=Number(x.reorder_level||0),target=Number(x.effective_target_level??x.target_level??threshold),unit=x.inventory_base_unit||x.unit||'unit';
+  const gap=Math.max(0,threshold-current),targetGap=Math.max(0,target-current);
+  return gap>0
+    ?`${num(gap,4)} ${esc(unit)} below alert • replenish ${num(targetGap,4)} ${esc(unit)} toward target ${num(target,4)}`
+    :`At the ${num(threshold,4)} ${esc(unit)} alert level • target ${num(target,4)} ${esc(unit)}`;
+}
+function restockSupplierGroup(items,supplierBusinessId){
+  const group=document.createElement('div');group.className='restockSupplierGroup card stack';group.dataset.supplierBusinessId=String(supplierBusinessId);
+  const supplierName=items[0]?.supplier_name||'Preferred Supplier';
+  const estimated=items.reduce((sum,x)=>sum+(Number.isFinite(Number(x.price_per_pack))?Number(x.suggested_packs||0)*Number(x.price_per_pack):0),0);
+  const head=document.createElement('div');head.className='sectionHead';
+  head.innerHTML=`<div><strong>${esc(supplierName)}</strong><small class="muted">${items.length} item${items.length===1?'':'s'} • grouped restock request${estimated>0?' • approx. '+money(estimated):''}</small></div><span class="positive">Preferred Supplier</span>`;
+  group.appendChild(head);
+  for(const x of items){
+    const row=document.createElement('div');row.className='listRow restockReviewRow';
+    const usable=Number(x.usable_quantity??x.quantity??0),physical=Number(x.physical_quantity??x.quantity??0),blocked=Number(x.blocked_quantity||0),target=Number(x.effective_target_level??x.target_level??x.reorder_level??0);
+    const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(x.unit||'')} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`usable ${num(usable,4)} ${esc(x.unit||'')}`;
+    const min=Math.max(1,Number(x.minimum_packs||1)),suggested=Math.max(min,Number(x.suggested_packs||min));
+    row.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)}<br>${stockCopy} • target ${num(target,4)} ${esc(x.unit||'')}${Number.isFinite(Number(x.price_per_pack))?' • '+money(x.price_per_pack)+' / '+esc(x.unit_name||'pack'):''}</small></div><label class="restockPackEditor"><span>Packs</span><input type="number" min="${min}" step="1" value="${suggested}" data-restock-inventory="${Number(x.inventory_id)}" /></label>`;
+    group.appendChild(row);
+  }
+  const actions=document.createElement('div');actions.className='stack';
+  actions.innerHTML='<div class="salePreview">Review the quantities above. Sending this request does not create a purchase order, payment or received stock.</div><button type="button" class="secondary restockGroupSend">Prepare Supplier request</button><div class="restockGroupMessage"></div>';
+  group.appendChild(actions);
+  actions.querySelector('.restockGroupSend').onclick=()=>sendSupplierRestockRequest(group,items);
+  return group;
 }
 function renderRestockList(rows=[]){
   const list=$('restockList'),summary=$('restockSummary');if(!list||!summary)return;
-  const items=Array.isArray(rows)?rows:[];
-  summary.textContent=items.length?`${items.length} item${items.length===1?'':'s'} need restocking.`:'No items currently need restocking.';
-  const nodes=items.map(x=>{
-    const d=document.createElement('div');d.className='listRow';
+  restockSuggestions=Array.isArray(rows)?rows:[];
+  summary.textContent=restockSuggestions.length?`${restockSuggestions.length} item${restockSuggestions.length===1?'':'s'} need restocking toward their Target / Par level.`:'No items currently need restocking.';
+  const groups=new Map(),unsourced=[];
+  for(const x of restockSuggestions){
     const preferred=x.source_status==='PREFERRED_SOURCE'&&Number(x.supplier_business_id)>0&&Number(x.suggested_packs)>0;
-    const supplier=preferred?`${esc(x.supplier_name||'Preferred Supplier')} • suggested ${num(x.suggested_packs,4)} ${esc(x.unit_name||'pack')}`:'No preferred Supplier linked yet';
-    const estimated=preferred&&Number.isFinite(Number(x.price_per_pack))?` • approx. ${money(Number(x.suggested_packs)*Number(x.price_per_pack))}`:'';
-    const usable=Number(x.usable_quantity??x.quantity??0),physical=Number(x.physical_quantity??x.quantity??0),blocked=Number(x.blocked_quantity||0);
-    const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(x.unit||'')} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`usable ${num(usable,4)} ${esc(x.unit||'')}`;
-    d.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • ${stockCopy}, alert at ${num(x.reorder_level,4)} ${esc(x.unit||'')}<br>${supplier}${estimated}</small></div><div class="rowRight">${preferred?'<button type="button" class="miniBtn restockRequestBtn">Ask Supplier to prepare</button>':'<span class="negative">Supplier needed</span>'}</div>`;
-    if(preferred)d.querySelector('.restockRequestBtn').onclick=()=>sendRestockRequest(x,d);
-    return d;
-  });
+    if(!preferred){unsourced.push(x);continue}
+    const key=Number(x.supplier_business_id);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(x);
+  }
+  const nodes=[];
+  for(const [supplierBusinessId,items] of groups)nodes.push(restockSupplierGroup(items,supplierBusinessId));
+  if(unsourced.length){
+    const box=document.createElement('div');box.className='restockSupplierGroup card stack';
+    box.innerHTML='<div class="sectionHead"><div><strong>Supplier needed</strong><small class="muted">These items have no comparable preferred Supplier source yet.</small></div><span class="negative">'+unsourced.length+' item(s)</span></div>';
+    for(const x of unsourced){
+      const row=document.createElement('div');row.className='listRow';
+      const target=Number(x.effective_target_level??x.target_level??x.reorder_level??0);
+      row.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • target ${num(target,4)} ${esc(x.unit||'')}</small></div><span class="negative">${esc(x.source_status==='NOT_COMPARABLE'?'Unit mismatch':'Supplier needed')}</span>`;
+      box.appendChild(row);
+    }
+    nodes.push(box);
+  }
   list.replaceChildren(...(nodes.length?nodes:[emptyRow('Nothing is below its low-stock alert level.')]));
 }
 async function loadRestockSuggestions(){
@@ -417,37 +450,68 @@ async function loadRestockSuggestions(){
     renderRestockList(rows);
     return rows;
   }catch(error){
-    const list=$('restockList'),summary=$('restockSummary');
+    const list=$('restockList'),summary=$('restockSummary');restockSuggestions=[];
     if(summary)summary.textContent='Restock list could not be loaded.';
     if(list)list.replaceChildren(emptyRow(error.message||'Supplier restock information is unavailable.'));
     return [];
   }
 }
-async function sendRestockRequest(x,row){
-  const button=row?.querySelector('.restockRequestBtn');if(button){button.disabled=true;button.textContent='Sending…'}
+async function sendSupplierRestockRequest(group,items){
+  const button=group?.querySelector('.restockGroupSend'),message=group?.querySelector('.restockGroupMessage');
+  if(button){button.disabled=true;button.textContent='Sending…'}if(message)message.textContent='';
   try{
-    const packs=Number(x.suggested_packs);
-    const result=await api('/api/procurement/sourcing/rfqs',{method:'POST',body:JSON.stringify({
-      item_specification:x.item,
-      requested_quantity:packs,
-      requested_unit:x.unit_name||'pack',
-      fulfilment_mode:'either',
-      substitution_policy:'approval_required',
+    const payloadItems=[...group.querySelectorAll('[data-restock-inventory]')].map(input=>({
+      inventory_id:Number(input.dataset.restockInventory),
+      requested_packs:Number(input.value)
+    }));
+    if(payloadItems.some(x=>!Number.isInteger(x.inventory_id)||!Number.isFinite(x.requested_packs)||x.requested_packs<=0))throw new Error('Review every requested pack quantity.');
+    const supplierBusinessId=Number(group.dataset.supplierBusinessId);
+    const result=await api('/api/procurement/restock-requests',{method:'POST',body:JSON.stringify({
+      supplier_business_id:supplierBusinessId,
       currency_code:'PHP',
-      supplier_business_ids:[Number(x.supplier_business_id)],
-      note:`Low-stock restock request from Inventory. Usable stock: ${num(x.usable_quantity??x.quantity,4)} ${x.unit||''}; physical stock: ${num(x.physical_quantity??x.quantity,4)} ${x.unit||''}; alert level: ${num(x.reorder_level,4)} ${x.unit||''}.`
+      items:payloadItems,
+      note:'Grouped low-stock replenishment request prepared from Merchant Inventory.'
     })});
     if(button){button.textContent='Request sent';button.disabled=true}
-    const small=row?.querySelector('.rowMain small');if(small)small.insertAdjacentHTML('beforeend',`<br><strong>Supplier request #${esc(result.id||'created')} sent.</strong>`);
+    if(message)message.innerHTML=`<strong>Restock request #${esc(result.id)} sent.</strong> ${result.items?.length||payloadItems.length} item(s) shared with ${esc(result.supplier_name||items[0]?.supplier_name||'Supplier')}.`;
   }catch(error){
-    if(button){button.disabled=false;button.textContent='Ask Supplier to prepare'}
-    alert(error.message||'Could not send the Supplier request.');
+    if(button){button.disabled=false;button.textContent='Prepare Supplier request'}
+    if(message)message.textContent=error.message||'Could not send the grouped Supplier request.';
   }
+}
+function baseQuantityForDisplay(value,unit){
+  const meta=unitMeta(unit);if(!meta)return Number(value||0);
+  return Number(value||0)/Number(meta.factor||1);
+}
+function fillRestockSettingsEditor(){
+  const select=$('restockSettingsInventory');if(!select)return;
+  const previous=select.value;
+  select.innerHTML=inventory.length?'<option value="">Choose an item</option>'+inventory.map(i=>`<option value="${i.id}">${esc(i.item)}</option>`).join(''):'<option value="">Add stock first</option>';
+  if(previous&&inventory.some(i=>String(i.id)===String(previous)))select.value=previous;
+  loadRestockSettingsItem();
+}
+function loadRestockSettingsItem(){
+  const item=inventory.find(i=>Number(i.id)===Number($('restockSettingsInventory')?.value)),out=$('restockSettingsPreview');
+  if(!item){if(out)out.textContent='Choose an item to review its replenishment levels.';return}
+  const preferredUnit=item.last_purchase_unit&&unitMeta(item.last_purchase_unit)?.family===unitMeta(item.base_unit||item.unit)?.family?item.last_purchase_unit:(item.base_unit||item.unit||'unit');
+  syncUnitSelect('restockSettingsUnit',preferredUnit);
+  $('restockSettingsAlert').value=baseQuantityForDisplay(item.reorder_level,preferredUnit);
+  $('restockSettingsTarget').value=Number(item.target_level)>0?baseQuantityForDisplay(item.target_level,preferredUnit):0;
+  updateRestockSettingsPreview();
+}
+function updateRestockSettingsPreview(){
+  const item=inventory.find(i=>Number(i.id)===Number($('restockSettingsInventory')?.value)),out=$('restockSettingsPreview');if(!out)return;
+  if(!item){out.textContent='Choose an item to review its replenishment levels.';return}
+  const alert=Math.max(0,Number($('restockSettingsAlert').value||0)),targetInput=Math.max(0,Number($('restockSettingsTarget').value||0)),target=targetInput>0?targetInput:alert,unit=$('restockSettingsUnit').value;
+  const invalid=targetInput>0&&targetInput<alert;
+  out.innerHTML=invalid
+    ?'<strong class="negative">Target must be equal to or higher than the low-stock alert.</strong>'
+    :`Notify when usable stock reaches <strong>${num(alert,4)} ${esc(unit)}</strong>. Replenishment suggestions aim for <strong>${num(target,4)} ${esc(unit)}</strong>.`;
 }
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
   inventory=results[0];
-  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),reserved=Number(i.reserved_quantity||0),available=Number(i.available_quantity??Math.max(0,usable-reserved)),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=reserved>0?`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)}`:blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;const condition=STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other',area=STORAGE_AREA_LABELS[i.storage_area_type]||'Other / not set',location=i.storage_location_label?` · ${esc(i.storage_location_label)}`:'';const storageCopy=`storage ${esc(condition)} · ${esc(area)}${location}${i.storage_segregated?' · segregated':''}`;d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • ${storageCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
+  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),reserved=Number(i.reserved_quantity||0),available=Number(i.available_quantity??Math.max(0,usable-reserved)),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=reserved>0?`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)}`:blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;const condition=STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other',area=STORAGE_AREA_LABELS[i.storage_area_type]||'Other / not set',location=i.storage_location_label?` · ${esc(i.storage_location_label)}`:'';const storageCopy=`storage ${esc(condition)} · ${esc(area)}${location}${i.storage_segregated?' · segregated':''}`,target=Number(i.target_level)>0?Number(i.target_level):Number(i.reorder_level);d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • ${storageCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)} • target ${num(target,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
   $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
   if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
@@ -455,6 +519,7 @@ async function loadStock(){
   fillConsumableRuleInventory();
   fillStockAdjustmentInventory();
   fillStorageEditor();
+  fillRestockSettingsEditor();
   await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots()]);
 }
 function lotExpiryCopy(row){
@@ -870,7 +935,21 @@ $('storageForm')?.addEventListener('submit',async e=>{
     invalidateMerchantToday();
   }catch(error){if(out)out.textContent=error.message}
 });
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('restockSettingsInventory')?.addEventListener('change',loadRestockSettingsItem);
+for(const id of ['restockSettingsAlert','restockSettingsTarget'])$(id)?.addEventListener('input',updateRestockSettingsPreview);
+$('restockSettingsUnit')?.addEventListener('change',updateRestockSettingsPreview);
+$('restockSettingsForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();const out=$('restockSettingsMessage');if(out)out.textContent='Saving…';
+  try{
+    const id=Number($('restockSettingsInventory').value);if(!Number.isInteger(id))throw new Error('Choose an Inventory item.');
+    const alert=Number($('restockSettingsAlert').value||0),target=Number($('restockSettingsTarget').value||0),unit=$('restockSettingsUnit').value;
+    if(target>0&&target<alert)throw new Error('Restock target must be equal to or higher than the low-stock alert.');
+    await api(`/api/inventory/${id}/reorder-settings`,{method:'PUT',body:JSON.stringify({reorder_quantity:alert,target_quantity:target,unit})});
+    if(out)out.textContent='Restock settings saved.';
+    await loadStock();invalidateMerchantToday();
+  }catch(error){if(out)out.textContent=error.message}
+});
+$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,target_quantity:Number($('stockTargetQty').value||0),target_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockTargetQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});
@@ -913,7 +992,7 @@ $('recipeIngredient').onchange=()=>{const inv=inventory.find(i=>Number(i.id)===N
 for(const id of ['recipeYieldQty','recipeYieldUnit','recipeSellQty','recipeSellUnit'])$(id).addEventListener('input',updateRecipeCost);
 $('recipeAdd').onclick=()=>{const inventoryId=Number($('recipeIngredient').value),quantity=Number($('recipeQty').value),unit=$('recipeUnit').value;if(!inventoryId||!Number.isFinite(quantity)||quantity<=0)return alert('Choose an ingredient and an amount greater than zero.');if(recipeDraft.some(x=>x.inventory_id===inventoryId))return alert('That ingredient is already in the recipe.');recipeDraft.push({inventory_id:inventoryId,quantity,unit});$('recipeQty').value='';renderRecipeDraft();updateRecipeCost()};
 $('recipeSave').onclick=async()=>{const productId=Number($('recipeProduct').value);if(!productId)return alert('Create a prepared product first.');if(!recipeDraft.length)return alert('Add at least one ingredient.');$('recipeMessage').textContent='Saving batch recipe…';try{const saved=await api(`/api/products/${productId}/recipe-batch`,{method:'PUT',body:JSON.stringify({yield_quantity:Number($('recipeYieldQty').value),yield_unit:$('recipeYieldUnit').value,selling_quantity:Number($('recipeSellQty').value),selling_unit:$('recipeSellUnit').value,components:recipeDraft})});$('recipeMessage').textContent=`Recipe saved. Estimated ingredient cost per sale unit: ${money(saved.recipe_cost_per_sale_unit??saved.estimated_unit_cost)}.`;await loadProducts()}catch(err){$('recipeMessage').textContent=err.message}};
-for(const id of ['stockPurchaseQty','stockPurchaseUnit','stockTotalCost'])$(id).addEventListener('input',stockPurchasePreview);
+for(const id of ['stockPurchaseQty','stockPurchaseUnit','stockTotalCost','stockReorderQty','stockTargetQty'])$(id).addEventListener('input',stockPurchasePreview);
 $('stockPurchaseUnit').addEventListener('change',()=>{const u=$('stockPurchaseUnit').value,m=unitMeta(u);if(m)syncUnitSelect('stockReorderUnit',m.base);stockPurchasePreview()});
 stockPurchasePreview();
 $('sellProduct').onchange=updateSellPreview;$('sellQty').oninput=updateSellPreview;

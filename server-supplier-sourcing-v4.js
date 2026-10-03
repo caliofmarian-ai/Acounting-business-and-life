@@ -206,6 +206,41 @@ export async function ensureSupplierSourcingV4Schema(pool){
       UNIQUE(business_id,inventory_id,preference_rank)
     );
 
+    CREATE TABLE IF NOT EXISTS merchant_restock_requests(
+      id BIGSERIAL PRIMARY KEY,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+      supplier_business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+      supplier_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      created_by_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'sent',
+      currency_code TEXT NOT NULL DEFAULT 'PHP',
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK(status IN ('prepared','sent','cancelled'))
+    );
+    CREATE INDEX IF NOT EXISTS merchant_restock_requests_business_idx
+      ON merchant_restock_requests(business_id,created_at DESC,id DESC);
+    CREATE INDEX IF NOT EXISTS merchant_restock_requests_supplier_idx
+      ON merchant_restock_requests(supplier_business_id,created_at DESC,id DESC);
+
+    CREATE TABLE IF NOT EXISTS merchant_restock_request_items(
+      id BIGSERIAL PRIMARY KEY,
+      restock_request_id BIGINT NOT NULL REFERENCES merchant_restock_requests(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      catalog_item_id BIGINT REFERENCES supplier_catalog_items(id) ON DELETE SET NULL,
+      rfq_id BIGINT REFERENCES supplier_rfqs(id) ON DELETE SET NULL,
+      item_name_snapshot TEXT NOT NULL,
+      requested_packs NUMERIC(16,6) NOT NULL CHECK(requested_packs>0),
+      requested_unit TEXT NOT NULL,
+      usable_quantity_snapshot NUMERIC(16,6) NOT NULL DEFAULT 0,
+      target_level_snapshot NUMERIC(16,6) NOT NULL DEFAULT 0,
+      price_per_pack_snapshot NUMERIC(14,2),
+      estimated_cost_snapshot NUMERIC(14,2),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(restock_request_id,inventory_id)
+    );
+
     ALTER TABLE purchase_orders
       ADD COLUMN IF NOT EXISTS source_quote_id BIGINT REFERENCES supplier_quotes(id) ON DELETE SET NULL;
     ALTER TABLE purchase_orders
@@ -361,6 +396,126 @@ export function registerSupplierSourcingV4Routes({app,pool,body,identity}){
         const id=Number(item.business_id);if(!byBusiness.has(id))byBusiness.set(id,[]);byBusiness.get(id).push(item);
       }
       res.json(rows.map(row=>({...row,published_catalog:byBusiness.get(Number(row.supplier_business_id))||[]})));
+    }catch(e){next(e)}
+  });
+
+  app.post('/api/procurement/restock-requests',body,async(req,res,next)=>{
+    try{
+      const me=await identity(req);
+      const merchant=await exactProfileBusiness(pool,me,'merchant',req.body?.business_id||null);
+      const supplierBusinessId=Number(req.body?.supplier_business_id);
+      const requested=Array.isArray(req.body?.items)?req.body.items:[];
+      if(!Number.isInteger(supplierBusinessId)||requested.length<1||requested.length>50){
+        return res.status(400).json({error:'Choose one Supplier and 1–50 restock items.'});
+      }
+      const current=await supplierReorderSuggestions(pool,merchant.id);
+      const byInventory=new Map(current.map(x=>[Number(x.inventory_id),x]));
+      const normalized=[],seen=new Set();
+      for(const raw of requested){
+        const inventoryId=Number(raw?.inventory_id),packs=Number(raw?.requested_packs);
+        if(!Number.isInteger(inventoryId)||!Number.isFinite(packs)||packs<=0)return res.status(400).json({error:'Every restock item needs an Inventory item and pack quantity greater than zero.'});
+        if(seen.has(inventoryId))return res.status(400).json({error:'The same Inventory item cannot appear twice in one restock request.'});
+        seen.add(inventoryId);
+        const row=byInventory.get(inventoryId);
+        if(!row||row.source_status!=='PREFERRED_SOURCE')return res.status(409).json({error:'One or more items no longer have an active preferred Supplier source or no longer need restocking.'});
+        if(Number(row.supplier_business_id)!==supplierBusinessId)return res.status(409).json({error:'All items in one restock request must belong to the same preferred Supplier.'});
+        normalized.push({row,packs});
+      }
+      const supplier=normalized[0]?.row;
+      if(!supplier||!Number.isInteger(Number(supplier.supplier_account_id)))return res.status(409).json({error:'Preferred Supplier account evidence is unavailable.'});
+      await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'invitation_create',subjectType:'merchant_restock_request',subjectId:merchant.id});
+      const client=await pool.connect();
+      try{
+        await client.query('BEGIN');
+        const parent=await client.query(
+          `INSERT INTO merchant_restock_requests(
+            business_id,supplier_business_id,supplier_account_id,created_by_account_id,status,currency_code,note
+          ) VALUES($1,$2,$3,$4,'sent',$5,$6) RETURNING *`,
+          [merchant.id,supplierBusinessId,Number(supplier.supplier_account_id),me.account.id,clean(req.body?.currency_code||'PHP',8)||'PHP',clean(req.body?.note,1000)]
+        );
+        const requestId=Number(parent.rows[0].id),expires=new Date(Date.now()+7*86400000).toISOString();
+        const saved=[];
+        for(const item of normalized){
+          const x=item.row,unit=clean(x.unit_name||'pack',50)||'pack';
+          const note=clean(
+            `Restock request #${requestId}. Usable stock: ${Number(x.usable_quantity||0)} ${x.unit||''}; target: ${Number(x.effective_target_level||x.reorder_level||0)} ${x.unit||''}.`,
+            1000
+          );
+          const rfq=await client.query(
+            `INSERT INTO supplier_rfqs(
+              business_id,created_by_account_id,item_specification,requested_quantity,requested_unit,
+              fulfilment_mode,substitution_policy,currency_code,note,status,expires_at
+            ) VALUES($1,$2,$3,$4,$5,'either','approval_required',$6,$7,'open',$8) RETURNING *`,
+            [merchant.id,me.account.id,clean(x.item,500),item.packs,unit,clean(req.body?.currency_code||'PHP',8)||'PHP',note,expires]
+          );
+          await client.query(
+            `INSERT INTO supplier_rfq_targets(rfq_id,supplier_business_id,supplier_account_id)
+             VALUES($1,$2,$3)`,
+            [rfq.rows[0].id,supplierBusinessId,Number(x.supplier_account_id)]
+          );
+          const estimated=Number.isFinite(Number(x.price_per_pack))?Math.round(item.packs*Number(x.price_per_pack)*100)/100:null;
+          const line=await client.query(
+            `INSERT INTO merchant_restock_request_items(
+              restock_request_id,inventory_id,catalog_item_id,rfq_id,item_name_snapshot,requested_packs,requested_unit,
+              usable_quantity_snapshot,target_level_snapshot,price_per_pack_snapshot,estimated_cost_snapshot
+            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+            [requestId,Number(x.inventory_id),Number(x.catalog_item_id),rfq.rows[0].id,clean(x.item,180),item.packs,unit,
+             Number(x.usable_quantity||0),Number(x.effective_target_level||x.reorder_level||0),
+             Number.isFinite(Number(x.price_per_pack))?Number(x.price_per_pack):null,estimated]
+          );
+          saved.push({...line.rows[0],rfq_status:rfq.rows[0].status});
+        }
+        await client.query('COMMIT');
+        res.status(201).json({...parent.rows[0],supplier_name:supplier.supplier_name||'',items:saved,commercial_effect:'sourcing_request_only_no_purchase_payment_or_receipt'});
+      }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+      finally{client.release()}
+    }catch(e){next(e)}
+  });
+
+  app.get('/api/procurement/restock-requests',async(req,res,next)=>{
+    try{
+      const me=await identity(req);
+      const merchant=await exactProfileBusiness(pool,me,'merchant',req.query.business_id||null);
+      const {rows}=await pool.query(
+        `SELECT r.*,COALESCE(sp.supplier_name,b.name) supplier_name,
+          COALESCE(json_agg(json_build_object(
+            'id',i.id,'inventory_id',i.inventory_id,'item',i.item_name_snapshot,
+            'requested_packs',i.requested_packs,'requested_unit',i.requested_unit,
+            'rfq_id',i.rfq_id,'estimated_cost',i.estimated_cost_snapshot
+          ) ORDER BY i.id) FILTER(WHERE i.id IS NOT NULL),'[]'::json) items
+         FROM merchant_restock_requests r
+         JOIN businesses b ON b.id=r.supplier_business_id
+         LEFT JOIN supplier_profiles sp ON sp.account_id=r.supplier_account_id
+         LEFT JOIN merchant_restock_request_items i ON i.restock_request_id=r.id
+         WHERE r.business_id=$1
+         GROUP BY r.id,sp.supplier_name,b.name
+         ORDER BY r.created_at DESC,r.id DESC LIMIT 100`,
+        [merchant.id]
+      );
+      res.json(rows);
+    }catch(e){next(e)}
+  });
+
+  app.get('/api/supplier/v4/restock-requests',async(req,res,next)=>{
+    try{
+      const me=await identity(req);
+      const supplier=await exactProfileBusiness(pool,me,'supplier',req.query.business_id||null);
+      const {rows}=await pool.query(
+        `SELECT r.*,b.name merchant_business_name,
+          COALESCE(json_agg(json_build_object(
+            'id',i.id,'inventory_id',i.inventory_id,'item',i.item_name_snapshot,
+            'requested_packs',i.requested_packs,'requested_unit',i.requested_unit,
+            'rfq_id',i.rfq_id,'estimated_cost',i.estimated_cost_snapshot
+          ) ORDER BY i.id) FILTER(WHERE i.id IS NOT NULL),'[]'::json) items
+         FROM merchant_restock_requests r
+         JOIN businesses b ON b.id=r.business_id
+         LEFT JOIN merchant_restock_request_items i ON i.restock_request_id=r.id
+         WHERE r.supplier_business_id=$1
+         GROUP BY r.id,b.name
+         ORDER BY r.created_at DESC,r.id DESC LIMIT 100`,
+        [supplier.id]
+      );
+      res.json(rows);
     }catch(e){next(e)}
   });
 
@@ -793,7 +948,7 @@ export async function supplierReorderSuggestions(pool,businessId){
   const availabilityById=new Map(availabilityRows.map(x=>[Number(x.id),x]));
   const {rows}=await pool.query(
     `SELECT
-       i.id inventory_id,i.item,i.quantity,i.reorder_level,i.unit,i.unit_cost,i.base_unit inventory_base_unit,
+       i.id inventory_id,i.item,i.quantity,i.reorder_level,i.target_level,i.unit,i.unit_cost,i.base_unit inventory_base_unit,
        src.catalog_item_id,src.preference_rank,src.supplier_business_id,
        c.product_name,c.unit_name,c.base_unit,c.base_units_per_pack,c.price_per_pack,c.minimum_packs,
        c.lead_time_days,c.supplier_account_id,c.availability_status,
@@ -838,15 +993,18 @@ export async function supplierReorderSuggestions(pool,businessId){
   }).filter(x=>Number(x.usable_quantity)<=Number(x.reorder_level))
     .sort((a,b)=>(Number(b.reorder_level)-Number(b.usable_quantity))-(Number(a.reorder_level)-Number(a.usable_quantity))||String(a.item).localeCompare(String(b.item)))
     .map(x=>{
-      if(!x.catalog_item_id)return{...x,source_status:'NO_CONFIGURED_SOURCE',suggested_packs:null};
+      if(!x.catalog_item_id){const effectiveTarget=Number(x.target_level)>0?Number(x.target_level):Number(x.reorder_level);return{...x,effective_target_level:effectiveTarget,suggested_base_quantity:Math.max(0,effectiveTarget-Number(x.usable_quantity)),source_status:'NO_CONFIGURED_SOURCE',suggested_packs:null}};
+      const effectiveTarget=Number(x.target_level)>0?Number(x.target_level):Number(x.reorder_level);
       const suggestion=reorderPackSuggestion({
-        quantity:Number(x.usable_quantity),reorderLevel:Number(x.reorder_level),
+        quantity:Number(x.usable_quantity),reorderLevel:Number(x.reorder_level),targetLevel:effectiveTarget,
         inventoryUnit:x.inventory_base_unit||x.unit,
         baseUnitsPerPack:Number(x.base_units_per_pack),supplierBaseUnit:x.base_unit,
         minimumPacks:Number(x.minimum_packs||1)
       });
       return{
         ...x,
+        effective_target_level:effectiveTarget,
+        suggested_base_quantity:Math.max(0,effectiveTarget-Number(x.usable_quantity)),
         source_status:suggestion.status==='COMPARABLE'?'PREFERRED_SOURCE':suggestion.status,
         suggested_packs:suggestion.suggested_packs
       };

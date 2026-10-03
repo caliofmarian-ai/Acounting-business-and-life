@@ -285,8 +285,10 @@
           </div>
           <div class="grid2">
             <label>Notify me when stock falls below<input id="stockReorderQty" type="number" min="0" step="0.0001" value="0" /></label>
-            <label>Reorder unit<select id="stockReorderUnit"><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="L">L</option><option value="unit">unit / piece</option></select></label>
+            <label>Restock up to / target<input id="stockTargetQty" type="number" min="0" step="0.0001" value="0" /></label>
           </div>
+          <label>Stock level unit<select id="stockReorderUnit"><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="L">L</option><option value="unit">unit / piece</option></select></label>
+          <small class="muted">The alert tells you when to restock. The target tells Business & Life how much stock you want after replenishment. Set target to 0 to use the alert level.</small>
           <div class="grid2">
             <label>Lot / batch code<input id="stockLotCode" maxlength="90" placeholder="Optional supplier or batch code" /></label>
             <label>Expiry / best before<input id="stockExpiry" type="date" /></label>
@@ -297,6 +299,19 @@
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
         <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
+        <div class="card stack">
+          <div><h2>Restock settings</h2><p class="muted">Change the low-stock alert and Target / Par level without recording a purchase.</p></div>
+          <form id="restockSettingsForm" class="stack">
+            <label>Inventory item<select id="restockSettingsInventory"><option value="">Choose an item</option></select></label>
+            <div class="grid2">
+              <label>Notify below<input id="restockSettingsAlert" type="number" min="0" step="0.0001" value="0" /></label>
+              <label>Restock up to<input id="restockSettingsTarget" type="number" min="0" step="0.0001" value="0" /></label>
+            </div>
+            <label>Unit<select id="restockSettingsUnit"><option value="g">g</option><option value="kg">kg</option><option value="ml">ml</option><option value="L">L</option><option value="unit">unit / piece</option></select></label>
+            <div id="restockSettingsPreview" class="salePreview">Choose an item to review its replenishment levels.</div>
+            <button class="secondary">Save restock settings</button><div id="restockSettingsMessage"></div>
+          </form>
+        </div>
         <div class="card stack">
           <div><h2>Storage & segregation</h2><p class="muted">Update where an existing item is stored without adding or removing stock.</p></div>
           <form id="storageForm" class="stack">
@@ -371,10 +386,10 @@
           <div id="stockAdjustmentList" class="list"></div>
         </div>
         <div class="card stack">
-          <div class="sectionHead"><div><h2>Restock list</h2><p class="muted">Business & Life automatically collects every item that has reached its low-stock alert level.</p></div><button id="restockRefresh" type="button" class="secondary">Refresh list</button></div>
+          <div class="sectionHead"><div><h2>Restock list</h2><p class="muted">Items below their low-stock alert are grouped by preferred Supplier and replenished toward the Target / Par level.</p></div><button id="restockRefresh" type="button" class="secondary">Refresh list</button></div>
           <div id="restockSummary" class="salePreview">No items currently need restocking.</div>
           <div id="restockList" class="list"></div>
-          <small class="muted">When a preferred Supplier is linked, you can send a restock request so they can prepare the supply. Sending a request does not record a purchase, payment or received stock.</small>
+          <small class="muted">Review pack quantities before sending. One grouped Supplier request can contain several items. Sending it creates sourcing requests only — never a purchase order, payment or received stock.</small>
         </div>
         <div class="card stack">
           <div><h2>Order consumables</h2><p class="muted">Automatically deduct packaging and other consumables when food preparation starts. These rules are separate from recipes.</p></div>
