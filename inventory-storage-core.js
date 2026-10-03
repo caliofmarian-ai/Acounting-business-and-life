@@ -1,12 +1,44 @@
 export const STORAGE_CONDITIONS=Object.freeze(['ambient','dry','chilled','frozen','other']);
-export const STORAGE_AREA_TYPES=Object.freeze(['pantry','fridge','freezer','prep_station','chemical_storage','service_storage','other']);
+export const STORAGE_AREA_TYPES=Object.freeze(['pantry','fridge','freezer','prep_station','chemical_storage','service_storage','sales_floor','stock_room','shelf_bin','warehouse','secure_storage','returns_inspection','general_supply','other']);
 
 const FOOD_STORAGE_AREAS=new Set(['pantry','fridge','freezer','prep_station']);
 const FOOD_CONTACT_TYPES=new Set(['ingredient','packaging','kitchen_consumable','hygiene']);
 const clean=(value,max=120)=>String(value??'').trim().slice(0,max);
 
-export function inventoryStorageDefaults(inventoryType='ingredient'){
-  const type=clean(inventoryType,40)||'ingredient';
+export function inventoryStorageDefaults(input='ingredient'){
+  const opts=typeof input==='object'&&input!==null?input:{inventoryType:input};
+  const type=clean(opts.inventoryType||opts.inventory_type||'ingredient',40)||'ingredient';
+  const domain=clean(opts.inventoryDomain||opts.inventory_domain,30);
+  const role=clean(opts.stockRole||opts.stock_role,40);
+
+  if(domain==='non_food'){
+    return{
+      storage_condition:'dry',
+      storage_area_type:role==='production_material'?'warehouse':'stock_room',
+      storage_location_label:'',
+      storage_segregated:false
+    };
+  }
+  if(domain==='operations'){
+    if(type==='cleaning_sanitation')return{
+      storage_condition:'ambient',
+      storage_area_type:'chemical_storage',
+      storage_location_label:'Chemical storage',
+      storage_segregated:true
+    };
+    return{
+      storage_condition:'dry',
+      storage_area_type:role==='packaging'?'general_supply':'service_storage',
+      storage_location_label:'',
+      storage_segregated:false
+    };
+  }
+  if(domain==='food'&&role==='direct_resale')return{
+    storage_condition:'other',
+    storage_area_type:'other',
+    storage_location_label:'',
+    storage_segregated:false
+  };
   if(type==='cleaning_sanitation')return{
     storage_condition:'ambient',
     storage_area_type:'chemical_storage',
@@ -35,12 +67,16 @@ export function inventoryStorageDefaults(inventoryType='ingredient'){
 
 export function validateInventoryStorage({
   inventoryType='ingredient',
+  inventoryDomain='',
+  stockRole='',
   storageCondition='other',
   storageAreaType='other',
   storageLocationLabel='',
   storageSegregated=false
 }={}){
   const type=clean(inventoryType,40)||'ingredient';
+  const domain=clean(inventoryDomain,30);
+  const role=clean(stockRole,40);
   const condition=clean(storageCondition,30)||'other';
   const area=clean(storageAreaType,40)||'other';
   const label=clean(storageLocationLabel,120);
@@ -68,9 +104,18 @@ export function validateInventoryStorage({
   if(condition==='frozen'&&!['freezer','other'].includes(area))errors.push('Frozen stock must be assigned to a freezer or a labelled custom frozen-storage area.');
   if(['chilled','frozen'].includes(condition)&&area==='other'&&!label)errors.push('Custom chilled or frozen storage needs a location label.');
 
+  if(domain==='operations'&&role==='operational_supply'&&area==='sales_floor'){
+    errors.push('Operational supplies should not use the customer sales floor as their storage location.');
+  }
+  if(domain==='non_food'&&['pantry','prep_station'].includes(area)&&!label){
+    errors.push('Retail stock using a Food-oriented storage area needs a clear custom location label.');
+  }
+
   return{
     ok:errors.length===0,
     errors,
+    inventory_domain:domain,
+    stock_role:role,
     storage_condition:STORAGE_CONDITIONS.includes(condition)?condition:'other',
     storage_area_type:STORAGE_AREA_TYPES.includes(area)?area:'other',
     storage_location_label:label,
