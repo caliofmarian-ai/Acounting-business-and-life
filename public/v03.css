@@ -236,3 +236,8 @@
   .stockStorageDetails>summary{align-items:flex-start;flex-direction:column}
   .stockStorageDetails>summary small{text-align:left}
 }
+
+.allergenGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.allergenCheck{display:flex;align-items:center;gap:8px;min-height:44px;padding:9px 10px;border:1px solid var(--line,#e3e6ea);border-radius:12px;background:var(--card,#fff);font-size:12px;font-weight:650}
+.allergenCheck input{width:18px;height:18px;flex:0 0 auto}
+@media(max-width:520px){.allergenGrid{grid-template-columns:1fr}}
