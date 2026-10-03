@@ -381,15 +381,30 @@ export function registerInventoryCountSessionRoutes(app,deps){
       }
       if(session.rows[0].status!=='review')throw Object.assign(new Error('Review the completed count before posting variances.'),{status:409});
 
-      const itemQuery=await client.query(`
-        SELECT si.*,i.item,i.inventory_type,i.storage_area_type,i.storage_condition,i.storage_location_label,
-               i.quantity current_quantity,i.unit current_unit,i.unit_cost current_unit_cost
-          FROM inventory_count_session_items si
-          JOIN inventory i ON i.id=si.inventory_id AND i.business_id=$2
-         WHERE si.session_id=$1
-         ORDER BY i.id
-         FOR UPDATE OF si,i
-      `,[sessionId,ctx.business.id]);
+      const locationId=session.rows[0].location_id==null?null:Number(session.rows[0].location_id);
+      const itemQuery=locationId==null
+        ?await client.query(`
+          SELECT si.*,i.item,i.inventory_type,i.storage_area_type,i.storage_condition,i.storage_location_label,
+                 i.quantity current_quantity,i.quantity canonical_quantity,i.unit current_unit,i.unit_cost current_unit_cost
+            FROM inventory_count_session_items si
+            JOIN inventory i ON i.id=si.inventory_id AND i.business_id=$2
+           WHERE si.session_id=$1
+           ORDER BY i.id
+           FOR UPDATE OF si,i
+        `,[sessionId,ctx.business.id])
+        :await client.query(`
+          SELECT si.*,i.item,i.inventory_type,i.storage_area_type,i.storage_condition,i.storage_location_label,
+                 lb.quantity current_quantity,i.quantity canonical_quantity,i.unit current_unit,i.unit_cost current_unit_cost,
+                 l.name location_name
+            FROM inventory_count_session_items si
+            JOIN inventory i ON i.id=si.inventory_id AND i.business_id=$2
+            JOIN inventory_location_balances lb
+              ON lb.business_id=$2 AND lb.inventory_id=si.inventory_id AND lb.location_id=$3
+            JOIN inventory_storage_locations l ON l.id=lb.location_id AND l.business_id=$2
+           WHERE si.session_id=$1
+           ORDER BY i.id
+           FOR UPDATE OF si,i,lb,l
+        `,[sessionId,ctx.business.id,locationId]);
       if(itemQuery.rows.some(row=>row.counted_quantity==null)){
         throw Object.assign(new Error('Count every item before posting.'),{status:409});
       }
