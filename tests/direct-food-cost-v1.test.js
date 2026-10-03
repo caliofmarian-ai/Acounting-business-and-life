@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
 const accounting=readFileSync(new URL('../server-business-accounting.js',import.meta.url),'utf8');
+const costCore=readFileSync(new URL('../food-cost-core.js',import.meta.url),'utf8');
 const orders=readFileSync(new URL('../server-orders.js',import.meta.url),'utf8');
 const reservation=readFileSync(new URL('../order-stock-reservation.js',import.meta.url),'utf8');
 const finance=readFileSync(new URL('../business-finance-view-core.js',import.meta.url),'utf8');
@@ -23,7 +24,7 @@ test('prepared product estimates expose pickup and delivery direct food cost wit
   assert.match(accounting,/estimated_unit_cost:money\(unitCost\)/);
   assert.match(accounting,/estimated_direct_food_cost_pickup/);
   assert.match(accounting,/estimated_direct_food_cost_delivery/);
-  assert.match(accounting,/direct_consumable_per_order/);
+  assert.match(costCore,/direct_consumable_per_order/);
 });
 
 test('completed order profitability is reconciled from actual stock consumption evidence',()=>{
