@@ -11,7 +11,7 @@ import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocit
 import {restoreLotAllocation} from './inventory-lot-runtime.js';
 import {ensureOrderStockReservationSchema,reserveOrderStock,consumeOrderReservations,releaseOrderReservations} from './order-stock-reservation.js';
 import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requireMicrobusinessCommerceEligibility,filterCommerceEligibleBusinessIds} from './microbusiness-readiness-core.js';
-import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';
+import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';\nimport {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} from './catalog-v3-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -66,7 +66,7 @@ export function isMarketplaceOwnedPath(path='',method='GET'){
   if(['/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js'].includes(pathname))return true;
   if(pathname.startsWith('/api/public/marketplace/'))return true;
   if(pathname.startsWith('/api/marketplace/'))return true;
-  if(pathname==='/api/merchant/storefront'||pathname.startsWith('/api/merchant/storefront/'))return true;
+  if(pathname==='/api/merchant/storefront'||pathname.startsWith('/api/merchant/storefront/'))return true;\n  if(pathname==='/api/merchant/catalog-v3/schema'||pathname.startsWith('/api/merchant/catalog-v3/'))return true;
   if(/^\/api\/orders\/merchant\/[^/]+\/(?:start|cancel)$/.test(pathname))return true;
   return false;
 }
@@ -203,7 +203,7 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool)}
 
 async function storefrontMedia(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
@@ -489,6 +489,22 @@ app.get('/api/marketplace/storefronts',async(req,res,next)=>{try{await requireCu
 app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const s=await storefront(Number(req.params.businessId),false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(Number(req.params.businessId),false)})}catch(e){next(e)}})
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{res.status(201).json(await createMarketplaceOrder(req))}catch(e){next(e)}})
 
+app.get('/api/merchant/catalog-v3/schema',async(req,res,next)=>{try{
+  const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  const store=await storefront(business.id,true);
+  const requested=clean(req.query.domain,20);
+  const merchantDomain=store?.merchant_domain||'mixed';
+  const domain=['food','non_food'].includes(requested)
+    ?requested
+    :(merchantDomain==='food'||merchantDomain==='non_food'?merchantDomain:'');
+  res.set('Cache-Control','private, no-store');
+  res.json({
+    business_id:Number(business.id),
+    merchant_domain:merchantDomain,
+    ...catalogEditorSchema(domain),
+    schema_version:CATALOG_V3_SCHEMA_VERSION
+  });
+}catch(e){next(e)}})
 app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}const readiness=await microbusinessReadinessSnapshot(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id});res.json({...s,readiness,products:await products(business.id,true)})}catch(e){next(e)}})
 app.get('/api/merchant/storefront/geocode',async(req,res,next)=>{try{
   const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
