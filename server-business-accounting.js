@@ -769,7 +769,10 @@ app.get('/api/inventory/lots',async(req,res,next)=>{
       SELECT l.id,l.business_id,l.inventory_id,l.item_name,l.internal_lot_code,l.supplier_lot_code,
              COALESCE(to_jsonb(l)->>'lot_state','available') lot_state,
              l.base_unit,l.quantity_received_base,l.quantity_remaining_base,l.unit_cost_base,
-             l.expires_at,l.received_at,l.created_at,i.inventory_type
+             l.expires_at,l.received_at,l.created_at,i.inventory_type,
+             l.storage_condition_snapshot,l.storage_area_type_snapshot,l.storage_location_label_snapshot,l.storage_segregated_snapshot,
+             i.storage_condition current_storage_condition,i.storage_area_type current_storage_area_type,
+             i.storage_location_label current_storage_location_label,i.storage_segregated current_storage_segregated
         FROM supply_lots l
         JOIN inventory i ON i.id=l.inventory_id AND i.business_id=l.business_id
        WHERE l.business_id=$1 ${inventoryFilter}
