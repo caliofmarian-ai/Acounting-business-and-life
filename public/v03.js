@@ -3,6 +3,7 @@ let token = false;
 let transactions = [];
 let inventory = [];
 let stockAdjustmentLots = [];
+let restockSuggestions = [];
 let products = [];
 let recipeDraft = [];
 let allergenCatalog = [];
@@ -390,25 +391,56 @@ async function loadSummary(){
 }
 async function loadTransactions(){const tx=await cachedJson('/api/transactions','transactions');transactions=tx;$('recentList').replaceChildren(...(tx.length?tx.slice(0,8).map(t=>txRow(t,false)):[emptyRow('No transactions yet.')]));$('historyList').replaceChildren(...(tx.length?tx.map(t=>txRow(t,true)):[emptyRow('No transactions yet.')]))}
 function restockNeedLabel(x){
-  const current=Number(x.usable_quantity??x.quantity??0),threshold=Number(x.reorder_level||0),unit=x.inventory_base_unit||x.unit||'unit';
-  const gap=Math.max(0,threshold-current);
-  return gap>0?`${num(gap,4)} ${esc(unit)} below alert level`:`At the ${num(threshold,4)} ${esc(unit)} alert level`;
+  const current=Number(x.usable_quantity??x.quantity??0),threshold=Number(x.reorder_level||0),target=Number(x.effective_target_level??x.target_level??threshold),unit=x.inventory_base_unit||x.unit||'unit';
+  const gap=Math.max(0,threshold-current),targetGap=Math.max(0,target-current);
+  return gap>0
+    ?`${num(gap,4)} ${esc(unit)} below alert • replenish ${num(targetGap,4)} ${esc(unit)} toward target ${num(target,4)}`
+    :`At the ${num(threshold,4)} ${esc(unit)} alert level • target ${num(target,4)} ${esc(unit)}`;
+}
+function restockSupplierGroup(items,supplierBusinessId){
+  const group=document.createElement('div');group.className='restockSupplierGroup card stack';group.dataset.supplierBusinessId=String(supplierBusinessId);
+  const supplierName=items[0]?.supplier_name||'Preferred Supplier';
+  const estimated=items.reduce((sum,x)=>sum+(Number.isFinite(Number(x.price_per_pack))?Number(x.suggested_packs||0)*Number(x.price_per_pack):0),0);
+  const head=document.createElement('div');head.className='sectionHead';
+  head.innerHTML=`<div><strong>${esc(supplierName)}</strong><small class="muted">${items.length} item${items.length===1?'':'s'} • grouped restock request${estimated>0?' • approx. '+money(estimated):''}</small></div><span class="positive">Preferred Supplier</span>`;
+  group.appendChild(head);
+  for(const x of items){
+    const row=document.createElement('div');row.className='listRow restockReviewRow';
+    const usable=Number(x.usable_quantity??x.quantity??0),physical=Number(x.physical_quantity??x.quantity??0),blocked=Number(x.blocked_quantity||0),target=Number(x.effective_target_level??x.target_level??x.reorder_level||0);
+    const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(x.unit||'')} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`usable ${num(usable,4)} ${esc(x.unit||'')}`;
+    const min=Math.max(1,Number(x.minimum_packs||1)),suggested=Math.max(min,Number(x.suggested_packs||min));
+    row.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)}<br>${stockCopy} • target ${num(target,4)} ${esc(x.unit||'')}${Number.isFinite(Number(x.price_per_pack))?' • '+money(x.price_per_pack)+' / '+esc(x.unit_name||'pack'):''}</small></div><label class="restockPackEditor"><span>Packs</span><input type="number" min="${min}" step="1" value="${suggested}" data-restock-inventory="${Number(x.inventory_id)}" /></label>`;
+    group.appendChild(row);
+  }
+  const actions=document.createElement('div');actions.className='stack';
+  actions.innerHTML='<div class="salePreview">Review the quantities above. Sending this request does not create a purchase order, payment or received stock.</div><button type="button" class="secondary restockGroupSend">Prepare Supplier request</button><div class="restockGroupMessage"></div>';
+  group.appendChild(actions);
+  actions.querySelector('.restockGroupSend').onclick=()=>sendSupplierRestockRequest(group,items);
+  return group;
 }
 function renderRestockList(rows=[]){
   const list=$('restockList'),summary=$('restockSummary');if(!list||!summary)return;
-  const items=Array.isArray(rows)?rows:[];
-  summary.textContent=items.length?`${items.length} item${items.length===1?'':'s'} need restocking.`:'No items currently need restocking.';
-  const nodes=items.map(x=>{
-    const d=document.createElement('div');d.className='listRow';
+  restockSuggestions=Array.isArray(rows)?rows:[];
+  summary.textContent=restockSuggestions.length?`${restockSuggestions.length} item${restockSuggestions.length===1?'':'s'} need restocking toward their Target / Par level.`:'No items currently need restocking.';
+  const groups=new Map(),unsourced=[];
+  for(const x of restockSuggestions){
     const preferred=x.source_status==='PREFERRED_SOURCE'&&Number(x.supplier_business_id)>0&&Number(x.suggested_packs)>0;
-    const supplier=preferred?`${esc(x.supplier_name||'Preferred Supplier')} • suggested ${num(x.suggested_packs,4)} ${esc(x.unit_name||'pack')}`:'No preferred Supplier linked yet';
-    const estimated=preferred&&Number.isFinite(Number(x.price_per_pack))?` • approx. ${money(Number(x.suggested_packs)*Number(x.price_per_pack))}`:'';
-    const usable=Number(x.usable_quantity??x.quantity??0),physical=Number(x.physical_quantity??x.quantity??0),blocked=Number(x.blocked_quantity||0);
-    const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(x.unit||'')} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`usable ${num(usable,4)} ${esc(x.unit||'')}`;
-    d.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • ${stockCopy}, alert at ${num(x.reorder_level,4)} ${esc(x.unit||'')}<br>${supplier}${estimated}</small></div><div class="rowRight">${preferred?'<button type="button" class="miniBtn restockRequestBtn">Ask Supplier to prepare</button>':'<span class="negative">Supplier needed</span>'}</div>`;
-    if(preferred)d.querySelector('.restockRequestBtn').onclick=()=>sendRestockRequest(x,d);
-    return d;
-  });
+    if(!preferred){unsourced.push(x);continue}
+    const key=Number(x.supplier_business_id);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(x);
+  }
+  const nodes=[];
+  for(const [supplierBusinessId,items] of groups)nodes.push(restockSupplierGroup(items,supplierBusinessId));
+  if(unsourced.length){
+    const box=document.createElement('div');box.className='restockSupplierGroup card stack';
+    box.innerHTML='<div class="sectionHead"><div><strong>Supplier needed</strong><small class="muted">These items have no comparable preferred Supplier source yet.</small></div><span class="negative">'+unsourced.length+' item(s)</span></div>';
+    for(const x of unsourced){
+      const row=document.createElement('div');row.className='listRow';
+      const target=Number(x.effective_target_level??x.target_level??x.reorder_level||0);
+      row.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • target ${num(target,4)} ${esc(x.unit||'')}</small></div><span class="negative">${esc(x.source_status==='NOT_COMPARABLE'?'Unit mismatch':'Supplier needed')}</span>`;
+      box.appendChild(row);
+    }
+    nodes.push(box);
+  }
   list.replaceChildren(...(nodes.length?nodes:[emptyRow('Nothing is below its low-stock alert level.')]));
 }
 async function loadRestockSuggestions(){
@@ -417,32 +449,63 @@ async function loadRestockSuggestions(){
     renderRestockList(rows);
     return rows;
   }catch(error){
-    const list=$('restockList'),summary=$('restockSummary');
+    const list=$('restockList'),summary=$('restockSummary');restockSuggestions=[];
     if(summary)summary.textContent='Restock list could not be loaded.';
     if(list)list.replaceChildren(emptyRow(error.message||'Supplier restock information is unavailable.'));
     return [];
   }
 }
-async function sendRestockRequest(x,row){
-  const button=row?.querySelector('.restockRequestBtn');if(button){button.disabled=true;button.textContent='Sending…'}
+async function sendSupplierRestockRequest(group,items){
+  const button=group?.querySelector('.restockGroupSend'),message=group?.querySelector('.restockGroupMessage');
+  if(button){button.disabled=true;button.textContent='Sending…'}if(message)message.textContent='';
   try{
-    const packs=Number(x.suggested_packs);
-    const result=await api('/api/procurement/sourcing/rfqs',{method:'POST',body:JSON.stringify({
-      item_specification:x.item,
-      requested_quantity:packs,
-      requested_unit:x.unit_name||'pack',
-      fulfilment_mode:'either',
-      substitution_policy:'approval_required',
+    const payloadItems=[...group.querySelectorAll('[data-restock-inventory]')].map(input=>({
+      inventory_id:Number(input.dataset.restockInventory),
+      requested_packs:Number(input.value)
+    }));
+    if(payloadItems.some(x=>!Number.isInteger(x.inventory_id)||!Number.isFinite(x.requested_packs)||x.requested_packs<=0))throw new Error('Review every requested pack quantity.');
+    const supplierBusinessId=Number(group.dataset.supplierBusinessId);
+    const result=await api('/api/procurement/restock-requests',{method:'POST',body:JSON.stringify({
+      supplier_business_id:supplierBusinessId,
       currency_code:'PHP',
-      supplier_business_ids:[Number(x.supplier_business_id)],
-      note:`Low-stock restock request from Inventory. Usable stock: ${num(x.usable_quantity??x.quantity,4)} ${x.unit||''}; physical stock: ${num(x.physical_quantity??x.quantity,4)} ${x.unit||''}; alert level: ${num(x.reorder_level,4)} ${x.unit||''}.`
+      items:payloadItems,
+      note:'Grouped low-stock replenishment request prepared from Merchant Inventory.'
     })});
     if(button){button.textContent='Request sent';button.disabled=true}
-    const small=row?.querySelector('.rowMain small');if(small)small.insertAdjacentHTML('beforeend',`<br><strong>Supplier request #${esc(result.id||'created')} sent.</strong>`);
+    if(message)message.innerHTML=`<strong>Restock request #${esc(result.id)} sent.</strong> ${result.items?.length||payloadItems.length} item(s) shared with ${esc(result.supplier_name||items[0]?.supplier_name||'Supplier')}.`;
   }catch(error){
-    if(button){button.disabled=false;button.textContent='Ask Supplier to prepare'}
-    alert(error.message||'Could not send the Supplier request.');
+    if(button){button.disabled=false;button.textContent='Prepare Supplier request'}
+    if(message)message.textContent=error.message||'Could not send the grouped Supplier request.';
   }
+}
+function baseQuantityForDisplay(value,unit){
+  const meta=unitMeta(unit);if(!meta)return Number(value||0);
+  return Number(value||0)/Number(meta.factor||1);
+}
+function fillRestockSettingsEditor(){
+  const select=$('restockSettingsInventory');if(!select)return;
+  const previous=select.value;
+  select.innerHTML=inventory.length?'<option value="">Choose an item</option>'+inventory.map(i=>`<option value="${i.id}">${esc(i.item)}</option>`).join(''):'<option value="">Add stock first</option>';
+  if(previous&&inventory.some(i=>String(i.id)===String(previous)))select.value=previous;
+  loadRestockSettingsItem();
+}
+function loadRestockSettingsItem(){
+  const item=inventory.find(i=>Number(i.id)===Number($('restockSettingsInventory')?.value)),out=$('restockSettingsPreview');
+  if(!item){if(out)out.textContent='Choose an item to review its replenishment levels.';return}
+  const preferredUnit=item.last_purchase_unit&&unitMeta(item.last_purchase_unit)?.family===unitMeta(item.base_unit||item.unit)?.family?item.last_purchase_unit:(item.base_unit||item.unit||'unit');
+  syncUnitSelect('restockSettingsUnit',preferredUnit);
+  $('restockSettingsAlert').value=baseQuantityForDisplay(item.reorder_level,preferredUnit);
+  $('restockSettingsTarget').value=Number(item.target_level)>0?baseQuantityForDisplay(item.target_level,preferredUnit):0;
+  updateRestockSettingsPreview();
+}
+function updateRestockSettingsPreview(){
+  const item=inventory.find(i=>Number(i.id)===Number($('restockSettingsInventory')?.value)),out=$('restockSettingsPreview');if(!out)return;
+  if(!item){out.textContent='Choose an item to review its replenishment levels.';return}
+  const alert=Math.max(0,Number($('restockSettingsAlert').value||0)),targetInput=Math.max(0,Number($('restockSettingsTarget').value||0)),target=targetInput>0?targetInput:alert,unit=$('restockSettingsUnit').value;
+  const invalid=targetInput>0&&targetInput<alert;
+  out.innerHTML=invalid
+    ?'<strong class="negative">Target must be equal to or higher than the low-stock alert.</strong>'
+    :`Notify when usable stock reaches <strong>${num(alert,4)} ${esc(unit)}</strong>. Replenishment suggestions aim for <strong>${num(target,4)} ${esc(unit)}</strong>.`;
 }
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
