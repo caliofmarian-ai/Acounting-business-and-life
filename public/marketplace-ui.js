@@ -396,7 +396,7 @@ async function submitCheckout(e){
 function announceMerchantMarketSurface(surface){document.dispatchEvent(new CustomEvent('abl:marketplace-merchant-surface',{detail:{surface}}))}
 async function openMerchantStore(){ensureMarket();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('marketWorkspace')){hideBase();marketWorkspace.classList.remove('hidden')}document.getElementById('basketBar').classList.add('hidden');announceMerchantMarketSurface('storefront');await renderMerchantStore()}
 async function openMerchantCatalog(){ensureMarket();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('marketWorkspace')){hideBase();marketWorkspace.classList.remove('hidden')}document.getElementById('basketBar').classList.add('hidden');announceMerchantMarketSurface('catalog');await renderMerchantCatalog()}
-async function renderMerchantStore(){marketWorkspace.innerHTML=marketHeader('Storefront','Public shop settings only')+'<div class="marketEmpty">Loading storefront settings…</div>';bindBack();try{merchantStore=await mapi('/api/merchant/storefront');marketWorkspace.innerHTML=marketHeader('Storefront','How your shop appears and operates for customers')+merchantReadinessForm(merchantStore)+storeForm(merchantStore)+`<section class="merchantStoreCard catalogBoundaryNote"><strong>Products are managed in Catalog</strong><p>Add, import, publish, hide and manage product images from Catalog. Storefront contains only store-level settings.</p><button type="button" class="importProducts" id="openCatalogFromStorefront">Open Catalog</button></section>`;bindBack();bindMerchantReadiness(merchantStore);upgradeStorefrontFormV2(merchantStore);bindStoreForm();bindStorefrontV2Controls(merchantStore);document.getElementById('openCatalogFromStorefront')?.addEventListener('click',openMerchantCatalog)}catch(e){marketWorkspace.innerHTML=marketHeader('Storefront','Marketplace settings')+`<div class="marketEmpty">${mh(e.message)}</div>`;bindBack()}}
+async function renderMerchantStore(){marketWorkspace.innerHTML=marketHeader('Storefront','Public shop settings only')+'<div class="marketEmpty">Loading storefront settings…</div>';bindBack();try{merchantStore=await mapi('/api/merchant/storefront?include_products=false');marketWorkspace.innerHTML=marketHeader('Storefront','How your shop appears and operates for customers')+merchantReadinessForm(merchantStore)+storeForm(merchantStore)+`<section class="merchantStoreCard catalogBoundaryNote"><strong>Products are managed in Catalog</strong><p>Add, import, publish, hide and manage product images from Catalog. Storefront contains only store-level settings.</p><button type="button" class="importProducts" id="openCatalogFromStorefront">Open Catalog</button></section>`;bindBack();bindMerchantReadiness(merchantStore);upgradeStorefrontFormV2(merchantStore);bindStoreForm();bindStorefrontV2Controls(merchantStore);document.getElementById('openCatalogFromStorefront')?.addEventListener('click',openMerchantCatalog)}catch(e){marketWorkspace.innerHTML=marketHeader('Storefront','Marketplace settings')+`<div class="marketEmpty">${mh(e.message)}</div>`;bindBack()}}
 function retailCatalogQuery(){
   const p=new URLSearchParams();
   p.set('business_id',String(Number(merchantStore?.business_id||0)));
@@ -413,7 +413,7 @@ async function renderMerchantCatalog(){
   marketWorkspace.innerHTML=marketHeader('Catalog','Create and manage what customers can buy')+'<div class="marketEmpty">Loading Catalog…</div>';
   bindBack();
   try{
-    const [store,inventory]=await Promise.all([mapi('/api/merchant/storefront'),mapi('/api/inventory')]);
+    const [store,inventory]=await Promise.all([mapi('/api/merchant/storefront?product_domain=food'),mapi('/api/inventory')]);
     merchantStore=store;
     const [retailPage,collections]=await Promise.all([
       mapi('/api/merchant/catalog-v3/items?'+retailCatalogQuery()),
@@ -491,8 +491,8 @@ function retailCatalogRow(item,collections=[]){
   const collectionNames=(item.collection_ids||[]).map(id=>collections.find(c=>Number(c.id)===Number(id))?.name).filter(Boolean);
   const ids=[item.internal_sku?`SKU ${mh(item.internal_sku)}`:'',item.barcode?`GTIN ${mh(item.barcode)}`:''].filter(Boolean);
   const variantCopy=Number(item.variant_count||0)>0
-    ?`${Number(item.active_variant_count||0)} active variant${Number(item.active_variant_count||0)===1?'':'s'} · on hand ${Number(item.variant_on_hand||0).toLocaleString('en-PH',{maximumFractionDigits:4})}`
-    :(item.inventory_id?`On hand ${Number(item.direct_inventory_quantity||0).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(item.inventory_unit||'')}`:'No linked direct stock');
+    ?`${Number(item.active_variant_count||0)} active variant${Number(item.active_variant_count||0)===1?'':'s'} · available ${Number(item.variant_available||0).toLocaleString('en-PH',{maximumFractionDigits:4})} · on hand ${Number(item.variant_on_hand||0).toLocaleString('en-PH',{maximumFractionDigits:4})}`
+    :(item.inventory_id?`Available ${Number(item.direct_available_quantity||0).toLocaleString('en-PH',{maximumFractionDigits:4})} · on hand ${Number(item.direct_inventory_quantity||0).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(item.inventory_unit||'')}`:'No linked direct stock');
   const status=retailCatalogStatus(item);
   return `<article class="retailCatalogRow" data-retail-product-row="${Number(item.id)}">
     <label class="retailCatalogSelect"><input type="checkbox" data-retail-select="${Number(item.id)}" aria-label="Select ${mh(item.name)}"></label>
@@ -586,6 +586,10 @@ async function retailScanLookup(barcode){
       retailCatalogState.q=value;retailCatalogState.offset=0;
       mtoast(result.status==='catalog_variant'?'Existing Retail variant found.':'Existing Retail product found.');
       await renderMerchantCatalog();return;
+    }
+    if(result.status==='inventory_non_retail'){
+      if(message)message.textContent='This barcode belongs to Food or Operations Inventory, not Retail stock. Open the matching Inventory item instead of creating a Non-food product from it.';
+      return;
     }
     if(result.status==='inventory_only'){
       const select=document.getElementById('merchantCatalogInventory'),kind=document.getElementById('merchantCatalogKind'),name=document.getElementById('merchantCatalogName');
