@@ -557,10 +557,10 @@ async function root(req,res){const r=await ordersFetch(req.path,{headers:req.hea
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/public/marketplace/storefronts',async(req,res,next)=>{try{res.set('Cache-Control','public, max-age=30');res.json(await guestPublicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
-app.get('/api/public/marketplace/storefronts/:businessId',async(req,res,next)=>{try{const businessId=Number(req.params.businessId);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'Invalid storefront'});const store=await guestPublicStorefront(businessId);if(!store)return res.status(404).json({error:'Storefront not found'});res.set('Cache-Control','public, max-age=30');res.json({...store,products:await guestPublicProducts(businessId)})}catch(e){next(e)}})
+app.get('/api/public/marketplace/storefronts/:businessId',async(req,res,next)=>{try{const businessId=Number(req.params.businessId);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'Invalid storefront'});const store=await guestPublicStorefront(businessId);if(!store)return res.status(404).json({error:'Storefront not found'});res.set('Cache-Control','public, max-age=30');res.json({...store,products:await guestPublicProducts(businessId),menus:await readFoodMenus(pool,{businessId,publicOnly:true})})}catch(e){next(e)}})
 
 app.get('/api/marketplace/storefronts',async(req,res,next)=>{try{await requireCustomer(req);res.json(await publicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
-app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const s=await storefront(Number(req.params.businessId),false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(Number(req.params.businessId),false)})}catch(e){next(e)}})
+app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const businessId=Number(req.params.businessId);const s=await storefront(businessId,false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(businessId,false),menus:await readFoodMenus(pool,{businessId,publicOnly:true})})}catch(e){next(e)}})
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{res.status(201).json(await createMarketplaceOrder(req))}catch(e){next(e)}})
 
 app.get('/api/merchant/catalog-v3/schema',async(req,res,next)=>{try{
@@ -579,6 +579,69 @@ app.get('/api/merchant/catalog-v3/schema',async(req,res,next)=>{try{
     schema_version:CATALOG_V3_SCHEMA_VERSION
   });
 }catch(e){next(e)}})
+
+app.get('/api/merchant/catalog-v3/food',async(req,res,next)=>{try{
+  const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  res.set('Cache-Control','private, no-store');
+  res.json({
+    business_id:Number(business.id),
+    menus:await readFoodMenus(pool,{businessId:Number(business.id),publicOnly:false}),
+    modifier_groups:await readModifierGroups(pool,{businessId:Number(business.id),publicOnly:false})
+  });
+}catch(e){next(e)}})
+
+app.post('/api/merchant/catalog-v3/menus',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const menu=await createFoodMenu(client,{businessId:Number(business.id),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.status(201).json(menu);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A menu with this name/code already exists.'});next(e)}
+  finally{client.release()}
+})
+app.put('/api/merchant/catalog-v3/menus/:menuId',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const menu=await replaceFoodMenu(client,{businessId:Number(business.id),menuId:Number(req.params.menuId),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.json(menu);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A menu section or menu code is duplicated.'});next(e)}
+  finally{client.release()}
+})
+
+app.post('/api/merchant/catalog-v3/modifier-groups',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const group=await createModifierGroup(client,{businessId:Number(business.id),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.status(201).json(group);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A modifier group with this name/code already exists.'});next(e)}
+  finally{client.release()}
+})
+app.put('/api/merchant/catalog-v3/modifier-groups/:groupId',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const group=await replaceModifierGroup(client,{businessId:Number(business.id),groupId:Number(req.params.groupId),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.json(group);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A modifier option or group code is duplicated.'});next(e)}
+  finally{client.release()}
+})
+
+app.patch('/api/merchant/storefront/products/:id/availability',body,async(req,res,next)=>{try{
+  const{product,business}=await merchantOwnedMarketplaceProduct(req);
+  if(product.product_domain!=='food')return res.status(409).json({error:'Quick menu availability is available for Food products.'});
+  res.json(await setFoodProductAvailability(pool,{businessId:Number(business.id),productId:Number(product.id),input:req.body||{}}));
+}catch(e){next(e)}})
+
 app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}const readiness=await microbusinessReadinessSnapshot(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id});res.json({...s,readiness,products:await products(business.id,true)})}catch(e){next(e)}})
 app.get('/api/merchant/storefront/geocode',async(req,res,next)=>{try{
   const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
