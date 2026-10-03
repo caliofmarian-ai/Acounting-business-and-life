@@ -11,7 +11,8 @@ import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocit
 import {restoreLotAllocation} from './inventory-lot-runtime.js';
 import {ensureOrderStockReservationSchema,reserveOrderStock,consumeOrderReservations,releaseOrderReservations} from './order-stock-reservation.js';
 import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requireMicrobusinessCommerceEligibility,filterCommerceEligibleBusinessIds} from './microbusiness-readiness-core.js';
-import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';\nimport {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} from './catalog-v3-core.js';
+import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';
+import {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} from './catalog-v3-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
