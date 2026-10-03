@@ -1,4 +1,5 @@
 let marketMe=null,marketWorkspace=null,marketMode='food',currentStore=null,basket=new Map(),merchantStore=null;
+let merchantCatalogSchema=null;
 let currentStoreCollection='';
 let currentStoreDomain='all';
 let currentFoodSection='';
@@ -35,10 +36,14 @@ function ensureMarket(){
     const detail=document.createElement('div');detail.id='productDetailBackdrop';detail.className='productDetailBackdrop hidden';detail.innerHTML='<section id="productDetailPanel" class="productDetailPanel"></section>';
     document.body.appendChild(detail);detail.onclick=e=>{if(e.target===detail)closeProductDetail()};
   }
+  if(!document.getElementById('catalogEditorBackdrop')){
+    const editor=document.createElement('div');editor.id='catalogEditorBackdrop';editor.className='catalogEditorBackdrop hidden';editor.innerHTML='<section id="catalogEditorPanel" class="catalogEditorPanel"></section>';
+    document.body.appendChild(editor);editor.onclick=e=>{if(e.target===editor)closeCatalogEditor()};
+  }
   return true;
 }
 function hideBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('roleHub')?.classList.add('hidden');document.getElementById('ordersWorkspace')?.classList.add('hidden')}
-function closeMarket(){document.getElementById('basketBar')?.classList.add('hidden');closeCheckout();closeProductDetail();marketWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closeMarket(){document.getElementById('basketBar')?.classList.add('hidden');closeCheckout();closeProductDetail();closeCatalogEditor();marketWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function marketHeader(title,sub){return `<div class="marketHeader"><button class="marketBack" type="button" data-market-back>‹</button><div class="marketHeaderCopy"><h1>${mh(title)}</h1><p>${mh(sub)}</p></div></div>`}
 function bindBack(){const b=marketWorkspace.querySelector('[data-market-back]');if(b)b.onclick=closeMarket}
 function logo(store,size=''){if(store.logo_data_url)return `<span class="storeLogo ${size}"><img src="${store.logo_data_url}" alt=""></span>`;return `<span class="storeLogo ${size}">${mh((store.store_name||'S').trim()[0]?.toUpperCase()||'S')}</span>`}
@@ -839,10 +844,12 @@ async function renderMerchantCatalog(){
   try{
     const [store,inventory]=await Promise.all([mapi('/api/merchant/storefront?product_domain=food'),mapi('/api/inventory')]);
     merchantStore=store;
-    const [retailPage,collections]=await Promise.all([
+    const [retailPage,collections,schema]=await Promise.all([
       mapi('/api/merchant/catalog-v3/items?'+retailCatalogQuery()),
-      mapi('/api/merchant/catalog-v3/collections?business_id='+encodeURIComponent(Number(store.business_id)))
+      mapi('/api/merchant/catalog-v3/collections?business_id='+encodeURIComponent(Number(store.business_id))),
+      mapi('/api/merchant/catalog-v3/schema?business_id='+encodeURIComponent(Number(store.business_id)))
     ]);
+    merchantCatalogSchema=schema;
     marketWorkspace.innerHTML=
       marketHeader('Catalog','Food menus and Retail products share one Catalog engine')+
       catalogCreateSection(inventory||[])+
@@ -925,10 +932,12 @@ function retailCatalogRow(item,collections=[]){
       <div class="retailCatalogTitle"><strong>${mh(item.name)}</strong><span class="${item.published&&item.active!==false?'live':item.active===false?'archived':'private'}">${status}</span></div>
       <small>${mh(item.category||'General')} · ${mphp(item.selling_price)}${item.brand?' · '+mh(item.brand):''}${item.model?' · '+mh(item.model):''}</small>
       <small>${variantCopy} · ${item.in_stock?'In stock':'Out of stock'}${item.has_public_media?'':' · Photo missing'}</small>
+      ${item.catalog_review_required?'<span class="catalogReviewBadge">Product details need review</span>':''}
       ${ids.length?`<small>${ids.join(' · ')}</small>`:''}
       ${collectionNames.length?`<div class="retailCollectionChips">${collectionNames.map(name=>`<span>${mh(name)}</span>`).join('')}</div>`:''}
     </div>
     <div class="retailCatalogRowActions">
+      <button class="imageAction" type="button" data-edit-catalog-product="${Number(item.id)}">Edit</button>
       ${item.active===false
         ?`<button class="publishButton" type="button" data-restore-product="${Number(item.id)}">Restore</button>`
         :`<button class="publishButton ${item.published?'on':''}" type="button" data-toggle-product="${Number(item.id)}" data-published="${item.published?'1':'0'}">${item.published?'Published':'Private'}</button><button class="imageAction danger" type="button" data-archive-product="${Number(item.id)}">Archive</button>`}
@@ -1171,27 +1180,129 @@ function bindRetailMerchandising(page={},collections=[],inventory=[]){
   });
 }
 
-function catalogCreateSection(inventory=[]){
-  const options=(inventory||[]).map(item=>`<option value="${Number(item.id)}" data-unit="${mh(item.unit||'unit')}" data-name="${mh(item.item)}">${mh(item.item)} · ${Number(item.usable_quantity??item.quantity??0).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(item.unit||'')}</option>`).join('');
-  return `<section class="merchantStoreCard merchantCatalogCreate"><div class="merchantCatalogHead"><div><small>SELL WHAT YOU STOCK</small><h2>Add product from Inventory</h2><p>Creating a Catalog product does not change stock. The quantity below is deducted only when a customer order is fulfilled.</p></div></div>
-    <form id="merchantCatalogCreateForm" class="merchantStoreForm">
-      <input id="merchantCatalogBusinessId" type="hidden" value="${Number(merchantStore?.business_id||0)}">
-      <label>Inventory item<select id="merchantCatalogInventory" required><option value="">Choose recorded stock</option>${options}</select></label>
-      <div class="merchantStoreForm two">
-        <label>Product type<select id="merchantCatalogKind"><option value="fresh_direct">Fresh / direct food</option><option value="packaged_resale">Packaged food resale</option><option value="non_food_resale">Non-food resale</option></select></label>
-        <label>Customer-facing name<input id="merchantCatalogName" maxlength="120" required placeholder="Example: Carrots"></label>
-      </div>
-      <div class="merchantStoreForm two">
-        <label>Selling price ₱<input id="merchantCatalogPrice" type="number" min="0" step="0.01" required></label>
-        <label>Stock used per sale<input id="merchantCatalogQuantity" type="number" min="0.0001" step="0.0001" value="1" required></label>
-      </div>
-      <label>Category<input id="merchantCatalogCategory" maxlength="100" value="General"></label>
-      <label>Description<textarea id="merchantCatalogDescription" rows="2" maxlength="800" placeholder="What customers should know about this product"></textarea></label>
-      <div id="merchantCatalogStockHint" class="catalogBoundaryNote">Choose an Inventory item. Its cost remains private; this form sets only the public selling product.</div>
-      <div class="storeFormActions"><button class="saveStore" type="submit">Create private product</button></div>
-      <div id="merchantCatalogCreateMessage" class="avatarHint"></div>
-    </form>
-  </section>`;
+function catalogDomainForKind(kind){
+  return String(kind||'')==='non_food_resale'?'non_food':'food';
+}
+function catalogDefaultCategoryForKind(kind){
+  return ({fresh_direct:'fresh_food',packaged_resale:'packaged_food_drink',non_food_resale:'general_retail',prepared_food:'prepared_food'})[String(kind||'')]||'';
+}
+function catalogSchemaCategories(schema=merchantCatalogSchema,domain=''){
+  return (Array.isArray(schema?.categories)?schema.categories:[]).filter(category=>!domain||category.domain_hint===domain);
+}
+function catalogCategoryOptions(schema,domain,selected=''){
+  const rows=catalogSchemaCategories(schema,domain);
+  return '<option value="">Choose product category</option>'+rows.map(category=>
+    '<option value="'+mh(category.code)+'" '+(String(selected)===String(category.code)?'selected':'')+'>'+mh(category.label)+'</option>'
+  ).join('');
+}
+function catalogCategoryFromSchema(schema,code){
+  return (schema?.categories||[]).find(category=>String(category.code)===String(code))||null;
+}
+function catalogAttributeValue(values,code){
+  const entry=values&&Object.prototype.hasOwnProperty.call(values,code)?values[code]:'';
+  if(entry&&typeof entry==='object'&&Object.prototype.hasOwnProperty.call(entry,'value'))return entry.value;
+  return entry??'';
+}
+function catalogAttributeField(mapping,value,prefix){
+  const def=mapping?.definition||{},code=String(mapping?.attribute_code||def.code||''),id=prefix+'-'+code;
+  if(!code)return'';
+  const required=mapping.required?' required':'',variant=mapping.variant_axis?'<span class="catalogVariantAxis">Variant option</span>':'';
+  const unit=def.unit_family?'<span class="catalogAttributeUnit">'+mh(def.unit_family)+'</span>':'';
+  let control='';
+  if(def.value_type==='boolean'){
+    control='<select id="'+mh(id)+'" data-catalog-attribute="'+mh(code)+'" data-value-type="boolean"'+required+'><option value="">Choose</option><option value="true" '+(value===true||String(value)==='true'?'selected':'')+'>Yes</option><option value="false" '+(value===false||String(value)==='false'?'selected':'')+'>No</option></select>';
+  }else if(def.value_type==='select'){
+    control='<select id="'+mh(id)+'" data-catalog-attribute="'+mh(code)+'" data-value-type="select"'+required+'><option value="">Choose</option>'+
+      (def.allowed_values||[]).map(option=>'<option value="'+mh(option)+'" '+(String(value)===String(option)?'selected':'')+'>'+mh(mnice(option))+'</option>').join('')+
+    '</select>';
+  }else{
+    const type=def.value_type==='number'?'number':'text',min=type==='number'?' min="0" step="any"':'';
+    control='<input id="'+mh(id)+'" type="'+type+'" data-catalog-attribute="'+mh(code)+'" data-value-type="'+mh(def.value_type||'text')+'" value="'+mh(value)+'"'+min+required+'>';
+  }
+  return '<label class="catalogAdaptiveField"><span>'+mh(def.label||code)+(mapping.required?' *':'')+variant+'</span><span class="catalogAttributeControl">'+control+unit+'</span></label>';
+}
+function catalogAdaptiveAttributesMarkup(schema,categoryCode,values={},prefix='catalogAttr'){
+  const category=catalogCategoryFromSchema(schema,categoryCode);
+  if(!category)return '<div class="catalogAdaptiveEmpty">Choose a product category to show only the details that apply to this product.</div>';
+  const mappings=Array.isArray(category.attributes)?category.attributes:[];
+  if(!mappings.length)return '<div class="catalogAdaptiveEmpty">No extra product details are required for '+mh(category.label)+'.</div>';
+  return '<div class="catalogAdaptiveHead"><div><strong>'+mh(category.label)+' details</strong><small>Only fields relevant to this category are shown.</small></div><span>'+mappings.length+' fields</span></div>'+
+    '<div class="catalogAdaptiveGrid">'+mappings.map(mapping=>catalogAttributeField(mapping,catalogAttributeValue(values,mapping.attribute_code),prefix)).join('')+'</div>';
+}
+function collectCatalogAttributes(root,{includeEmpty=false}={}){
+  const values={};
+  root?.querySelectorAll('[data-catalog-attribute]').forEach(input=>{
+    const code=input.dataset.catalogAttribute,type=input.dataset.valueType||'text',raw=input.value;
+    if(raw===''){if(includeEmpty)values[code]='';return}
+    if(type==='number')values[code]=Number(raw);
+    else if(type==='boolean')values[code]=raw==='true';
+    else values[code]=raw;
+  });
+  return values;
+}
+function catalogProductTypeOptions(){
+  const domain=merchantStore?.merchant_domain||'mixed',options=[];
+  if(domain==='food'||domain==='mixed'){
+    options.push(['fresh_direct','Fresh / direct food'],['packaged_resale','Packaged food resale']);
+  }
+  if(domain==='non_food'||domain==='mixed')options.push(['non_food_resale','Non-food resale']);
+  return options;
+}
+function catalogIdentityAdvancedMarkup(prefix='merchantCatalog',values={},kind='non_food_resale'){
+  const retail=kind==='non_food_resale',packaged=kind==='packaged_resale',direct=kind!=='prepared_food';
+  const identityFields=retail
+    ?'<div class="merchantStoreForm two catalogAdvancedGrid">'+
+      '<label>Brand<input id="'+prefix+'Brand" maxlength="120" value="'+mh(values.brand||'')+'" placeholder="Optional"></label>'+
+      '<label>Model<input id="'+prefix+'Model" maxlength="120" value="'+mh(values.model||'')+'" placeholder="Optional"></label>'+
+      '<label>Condition<select id="'+prefix+'Condition"><option value="">Not specified</option><option value="new" '+(values.condition_code==='new'?'selected':'')+'>New</option><option value="used" '+(values.condition_code==='used'?'selected':'')+'>Used</option><option value="refurbished" '+(values.condition_code==='refurbished'?'selected':'')+'>Refurbished</option><option value="other" '+(values.condition_code==='other'?'selected':'')+'>Other</option></select></label>'+
+      '<label>Manufacturer / part number<input id="'+prefix+'Mpn" maxlength="120" value="'+mh(values.manufacturer_part_number||'')+'" placeholder="Optional"></label>'+
+    '</div>'
+    :packaged
+      ?'<div class="merchantStoreForm catalogAdvancedGrid"><label>Brand<input id="'+prefix+'Brand" maxlength="120" value="'+mh(values.brand||'')+'" placeholder="Optional"></label></div>'
+      :'';
+  const packageFields=direct
+    ?'<div class="catalogPackageHead"><strong>Delivery package</strong><small>Optional. Used for fulfilment and delivery planning; not exposed as private stock/accounting data.</small></div>'+
+      '<div class="merchantStoreForm two catalogPackageGrid">'+
+        '<label>Length (cm)<input id="'+prefix+'PackageLength" type="number" min="0" step="0.01" value="'+mh(values.package_length_cm??'')+'"></label>'+
+        '<label>Width (cm)<input id="'+prefix+'PackageWidth" type="number" min="0" step="0.01" value="'+mh(values.package_width_cm??'')+'"></label>'+
+        '<label>Height (cm)<input id="'+prefix+'PackageHeight" type="number" min="0" step="0.01" value="'+mh(values.package_height_cm??'')+'"></label>'+
+        '<label>Weight (kg)<input id="'+prefix+'PackageWeight" type="number" min="0" step="0.001" value="'+mh(values.package_weight_kg??'')+'"></label>'+
+      '</div>'
+    :'';
+  if(!identityFields&&!packageFields)return'';
+  return '<details class="catalogAdvancedDetails"><summary>'+(retail?'Brand, condition & delivery package':packaged?'Brand & delivery package':'Delivery package')+'</summary>'+identityFields+packageFields+'</details>';
+}
+function catalogCreateSection(inventory=[],schema=merchantCatalogSchema){
+  const defaultKind=(merchantStore?.merchant_domain==='non_food')?'non_food_resale':'fresh_direct';
+  const defaultDomain=catalogDomainForKind(defaultKind),defaultCategory=catalogDefaultCategoryForKind(defaultKind);
+  const options=(inventory||[]).map(item=>
+    '<option value="'+Number(item.id)+'" data-unit="'+mh(item.unit||'unit')+'" data-name="'+mh(item.item)+'" data-domain="'+mh(item.inventory_domain||'')+'">'+
+      mh(item.item)+' · '+Number(item.usable_quantity??item.quantity??0).toLocaleString('en-PH',{maximumFractionDigits:4})+' '+mh(item.unit||'')+
+    '</option>'
+  ).join('');
+  const kindOptions=catalogProductTypeOptions().map(([value,label])=>'<option value="'+value+'" '+(value===defaultKind?'selected':'')+'>'+label+'</option>').join('');
+  return '<section class="merchantStoreCard merchantCatalogCreate"><div class="merchantCatalogHead"><div><small>ADAPTIVE PRODUCT EDITOR</small><h2>Add product from Inventory</h2><p>Choose what you sell first. Business & Life then shows only the product details that apply to that category.</p></div></div>'+
+    '<form id="merchantCatalogCreateForm" class="merchantStoreForm">'+
+      '<input id="merchantCatalogBusinessId" type="hidden" value="'+Number(merchantStore?.business_id||0)+'">'+
+      '<label>Inventory item<select id="merchantCatalogInventory" required><option value="">Choose recorded stock</option>'+options+'</select><span class="storeFieldHelp">Catalog never duplicates stock. This product points to the Inventory item that fulfils an order.</span></label>'+
+      '<div class="merchantStoreForm two">'+
+        '<label>Product type<select id="merchantCatalogKind">'+kindOptions+'</select></label>'+
+        '<label>Customer-facing name<input id="merchantCatalogName" maxlength="120" required placeholder="Example: Cotton T-Shirt"></label>'+
+      '</div>'+
+      '<div class="merchantStoreForm two">'+
+        '<label>Selling price ₱<input id="merchantCatalogPrice" type="number" min="0" step="0.01" required></label>'+
+        '<label>Stock used per sale<input id="merchantCatalogQuantity" type="number" min="0.0001" step="0.0001" value="1" required></label>'+
+      '</div>'+
+      '<label>Product category<select id="merchantCatalogCategoryCode" required>'+catalogCategoryOptions(schema,defaultDomain,defaultCategory)+'</select><span class="storeFieldHelp">This controls relevant specifications and filters. It is different from a promotional collection.</span></label>'+
+      '<label>Customer section / shelf<input id="merchantCatalogCategory" maxlength="100" value="General" placeholder="Example: Men / Shirts"></label>'+
+      '<label>Description<textarea id="merchantCatalogDescription" rows="2" maxlength="800" placeholder="What customers should know about this product"></textarea></label>'+
+      '<section id="merchantCatalogAdaptiveAttributes" class="catalogAdaptiveAttributes">'+catalogAdaptiveAttributesMarkup(schema,defaultCategory,{},'merchantCatalogCreateAttr')+'</section>'+
+      '<div id="merchantCatalogAdvancedHost">'+catalogIdentityAdvancedMarkup('merchantCatalog',{},defaultKind)+'</div>'+
+      '<div id="merchantCatalogStockHint" class="catalogBoundaryNote">Choose an Inventory item. Its cost remains private; this form sets only the public selling product.</div>'+
+      '<div class="storeFormActions"><button class="saveStore" type="submit">Create private product</button></div>'+
+      '<div id="merchantCatalogCreateMessage" class="avatarHint"></div>'+
+    '</form>'+
+  '</section>';
 }
 function preparedImportSection(){
   return `<section class="merchantStoreCard merchantPreparedImport"><h2>Prepared recipes</h2><p>Recipes are created in Products & recipes, then imported here as private Catalog products. Importing never publishes automatically.</p><button class="importProducts catalogImportPrepared" id="importLegacy" type="button">Import prepared products</button><div id="catalogImportMessage" class="avatarHint"></div></section>`;
@@ -1200,19 +1311,233 @@ function catalogSection(products){
   const all=(Array.isArray(products)?products:[]).filter(product=>product.product_domain==='food');
   if(!all.length)return '';
   const active=all.filter(p=>p.active!==false),archived=all.filter(p=>p.active===false);
-  const rows=active.length?active.map(p=>{const images=Array.isArray(p.images)?p.images:[];const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible);const draft=images.find(x=>x.source_type==='ai_generated'&&x.approval_status==='draft');const visual=primary?.data_url||draft?.data_url||p.image_data_url||'';const aiPrimary=primary?.source_type==='ai_generated';const canGenerate=p.product_domain==='food'&&p.product_kind==='prepared_food'&&Boolean(p.legacy_product_id);const allergenState=canGenerate?(p.allergen_review_current?'<span class="allergenReviewBadge current">Ingredient disclosure reviewed</span>':'<span class="allergenReviewBadge required">Ingredient disclosure review required</span>'):'';return `<div class="merchantProductRow merchantProductMediaRow"><div class="merchantProductVisual">${visual?`<img src="${visual}" alt="${mh(p.name)}">`:'<span>＋ photo</span>'}</div><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • ${p.legacy_product_id?'Prepared recipe':p.inventory_id?`${mnice(p.product_kind)} · ${Number(p.quantity_per_unit).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(p.inventory_unit||'stock')}/sale`:'Marketplace product'}</small>${aiPrimary?'<span class="aiReferenceLabel">AI-generated reference image</span>':''}${draft?'<span class="aiDraftLabel">AI image draft · review before use</span>':''}${allergenState}<div class="merchantImageActions">${canGenerate?`<button class="imageAction" type="button" data-generate-image="${p.id}">${draft?'Generate another':'Generate AI image'}</button>`:''}${draft?`<button class="imageAction primary" type="button" data-approve-image="${p.id}" data-media-id="${draft.id}">Use as primary</button><button class="imageAction danger" type="button" data-archive-image="${p.id}" data-media-id="${draft.id}">Discard image</button>`:''}<button class="imageAction danger" type="button" data-archive-product="${p.id}">Archive product</button></div></div><button class="publishButton ${p.published?'on':''}" type="button" data-toggle-product="${p.id}" data-published="${p.published?'1':'0'}">${p.published?'Published':'Private'}</button></div>`}).join(''):'<div class="marketEmpty">No active Catalog products yet. Add one from Inventory or import prepared recipes above.</div>';
-  const archivedHtml=archived.length?`<details class="catalogArchived"><summary>Archived products (${archived.length})</summary><div class="merchantCatalogList">${archived.map(p=>`<div class="merchantProductRow"><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • archived</small></div><button class="publishButton" type="button" data-restore-product="${p.id}">Restore</button></div>`).join('')}</div></details>`:'';
+  const rows=active.length?active.map(p=>{const images=Array.isArray(p.images)?p.images:[];const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible);const draft=images.find(x=>x.source_type==='ai_generated'&&x.approval_status==='draft');const visual=primary?.data_url||draft?.data_url||p.image_data_url||'';const aiPrimary=primary?.source_type==='ai_generated';const canGenerate=p.product_domain==='food'&&p.product_kind==='prepared_food'&&Boolean(p.legacy_product_id);const allergenState=canGenerate?(p.allergen_review_current?'<span class="allergenReviewBadge current">Ingredient disclosure reviewed</span>':'<span class="allergenReviewBadge required">Ingredient disclosure review required</span>'):'';return `<div class="merchantProductRow merchantProductMediaRow"><div class="merchantProductVisual">${visual?`<img src="${visual}" alt="${mh(p.name)}">`:'<span>＋ photo</span>'}</div><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • ${p.legacy_product_id?'Prepared recipe':p.inventory_id?`${mnice(p.product_kind)} · ${Number(p.quantity_per_unit).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(p.inventory_unit||'stock')}/sale`:'Marketplace product'}</small>${aiPrimary?'<span class="aiReferenceLabel">AI-generated reference image</span>':''}${draft?'<span class="aiDraftLabel">AI image draft · review before use</span>':''}${allergenState}${p.catalog_review_required?'<span class="catalogReviewBadge">Product details need review</span>':''}<div class="merchantImageActions"><button class="imageAction" type="button" data-edit-catalog-product="${p.id}">Edit product</button>${canGenerate?`<button class="imageAction" type="button" data-generate-image="${p.id}">${draft?'Generate another':'Generate AI image'}</button>`:''}${draft?`<button class="imageAction primary" type="button" data-approve-image="${p.id}" data-media-id="${draft.id}">Use as primary</button><button class="imageAction danger" type="button" data-archive-image="${p.id}" data-media-id="${draft.id}">Discard image</button>`:''}<button class="imageAction danger" type="button" data-archive-product="${p.id}">Archive product</button></div></div><button class="publishButton ${p.published?'on':''}" type="button" data-toggle-product="${p.id}" data-published="${p.published?'1':'0'}">${p.published?'Published':'Private'}</button></div>`}).join(''):'<div class="marketEmpty">No active Catalog products yet. Add one from Inventory or import prepared recipes above.</div>';
+  const archivedHtml=archived.length?`<details class="catalogArchived"><summary>Archived products (${archived.length})</summary><div class="merchantCatalogList">${archived.map(p=>`<div class="merchantProductRow"><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • archived</small></div><div class="merchantImageActions"><button class="imageAction" type="button" data-edit-catalog-product="${p.id}">Edit</button><button class="publishButton" type="button" data-restore-product="${p.id}">Restore</button></div></div>`).join('')}</div></details>`:'';
   return `<section class="merchantStoreCard"><h2>Your Catalog</h2><p>These are the products customers can eventually see. Publishing is separate from creating or importing.</p><div class="merchantCatalogList">${rows}</div>${archivedHtml}</section>`;
 }
-function bindCatalogCreate(inventory=[]){
-  const form=document.getElementById('merchantCatalogCreateForm'),select=document.getElementById('merchantCatalogInventory');if(!form||!select)return;
-  const sync=()=>{const option=select.selectedOptions?.[0],id=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===id),name=document.getElementById('merchantCatalogName'),hint=document.getElementById('merchantCatalogStockHint');if(item&&name&&!name.value)name.value=item.item||'';if(hint)hint.textContent=item?`Selling one unit will use the quantity you set from ${item.item} (${item.unit||'stock'}). Inventory cost stays private.`:'Choose an Inventory item. Its cost remains private; this form sets only the public selling product.'};
-  select.onchange=sync;sync();
-  form.onsubmit=async event=>{event.preventDefault();const msg=document.getElementById('merchantCatalogCreateMessage');if(msg)msg.textContent='Creating product…';try{const inventoryId=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===inventoryId);if(!item)throw new Error('Choose an Inventory item.');await mapi('/api/merchant/storefront/products',{method:'POST',body:JSON.stringify({business_id:Number(merchantStore?.business_id),inventory_id:inventoryId,product_kind:document.getElementById('merchantCatalogKind').value,name:document.getElementById('merchantCatalogName').value,description:document.getElementById('merchantCatalogDescription').value,category:document.getElementById('merchantCatalogCategory').value,selling_price:Number(document.getElementById('merchantCatalogPrice').value),quantity_per_unit:Number(document.getElementById('merchantCatalogQuantity').value),unit_code:(document.getElementById('merchantCatalogQuantity').value||'1')+' '+(item.unit||'unit'),published:false})});mtoast('Catalog product created as Private.');await renderMerchantCatalog()}catch(error){if(msg)msg.textContent=error.message}};
-  const importButton=document.getElementById('importLegacy');if(importButton)importButton.onclick=async()=>{const msg=document.getElementById('catalogImportMessage');if(msg)msg.textContent='Importing prepared products…';try{const result=await mapi('/api/merchant/storefront/import-legacy',{method:'POST',body:JSON.stringify({business_id:Number(merchantStore?.business_id)})});mtoast(`${result.imported_or_updated} prepared product${Number(result.imported_or_updated)===1?'':'s'} imported or updated.`);await renderMerchantCatalog()}catch(error){if(msg)msg.textContent=error.message}};
+function bindCatalogCreate(inventory=[],schema=merchantCatalogSchema){
+  const form=document.getElementById('merchantCatalogCreateForm'),select=document.getElementById('merchantCatalogInventory'),kind=document.getElementById('merchantCatalogKind'),category=document.getElementById('merchantCatalogCategoryCode');
+  if(!form||!select||!kind||!category)return;
+
+  const syncInventory=()=>{
+    const domain=catalogDomainForKind(kind.value);
+    [...select.options].forEach(option=>{
+      if(!option.value)return;
+      const optionDomain=String(option.dataset.domain||'');
+      option.disabled=Boolean(optionDomain&&optionDomain!==domain);
+    });
+    if(select.selectedOptions?.[0]?.disabled)select.value='';
+  };
+  const syncCategory=(preserve=false)=>{
+    const domain=catalogDomainForKind(kind.value),previous=preserve?category.value:'',preferred=previous||catalogDefaultCategoryForKind(kind.value);
+    category.innerHTML=catalogCategoryOptions(schema,domain,preferred);
+    if(!category.value){
+      const fallback=catalogDefaultCategoryForKind(kind.value);
+      if([...category.options].some(option=>option.value===fallback))category.value=fallback;
+    }
+    const host=document.getElementById('merchantCatalogAdaptiveAttributes');
+    if(host)host.innerHTML=catalogAdaptiveAttributesMarkup(schema,category.value,{},'merchantCatalogCreateAttr');
+    const advancedHost=document.getElementById('merchantCatalogAdvancedHost');
+    if(advancedHost)advancedHost.innerHTML=catalogIdentityAdvancedMarkup('merchantCatalog',{},kind.value);
+  };
+  const syncStock=()=>{
+    const id=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===id),name=document.getElementById('merchantCatalogName'),hint=document.getElementById('merchantCatalogStockHint');
+    if(item&&name&&!name.value)name.value=item.item||'';
+    if(hint)hint.textContent=item
+      ?`Selling one unit will use the quantity you set from ${item.item} (${item.unit||'stock'}). Inventory cost, supplier data and stock history stay private.`
+      :'Choose an Inventory item. Its cost remains private; this form sets only the public selling product.';
+  };
+  kind.onchange=()=>{syncInventory();syncCategory(false);syncStock()};
+  category.onchange=()=>{
+    const host=document.getElementById('merchantCatalogAdaptiveAttributes');
+    if(host)host.innerHTML=catalogAdaptiveAttributesMarkup(schema,category.value,{},'merchantCatalogCreateAttr');
+  };
+  select.onchange=syncStock;
+  syncInventory();syncCategory(true);syncStock();
+
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const msg=document.getElementById('merchantCatalogCreateMessage');if(msg)msg.textContent='Creating product…';
+    try{
+      const inventoryId=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===inventoryId);
+      if(!item)throw new Error('Choose an Inventory item.');
+      const payload={
+        business_id:Number(merchantStore?.business_id),
+        inventory_id:inventoryId,
+        product_kind:kind.value,
+        name:document.getElementById('merchantCatalogName').value,
+        description:document.getElementById('merchantCatalogDescription').value,
+        category:document.getElementById('merchantCatalogCategory').value,
+        catalog_category_code:category.value,
+        catalog_attributes:collectCatalogAttributes(document.getElementById('merchantCatalogAdaptiveAttributes')),
+        selling_price:Number(document.getElementById('merchantCatalogPrice').value),
+        quantity_per_unit:Number(document.getElementById('merchantCatalogQuantity').value),
+        unit_code:(document.getElementById('merchantCatalogQuantity').value||'1')+' '+(item.unit||'unit'),
+        brand:document.getElementById('merchantCatalogBrand')?.value||'',
+        model:document.getElementById('merchantCatalogModel')?.value||'',
+        condition_code:document.getElementById('merchantCatalogCondition')?.value||'',
+        manufacturer_part_number:document.getElementById('merchantCatalogMpn')?.value||'',
+        package_length_cm:document.getElementById('merchantCatalogPackageLength')?.value||null,
+        package_width_cm:document.getElementById('merchantCatalogPackageWidth')?.value||null,
+        package_height_cm:document.getElementById('merchantCatalogPackageHeight')?.value||null,
+        package_weight_kg:document.getElementById('merchantCatalogPackageWeight')?.value||null,
+        published:false
+      };
+      await mapi('/api/merchant/storefront/products',{method:'POST',body:JSON.stringify(payload)});
+      mtoast('Catalog product created as Private.');
+      await renderMerchantCatalog();
+    }catch(error){if(msg)msg.textContent=error.message}
+  };
+
+  const importButton=document.getElementById('importLegacy');
+  if(importButton)importButton.onclick=async()=>{
+    const msg=document.getElementById('catalogImportMessage');if(msg)msg.textContent='Importing prepared products…';
+    try{
+      const result=await mapi('/api/merchant/storefront/import-legacy',{method:'POST',body:JSON.stringify({business_id:Number(merchantStore?.business_id)})});
+      mtoast(`${result.imported_or_updated} prepared product${Number(result.imported_or_updated)===1?'':'s'} imported or updated.`);
+      await renderMerchantCatalog();
+    }catch(error){if(msg)msg.textContent=error.message}
+  };
 }
+function closeCatalogEditor(){
+  const backdrop=document.getElementById('catalogEditorBackdrop');
+  backdrop?.classList.add('hidden');
+  if(document.getElementById('checkoutBackdrop')?.classList.contains('hidden')!==false&&document.getElementById('productDetailBackdrop')?.classList.contains('hidden')!==false)document.body.style.overflow='';
+}
+function catalogAttributeLabel(schema,code){
+  for(const category of schema?.categories||[]){
+    const mapping=(category.attributes||[]).find(row=>String(row.attribute_code)===String(code));
+    if(mapping)return mapping.definition?.label||code;
+  }
+  return mnice(code);
+}
+function catalogReviewValue(value){
+  if(value==null)return'';
+  if(typeof value==='object')return JSON.stringify(value);
+  if(value===true)return'Yes';
+  if(value===false)return'No';
+  return String(value);
+}
+function catalogEditorReviewMarkup(data){
+  const reviews=Array.isArray(data?.catalog_attribute_reviews)?data.catalog_attribute_reviews:[];
+  if(!reviews.length)return '';
+  return '<section class="catalogReviewPanel"><div class="catalogReviewHead"><div><strong>Previous category details need review</strong><small>These values no longer belong to the current product category. They are preserved for review and are not shown to customers.</small></div><span>'+reviews.length+'</span></div>'+
+    '<div class="catalogReviewList">'+reviews.map(row=>'<div><strong>'+mh(catalogAttributeLabel(data.schema,row.attribute_code))+'</strong><span>'+mh(catalogReviewValue(row.value_json))+'</span></div>').join('')+'</div>'+
+    '<button type="button" id="catalogResolveReviews" class="catalogReviewResolve">Acknowledge previous details</button>'+
+  '</section>';
+}
+function catalogCategoryChangeNotice(schema,fromCode,toCode,currentValues={}){
+  if(String(fromCode||'')===String(toCode||''))return '';
+  const next=catalogCategoryFromSchema(schema,toCode),allowed=new Set((next?.attributes||[]).map(row=>String(row.attribute_code)));
+  const removed=Object.keys(currentValues||{}).filter(code=>!allowed.has(String(code)));
+  if(!removed.length)return '<div class="catalogCategoryChangeNotice safe"><strong>Category change is compatible</strong><span>Existing compatible details will be kept.</span></div>';
+  return '<div class="catalogCategoryChangeNotice"><strong>'+removed.length+' previous detail'+(removed.length===1?'':'s')+' will move to review</strong><span>'+removed.map(code=>mh(catalogAttributeLabel(schema,code))).join(', ')+'</span><small>The product will become Private until you acknowledge those previous-category details.</small></div>';
+}
+function catalogEditorStatus(product){
+  if(product.active===false)return'Archived';
+  return product.published?'Published':'Private';
+}
+function catalogEditorKindLabel(kind){
+  return ({prepared_food:'Prepared food',fresh_direct:'Fresh / direct food',packaged_resale:'Packaged food resale',non_food_resale:'Non-food resale'})[String(kind||'')]||mnice(kind);
+}
+function catalogEditorMarkup(data){
+  const p=data.product||{},schema=data.schema||{},attrs=data.catalog_attributes||{};
+  const categoryCode=p.catalog_category_code||catalogDefaultCategoryForKind(p.product_kind);
+  const review=catalogEditorReviewMarkup(data);
+  return '<div class="catalogEditorTop"><div><small>ADAPTIVE PRODUCT EDITOR</small><h2>'+mh(p.name||'Product')+'</h2><span>'+mh(catalogEditorKindLabel(p.product_kind))+' · '+mh(catalogEditorStatus(p))+'</span></div><button type="button" id="catalogEditorClose" aria-label="Close">×</button></div>'+
+    '<form id="catalogEditorForm" class="catalogEditorForm">'+
+      '<div class="merchantStoreForm two">'+
+        '<label>Customer-facing name<input id="catalogEditName" maxlength="120" required value="'+mh(p.name||'')+'"></label>'+
+        '<label>Selling price ₱<input id="catalogEditPrice" type="number" min="0" step="0.01" required value="'+mh(p.selling_price??'')+'"></label>'+
+      '</div>'+
+      '<label>Product category<select id="catalogEditCategoryCode" required>'+catalogCategoryOptions(schema,p.product_domain,categoryCode)+'</select><span class="storeFieldHelp">Choose the canonical product category. Relevant details below adapt automatically.</span></label>'+
+      '<label>Customer section / shelf<input id="catalogEditCategory" maxlength="100" value="'+mh(p.category||'General')+'"></label>'+
+      '<label>Description<textarea id="catalogEditDescription" rows="3" maxlength="800">'+mh(p.description||'')+'</textarea></label>'+
+      '<div id="catalogCategoryChangeHost"></div>'+
+      '<section id="catalogEditorAdaptiveAttributes" class="catalogAdaptiveAttributes">'+catalogAdaptiveAttributesMarkup(schema,categoryCode,attrs,'catalogEditAttr')+'</section>'+
+      '<div id="catalogEditorAdvancedHost">'+catalogIdentityAdvancedMarkup('catalogEdit',p,p.product_kind)+'</div>'+
+      '<div class="catalogEditorSource"><strong>Stock source</strong><span>'+(
+        p.variant_mode?'Retail variants are linked to Inventory separately.'
+        :p.inventory_id?'Direct Inventory-linked product.'
+        :p.product_kind==='prepared_food'?'Prepared recipe product.'
+        :'No direct Inventory source'
+      )+'</span><small>Stock counts, supplier costs and accounting remain private.</small></div>'+
+      review+
+      '<div class="catalogEditorActions"><button type="button" id="catalogEditorCancel">Cancel</button><button type="submit" class="saveStore">Save product</button></div>'+
+      '<div id="catalogEditorMessage" class="avatarHint" aria-live="polite"></div>'+
+    '</form>';
+}
+async function openCatalogEditor(productId){
+  ensureMarket();
+  const backdrop=document.getElementById('catalogEditorBackdrop'),panel=document.getElementById('catalogEditorPanel');
+  if(!backdrop||!panel)return;
+  panel.innerHTML='<div class="marketEmpty">Loading product editor…</div>';
+  backdrop.classList.remove('hidden');document.body.style.overflow='hidden';
+  try{
+    const data=await mapi('/api/merchant/catalog-v3/products/'+Number(productId)+'/editor');
+    const p=data.product||{},schema=data.schema||{},originalAttrs={...(data.catalog_attributes||{})},originalCategory=p.catalog_category_code||catalogDefaultCategoryForKind(p.product_kind);
+    panel.innerHTML=catalogEditorMarkup(data);
+    document.getElementById('catalogEditorClose').onclick=closeCatalogEditor;
+    document.getElementById('catalogEditorCancel').onclick=closeCatalogEditor;
+
+    const category=document.getElementById('catalogEditCategoryCode'),attrHost=document.getElementById('catalogEditorAdaptiveAttributes'),notice=document.getElementById('catalogCategoryChangeHost');
+    const renderAdaptive=()=>{
+      const current=collectCatalogAttributes(attrHost,{includeEmpty:true});
+      const seed={...originalAttrs,...current};
+      attrHost.innerHTML=catalogAdaptiveAttributesMarkup(schema,category.value,seed,'catalogEditAttr');
+      notice.innerHTML=catalogCategoryChangeNotice(schema,originalCategory,category.value,originalAttrs);
+    };
+    category.onchange=renderAdaptive;
+    notice.innerHTML=catalogCategoryChangeNotice(schema,originalCategory,category.value,originalAttrs);
+
+    document.getElementById('catalogResolveReviews')?.addEventListener('click',async()=>{
+      const button=document.getElementById('catalogResolveReviews');if(button)button.disabled=true;
+      try{
+        const reviewIds=(data.catalog_attribute_reviews||[]).map(row=>Number(row.id));
+        await mapi('/api/merchant/catalog-v3/products/'+Number(p.id)+'/attribute-review',{
+          method:'POST',body:JSON.stringify({review_ids:reviewIds,decision:'resolved'})
+        });
+        mtoast('Previous category details acknowledged.');
+        await openCatalogEditor(Number(p.id));
+        await renderMerchantCatalog();
+      }catch(error){mtoast(error.message);if(button)button.disabled=false}
+    });
+
+    const form=document.getElementById('catalogEditorForm');
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const message=document.getElementById('catalogEditorMessage'),save=form.querySelector('button[type="submit"]');
+      if(message)message.textContent='Saving product…';if(save)save.disabled=true;
+      try{
+        const payload={
+          name:document.getElementById('catalogEditName').value,
+          selling_price:Number(document.getElementById('catalogEditPrice').value),
+          catalog_category_code:category.value,
+          category:document.getElementById('catalogEditCategory').value,
+          description:document.getElementById('catalogEditDescription').value,
+          catalog_attributes:collectCatalogAttributes(attrHost,{includeEmpty:true})
+        };
+        const brand=document.getElementById('catalogEditBrand'),model=document.getElementById('catalogEditModel'),condition=document.getElementById('catalogEditCondition'),mpn=document.getElementById('catalogEditMpn');
+        if(brand)payload.brand=brand.value;if(model)payload.model=model.value;if(condition)payload.condition_code=condition.value;if(mpn)payload.manufacturer_part_number=mpn.value;
+        for(const [field,id] of [['package_length_cm','catalogEditPackageLength'],['package_width_cm','catalogEditPackageWidth'],['package_height_cm','catalogEditPackageHeight'],['package_weight_kg','catalogEditPackageWeight']]){
+          const input=document.getElementById(id);if(input)payload[field]=input.value||null;
+        }
+        const saved=await mapi('/api/merchant/storefront/products/'+Number(p.id),{method:'PATCH',body:JSON.stringify(payload)});
+        const needsReview=Array.isArray(saved.catalog_attribute_reviews)&&saved.catalog_attribute_reviews.length>0;
+        mtoast(needsReview?'Product saved as Private — review previous category details.':'Product saved.');
+        await renderMerchantCatalog();
+        if(needsReview)await openCatalogEditor(Number(p.id));else closeCatalogEditor();
+      }catch(error){if(message)message.textContent=error.message;if(save)save.disabled=false}
+    };
+  }catch(error){
+    panel.innerHTML='<div class="catalogEditorTop"><div><h2>Product editor</h2></div><button type="button" id="catalogEditorClose" aria-label="Close">×</button></div><div class="marketEmpty">'+mh(error.message)+'</div>';
+    document.getElementById('catalogEditorClose').onclick=closeCatalogEditor;
+  }
+}
+
 function bindStoreForm(){const f=document.getElementById('merchantStoreForm');if(!f)return;f.onsubmit=async e=>{e.preventDefault();const msg=document.getElementById('storeMessage');msg.textContent='';try{await mapi('/api/merchant/storefront',{method:'PUT',body:JSON.stringify({business_id:Number(document.getElementById('storeBusinessId').value),store_name:document.getElementById('storeName').value,description:document.getElementById('storeDescription').value,merchant_domain:document.getElementById('storeDomain').value,publication_status:document.getElementById('storeStatus').value,pickup_address:document.getElementById('storeAddress').value,presence_type:document.getElementById('storePresence')?.value||'online',public_location_enabled:Boolean(document.getElementById('storePublicLocation')?.checked),location_label:document.getElementById('storeLocationLabel')?.value||'',finding_instructions:document.getElementById('storeFinding')?.value||'',opening_hours_text:document.getElementById('storeOpeningHours')?.value||'',pickup_lat:document.getElementById('storeLat')?.value||null,pickup_lng:document.getElementById('storeLng')?.value||null,opening_status:document.getElementById('storeOpening').value,preparation_eta_minutes:Number(document.getElementById('storeEta').value),pickup_enabled:document.getElementById('storePickup').checked,delivery_enabled:document.getElementById('storeDelivery').checked,cash_enabled:document.getElementById('storeCash').checked,online_enabled:document.getElementById('storeOnline').checked,public_reputation_enabled:document.getElementById('storeReputation').checked,price_comparison_enabled:document.getElementById('storeCompare').checked,logo_data_url:document.getElementById('storeLogoData')?.value||merchantStore?.logo_data_url||''})});mtoast('Storefront saved.');await renderMerchantStore()}catch(err){msg.textContent=err.message}}}
 function bindCatalog(){
+  marketWorkspace.querySelectorAll('[data-edit-catalog-product]').forEach(button=>button.onclick=()=>openCatalogEditor(Number(button.dataset.editCatalogProduct)));
   marketWorkspace.querySelectorAll('[data-toggle-product]').forEach(b=>b.onclick=async()=>{try{const id=Number(b.dataset.toggleProduct),published=b.dataset.published!=='1';await mapi(`/api/merchant/storefront/products/${id}`,{method:'PATCH',body:JSON.stringify({published})});mtoast(published?'Product published.':'Product hidden from Marketplace.');await renderMerchantCatalog()}catch(e){mtoast(e.message)}});
   marketWorkspace.querySelectorAll('[data-archive-product]').forEach(b=>b.onclick=async()=>{if(!confirm('Archive this Catalog product? It will be hidden from customers and kept for history.'))return;try{await mapi(`/api/merchant/storefront/products/${Number(b.dataset.archiveProduct)}`,{method:'PATCH',body:JSON.stringify({active:false,published:false})});mtoast('Product archived.');await renderMerchantCatalog()}catch(e){mtoast(e.message)}});
   marketWorkspace.querySelectorAll('[data-restore-product]').forEach(b=>b.onclick=async()=>{try{await mapi(`/api/merchant/storefront/products/${Number(b.dataset.restoreProduct)}`,{method:'PATCH',body:JSON.stringify({active:true,published:false})});mtoast('Product restored as Private.');await renderMerchantCatalog()}catch(e){mtoast(e.message)}});

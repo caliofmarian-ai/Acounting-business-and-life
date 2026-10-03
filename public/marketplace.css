@@ -305,3 +305,74 @@
   .retailProductCard{min-height:215px}
   .foodGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+
+/* Catalog Core V3A Adaptive Editor · #738 */
+.catalogAdaptiveAttributes{display:grid;gap:9px;border:1px solid #dfe8e5;border-radius:16px;background:#f9fcfb;padding:11px}
+.catalogAdaptiveHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.catalogAdaptiveHead>div{display:grid;gap:2px}
+.catalogAdaptiveHead strong{font-size:12px;color:#17233c}
+.catalogAdaptiveHead small{font-size:9px;color:#687386}
+.catalogAdaptiveHead>span{flex:0 0 auto;border-radius:999px;background:#e8f3ef;color:#0a6756;padding:5px 8px;font-size:8px;font-weight:900}
+.catalogAdaptiveGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.catalogAdaptiveField{display:grid;gap:5px;min-width:0;font-size:9px;font-weight:900;color:#536071}
+.catalogAdaptiveField>span:first-child{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.catalogVariantAxis{border-radius:999px;background:#eef2ff;color:#334e9b;padding:3px 5px;font-size:7px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+.catalogAttributeControl{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px}
+.catalogAdaptiveField input,.catalogAdaptiveField select{width:100%;min-height:43px;box-sizing:border-box;border:1px solid #d7e1de;border-radius:11px;background:#fff;padding:8px 9px;font:inherit;color:#17233c}
+.catalogAttributeUnit{font-size:8px;color:#687386;font-weight:900}
+.catalogAdaptiveEmpty{border:1px dashed #ccd9d5;border-radius:13px;background:#fff;padding:11px;color:#687386;font-size:9px;line-height:1.5}
+.catalogAdvancedDetails{border:1px solid #e1e9e6;border-radius:15px;background:#fff;padding:0 10px 10px}
+.catalogAdvancedDetails>summary{display:flex;align-items:center;min-height:44px;cursor:pointer;font-size:10px;font-weight:900;color:#17233c}
+.catalogAdvancedGrid,.catalogPackageGrid{margin-top:3px}
+.catalogPackageHead{display:grid;gap:2px;margin:9px 0 7px;border-top:1px solid #edf1ef;padding-top:9px}
+.catalogPackageHead strong{font-size:10px;color:#17233c}
+.catalogPackageHead small{font-size:8px;color:#687386;line-height:1.4}
+.catalogReviewBadge{display:inline-flex;width:max-content;max-width:100%;border-radius:999px;background:#fff0d9;color:#8a5300;padding:4px 7px;font-size:8px;font-weight:900}
+.catalogEditorBackdrop{position:fixed;inset:0;z-index:235;background:rgba(9,18,33,.60);backdrop-filter:blur(5px);display:grid;place-items:end center}
+.catalogEditorBackdrop.hidden{display:none!important}
+.catalogEditorPanel{width:min(100%,620px);max-height:94dvh;overflow:auto;background:#f8fbfa;border-radius:28px 28px 0 0;padding:14px 16px calc(24px + env(safe-area-inset-bottom));box-shadow:0 -20px 70px rgba(9,18,33,.34)}
+.catalogEditorTop{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;position:sticky;top:-14px;z-index:5;background:rgba(248,251,250,.96);backdrop-filter:blur(8px);padding:14px 0 8px}
+.catalogEditorTop>div{display:grid;gap:2px}
+.catalogEditorTop small{font-size:8px;font-weight:900;letter-spacing:.08em;color:#0a7c66}
+.catalogEditorTop h2{margin:0;color:#17233c;font-size:20px}
+.catalogEditorTop span{font-size:9px;color:#687386}
+.catalogEditorTop button{width:44px;height:44px;flex:0 0 auto;border:0;border-radius:50%;background:#17233c;color:#fff;font-size:22px}
+.catalogEditorForm{display:grid;gap:10px}
+.catalogEditorForm>label{display:grid;gap:5px;font-size:9px;font-weight:900;color:#536071}
+.catalogEditorForm>label input,.catalogEditorForm>label select,.catalogEditorForm>label textarea{width:100%;box-sizing:border-box;border:1px solid #d7e1de;border-radius:11px;background:#fff;padding:9px;font:inherit;color:#17233c}
+.catalogEditorForm>label input,.catalogEditorForm>label select{min-height:44px}
+.catalogEditorSource{display:grid;gap:3px;border:1px solid #e1e9e6;border-radius:14px;background:#fff;padding:10px}
+.catalogEditorSource strong{font-size:10px;color:#17233c}
+.catalogEditorSource span,.catalogEditorSource small{font-size:8px;color:#687386;line-height:1.45}
+.catalogCategoryChangeNotice{display:grid;gap:3px;border:1px solid #f0d8ae;border-radius:13px;background:#fff8eb;padding:10px}
+.catalogCategoryChangeNotice.safe{border-color:#cfe6dc;background:#f1faf6}
+.catalogCategoryChangeNotice strong{font-size:10px;color:#6f4500}
+.catalogCategoryChangeNotice.safe strong{color:#0a6756}
+.catalogCategoryChangeNotice span,.catalogCategoryChangeNotice small{font-size:8px;color:#687386;line-height:1.45}
+.catalogReviewPanel{display:grid;gap:9px;border:1px solid #efcf9d;border-radius:16px;background:#fff8eb;padding:11px}
+.catalogReviewHead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.catalogReviewHead>div{display:grid;gap:3px}
+.catalogReviewHead strong{font-size:11px;color:#754900}
+.catalogReviewHead small{font-size:8px;color:#687386;line-height:1.45}
+.catalogReviewHead>span{border-radius:999px;background:#f8dfb7;color:#744500;padding:4px 7px;font-size:8px;font-weight:900}
+.catalogReviewList{display:grid;gap:6px}
+.catalogReviewList>div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:8px;border-top:1px solid #f2dfbd;padding-top:6px}
+.catalogReviewList strong{font-size:9px;color:#17233c}
+.catalogReviewList span{font-size:9px;color:#687386;overflow-wrap:anywhere}
+.catalogReviewResolve{min-height:43px;border:0;border-radius:11px;background:#8a5a00;color:#fff;font-weight:900}
+.catalogEditorActions{display:grid;grid-template-columns:1fr 1.4fr;gap:8px;position:sticky;bottom:-24px;background:linear-gradient(rgba(248,251,250,.2),#f8fbfa 24%);padding:18px 0 8px}
+.catalogEditorActions button{min-height:48px;border:1px solid #d7e1de;border-radius:13px;background:#fff;font-weight:900}
+.catalogEditorActions .saveStore{border:0;background:#0a7c66;color:#fff}
+@media(min-width:680px){
+  .catalogEditorBackdrop{place-items:center}
+  .catalogEditorPanel{border-radius:28px}
+}
+@media(max-width:520px){
+  .catalogAdaptiveGrid{grid-template-columns:1fr}
+  .catalogEditorPanel{padding-inline:13px}
+  .catalogEditorTop{top:-14px}
+  .catalogEditorForm .merchantStoreForm.two{grid-template-columns:1fr}
+  .catalogEditorActions{grid-template-columns:1fr 1.25fr}
+  .catalogReviewList>div{grid-template-columns:1fr}
+}
