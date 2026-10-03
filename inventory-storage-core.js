@@ -89,7 +89,7 @@ export function validateInventoryStorage({
   if(type==='cleaning_sanitation'){
     if(FOOD_STORAGE_AREAS.has(area))errors.push('Cleaning & sanitation stock must be stored separately from food.');
     if(area==='chemical_storage'&&!segregated)errors.push('Chemical storage must be marked as segregated from food.');
-    if(['service_storage','other'].includes(area)&&(!segregated||!label)){
+    if(area!=='chemical_storage'&&!FOOD_STORAGE_AREAS.has(area)&&(!segregated||!label)){
       errors.push('Cleaning & sanitation stock needs an explicit segregated storage location.');
     }
   }
