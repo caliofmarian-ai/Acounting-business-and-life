@@ -25,7 +25,7 @@ import {directProductCostEstimate} from './food-cost-core.js';
 import {buildWasteAnalytics} from './inventory-waste-core.js';
 import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
 import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
-import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance} from './inventory-locations.js';
+import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -590,7 +590,11 @@ registerInventoryCountSessionRoutes(app,{
   canUseSupplyLots,
   inventoryLotRows,
   planPhysicalStockReduction,
-  applyPhysicalLotReductions
+  applyPhysicalLotReductions,
+  reconcileBusinessInventoryLocations,
+  planLocationStockReduction,
+  applyLocationLotReductions,
+  reconcileInventoryLocationBalance
 });
 
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
