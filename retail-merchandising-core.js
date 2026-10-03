@@ -148,7 +148,7 @@ export async function replaceCollectionProducts(db,{businessId,collectionId,prod
   return ids;
 }
 
-function inventoryAvailableSql(alias,{lotsAvailable=true}={}){
+function inventoryAvailableSql(alias,{lotsAvailable=true,holdsAvailable=true}={}){
   const lotBlocked=lotsAvailable?`COALESCE((
     SELECT SUM(GREATEST(0,sl.quantity_remaining_base))
       FROM supply_lots sl
@@ -171,13 +171,13 @@ function inventoryAvailableSql(alias,{lotsAvailable=true}={}){
            AND r.state='reserved'
            AND (r.expires_at IS NULL OR r.expires_at>NOW())
       ),0)
-    - COALESCE((
+    - ${holdsAvailable?`COALESCE((
         SELECT SUM(h.quantity)
           FROM inventory_unavailable_allocations h
          WHERE h.business_id=${alias}.business_id
            AND h.inventory_id=${alias}.id
            AND h.state='active'
-      ),0)
+      ),0)`:'0'}
     - ${lotBlocked}
   )`;
 }
@@ -204,13 +204,14 @@ function catalogListFilters(input={}){
 export async function retailCatalogPage(db,{businessId,filters={}}={}){
   const bid=Number(businessId);
   if(!positiveInt(bid))throw new TypeError('A valid Merchant business is required.');
-  let lotsAvailable=true;
+  let lotsAvailable=true,holdsAvailable=true;
   try{
-    const rel=await db.query("SELECT to_regclass('public.supply_lots') rel");
-    lotsAvailable=Boolean(rel.rows[0]?.rel);
+    const rel=await db.query("SELECT to_regclass('public.supply_lots') lots_rel, to_regclass('public.inventory_unavailable_allocations') holds_rel");
+    lotsAvailable=Boolean(rel.rows[0]?.lots_rel);
+    holdsAvailable=Boolean(rel.rows[0]?.holds_rel);
   }catch(error){
     if(!['42P01','42703'].includes(String(error?.code||'')))throw error;
-    lotsAvailable=false;
+    lotsAvailable=false;holdsAvailable=false;
   }
   const f=catalogListFilters(filters);
   const args=[bid];
@@ -244,8 +245,8 @@ export async function retailCatalogPage(db,{businessId,filters={}}={}){
     )`);
   }
 
-  const directAvailableExpr=inventoryAvailableSql('i',{lotsAvailable});
-  const variantAvailableExpr=inventoryAvailableSql('vi',{lotsAvailable});
+  const directAvailableExpr=inventoryAvailableSql('i',{lotsAvailable,holdsAvailable});
+  const variantAvailableExpr=inventoryAvailableSql('vi',{lotsAvailable,holdsAvailable});
   const sellableExpr=`CASE
     WHEN p.variant_mode THEN EXISTS(
       SELECT 1 FROM catalog_product_variants v
