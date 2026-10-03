@@ -75,6 +75,9 @@ test('migration evidence is explicit and detects ownership/snapshot regressions'
     if(/marketplace_order_items_missing_core_snapshot/.test(s))return{rows:[{
       marketplace_order_items:8,marketplace_order_items_missing_core_snapshot:0
     }],rowCount:1};
+    if(/information_schema\.columns/.test(s))return{rows:[{
+      inventory_business_scoped:true,legacy_product_business_scoped:true
+    }],rowCount:1};
     if(/inventory_business_mismatches/.test(s))return{rows:[{
       inventory_business_mismatches:0,legacy_product_business_mismatches:0
     }],rowCount:1};
@@ -90,8 +93,42 @@ test('migration evidence is explicit and detects ownership/snapshot regressions'
   assert.equal(evidence.safe,true);
   assert.equal(evidence.products.total,5);
   assert.equal(evidence.orders.marketplace_items,8);
+  assert.equal(evidence.ownership.inventory_business_check_available,true);
+  assert.equal(evidence.ownership.legacy_product_business_check_available,true);
   assert.equal(evidence.ownership.inventory_business_mismatches,0);
   assert.equal(evidence.media.orphan_rows,0);
+  assert.equal(queries.length,6);
+});
+
+test('fresh legacy schema defers ownership evidence until tenancy columns exist',async()=>{
+  const queries=[];
+  const db={query:async(sql,args=[])=>{
+    const s=String(sql);queries.push({sql:s,args});
+    if(/COUNT\(DISTINCT id\)/.test(s))return{rows:[{
+      total_products:0,distinct_product_ids:0,food_products:0,non_food_products:0,
+      unmapped_products:0,unversioned_products:0,legacy_linked_products:0,inventory_linked_products:0
+    }],rowCount:1};
+    if(/marketplace_order_items_missing_core_snapshot/.test(s))return{rows:[{
+      marketplace_order_items:0,marketplace_order_items_missing_core_snapshot:0
+    }],rowCount:1};
+    if(/information_schema\.columns/.test(s))return{rows:[{
+      inventory_business_scoped:false,legacy_product_business_scoped:false
+    }],rowCount:1};
+    if(/orphan_marketplace_media_rows/.test(s))return{rows:[{
+      marketplace_media_rows:0,orphan_marketplace_media_rows:0
+    }],rowCount:1};
+    if(/FROM catalog_migration_versions/.test(s))return{rows:[{
+      version:CATALOG_MIGRATION_CONTRACT_VERSION,schema_version:CATALOG_V3_SCHEMA_VERSION,applied_at:'2026-10-03T00:00:00Z'
+    }],rowCount:1};
+    if(/inventory_business_mismatches/.test(s))throw new Error('ownership query must be deferred');
+    throw new Error('unexpected query');
+  }};
+  const evidence=await catalogMigrationEvidence(db);
+  assert.equal(evidence.safe,true);
+  assert.equal(evidence.ownership.inventory_business_check_available,false);
+  assert.equal(evidence.ownership.legacy_product_business_check_available,false);
+  assert.equal(evidence.ownership.inventory_business_mismatches,null);
+  assert.equal(evidence.ownership.legacy_product_business_mismatches,null);
   assert.equal(queries.length,5);
 });
 
