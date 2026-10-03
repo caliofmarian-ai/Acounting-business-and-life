@@ -47,6 +47,11 @@ export async function ensureInventoryLocationSchema(pool){
       CHECK(storage_condition IN ('ambient','dry','chilled','frozen','other')),
       CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','sales_floor','stock_room','shelf_bin','warehouse','secure_storage','returns_inspection','general_supply','other'))
     );
+    ALTER TABLE inventory_storage_locations
+      DROP CONSTRAINT IF EXISTS inventory_storage_locations_storage_area_type_check;
+    ALTER TABLE inventory_storage_locations
+      ADD CONSTRAINT inventory_storage_locations_storage_area_type_check
+      CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','sales_floor','stock_room','shelf_bin','warehouse','secure_storage','returns_inspection','general_supply','other'));
     CREATE UNIQUE INDEX IF NOT EXISTS inventory_storage_locations_business_name_unique
       ON inventory_storage_locations(business_id,LOWER(name));
 
