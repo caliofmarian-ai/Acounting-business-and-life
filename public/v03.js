@@ -407,7 +407,7 @@ function restockSupplierGroup(items,supplierBusinessId){
   group.appendChild(head);
   for(const x of items){
     const row=document.createElement('div');row.className='listRow restockReviewRow';
-    const usable=Number(x.usable_quantity??x.quantity??0),physical=Number(x.physical_quantity??x.quantity??0),blocked=Number(x.blocked_quantity||0),target=Number(x.effective_target_level??x.target_level??x.reorder_level||0);
+    const usable=Number(x.usable_quantity??x.quantity??0),physical=Number(x.physical_quantity??x.quantity??0),blocked=Number(x.blocked_quantity||0),target=Number(x.effective_target_level??x.target_level??x.reorder_level??0);
     const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(x.unit||'')} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`usable ${num(usable,4)} ${esc(x.unit||'')}`;
     const min=Math.max(1,Number(x.minimum_packs||1)),suggested=Math.max(min,Number(x.suggested_packs||min));
     row.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)}<br>${stockCopy} • target ${num(target,4)} ${esc(x.unit||'')}${Number.isFinite(Number(x.price_per_pack))?' • '+money(x.price_per_pack)+' / '+esc(x.unit_name||'pack'):''}</small></div><label class="restockPackEditor"><span>Packs</span><input type="number" min="${min}" step="1" value="${suggested}" data-restock-inventory="${Number(x.inventory_id)}" /></label>`;
@@ -436,7 +436,7 @@ function renderRestockList(rows=[]){
     box.innerHTML='<div class="sectionHead"><div><strong>Supplier needed</strong><small class="muted">These items have no comparable preferred Supplier source yet.</small></div><span class="negative">'+unsourced.length+' item(s)</span></div>';
     for(const x of unsourced){
       const row=document.createElement('div');row.className='listRow';
-      const target=Number(x.effective_target_level??x.target_level??x.reorder_level||0);
+      const target=Number(x.effective_target_level??x.target_level??x.reorder_level??0);
       row.innerHTML=`<div class="rowMain"><strong>${esc(x.item)}</strong><small>${restockNeedLabel(x)} • target ${num(target,4)} ${esc(x.unit||'')}</small></div><span class="negative">${esc(x.source_status==='NOT_COMPARABLE'?'Unit mismatch':'Supplier needed')}</span>`;
       box.appendChild(row);
     }
