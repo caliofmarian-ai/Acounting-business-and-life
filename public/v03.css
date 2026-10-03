@@ -280,3 +280,15 @@
     width:70px
   }
 }
+
+
+.wastePeriodButtons{display:flex;gap:6px;flex-wrap:wrap}
+.wastePeriodButtons .miniBtn.active{
+  background:var(--accent,#0a7c66);
+  color:#fff;
+  border-color:var(--accent,#0a7c66)
+}
+#wasteAnalyticsCard .grid2{align-items:start}
+@media(max-width:520px){
+  #wasteAnalyticsCard .grid2{grid-template-columns:1fr}
+}

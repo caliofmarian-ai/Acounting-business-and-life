@@ -385,6 +385,18 @@
           <div class="sectionHead"><h3>Recent adjustments</h3><small class="muted">Audit trail</small></div>
           <div id="stockAdjustmentList" class="list"></div>
         </div>
+        <div class="card stack" id="wasteAnalyticsCard">
+          <div class="sectionHead"><div><h2>Waste & spoilage analytics</h2><p class="muted">Loss value uses the cost snapshot saved when each stock adjustment was recorded.</p></div><div class="wastePeriodButtons"><button id="wastePeriod7" type="button" class="miniBtn active">7 days</button><button id="wastePeriod30" type="button" class="miniBtn">30 days</button></div></div>
+          <div id="wasteAnalyticsSummary" class="salePreview">No waste analytics loaded yet.</div>
+          <div class="grid2">
+            <div><strong>Why stock was lost</strong><div id="wasteReasonList" class="list"></div></div>
+            <div><strong>Top wasted items</strong><div id="wasteTopItems" class="list"></div></div>
+          </div>
+          <div class="sectionHead"><h3>Recent loss evidence</h3><small class="muted">Waste / spoilage / expiry / damage only</small></div>
+          <div id="wasteDetailList" class="list"></div>
+          <div id="wasteEvidencePolicy" class="salePreview">Business & Life does not calculate a waste percentage unless denominator completeness can be proven.</div>
+        </div>
+
         <div class="card stack">
           <div class="sectionHead"><div><h2>Restock list</h2><p class="muted">Items below their low-stock alert are grouped by preferred Supplier and replenished toward the Target / Par level.</p></div><button id="restockRefresh" type="button" class="secondary">Refresh list</button></div>
           <div id="restockSummary" class="salePreview">No items currently need restocking.</div>
