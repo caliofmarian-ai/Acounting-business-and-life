@@ -4,6 +4,7 @@ let transactions = [];
 let inventory = [];
 let stockAdjustmentLots = [];
 let restockSuggestions = [];
+let wasteAnalyticsDays = 7;
 let products = [];
 let recipeDraft = [];
 let allergenCatalog = [];
@@ -520,7 +521,7 @@ async function loadStock(){
   fillStockAdjustmentInventory();
   fillStorageEditor();
   fillRestockSettingsEditor();
-  await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots()]);
+  await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays)]);
 }
 function lotExpiryCopy(row){
   if(row.lot_state&&row.lot_state!=='available'&&row.lot_state!=='depleted')return 'Held: '+String(row.lot_state).replaceAll('_',' ');
@@ -692,6 +693,59 @@ async function loadStockAdjustments(){
   }catch(error){
     list.replaceChildren(emptyRow(error.message||'Stock adjustment history could not be loaded.'));
     return[];
+  }
+}
+function wasteReasonLabel(kind){
+  return({waste:'Waste',spoilage:'Spoilage',expired:'Expired',damaged:'Damaged / broken',other_loss:'Other loss'})[kind]||kind;
+}
+function wasteQuantitySummary(rows=[]){
+  return (rows||[]).map(x=>`${num(x.quantity,4)} ${esc(x.unit)}`).join(' • ')||'No recorded loss quantity';
+}
+function renderWasteAnalytics(report={}){
+  const summary=$('wasteAnalyticsSummary'),reasons=$('wasteReasonList'),top=$('wasteTopItems'),details=$('wasteDetailList'),policy=$('wasteEvidencePolicy');
+  if(!summary||!reasons||!top||!details||!policy)return;
+  const s=report.summary||{};
+  summary.innerHTML=`<strong>${money(s.value_loss||0)} recorded loss value</strong> • ${num(s.events||0,0)} event(s) • ${num(s.items_affected||0,0)} item(s)<br><span class="muted">${wasteQuantitySummary(s.quantities_by_unit||[])}</span>`;
+  const reasonNodes=(report.by_reason||[]).map(row=>{
+    const d=document.createElement('div');d.className='listRow';
+    d.innerHTML=`<div class="rowMain"><strong>${esc(row.label||wasteReasonLabel(row.adjustment_kind))}</strong><small>${num(row.events||0,0)} event(s)</small></div><div class="rowRight"><span class="negative">${money(row.value_loss||0)}</span><small>${Number(row.share_of_loss_value_pct||0).toFixed(1)}% of recorded loss value</small></div>`;
+    return d;
+  });
+  reasons.replaceChildren(...(reasonNodes.length?reasonNodes:[emptyRow('No loss reasons in this period.')]));
+  const topNodes=(report.top_items||[]).slice(0,8).map(row=>{
+    const d=document.createElement('div');d.className='listRow';
+    const p=row.comparison?.purchase_evidence,u=row.comparison?.usage_evidence;
+    const evidence=[];
+    if(p?.status==='RECORDED_PURCHASES_PRESENT')evidence.push(`recorded purchases ${money(p.value)}`);
+    if(u?.status==='RECORDED_USAGE_PRESENT')evidence.push(`recorded usage ${num(u.quantity,4)} ${esc(row.unit)}`);
+    d.innerHTML=`<div class="rowMain"><strong>${esc(row.item)}</strong><small>${num(row.quantity_loss,4)} ${esc(row.unit)} lost • ${num(row.events||0,0)} event(s)${evidence.length?' • '+evidence.join(' • '):''}</small></div><span class="negative">${money(row.value_loss||0)}</span>`;
+    return d;
+  });
+  top.replaceChildren(...(topNodes.length?topNodes:[emptyRow('No wasted items in this period.')]));
+  const detailNodes=(report.details||[]).slice(0,20).map(row=>{
+    const d=document.createElement('div');d.className='listRow';
+    const lots=Array.isArray(row.lot_allocations)?row.lot_allocations:[];
+    const lotCopy=lots.length?' • '+lots.map(x=>esc(x.lot_code||('Lot '+x.lot_id))).join(', '):'';
+    const when=row.created_at?new Date(row.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'}):'';
+    d.innerHTML=`<div class="rowMain"><strong>${esc(row.item)} · ${esc(row.label||wasteReasonLabel(row.adjustment_kind))}</strong><small>${num(row.quantity_loss,4)} ${esc(row.unit)}${lotCopy}${row.note?' • '+esc(row.note):''}${when?' • '+esc(when):''}</small></div><span class="negative">${money(row.value_loss||0)}</span>`;
+    return d;
+  });
+  details.replaceChildren(...(detailNodes.length?detailNodes:[emptyRow('No recent loss evidence in this period.')]));
+  const dp=report.denominator_policy||{};
+  policy.innerHTML=`<strong>Comparison evidence</strong><br><span class="muted">${esc(dp.note||'Purchase and usage evidence is shown when available, but no waste rate is invented without a complete denominator.')}</span>`;
+  if($('wastePeriod7'))$('wastePeriod7').classList.toggle('active',Number(report.days||wasteAnalyticsDays)===7);
+  if($('wastePeriod30'))$('wastePeriod30').classList.toggle('active',Number(report.days||wasteAnalyticsDays)===30);
+}
+async function loadWasteAnalytics(days=wasteAnalyticsDays){
+  wasteAnalyticsDays=Number(days)===30?30:7;
+  try{
+    const report=await api(`/api/inventory/waste-analytics?days=${wasteAnalyticsDays}`);
+    renderWasteAnalytics(report);
+    return report;
+  }catch(error){
+    const summary=$('wasteAnalyticsSummary');
+    if(summary)summary.textContent=error.message||'Waste analytics could not be loaded.';
+    return null;
   }
 }
 function fillConsumableRuleInventory(){
@@ -875,6 +929,8 @@ async function refreshCurrentMerchantView(){
 }
 if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
 if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
+if($('wastePeriod7'))$('wastePeriod7').onclick=()=>loadWasteAnalytics(7);
+if($('wastePeriod30'))$('wastePeriod30').onclick=()=>loadWasteAnalytics(30);
 if($('lotRefresh'))$('lotRefresh').onclick=()=>loadInventoryLots();
 
 $('txForm').addEventListener('submit',async e=>{e.preventDefault();$('txMessage').textContent='Saving…';try{await api('/api/transactions',{method:'POST',body:JSON.stringify({type:$('type').value,amount:Number($('amount').value),category:$('category').value||'Other',account:$('account').value,note:$('note').value})});e.target.reset();$('account').value='cash';$('txMessage').textContent='Saved.';invalidateMerchantToday();setView('Dashboard')}catch(err){$('txMessage').textContent=err.message}});
