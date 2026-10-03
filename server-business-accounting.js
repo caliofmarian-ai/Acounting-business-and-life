@@ -94,7 +94,7 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ADD CONSTRAINT inventory_storage_condition_check CHECK(storage_condition IN ('ambient','dry','chilled','frozen','other'));
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_area_type TEXT NOT NULL DEFAULT 'other';
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_storage_area_type_check;
-    ALTER TABLE inventory ADD CONSTRAINT inventory_storage_area_type_check CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','other'));
+    ALTER TABLE inventory ADD CONSTRAINT inventory_storage_area_type_check CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','sales_floor','stock_room','shelf_bin','warehouse','secure_storage','returns_inspection','general_supply','other'));
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_location_label TEXT NOT NULL DEFAULT '';
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_segregated BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS measurement_family TEXT;
@@ -711,10 +711,16 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
   const inventoryType=classificationExplicit?compatibilityInventoryType(classification,legacyType):legacyType;
   if(Number(target_level)>0&&Number(target_level)+1e-9<Number(reorder_level||0))return res.status(400).json({error:'Target stock must be equal to or higher than the low-stock alert level.'});
   if(!clean(item,100))return res.status(400).json({error:'Item is required'});
-  const defaults=inventoryStorageDefaults(inventoryType);
+  const defaults=inventoryStorageDefaults({
+    inventoryType,
+    inventoryDomain:classification.inventory_domain,
+    stockRole:classification.stock_role
+  });
   const hasStorage=['storage_condition','storage_area_type','storage_location_label','storage_segregated'].some(key=>Object.prototype.hasOwnProperty.call(req.body||{},key));
   const storage=requireValidInventoryStorage({
     inventoryType,
+    inventoryDomain:classification.inventory_domain,
+    stockRole:classification.stock_role,
     storageCondition:req.body?.storage_condition??defaults.storage_condition,
     storageAreaType:req.body?.storage_area_type??defaults.storage_area_type,
     storageLocationLabel:req.body?.storage_location_label??defaults.storage_location_label,
@@ -795,10 +801,16 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
       const inventoryType=classificationExplicit
         ?compatibilityInventoryType(classification,requestedLegacyType)
         :(existing?.inventory_type||requestedLegacyType);
-      const defaults=inventoryStorageDefaults(inventoryType);
+      const defaults=inventoryStorageDefaults({
+        inventoryType,
+        inventoryDomain:classification.inventory_domain,
+        stockRole:classification.stock_role
+      });
       const fallback=current.rows[0]||defaults;
       const storage=requireValidInventoryStorage({
         inventoryType,
+        inventoryDomain:classification.inventory_domain,
+        stockRole:classification.stock_role,
         storageCondition:req.body?.storage_condition??fallback.storage_condition??defaults.storage_condition,
         storageAreaType:req.body?.storage_area_type??fallback.storage_area_type??defaults.storage_area_type,
         storageLocationLabel:req.body?.storage_location_label??fallback.storage_location_label??defaults.storage_location_label,
@@ -976,6 +988,8 @@ app.put('/api/inventory/:id/storage',jsonBody,async(req,res,next)=>{
     const row=current.rows[0];
     const storage=requireValidInventoryStorage({
       inventoryType:row.inventory_type||'ingredient',
+      inventoryDomain:row.inventory_domain||'',
+      stockRole:row.stock_role||'',
       storageCondition:req.body?.storage_condition??row.storage_condition,
       storageAreaType:req.body?.storage_area_type??row.storage_area_type,
       storageLocationLabel:req.body?.storage_location_label??row.storage_location_label,
