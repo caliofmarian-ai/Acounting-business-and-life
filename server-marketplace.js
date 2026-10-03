@@ -249,12 +249,13 @@ async function attachMarketplaceAllergens(rows,{publicOnly=false}={}){
       return{...row,allergen_information:null,allergen_review_current:null};
     }
     const summary=await deriveProductAllergenSummary(pool,{businessId:row.business_id,productId:row.legacy_product_id});
+    const reviewed=Boolean(summary?.review_current);
     const allergen_information=summary?allergenPublicProjection(summary):null;
     if(publicOnly){
       const {legacy_product_id,...safe}=row;
-      return{...safe,allergen_information,allergen_review_current:Boolean(summary?.review_current)};
+      return{...safe,allergen_information:reviewed?allergen_information:null,allergen_review_current:reviewed};
     }
-    return{...row,allergen_information,allergen_review_current:Boolean(summary?.review_current),allergen_revision:summary?.revision||null};
+    return{...row,allergen_information,allergen_review_current:reviewed,allergen_revision:summary?.revision||null};
   }));
 }
 async function products(businessId,includePrivate=false){
