@@ -79,6 +79,7 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ALTER COLUMN business_id SET NOT NULL;
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_item_key;
     CREATE UNIQUE INDEX IF NOT EXISTS inventory_business_item_unique ON inventory(business_id,item);
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS target_level NUMERIC(14,4) NOT NULL DEFAULT 0;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS inventory_type TEXT NOT NULL DEFAULT 'ingredient';
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_inventory_type_check;
     ALTER TABLE inventory ADD CONSTRAINT inventory_inventory_type_check CHECK(inventory_type IN ('ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply'));
@@ -612,7 +613,9 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         purchase_unit:req.body?.purchase_unit,
         total_cost:req.body?.total_cost,
         reorder_quantity:req.body?.reorder_quantity||0,
-        reorder_unit:req.body?.reorder_unit||req.body?.purchase_unit
+        reorder_unit:req.body?.reorder_unit||req.body?.purchase_unit,
+        target_quantity:req.body?.target_quantity||0,
+        target_unit:req.body?.target_unit||req.body?.reorder_unit||req.body?.purchase_unit
       });
     }catch(error){return res.status(400).json({error:error.message})}
 
@@ -655,29 +658,30 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
                  storage_location_label=$8,
                  storage_segregated=$9,
                  reorder_level=CASE WHEN $10>0 THEN $10 ELSE reorder_level END,
-                 last_purchase_quantity=$11,
-                 last_purchase_unit=$12,
-                 last_purchase_total_cost=$13,
+                 target_level=CASE WHEN $11>0 THEN $11 ELSE target_level END,
+                 last_purchase_quantity=$12,
+                 last_purchase_unit=$13,
+                 last_purchase_total_cost=$14,
                  last_purchase_at=NOW(),
                  updated_at=NOW()
-           WHERE id=$14 AND business_id=$15
+           WHERE id=$15 AND business_id=$16
            RETURNING *
         `,[
           purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,inventoryType,
           storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
-          purchase.reorder_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id
+          purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id
         ]);
         inventoryRow=updated.rows[0];
       }else{
         const inserted=await client.query(`
           INSERT INTO inventory(
-            business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
+            business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
             storage_condition,storage_area_type,storage_location_label,storage_segregated,
             measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at
-          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$3,$13,$14,$15,NOW())
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$3,$14,$15,$16,NOW())
           RETURNING *
         `,[
-          ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.base_unit_cost,inventoryType,
+          ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.base_unit_cost,inventoryType,
           storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
           purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost
         ]);
@@ -748,6 +752,29 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
     }finally{client.release()}
   }catch(error){next(error)}
 });
+
+app.put('/api/inventory/:id/reorder-settings',jsonBody,async(req,res,next)=>{try{
+  const ctx=await accountingContext(req);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  const id=Number(req.params.id);
+  if(!Number.isInteger(id))return res.status(400).json({error:'Invalid Inventory item'});
+  const q=await pool.query(`SELECT * FROM inventory WHERE id=$1 AND business_id=$2`,[id,ctx.business.id]);
+  if(!q.rowCount)return res.status(404).json({error:'Inventory item not found'});
+  const row=q.rows[0],unit=clean(req.body?.unit||row.base_unit||row.unit,20);
+  let alert,target;
+  try{
+    alert=toBaseQuantity(req.body?.reorder_quantity??0,unit);
+    target=toBaseQuantity(req.body?.target_quantity??0,unit);
+  }catch(error){return res.status(400).json({error:error.message})}
+  const family=clean(row.measurement_family,20);
+  if(family&&family!=='custom'&&(alert.family!==family||target.family!==family))return res.status(400).json({error:'Stock levels must use the same measurement type as this Inventory item.'});
+  if(target.base_quantity>0&&target.base_quantity+1e-9<alert.base_quantity)return res.status(400).json({error:'Restock target must be equal to or higher than the low-stock alert level.'});
+  const {rows}=await pool.query(`
+    UPDATE inventory SET reorder_level=$1,target_level=$2,updated_at=NOW()
+     WHERE id=$3 AND business_id=$4 RETURNING *
+  `,[alert.base_quantity,target.base_quantity,id,ctx.business.id]);
+  res.json(rows[0]);
+}catch(e){next(e)}});
 
 app.put('/api/inventory/:id/storage',jsonBody,async(req,res,next)=>{
   try{
