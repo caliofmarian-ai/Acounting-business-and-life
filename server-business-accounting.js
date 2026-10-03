@@ -229,11 +229,6 @@ async function initAccountingTenancyDb() {
     CREATE INDEX IF NOT EXISTS inventory_adjustment_lot_allocations_lot_idx
       ON inventory_adjustment_lot_allocations(lot_id,created_at DESC);
 
-    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_condition_snapshot TEXT NOT NULL DEFAULT 'other';
-    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_area_type_snapshot TEXT NOT NULL DEFAULT 'other';
-    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_location_label_snapshot TEXT NOT NULL DEFAULT '';
-    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_segregated_snapshot BOOLEAN NOT NULL DEFAULT FALSE;
-
     CREATE TABLE IF NOT EXISTS product_sale_lot_allocations (
       sale_id BIGINT NOT NULL REFERENCES product_sales(id) ON DELETE CASCADE,
       inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
