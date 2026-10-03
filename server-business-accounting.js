@@ -762,18 +762,22 @@ app.put('/api/inventory/:id/reorder-settings',jsonBody,async(req,res,next)=>{try
   const q=await pool.query(`SELECT * FROM inventory WHERE id=$1 AND business_id=$2`,[id,ctx.business.id]);
   if(!q.rowCount)return res.status(404).json({error:'Inventory item not found'});
   const row=q.rows[0],unit=clean(req.body?.unit||row.base_unit||row.unit,20);
-  let alert,target;
+  let alertBase=0,targetBase=0,levelFamily=null;
   try{
-    alert=toBaseQuantity(req.body?.reorder_quantity??0,unit);
-    target=toBaseQuantity(req.body?.target_quantity??0,unit);
+    if(Number(req.body?.reorder_quantity)>0){
+      const alert=toBaseQuantity(req.body.reorder_quantity,unit);alertBase=alert.base_quantity;levelFamily=alert.family;
+    }
+    if(Number(req.body?.target_quantity)>0){
+      const target=toBaseQuantity(req.body.target_quantity,unit);targetBase=target.base_quantity;levelFamily=levelFamily||target.family;
+    }
   }catch(error){return res.status(400).json({error:error.message})}
   const family=clean(row.measurement_family,20);
-  if(family&&family!=='custom'&&(alert.family!==family||target.family!==family))return res.status(400).json({error:'Stock levels must use the same measurement type as this Inventory item.'});
-  if(target.base_quantity>0&&target.base_quantity+1e-9<alert.base_quantity)return res.status(400).json({error:'Restock target must be equal to or higher than the low-stock alert level.'});
+  if(family&&family!=='custom'&&levelFamily&&levelFamily!==family)return res.status(400).json({error:'Stock levels must use the same measurement type as this Inventory item.'});
+  if(targetBase>0&&targetBase+1e-9<alertBase)return res.status(400).json({error:'Restock target must be equal to or higher than the low-stock alert level.'});
   const {rows}=await pool.query(`
     UPDATE inventory SET reorder_level=$1,target_level=$2,updated_at=NOW()
      WHERE id=$3 AND business_id=$4 RETURNING *
-  `,[alert.base_quantity,target.base_quantity,id,ctx.business.id]);
+  `,[alertBase,targetBase,id,ctx.business.id]);
   res.json(rows[0]);
 }catch(e){next(e)}});
 
