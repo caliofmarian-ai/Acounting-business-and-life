@@ -40,7 +40,10 @@ test('mixed measurement units are reported separately instead of producing a mea
     {id:1,inventory_id:1,item:'Chicken',adjustment_kind:'waste',quantity_delta:-2,unit:'kg',estimated_value_delta:-300},
     {id:2,inventory_id:2,item:'Milk',adjustment_kind:'waste',quantity_delta:-3,unit:'L',estimated_value_delta:-150}
   ]});
-  assert.deepEqual(report.summary.quantities_by_unit,[{unit:'L',quantity:3},{unit:'kg',quantity:2}]);
+  const byUnit=new Map(report.summary.quantities_by_unit.map(x=>[x.unit,x.quantity]));
+  assert.equal(byUnit.get('L'),3);
+  assert.equal(byUnit.get('kg'),2);
+  assert.equal(byUnit.size,2);
 });
 
 test('purchase and usage evidence is exposed without inventing a waste percentage',()=>{
