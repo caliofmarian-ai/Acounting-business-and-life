@@ -67,7 +67,8 @@ export function isMarketplaceOwnedPath(path='',method='GET'){
   if(['/marketplace.css','/marketplace-ui.js','/guest-explore.css','/guest-explore.js'].includes(pathname))return true;
   if(pathname.startsWith('/api/public/marketplace/'))return true;
   if(pathname.startsWith('/api/marketplace/'))return true;
-  if(pathname==='/api/merchant/storefront'||pathname.startsWith('/api/merchant/storefront/'))return true;\n  if(pathname==='/api/merchant/catalog-v3/schema'||pathname.startsWith('/api/merchant/catalog-v3/'))return true;
+  if(pathname==='/api/merchant/storefront'||pathname.startsWith('/api/merchant/storefront/'))return true;
+  if(pathname==='/api/merchant/catalog-v3/schema'||pathname.startsWith('/api/merchant/catalog-v3/'))return true;
   if(/^\/api\/orders\/merchant\/[^/]+\/(?:start|cancel)$/.test(pathname))return true;
   return false;
 }
