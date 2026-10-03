@@ -492,6 +492,40 @@ async function loadInventoryLots(){
     return[];
   }
 }
+function fillStorageEditor(){
+  const select=$('storageInventoryId');if(!select)return;
+  const previous=select.value;
+  select.innerHTML=inventory.length
+    ?'<option value="">Choose an item</option>'+inventory.map(i=>`<option value="${i.id}">${esc(i.item)} · ${esc(STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other')}</option>`).join('')
+    :'<option value="">Add stock first</option>';
+  if(previous&&inventory.some(i=>String(i.id)===String(previous)))select.value=previous;
+  loadStorageEditorItem();
+}
+function loadStorageEditorItem(){
+  const id=Number($('storageInventoryId')?.value),item=inventory.find(x=>Number(x.id)===id);
+  if(!item){
+    if($('storageSafetyMessage'))$('storageSafetyMessage').textContent='Choose an Inventory item to review its storage settings.';
+    return;
+  }
+  $('storageCondition').value=item.storage_condition||'other';
+  $('storageAreaType').value=item.storage_area_type||'other';
+  $('storageLocationLabel').value=item.storage_location_label||'';
+  $('storageSegregated').checked=Boolean(item.storage_segregated);
+  updateStorageEditorSafety();
+}
+function updateStorageEditorSafety(){
+  const id=Number($('storageInventoryId')?.value),item=inventory.find(x=>Number(x.id)===id),out=$('storageSafetyMessage');
+  if(!out)return;
+  if(!item){out.textContent='Choose an Inventory item to review its storage settings.';return}
+  const result=storageSafetyMessage({
+    type:item.inventory_type||'ingredient',
+    condition:$('storageCondition').value,
+    area:$('storageAreaType').value,
+    label:$('storageLocationLabel').value,
+    segregated:$('storageSegregated').checked
+  });
+  out.innerHTML=`<strong class="${result.ok?'positive':'negative'}">${result.ok?'Storage check':'Storage warning'}</strong><br><span class="muted">${esc(result.text)}</span>`;
+}
 function fillStockAdjustmentInventory(){
   const select=$('stockAdjustmentInventory');if(!select)return;
   const previous=select.value;
