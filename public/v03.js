@@ -747,7 +747,8 @@ async function openPendingInventoryNotification(){
 }
 document.addEventListener('abl:profile-state',event=>{
   baseActiveRole=event.detail?.activeRole||null;
-  if(isMerchantBaseActive()){loadMerchantToday().catch(()=>{});openPendingInventoryNotification().catch(()=>{})}
+  if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+  if(isMerchantBaseActive())openPendingInventoryNotification().catch(()=>{});
 });
 document.addEventListener('abl:business-workspace-changed',()=>{
   invalidateMerchantToday();
@@ -769,7 +770,8 @@ initStockPicker();
     showShell();
     if(window.BusinessLifeProfileState){
       baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
-      if(isMerchantBaseActive()){loadMerchantToday().catch(()=>{});openPendingInventoryNotification().catch(()=>{})}
+      if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+      if(isMerchantBaseActive())openPendingInventoryNotification().catch(()=>{});
     }
   }
 });
