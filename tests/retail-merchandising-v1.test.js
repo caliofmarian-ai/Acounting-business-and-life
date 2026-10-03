@@ -52,7 +52,7 @@ test('Retail Catalog page is paged and searches customer identity plus Inventory
   const queries=[];
   const db={query:async(sql,args=[])=>{
     const text=String(sql);queries.push({sql:text,args});
-    if(text.includes("to_regclass('public.supply_lots')"))return{rows:[{rel:'supply_lots'}],rowCount:1};
+    if(text.includes("to_regclass('public.supply_lots')"))return{rows:[{lots_rel:'supply_lots',holds_rel:'inventory_unavailable_allocations'}],rowCount:1};
     return{rows:[{
       id:7,business_id:2,name:'Cotton shirt',description:'',category:'Shirts',
       product_domain:'non_food',product_kind:'non_food_resale',selling_price:'799',
