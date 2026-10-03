@@ -33,6 +33,32 @@ export async function ensureCatalogMigrationContract(db){
     );
   `);
 
+
+
+  await db.query(`
+    UPDATE marketplace_products
+       SET catalog_category_code=CASE
+         WHEN product_domain='non_food' THEN 'general_retail'
+         WHEN product_kind='prepared_food' THEN 'prepared_food'
+         WHEN product_kind='fresh_direct' THEN 'fresh_food'
+         WHEN product_kind='packaged_resale' THEN 'packaged_food_drink'
+         ELSE catalog_category_code
+       END,
+       updated_at=updated_at
+     WHERE (catalog_category_code IS NULL OR catalog_category_code='')
+       AND (
+         product_domain='non_food'
+         OR product_kind IN ('prepared_food','fresh_direct','packaged_resale')
+       )
+  `);
+
+  await db.query(`
+    UPDATE marketplace_products
+       SET catalog_schema_version=$1,
+           updated_at=updated_at
+     WHERE COALESCE(catalog_schema_version,'')=''
+  `,[CATALOG_V3_SCHEMA_VERSION]);
+
   await db.query(`
     INSERT INTO catalog_migration_versions(version,schema_version,metadata_json)
     VALUES($1,$2,$3::jsonb)
@@ -58,30 +84,6 @@ export async function ensureCatalogMigrationContract(db){
       }
     })
   ]);
-
-  await db.query(`
-    UPDATE marketplace_products
-       SET catalog_category_code=CASE
-         WHEN product_domain='non_food' THEN 'general_retail'
-         WHEN product_kind='prepared_food' THEN 'prepared_food'
-         WHEN product_kind='fresh_direct' THEN 'fresh_food'
-         WHEN product_kind='packaged_resale' THEN 'packaged_food_drink'
-         ELSE catalog_category_code
-       END,
-       updated_at=updated_at
-     WHERE (catalog_category_code IS NULL OR catalog_category_code='')
-       AND (
-         product_domain='non_food'
-         OR product_kind IN ('prepared_food','fresh_direct','packaged_resale')
-       )
-  `);
-
-  await db.query(`
-    UPDATE marketplace_products
-       SET catalog_schema_version=$1,
-           updated_at=updated_at
-     WHERE COALESCE(catalog_schema_version,'')=''
-  `,[CATALOG_V3_SCHEMA_VERSION]);
 }
 
 export async function catalogMigrationEvidence(db){
@@ -178,7 +180,9 @@ export async function catalogMigrationEvidence(db){
     },
     safe:
       Number(products.total_products||0)===Number(products.distinct_product_ids||0)
+      && Number(products.unmapped_products||0)===0
       && Number(products.unversioned_products||0)===0
+      && Number(orders.marketplace_order_items_missing_core_snapshot||0)===0
       && Number(ownership.inventory_business_mismatches||0)===0
       && Number(ownership.legacy_product_business_mismatches||0)===0
   };
