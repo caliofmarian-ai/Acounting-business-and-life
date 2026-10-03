@@ -336,15 +336,21 @@ export async function createEmbeddedMarketplaceOrder({authorization='',body={}}=
 
 async function createMarketplaceOrder(req){
   const me=await requireCustomer(req);
-  const customerId=Number(me.account.id),businessId=Number(req.body?.business_id),ids=[],qty=new Map();
+  const customerId=Number(me.account.id),businessId=Number(req.body?.business_id),ids=[],basketLines=new Map();
   if(!Number.isInteger(businessId)||businessId<1)throw Object.assign(new Error('Choose a valid merchant'),{status:400});
   await requireMicrobusinessCommerceEligibility(pool,{profileRole:'merchant',businessId,action:'accept a public marketplace order'});
-  for(const raw of req.body?.items||[]){
+  const rawItems=Array.isArray(req.body?.items)?req.body.items:[];
+  for(const raw of rawItems){
     const id=Number(raw.product_id),q=Number(raw.quantity);
+    const variantId=raw.variant_id==null||raw.variant_id===''?null:Number(raw.variant_id);
     if(!Number.isInteger(id)||!positive(q))throw Object.assign(new Error('Every basket item needs a valid quantity'),{status:400});
-    ids.push(id);qty.set(id,(qty.get(id)||0)+q);
+    if(variantId!=null&&(!Number.isInteger(variantId)||variantId<1))throw Object.assign(new Error('Choose a valid product variant'),{status:400});
+    ids.push(id);
+    const key=`${id}:${variantId||0}`,existing=basketLines.get(key);
+    if(existing)existing.quantity+=q;
+    else basketLines.set(key,{product_id:id,variant_id:variantId,quantity:q});
   }
-  if(!ids.length||ids.length>50)throw Object.assign(new Error('Basket needs 1–50 items'),{status:400});
+  if(!rawItems.length||rawItems.length>50)throw Object.assign(new Error('Basket needs 1–50 items'),{status:400});
   const store=await storefront(businessId,false);
   if(!store)throw Object.assign(new Error('Storefront is not available'),{status:404});
   if(store.opening_status==='closed')throw Object.assign(new Error('This merchant is currently closed'),{status:409});
@@ -361,27 +367,70 @@ async function createMarketplaceOrder(req){
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
-    const p=await client.query(`SELECT * FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE AND active=TRUE FOR SHARE`,[businessId,[...new Set(ids)]]);
-    if(p.rowCount!==new Set(ids).size)throw Object.assign(new Error('One or more basket items are unavailable'),{status:409});
+    const productIds=[...new Set(ids)];
+    const p=await client.query(`SELECT * FROM marketplace_products WHERE business_id=$1 AND id=ANY($2::bigint[]) AND published=TRUE AND active=TRUE FOR SHARE`,[businessId,productIds]);
+    if(p.rowCount!==productIds.length)throw Object.assign(new Error('One or more basket items are unavailable'),{status:409});
+    const productById=new Map(p.rows.map(row=>[Number(row.id),row]));
     let subtotal=0;
     const snapshots=[];
-    for(const row of p.rows){
-      const q=qty.get(Number(row.id));
-      let unitCost=0;
-      if(row.inventory_id){
-        const inv=await client.query(`SELECT item,quantity,unit,unit_cost FROM inventory WHERE id=$1 AND business_id=$2 FOR SHARE`,[row.inventory_id,businessId]);
-        if(!inv.rowCount)throw Object.assign(new Error(`${row.name} is not linked to valid Merchant stock`),{status:409});
-        const required=Number(row.quantity_per_unit)*q;
-        if(Number(inv.rows[0].quantity)+1e-9<required)throw Object.assign(new Error(`${row.name} does not have enough stock`),{status:409});
-        unitCost=Number(row.quantity_per_unit)*Number(inv.rows[0].unit_cost);
-      }else if(row.legacy_product_id){
-        const cost=await client.query(`SELECT COALESCE(SUM(r.quantity*i.unit_cost),0) cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2`,[row.legacy_product_id,businessId]);
-        unitCost=Number(cost.rows[0]?.cost||0);
-      }else if(row.stock_tracked&&row.stock_quantity!=null){
-        if(Number(row.stock_quantity)+1e-9<q)throw Object.assign(new Error(`${row.name} does not have enough stock`),{status:409});
+    for(const basketLine of basketLines.values()){
+      const row=productById.get(Number(basketLine.product_id)),q=Number(basketLine.quantity);
+      if(!row)throw Object.assign(new Error('One or more basket items are unavailable'),{status:409});
+      let unitCost=0,unitPrice=Number(row.selling_price),variantId=null,variantSnapshot={};
+      let nameSnapshot=row.name;
+
+      if(row.variant_mode){
+        if(!basketLine.variant_id)throw Object.assign(new Error(`Choose a variant for ${row.name}`),{status:409});
+        const variant=await client.query(`
+          SELECT v.id,v.variant_key,v.inventory_id,v.price_override,v.active,
+                 i.item,i.quantity,i.unit,i.unit_cost
+            FROM catalog_product_variants v
+            JOIN inventory i ON i.id=v.inventory_id AND i.business_id=$3
+           WHERE v.id=$1 AND v.product_id=$2 AND v.active=TRUE
+           FOR SHARE OF v,i
+        `,[Number(basketLine.variant_id),Number(row.id),businessId]);
+        if(!variant.rowCount)throw Object.assign(new Error(`${row.name} variant is unavailable`),{status:409});
+        const selected=variant.rows[0],required=Number(row.quantity_per_unit)*q;
+        if(Number(selected.quantity)+1e-9<required)throw Object.assign(new Error(`${row.name} variant does not have enough stock`),{status:409});
+        unitCost=Number(row.quantity_per_unit)*Number(selected.unit_cost||0);
+        unitPrice=selected.price_override==null?Number(row.selling_price):Number(selected.price_override);
+        variantId=Number(selected.id);
+        const options=await client.query(`
+          SELECT o.code option_code,o.label option_label,ov.value_code,ov.label value_label
+            FROM catalog_variant_option_values x
+            JOIN catalog_product_options o ON o.id=x.option_id
+            JOIN catalog_product_option_values ov ON ov.id=x.option_value_id
+           WHERE x.variant_id=$1
+           ORDER BY o.sort_order,o.id
+        `,[variantId]);
+        const optionValues=options.rows.map(option=>({
+          option_code:option.option_code,
+          option_label:option.option_label,
+          value_code:option.value_code,
+          value_label:option.value_label
+        }));
+        const variantLabel=optionValues.map(option=>option.value_label).filter(Boolean).join(' / ');
+        if(variantLabel)nameSnapshot=`${row.name} · ${variantLabel}`;
+        variantSnapshot={variant_id:variantId,variant_key:selected.variant_key,option_values:optionValues};
+      }else{
+        if(basketLine.variant_id)throw Object.assign(new Error(`${row.name} does not use retail variants`),{status:409});
+        if(row.inventory_id){
+          const inv=await client.query(`SELECT item,quantity,unit,unit_cost FROM inventory WHERE id=$1 AND business_id=$2 FOR SHARE`,[row.inventory_id,businessId]);
+          if(!inv.rowCount)throw Object.assign(new Error(`${row.name} is not linked to valid Merchant stock`),{status:409});
+          const required=Number(row.quantity_per_unit)*q;
+          if(Number(inv.rows[0].quantity)+1e-9<required)throw Object.assign(new Error(`${row.name} does not have enough stock`),{status:409});
+          unitCost=Number(row.quantity_per_unit)*Number(inv.rows[0].unit_cost);
+        }else if(row.legacy_product_id){
+          const cost=await client.query(`SELECT COALESCE(SUM(r.quantity*i.unit_cost),0) cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2`,[row.legacy_product_id,businessId]);
+          unitCost=Number(cost.rows[0]?.cost||0);
+        }else if(row.stock_tracked&&row.stock_quantity!=null){
+          if(Number(row.stock_quantity)+1e-9<q)throw Object.assign(new Error(`${row.name} does not have enough stock`),{status:409});
+        }
       }
-      const line=money(Number(row.selling_price)*q),cogs=money(unitCost*q),gross=money(line-cogs);
-      subtotal+=line;snapshots.push({row,q,line,unitCost,cogs,gross});
+
+      const line=money(unitPrice*q),cogs=money(unitCost*q),gross=money(line-cogs);
+      subtotal+=line;
+      snapshots.push({row,q,line,unitCost,unitPrice,cogs,gross,variantId,variantSnapshot,nameSnapshot});
     }
     subtotal=money(subtotal);
 
@@ -395,7 +444,13 @@ async function createMarketplaceOrder(req){
     const orderId=Number(o.rows[0].id),number=`BL-${manilaStamp()}-${String(orderId).padStart(5,'0')}`;
     await client.query(`UPDATE orders SET order_number=$1 WHERE id=$2`,[number,orderId]);
     for(const x of snapshots){
-      await client.query(`INSERT INTO order_items(order_id,source_kind,source_id,name_snapshot,category_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,line_total,estimated_cogs,estimated_gross_profit) VALUES($1,'marketplace_product',$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[orderId,x.row.id,x.row.name,x.row.category,x.q,x.row.selling_price,x.unitCost,x.line,x.cogs,x.gross]);
+      await client.query(`
+        INSERT INTO order_items(
+          order_id,source_kind,source_id,catalog_variant_id,variant_snapshot_json,
+          name_snapshot,category_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,
+          line_total,estimated_cogs,estimated_gross_profit
+        ) VALUES($1,'marketplace_product',$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12)
+      `,[orderId,x.row.id,x.variantId,JSON.stringify(x.variantSnapshot||{}),x.nameSnapshot,x.row.category,x.q,x.unitPrice,x.unitCost,x.line,x.cogs,x.gross]);
     }
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Marketplace checkout')`,[orderId,status,customerId]);
     await reserveOrderStock(client,{...o.rows[0],id:orderId,order_number:number,order_status:status,business_id:businessId,fulfilment_method:fulfilment});
