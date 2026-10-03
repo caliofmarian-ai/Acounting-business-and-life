@@ -147,6 +147,23 @@ export function buildWasteAnalytics({
     },
     by_reason:reasons,
     top_items:topItems,
+    details:[...lossRows]
+      .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)||Number(b.id||0)-Number(a.id||0))
+      .map(row=>({
+        id:Number(row.id),
+        inventory_id:Number(row.inventory_id),
+        item:String(row.item||'Inventory item'),
+        inventory_type:String(row.inventory_type||'ingredient'),
+        adjustment_kind:row.adjustment_kind,
+        label:wasteKindLabel(row.adjustment_kind),
+        quantity_loss:row.loss_quantity,
+        unit:row.unit,
+        value_loss:row.value_loss,
+        unit_cost_snapshot:Number(row.unit_cost_snapshot||0),
+        note:String(row.note||''),
+        created_at:row.created_at||null,
+        lot_allocations:Array.isArray(row.lot_allocations)?row.lot_allocations:[]
+      })),
     denominator_policy:{
       waste_rate_pct:null,
       status:'NOT_COMPUTED_WITHOUT_COMPLETE_DENOMINATOR_EVIDENCE',
