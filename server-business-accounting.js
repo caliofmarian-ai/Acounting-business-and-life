@@ -26,6 +26,7 @@ import {buildWasteAnalytics} from './inventory-waste-core.js';
 import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
 import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
 import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
+import {INVENTORY_CLASSIFICATION_VERSION,ensureUniversalInventorySchema,normalizeInventoryClassification,compatibilityInventoryType,inventoryClassificationInputProvided} from './universal-inventory-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,7 +37,7 @@ const jsonBody = express.json({ limit: '14mb' });
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const ACCOUNTS = new Set(['cash','gcash','bank','other']);
 const TYPES = new Set(['sale','business_expense','money_received','personal_withdrawal','adjustment']);
-const INVENTORY_TYPES = new Set(['ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply']);
+const INVENTORY_TYPES = new Set(['ingredient','resale_item','production_material','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply']);
 const normalizeInventoryType=value=>INVENTORY_TYPES.has(clean(value,40))?clean(value,40):'ingredient';
 const INVENTORY_ADJUSTMENT_KINDS = new Set(['waste','spoilage','expired','damaged','count_correction','other_loss']);
 let profileGovernanceApp=null;
@@ -86,7 +87,7 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS target_level NUMERIC(14,4) NOT NULL DEFAULT 0;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS inventory_type TEXT NOT NULL DEFAULT 'ingredient';
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_inventory_type_check;
-    ALTER TABLE inventory ADD CONSTRAINT inventory_inventory_type_check CHECK(inventory_type IN ('ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply'));
+    ALTER TABLE inventory ADD CONSTRAINT inventory_inventory_type_check CHECK(inventory_type IN ('ingredient','resale_item','production_material','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply'));
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_condition TEXT NOT NULL DEFAULT 'other';
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_storage_condition_check;
     ALTER TABLE inventory ADD CONSTRAINT inventory_storage_condition_check CHECK(storage_condition IN ('ambient','dry','chilled','frozen','other'));
@@ -315,6 +316,7 @@ async function initAccountingTenancyDb() {
   await ensureInventoryIdentifierSchema(pool);
   await ensureInventoryLocationSchema(pool);
   await ensureInventoryCountSessionSchema(pool);
+  await ensureUniversalInventorySchema(pool);
   await addBusinessForeignKeys();
   await provisionExistingBindings();
   await ensureBudgetRows();
@@ -599,7 +601,12 @@ registerInventoryCountSessionRoutes(app,{
 
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
   const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,target_level=0,unit_cost=0}=req.body||{};
-  const inventoryType=normalizeInventoryType(req.body?.inventory_type);
+  const legacyType=normalizeInventoryType(req.body?.inventory_type);
+  const classificationExplicit=inventoryClassificationInputProvided(req.body||{});
+  let classification;
+  try{classification=normalizeInventoryClassification(req.body||{},{inventoryType:legacyType})}
+  catch(error){return res.status(400).json({error:error.message})}
+  const inventoryType=classificationExplicit?compatibilityInventoryType(classification,legacyType):legacyType;
   if(Number(target_level)>0&&Number(target_level)+1e-9<Number(reorder_level||0))return res.status(400).json({error:'Target stock must be equal to or higher than the low-stock alert level.'});
   if(!clean(item,100))return res.status(400).json({error:'Item is required'});
   const defaults=inventoryStorageDefaults(inventoryType);
@@ -612,21 +619,30 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
     storageSegregated:req.body?.storage_segregated??defaults.storage_segregated
   });
   const{rows}=await pool.query(`
-    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
-      storage_condition,storage_area_type,storage_location_label,storage_segregated)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    INSERT INTO inventory(
+      business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
+      storage_condition,storage_area_type,storage_location_label,storage_segregated,
+      inventory_domain,stock_role,classification_version
+    )
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
     ON CONFLICT(business_id,item) DO UPDATE SET
       unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,target_level=EXCLUDED.target_level,
-      unit_cost=EXCLUDED.unit_cost,inventory_type=EXCLUDED.inventory_type,
-      storage_condition=CASE WHEN $13 THEN EXCLUDED.storage_condition ELSE inventory.storage_condition END,
-      storage_area_type=CASE WHEN $13 THEN EXCLUDED.storage_area_type ELSE inventory.storage_area_type END,
-      storage_location_label=CASE WHEN $13 THEN EXCLUDED.storage_location_label ELSE inventory.storage_location_label END,
-      storage_segregated=CASE WHEN $13 THEN EXCLUDED.storage_segregated ELSE inventory.storage_segregated END,
+      unit_cost=EXCLUDED.unit_cost,
+      inventory_type=CASE WHEN $17 THEN EXCLUDED.inventory_type ELSE inventory.inventory_type END,
+      inventory_domain=CASE WHEN $17 THEN EXCLUDED.inventory_domain ELSE inventory.inventory_domain END,
+      stock_role=CASE WHEN $17 THEN EXCLUDED.stock_role ELSE inventory.stock_role END,
+      classification_version=CASE WHEN $17 THEN EXCLUDED.classification_version ELSE inventory.classification_version END,
+      storage_condition=CASE WHEN $16 THEN EXCLUDED.storage_condition ELSE inventory.storage_condition END,
+      storage_area_type=CASE WHEN $16 THEN EXCLUDED.storage_area_type ELSE inventory.storage_area_type END,
+      storage_location_label=CASE WHEN $16 THEN EXCLUDED.storage_location_label ELSE inventory.storage_location_label END,
+      storage_segregated=CASE WHEN $16 THEN EXCLUDED.storage_segregated ELSE inventory.storage_segregated END,
       updated_at=NOW()
     RETURNING *
   `,[
     business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(target_level)||0,Number(unit_cost)||0,inventoryType,
-    storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,hasStorage
+    storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
+    classification.inventory_domain,classification.stock_role,classification.classification_version,
+    hasStorage,classificationExplicit
   ]);
   res.status(201).json(rows[0])
 }catch(e){next(e)}});
@@ -639,7 +655,8 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
     const requestedInventoryId=req.body?.inventory_id==null||req.body?.inventory_id===''?null:Number(req.body.inventory_id);
     if(requestedInventoryId!=null&&!Number.isInteger(requestedInventoryId))return res.status(400).json({error:'Choose a valid Inventory item.'});
     if(!itemName&&requestedInventoryId==null)return res.status(400).json({error:'Item is required'});
-    const inventoryType=normalizeInventoryType(req.body?.inventory_type);
+    const requestedLegacyType=normalizeInventoryType(req.body?.inventory_type);
+    const classificationExplicit=inventoryClassificationInputProvided(req.body||{});
     const expiryAt=inventoryExpiryTimestamp(req.body?.expires_at);
     const supplierLotCode=clean(req.body?.lot_code,90);
     const account=clean(req.body?.account||'cash',30);
@@ -665,6 +682,18 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         :await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND id=$2 FOR UPDATE`,[ctx.business.id,requestedInventoryId]);
       if(requestedInventoryId!=null&&!current.rowCount)throw Object.assign(new Error('Inventory item not found.'),{status:404});
       if(requestedInventoryId!=null)itemName=current.rows[0].item;
+      const existing=current.rows[0]||null;
+      let classification;
+      try{
+        classification=classificationExplicit
+          ?normalizeInventoryClassification(req.body||{},{inventoryType:requestedLegacyType})
+          :existing?.inventory_domain&&existing?.stock_role
+            ?normalizeInventoryClassification({inventory_domain:existing.inventory_domain,stock_role:existing.stock_role},{inventoryType:existing.inventory_type})
+            :normalizeInventoryClassification(req.body||{},{inventoryType:existing?.inventory_type||requestedLegacyType});
+      }catch(error){throw Object.assign(error,{status:400})}
+      const inventoryType=classificationExplicit
+        ?compatibilityInventoryType(classification,requestedLegacyType)
+        :(existing?.inventory_type||requestedLegacyType);
       const defaults=inventoryStorageDefaults(inventoryType);
       const fallback=current.rows[0]||defaults;
       const storage=requireValidInventoryStorage({
@@ -694,24 +723,29 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
                  base_unit=$2,
                  measurement_family=$3,
                  unit_cost=$4,
-                 inventory_type=$5,
-                 storage_condition=$6,
-                 storage_area_type=$7,
-                 storage_location_label=$8,
-                 storage_segregated=$9,
-                 reorder_level=CASE WHEN $10>0 THEN $10 ELSE reorder_level END,
-                 target_level=CASE WHEN $11>0 THEN $11 ELSE target_level END,
-                 last_purchase_quantity=$12,
-                 last_purchase_unit=$13,
-                 last_purchase_total_cost=$14,
+                 inventory_type=CASE WHEN $17 THEN $5 ELSE inventory_type END,
+                 inventory_domain=CASE WHEN $17 THEN $6 ELSE inventory_domain END,
+                 stock_role=CASE WHEN $17 THEN $7 ELSE stock_role END,
+                 classification_version=CASE WHEN $17 THEN $8 ELSE classification_version END,
+                 storage_condition=$9,
+                 storage_area_type=$10,
+                 storage_location_label=$11,
+                 storage_segregated=$12,
+                 reorder_level=CASE WHEN $13>0 THEN $13 ELSE reorder_level END,
+                 target_level=CASE WHEN $14>0 THEN $14 ELSE target_level END,
+                 last_purchase_quantity=$15,
+                 last_purchase_unit=$16,
+                 last_purchase_total_cost=$18,
                  last_purchase_at=NOW(),
                  updated_at=NOW()
-           WHERE id=$15 AND business_id=$16
+           WHERE id=$19 AND business_id=$20
            RETURNING *
         `,[
           purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,inventoryType,
+          classification.inventory_domain,classification.stock_role,classification.classification_version,
           storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
-          purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id
+          purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,
+          classificationExplicit,purchase.total_cost,old.id,ctx.business.id
         ]);
         inventoryRow=updated.rows[0];
       }else{
@@ -719,13 +753,15 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
           INSERT INTO inventory(
             business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
             storage_condition,storage_area_type,storage_location_label,storage_segregated,
-            measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at
-          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$3,$14,$15,$16,NOW())
+            measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at,
+            inventory_domain,stock_role,classification_version
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$3,$14,$15,$16,NOW(),$17,$18,$19)
           RETURNING *
         `,[
           ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.base_unit_cost,inventoryType,
           storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
-          purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost
+          purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,
+          classification.inventory_domain,classification.stock_role,classification.classification_version
         ]);
         inventoryRow=inserted.rows[0];
       }
