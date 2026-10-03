@@ -85,8 +85,9 @@ test('schema bootstrap is additive and remaps catalog-linked resale stock when M
   assert.match(calls[0].sql,/ADD COLUMN IF NOT EXISTS inventory_domain/);
   assert.match(calls[0].sql,/ADD COLUMN IF NOT EXISTS stock_role/);
   assert.match(calls[0].sql,/inventory_domain_role_check/);
-  assert.ok(calls.some(x=>/FROM marketplace_products/.test(x.sql)&&/stock_role='direct_resale'/.test(x.sql)));
-  assert.ok(calls.some(x=>/inventory_type='resale_item'/.test(x.sql)));
+  const linked=calls.find(x=>/FROM marketplace_products/.test(x.sql)&&/stock_role='direct_resale'/.test(x.sql));
+  assert.ok(linked);
+  assert.doesNotMatch(linked.sql,/inventory_type\s*=/);
 });
 
 test('when Marketplace is not initialized, ambiguous legacy ingredients stay pending instead of being misclassified',async()=>{
