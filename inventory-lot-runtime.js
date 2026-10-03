@@ -63,3 +63,23 @@ export async function restoreLotAllocation(client,{lotId,quantity}={}){
 export async function canUseSupplyLots(client){
   return supplyLotsAvailable(client);
 }
+
+export async function applyPhysicalLotReductions(client,allocations=[]){
+  const applied=[];
+  for(const allocation of allocations){
+    const qty=Number(allocation.quantity);
+    if(!Number.isFinite(qty)||qty<=0)continue;
+    const result=await client.query(
+      `UPDATE supply_lots
+          SET quantity_remaining_base=GREATEST(0,quantity_remaining_base-$1),
+              lot_state=CASE WHEN quantity_remaining_base-$1<=0.000000001 THEN 'depleted' ELSE lot_state END
+        WHERE id=$2 AND quantity_remaining_base+$3>=$1
+        RETURNING id,inventory_id,internal_lot_code,supplier_lot_code,lot_state,expires_at,quantity_remaining_base`,
+      [qty,Number(allocation.lot_id),1e-9]
+    );
+    if(!result.rowCount)throw Object.assign(new Error('Lot quantity changed while the Inventory adjustment was being saved'),{status:409});
+    applied.push({...allocation,...result.rows[0]});
+  }
+  return applied;
+}
+
