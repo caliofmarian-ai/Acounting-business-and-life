@@ -22,6 +22,7 @@ import {ensureCatalogVariantSchema,readRetailVariantConfiguration,replaceRetailV
 import {ensureFoodMenuSchema,readFoodMenus,readModifierGroups,modifierProjectionForProducts,createFoodMenu,replaceFoodMenu,createModifierGroup,replaceModifierGroup,setFoodProductAvailability,effectiveFoodAvailability,validateProductModifierSelections,foodProductOrderability} from './food-menu-core.js';
 import {ensureRetailMerchandisingSchema,retailCatalogPage,listCatalogCollections,createCatalogCollection,updateCatalogCollection,replaceCollectionProducts,applyRetailBulkAction,scanRetailCatalogBarcode,publicRetailCollections} from './retail-merchandising-core.js';
 import {ADAPTIVE_STOREFRONT_VERSION,publicCatalogAttributeMap,publicRetailAvailabilityMap,publicProductProjection,retailFacetSummary,storefrontPresentationMode} from './adaptive-storefront-core.js';
+import {catalogMigrationContractReady,catalogCompatibilityProjection} from './catalog-migration-contract-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -214,7 +215,7 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool);await ensureCatalogVariantSchema(pool);await ensureFoodMenuSchema(pool);await ensureRetailMerchandisingSchema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool);await ensureCatalogVariantSchema(pool);await ensureFoodMenuSchema(pool);await ensureRetailMerchandisingSchema(pool);await catalogMigrationContractReady(pool)}
 
 async function storefrontMedia(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
@@ -311,7 +312,8 @@ async function products(businessId,includePrivate=false,domain=''){
     ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1${domainSql} ORDER BY p.category,p.name`
     :`SELECT p.* FROM marketplace_products p WHERE p.business_id=$1 AND p.published=TRUE AND p.active=TRUE${domainSql} ORDER BY p.category,p.name`;
   const{rows}=await pool.query(query,args);
-  const media=await attachProductMedia(rows,!includePrivate);
+  const compatibleRows=rows.map(catalogCompatibilityProjection);
+  const media=await attachProductMedia(compatibleRows,!includePrivate);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:!includePrivate});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
   const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:!includePrivate});
@@ -369,7 +371,7 @@ async function guestPublicProducts(businessId){
     image_data_url,variant_mode,availability_state,availability_until,availability_note,
     catalog_category_code,brand,model,condition_code,manufacturer_part_number
     FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
-  const media=await attachProductMedia(rows,true);
+  const media=await attachProductMedia(rows.map(catalogCompatibilityProjection),true);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:true});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
   const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:true});
@@ -377,7 +379,30 @@ async function guestPublicProducts(businessId){
   return adaptivePublicProducts(withAllergens,businessId);
 }
 
-async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
+async function importLegacyProducts(businessId){const r=await pool.query(`
+  INSERT INTO marketplace_products(
+    business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,
+    quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,
+    catalog_category_code,catalog_schema_version
+  )
+  SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',
+         1,p.selling_price,FALSE,NULL,p.active,FALSE,'prepared_food',$2
+    FROM products p
+   WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe'
+  ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL
+  DO UPDATE SET
+    name=EXCLUDED.name,
+    category=EXCLUDED.category,
+    selling_price=EXCLUDED.selling_price,
+    active=EXCLUDED.active,
+    catalog_category_code=COALESCE(marketplace_products.catalog_category_code,EXCLUDED.catalog_category_code),
+    catalog_schema_version=CASE
+      WHEN COALESCE(marketplace_products.catalog_schema_version,'')='' THEN EXCLUDED.catalog_schema_version
+      ELSE marketplace_products.catalog_schema_version
+    END,
+    updated_at=NOW()
+  RETURNING id
+`,[businessId,CATALOG_V3_SCHEMA_VERSION]);return r.rowCount}
 
 function manilaStamp(){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const x=Object.fromEntries(parts.map(p=>[p.type,p.value]));return `${x.year}${x.month}${x.day}`}
 async function trust(client,businessId,customerId){const count=await client.query(`SELECT COUNT(*)::int count FROM orders WHERE business_id=$1 AND customer_account_id=$2 AND order_status='completed'`,[businessId,customerId]);const s=await client.query(`SELECT allow_remote_cash_prep,trust_suspended_at FROM merchant_customer_settings WHERE business_id=$1 AND customer_account_id=$2`,[businessId,customerId]);const c=Number(count.rows[0]?.count||0),row=s.rows[0];return{eligible:c>=5&&!row?.trust_suspended_at,allowed:c>=5&&Boolean(row?.allow_remote_cash_prep)&&!row?.trust_suspended_at}}
