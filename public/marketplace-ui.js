@@ -1,4 +1,8 @@
 let marketMe=null,marketWorkspace=null,marketMode='food',currentStore=null,basket=new Map(),merchantStore=null;
+let retailCatalogState={q:'',category:'',status:'all',stock:'all',media:'all',collection_id:'',offset:0,limit:50};
+let retailCatalogSelection=new Set();
+let retailCatalogScannerStream=null;
+let retailCatalogScanFrame=0;
 let activeDeliveryQuote=null,activeDeliveryDestination=null,deliveryQuoteSeq=0;
 const mtok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const mh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -393,7 +397,44 @@ function announceMerchantMarketSurface(surface){document.dispatchEvent(new Custo
 async function openMerchantStore(){ensureMarket();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('marketWorkspace')){hideBase();marketWorkspace.classList.remove('hidden')}document.getElementById('basketBar').classList.add('hidden');announceMerchantMarketSurface('storefront');await renderMerchantStore()}
 async function openMerchantCatalog(){ensureMarket();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('marketWorkspace')){hideBase();marketWorkspace.classList.remove('hidden')}document.getElementById('basketBar').classList.add('hidden');announceMerchantMarketSurface('catalog');await renderMerchantCatalog()}
 async function renderMerchantStore(){marketWorkspace.innerHTML=marketHeader('Storefront','Public shop settings only')+'<div class="marketEmpty">Loading storefront settings…</div>';bindBack();try{merchantStore=await mapi('/api/merchant/storefront');marketWorkspace.innerHTML=marketHeader('Storefront','How your shop appears and operates for customers')+merchantReadinessForm(merchantStore)+storeForm(merchantStore)+`<section class="merchantStoreCard catalogBoundaryNote"><strong>Products are managed in Catalog</strong><p>Add, import, publish, hide and manage product images from Catalog. Storefront contains only store-level settings.</p><button type="button" class="importProducts" id="openCatalogFromStorefront">Open Catalog</button></section>`;bindBack();bindMerchantReadiness(merchantStore);upgradeStorefrontFormV2(merchantStore);bindStoreForm();bindStorefrontV2Controls(merchantStore);document.getElementById('openCatalogFromStorefront')?.addEventListener('click',openMerchantCatalog)}catch(e){marketWorkspace.innerHTML=marketHeader('Storefront','Marketplace settings')+`<div class="marketEmpty">${mh(e.message)}</div>`;bindBack()}}
-async function renderMerchantCatalog(){marketWorkspace.innerHTML=marketHeader('Catalog','Create and manage what customers can buy')+'<div class="marketEmpty">Loading Catalog…</div>';bindBack();try{const [store,inventory]=await Promise.all([mapi('/api/merchant/storefront'),mapi('/api/inventory')]);merchantStore=store;marketWorkspace.innerHTML=marketHeader('Catalog','Products, selling prices, publication and product images')+catalogCreateSection(inventory||[])+preparedImportSection()+catalogSection(store.products||[]);bindBack();bindCatalogCreate(inventory||[]);bindCatalog()}catch(e){marketWorkspace.innerHTML=marketHeader('Catalog','Product management')+`<div class="marketEmpty">${mh(e.message)}</div>`;bindBack()}}
+function retailCatalogQuery(){
+  const p=new URLSearchParams();
+  p.set('business_id',String(Number(merchantStore?.business_id||0)));
+  for(const key of ['q','category','status','stock','media','collection_id']){
+    const value=retailCatalogState[key];
+    if(value&&value!=='all')p.set(key,String(value));
+  }
+  p.set('offset',String(Math.max(0,Number(retailCatalogState.offset)||0)));
+  p.set('limit',String(Math.max(1,Number(retailCatalogState.limit)||50)));
+  return p.toString();
+}
+async function renderMerchantCatalog(){
+  stopRetailCatalogScanner();
+  marketWorkspace.innerHTML=marketHeader('Catalog','Create and manage what customers can buy')+'<div class="marketEmpty">Loading Catalog…</div>';
+  bindBack();
+  try{
+    const [store,inventory]=await Promise.all([mapi('/api/merchant/storefront'),mapi('/api/inventory')]);
+    merchantStore=store;
+    const [retailPage,collections]=await Promise.all([
+      mapi('/api/merchant/catalog-v3/items?'+retailCatalogQuery()),
+      mapi('/api/merchant/catalog-v3/collections?business_id='+encodeURIComponent(Number(store.business_id)))
+    ]);
+    const foodProducts=(store.products||[]).filter(product=>product.product_domain==='food');
+    marketWorkspace.innerHTML=
+      marketHeader('Catalog','Food menus and Retail products share one Catalog engine')+
+      catalogCreateSection(inventory||[])+
+      retailMerchandisingSection(retailPage,collections||[])+
+      ((store.merchant_domain==='food'||store.merchant_domain==='mixed')?preparedImportSection():'')+
+      (foodProducts.length?catalogSection(foodProducts):'');
+    bindBack();
+    bindCatalogCreate(inventory||[]);
+    bindRetailMerchandising(retailPage,collections||[],inventory||[]);
+    bindCatalog();
+  }catch(e){
+    marketWorkspace.innerHTML=marketHeader('Catalog','Product management')+`<div class="marketEmpty">${mh(e.message)}</div>`;
+    bindBack();
+  }
+}
 function readinessLabel(value){const map={starting:'Starting',building_records:'Building records',getting_ready:'Getting ready',applying:'Applying',verified:'Verified',growing:'Growing'};return map[value]||'Starting'}
 function readinessNextLabel(value){const map={choose_activity_track:'Choose Food or Non-food',add_operating_context:'Tell us where you operate',start_building_records:'Start building basic records',review_readiness_steps:'Review your next readiness step',prepare_applications:'Prepare the applicable official steps',track_application_progress:'Track your application progress',review_commerce_capabilities:'Review available commerce capabilities',grow_business:'Keep growing the business'};return map[value]||'Review your next step'}
 function merchantReadinessForm(s){
@@ -434,6 +475,275 @@ function bindMerchantReadiness(store){
   };
 }
 function storeForm(s){return `<section class="merchantStoreCard"><h2>Public storefront</h2><p>Accounting, supplier relationships and internal margins are never published here.</p><div data-bl-pricing="merchant"></div><form id="merchantStoreForm" class="merchantStoreForm"><input id="storeBusinessId" type="hidden" value="${s.business_id}"><label>Store name<input id="storeName" value="${mh(s.store_name)}" required></label><label>Description<textarea id="storeDescription" rows="3">${mh(s.description||'')}</textarea></label><div class="merchantStoreForm two"><label>Store type<select id="storeDomain"><option value="food" ${s.merchant_domain==='food'?'selected':''}>Food</option><option value="non_food" ${s.merchant_domain==='non_food'?'selected':''}>Non-food</option><option value="mixed" ${s.merchant_domain==='mixed'?'selected':''}>Mixed</option></select></label><label>Publication<select id="storeStatus"><option value="draft" ${s.publication_status==='draft'?'selected':''}>Draft / private</option><option value="published" ${s.publication_status==='published'?'selected':''} ${s.readiness?.enforcement_enabled&&!['eligible_limited','eligible_full'].includes(s.readiness?.commerce_state)?'disabled':''}>Published</option><option value="paused" ${s.publication_status==='paused'?'selected':''}>Paused</option></select></label></div><label>Pickup address<input id="storeAddress" value="${mh(s.pickup_address||'')}" placeholder="Public pickup location"></label><div class="merchantStoreForm two"><label>Opening status<select id="storeOpening"><option value="open" ${s.opening_status==='open'?'selected':''}>Open</option><option value="busy" ${s.opening_status==='busy'?'selected':''}>Busy</option><option value="closed" ${s.opening_status==='closed'?'selected':''}>Closed</option></select></label><label>Preparation ETA (minutes)<input id="storeEta" type="number" min="1" max="240" value="${Number(s.preparation_eta_minutes)||15}"></label></div><div class="toggleGrid"><label class="toggleBox"><input id="storePickup" type="checkbox" ${s.pickup_enabled?'checked':''}> Pickup</label><label class="toggleBox"><input id="storeDelivery" type="checkbox" ${s.delivery_enabled?'checked':''}> Delivery</label><label class="toggleBox"><input id="storeCash" type="checkbox" ${s.cash_enabled?'checked':''}> Cash</label><label class="toggleBox"><input id="storeOnline" type="checkbox" ${s.online_enabled?'checked':''}> Online/digital</label></div><div class="privacyToggle"><strong>Public Merchant rating</strong><p>When enabled, verified completed orders can contribute to your public rating and Top Merchants. You can turn it off and leave the Marketplace.</p><label class="toggleBox"><input id="storeReputation" type="checkbox" ${s.public_reputation_enabled?'checked':''}> Participate in public Merchant reputation</label></div><div class="privacyToggle"><strong>Price comparison — explicit opt-in</strong><p>Default is OFF. If OFF, your products remain visible and purchasable but are excluded from Lowest listed price / Lowest unit price and price-based rankings.</p><label class="toggleBox"><input id="storeCompare" type="checkbox" ${s.price_comparison_enabled?'checked':''}> Allow my eligible products in price comparison</label></div><div class="storeFormActions"><button class="saveStore">Save storefront</button></div><div id="storeMessage" class="avatarHint"></div></form></section>`}
+function retailCollectionOptions(collections=[],selected=''){
+  return '<option value="">All collections</option>'+collections.filter(x=>x.active!==false).map(collection=>`<option value="${Number(collection.id)}" ${String(selected)===String(collection.id)?'selected':''}>${mh(collection.name)} (${Number(collection.item_count||0)})</option>`).join('');
+}
+function retailBulkCollectionOptions(collections=[]){
+  return '<option value="">Choose collection</option>'+collections.filter(x=>x.active!==false).map(collection=>`<option value="${Number(collection.id)}">${mh(collection.name)}</option>`).join('');
+}
+function retailCatalogStatus(item){
+  if(item.active===false)return 'Archived';
+  return item.published?'Published':'Private';
+}
+function retailCatalogRow(item,collections=[]){
+  const images=Array.isArray(item.images)?item.images:[];
+  const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible);
+  const visual=primary?.data_url||item.image_data_url||'';
+  const collectionNames=(item.collection_ids||[]).map(id=>collections.find(c=>Number(c.id)===Number(id))?.name).filter(Boolean);
+  const ids=[item.internal_sku?`SKU ${mh(item.internal_sku)}`:'',item.barcode?`GTIN ${mh(item.barcode)}`:''].filter(Boolean);
+  const variantCopy=Number(item.variant_count||0)>0
+    ?`${Number(item.active_variant_count||0)} active variant${Number(item.active_variant_count||0)===1?'':'s'} · on hand ${Number(item.variant_on_hand||0).toLocaleString('en-PH',{maximumFractionDigits:4})}`
+    :(item.inventory_id?`On hand ${Number(item.direct_inventory_quantity||0).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(item.inventory_unit||'')}`:'No linked direct stock');
+  const status=retailCatalogStatus(item);
+  return `<article class="retailCatalogRow" data-retail-product-row="${Number(item.id)}">
+    <label class="retailCatalogSelect"><input type="checkbox" data-retail-select="${Number(item.id)}" aria-label="Select ${mh(item.name)}"></label>
+    <div class="retailCatalogThumb">${visual?`<img src="${visual}" alt="${mh(item.name)}">`:'📦'}</div>
+    <div class="retailCatalogCopy">
+      <div class="retailCatalogTitle"><strong>${mh(item.name)}</strong><span class="${item.published&&item.active!==false?'live':item.active===false?'archived':'private'}">${status}</span></div>
+      <small>${mh(item.category||'General')} · ${mphp(item.selling_price)}${item.brand?' · '+mh(item.brand):''}${item.model?' · '+mh(item.model):''}</small>
+      <small>${variantCopy} · ${item.in_stock?'In stock':'Out of stock'}${item.has_public_media?'':' · Photo missing'}</small>
+      ${ids.length?`<small>${ids.join(' · ')}</small>`:''}
+      ${collectionNames.length?`<div class="retailCollectionChips">${collectionNames.map(name=>`<span>${mh(name)}</span>`).join('')}</div>`:''}
+    </div>
+    <div class="retailCatalogRowActions">
+      ${item.active===false
+        ?`<button class="publishButton" type="button" data-restore-product="${Number(item.id)}">Restore</button>`
+        :`<button class="publishButton ${item.published?'on':''}" type="button" data-toggle-product="${Number(item.id)}" data-published="${item.published?'1':'0'}">${item.published?'Published':'Private'}</button><button class="imageAction danger" type="button" data-archive-product="${Number(item.id)}">Archive</button>`}
+    </div>
+  </article>`;
+}
+function retailMerchandisingSection(page={},collections=[]){
+  const items=Array.isArray(page.items)?page.items:[];
+  const total=Number(page.total||0),offset=Number(page.offset||0),limit=Number(page.limit||50);
+  const from=total?offset+1:0,to=Math.min(total,offset+items.length);
+  const prev=offset>0,next=offset+items.length<total;
+  const collectionList=collections.length?collections.map(collection=>`
+    <div class="retailCollectionRow">
+      <div><strong>${mh(collection.name)}</strong><small>${Number(collection.item_count||0)} product${Number(collection.item_count||0)===1?'':'s'}${collection.description?' · '+mh(collection.description):''}</small></div>
+      <div><button type="button" class="imageAction" data-edit-collection="${Number(collection.id)}">Edit</button><button type="button" class="imageAction danger" data-archive-collection="${Number(collection.id)}">Archive</button></div>
+    </div>`).join(''):'<div class="marketEmpty">No Retail collections yet.</div>';
+  return `<section class="merchantStoreCard retailMerchandising">
+    <div class="retailCatalogHead"><div><small>RETAIL MERCHANDISING</small><h2>Products & collections</h2><p>Search, scan, organise and publish Retail products without duplicating Inventory.</p></div><span>${total} product${total===1?'':'s'}</span></div>
+
+    <form id="retailCatalogFilterForm" class="retailCatalogFilters">
+      <label class="retailSearch">Search<input id="retailCatalogSearch" value="${mh(retailCatalogState.q)}" placeholder="Name, brand, SKU or barcode"></label>
+      <label>Status<select id="retailCatalogStatus"><option value="all">All states</option><option value="published" ${retailCatalogState.status==='published'?'selected':''}>Published</option><option value="private" ${retailCatalogState.status==='private'?'selected':''}>Private</option><option value="archived" ${retailCatalogState.status==='archived'?'selected':''}>Archived</option></select></label>
+      <label>Stock<select id="retailCatalogStock"><option value="all">All stock</option><option value="in_stock" ${retailCatalogState.stock==='in_stock'?'selected':''}>In stock</option><option value="out_of_stock" ${retailCatalogState.stock==='out_of_stock'?'selected':''}>Out of stock</option></select></label>
+      <label>Media<select id="retailCatalogMedia"><option value="all">All media</option><option value="missing" ${retailCatalogState.media==='missing'?'selected':''}>Photo missing</option><option value="has_media" ${retailCatalogState.media==='has_media'?'selected':''}>Has photo</option></select></label>
+      <label>Collection<select id="retailCatalogCollectionFilter">${retailCollectionOptions(collections,retailCatalogState.collection_id)}</select></label>
+      <label>Category<input id="retailCatalogCategoryFilter" value="${mh(retailCatalogState.category)}" placeholder="Exact category"></label>
+      <div class="retailFilterActions"><button type="submit" class="saveStore">Apply</button><button id="retailCatalogClearFilters" type="button" class="importProducts">Clear</button></div>
+    </form>
+
+    <div class="retailScanPanel">
+      <div><strong>Scan-first intake</strong><small>Exact barcode match opens the existing Catalog item. Unknown barcodes start a draft but never invent product details.</small></div>
+      <form id="retailBarcodeForm"><input id="retailBarcodeInput" inputmode="text" autocomplete="off" placeholder="Scan or enter barcode / GTIN"><button type="submit">Look up</button><button id="retailBarcodeCamera" type="button">Scan camera</button></form>
+      <div id="retailBarcodeScanner" class="retailBarcodeScanner hidden"><video id="retailBarcodeVideo" playsinline muted></video><button id="retailBarcodeStop" type="button">Stop camera</button></div>
+      <div id="retailBarcodeMessage" class="avatarHint" aria-live="polite"></div>
+    </div>
+
+    <div class="retailBulkBar">
+      <label><input id="retailSelectAll" type="checkbox"> Select page</label>
+      <strong id="retailSelectedCount">0 selected</strong>
+      <select id="retailBulkAction">
+        <option value="">Bulk action</option>
+        <option value="publish">Publish</option>
+        <option value="unpublish">Make private</option>
+        <option value="availability_off">Make unavailable</option>
+        <option value="availability_on">Make available</option>
+        <option value="category">Change category</option>
+        <option value="collection_add">Add to collection</option>
+        <option value="collection_remove">Remove from collection</option>
+        <option value="archive">Archive</option>
+        <option value="restore">Restore as private</option>
+      </select>
+      <select id="retailBulkCollection">${retailBulkCollectionOptions(collections)}</select>
+      <button id="retailBulkApply" type="button">Apply</button>
+    </div>
+
+    <div class="retailCatalogResults">
+      ${items.length?items.map(item=>retailCatalogRow(item,collections)).join(''):'<div class="marketEmpty">No Retail products match these filters.</div>'}
+    </div>
+    <div class="retailCatalogPager"><span>Showing ${from}–${to} of ${total}</span><div><button id="retailPrevPage" type="button" ${prev?'':'disabled'}>Previous</button><button id="retailNextPage" type="button" ${next?'':'disabled'}>Next</button></div></div>
+
+    <details class="retailCollectionsPanel">
+      <summary>Collections</summary>
+      <p>Collections are merchandising groups such as New arrivals, Sale or Back to school. Products are referenced, never duplicated.</p>
+      <form id="retailCollectionCreateForm" class="retailCollectionForm"><input id="retailCollectionName" maxlength="100" placeholder="Collection name" required><input id="retailCollectionDescription" maxlength="500" placeholder="Optional description"><button type="submit">Create collection</button></form>
+      <div class="retailCollectionList">${collectionList}</div>
+      <div id="retailCollectionMessage" class="avatarHint"></div>
+    </details>
+  </section>`;
+}
+
+async function retailScanLookup(barcode){
+  const message=document.getElementById('retailBarcodeMessage');
+  const value=String(barcode||'').replace(/\s+/g,'').trim();
+  if(!value){if(message)message.textContent='Scan or enter a barcode first.';return}
+  if(message)message.textContent='Looking up barcode…';
+  try{
+    const result=await mapi('/api/merchant/catalog-v3/scan?business_id='+encodeURIComponent(Number(merchantStore?.business_id))+'&barcode='+encodeURIComponent(value));
+    if(result.status==='catalog_product'||result.status==='catalog_variant'){
+      retailCatalogState.q=value;retailCatalogState.offset=0;
+      mtoast(result.status==='catalog_variant'?'Existing Retail variant found.':'Existing Retail product found.');
+      await renderMerchantCatalog();return;
+    }
+    if(result.status==='inventory_only'){
+      const select=document.getElementById('merchantCatalogInventory'),kind=document.getElementById('merchantCatalogKind'),name=document.getElementById('merchantCatalogName');
+      if(select){select.value=String(result.inventory?.id||'');select.dispatchEvent(new Event('change'))}
+      if(kind)kind.value='non_food_resale';
+      if(name&&!name.value)name.value=result.draft?.name||result.inventory?.item||'';
+      if(message)message.textContent='Barcode matches Inventory but no Catalog product yet. A private Retail draft is ready below.';
+      document.getElementById('merchantCatalogCreateForm')?.scrollIntoView({behavior:'smooth',block:'start'});
+      return;
+    }
+    if(message)message.innerHTML='<strong>New barcode draft:</strong> '+mh(result.barcode||value)+'<br><span class="muted">No Inventory item owns this barcode yet. Add or identify the physical stock in Inventory first; Business & Life will not guess brand, price, specifications or stock.</span>';
+  }catch(error){if(message)message.textContent=error.message}
+}
+function stopRetailCatalogScanner(){
+  if(retailCatalogScanFrame){cancelAnimationFrame(retailCatalogScanFrame);retailCatalogScanFrame=0}
+  if(retailCatalogScannerStream){for(const track of retailCatalogScannerStream.getTracks())track.stop();retailCatalogScannerStream=null}
+  const pane=document.getElementById('retailBarcodeScanner');if(pane)pane.classList.add('hidden');
+  const video=document.getElementById('retailBarcodeVideo');if(video)video.srcObject=null;
+}
+async function startRetailCatalogScanner(){
+  const message=document.getElementById('retailBarcodeMessage'),pane=document.getElementById('retailBarcodeScanner'),video=document.getElementById('retailBarcodeVideo');
+  if(!navigator.mediaDevices?.getUserMedia||!window.BarcodeDetector){
+    if(message)message.textContent='Camera barcode scanning is not supported here. Enter the barcode manually.';
+    return;
+  }
+  try{
+    const detector=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','qr_code']});
+    retailCatalogScannerStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    if(video){video.srcObject=retailCatalogScannerStream;await video.play()}
+    pane?.classList.remove('hidden');if(message)message.textContent='Point the camera at one barcode.';
+    let busy=false;
+    const tick=async()=>{
+      if(!retailCatalogScannerStream||!video)return;
+      if(!busy&&video.readyState>=2){
+        busy=true;
+        try{
+          const codes=await detector.detect(video);
+          const raw=String(codes?.[0]?.rawValue||'').trim();
+          if(raw){
+            const input=document.getElementById('retailBarcodeInput');if(input)input.value=raw;
+            stopRetailCatalogScanner();await retailScanLookup(raw);return;
+          }
+        }catch{}finally{busy=false}
+      }
+      retailCatalogScanFrame=requestAnimationFrame(tick);
+    };
+    retailCatalogScanFrame=requestAnimationFrame(tick);
+  }catch(error){stopRetailCatalogScanner();if(message)message.textContent=error?.name==='NotAllowedError'?'Camera permission was not granted. Enter the barcode manually.':'Camera scanning could not start. Enter the barcode manually.'}
+}
+async function applyRetailBulkActionUi(collections=[]){
+  const ids=[...retailCatalogSelection],actionEl=document.getElementById('retailBulkAction');
+  const raw=actionEl?.value||'';
+  if(!ids.length)return mtoast('Select at least one Retail product.');
+  if(!raw)return mtoast('Choose a bulk action.');
+  let action=raw,value=null;
+  if(raw==='availability_off'){action='availability';value=false}
+  if(raw==='availability_on'){action='availability';value=true}
+  if(raw==='category'){
+    value=prompt('Enter the category for the selected products:','');
+    if(value==null)return;
+    value=String(value).trim();if(!value)return mtoast('Category was not changed.');
+  }
+  if(raw==='collection_add'||raw==='collection_remove'){
+    value=Number(document.getElementById('retailBulkCollection')?.value);
+    if(!Number.isInteger(value)||value<1)return mtoast('Choose a collection first.');
+  }
+  const label=action==='publish'?'publish':action==='archive'?'archive':action==='unpublish'?'make private':raw.replaceAll('_',' ');
+  if(!confirm(`Apply “${label}” to ${ids.length} selected product${ids.length===1?'':'s'}?`))return;
+  try{
+    await mapi('/api/merchant/catalog-v3/bulk',{method:'POST',body:JSON.stringify({
+      business_id:Number(merchantStore?.business_id),product_ids:ids,action,value,confirm:true
+    })});
+    retailCatalogSelection.clear();mtoast('Bulk Catalog action applied.');await renderMerchantCatalog();
+  }catch(error){mtoast(error.message)}
+}
+function bindRetailMerchandising(page={},collections=[],inventory=[]){
+  const form=document.getElementById('retailCatalogFilterForm');
+  if(form)form.onsubmit=event=>{
+    event.preventDefault();
+    retailCatalogState={
+      ...retailCatalogState,
+      q:document.getElementById('retailCatalogSearch')?.value.trim()||'',
+      category:document.getElementById('retailCatalogCategoryFilter')?.value.trim()||'',
+      status:document.getElementById('retailCatalogStatus')?.value||'all',
+      stock:document.getElementById('retailCatalogStock')?.value||'all',
+      media:document.getElementById('retailCatalogMedia')?.value||'all',
+      collection_id:document.getElementById('retailCatalogCollectionFilter')?.value||'',
+      offset:0
+    };
+    renderMerchantCatalog();
+  };
+  document.getElementById('retailCatalogClearFilters')?.addEventListener('click',()=>{
+    retailCatalogState={q:'',category:'',status:'all',stock:'all',media:'all',collection_id:'',offset:0,limit:50};
+    retailCatalogSelection.clear();renderMerchantCatalog();
+  });
+  const syncSelection=()=>{
+    const count=document.getElementById('retailSelectedCount');if(count)count.textContent=retailCatalogSelection.size+' selected';
+    const visible=[...document.querySelectorAll('[data-retail-select]')].map(input=>Number(input.dataset.retailSelect));
+    const all=document.getElementById('retailSelectAll');if(all)all.checked=visible.length>0&&visible.every(id=>retailCatalogSelection.has(id));
+  };
+  marketWorkspace.querySelectorAll('[data-retail-select]').forEach(input=>{
+    const id=Number(input.dataset.retailSelect);input.checked=retailCatalogSelection.has(id);
+    input.onchange=()=>{if(input.checked)retailCatalogSelection.add(id);else retailCatalogSelection.delete(id);syncSelection()};
+  });
+  document.getElementById('retailSelectAll')?.addEventListener('change',event=>{
+    marketWorkspace.querySelectorAll('[data-retail-select]').forEach(input=>{
+      const id=Number(input.dataset.retailSelect);input.checked=event.target.checked;
+      if(event.target.checked)retailCatalogSelection.add(id);else retailCatalogSelection.delete(id);
+    });syncSelection();
+  });
+  syncSelection();
+  document.getElementById('retailBulkApply')?.addEventListener('click',()=>applyRetailBulkActionUi(collections));
+  document.getElementById('retailPrevPage')?.addEventListener('click',()=>{retailCatalogState.offset=Math.max(0,Number(retailCatalogState.offset)-Number(page.limit||50));renderMerchantCatalog()});
+  document.getElementById('retailNextPage')?.addEventListener('click',()=>{retailCatalogState.offset=Number(retailCatalogState.offset)+Number(page.limit||50);renderMerchantCatalog()});
+  const barcodeForm=document.getElementById('retailBarcodeForm');
+  if(barcodeForm)barcodeForm.onsubmit=event=>{event.preventDefault();retailScanLookup(document.getElementById('retailBarcodeInput')?.value)};
+  document.getElementById('retailBarcodeCamera')?.addEventListener('click',startRetailCatalogScanner);
+  document.getElementById('retailBarcodeStop')?.addEventListener('click',stopRetailCatalogScanner);
+
+  const create=document.getElementById('retailCollectionCreateForm');
+  if(create)create.onsubmit=async event=>{
+    event.preventDefault();const message=document.getElementById('retailCollectionMessage');if(message)message.textContent='Creating collection…';
+    try{
+      await mapi('/api/merchant/catalog-v3/collections',{method:'POST',body:JSON.stringify({
+        business_id:Number(merchantStore?.business_id),
+        name:document.getElementById('retailCollectionName')?.value||'',
+        description:document.getElementById('retailCollectionDescription')?.value||''
+      })});
+      mtoast('Collection created.');await renderMerchantCatalog();
+    }catch(error){if(message)message.textContent=error.message}
+  };
+  marketWorkspace.querySelectorAll('[data-edit-collection]').forEach(button=>button.onclick=async()=>{
+    const collection=collections.find(x=>Number(x.id)===Number(button.dataset.editCollection));if(!collection)return;
+    const name=prompt('Collection name:',collection.name||'');if(name==null||!String(name).trim())return;
+    const description=prompt('Collection description:',collection.description||'');if(description==null)return;
+    try{
+      await mapi('/api/merchant/catalog-v3/collections/'+Number(collection.id),{method:'PUT',body:JSON.stringify({
+        business_id:Number(merchantStore?.business_id),name:String(name).trim(),description:String(description).trim(),
+        active:collection.active!==false,sort_order:Number(collection.sort_order||0)
+      })});
+      mtoast('Collection updated.');await renderMerchantCatalog();
+    }catch(error){mtoast(error.message)}
+  });
+  marketWorkspace.querySelectorAll('[data-archive-collection]').forEach(button=>button.onclick=async()=>{
+    const collection=collections.find(x=>Number(x.id)===Number(button.dataset.archiveCollection));if(!collection)return;
+    if(!confirm(`Archive collection “${collection.name}”? Products will not be deleted.`))return;
+    try{
+      await mapi('/api/merchant/catalog-v3/collections/'+Number(collection.id),{method:'PUT',body:JSON.stringify({
+        business_id:Number(merchantStore?.business_id),name:collection.name,description:collection.description||'',
+        active:false,sort_order:Number(collection.sort_order||0)
+      })});
+      if(String(retailCatalogState.collection_id)===String(collection.id))retailCatalogState.collection_id='';
+      mtoast('Collection archived.');await renderMerchantCatalog();
+    }catch(error){mtoast(error.message)}
+  });
+}
+
 function catalogCreateSection(inventory=[]){
   const options=(inventory||[]).map(item=>`<option value="${Number(item.id)}" data-unit="${mh(item.unit||'unit')}" data-name="${mh(item.item)}">${mh(item.item)} · ${Number(item.usable_quantity??item.quantity??0).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(item.unit||'')}</option>`).join('');
   return `<section class="merchantStoreCard merchantCatalogCreate"><div class="merchantCatalogHead"><div><small>SELL WHAT YOU STOCK</small><h2>Add product from Inventory</h2><p>Creating a Catalog product does not change stock. The quantity below is deducted only when a customer order is fulfilled.</p></div></div>
