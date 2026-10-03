@@ -81,7 +81,7 @@ function applyFinancePresentation(overview){
 const BUSINESS_FINANCE_COMPATIBILITY_COPY=Object.freeze({merchant_sales:'Completed merchandise sales',supplier_orders:'Fulfilled PO value',supplier_received:'Recorded money received',supplier_budget:'Planned Supplier budget',settings:'Money Settings'});
 function financeCompactMetric(label,value,detail=''){return '<div class="businessFinanceMetric primary"><span>'+escapeHtml(label)+'</span><strong>'+(typeof value==='number'?financeMoney(value):escapeHtml(value))+'</strong>'+(detail?'<small>'+escapeHtml(detail)+'</small>':'')+'</div>'}
 function merchantFinanceHtml(o){
-  const p=o.profitability||{},sett=o.settlement?.merchant_net,reconciliation=o.ledger_reconciliation||{},margin=p.estimated_margin_pct==null?'Not available':Number(p.estimated_margin_pct).toFixed(2)+'%';
+  const p=o.profitability||{},sett=o.settlement?.merchant_net,reconciliation=o.ledger_reconciliation||{},margin=p.actual_direct_margin_pct!=null?Number(p.actual_direct_margin_pct).toFixed(2)+'%':p.estimated_margin_pct==null?'Not available':Number(p.estimated_margin_pct).toFixed(2)+'%';
   const primary='<div class="businessFinancePrimary">'
     +financeCompactMetric('Money received',Number(o.cash_evidence?.confirmed_merchandise_received||0),'Confirmed customer payments')
     +financeCompactMetric('Sales',Number(o.commercial?.completed_merchandise_value||0),'Completed merchandise')
@@ -93,7 +93,9 @@ function merchantFinanceHtml(o){
     +financeMetric('Products in stock',Number(o.inventory?.valuation||0),'Estimated cost value · not available cash')
     +financeMetric('Money taken by owner',Number(o.ledger?.owner_drawings||0),'Personal withdrawals · not business expenses')
     +financeMetric('Manual records total',Number(reconciliation.recorded_available_balance||0),'Unverified entries · not bank balance or available cash')
-    +financeMetric('Estimated profit margin',margin,financeStatusCopy(p.status))
+    +financeMetric('Direct food cost',Number(p.actual_direct_food_cost||0),'Ingredients + packaging/direct consumables from completed-order stock evidence')
+    +financeMetric('Packaging / direct consumables',Number(p.actual_direct_consumable_cost||0),'Cleaning and general operational supplies stay separate')
+    +financeMetric('Direct profit margin',margin,p.actual_direct_margin_pct!=null?'Completed-order merchandise revenue minus direct food cost':financeStatusCopy(p.status))
     +financeStatusMetric('Payment destination',sett)
     +'</div><div class="ledgerReconciliation '+(reconciliation.status==='MATCHED'?'matched':'separate')+'"><strong>'+(reconciliation.status==='MATCHED'?'Records agree with confirmed payments':'Manual records are not confirmed payments')+'</strong><span>'+(reconciliation.status==='MATCHED'?'The current totals agree, but only provider-confirmed payments count as money received.':'Manual sales, adjustments and test entries can change this total without moving real money. Check your payment provider or bank for received funds.')+'</span></div></details>';
   return primary+details;
