@@ -16,6 +16,7 @@ import {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} fro
 import {ensureCatalogVariantSchema,readRetailVariantConfiguration,replaceRetailVariantConfiguration,variantProjectionForProducts} from './catalog-variants-core.js';
 import {ensureFoodMenuSchema,readFoodMenus,readModifierGroups,modifierProjectionForProducts,createFoodMenu,replaceFoodMenu,createModifierGroup,replaceModifierGroup,setFoodProductAvailability,effectiveFoodAvailability,validateProductModifierSelections,foodProductOrderability} from './food-menu-core.js';
 import {ensureRetailMerchandisingSchema,retailCatalogPage,listCatalogCollections,createCatalogCollection,updateCatalogCollection,replaceCollectionProducts,applyRetailBulkAction,scanRetailCatalogBarcode,publicRetailCollections} from './retail-merchandising-core.js';
+import {ADAPTIVE_STOREFRONT_VERSION,publicCatalogAttributeMap,publicRetailAvailabilityMap,publicProductProjection,retailFacetSummary,storefrontPresentationMode} from './adaptive-storefront-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -283,6 +284,21 @@ async function attachFoodCommerce(rows,{businessId,publicOnly=false}={}){
     };
   }).filter(row=>!publicOnly||row.product_domain!=='food'||!row.availability?.hidden);
 }
+async function adaptivePublicProducts(rows,businessId){
+  const list=Array.isArray(rows)?rows:[];
+  if(!list.length)return[];
+  const ids=list.map(row=>Number(row.id)).filter(Number.isInteger);
+  const retailIds=list.filter(row=>row.product_domain==='non_food').map(row=>Number(row.id));
+  const [attributeMap,retailAvailability]=await Promise.all([
+    publicCatalogAttributeMap(pool,ids),
+    publicRetailAvailabilityMap(pool,{businessId:Number(businessId),productIds:retailIds})
+  ]);
+  return list.map(row=>publicProductProjection(row,{
+    attributes:attributeMap.get(Number(row.id))||{},
+    retailAvailability:row.product_domain==='non_food'?(retailAvailability.get(Number(row.id))||null):null
+  }));
+}
+
 async function products(businessId,includePrivate=false,domain=''){
   const safeDomain=['food','non_food'].includes(domain)?domain:'';
   const args=[businessId];const domainSql=safeDomain?(args.push(safeDomain),' AND p.product_domain=$2'):'';
@@ -294,7 +310,8 @@ async function products(businessId,includePrivate=false,domain=''){
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:!includePrivate});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
   const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:!includePrivate});
-  return attachMarketplaceAllergens(withFood,{publicOnly:!includePrivate})
+  const withAllergens=await attachMarketplaceAllergens(withFood,{publicOnly:!includePrivate});
+  return includePrivate?withAllergens:adaptivePublicProducts(withAllergens,businessId)
 }
 
 // Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
@@ -343,12 +360,16 @@ async function attachGuestPublicAllergens(rows,businessId){
 }
 
 async function guestPublicProducts(businessId){
-  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url,variant_mode,availability_state,availability_until,availability_note FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
+  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,
+    image_data_url,variant_mode,availability_state,availability_until,availability_note,
+    catalog_category_code,brand,model,condition_code,manufacturer_part_number
+    FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
   const media=await attachProductMedia(rows,true);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:true});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
   const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:true});
-  return attachGuestPublicAllergens(withFood,businessId);
+  const withAllergens=await attachGuestPublicAllergens(withFood,businessId);
+  return adaptivePublicProducts(withAllergens,businessId);
 }
 
 async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
@@ -594,10 +615,43 @@ async function root(req,res){const r=await ordersFetch(req.path,{headers:req.hea
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/public/marketplace/storefronts',async(req,res,next)=>{try{res.set('Cache-Control','public, max-age=30');res.json(await guestPublicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
-app.get('/api/public/marketplace/storefronts/:businessId',async(req,res,next)=>{try{const businessId=Number(req.params.businessId);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'Invalid storefront'});const store=await guestPublicStorefront(businessId);if(!store)return res.status(404).json({error:'Storefront not found'});res.set('Cache-Control','public, max-age=30');res.json({...store,products:await guestPublicProducts(businessId),menus:await readFoodMenus(pool,{businessId,publicOnly:true}),collections:await publicRetailCollections(pool,{businessId})})}catch(e){next(e)}})
+app.get('/api/public/marketplace/storefronts/:businessId',async(req,res,next)=>{try{
+  const businessId=Number(req.params.businessId);
+  if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'Invalid storefront'});
+  const store=await guestPublicStorefront(businessId);if(!store)return res.status(404).json({error:'Storefront not found'});
+  const [productsPublic,menus]=await Promise.all([
+    guestPublicProducts(businessId),
+    readFoodMenus(pool,{businessId,publicOnly:true})
+  ]);
+  res.set('Cache-Control','public, max-age=30');
+  res.json({
+    ...store,
+    adaptive_storefront_version:ADAPTIVE_STOREFRONT_VERSION,
+    presentation_mode:storefrontPresentationMode(store,productsPublic),
+    products:productsPublic,menus,
+    collections:await publicRetailCollections(pool,{businessId}),
+    retail_facets:retailFacetSummary(productsPublic)
+  });
+}catch(e){next(e)}})
 
 app.get('/api/marketplace/storefronts',async(req,res,next)=>{try{await requireCustomer(req);res.json(await publicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
-app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const businessId=Number(req.params.businessId);const s=await storefront(businessId,false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(businessId,false),menus:await readFoodMenus(pool,{businessId,publicOnly:true}),collections:await publicRetailCollections(pool,{businessId})})}catch(e){next(e)}})
+app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{
+  await requireCustomer(req);
+  const businessId=Number(req.params.businessId),s=await storefront(businessId,false);
+  if(!s)return res.status(404).json({error:'Storefront not found'});
+  const [productsPublic,menus]=await Promise.all([
+    products(businessId,false),
+    readFoodMenus(pool,{businessId,publicOnly:true})
+  ]);
+  res.json({
+    ...s,
+    adaptive_storefront_version:ADAPTIVE_STOREFRONT_VERSION,
+    presentation_mode:storefrontPresentationMode(s,productsPublic),
+    products:productsPublic,menus,
+    collections:await publicRetailCollections(pool,{businessId}),
+    retail_facets:retailFacetSummary(productsPublic)
+  });
+}catch(e){next(e)}})
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{res.status(201).json(await createMarketplaceOrder(req))}catch(e){next(e)}})
 
 app.get('/api/merchant/catalog-v3/schema',async(req,res,next)=>{try{
