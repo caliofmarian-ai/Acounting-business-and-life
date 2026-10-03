@@ -87,6 +87,8 @@ test('posting is idempotent, stale-safe and writes count corrections through lot
   assert.match(block,/current_quantity/);
   assert.match(block,/expected_quantity/);
   assert.match(block,/Inventory changed after this count started/);
+  assert.match(block,/order_stock_reservations/);
+  assert.match(block,/stock reserved for an active order/);
   assert.match(block,/Approve every variance or return to counting before posting/);
   assert.match(block,/planPhysicalStockReduction/);
   assert.match(block,/mode:'count'/);
