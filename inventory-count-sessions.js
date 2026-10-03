@@ -1,5 +1,5 @@
 const COUNT_TYPES=new Set(['full','cycle']);
-const SCOPE_TYPES=new Set(['all','inventory_type','storage_area_type']);
+const SCOPE_TYPES=new Set(['all','inventory_type','storage_area_type','location_id']);
 const STORAGE_AREAS=new Set(['pantry','fridge','freezer','prep_station','chemical_storage','service_storage','other']);
 
 const asNumber=value=>Number(value);
@@ -11,8 +11,8 @@ export function normalizeInventoryCountScope(body={},inventoryTypes=new Set()){
   if(countType==='full')return{count_type:'full',scope_type:'all',scope_value:''};
   const scopeType=cleanText(body.scope_type,40);
   const scopeValue=cleanText(body.scope_value,80);
-  if(!['inventory_type','storage_area_type'].includes(scopeType)||!scopeValue){
-    throw Object.assign(new Error('Cycle count requires an Inventory category or storage area.'),{status:400});
+  if(!SCOPE_TYPES.has(scopeType)||scopeType==='all'||!scopeValue){
+    throw Object.assign(new Error('Cycle count requires an Inventory category, storage area or internal location.'),{status:400});
   }
   if(scopeType==='inventory_type'&&!inventoryTypes.has(scopeValue)){
     throw Object.assign(new Error('Choose a valid Inventory category for this cycle count.'),{status:400});
@@ -20,7 +20,12 @@ export function normalizeInventoryCountScope(body={},inventoryTypes=new Set()){
   if(scopeType==='storage_area_type'&&!STORAGE_AREAS.has(scopeValue)){
     throw Object.assign(new Error('Choose a valid storage area for this cycle count.'),{status:400});
   }
-  return{count_type:'cycle',scope_type:scopeType,scope_value:scopeValue};
+  if(scopeType==='location_id'){
+    const locationId=Number(scopeValue);
+    if(!Number.isInteger(locationId)||locationId<=0)throw Object.assign(new Error('Choose a valid internal storage location for this cycle count.'),{status:400});
+    return{count_type:'cycle',scope_type:'location_id',scope_value:String(locationId),location_id:locationId};
+  }
+  return{count_type:'cycle',scope_type:scopeType,scope_value:scopeValue,location_id:null};
 }
 
 export function serializeInventoryCountSession(session,items=[]){
@@ -37,6 +42,8 @@ export function serializeInventoryCountSession(session,items=[]){
       storage_area_type:row.storage_area_type||'other',
       storage_condition:row.storage_condition||'other',
       storage_location_label:row.storage_location_label||'',
+      location_id:row.location_id==null?null:asNumber(row.location_id),
+      location_name:row.location_name||'',
       unit:row.unit_snapshot||row.unit||'',
       counted_quantity:counted,
       counted_at:row.counted_at||null,
@@ -55,6 +62,8 @@ export function serializeInventoryCountSession(session,items=[]){
     count_type:session.count_type,
     scope_type:session.scope_type,
     scope_value:session.scope_value||'',
+    location_id:session.location_id==null?null:asNumber(session.location_id),
+    location_name:session.location_name||'',
     status,
     actor_account_id:session.actor_account_id==null?null:asNumber(session.actor_account_id),
     reviewed_by_account_id:session.reviewed_by_account_id==null?null:asNumber(session.reviewed_by_account_id),
