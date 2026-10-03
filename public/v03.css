@@ -338,3 +338,22 @@
 @media(prefers-reduced-motion:reduce){
   .countProgressTrack>span{transition:none}
 }
+
+
+/* Inventory barcode scanning · issue #719 */
+.inventoryLookupForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}
+.inventoryScannerPane{position:relative;overflow:hidden;border-radius:16px;background:#101820;border:1px solid var(--line,#e0e5e8);padding:10px}
+.inventoryScannerPane video{display:block;width:100%;max-height:320px;object-fit:cover;border-radius:12px;background:#101820}
+.inventoryScannerGuide{position:absolute;inset:10px 10px 54px;display:grid;place-items:center;pointer-events:none}
+.inventoryScannerGuide span{display:block;width:min(82%,300px);height:92px;border:2px solid rgba(255,255,255,.92);border-radius:14px;box-shadow:0 0 0 999px rgba(0,0,0,.18)}
+.inventoryLookupResult{align-items:flex-start;gap:12px}
+.inventoryLookupActions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.inventoryIdentifierEditor{padding-top:10px}
+#inventoryIdentifiersEditor>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:700}
+#inventoryScanStart:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:560px){
+  .inventoryLookupForm{grid-template-columns:1fr}
+  .inventoryLookupResult{flex-direction:column}
+  .inventoryLookupActions{width:100%;justify-content:flex-start}
+  .inventoryLookupActions .miniBtn{min-height:42px}
+}
