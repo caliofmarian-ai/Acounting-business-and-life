@@ -51,15 +51,16 @@ test('Retail merchandising schema references Catalog products instead of copying
 test('Retail Catalog page is paged and searches customer identity plus Inventory identifiers',async()=>{
   const queries=[];
   const db={query:async(sql,args=[])=>{
-    queries.push({sql:String(sql),args});
+    const text=String(sql);queries.push({sql:text,args});
+    if(text.includes("to_regclass('public.supply_lots')"))return{rows:[{rel:'supply_lots'}],rowCount:1};
     return{rows:[{
       id:7,business_id:2,name:'Cotton shirt',description:'',category:'Shirts',
       product_domain:'non_food',product_kind:'non_food_resale',selling_price:'799',
       quantity_per_unit:'1',variant_mode:false,active:true,published:false,
       brand:'Local Brand',model:'',inventory_id:55,inventory_item_name:'Cotton shirt Black M',
       internal_sku:'TS-BLK-M',barcode:'4801234567890',direct_inventory_quantity:'6',
-      inventory_unit:'unit',in_stock:true,has_public_media:false,variant_count:0,
-      active_variant_count:0,variant_on_hand:'0',collection_ids:[3],total_count:501
+      direct_available_quantity:'4',inventory_unit:'unit',in_stock:true,has_public_media:false,variant_count:0,
+      active_variant_count:0,variant_on_hand:'0',variant_available:'0',collection_ids:[3],total_count:501
     }],rowCount:1};
   }};
   const page=await retailCatalogPage(db,{businessId:2,filters:{
@@ -71,11 +72,15 @@ test('Retail Catalog page is paged and searches customer identity plus Inventory
   assert.equal(page.total,501);
   assert.equal(page.items[0].internal_sku,'TS-BLK-M');
   assert.deepEqual(page.items[0].collection_ids,[3]);
-  const sql=queries[0].sql;
+  assert.equal(page.items[0].direct_available_quantity,4);
+  const sql=queries.find(x=>/FROM marketplace_products p/.test(x.sql)).sql;
   assert.match(sql,/p\.name ILIKE/);
   assert.match(sql,/p\.brand ILIKE/);
   assert.match(sql,/internal_sku/);
   assert.match(sql,/barcode/);
+  assert.match(sql,/order_stock_reservations/);
+  assert.match(sql,/inventory_unavailable_allocations/);
+  assert.match(sql,/supply_lots/);
   assert.match(sql,/COUNT\(\*\) OVER\(\)/);
   assert.match(sql,/LIMIT/);
   assert.match(sql,/OFFSET/);
@@ -91,6 +96,16 @@ test('scan-first returns a safe draft when barcode is unknown instead of inventi
   assert.equal(Object.prototype.hasOwnProperty.call(result.draft,'brand'),false);
   assert.equal(Object.prototype.hasOwnProperty.call(result.draft,'selling_price'),false);
   assert.equal(Object.prototype.hasOwnProperty.call(result.draft,'stock'),false);
+});
+
+test('scan-first refuses to turn Food or Operations Inventory into a Retail draft',async()=>{
+  const db={query:async()=>({rows:[{
+    id:9,business_id:2,item:'Chicken breast',internal_sku:'',barcode:'4800000000009',
+    quantity:'2',unit:'kg',unit_cost:'250',inventory_domain:'food',stock_role:'ingredient'
+  }],rowCount:1})};
+  const result=await scanRetailCatalogBarcode(db,{businessId:2,barcode:'4800000000009'});
+  assert.equal(result.status,'inventory_non_retail');
+  assert.equal(Object.prototype.hasOwnProperty.call(result,'draft'),false);
 });
 
 test('scan-first reuses an exact Inventory barcode and starts a Catalog draft when no product is linked',async()=>{
@@ -130,6 +145,8 @@ test('Merchant Retail UI provides search, filters, collections, pagination and e
   assert.match(ui,/retailCatalogStock/);
   assert.match(ui,/retailCatalogMedia/);
   assert.match(ui,/retailCatalogCollectionFilter/);
+  assert.match(ui,/product_domain=food/);
+  assert.match(ui,/include_products=false/);
   assert.match(ui,/retailPrevPage/);
   assert.match(ui,/retailNextPage/);
   assert.match(ui,/retailCollectionCreateForm/);
