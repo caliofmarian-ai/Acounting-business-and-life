@@ -54,7 +54,14 @@ test('background payment failures do not leak raw upstream errors into unrelated
   assert.match(help,/shouldSurface\(path\)/);
   assert.match(help,/path\.startsWith\('\/api\/payments\/'\)/);
   assert.match(help,/This feature is temporarily unavailable/);
-  assert.match(helpCss,/@media\(max-width:640px\)\{\.contextHelpGlobal\{display:none\}/);
+});
+
+test('contextual Help never adds a persistent floating question-mark over app navigation',()=>{
+  assert.doesNotMatch(help,/contextHelpGlobal/);
+  assert.doesNotMatch(help,/aria-label="Open Help Center">\?<\/button>/);
+  assert.doesNotMatch(helpCss,/contextHelpGlobal/);
+  assert.match(help,/contextHelpNotice hidden/);
+  assert.match(help,/contextHelpClose/);
 });
 
 test('Payments loads independent context calls in parallel',()=>{
