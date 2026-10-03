@@ -194,3 +194,19 @@
   .merchantTodayView .todayPrimaryAction{transition:none}
   .merchantTodayView .todayPrimaryAction:hover{transform:none}
 }
+
+
+.inventoryNotificationTarget{
+  outline:3px solid currentColor;
+  outline-offset:3px;
+  border-radius:12px;
+  animation:inventoryNotificationPulse 1.2s ease-out 1;
+}
+@keyframes inventoryNotificationPulse{
+  0%{transform:scale(.985)}
+  45%{transform:scale(1.01)}
+  100%{transform:scale(1)}
+}
+@media (prefers-reduced-motion:reduce){
+  .inventoryNotificationTarget{animation:none}
+}
