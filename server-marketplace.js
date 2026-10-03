@@ -14,6 +14,7 @@ import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requir
 import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';
 import {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} from './catalog-v3-core.js';
 import {ensureCatalogVariantSchema,readRetailVariantConfiguration,replaceRetailVariantConfiguration,variantProjectionForProducts} from './catalog-variants-core.js';
+import {ensureFoodMenuSchema,readFoodMenus,readModifierGroups,modifierProjectionForProducts,createFoodMenu,replaceFoodMenu,createModifierGroup,replaceModifierGroup,setFoodProductAvailability,effectiveFoodAvailability,validateProductModifierSelections,foodProductOrderability} from './food-menu-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -206,7 +207,7 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool);await ensureCatalogVariantSchema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool);await ensureCatalogVariantSchema(pool);await ensureFoodMenuSchema(pool)}
 
 async function storefrontMedia(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
@@ -261,6 +262,26 @@ async function attachMarketplaceAllergens(rows,{publicOnly=false}={}){
     return{...row,allergen_information,allergen_review_current:reviewed,allergen_revision:summary?.revision||null};
   }));
 }
+async function attachFoodCommerce(rows,{businessId,publicOnly=false}={}){
+  const foodIds=(rows||[]).filter(row=>row.product_domain==='food').map(row=>Number(row.id));
+  const modifierMap=await modifierProjectionForProducts(pool,{businessId:Number(businessId),productIds:foodIds,publicOnly});
+  const orderabilityMap=new Map();
+  if(publicOnly){
+    await Promise.all(foodIds.map(async productId=>{
+      orderabilityMap.set(productId,await foodProductOrderability(pool,{businessId:Number(businessId),productId}));
+    }));
+  }
+  return (rows||[]).map(row=>{
+    if(row.product_domain!=='food')return{...row,modifier_groups:[],availability:null,orderability:null};
+    const availability=effectiveFoodAvailability(row);
+    return{
+      ...row,
+      modifier_groups:modifierMap.get(Number(row.id))||[],
+      availability,
+      orderability:publicOnly?(orderabilityMap.get(Number(row.id))||{orderable:availability.orderable,reason:availability.state}):null
+    };
+  }).filter(row=>!publicOnly||row.product_domain!=='food'||!row.availability?.hidden);
+}
 async function products(businessId,includePrivate=false){
   const query=includePrivate
     ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 ORDER BY p.category,p.name`
@@ -269,7 +290,8 @@ async function products(businessId,includePrivate=false){
   const media=await attachProductMedia(rows,!includePrivate);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:!includePrivate});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
-  return attachMarketplaceAllergens(withVariants,{publicOnly:!includePrivate})
+  const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:!includePrivate});
+  return attachMarketplaceAllergens(withFood,{publicOnly:!includePrivate})
 }
 
 // Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
@@ -318,11 +340,12 @@ async function attachGuestPublicAllergens(rows,businessId){
 }
 
 async function guestPublicProducts(businessId){
-  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url,variant_mode FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
+  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url,variant_mode,availability_state,availability_until,availability_note FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
   const media=await attachProductMedia(rows,true);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:true});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
-  return attachGuestPublicAllergens(withVariants,businessId);
+  const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:true});
+  return attachGuestPublicAllergens(withFood,businessId);
 }
 
 async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
@@ -343,12 +366,18 @@ async function createMarketplaceOrder(req){
   for(const raw of rawItems){
     const id=Number(raw.product_id),q=Number(raw.quantity);
     const variantId=raw.variant_id==null||raw.variant_id===''?null:Number(raw.variant_id);
+    const modifierOptionIds=[...new Set((Array.isArray(raw.modifier_option_ids)?raw.modifier_option_ids:[])
+      .map(Number).filter(value=>Number.isInteger(value)&&value>0))].sort((a,b)=>a-b);
     if(!Number.isInteger(id)||!positive(q))throw Object.assign(new Error('Every basket item needs a valid quantity'),{status:400});
     if(variantId!=null&&(!Number.isInteger(variantId)||variantId<1))throw Object.assign(new Error('Choose a valid product variant'),{status:400});
+    if(Array.isArray(raw.modifier_option_ids)&&modifierOptionIds.length!==raw.modifier_option_ids.length){
+      throw Object.assign(new Error('Choose valid product options'),{status:400});
+    }
     ids.push(id);
-    const key=`${id}:${variantId||0}`,existing=basketLines.get(key);
+    const modifierKey=modifierOptionIds.join(',');
+    const key=`${id}:${variantId||0}:${modifierKey}`,existing=basketLines.get(key);
     if(existing)existing.quantity+=q;
-    else basketLines.set(key,{product_id:id,variant_id:variantId,quantity:q});
+    else basketLines.set(key,{product_id:id,variant_id:variantId,modifier_option_ids:modifierOptionIds,quantity:q});
   }
   if(!rawItems.length||rawItems.length>50)throw Object.assign(new Error('Basket needs 1–50 items'),{status:400});
   const store=await storefront(businessId,false);
@@ -376,8 +405,25 @@ async function createMarketplaceOrder(req){
     for(const basketLine of basketLines.values()){
       const row=productById.get(Number(basketLine.product_id)),q=Number(basketLine.quantity);
       if(!row)throw Object.assign(new Error('One or more basket items are unavailable'),{status:409});
-      let unitCost=0,unitPrice=Number(row.selling_price),variantId=null,variantSnapshot={};
+      let unitCost=0,unitPrice=Number(row.selling_price),variantId=null,variantSnapshot={},modifierSnapshot={groups:[]};
       let nameSnapshot=row.name;
+
+      if(row.product_domain==='food'){
+        const orderability=await foodProductOrderability(client,{businessId,productId:Number(row.id)});
+        if(!orderability.orderable){
+          const message=orderability.reason==='outside_menu_schedule'
+            ?`${row.name} is not available in the current menu schedule`
+            :`${row.name} is currently unavailable`;
+          throw Object.assign(new Error(message),{status:409,code:'FOOD_ITEM_UNAVAILABLE'});
+        }
+        const modifiers=await validateProductModifierSelections(client,{
+          businessId,productId:Number(row.id),optionIds:basketLine.modifier_option_ids||[]
+        });
+        unitPrice=money(unitPrice+Number(modifiers.price_delta||0));
+        modifierSnapshot=modifiers.snapshot||{groups:[]};
+      }else if((basketLine.modifier_option_ids||[]).length){
+        throw Object.assign(new Error(`${row.name} does not use Food menu options`),{status:409});
+      }
 
       if(row.variant_mode){
         if(!basketLine.variant_id)throw Object.assign(new Error(`Choose a variant for ${row.name}`),{status:409});
@@ -430,7 +476,7 @@ async function createMarketplaceOrder(req){
 
       const line=money(unitPrice*q),cogs=money(unitCost*q),gross=money(line-cogs);
       subtotal+=line;
-      snapshots.push({row,q,line,unitCost,unitPrice,cogs,gross,variantId,variantSnapshot,nameSnapshot});
+      snapshots.push({row,q,line,unitCost,unitPrice,cogs,gross,variantId,variantSnapshot,modifierSnapshot,nameSnapshot});
     }
     subtotal=money(subtotal);
 
@@ -446,11 +492,11 @@ async function createMarketplaceOrder(req){
     for(const x of snapshots){
       await client.query(`
         INSERT INTO order_items(
-          order_id,source_kind,source_id,catalog_variant_id,variant_snapshot_json,
+          order_id,source_kind,source_id,catalog_variant_id,variant_snapshot_json,modifier_snapshot_json,
           name_snapshot,category_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,
           line_total,estimated_cogs,estimated_gross_profit
-        ) VALUES($1,'marketplace_product',$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12)
-      `,[orderId,x.row.id,x.variantId,JSON.stringify(x.variantSnapshot||{}),x.nameSnapshot,x.row.category,x.q,x.unitPrice,x.unitCost,x.line,x.cogs,x.gross]);
+        ) VALUES($1,'marketplace_product',$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)
+      `,[orderId,x.row.id,x.variantId,JSON.stringify(x.variantSnapshot||{}),JSON.stringify(x.modifierSnapshot||{groups:[]}),x.nameSnapshot,x.row.category,x.q,x.unitPrice,x.unitCost,x.line,x.cogs,x.gross]);
     }
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Marketplace checkout')`,[orderId,status,customerId]);
     await reserveOrderStock(client,{...o.rows[0],id:orderId,order_number:number,order_status:status,business_id:businessId,fulfilment_method:fulfilment});
@@ -545,10 +591,10 @@ async function root(req,res){const r=await ordersFetch(req.path,{headers:req.hea
 app.get('/',root);app.get('/index.html',root)
 
 app.get('/api/public/marketplace/storefronts',async(req,res,next)=>{try{res.set('Cache-Control','public, max-age=30');res.json(await guestPublicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
-app.get('/api/public/marketplace/storefronts/:businessId',async(req,res,next)=>{try{const businessId=Number(req.params.businessId);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'Invalid storefront'});const store=await guestPublicStorefront(businessId);if(!store)return res.status(404).json({error:'Storefront not found'});res.set('Cache-Control','public, max-age=30');res.json({...store,products:await guestPublicProducts(businessId)})}catch(e){next(e)}})
+app.get('/api/public/marketplace/storefronts/:businessId',async(req,res,next)=>{try{const businessId=Number(req.params.businessId);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'Invalid storefront'});const store=await guestPublicStorefront(businessId);if(!store)return res.status(404).json({error:'Storefront not found'});res.set('Cache-Control','public, max-age=30');res.json({...store,products:await guestPublicProducts(businessId),menus:await readFoodMenus(pool,{businessId,publicOnly:true})})}catch(e){next(e)}})
 
 app.get('/api/marketplace/storefronts',async(req,res,next)=>{try{await requireCustomer(req);res.json(await publicStorefronts(clean(req.query.domain,20)))}catch(e){next(e)}})
-app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const s=await storefront(Number(req.params.businessId),false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(Number(req.params.businessId),false)})}catch(e){next(e)}})
+app.get('/api/marketplace/storefronts/:businessId',async(req,res,next)=>{try{await requireCustomer(req);const businessId=Number(req.params.businessId);const s=await storefront(businessId,false);if(!s)return res.status(404).json({error:'Storefront not found'});res.json({...s,products:await products(businessId,false),menus:await readFoodMenus(pool,{businessId,publicOnly:true})})}catch(e){next(e)}})
 app.post('/api/marketplace/checkout',body,async(req,res,next)=>{try{res.status(201).json(await createMarketplaceOrder(req))}catch(e){next(e)}})
 
 app.get('/api/merchant/catalog-v3/schema',async(req,res,next)=>{try{
@@ -567,6 +613,69 @@ app.get('/api/merchant/catalog-v3/schema',async(req,res,next)=>{try{
     schema_version:CATALOG_V3_SCHEMA_VERSION
   });
 }catch(e){next(e)}})
+
+app.get('/api/merchant/catalog-v3/food',async(req,res,next)=>{try{
+  const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  res.set('Cache-Control','private, no-store');
+  res.json({
+    business_id:Number(business.id),
+    menus:await readFoodMenus(pool,{businessId:Number(business.id),publicOnly:false}),
+    modifier_groups:await readModifierGroups(pool,{businessId:Number(business.id),publicOnly:false})
+  });
+}catch(e){next(e)}})
+
+app.post('/api/merchant/catalog-v3/menus',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const menu=await createFoodMenu(client,{businessId:Number(business.id),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.status(201).json(menu);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A menu with this name/code already exists.'});next(e)}
+  finally{client.release()}
+})
+app.put('/api/merchant/catalog-v3/menus/:menuId',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const menu=await replaceFoodMenu(client,{businessId:Number(business.id),menuId:Number(req.params.menuId),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.json(menu);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A menu section or menu code is duplicated.'});next(e)}
+  finally{client.release()}
+})
+
+app.post('/api/merchant/catalog-v3/modifier-groups',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const group=await createModifierGroup(client,{businessId:Number(business.id),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.status(201).json(group);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A modifier group with this name/code already exists.'});next(e)}
+  finally{client.release()}
+})
+app.put('/api/merchant/catalog-v3/modifier-groups/:groupId',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
+    await client.query('BEGIN');
+    const group=await replaceModifierGroup(client,{businessId:Number(business.id),groupId:Number(req.params.groupId),configuration:req.body||{}});
+    await client.query('COMMIT');
+    res.json(group);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});if(e?.code==='23505')return res.status(409).json({error:'A modifier option or group code is duplicated.'});next(e)}
+  finally{client.release()}
+})
+
+app.patch('/api/merchant/storefront/products/:id/availability',body,async(req,res,next)=>{try{
+  const{product,business}=await merchantOwnedMarketplaceProduct(req);
+  if(product.product_domain!=='food')return res.status(409).json({error:'Quick menu availability is available for Food products.'});
+  res.json(await setFoodProductAvailability(pool,{businessId:Number(business.id),productId:Number(product.id),input:req.body||{}}));
+}catch(e){next(e)}})
+
 app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}const readiness=await microbusinessReadinessSnapshot(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id});res.json({...s,readiness,products:await products(business.id,true)})}catch(e){next(e)}})
 app.get('/api/merchant/storefront/geocode',async(req,res,next)=>{try{
   const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
