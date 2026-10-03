@@ -533,7 +533,11 @@ async function sendQueuedPush(pool,row){
     ?`/?support_ticket=${encodeURIComponent(row.entity_id)}`
     :row.entity_type==='profile_application'&&row.entity_id
       ?(String(row.role_hint||'').toLowerCase()==='admin'?`/admin?application=${encodeURIComponent(row.entity_id)}`:`/?profile_application=${encodeURIComponent(row.entity_id)}`)
-      :'/';
+      :row.entity_type==='inventory_item'&&row.entity_id
+        ?`/?inventory_item=${encodeURIComponent(row.entity_id)}`
+        :row.entity_type==='inventory_lot'&&row.entity_id
+          ?`/?inventory_lot=${encodeURIComponent(row.entity_id)}${row.data_json?.inventory_id?`&inventory_id=${encodeURIComponent(row.data_json.inventory_id)}`:''}`
+          :'/';
   const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id,attention});
   let successes=0,lastError='';
   for(const sub of subs){
