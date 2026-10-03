@@ -129,8 +129,8 @@ test('historical Marketplace orders preserve name price cost variant and modifie
 test('prepared recipe and direct resale stock contracts remain linked through legacy and Inventory IDs',()=>{
   const reservation=read('order-stock-reservation.js');
   assert.match(reservation,/legacy_product_id,inventory_id,quantity_per_unit,variant_mode/);
-  assert.match(reservation,/product\.legacy_product_id/);
-  assert.match(reservation,/product\.inventory_id/);
+  assert.match(reservation,/row\.legacy_product_id/);
+  assert.match(reservation,/row\.inventory_id/);
   assert.match(reservation,/quantity_per_unit/);
   assert.match(reservation,/source_kind='marketplace_product'/);
 });
@@ -145,8 +145,8 @@ test('Supplier receiving remains business-scoped and does not resolve stock by c
 test('Product Media remains attached to stable marketplace product IDs',()=>{
   const media=read('catalog-media-core.js');
   const marketplace=read('server-marketplace.js');
-  assert.match(media,/entity_type='marketplace_product'/);
-  assert.match(media,/entity_id=ANY\(\$2::bigint\[\]\)/);
+  assert.match(media,/ENTITY_TYPES=new Set\(\['marketplace_product','supplier_catalog_item'\]\)/);
+  assert.match(media,/WHERE entity_type=\$1 AND entity_id=ANY\(\$2::bigint\[\]\)/);
   assert.match(marketplace,/mediaForEntities\(pool,\{entityType:'marketplace_product',entityIds:rows\.map\(x=>x\.id\)/);
 });
 
