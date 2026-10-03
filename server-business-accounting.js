@@ -550,10 +550,9 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
     storageSegregated:req.body?.storage_segregated??defaults.storage_segregated
   });
   const{rows}=await pool.query(`
-    INSERT INTO inventory(
-      business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
-      storage_condition,storage_area_type,storage_location_label,storage_segregated
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
+      storage_condition,storage_area_type,storage_location_label,storage_segregated)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
     ON CONFLICT(business_id,item) DO UPDATE SET
       unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,
       unit_cost=EXCLUDED.unit_cost,inventory_type=EXCLUDED.inventory_type,
