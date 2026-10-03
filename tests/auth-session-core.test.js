@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
   AUTH_SESSION_TTL_MS,AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,
-  resolveV2SessionStepUp,resolveV2SessionToken,signV2SessionToken
+  resolveV2SessionStepUp,resolveV2SessionToken,signV2SessionToken,verifyV2SessionTokenSignature
 } from '../auth-session-core.js';
 
 const SECRET='test-secret';
@@ -22,6 +22,17 @@ function poolFor({active=true,stepUpAt=null}={}){
     }
   };
 }
+
+test('pure V2 verifier authenticates the signature and TTL before database policy work',()=>{
+  const token=signV2SessionToken(SECRET,7,SESSION,{issued:ISSUED});
+  assert.deepEqual(
+    verifyV2SessionTokenSignature(SECRET,token,{now:ISSUED+1000}),
+    {accountId:7,sessionId:SESSION,issued:ISSUED,legacy:false}
+  );
+  const altered=token.slice(0,-1)+(token.endsWith('a')?'b':'a');
+  assert.equal(verifyV2SessionTokenSignature(SECRET,altered,{now:ISSUED+1000}),null);
+  assert.equal(verifyV2SessionTokenSignature(SECRET,token,{now:ISSUED+AUTH_SESSION_TTL_MS+1}),null);
+});
 
 test('shared V2 token signs and resolves one active database session',async()=>{
   const pool=poolFor();
