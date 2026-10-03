@@ -183,12 +183,14 @@ async function initDb() {
       order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
       inventory_id BIGINT NOT NULL REFERENCES inventory(id),
       item_name_snapshot TEXT NOT NULL,
+      inventory_type_snapshot TEXT,
       quantity_used NUMERIC(14,4) NOT NULL,
       unit_cost_snapshot NUMERIC(12,4) NOT NULL,
       cost_snapshot NUMERIC(12,4) NOT NULL,
       reversed_at TIMESTAMPTZ,
       PRIMARY KEY(order_id, inventory_id)
     );
+    ALTER TABLE order_stock_consumptions ADD COLUMN IF NOT EXISTS inventory_type_snapshot TEXT;
 
     CREATE TABLE IF NOT EXISTS order_stock_lot_allocations (
       order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
