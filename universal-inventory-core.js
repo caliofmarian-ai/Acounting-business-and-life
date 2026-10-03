@@ -116,7 +116,6 @@ export async function ensureUniversalInventorySchema(pool){
                ELSE 'food'
              END,
              stock_role='direct_resale',
-             inventory_type='resale_item',
              classification_version=$1,
              updated_at=NOW()
         FROM (
