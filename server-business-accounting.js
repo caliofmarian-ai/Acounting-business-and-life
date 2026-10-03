@@ -17,6 +17,10 @@ import { inventoryLotExpiryStatus,planPhysicalStockReduction } from './inventory
 import {inventoryStorageDefaults,requireValidInventoryStorage} from './inventory-storage-core.js';
 import { planInventoryFefo,applyLotAllocations,canUseSupplyLots,inventoryLotRows,applyPhysicalLotReductions,inventoryAvailabilityRows } from './inventory-lot-runtime.js';
 import {reserveOrderStock,reservationExpiryForOrder} from './order-stock-reservation.js';
+import {
+  FOOD_ALLERGENS,normalizeAllergenCodes,ensureFoodAllergenSchema,
+  deriveProductAllergenSummary,invalidateProductAllergenReview,invalidateAllergenReviewForInventory
+} from './food-allergen-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1012,10 +1016,107 @@ app.post('/api/budget',jsonBody,async(req,res,next)=>{try{const{business}=await 
 
 app.get('/api/analysis',async(req,res,next)=>{try{const{business}=await accountingContext(req),days=Number(req.query.days)===30?30:7;const categories=await pool.query(`SELECT CASE WHEN type='business_expense' THEN 'business' ELSE 'personal' END kind,category,COALESCE(SUM(amount),0) total FROM transactions WHERE business_id=$1 AND type IN ('business_expense','personal_withdrawal') AND occurred_at>=NOW()-($2::int*INTERVAL '1 day') GROUP BY kind,category ORDER BY total DESC`,[business.id,days]);const totals=await pool.query(`SELECT COALESCE(SUM(CASE WHEN type='business_expense' THEN amount ELSE 0 END),0) business,COALESCE(SUM(CASE WHEN type='personal_withdrawal' THEN amount ELSE 0 END),0) personal,COALESCE(SUM(CASE WHEN type='sale' THEN amount ELSE 0 END),0) sales,COALESCE(SUM(CASE WHEN type='money_received' THEN amount ELSE 0 END),0) received FROM transactions WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day')`,[business.id,days]);res.json({days,totals:totals.rows[0],categories:categories.rows})}catch(e){next(e)}});
 
+app.get('/api/food/allergens/catalog',async(req,res,next)=>{try{
+  const ctx=await accountingContext(req);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  res.json({allergens:FOOD_ALLERGENS,policy:'merchant_declared_evidence_only'});
+}catch(e){next(e)}});
+
+app.get('/api/inventory/:id/allergens',async(req,res,next)=>{try{
+  const ctx=await accountingContext(req),id=Number(req.params.id);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  const item=await pool.query(`SELECT id,item,inventory_type FROM inventory WHERE id=$1 AND business_id=$2`,[id,ctx.business.id]);
+  if(!item.rowCount)return res.status(404).json({error:'Inventory item not found'});
+  if((item.rows[0].inventory_type||'ingredient')!=='ingredient')return res.status(409).json({error:'Allergen evidence is recorded on Ingredient stock only.'});
+  const {rows}=await pool.query(`SELECT allergen_code,evidence_kind,note,updated_at FROM inventory_allergen_evidence WHERE inventory_id=$1 AND business_id=$2 ORDER BY allergen_code,evidence_kind`,[id,ctx.business.id]);
+  res.json({
+    inventory_id:id,item:item.rows[0].item,
+    contains:rows.filter(x=>x.evidence_kind==='contains').map(x=>x.allergen_code),
+    may_contain:rows.filter(x=>x.evidence_kind==='may_contain').map(x=>x.allergen_code),
+    note:rows.find(x=>x.note)?.note||'',
+    source:'merchant_declared'
+  });
+}catch(e){next(e)}});
+
+app.put('/api/inventory/:id/allergens',jsonBody,async(req,res,next)=>{const client=await pool.connect();try{
+  const ctx=await accountingContext(req),id=Number(req.params.id);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  const item=await client.query(`SELECT id,item,inventory_type FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,[id,ctx.business.id]);
+  if(!item.rowCount)throw Object.assign(new Error('Inventory item not found'),{status:404});
+  if((item.rows[0].inventory_type||'ingredient')!=='ingredient')throw Object.assign(new Error('Allergen evidence is recorded on Ingredient stock only.'),{status:409});
+  const contains=normalizeAllergenCodes(req.body?.contains),may=normalizeAllergenCodes(req.body?.may_contain).filter(code=>!contains.includes(code));
+  const supplied=[...(req.body?.contains||[]),...(req.body?.may_contain||[])].map(x=>clean(x,40)).filter(Boolean);
+  const invalid=supplied.filter(code=>!FOOD_ALLERGENS.some(x=>x.code===code));
+  if(invalid.length)throw Object.assign(new Error('One or more allergen codes are not supported.'),{status:400,invalid_allergens:[...new Set(invalid)]});
+  const note=clean(req.body?.note,500);
+  await client.query('BEGIN');
+  await client.query(`DELETE FROM inventory_allergen_evidence WHERE inventory_id=$1 AND business_id=$2`,[id,ctx.business.id]);
+  for(const code of contains)await client.query(`
+    INSERT INTO inventory_allergen_evidence(business_id,inventory_id,allergen_code,evidence_kind,note,updated_by_account_id)
+    VALUES($1,$2,$3,'contains',$4,$5)
+  `,[ctx.business.id,id,code,note,ctx.me.account.id]);
+  for(const code of may)await client.query(`
+    INSERT INTO inventory_allergen_evidence(business_id,inventory_id,allergen_code,evidence_kind,note,updated_by_account_id)
+    VALUES($1,$2,$3,'may_contain',$4,$5)
+  `,[ctx.business.id,id,code,note,ctx.me.account.id]);
+  const affected=await invalidateAllergenReviewForInventory(client,{businessId:ctx.business.id,inventoryId:id});
+  await client.query('COMMIT');
+  res.json({inventory_id:id,item:item.rows[0].item,contains,may_contain:may,note,affected_products:affected,source:'merchant_declared'});
+}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
+
+app.get('/api/products/:id/allergens',async(req,res,next)=>{try{
+  const ctx=await accountingContext(req),id=Number(req.params.id);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  const summary=await deriveProductAllergenSummary(pool,{businessId:ctx.business.id,productId:id});
+  if(!summary)return res.status(404).json({error:'Product not found'});
+  res.json({...summary,catalog:FOOD_ALLERGENS});
+}catch(e){next(e)}});
+
+app.put('/api/products/:id/allergens/cross-contact',jsonBody,async(req,res,next)=>{const client=await pool.connect();try{
+  const ctx=await accountingContext(req),id=Number(req.params.id);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  const product=await client.query(`SELECT id FROM products WHERE id=$1 AND business_id=$2 FOR UPDATE`,[id,ctx.business.id]);
+  if(!product.rowCount)throw Object.assign(new Error('Product not found'),{status:404});
+  const cross=normalizeAllergenCodes(req.body?.cross_contact),supplied=(req.body?.cross_contact||[]).map(x=>clean(x,40)).filter(Boolean);
+  const invalid=supplied.filter(code=>!FOOD_ALLERGENS.some(x=>x.code===code));
+  if(invalid.length)throw Object.assign(new Error('One or more allergen codes are not supported.'),{status:400,invalid_allergens:[...new Set(invalid)]});
+  const note=clean(req.body?.note,500);
+  await client.query('BEGIN');
+  await client.query(`DELETE FROM product_cross_contact_allergens WHERE product_id=$1 AND business_id=$2`,[id,ctx.business.id]);
+  for(const code of cross)await client.query(`
+    INSERT INTO product_cross_contact_allergens(business_id,product_id,allergen_code,note,updated_by_account_id)
+    VALUES($1,$2,$3,$4,$5)
+  `,[ctx.business.id,id,code,note,ctx.me.account.id]);
+  await invalidateProductAllergenReview(client,{businessId:ctx.business.id,productId:id});
+  await client.query('COMMIT');
+  res.json(await deriveProductAllergenSummary(pool,{businessId:ctx.business.id,productId:id}));
+}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
+
+app.post('/api/products/:id/allergens/review',jsonBody,async(req,res,next)=>{const client=await pool.connect();try{
+  const ctx=await accountingContext(req),id=Number(req.params.id);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  await client.query('BEGIN');
+  const product=await client.query(`SELECT id,allergen_revision,product_kind FROM products WHERE id=$1 AND business_id=$2 FOR UPDATE`,[id,ctx.business.id]);
+  if(!product.rowCount)throw Object.assign(new Error('Product not found'),{status:404});
+  if(product.rows[0].product_kind!=='prepared_recipe')throw Object.assign(new Error('Allergen review is currently for prepared recipe products.'),{status:409});
+  const recipe=await client.query(`SELECT COUNT(*)::int count FROM recipes WHERE product_id=$1`,[id]);
+  if(Number(recipe.rows[0]?.count||0)===0)throw Object.assign(new Error('Save the recipe before reviewing allergen information.'),{status:409});
+  const revision=Number(product.rows[0].allergen_revision||1);
+  await client.query(`
+    INSERT INTO product_allergen_reviews(product_id,business_id,reviewed_revision,reviewed_by_account_id,review_note,reviewed_at)
+    VALUES($1,$2,$3,$4,$5,NOW())
+    ON CONFLICT(product_id) DO UPDATE SET
+      business_id=EXCLUDED.business_id,reviewed_revision=EXCLUDED.reviewed_revision,
+      reviewed_by_account_id=EXCLUDED.reviewed_by_account_id,review_note=EXCLUDED.review_note,reviewed_at=NOW()
+  `,[id,ctx.business.id,revision,ctx.me.account.id,clean(req.body?.note,500)]);
+  await client.query('COMMIT');
+  res.json(await deriveProductAllergenSummary(pool,{businessId:ctx.business.id,productId:id}));
+}catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}});
+
 app.get('/api/products',async(req,res,next)=>{try{const{business}=await accountingContext(req);res.json(await productsWithRecipes(Number(business.id)))}catch(e){next(e)}});
 app.post('/api/products',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),name=clean(req.body?.name,120),category=clean(req.body?.category||'Food',80)||'Food',price=Number(req.body?.selling_price),kind=normalizedProductKind(req.body?.product_kind||'prepared_recipe','food');if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Product name and valid selling price are required.'});const{rows}=await pool.query(`INSERT INTO products(business_id,name,category,selling_price,active,product_kind) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,[business.id,name,category,price,req.body?.active!==false,kind]);res.status(201).json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
 app.patch('/api/products/:id',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),id=Number(req.params.id),old=await pool.query(`SELECT * FROM products WHERE id=$1 AND business_id=$2`,[id,business.id]);if(!old.rowCount)return res.status(404).json({error:'Product not found'});const prev=old.rows[0],name=clean(req.body?.name??prev.name,120),category=clean(req.body?.category??prev.category,80)||'Food',price=Number(req.body?.selling_price??prev.selling_price),active=req.body?.active??prev.active,kind=normalizedProductKind(req.body?.product_kind??prev.product_kind,'food');if(!name||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Invalid product'});const{rows}=await pool.query(`UPDATE products SET name=$1,category=$2,selling_price=$3,active=$4,product_kind=$5,updated_at=NOW() WHERE id=$6 AND business_id=$7 RETURNING *`,[name,category,price,Boolean(active),kind,id,business.id]);res.json(rows[0])}catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this business.'});next(e)}});
-app.put('/api/products/:id/recipe',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),productId=Number(req.params.id),components=Array.isArray(req.body?.components)?req.body.components:[];const exists=await pool.query(`SELECT id FROM products WHERE id=$1 AND business_id=$2`,[productId,business.id]);if(!exists.rowCount)return res.status(404).json({error:'Product not found'});const normalized=[],seen=new Set();for(const c of components){const inventoryId=Number(c.inventory_id),quantity=Number(c.quantity);if(!Number.isInteger(inventoryId)||!positive(quantity))return res.status(400).json({error:'Every recipe component needs an inventory item and quantity greater than zero.'});if(seen.has(inventoryId))return res.status(400).json({error:'The same ingredient cannot appear twice in one recipe.'});seen.add(inventoryId);normalized.push({inventoryId,quantity})}if(normalized.length){const check=await pool.query(`SELECT id,inventory_type FROM inventory WHERE business_id=$1 AND id=ANY($2::bigint[])`,[business.id,normalized.map(x=>x.inventoryId)]);if(check.rowCount!==normalized.length)return res.status(400).json({error:'One or more inventory ingredients do not belong to this business.'});if(check.rows.some(x=>(x.inventory_type||'ingredient')!=='ingredient'))return res.status(400).json({error:'Only Inventory items classified as Ingredient can be used in recipes.'})}const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM recipes WHERE product_id=$1`,[productId]);for(const c of normalized)await client.query(`INSERT INTO recipes(product_id,inventory_id,quantity) VALUES($1,$2,$3)`,[productId,c.inventoryId,c.quantity]);await client.query('COMMIT');res.json((await productsWithRecipes(Number(business.id))).find(p=>p.id===productId))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}});
+app.put('/api/products/:id/recipe',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),productId=Number(req.params.id),components=Array.isArray(req.body?.components)?req.body.components:[];const exists=await pool.query(`SELECT id FROM products WHERE id=$1 AND business_id=$2`,[productId,business.id]);if(!exists.rowCount)return res.status(404).json({error:'Product not found'});const normalized=[],seen=new Set();for(const c of components){const inventoryId=Number(c.inventory_id),quantity=Number(c.quantity);if(!Number.isInteger(inventoryId)||!positive(quantity))return res.status(400).json({error:'Every recipe component needs an inventory item and quantity greater than zero.'});if(seen.has(inventoryId))return res.status(400).json({error:'The same ingredient cannot appear twice in one recipe.'});seen.add(inventoryId);normalized.push({inventoryId,quantity})}if(normalized.length){const check=await pool.query(`SELECT id,inventory_type FROM inventory WHERE business_id=$1 AND id=ANY($2::bigint[])`,[business.id,normalized.map(x=>x.inventoryId)]);if(check.rowCount!==normalized.length)return res.status(400).json({error:'One or more inventory ingredients do not belong to this business.'});if(check.rows.some(x=>(x.inventory_type||'ingredient')!=='ingredient'))return res.status(400).json({error:'Only Inventory items classified as Ingredient can be used in recipes.'})}const client=await pool.connect();try{await client.query('BEGIN');await client.query(`DELETE FROM recipes WHERE product_id=$1`,[productId]);for(const c of normalized)await client.query(`INSERT INTO recipes(product_id,inventory_id,quantity) VALUES($1,$2,$3)`,[productId,c.inventoryId,c.quantity]);await invalidateProductAllergenReview(client,{businessId:business.id,productId});await client.query('COMMIT');res.json((await productsWithRecipes(Number(business.id))).find(p=>p.id===productId))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}});
 
 
 app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
@@ -1076,6 +1177,7 @@ app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
         `,[productId,component.inventory_id,component.batch_quantity,component.batch_unit,component.base_quantity,component.base_unit,component.per_sale_quantity,component.percentage]);
         await client.query(`INSERT INTO recipes(product_id,inventory_id,quantity) VALUES($1,$2,$3)`,[productId,component.inventory_id,component.per_sale_quantity]);
       }
+      await invalidateProductAllergenReview(client,{businessId:ctx.business.id,productId});
       await client.query('COMMIT');
       const saved=(await productsWithRecipes(Number(ctx.business.id))).find(p=>Number(p.id)===productId);
       res.json({...saved,recipe_batch_cost:batch.batch_cost,recipe_cost_per_sale_unit:batch.cost_per_sale_unit});
@@ -1241,6 +1343,7 @@ export async function startEmbeddedBusinessAccounting(){
       profileGovernanceApp=await startEmbeddedProfileGovernance();
       profileGovernanceReady=true;
       await initAccountingTenancyDb();
+      await ensureFoodAllergenSchema(pool);
       console.log('Business & Life multi-business accounting mounted in-process');
       return app;
     })();

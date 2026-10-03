@@ -200,6 +200,21 @@
           <button id="recipeSave" type="button" class="primary">Save batch recipe</button><div id="recipeMessage"></div>
         </div>
 
+        <div class="card stack" id="productAllergenCard">
+          <div><h2>Allergens & cross-contact</h2><p class="muted">Contains and May contain come only from allergen evidence you record on recipe ingredients. Cross-contact is a separate kitchen risk that you control manually.</p></div>
+          <label>Prepared product<select id="allergenProduct"><option value="">Choose a product</option></select></label>
+          <div id="productAllergenDerived" class="salePreview">Choose a prepared product to review its allergen information.</div>
+          <div><strong>Cross-contact risk</strong><small class="muted">Select only risks that are actually present in your kitchen/process.</small></div>
+          <div id="productCrossContactGrid" class="allergenGrid"></div>
+          <label>Cross-contact note<textarea id="productCrossContactNote" rows="2" maxlength="500" placeholder="Example: Shared fryer used for products containing crustaceans."></textarea></label>
+          <button id="saveProductCrossContact" type="button" class="secondary">Save cross-contact risk</button>
+          <div id="productAllergenReviewState" class="salePreview">Allergen review status will appear here.</div>
+          <label>Review note<input id="productAllergenReviewNote" maxlength="500" placeholder="Optional internal review note" /></label>
+          <button id="reviewProductAllergens" type="button" class="primary">Review & confirm allergen information</button>
+          <div id="productAllergenMessage"></div>
+          <small class="muted">Changing the recipe, ingredient allergen evidence or cross-contact risk makes the review outdated and removes a published prepared product from public sale until it is reviewed again.</small>
+        </div>
+
         <div class="card stack"><div class="sectionHead"><h2>Product profitability</h2><span class="muted">Ingredient-cost estimate</span></div><div class="analysisBlock"><strong>Last 7 days</strong><div id="profit7Totals" class="muted"></div><div id="profit7List" class="list"></div></div><div class="analysisBlock"><strong>Last 30 days</strong><div id="profit30Totals" class="muted"></div><div id="profit30List" class="list"></div></div></div>
       </section>
 
@@ -315,6 +330,20 @@
           <div id="lotSummary" class="salePreview">No tracked lots yet.</div>
           <div id="lotList" class="list"></div>
         </div>
+        <div class="card stack" id="ingredientAllergenCard">
+          <div><h2>Ingredient allergen evidence</h2><p class="muted">Record only what you know from the ingredient label, Supplier documentation or confirmed preparation facts. Business & Life never guesses allergens from an ingredient name.</p></div>
+          <form id="ingredientAllergenForm" class="stack">
+            <label>Ingredient<select id="ingredientAllergenInventory"><option value="">Choose an ingredient</option></select></label>
+            <div><strong>Contains</strong><small class="muted">Allergens intentionally present in this ingredient.</small></div>
+            <div id="ingredientContainsGrid" class="allergenGrid"></div>
+            <div><strong>May contain</strong><small class="muted">Use only when the ingredient evidence explicitly supports a precautionary statement.</small></div>
+            <div id="ingredientMayContainGrid" class="allergenGrid"></div>
+            <label>Evidence note<textarea id="ingredientAllergenNote" rows="2" maxlength="500" placeholder="Supplier label, packaging statement or other confirmed evidence"></textarea></label>
+            <button class="secondary">Save ingredient allergen evidence</button>
+            <div id="ingredientAllergenMessage"></div>
+          </form>
+        </div>
+
         <div class="card stack">
           <div><h2>Waste & stock count</h2><p class="muted">Record real losses or correct stock after a physical count. These changes adjust Inventory only; they do not pretend cash moved.</p></div>
           <form id="stockAdjustmentForm" class="stack">

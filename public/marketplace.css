@@ -96,3 +96,15 @@
   .storefrontCoverPublic{border-radius:18px;margin-inline:0}
 }
 .marketSafetyBar{max-width:980px;margin:-3px auto 12px;display:flex;align-items:center;justify-content:flex-end;gap:9px}.marketSafetyBar span{font-size:10px;color:#687386}.marketSafetyAction,.marketProductReport{min-height:44px;border:1px solid #ead8d8;border-radius:12px;background:#fff7f6;color:#8d3e43;padding:9px 12px;font-size:10px;font-weight:900}.marketProductReport{align-self:flex-start;padding:7px 9px;margin-top:2px}
+
+.marketAllergenInfo,.marketAllergenPending{margin-top:8px;border-radius:12px;padding:8px;display:grid;gap:3px;font-size:9px;line-height:1.35}
+.marketAllergenInfo{background:#fff8e8;border:1px solid #f1dfae;color:#5f4a16}
+.marketAllergenInfo>strong{font-size:9px;color:#6e5108}
+.marketAllergenInfo span{display:block}
+.marketAllergenInfo small{font-size:8px;color:#766b51}
+.marketAllergenPending{background:#f5f7f7;border:1px solid #dce5e2;color:#52615c}
+.marketAllergenPending strong{font-size:9px;color:#344943}
+.marketAllergenPending span{font-size:8px}
+.allergenReviewBadge{display:inline-block;margin-top:5px;border-radius:999px;padding:4px 7px;font-size:8px;font-weight:900}
+.allergenReviewBadge.current{background:#e1f4eb;color:#086248}
+.allergenReviewBadge.required{background:#fff1ce;color:#825900}
