@@ -112,6 +112,18 @@ export function createInventoryCountUi({
     renderCurrentItem();
   }
 
+  function selectItem(inventoryId){
+    if(session?.status!=='in_progress')return false;
+    const picker=byId('countSessionItemPicker');
+    const item=(session.items||[]).find(x=>Number(x.inventory_id)===Number(inventoryId));
+    if(!picker||!item)return false;
+    picker.value=String(item.inventory_id);
+    renderCurrentItem();
+    byId('guidedCountCard')?.scrollIntoView({behavior:'smooth',block:'start'});
+    byId('countSessionQuantity')?.focus();
+    return true;
+  }
+
   function updatePostAvailability(){
     const post=byId('countSessionPostBtn');
     if(!post)return;
@@ -312,5 +324,5 @@ export function createInventoryCountUi({
     syncScopeOptions();
   }
 
-  return{wire,load,render,getSession:()=>session,syncScopeOptions};
+  return{wire,load,render,getSession:()=>session,syncScopeOptions,selectItem};
 }
