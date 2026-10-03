@@ -1,4 +1,5 @@
 let marketMe=null,marketWorkspace=null,marketMode='food',currentStore=null,basket=new Map(),merchantStore=null;
+let currentStoreCollection='';
 let retailCatalogState={q:'',category:'',status:'all',stock:'all',media:'all',collection_id:'',offset:0,limit:50};
 let retailCatalogSelection=new Set();
 let retailCatalogScannerStream=null;
@@ -231,9 +232,46 @@ function enhancePublicStorefrontV2(store){
 
 async function openMarketplace(domain='food'){ensureMarket();marketMode=domain;basket.clear();currentStore=null;if(!window.BusinessLifeShell?.openFeatureWorkspace?.('marketWorkspace')){hideBase();marketWorkspace.classList.remove('hidden')}updateBasket();await renderStoreList()}
 async function renderStoreList(){marketWorkspace.innerHTML=marketHeader(marketMode==='food'?'Food Marketplace':'Non-food Marketplace','Local merchants in the Philippines Edition')+`<section class="marketHero"><span>Business & Life • Local marketplace</span><h2>${marketMode==='food'?'Good food, closer to home.':'Useful products from local sellers.'}</h2><p>Browse participating merchants, compare their published offers and place orders directly inside the ecosystem.</p></section><div class="marketFilters"><button class="marketFilter ${marketMode==='food'?'active':''}" data-domain="food">🍲 Food</button><button class="marketFilter ${marketMode==='non_food'?'active':''}" data-domain="non_food">🧺 Non-food</button></div><div id="storeGrid" class="storeGrid"><div class="marketEmpty">Loading merchants…</div></div>`;bindBack();marketWorkspace.querySelectorAll('[data-domain]').forEach(b=>b.onclick=()=>{marketMode=b.dataset.domain;renderStoreList()});try{const stores=await mapi(`/api/marketplace/storefronts?domain=${encodeURIComponent(marketMode)}`);const host=document.getElementById('storeGrid');host.innerHTML=stores.length?stores.map(s=>`<button class="storeCard" type="button" data-store="${s.business_id}">${logo(s)}<span class="storeCardCopy"><strong>${mh(s.store_name)}</strong><p>${mh(s.description||'Local merchant')}</p><span class="storeMeta"><span class="${s.opening_status}">${mh(mnice(s.opening_status))}</span><span>~${Number(s.preparation_eta_minutes)||15} min</span><span>${s.product_count} products</span>${s.min_price!=null?`<span>from ${mphp(s.min_price)}</span>`:''}</span></span><span class="storeOpen">›</span></button>`).join(''):'<div class="marketEmpty">No participating merchants have published a store in this category yet.</div>';host.querySelectorAll('[data-store]').forEach(b=>b.onclick=()=>openStore(Number(b.dataset.store)))}catch(e){document.getElementById('storeGrid').innerHTML=`<div class="marketEmpty">${mh(e.message)}</div>`}}
-async function openStore(businessId){try{currentStore=await mapi(`/api/marketplace/storefronts/${businessId}`);basket.clear();updateBasket();renderStore()}catch(e){mtoast(e.message)}}
+async function openStore(businessId){try{currentStore=await mapi(`/api/marketplace/storefronts/${businessId}`);currentStoreCollection='';basket.clear();updateBasket();renderStore()}catch(e){mtoast(e.message)}}
 async function openMarketplaceReport(context){const loader=window.BusinessLifeFeatureLoader;if(!loader?.openSafetyReport)return mtoast('Safety reporting is not available yet.');try{await loader.openSafetyReport(context)}catch{}}
-function renderStore(){const s=currentStore;marketWorkspace.innerHTML=marketHeader(s.store_name,`${mnice(s.merchant_domain)} • ${mnice(s.opening_status)}`)+`<section class="storefrontHero">${logo(s)}<div class="storefrontHeroCopy"><h2>${mh(s.store_name)}</h2><p>${mh(s.description||'Local merchant')}</p><span class="storeMeta"><span class="${s.opening_status}">${mh(mnice(s.opening_status))}</span><span>Prep ~${Number(s.preparation_eta_minutes)||15} min</span>${s.pickup_enabled?'<span>Pickup</span>':''}${s.delivery_enabled?'<span>Delivery</span>':''}</span></div></section><div class="marketSafetyBar"><button class="marketSafetyAction" id="reportMerchant" type="button">Report merchant</button><span>Private report · not a public review</span></div><div class="productGridMarket">${s.products.length?s.products.map(p=>productCard(p)).join(''):'<div class="marketEmpty">This merchant has not published products yet.</div>'}</div>`;bindBack();marketWorkspace.querySelector('[data-market-back]').onclick=renderStoreList;document.getElementById('reportMerchant').onclick=()=>openMarketplaceReport({related_type:'merchant',related_id:Number(s.business_id),display_label:`Merchant: ${s.store_name}`,suggested_category:'Scam / fraud / suspicious activity'});marketWorkspace.querySelectorAll('[data-report-product]').forEach(b=>b.onclick=()=>{const p=s.products.find(x=>Number(x.id)===Number(b.dataset.reportProduct));if(p)openMarketplaceReport({related_type:'marketplace_product',related_id:Number(p.id),display_label:`Product: ${p.name} — ${s.store_name}`,suggested_category:'Illegal / restricted item or service'})});marketWorkspace.querySelectorAll('[data-add-product]').forEach(b=>b.onclick=()=>addBasket(Number(b.dataset.addProduct)));enhancePublicStorefrontV2(s)}
+function storefrontCollections(store){
+  const rows=(Array.isArray(store?.collections)?store.collections:[]).filter(collection=>Array.isArray(collection.product_ids)&&collection.product_ids.length);
+  if(!rows.length)return '';
+  return '<div class="storeCollectionBar" aria-label="Store collections">'+
+    '<button type="button" data-store-collection="" class="'+(!currentStoreCollection?'active':'')+'">All</button>'+
+    rows.map(collection=>'<button type="button" data-store-collection="'+mh(collection.code||String(collection.id))+'" class="'+(String(currentStoreCollection)===String(collection.code||collection.id)?'active':'')+'">'+mh(collection.name)+'</button>').join('')+
+  '</div>';
+}
+function storeVisibleProducts(store){
+  const all=Array.isArray(store?.products)?store.products:[];
+  if(!currentStoreCollection)return all;
+  const collection=(store.collections||[]).find(row=>String(row.code||row.id)===String(currentStoreCollection));
+  if(!collection)return all;
+  const ids=new Set((collection.product_ids||[]).map(Number));
+  return all.filter(product=>ids.has(Number(product.id)));
+}
+function renderStore(){
+  const s=currentStore,visible=storeVisibleProducts(s);
+  marketWorkspace.innerHTML=
+    marketHeader(s.store_name,`${mnice(s.merchant_domain)} • ${mnice(s.opening_status)}`)+
+    `<section class="storefrontHero">${logo(s)}<div class="storefrontHeroCopy"><h2>${mh(s.store_name)}</h2><p>${mh(s.description||'Local merchant')}</p><span class="storeMeta"><span class="${s.opening_status}">${mh(mnice(s.opening_status))}</span><span>Prep ~${Number(s.preparation_eta_minutes)||15} min</span>${s.pickup_enabled?'<span>Pickup</span>':''}${s.delivery_enabled?'<span>Delivery</span>':''}</span></div></section>`+
+    storefrontCollections(s)+
+    '<div class="marketSafetyBar"><button class="marketSafetyAction" id="reportMerchant" type="button">Report merchant</button><span>Private report · not a public review</span></div>'+
+    '<div class="productGridMarket">'+(visible.length?visible.map(product=>productCard(product)).join(''):'<div class="marketEmpty">No products are available in this collection right now.</div>')+'</div>';
+  bindBack();
+  marketWorkspace.querySelector('[data-market-back]').onclick=renderStoreList;
+  document.getElementById('reportMerchant').onclick=()=>openMarketplaceReport({related_type:'merchant',related_id:Number(s.business_id),display_label:`Merchant: ${s.store_name}`,suggested_category:'Scam / fraud / suspicious activity'});
+  marketWorkspace.querySelectorAll('[data-store-collection]').forEach(button=>button.onclick=()=>{
+    currentStoreCollection=button.dataset.storeCollection||'';
+    renderStore();
+  });
+  marketWorkspace.querySelectorAll('[data-report-product]').forEach(button=>button.onclick=()=>{
+    const product=s.products.find(x=>Number(x.id)===Number(button.dataset.reportProduct));
+    if(product)openMarketplaceReport({related_type:'marketplace_product',related_id:Number(product.id),display_label:`Product: ${product.name} — ${s.store_name}`,suggested_category:'Illegal / restricted item or service'});
+  });
+  marketWorkspace.querySelectorAll('[data-add-product]').forEach(button=>button.onclick=()=>addBasket(Number(button.dataset.addProduct)));
+  enhancePublicStorefrontV2(s);
+}
 function marketplaceAllergenInfo(p){
   if(p?.product_domain!=='food'||p?.product_kind!=='prepared_food')return '';
   if(!p?.allergen_review_current)return '<div class="marketAllergenPending"><strong>Ingredient disclosure pending review</strong><span>Contact the Merchant for current ingredient information before ordering.</span></div>';
