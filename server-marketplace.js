@@ -705,8 +705,9 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
     }else inventoryId=null;
     const quantityPerUnit=Number(req.body?.quantity_per_unit??old.quantity_per_unit);
     if(!positive(quantityPerUnit))return res.status(400).json({error:'Stock quantity per sold unit must be greater than zero'});
-    const publishRequested=req.body?.published===true&&old.published!==true;
-    if(publishRequested&&variantMode){
+    const targetPublished=req.body?.published===undefined?Boolean(old.published):Boolean(req.body.published);
+    const publishRequested=targetPublished&&old.published!==true;
+    if(targetPublished&&variantMode){
       const variants=await pool.query(`
         SELECT COUNT(*)::int count
           FROM catalog_product_variants v
