@@ -22,6 +22,7 @@ import {
   deriveProductAllergenSummary,invalidateProductAllergenReview,invalidateAllergenReviewForInventory
 } from './food-allergen-core.js';
 import {directProductCostEstimate} from './food-cost-core.js';
+import {buildWasteAnalytics} from './inventory-waste-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -843,6 +844,88 @@ app.get('/api/inventory/lots',async(req,res,next)=>{
       const state=String(row.lot_state||'available');
       return{...row,expiry_status,days_to_expiry,usable:state==='available'&&expiry_status!=='expired'&&Number(row.quantity_remaining_base)>0};
     }));
+  }catch(error){next(error)}
+});
+
+app.get('/api/inventory/waste-analytics',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const days=Number(req.query.days)===30?30:7;
+    const [adjustments,purchases,usage]=await Promise.all([
+      pool.query(`
+        SELECT a.*,i.item,i.inventory_type,
+          COALESCE((
+            SELECT json_agg(json_build_object(
+              'lot_id',x.lot_id,
+              'quantity_removed',x.quantity_removed,
+              'lot_code',x.lot_code_snapshot,
+              'lot_state',x.lot_state_snapshot,
+              'expires_at',x.expires_at_snapshot
+            ) ORDER BY x.expires_at_snapshot NULLS LAST,x.lot_id)
+            FROM inventory_adjustment_lot_allocations x
+            WHERE x.adjustment_id=a.id
+          ),'[]'::json) lot_allocations
+          FROM inventory_adjustments a
+          JOIN inventory i ON i.id=a.inventory_id AND i.business_id=a.business_id
+         WHERE a.business_id=$1
+           AND a.adjustment_kind IN ('waste','spoilage','expired','damaged','other_loss')
+           AND a.quantity_delta<0
+           AND a.created_at>=NOW()-($2::int*INTERVAL '1 day')
+         ORDER BY a.created_at DESC,a.id DESC
+      `,[ctx.business.id,days]),
+      pool.query(`
+        SELECT inventory_id,MAX(base_unit) base_unit,
+               COALESCE(SUM(base_quantity),0) base_quantity,
+               COALESCE(SUM(total_cost),0) total_cost,
+               COUNT(*)::int purchase_events
+          FROM inventory_purchases
+         WHERE business_id=$1
+           AND created_at>=NOW()-($2::int*INTERVAL '1 day')
+         GROUP BY inventory_id
+      `,[ctx.business.id,days]),
+      pool.query(`
+        SELECT inventory_id,
+               COALESCE(SUM(usage_quantity),0) usage_quantity,
+               COALESCE(SUM(usage_value),0) usage_value,
+               COALESCE(SUM(usage_events),0)::int usage_events
+          FROM (
+            SELECT osc.inventory_id,
+                   SUM(osc.quantity_used) usage_quantity,
+                   SUM(osc.cost_snapshot) usage_value,
+                   COUNT(DISTINCT osc.order_id)::int usage_events
+              FROM order_stock_consumptions osc
+              JOIN orders o ON o.id=osc.order_id
+             WHERE o.business_id=$1
+               AND osc.reversed_at IS NULL
+               AND o.stock_consumed_at>=NOW()-($2::int*INTERVAL '1 day')
+             GROUP BY osc.inventory_id
+            UNION ALL
+            SELECT psi.inventory_id,
+                   SUM(psi.quantity_used) usage_quantity,
+                   SUM(psi.cost_snapshot) usage_value,
+                   COUNT(DISTINCT psi.sale_id)::int usage_events
+              FROM product_sale_ingredients psi
+              JOIN product_sales ps ON ps.id=psi.sale_id
+             WHERE ps.business_id=$1
+               AND ps.occurred_at>=NOW()-($2::int*INTERVAL '1 day')
+             GROUP BY psi.inventory_id
+          ) evidence
+         GROUP BY inventory_id
+      `,[ctx.business.id,days])
+    ]);
+    const report=buildWasteAnalytics({
+      adjustments:adjustments.rows,
+      purchases:purchases.rows,
+      usage:usage.rows
+    });
+    res.json({
+      days,
+      generated_at:new Date().toISOString(),
+      ...report,
+      source:'inventory_adjustments',
+      value_basis:'adjustment_time_unit_cost_snapshot'
+    });
   }catch(error){next(error)}
 });
 
