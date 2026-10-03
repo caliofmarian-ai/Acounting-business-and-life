@@ -28,6 +28,7 @@ import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from 
 import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
 import {INVENTORY_CLASSIFICATION_VERSION,ensureUniversalInventorySchema,normalizeInventoryClassification,compatibilityInventoryType,inventoryClassificationInputProvided} from './universal-inventory-core.js';
 import {ensureInventoryStateSchema,incomingInventoryMap,listInventoryUnavailableAllocations,createInventoryUnavailableAllocation,releaseInventoryUnavailableAllocation} from './inventory-state-core.js';
+import {CATALOG_V3_SCHEMA_VERSION} from './catalog-v3-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1673,7 +1674,38 @@ app.get('/api/procurement/reorder-suggestions',async(req,res,next)=>{try{
   if(!owned)return res.status(403).json({error:'Business unavailable'});
   res.json(await supplierReorderSuggestions(pool,businessId));
 }catch(e){next(e)}});
-app.post('/api/merchant/storefront/import-legacy',jsonBody,async(req,res,next)=>{try{const ctx=await accountingContext(req);if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});const businessId=Number(req.body?.business_id||ctx.business.id),owned=ctx.businesses.find(b=>Number(b.id)===businessId);if(!owned)return res.status(403).json({error:'Business unavailable'});const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT $1,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);const products=await pool.query(`SELECT * FROM marketplace_products WHERE business_id=$1 ORDER BY category,name`,[businessId]);res.json({imported_or_updated:r.rowCount,products:products.rows})}catch(e){next(e)}});
+app.post('/api/merchant/storefront/import-legacy',jsonBody,async(req,res,next)=>{try{
+  const ctx=await accountingContext(req);
+  if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+  const businessId=Number(req.body?.business_id||ctx.business.id),owned=ctx.businesses.find(b=>Number(b.id)===businessId);
+  if(!owned)return res.status(403).json({error:'Business unavailable'});
+  const r=await pool.query(`
+    INSERT INTO marketplace_products(
+      business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,
+      quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,
+      catalog_category_code,catalog_schema_version
+    )
+    SELECT $1,p.id,p.name,'',p.category,'food','prepared_food','item',
+           1,p.selling_price,FALSE,NULL,p.active,FALSE,'prepared_food',$2
+      FROM products p
+     WHERE p.business_id=$1
+    ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL
+    DO UPDATE SET
+      name=EXCLUDED.name,
+      category=EXCLUDED.category,
+      selling_price=EXCLUDED.selling_price,
+      active=EXCLUDED.active,
+      catalog_category_code=COALESCE(marketplace_products.catalog_category_code,EXCLUDED.catalog_category_code),
+      catalog_schema_version=CASE
+        WHEN COALESCE(marketplace_products.catalog_schema_version,'')='' THEN EXCLUDED.catalog_schema_version
+        ELSE marketplace_products.catalog_schema_version
+      END,
+      updated_at=NOW()
+    RETURNING id
+  `,[businessId,CATALOG_V3_SCHEMA_VERSION]);
+  const products=await pool.query(`SELECT * FROM marketplace_products WHERE business_id=$1 ORDER BY category,name`,[businessId]);
+  res.json({imported_or_updated:r.rowCount,products:products.rows})
+}catch(e){next(e)}});
 
 function dispatchProfileGovernanceJson(req,res,{afterSuccess=null}={}){
   if(!profileGovernanceApp)return Promise.reject(Object.assign(new Error('Profile Governance runtime is not ready'),{status:503}));
