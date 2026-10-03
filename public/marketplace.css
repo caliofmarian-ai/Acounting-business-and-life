@@ -125,6 +125,12 @@
 }
 
 
+
+.storeCollectionBar{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;margin:0 0 12px;padding:1px 0 3px}
+.storeCollectionBar::-webkit-scrollbar{display:none}
+.storeCollectionBar button{flex:0 0 auto;min-height:42px;border:1px solid #dfe7e4;background:#fff;color:#536071;border-radius:999px;padding:8px 13px;font-size:10px;font-weight:900;white-space:nowrap}
+.storeCollectionBar button.active{background:#17233c;color:#fff;border-color:#17233c}
+
 /* Retail Merchandising V1 · #741 */
 .retailMerchandising{display:grid;gap:14px}
 .retailCatalogHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
