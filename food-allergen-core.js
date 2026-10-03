@@ -133,6 +133,7 @@ export async function deriveProductAllergenSummary(db,{businessId,productId}={})
     product_id:pid,
     revision,
     ...derived,
+    cross_contact_note:cross.rows.find(x=>x.note)?.note||'',
     review_current:Boolean(r&&Number(r.reviewed_revision)===revision),
     reviewed_revision:r?Number(r.reviewed_revision):null,
     reviewed_at:r?.reviewed_at||null,
