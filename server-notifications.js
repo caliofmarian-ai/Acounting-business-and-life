@@ -6,7 +6,7 @@ import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ensureNotificationSchema,emitNotificationEvent,businessNotificationRecipients,
-  adminNotificationRecipients,processNotificationDeliveries,renderNotification,renderNotifications,
+  adminNotificationRecipients,processNotificationDeliveries,renderNotification,renderNotifications,renderNotificationsWithTemplates,
   normalizeNotificationLocale,notificationAttentionPreference,saveNotificationAttentionPreference,
   notificationSoundPreferences,saveNotificationSoundPreference
 } from './notification-core.js';
@@ -18,12 +18,15 @@ import { bootstrapResendWebhook,resendWebhookReadiness } from './resend-webhook-
 import { startEmbeddedAdminOperations,stopEmbeddedAdminOperations } from './server-admin-operations.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {ensureInventoryNotificationSchema,scanInventoryNotifications} from './inventory-notification-scanner.js';
+import {AUTH_SESSION_TTL_MS,verifyV2SessionTokenSignature} from './auth-session-core.js';
+import {sessionCredentialFromHeaders} from './session-cookie-core.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
 const app=express();
 const port=Number(process.env.PORT||3000);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
+const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
 const jsonBody=express.json({limit:'30mb'});
 const body=(req,res,next)=>req.body!==undefined?next():jsonBody(req,res,next);
 const CATEGORIES=['operational','security','legal','support','compliance','marketing'];
@@ -87,6 +90,39 @@ async function identity(req){
   const accountId=Number(b.account_id);
   if(!Number.isInteger(accountId)||accountId<1)throw Object.assign(new Error('Authenticated account context is unavailable'),{status:502});
   return{account:{id:accountId}};
+}
+
+function notificationReadCandidate(req){
+  const credential=sessionCredentialFromHeaders(req?.headers||{});
+  const parsed=verifyV2SessionTokenSignature(TOKEN_SECRET,credential.token,{ttlMs:AUTH_SESSION_TTL_MS});
+  if(!parsed)throw Object.assign(new Error('Unauthorized'),{status:401});
+  return parsed;
+}
+async function validateNotificationReadIdentity(candidate){
+  const q=await pool.query(`
+    SELECT a.id,a.auth_status
+      FROM account_sessions s
+      JOIN accounts a ON a.id=s.account_id
+     WHERE s.session_id=$1 AND s.account_id=$2
+       AND s.revoked_at IS NULL AND s.expires_at>NOW()
+  `,[candidate.sessionId,candidate.accountId]);
+  if(!q.rowCount)throw Object.assign(new Error('Unauthorized'),{status:401});
+  if(['suspended','closed'].includes(String(q.rows[0].auth_status||''))){
+    throw Object.assign(new Error('This account is not available'),{status:403,code:'ACCOUNT_NOT_ACTIVE'});
+  }
+  return{account:{id:Number(q.rows[0].id)}};
+}
+function activeInAppTemplateRows(){
+  return pool.query(`
+    SELECT DISTINCT ON (event_code,locale)
+      event_code,locale,title_template,body_template
+      FROM notification_templates
+     WHERE country_code='PH'
+       AND locale IN ('en-PH','fil-PH')
+       AND channel='in_app'
+       AND active=TRUE
+     ORDER BY event_code,locale,version DESC
+  `);
 }
 const uniqueRecipients=(...groups)=>[...new Map(groups.flat().filter(Boolean).map(x=>[Number(x.accountId),x])).values()];
 async function safeEmit(spec){try{return await emitNotificationEvent(pool,spec)}catch(e){console.error('Notification event failed:',e.message);return null}}
@@ -409,8 +445,10 @@ async function root(req,res){const r=await notificationsFetch(req.path,{headers:
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/notifications',async(req,res,next)=>{try{
-  const me=await identity(req),limit=Math.max(1,Math.min(100,Number(req.query.limit)||50)),threaded=String(req.query.threaded||'')==='all';
-  const{rows}=await pool.query(`
+  const candidate=notificationReadCandidate(req);
+  const limit=Math.max(1,Math.min(100,Number(req.query.limit)||50)),threaded=String(req.query.threaded||'')==='all';
+  const identityPromise=validateNotificationReadIdentity(candidate);
+  const inboxPromise=pool.query(`
     WITH base AS (
       SELECT r.id recipient_id,r.read_at,r.dismissed_at,r.locale,r.role_hint,e.id event_id,e.event_code,e.entity_type,e.entity_id,e.category,e.priority,e.data_json,e.created_at,
         CASE WHEN (e.entity_type='support_ticket' OR ($3::boolean AND e.entity_type IN ('order','delivery','purchase_order','service_job'))) AND e.entity_id<>''
@@ -426,32 +464,42 @@ app.get('/api/notifications',async(req,res,next)=>{try{
       FROM base
     ) SELECT recipient_id,read_at,dismissed_at,locale,role_hint,event_id,event_code,entity_type,entity_id,category,priority,data_json,created_at,thread_key,thread_count,unread_count
       FROM inbox WHERE thread_rank=1 ORDER BY created_at DESC LIMIT $2
-  `,[me.account.id,limit,threaded]);
-  const [soundPreferences,messages]=await Promise.all([
-    notificationSoundPreferences(pool,me.account.id),
-    renderNotifications(pool,rows,'in_app')
+  `,[candidate.accountId,limit,threaded]);
+  const [me,inbox,soundPreferences,templates]=await Promise.all([
+    identityPromise,
+    inboxPromise,
+    notificationSoundPreferences(pool,candidate.accountId),
+    activeInAppTemplateRows()
   ]);
+  const rows=inbox.rows;
+  const messages=renderNotificationsWithTemplates(rows,templates.rows);
   const out=rows.map((row,index)=>{
     const msg=messages[index],attention={...msg.attention,soundVariant:soundPreferences[msg.attention.soundSlot]??DEFAULT_NOTIFICATION_SOUND_VARIANT};
     return{...row,title:msg.title,body:msg.body,attention};
   });
+  if(Number(me.account.id)!==Number(candidate.accountId))throw Object.assign(new Error('Authenticated account context is unavailable'),{status:502});
   res.json(out)
 }catch(e){next(e)}});
 app.get('/api/notifications/unread-count',async(req,res,next)=>{try{
-  const me=await identity(req),threaded=String(req.query.threaded||'')==='all';
-  const q=await pool.query(`
-    SELECT COUNT(DISTINCT CASE
-      WHEN (e.entity_type='support_ticket' OR ($2::boolean AND e.entity_type IN ('order','delivery','purchase_order','service_job'))) AND e.entity_id<>''
-        THEN e.entity_type||':'||e.entity_id
-      ELSE 'recipient:'||r.id::text
-    END)::int n
-    FROM notification_recipients r
-    JOIN notification_events e ON e.id=r.event_id
-    JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
-    WHERE r.account_id=$1 AND r.dismissed_at IS NULL AND r.read_at IS NULL
-  `,[me.account.id,threaded]);
+  const candidate=notificationReadCandidate(req),threaded=String(req.query.threaded||'')==='all';
+  const [me,q]=await Promise.all([
+    validateNotificationReadIdentity(candidate),
+    pool.query(`
+      SELECT COUNT(DISTINCT CASE
+        WHEN (e.entity_type='support_ticket' OR ($2::boolean AND e.entity_type IN ('order','delivery','purchase_order','service_job'))) AND e.entity_id<>''
+          THEN e.entity_type||':'||e.entity_id
+        ELSE 'recipient:'||r.id::text
+      END)::int n
+      FROM notification_recipients r
+      JOIN notification_events e ON e.id=r.event_id
+      JOIN notification_deliveries d ON d.recipient_id=r.id AND d.channel='in_app' AND d.status='delivered'
+      WHERE r.account_id=$1 AND r.dismissed_at IS NULL AND r.read_at IS NULL
+    `,[candidate.accountId,threaded])
+  ]);
+  if(Number(me.account.id)!==Number(candidate.accountId))throw Object.assign(new Error('Authenticated account context is unavailable'),{status:502});
   res.json({unread:Number(q.rows[0].n)})
 }catch(e){next(e)}});
+
 app.patch('/api/notifications/:id/read',body,async(req,res,next)=>{try{
   const me=await identity(req),recipientId=Number(req.params.id),threaded=req.body?.threaded===true;
   const target=await pool.query(`SELECT e.entity_type,e.entity_id FROM notification_recipients r JOIN notification_events e ON e.id=r.event_id WHERE r.id=$1 AND r.account_id=$2`,[recipientId,me.account.id]);
