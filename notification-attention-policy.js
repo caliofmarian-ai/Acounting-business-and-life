@@ -61,7 +61,11 @@ const FINANCE_EVENTS=new Set([
 const WARNING_EVENTS=new Set([
   'order.cancelled',
   'profile.authorization_changed',
-  'delivery.offer_withdrawn'
+  'delivery.offer_withdrawn',
+  'inventory.out_of_stock',
+  'inventory.expiring_soon',
+  'inventory.expired',
+  'inventory.held'
 ]);
 
 const INFO_EVENTS=new Set([
