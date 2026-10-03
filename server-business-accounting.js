@@ -13,8 +13,8 @@ import {startEmbeddedProfileGovernance,stopEmbeddedProfileGovernance} from './se
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
 import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
-import { inventoryLotExpiryStatus } from './inventory-lot-core.js';
-import { planInventoryFefo,applyLotAllocations,canUseSupplyLots } from './inventory-lot-runtime.js';
+import { inventoryLotExpiryStatus,planPhysicalStockReduction } from './inventory-lot-core.js';
+import { planInventoryFefo,applyLotAllocations,canUseSupplyLots,inventoryLotRows,applyPhysicalLotReductions } from './inventory-lot-runtime.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -202,6 +202,22 @@ async function initAccountingTenancyDb() {
       ON inventory_adjustments(business_id,created_at DESC,id DESC);
     CREATE INDEX IF NOT EXISTS inventory_adjustments_inventory_idx
       ON inventory_adjustments(inventory_id,created_at DESC,id DESC);
+    ALTER TABLE inventory_adjustments
+      ADD COLUMN IF NOT EXISTS untracked_quantity_delta NUMERIC(14,4) NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS inventory_adjustment_lot_allocations (
+      adjustment_id BIGINT NOT NULL REFERENCES inventory_adjustments(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      lot_id BIGINT NOT NULL,
+      quantity_removed NUMERIC(16,6) NOT NULL CHECK(quantity_removed>0),
+      lot_code_snapshot TEXT NOT NULL DEFAULT '',
+      lot_state_snapshot TEXT NOT NULL DEFAULT '',
+      expires_at_snapshot TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(adjustment_id,lot_id)
+    );
+    CREATE INDEX IF NOT EXISTS inventory_adjustment_lot_allocations_lot_idx
+      ON inventory_adjustment_lot_allocations(lot_id,created_at DESC);
 
     CREATE TABLE IF NOT EXISTS product_sale_lot_allocations (
       sale_id BIGINT NOT NULL REFERENCES product_sales(id) ON DELETE CASCADE,
@@ -675,7 +691,34 @@ app.get('/api/inventory/adjustments',async(req,res,next)=>{
        ORDER BY a.created_at DESC,a.id DESC
        LIMIT 100
     `,[ctx.business.id]);
-    res.json(rows);
+    const ids=rows.map(x=>Number(x.id));
+    let allocationRows=[];
+    if(ids.length){
+      const q=await pool.query(`
+        SELECT x.adjustment_id,x.inventory_id,x.lot_id,x.quantity_removed,
+               x.lot_code_snapshot,x.lot_state_snapshot,x.expires_at_snapshot
+          FROM inventory_adjustment_lot_allocations x
+         WHERE x.adjustment_id=ANY($1::bigint[])
+         ORDER BY x.adjustment_id,x.expires_at_snapshot NULLS LAST,x.lot_id
+      `,[ids]);
+      allocationRows=q.rows;
+    }
+    const byAdjustment=new Map();
+    for(const x of allocationRows){
+      const id=Number(x.adjustment_id);
+      if(!byAdjustment.has(id))byAdjustment.set(id,[]);
+      byAdjustment.get(id).push({
+        lot_id:Number(x.lot_id),
+        quantity_removed:Number(x.quantity_removed),
+        lot_code:x.lot_code_snapshot||'',
+        lot_state:x.lot_state_snapshot||'',
+        expires_at:x.expires_at_snapshot||null
+      });
+    }
+    res.json(rows.map(row=>({
+      ...row,
+      lot_allocations:byAdjustment.get(Number(row.id))||[]
+    })));
   }catch(error){next(error)}
 });
 app.post('/api/inventory/adjustments',jsonBody,async(req,res,next)=>{
@@ -686,35 +729,116 @@ app.post('/api/inventory/adjustments',jsonBody,async(req,res,next)=>{
     const inventoryId=Number(req.body?.inventory_id);
     const kind=clean(req.body?.adjustment_kind,40);
     const entered=Number(req.body?.quantity);
+    const explicitLotId=req.body?.lot_id==null||req.body?.lot_id===''?null:Number(req.body.lot_id);
     if(!Number.isInteger(inventoryId)||!INVENTORY_ADJUSTMENT_KINDS.has(kind)||!Number.isFinite(entered)||entered<0){
       return res.status(400).json({error:'Choose an inventory item, adjustment type and valid quantity.'});
     }
+    if(explicitLotId!=null&&!Number.isInteger(explicitLotId))return res.status(400).json({error:'Choose a valid lot or leave the lot empty.'});
+    if(kind==='count_correction'&&explicitLotId!=null)return res.status(400).json({error:'Physical stock count reconciles the whole item; do not select a single lot.'});
     if(kind!=='count_correction'&&entered<=0)return res.status(400).json({error:'Loss quantity must be greater than zero.'});
+
     await client.query('BEGIN');
     const inv=await client.query(`SELECT * FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,[inventoryId,ctx.business.id]);
     if(!inv.rowCount)throw Object.assign(new Error('Inventory item not found'),{status:404});
     const row=inv.rows[0],before=Number(row.quantity),after=kind==='count_correction'?entered:before-entered;
     if(after<-1e-9)throw Object.assign(new Error('Adjustment cannot remove more stock than is currently available.'),{status:409});
     const safeAfter=Math.max(0,after),delta=safeAfter-before,unitCost=Number(row.unit_cost||0);
+
+    let physicalPlan={ok:true,allocations:[],untracked_used:0};
+    let appliedLots=[];
+    const lotTracking=await canUseSupplyLots(client);
+    if(delta<0&&lotTracking){
+      const lots=await inventoryLotRows(client,{businessId:ctx.business.id,inventoryId,lock:true});
+      physicalPlan=planPhysicalStockReduction({
+        quantityToRemove:-delta,
+        inventoryQuantity:before,
+        lots,
+        explicitLotId,
+        mode:kind==='count_correction'?'count':'loss',
+        expiredOnly:kind==='expired',
+        now:Date.now()
+      });
+      if(!physicalPlan.ok){
+        const messages={
+          lot_not_found:'The selected lot is unavailable or has no remaining quantity.',
+          lot_not_expired:'Expired disposal can only target a lot whose expiry date has passed.',
+          lot_shortage:'The selected lot does not contain enough remaining stock.',
+          expired_stock_shortage:'There is not enough expired or legacy-untracked stock for this expired disposal.',
+          aggregate_shortage:'Adjustment cannot remove more stock than is currently available.'
+        };
+        throw Object.assign(new Error(messages[physicalPlan.reason]||'Lot quantities cannot be reconciled with this stock adjustment.'),{
+          status:409,lot_reconciliation:physicalPlan
+        });
+      }
+      appliedLots=await applyPhysicalLotReductions(client,physicalPlan.allocations||[]);
+    }else if(explicitLotId!=null&&!lotTracking){
+      throw Object.assign(new Error('Lot tracking is not available for this Inventory workspace.'),{status:409});
+    }
+
     await client.query(`UPDATE inventory SET quantity=$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[safeAfter,inventoryId,ctx.business.id]);
+
+    if(lotTracking){
+      const afterLots=await inventoryLotRows(client,{businessId:ctx.business.id,inventoryId,lock:false});
+      const trackedAfter=afterLots.reduce((sum,x)=>sum+Number(x.quantity_remaining_base||0),0);
+      if(trackedAfter>safeAfter+1e-6){
+        throw Object.assign(new Error('Lot quantities would exceed the corrected Inventory quantity. Review the physical count or lot evidence.'),{
+          status:409,tracked_quantity:trackedAfter,inventory_quantity:safeAfter
+        });
+      }
+    }
+
+    const untrackedDelta=delta>0&&kind==='count_correction'
+      ?delta
+      :-(Number(physicalPlan.untracked_used||0));
+
     const saved=await client.query(`
       INSERT INTO inventory_adjustments(
         business_id,inventory_id,adjustment_kind,before_quantity,quantity_delta,after_quantity,
-        unit,unit_cost_snapshot,estimated_value_delta,note,actor_account_id
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        unit,unit_cost_snapshot,estimated_value_delta,note,actor_account_id,untracked_quantity_delta
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *
     `,[
       ctx.business.id,inventoryId,kind,before,delta,safeAfter,row.unit,unitCost,
-      delta*unitCost,clean(req.body?.note,300),ctx.me.account.id
+      delta*unitCost,clean(req.body?.note,300),ctx.me.account.id,untrackedDelta
     ]);
+
+    const adjustmentId=Number(saved.rows[0].id);
+    for(const allocation of appliedLots){
+      const code=clean(allocation.supplier_lot_code||allocation.internal_lot_code||'',90);
+      await client.query(`
+        INSERT INTO inventory_adjustment_lot_allocations(
+          adjustment_id,inventory_id,lot_id,quantity_removed,lot_code_snapshot,lot_state_snapshot,expires_at_snapshot
+        ) VALUES($1,$2,$3,$4,$5,$6,$7)
+      `,[
+        adjustmentId,inventoryId,Number(allocation.lot_id),Number(allocation.quantity),
+        code,clean(allocation.lot_state||'',30),allocation.expires_at||null
+      ]);
+    }
+
     await client.query('COMMIT');
     res.status(201).json({
-      adjustment:{...saved.rows[0],item:row.item,inventory_type:row.inventory_type},
+      adjustment:{
+        ...saved.rows[0],
+        item:row.item,
+        inventory_type:row.inventory_type,
+        lot_allocations:appliedLots.map(x=>({
+          lot_id:Number(x.lot_id),
+          quantity_removed:Number(x.quantity),
+          lot_code:clean(x.supplier_lot_code||x.internal_lot_code||'',90),
+          lot_state:x.lot_state||'',
+          expires_at:x.expires_at||null
+        }))
+      },
       inventory:{...row,quantity:safeAfter},
+      lot_reconciliation:{
+        tracked_lot_reductions:appliedLots.length,
+        untracked_quantity_delta:untrackedDelta
+      },
       accounting_effect:'inventory_only_no_cash_movement'
     });
   }catch(error){
     await client.query('ROLLBACK').catch(()=>{});
+    if(error?.lot_reconciliation)return res.status(error.status||409).json({error:error.message,lot_reconciliation:error.lot_reconciliation});
     next(error);
   }finally{client.release()}
 });

@@ -276,6 +276,10 @@
               </select></label>
               <label><span id="stockAdjustmentQtyLabel">Quantity to remove</span><input id="stockAdjustmentQty" type="number" min="0" step="0.0001" required /></label>
             </div>
+            <label>Lot / batch
+              <select id="stockAdjustmentLot" disabled><option value="">Choose an Inventory item first</option></select>
+            </label>
+            <small id="stockAdjustmentLotHelp" class="muted">Optional for waste/spoilage/damage when the exact lot is known. Physical stock count reconciles the whole item.</small>
             <label>Reason / note<input id="stockAdjustmentNote" maxlength="300" placeholder="Optional explanation, count note, spoilage reason…" /></label>
             <div id="stockAdjustmentPreview" class="salePreview">Choose an item and enter the quantity.</div>
             <button class="secondary">Record stock adjustment</button><div id="stockAdjustmentMessage"></div>
