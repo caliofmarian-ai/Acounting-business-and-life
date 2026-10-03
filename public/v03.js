@@ -390,7 +390,7 @@ async function sendRestockRequest(x,row){
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
   inventory=results[0];
-  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
+  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
   $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
   if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
@@ -418,7 +418,7 @@ async function loadInventoryLots(){
       ?`<strong>${active.length} open lot(s)</strong> • ${usable} usable • ${soon} expiring soon • ${expired} expired • ${held} held`
       :'No open tracked lots yet.';
     const nodes=rows.slice(0,120).map(r=>{
-      const d=document.createElement('div');d.className='listRow';
+      const d=document.createElement('div');d.className='listRow';d.dataset.lotId=String(r.id);d.dataset.inventoryId=String(r.inventory_id||'');
       const status=lotExpiryCopy(r),bad=r.expiry_status==='expired'||!['available','depleted'].includes(String(r.lot_state||'available'));
       const code=r.supplier_lot_code||r.internal_lot_code||('Lot '+r.id);
       d.innerHTML=`<div class="rowMain"><strong>${esc(r.item_name)} · ${esc(code)}</strong><small>${num(r.quantity_remaining_base,4)} ${esc(r.base_unit)} remaining • ${esc(status)}${r.supplier_lot_code&&r.internal_lot_code?' • internal '+esc(r.internal_lot_code):''}</small></div><span class="${bad?'negative':r.expiry_status==='expiring_soon'?'negative':''}">${r.usable?'FEFO':'HOLD'}</span>`;
@@ -708,6 +708,19 @@ function setView(name){
   if(name==='Sell')updateSellPreview();
   loadMerchantView(name).catch(error=>console.error(error));
 }
+async function openInventoryNotificationContext({inventoryId=null,lotId=null}={}){
+  if(!isMerchantBaseActive())throw new Error('Open the Merchant profile to view this Inventory alert.');
+  setView('Stock');
+  await loadStock();
+  const selector=lotId?`[data-lot-id="${Number(lotId)}"]`:inventoryId?`[data-inventory-id="${Number(inventoryId)}"]`:null;
+  const node=selector?document.querySelector(selector):$('viewStock');
+  if(node){
+    node.scrollIntoView({behavior:'smooth',block:'center'});
+    node.classList.add('inventoryNotificationTarget');
+    setTimeout(()=>node.classList.remove('inventoryNotificationTarget'),2400);
+  }
+}
+window.BusinessLifeInventory={...(window.BusinessLifeInventory||{}),openNotificationContext:openInventoryNotificationContext};
 document.querySelectorAll('.bottomNav [data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
 document.querySelectorAll('.bottomNav [data-merchant-action]').forEach(b=>b.onclick=()=>openMerchantAction(b.dataset.merchantAction));
 document.querySelectorAll('[data-view-link]').forEach(b=>b.onclick=()=>setView(b.dataset.viewLink));
@@ -715,9 +728,27 @@ document.querySelectorAll('[data-today-action]').forEach(b=>b.onclick=()=>openMe
 if($('todayRefresh'))$('todayRefresh').onclick=()=>{invalidateMerchantToday();loadMerchantToday({force:true}).catch(()=>{})};
 if($('todayRetry'))$('todayRetry').onclick=()=>{invalidateMerchantToday();loadMerchantToday({force:true}).catch(()=>{})};
 $('exportLink').onclick=async e=>{e.preventDefault();try{const r=await fetch('/api/export.csv');if(!r.ok)throw new Error('Export failed');const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='transactions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}catch(err){alert(err.message)}};
+function pendingInventoryNotificationContext(){
+  const q=new URLSearchParams(window.location.search);
+  const inventoryId=Number(q.get('inventory_item')||q.get('inventory_id')||0)||null;
+  const lotId=Number(q.get('inventory_lot')||0)||null;
+  return inventoryId||lotId?{inventoryId,lotId}:null;
+}
+async function openPendingInventoryNotification(){
+  const pending=pendingInventoryNotificationContext();
+  if(!pending||!isMerchantBaseActive())return false;
+  try{
+    await openInventoryNotificationContext(pending);
+    const url=new URL(window.location.href);
+    url.searchParams.delete('inventory_item');url.searchParams.delete('inventory_id');url.searchParams.delete('inventory_lot');
+    history.replaceState({},'',url.pathname+(url.search?'?'+url.searchParams.toString():'')+url.hash);
+    return true;
+  }catch{return false}
+}
 document.addEventListener('abl:profile-state',event=>{
   baseActiveRole=event.detail?.activeRole||null;
   if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+  if(isMerchantBaseActive())openPendingInventoryNotification().catch(()=>{});
 });
 document.addEventListener('abl:business-workspace-changed',()=>{
   invalidateMerchantToday();
@@ -740,6 +771,7 @@ initStockPicker();
     if(window.BusinessLifeProfileState){
       baseActiveRole=window.BusinessLifeProfileState.activeRole||null;
       if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
+      if(isMerchantBaseActive())openPendingInventoryNotification().catch(()=>{});
     }
   }
 });

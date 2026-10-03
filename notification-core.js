@@ -83,7 +83,17 @@ const templates=[
   ['territory.area_available','en-PH','Your area is open','{{area_message}}'],
   ['territory.area_available','fil-PH','Bukas ang iyong area','{{area_message}}'],
   ['territory.area_status','en-PH','Your area status','{{area_message}}'],
-  ['territory.area_status','fil-PH','Status ng iyong area','{{area_message}}']
+  ['territory.area_status','fil-PH','Status ng iyong area','{{area_message}}'],
+  ['inventory.low_stock','en-PH','Low stock: {{item}}','{{item}} has {{usable_quantity}} {{unit}} usable stock left. Alert level: {{reorder_level}} {{unit}}.'],
+  ['inventory.low_stock','fil-PH','Mababa ang stock: {{item}}','May {{usable_quantity}} {{unit}} na usable stock na lang para sa {{item}}. Alert level: {{reorder_level}} {{unit}}.'],
+  ['inventory.out_of_stock','en-PH','Out of stock: {{item}}','{{item}} has no usable stock available. Physical stock may include expired or held quantity.'],
+  ['inventory.out_of_stock','fil-PH','Wala nang stock: {{item}}','Wala nang usable stock para sa {{item}}. Maaaring may physical stock na expired o naka-hold.'],
+  ['inventory.expiring_soon','en-PH','Stock expiring soon: {{item}}','Lot {{lot_code}} expires {{expiry_text}}. {{quantity}} {{unit}} remains.'],
+  ['inventory.expiring_soon','fil-PH','Malapit nang mag-expire: {{item}}','Ang lot {{lot_code}} ay mag-e-expire {{expiry_text}}. May {{quantity}} {{unit}} pa.'],
+  ['inventory.expired','en-PH','Expired stock: {{item}}','Lot {{lot_code}} has expired. {{quantity}} {{unit}} remains and is excluded from usable stock.'],
+  ['inventory.expired','fil-PH','Expired na stock: {{item}}','Expired na ang lot {{lot_code}}. May {{quantity}} {{unit}} pa at hindi ito kasama sa usable stock.'],
+  ['inventory.held','en-PH','Stock on hold: {{item}}','Lot {{lot_code}} is {{lot_state}}. {{quantity}} {{unit}} is excluded from usable stock.'],
+  ['inventory.held','fil-PH','Naka-hold ang stock: {{item}}','Ang lot {{lot_code}} ay {{lot_state}}. Hindi kasama sa usable stock ang {{quantity}} {{unit}}.']
 ];
 
 export async function ensureNotificationSchema(pool){
@@ -523,7 +533,11 @@ async function sendQueuedPush(pool,row){
     ?`/?support_ticket=${encodeURIComponent(row.entity_id)}`
     :row.entity_type==='profile_application'&&row.entity_id
       ?(String(row.role_hint||'').toLowerCase()==='admin'?`/admin?application=${encodeURIComponent(row.entity_id)}`:`/?profile_application=${encodeURIComponent(row.entity_id)}`)
-      :'/';
+      :row.entity_type==='inventory_item'&&row.entity_id
+        ?`/?inventory_item=${encodeURIComponent(row.entity_id)}`
+        :row.entity_type==='inventory_lot'&&row.entity_id
+          ?`/?inventory_lot=${encodeURIComponent(row.entity_id)}${row.data_json?.inventory_id?`&inventory_id=${encodeURIComponent(row.data_json.inventory_id)}`:''}`
+          :'/';
   const payload=JSON.stringify({title:template.title,body:template.body,url:targetUrl,event_code:row.event_code,entity_type:row.entity_type,entity_id:row.entity_id,attention});
   let successes=0,lastError='';
   for(const sub of subs){
