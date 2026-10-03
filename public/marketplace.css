@@ -108,3 +108,18 @@
 .allergenReviewBadge{display:inline-block;margin-top:5px;border-radius:999px;padding:4px 7px;font-size:8px;font-weight:900}
 .allergenReviewBadge.current{background:#e1f4eb;color:#086248}
 .allergenReviewBadge.required{background:#fff1ce;color:#825900}
+
+
+/* Merchant Catalog / Storefront separation · #734 */
+.merchantCatalogCreate .merchantCatalogHead small{display:block;font-size:9px;letter-spacing:.08em;font-weight:900;color:#0a7c66;margin-bottom:3px}
+.merchantCatalogCreate .merchantCatalogHead h2{margin:0}
+.catalogBoundaryNote{border:1px solid #cfe4dc;background:#f2faf7;border-radius:14px;padding:10px;color:#17483f;font-size:10px;line-height:1.45}
+.catalogBoundaryNote strong{display:block;margin-bottom:3px}
+.merchantPreparedImport .catalogImportPrepared{min-height:44px;border:0;border-radius:13px;padding:11px 14px;font-weight:900}
+.catalogArchived{margin-top:12px;border-top:1px solid #e5ece9;padding-top:10px}
+.catalogArchived>summary{min-height:44px;display:flex;align-items:center;font-size:11px;font-weight:900;color:#536071;cursor:pointer}
+@media(max-width:560px){
+  .merchantCatalogCreate .merchantStoreForm.two{grid-template-columns:1fr}
+  .merchantProductMediaRow{grid-template-columns:78px minmax(0,1fr)}
+  .merchantProductMediaRow>.publishButton{grid-column:1/-1;width:100%}
+}
