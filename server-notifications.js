@@ -17,6 +17,7 @@ import { verifyResendWebhook,recordResendProviderEvent } from './resend-delivery
 import { bootstrapResendWebhook,resendWebhookReadiness } from './resend-webhook-bootstrap.js';
 import { startEmbeddedAdminOperations,stopEmbeddedAdminOperations } from './server-admin-operations.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
+import {ensureInventoryNotificationSchema,scanInventoryNotifications} from './inventory-notification-scanner.js';
 
 const {Pool}=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -28,7 +29,8 @@ const body=(req,res,next)=>req.body!==undefined?next():jsonBody(req,res,next);
 const CATEGORIES=['operational','security','legal','support','compliance','marketing'];
 const THREAD_ENTITY_TYPES=new Set(['support_ticket','order','delivery','purchase_order','service_job']);
 const isNotificationThreadEntity=(type,id)=>Boolean(String(id??'').trim())&&THREAD_ENTITY_TYPES.has(String(type||''));
-let adminApp=null;let adminReady=false;let shuttingDown=false;let workerTimer=null;let workerRunning=false;
+let adminApp=null;let adminReady=false;let shuttingDown=false;let workerTimer=null;let workerRunning=false;let inventoryScanLastAt=0;
+const INVENTORY_SCAN_INTERVAL_MS=60*1000;
 let resendWebhookRuntime={ready:Boolean(process.env.RESEND_WEBHOOK_SECRET),status:process.env.RESEND_WEBHOOK_SECRET?'ready':'not_ready',source:process.env.RESEND_WEBHOOK_SECRET?'env':'none',endpoint:'',webhook_id:'',secret:process.env.RESEND_WEBHOOK_SECRET||''};
 
 const clean=(v,max=1200)=>String(v??'').trim().slice(0,max);
@@ -499,7 +501,14 @@ app.use((req,res,next)=>{
 });
 app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;res.status(status).json({error:status<500?err.message:'Unexpected notification error'})});
 
-async function runWorker(){if(workerRunning)return;workerRunning=true;try{for(let i=0;i<5;i++){const n=await processNotificationDeliveries(pool,{limit:20});if(n<20)break}}catch(e){console.error('Notification worker:',e.message)}finally{workerRunning=false}}
+async function runWorker(){if(workerRunning)return;workerRunning=true;try{
+  const now=Date.now();
+  if(now-inventoryScanLastAt>=INVENTORY_SCAN_INTERVAL_MS){
+    inventoryScanLastAt=now;
+    try{await scanInventoryNotifications(pool,{now})}catch(e){console.error('Inventory notification scan:',e.message)}
+  }
+  for(let i=0;i<5;i++){const n=await processNotificationDeliveries(pool,{limit:20});if(n<20)break}
+}catch(e){console.error('Notification worker:',e.message)}finally{workerRunning=false}}
 async function bootstrapResendObservability(){
   const result=await bootstrapResendWebhook();
   resendWebhookRuntime=result;
@@ -515,6 +524,7 @@ export async function startEmbeddedNotifications(){
       adminApp=await startEmbeddedAdminOperations();
       adminReady=true;
       await ensureNotificationSchema(pool);
+      await ensureInventoryNotificationSchema(pool);
       await bootstrapResendObservability();
       workerTimer=setInterval(runWorker,8000);
       runWorker();
