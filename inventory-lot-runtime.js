@@ -1,4 +1,5 @@
 import {planFefoAllocation} from './inventory-lot-core.js';
+import {activeInventoryUnavailableMap} from './inventory-state-core.js';
 
 async function supplyLotsAvailable(client){
   const r=await client.query("SELECT to_regclass('public.supply_lots') rel");
@@ -102,23 +103,31 @@ async function activeInventoryReservationMap(client,businessId){
 
 export async function inventoryAvailabilityRows(client,{businessId}={}){
   const bid=Number(businessId);
-  const [inv,reservedById]=await Promise.all([
+  const [inv,reservedById,manualUnavailableById]=await Promise.all([
     client.query(`SELECT * FROM inventory WHERE business_id=$1 ORDER BY item,id`,[bid]),
-    activeInventoryReservationMap(client,bid)
+    activeInventoryReservationMap(client,bid),
+    activeInventoryUnavailableMap(client,bid)
   ]);
   if(!(await supplyLotsAvailable(client))){
     return inv.rows.map(row=>{
-      const usable=Number(row.quantity||0),reserved=Math.min(usable,Math.max(0,Number(reservedById.get(Number(row.id))||0)));
+      const onHand=Math.max(0,Number(row.quantity||0));
+      const manualUnavailable=Math.min(onHand,Math.max(0,Number(manualUnavailableById.get(Number(row.id))||0)));
+      const sellableBeforeReservation=Math.max(0,onHand-manualUnavailable);
+      const reserved=Math.min(sellableBeforeReservation,Math.max(0,Number(reservedById.get(Number(row.id))||0)));
       return{
         ...row,
-        physical_quantity:usable,
+        physical_quantity:onHand,
+        on_hand_quantity:onHand,
         tracked_quantity:0,
-        untracked_quantity:usable,
+        untracked_quantity:onHand,
         usable_tracked_quantity:0,
-        usable_quantity:usable,
-        blocked_quantity:0,
+        usable_quantity:onHand,
+        lot_blocked_quantity:0,
+        manual_unavailable_quantity:manualUnavailable,
+        unavailable_quantity:manualUnavailable,
+        blocked_quantity:manualUnavailable,
         reserved_quantity:reserved,
-        available_quantity:Math.max(0,usable-reserved)
+        available_quantity:Math.max(0,sellableBeforeReservation-reserved)
       };
     });
   }
@@ -144,17 +153,25 @@ export async function inventoryAvailabilityRows(client,{businessId}={}){
     const usableTracked=Math.max(0,Number(lot.usable_tracked_quantity||0));
     const untracked=Math.max(0,physical-tracked);
     const usable=Math.min(physical,untracked+usableTracked);
-    const reserved=Math.min(usable,Math.max(0,Number(reservedById.get(Number(row.id))||0)));
+    const lotBlocked=Math.max(0,physical-usable);
+    const manualUnavailable=Math.min(usable,Math.max(0,Number(manualUnavailableById.get(Number(row.id))||0)));
+    const sellableBeforeReservation=Math.max(0,usable-manualUnavailable);
+    const reserved=Math.min(sellableBeforeReservation,Math.max(0,Number(reservedById.get(Number(row.id))||0)));
+    const unavailable=lotBlocked+manualUnavailable;
     return{
       ...row,
       physical_quantity:physical,
+      on_hand_quantity:physical,
       tracked_quantity:tracked,
       untracked_quantity:untracked,
       usable_tracked_quantity:usableTracked,
       usable_quantity:usable,
-      blocked_quantity:Math.max(0,physical-usable),
+      lot_blocked_quantity:lotBlocked,
+      manual_unavailable_quantity:manualUnavailable,
+      unavailable_quantity:unavailable,
+      blocked_quantity:unavailable,
       reserved_quantity:reserved,
-      available_quantity:Math.max(0,usable-reserved)
+      available_quantity:Math.max(0,sellableBeforeReservation-reserved)
     };
   });
 }

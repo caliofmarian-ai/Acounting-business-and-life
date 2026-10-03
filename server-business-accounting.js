@@ -27,6 +27,7 @@ import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} f
 import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
 import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
 import {INVENTORY_CLASSIFICATION_VERSION,ensureUniversalInventorySchema,normalizeInventoryClassification,compatibilityInventoryType,inventoryClassificationInputProvided} from './universal-inventory-core.js';
+import {ensureInventoryStateSchema,incomingInventoryMap,listInventoryUnavailableAllocations,createInventoryUnavailableAllocation,releaseInventoryUnavailableAllocation} from './inventory-state-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -317,6 +318,7 @@ async function initAccountingTenancyDb() {
   await ensureInventoryLocationSchema(pool);
   await ensureInventoryCountSessionSchema(pool);
   await ensureUniversalInventorySchema(pool);
+  await ensureInventoryStateSchema(pool);
   await addBusinessForeignKeys();
   await provisionExistingBindings();
   await ensureBudgetRows();
@@ -563,13 +565,25 @@ app.get('/api/transactions/:id/audit',async(req,res,next)=>{try{const{business}=
 
 app.get('/api/inventory',async(req,res,next)=>{try{
   const{business}=await accountingContext(req);
-  const rows=await inventoryAvailabilityRows(pool,{businessId:business.id});
-  rows.sort((a,b)=>{
+  const [rows,incomingById]=await Promise.all([
+    inventoryAvailabilityRows(pool,{businessId:business.id}),
+    incomingInventoryMap(pool,business.id)
+  ]);
+  const projected=rows.map(row=>{
+    const incoming=incomingById.get(Number(row.id))||{};
+    return{
+      ...row,
+      incoming_quantity:Math.max(0,Number(incoming.incoming_quantity||0)),
+      incoming_lines:Number(incoming.incoming_lines||0),
+      incoming_unresolved_lines:Number(incoming.incoming_unresolved_lines||0)
+    };
+  });
+  projected.sort((a,b)=>{
     const al=Number(a.usable_quantity)<=Number(a.reorder_level),bl=Number(b.usable_quantity)<=Number(b.reorder_level);
     if(al!==bl)return al?-1:1;
     return String(a.item||'').localeCompare(String(b.item||''));
   });
-  res.json(rows);
+  res.json(projected);
 }catch(e){next(e)}});
 registerInventoryLocationRoutes(app,{
   pool,
@@ -597,6 +611,94 @@ registerInventoryCountSessionRoutes(app,{
   planLocationStockReduction,
   applyLocationLotReductions,
   reconcileInventoryLocationBalance
+});
+
+app.get('/api/inventory/:id/unavailable',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const inventoryId=Number(req.params.id);
+    if(!Number.isInteger(inventoryId)||inventoryId<1)return res.status(400).json({error:'Invalid Inventory item.'});
+    const owned=await pool.query('SELECT id FROM inventory WHERE id=$1 AND business_id=$2',[inventoryId,ctx.business.id]);
+    if(!owned.rowCount)return res.status(404).json({error:'Inventory item not found.'});
+    res.json(await listInventoryUnavailableAllocations(pool,{
+      businessId:Number(ctx.business.id),inventoryId
+    }));
+  }catch(error){next(error)}
+});
+
+app.post('/api/inventory/:id/unavailable',jsonBody,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const inventoryId=Number(req.params.id);
+    if(!Number.isInteger(inventoryId)||inventoryId<1)return res.status(400).json({error:'Invalid Inventory item.'});
+    await client.query('BEGIN');
+    const locked=await client.query(
+      'SELECT id,item FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE',
+      [inventoryId,ctx.business.id]
+    );
+    if(!locked.rowCount)throw Object.assign(new Error('Inventory item not found.'),{status:404});
+    const state=(await inventoryAvailabilityRows(client,{businessId:ctx.business.id}))
+      .find(row=>Number(row.id)===inventoryId);
+    const quantity=Number(req.body?.quantity);
+    if(!Number.isFinite(quantity)||quantity<=0)throw Object.assign(new Error('Unavailable quantity must be greater than zero.'),{status:400});
+    if(!state||quantity>Number(state.available_quantity||0)+1e-9){
+      throw Object.assign(new Error('Unavailable quantity exceeds stock currently available for sale or use.'),{
+        status:409,code:'INVENTORY_UNAVAILABLE_EXCEEDS_AVAILABLE'
+      });
+    }
+    const allocation=await createInventoryUnavailableAllocation(client,{
+      businessId:Number(ctx.business.id),
+      inventoryId,
+      input:req.body||{},
+      actorAccountId:Number(ctx.me.account.id)
+    });
+    await client.query('COMMIT');
+    const refreshed=(await inventoryAvailabilityRows(pool,{businessId:ctx.business.id}))
+      .find(row=>Number(row.id)===inventoryId)||null;
+    res.status(201).json({allocation,inventory:refreshed});
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    next(error);
+  }finally{client.release()}
+});
+
+app.post('/api/inventory/:id/unavailable/:allocationId/release',jsonBody,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const inventoryId=Number(req.params.id),allocationId=Number(req.params.allocationId);
+    if(!Number.isInteger(inventoryId)||inventoryId<1||!Number.isInteger(allocationId)||allocationId<1){
+      return res.status(400).json({error:'Invalid unavailable-stock allocation.'});
+    }
+    await client.query('BEGIN');
+    const locked=await client.query(
+      'SELECT id FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE',
+      [inventoryId,ctx.business.id]
+    );
+    if(!locked.rowCount)throw Object.assign(new Error('Inventory item not found.'),{status:404});
+    const allocationCheck=await client.query(
+      "SELECT id FROM inventory_unavailable_allocations WHERE id=$1 AND inventory_id=$2 AND business_id=$3 AND state='active' FOR UPDATE",
+      [allocationId,inventoryId,ctx.business.id]
+    );
+    if(!allocationCheck.rowCount)throw Object.assign(new Error('Active unavailable-stock allocation not found.'),{status:404});
+    const allocation=await releaseInventoryUnavailableAllocation(client,{
+      businessId:Number(ctx.business.id),
+      allocationId,
+      actorAccountId:Number(ctx.me.account.id),
+      note:req.body?.note||''
+    });
+    await client.query('COMMIT');
+    const refreshed=(await inventoryAvailabilityRows(pool,{businessId:ctx.business.id}))
+      .find(row=>Number(row.id)===inventoryId)||null;
+    res.json({allocation,inventory:refreshed});
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    next(error);
+  }finally{client.release()}
 });
 
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
