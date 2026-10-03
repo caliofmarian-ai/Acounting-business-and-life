@@ -1,4 +1,5 @@
 import {createInventoryCountUi} from './inventory-count-ui.js';
+import {createInventoryScanUi} from './inventory-scan-ui.js';
 const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
@@ -163,6 +164,7 @@ function initStockPicker(){
   item.addEventListener('change',()=>{
     const option=item.selectedOptions?.[0];
     if(!option?.value)return;
+    if($('stockInventoryId'))$('stockInventoryId').value='';
     $('stockItem').value=option.value;
     const unit=option.dataset.unit||'unit';
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
@@ -179,6 +181,7 @@ function initStockPicker(){
   for(const id of ['stockStorageCondition','stockStorageArea','stockStorageLocation'])$(id)?.addEventListener('change',updateStockStorageHint);
   $('stockStorageLocation')?.addEventListener('input',updateStockStorageHint);
   $('stockStorageSegregated')?.addEventListener('change',updateStockStorageHint);
+  $('stockItem')?.addEventListener('input',()=>{if($('stockInventoryId'))$('stockInventoryId').value='';});
   renderItems();
   updateStockStorageHint();
 }
@@ -520,6 +523,38 @@ const inventoryCountUi=createInventoryCountUi({
 });
 inventoryCountUi.wire();
 
+function useInventoryForReceiving(item){
+  if(!item)return;
+  if($('stockInventoryId'))$('stockInventoryId').value=String(item.id||'');
+  if($('stockItem'))$('stockItem').value=item.item||'';
+  if($('stockInventoryType'))$('stockInventoryType').value=item.inventory_type||'ingredient';
+  if($('stockStorageCondition'))$('stockStorageCondition').value=item.storage_condition||'other';
+  if($('stockStorageArea'))$('stockStorageArea').value=item.storage_area_type||'other';
+  if($('stockStorageLocation'))$('stockStorageLocation').value=item.storage_location_label||'';
+  if($('stockStorageSegregated'))$('stockStorageSegregated').checked=Boolean(item.storage_segregated);
+  syncUnitSelect('stockPurchaseUnit',item.last_purchase_unit||item.base_unit||item.unit||'unit');
+  syncUnitSelect('stockReorderUnit',item.base_unit||item.unit||'unit');
+  if($('stockReorderQty'))$('stockReorderQty').value=Number(item.reorder_level||0);
+  if($('stockTargetQty'))$('stockTargetQty').value=Number(item.target_level||0);
+  if($('stockLotCode'))$('stockLotCode').value='';
+  if($('stockExpiry'))$('stockExpiry').value='';
+  updateStockStorageHint();
+  stockPurchasePreview();
+  $('stockForm')?.scrollIntoView({behavior:'smooth',block:'start'});
+  $('stockPurchaseQty')?.focus();
+}
+
+const inventoryScanUi=createInventoryScanUi({
+  api,
+  getInventory:()=>inventory,
+  refreshInventory:()=>loadStock(),
+  escapeHtml:esc,
+  formatNumber:num,
+  onReceiveItem:useInventoryForReceiving,
+  onCountItem:item=>inventoryCountUi.selectItem(item?.id)
+});
+inventoryScanUi.wire();
+
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
   inventory=results[0];
@@ -532,6 +567,7 @@ async function loadStock(){
   fillStockAdjustmentInventory();
   fillStorageEditor();
   fillRestockSettingsEditor();
+  inventoryScanUi.syncInventory();
   await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays),inventoryCountUi.load()]);
 }
 function lotExpiryCopy(row){
@@ -1016,7 +1052,7 @@ $('restockSettingsForm')?.addEventListener('submit',async e=>{
     await loadStock();invalidateMerchantToday();
   }catch(error){if(out)out.textContent=error.message}
 });
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,target_quantity:Number($('stockTargetQty').value||0),target_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockTargetQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({inventory_id:$('stockInventoryId').value?Number($('stockInventoryId').value):null,item:$('stockItem').value,inventory_type:$('stockInventoryType').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,target_quantity:Number($('stockTargetQty').value||0),target_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockInventoryId').value='';$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockTargetQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});
