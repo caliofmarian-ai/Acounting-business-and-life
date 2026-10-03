@@ -12,7 +12,12 @@ import {restoreLotAllocation} from './inventory-lot-runtime.js';
 import {ensureOrderStockReservationSchema,reserveOrderStock,consumeOrderReservations,releaseOrderReservations} from './order-stock-reservation.js';
 import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requireMicrobusinessCommerceEligibility,filterCommerceEligibleBusinessIds} from './microbusiness-readiness-core.js';
 import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';
-import {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} from './catalog-v3-core.js';
+import {
+  CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema,
+  normalizeCatalogIdentity,normalizeCatalogPackage,normalizeCatalogAttributes,
+  replaceCatalogProductAttributes,readCatalogProductAttributes,
+  reconcileCatalogProductAttributes,listCatalogAttributeReviews,resolveCatalogAttributeReviews
+} from './catalog-v3-core.js';
 import {ensureCatalogVariantSchema,readRetailVariantConfiguration,replaceRetailVariantConfiguration,variantProjectionForProducts} from './catalog-variants-core.js';
 import {ensureFoodMenuSchema,readFoodMenus,readModifierGroups,modifierProjectionForProducts,createFoodMenu,replaceFoodMenu,createModifierGroup,replaceModifierGroup,setFoodProductAvailability,effectiveFoodAvailability,validateProductModifierSelections,foodProductOrderability} from './food-menu-core.js';
 import {ensureRetailMerchandisingSchema,retailCatalogPage,listCatalogCollections,createCatalogCollection,updateCatalogCollection,replaceCollectionProducts,applyRetailBulkAction,scanRetailCatalogBarcode,publicRetailCollections} from './retail-merchandising-core.js';
@@ -918,76 +923,196 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
   res.json(attachStorefrontMedia(rows[0],await storefrontMedia(business.id)));
 }catch(e){next(e)}})
 app.post('/api/merchant/storefront/import-legacy',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||1));res.json({imported_or_updated:await importLegacyProducts(business.id),products:await products(business.id,true)})}catch(e){next(e)}})
+async function ensureStorefrontDomainAllows(db,businessId,domain){
+  const q=await db.query('SELECT merchant_domain FROM merchant_storefronts WHERE business_id=$1',[Number(businessId)]);
+  const merchantDomain=q.rows[0]?.merchant_domain||'';
+  if(merchantDomain&&merchantDomain!=='mixed'&&merchantDomain!==domain){
+    throw Object.assign(new Error(`This storefront is configured for ${merchantDomain==='food'?'Food':'Non-food'} products. Change the Storefront type or use the matching product type.`),{
+      status:409,code:'MERCHANT_STOREFRONT_DOMAIN_MISMATCH'
+    });
+  }
+}
+function catalogRouteValidation(res,error){
+  if(error instanceof TypeError){res.status(400).json({error:error.message});return true}
+  if(error?.code==='23505'){res.status(409).json({error:'A product with this name already exists in this store'});return true}
+  return false;
+}
+
 app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
+  const client=await pool.connect();
   try{
     const{business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
-    const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind,40))?clean(req.body.product_kind,40):'prepared_food';
+    const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind,40))
+      ?clean(req.body.product_kind,40):'prepared_food';
     const domain=kind==='non_food_resale'?'non_food':'food';
-    const price=Number(req.body?.selling_price);
-    const quantityPerUnit=positive(req.body?.quantity_per_unit)?Number(req.body.quantity_per_unit):1;
+    const price=Number(req.body?.selling_price),quantityPerUnit=positive(req.body?.quantity_per_unit)?Number(req.body.quantity_per_unit):1;
     if(!clean(req.body?.name,120)||!Number.isFinite(price)||price<0)return res.status(400).json({error:'Name and valid selling price are required'});
+
+    const identity=normalizeCatalogIdentity(req.body||{},{domain});
+    const packageInfo=normalizeCatalogPackage(req.body||{});
+    const attributes=normalizeCatalogAttributes(identity.catalog_category_code,req.body?.catalog_attributes||{});
     const variantMode=kind==='non_food_resale'&&Boolean(req.body?.variant_mode);
     let inventoryId=req.body?.inventory_id?Number(req.body.inventory_id):null;
     const direct=kind!=='prepared_food';
+
+    await client.query('BEGIN');
+    await ensureStorefrontDomainAllows(client,business.id,domain);
+
     if(direct&&!variantMode){
-      if(!Number.isInteger(inventoryId))return res.status(400).json({error:'Choose the stock item this product sells from.'});
-      const inv=await pool.query(`SELECT id,item,unit FROM inventory WHERE id=$1 AND business_id=$2`,[inventoryId,business.id]);
-      if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found in this business'});
+      if(!Number.isInteger(inventoryId))throw Object.assign(new Error('Choose the stock item this product sells from.'),{status:400});
+      const inv=await client.query(`
+        SELECT id,item,unit,inventory_domain
+          FROM inventory
+         WHERE id=$1 AND business_id=$2
+      `,[inventoryId,business.id]);
+      if(!inv.rowCount)throw Object.assign(new Error('Inventory item not found in this business'),{status:404});
+      const invDomain=clean(inv.rows[0].inventory_domain,20);
+      if(invDomain&&invDomain!==domain){
+        throw Object.assign(new Error('Choose Inventory stock from the same Food/Non-food domain as this Catalog product.'),{status:409});
+      }
     }else inventoryId=null;
+
     const unitCode=clean(req.body?.unit_code,40)||(direct?`${quantityPerUnit} stock units`:'item');
-    const{rows}=await pool.query(`
+    const{rows}=await client.query(`
       INSERT INTO marketplace_products(
         business_id,inventory_id,name,description,category,product_domain,product_kind,unit_code,
-        quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,price_comparison_override,variant_mode
-      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,TRUE,$12,$13,$14)
+        quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published,price_comparison_override,variant_mode,
+        catalog_category_code,brand,model,condition_code,manufacturer_part_number,catalog_schema_version,
+        package_length_cm,package_width_cm,package_height_cm,package_weight_kg,catalog_review_required
+      ) VALUES(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,TRUE,$12,$13,$14,
+        $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,FALSE
+      )
       RETURNING *
-    `,[business.id,inventoryId,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',domain,kind,unitCode,quantityPerUnit,price,direct&&!variantMode,variantMode?false:Boolean(req.body?.published),req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override),variantMode]);
-    res.status(201).json(rows[0]);
-  }catch(e){if(e.code==='23505')return res.status(409).json({error:'A product with this name already exists in this store'});next(e)}
-})
+    `,[
+      business.id,inventoryId,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',
+      domain,kind,unitCode,quantityPerUnit,price,direct&&!variantMode,
+      variantMode?false:Boolean(req.body?.published),
+      req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override),variantMode,
+      identity.catalog_category_code,identity.brand,identity.model,identity.condition_code,identity.manufacturer_part_number,identity.catalog_schema_version,
+      packageInfo.package_length_cm,packageInfo.package_width_cm,packageInfo.package_height_cm,packageInfo.package_weight_kg
+    ]);
+    const product=rows[0];
+    await replaceCatalogProductAttributes(client,{
+      productId:Number(product.id),
+      categoryCode:identity.catalog_category_code,
+      attributes
+    });
+    await client.query('COMMIT');
+    res.status(201).json({...product,catalog_attributes:attributes,catalog_attribute_reviews:[]});
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    if(catalogRouteValidation(res,e))return;
+    next(e);
+  }finally{client.release()}
+});
+
 app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
+  const client=await pool.connect();
   try{
-    const id=Number(req.params.id);const own=await pool.query(`SELECT * FROM marketplace_products WHERE id=$1`,[id]);
-    if(!own.rowCount)return res.status(404).json({error:'Product not found'});
+    const id=Number(req.params.id);
+    if(!Number.isInteger(id)||id<1)return res.status(400).json({error:'Invalid product'});
+    await client.query('BEGIN');
+    const own=await client.query('SELECT * FROM marketplace_products WHERE id=$1 FOR UPDATE',[id]);
+    if(!own.rowCount)throw Object.assign(new Error('Product not found'),{status:404});
     const old=own.rows[0],{business}=await requireMerchant(req,old.business_id);
-    const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind??old.product_kind,40))?clean(req.body?.product_kind??old.product_kind,40):old.product_kind;
+    const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind??old.product_kind,40))
+      ?clean(req.body?.product_kind??old.product_kind,40):old.product_kind;
     const domain=kind==='non_food_resale'?'non_food':'food';
+    await ensureStorefrontDomainAllows(client,business.id,domain);
+
     const direct=kind!=='prepared_food';
     const variantMode=kind==='non_food_resale'&&(req.body?.variant_mode===undefined?Boolean(old.variant_mode):Boolean(req.body.variant_mode));
     let inventoryId=req.body?.inventory_id===undefined?old.inventory_id:(req.body.inventory_id?Number(req.body.inventory_id):null);
     if(direct&&!variantMode){
-      if(!Number.isInteger(Number(inventoryId)))return res.status(400).json({error:'Choose the stock item this product sells from.'});
-      const inv=await pool.query(`SELECT id FROM inventory WHERE id=$1 AND business_id=$2`,[Number(inventoryId),business.id]);
-      if(!inv.rowCount)return res.status(404).json({error:'Inventory item not found in this business'});
+      if(!Number.isInteger(Number(inventoryId)))throw Object.assign(new Error('Choose the stock item this product sells from.'),{status:400});
+      const inv=await client.query('SELECT id,inventory_domain FROM inventory WHERE id=$1 AND business_id=$2',[Number(inventoryId),business.id]);
+      if(!inv.rowCount)throw Object.assign(new Error('Inventory item not found in this business'),{status:404});
+      const invDomain=clean(inv.rows[0].inventory_domain,20);
+      if(invDomain&&invDomain!==domain)throw Object.assign(new Error('Choose Inventory stock from the same Food/Non-food domain as this Catalog product.'),{status:409});
     }else inventoryId=null;
+
     const quantityPerUnit=Number(req.body?.quantity_per_unit??old.quantity_per_unit);
-    if(!positive(quantityPerUnit))return res.status(400).json({error:'Stock quantity per sold unit must be greater than zero'});
+    if(!positive(quantityPerUnit))throw new TypeError('Stock quantity per sold unit must be greater than zero');
+    const sellingPrice=Number(req.body?.selling_price??old.selling_price);
+    if(!Number.isFinite(sellingPrice)||sellingPrice<0)throw new TypeError('Selling price must be zero or greater.');
+
+    const identity=normalizeCatalogIdentity({
+      catalog_category_code:req.body?.catalog_category_code===undefined?old.catalog_category_code:req.body.catalog_category_code,
+      brand:req.body?.brand===undefined?old.brand:req.body.brand,
+      model:req.body?.model===undefined?old.model:req.body.model,
+      condition_code:req.body?.condition_code===undefined?old.condition_code:req.body.condition_code,
+      manufacturer_part_number:req.body?.manufacturer_part_number===undefined?old.manufacturer_part_number:req.body.manufacturer_part_number
+    },{domain});
+    const packageInfo=normalizeCatalogPackage({
+      package_length_cm:req.body?.package_length_cm===undefined?old.package_length_cm:req.body.package_length_cm,
+      package_width_cm:req.body?.package_width_cm===undefined?old.package_width_cm:req.body.package_width_cm,
+      package_height_cm:req.body?.package_height_cm===undefined?old.package_height_cm:req.body.package_height_cm,
+      package_weight_kg:req.body?.package_weight_kg===undefined?old.package_weight_kg:req.body.package_weight_kg
+    });
+
     const targetPublished=req.body?.published===undefined?Boolean(old.published):Boolean(req.body.published);
     const publishRequested=targetPublished&&old.published!==true;
     if(targetPublished&&variantMode){
-      const variants=await pool.query(`
+      const variants=await client.query(`
         SELECT COUNT(*)::int count
           FROM catalog_product_variants v
           JOIN inventory i ON i.id=v.inventory_id AND i.business_id=$2
          WHERE v.product_id=$1 AND v.active=TRUE
       `,[id,business.id]);
-      if(Number(variants.rows[0]?.count||0)<1)return res.status(409).json({error:'Add at least one active retail variant linked to Inventory before publishing this product.'});
+      if(Number(variants.rows[0]?.count||0)<1)throw Object.assign(new Error('Add at least one active retail variant linked to Inventory before publishing this product.'),{status:409});
     }
     if(publishRequested&&kind==='prepared_food'){
-      if(!old.legacy_product_id)return res.status(409).json({error:'Prepared food must be linked to a confirmed prepared product before publication.'});
-      const allergen=await deriveProductAllergenSummary(pool,{businessId:business.id,productId:old.legacy_product_id});
-      if(!allergen?.review_current)return res.status(409).json({error:'Review and confirm the current allergen information before publishing this prepared food.',code:'ALLERGEN_REVIEW_REQUIRED'});
+      if(!old.legacy_product_id)throw Object.assign(new Error('Prepared food must be linked to a confirmed prepared product before publication.'),{status:409});
+      const allergen=await deriveProductAllergenSummary(client,{businessId:business.id,productId:old.legacy_product_id});
+      if(!allergen?.review_current)throw Object.assign(new Error('Review and confirm the current allergen information before publishing this prepared food.'),{status:409,code:'ALLERGEN_REVIEW_REQUIRED'});
     }
-    const{rows}=await pool.query(`
+
+    const{rows}=await client.query(`
       UPDATE marketplace_products SET
         inventory_id=$1,name=$2,description=$3,category=$4,product_domain=$5,product_kind=$6,
         unit_code=$7,quantity_per_unit=$8,selling_price=$9,stock_tracked=$10,stock_quantity=$11,
-        active=$12,published=$13,price_comparison_override=$14,variant_mode=$15,updated_at=NOW()
-      WHERE id=$16 RETURNING *
-    `,[inventoryId,clean(req.body?.name??old.name,120),clean(req.body?.description??old.description,800),clean(req.body?.category??old.category,100),domain,kind,clean(req.body?.unit_code??old.unit_code,40),quantityPerUnit,Number(req.body?.selling_price??old.selling_price),variantMode?false:(direct?true:(req.body?.stock_tracked??old.stock_tracked)),direct?null:(req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity),req.body?.active??old.active,req.body?.published??old.published,req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,variantMode,id]);
-    res.json(rows[0]);
-  }catch(e){next(e)}
-})
+        active=$12,published=$13,price_comparison_override=$14,variant_mode=$15,
+        catalog_category_code=$16,brand=$17,model=$18,condition_code=$19,manufacturer_part_number=$20,catalog_schema_version=$21,
+        package_length_cm=$22,package_width_cm=$23,package_height_cm=$24,package_weight_kg=$25,updated_at=NOW()
+      WHERE id=$26 RETURNING *
+    `,[
+      inventoryId,clean(req.body?.name??old.name,120),clean(req.body?.description??old.description,800),clean(req.body?.category??old.category,100),
+      domain,kind,clean(req.body?.unit_code??old.unit_code,40),quantityPerUnit,sellingPrice,
+      variantMode?false:(direct?true:(req.body?.stock_tracked??old.stock_tracked)),
+      direct?null:(req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity),
+      req.body?.active??old.active,targetPublished,
+      req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,variantMode,
+      identity.catalog_category_code,identity.brand,identity.model,identity.condition_code,identity.manufacturer_part_number,identity.catalog_schema_version,
+      packageInfo.package_length_cm,packageInfo.package_width_cm,packageInfo.package_height_cm,packageInfo.package_weight_kg,id
+    ]);
+
+    const transition=await reconcileCatalogProductAttributes(client,{
+      productId:id,
+      previousCategoryCode:old.catalog_category_code||'',
+      nextCategoryCode:identity.catalog_category_code||'',
+      incomingAttributes:req.body?.catalog_attributes||{}
+    });
+
+    if(transition.review_required){
+      if(req.body?.published===true){
+        throw Object.assign(new Error('Review the category details that no longer apply before publishing this product.'),{status:409,code:'CATALOG_ATTRIBUTE_REVIEW_REQUIRED'});
+      }
+      if(Boolean(rows[0].published)){
+        const privateRow=await client.query('UPDATE marketplace_products SET published=FALSE,updated_at=NOW() WHERE id=$1 RETURNING *',[id]);
+        rows[0]=privateRow.rows[0];
+      }
+    }
+
+    const reviews=await listCatalogAttributeReviews(client,{productId:id,state:'pending'});
+    await client.query('COMMIT');
+    res.json({...rows[0],catalog_attributes:transition.attributes,catalog_attribute_reviews:reviews});
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    if(catalogRouteValidation(res,e))return;
+    next(e);
+  }finally{client.release()}
+});
 
 async function merchantOwnedMarketplaceProduct(req){
   const id=Number(req.params.id);
@@ -998,6 +1123,44 @@ async function merchantOwnedMarketplaceProduct(req){
   const owner=await requireMerchant(req,product.business_id);
   return{product,...owner};
 }
+
+app.get('/api/merchant/catalog-v3/products/:id/editor',async(req,res,next)=>{try{
+  const{product}=await merchantOwnedMarketplaceProduct(req);
+  const [attributes,reviews]=await Promise.all([
+    readCatalogProductAttributes(pool,Number(product.id)),
+    listCatalogAttributeReviews(pool,{productId:Number(product.id),state:'pending'})
+  ]);
+  res.set('Cache-Control','private, no-store');
+  res.json({
+    product,
+    catalog_attributes:attributes,
+    catalog_attribute_reviews:reviews,
+    schema:catalogEditorSchema(product.product_domain),
+    schema_version:CATALOG_V3_SCHEMA_VERSION
+  });
+}catch(e){next(e)}});
+
+app.post('/api/merchant/catalog-v3/products/:id/attribute-review',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{product}=await merchantOwnedMarketplaceProduct(req);
+    await client.query('BEGIN');
+    const locked=await client.query('SELECT id FROM marketplace_products WHERE id=$1 FOR UPDATE',[Number(product.id)]);
+    if(!locked.rowCount)throw Object.assign(new Error('Product not found.'),{status:404});
+    const result=await resolveCatalogAttributeReviews(client,{
+      productId:Number(product.id),
+      reviewIds:req.body?.review_ids||[],
+      decision:req.body?.decision||'resolved'
+    });
+    const reviews=await listCatalogAttributeReviews(client,{productId:Number(product.id),state:'pending'});
+    await client.query('COMMIT');
+    res.json({...result,catalog_attribute_reviews:reviews});
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    if(catalogRouteValidation(res,e))return;
+    next(e);
+  }finally{client.release()}
+});
 app.get('/api/merchant/storefront/products/:id/variants',async(req,res,next)=>{
   try{
     const{product}=await merchantOwnedMarketplaceProduct(req);
