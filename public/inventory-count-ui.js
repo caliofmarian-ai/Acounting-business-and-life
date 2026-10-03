@@ -12,6 +12,7 @@ const INVENTORY_TYPE_LABELS={
 export function createInventoryCountUi({
   api,
   getInventory,
+  getLocations,
   refreshInventory,
   escapeHtml,
   formatNumber,
@@ -30,6 +31,7 @@ export function createInventoryCountUi({
   }
 
   function scopeLabel(item){
+    if(item.location_name)return 'Location · '+item.location_name;
     const type=INVENTORY_TYPE_LABELS[item.inventory_type]||item.inventory_type||'Inventory';
     const area=storageAreaLabels[item.storage_area_type]||item.storage_area_type||'Other / not set';
     return `${type} · ${area}${item.storage_location_label?' · '+item.storage_location_label:''}`;
@@ -47,15 +49,21 @@ export function createInventoryCountUi({
     valueWrap?.classList.toggle('hidden',!cycle);
     if(!cycle)return;
     const inventory=Array.isArray(getInventory?.())?getInventory():[];
-    const values=scopeType.value==='storage_area_type'
-      ?[...new Set(inventory.map(x=>x.storage_area_type||'other'))].sort()
-      :[...new Set(inventory.map(x=>x.inventory_type||'ingredient'))].sort();
+    const locations=Array.isArray(getLocations?.())?getLocations():[];
+    const values=scopeType.value==='location_id'
+      ?locations.map(x=>String(x.id))
+      :scopeType.value==='storage_area_type'
+        ?[...new Set(inventory.map(x=>x.storage_area_type||'other'))].sort()
+        :[...new Set(inventory.map(x=>x.inventory_type||'ingredient'))].sort();
     const prior=scopeValue.value;
     const options=[new Option('Choose a scope','')];
     for(const value of values){
-      const label=scopeType.value==='storage_area_type'
-        ?(storageAreaLabels[value]||value.replaceAll('_',' '))
-        :(INVENTORY_TYPE_LABELS[value]||value.replaceAll('_',' '));
+      const location=scopeType.value==='location_id'?locations.find(x=>String(x.id)===String(value)):null;
+      const label=scopeType.value==='location_id'
+        ?(location?.name||('Location '+value))
+        :scopeType.value==='storage_area_type'
+          ?(storageAreaLabels[value]||value.replaceAll('_',' '))
+          :(INVENTORY_TYPE_LABELS[value]||value.replaceAll('_',' '));
       options.push(new Option(label,value));
     }
     scopeValue.replaceChildren(...options);
@@ -189,7 +197,7 @@ export function createInventoryCountUi({
       const p=session.progress||{total:0,counted:0,remaining:0};
       const percent=p.total?Math.round((Number(p.counted)/Number(p.total))*100):0;
       const out=byId('countSessionProgress');
-      if(out)out.innerHTML=`<strong>${p.counted} of ${p.total} items counted</strong><br><span class="muted">${p.remaining} remaining · progress is saved after every item.</span>`;
+      if(out)out.innerHTML=`<strong>${p.counted} of ${p.total} items counted</strong><br><span class="muted">${session.location_name?'Location '+esc(session.location_name)+' · ':''}${p.remaining} remaining · progress is saved after every item.</span>`;
       const fill=byId('countSessionProgressFill');
       if(fill)fill.style.width=`${Math.max(0,Math.min(100,percent))}%`;
       const review=byId('countSessionReviewBtn');
