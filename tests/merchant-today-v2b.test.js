@@ -75,7 +75,7 @@ test('Today does not call legacy refreshAll or introduce polling',()=>{
 
 test('Today actions reuse canonical Orders, Catalog and Suppliers workspaces',()=>{
   assert.match(ui,/BusinessLifeOrders\?\.openMerchantOrders/);
-  assert.match(ui,/BusinessLifeMarketplace\?\.openMerchantStore/);
+  assert.match(ui,/BusinessLifeMarketplace\?\.openMerchantCatalog/);
   assert.match(ui,/BusinessLifeSuppliers\?\.openMerchantProcurement/);
 });
 
