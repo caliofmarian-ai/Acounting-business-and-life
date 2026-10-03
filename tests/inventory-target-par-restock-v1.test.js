@@ -87,5 +87,5 @@ test('Merchant UI supports Target Par editing and Supplier-group review',()=>{
   assert.match(ui,/data-restock-inventory/);
   assert.match(ui,/\/api\/procurement\/restock-requests/);
   assert.match(ui,/Prepare Supplier request/);
-  assert.match(ui,/One grouped Supplier request can contain several items/);
+  assert.match(html,/One grouped Supplier request can contain several items/);
 });
