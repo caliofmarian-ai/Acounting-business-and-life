@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
 let inventory = [];
+let inventoryDomainFilter='all';
 let stockAdjustmentLots = [];
 let restockSuggestions = [];
 let wasteAnalyticsDays = 7;
@@ -95,7 +96,62 @@ const STOCK_PICKER_CATALOG=[
 ];
 
 const STORAGE_CONDITION_LABELS={ambient:'Ambient',dry:'Dry',chilled:'Chilled',frozen:'Frozen',other:'Not set / other'};
-const STORAGE_AREA_LABELS={pantry:'Pantry / dry food storage',fridge:'Fridge / chiller',freezer:'Freezer',prep_station:'Prep station',chemical_storage:'Chemical storage',service_storage:'Service / supplies storage',other:'Other / not set'};
+const STORAGE_AREA_LABELS={
+  pantry:'Pantry / dry food storage',fridge:'Fridge / chiller',freezer:'Freezer',prep_station:'Prep station',
+  chemical_storage:'Chemical storage',service_storage:'Service / supplies storage',
+  sales_floor:'Sales floor',stock_room:'Stock room',shelf_bin:'Shelf / bin',warehouse:'Warehouse',
+  secure_storage:'Secure storage',returns_inspection:'Returns / inspection',general_supply:'General supplies',
+  other:'Other / not set'
+};
+const INVENTORY_DOMAIN_LABELS={food:'Food',non_food:'Retail',operations:'Operations'};
+const INVENTORY_ROLE_LABELS={
+  ingredient:'Ingredient',direct_resale:'Direct resale',production_material:'Production material',
+  packaging:'Packaging',operational_consumable:'Operational consumable',operational_supply:'Operational supply'
+};
+const INVENTORY_ROLES_BY_DOMAIN={
+  food:[['ingredient','Ingredient'],['direct_resale','Direct resale']],
+  non_food:[['direct_resale','Direct resale'],['production_material','Production material']],
+  operations:[['packaging','Packaging'],['operational_consumable','Operational consumable'],['operational_supply','Operational supply']]
+};
+function classificationFromLegacyType(type='ingredient'){
+  if(type==='ingredient')return{domain:'food',role:'ingredient'};
+  if(type==='resale_item')return{domain:'non_food',role:'direct_resale'};
+  if(type==='production_material')return{domain:'non_food',role:'production_material'};
+  if(type==='packaging')return{domain:'operations',role:'packaging'};
+  if(['kitchen_consumable','hygiene'].includes(type))return{domain:'operations',role:'operational_consumable'};
+  return{domain:'operations',role:'operational_supply'};
+}
+function legacyTypeForClassification(domain,role,current=''){
+  if(domain==='food'&&role==='ingredient')return'ingredient';
+  if(role==='direct_resale')return'resale_item';
+  if(role==='production_material')return'production_material';
+  if(role==='packaging')return'packaging';
+  if(role==='operational_consumable')return ['kitchen_consumable','hygiene'].includes(current)?current:'kitchen_consumable';
+  if(role==='operational_supply')return ['cleaning_sanitation','operational_supply'].includes(current)?current:'operational_supply';
+  return'ingredient';
+}
+function syncInventoryRoleOptions(preferred=''){
+  const domain=$('stockInventoryDomain')?.value||'food',select=$('stockStockRole');if(!select)return;
+  const choices=INVENTORY_ROLES_BY_DOMAIN[domain]||INVENTORY_ROLES_BY_DOMAIN.food;
+  const wanted=preferred||select.value;
+  select.replaceChildren(...choices.map(([value,label])=>new Option(label,value)));
+  if(choices.some(([value])=>value===wanted))select.value=wanted;
+  else select.value=choices[0][0];
+}
+function syncUniversalInventoryClassification({fromLegacy=false,storage=true}={}){
+  const domain=$('stockInventoryDomain'),role=$('stockStockRole'),legacy=$('stockInventoryType');if(!domain||!role||!legacy)return;
+  if(fromLegacy){
+    const mapped=classificationFromLegacyType(legacy.value);
+    domain.value=mapped.domain;syncInventoryRoleOptions(mapped.role);role.value=mapped.role;
+  }else{
+    syncInventoryRoleOptions(role.value);
+    legacy.value=legacyTypeForClassification(domain.value,role.value,legacy.value);
+  }
+  if(storage){
+    const suggestion=storageSuggestionForClassification(domain.value,role.value,legacy.value);
+    applyStockStorageSuggestion(suggestion);
+  }else updateStockStorageHint();
+}
 function storageSuggestionFor(group,itemName=''){
   const base={...(group?.storage||{condition:'other',area:'other',label:'',segregated:false})};
   if(itemName==='Ice')return{condition:'frozen',area:'freezer',label:'',segregated:false};
@@ -107,6 +163,12 @@ function storageSuggestionForType(type='ingredient'){
   if(['packaging','kitchen_consumable','hygiene','operational_supply'].includes(type))return{condition:'dry',area:'service_storage',label:'',segregated:false};
   return{condition:'other',area:'other',label:'',segregated:false};
 }
+function storageSuggestionForClassification(domain='food',role='ingredient',legacyType='ingredient'){
+  if(legacyType==='cleaning_sanitation')return{condition:'ambient',area:'chemical_storage',label:'Chemical storage',segregated:true};
+  if(domain==='non_food')return{condition:'dry',area:role==='production_material'?'warehouse':'stock_room',label:'',segregated:false};
+  if(domain==='operations')return{condition:'dry',area:role==='packaging'?'general_supply':'service_storage',label:'',segregated:false};
+  return storageSuggestionForType(legacyType);
+}
 function applyStockStorageSuggestion(suggestion={}){
   if($('stockStorageCondition'))$('stockStorageCondition').value=suggestion.condition||'other';
   if($('stockStorageArea'))$('stockStorageArea').value=suggestion.area||'other';
@@ -114,11 +176,11 @@ function applyStockStorageSuggestion(suggestion={}){
   if($('stockStorageSegregated'))$('stockStorageSegregated').checked=Boolean(suggestion.segregated);
   updateStockStorageHint();
 }
-function storageSafetyMessage({type,condition,area,label,segregated}){
+function storageSafetyMessage({type,domain='',role='',condition,area,label,segregated}){
   if(type==='cleaning_sanitation'){
     if(['pantry','fridge','freezer','prep_station'].includes(area))return{ok:false,text:'Cleaning & sanitation stock must be stored separately from food.'};
     if(area==='chemical_storage'&&!segregated)return{ok:false,text:'Chemical storage must be marked as segregated from food.'};
-    if(['service_storage','other'].includes(area)&&(!segregated||!String(label||'').trim()))return{ok:false,text:'Choose a named segregated storage location for cleaning & sanitation stock.'};
+    if(area!=='chemical_storage'&&!['pantry','fridge','freezer','prep_station'].includes(area)&&(!segregated||!String(label||'').trim()))return{ok:false,text:'Choose a named segregated storage location for cleaning & sanitation stock.'};
   }
   if(['ingredient','packaging','kitchen_consumable','hygiene'].includes(type)&&area==='chemical_storage')return{ok:false,text:'Food, packaging and food-handling stock cannot be stored in chemical storage.'};
   if(area==='fridge'&&condition!=='chilled')return{ok:false,text:'Fridge storage should use the Chilled condition.'};
@@ -126,12 +188,16 @@ function storageSafetyMessage({type,condition,area,label,segregated}){
   if(condition==='chilled'&&!['fridge','other'].includes(area))return{ok:false,text:'Chilled stock needs a fridge or a labelled custom cold-storage area.'};
   if(condition==='frozen'&&!['freezer','other'].includes(area))return{ok:false,text:'Frozen stock needs a freezer or a labelled custom frozen-storage area.'};
   if(['chilled','frozen'].includes(condition)&&area==='other'&&!String(label||'').trim())return{ok:false,text:'Custom chilled/frozen storage needs a location label.'};
-  return{ok:true,text:'Storage context looks consistent. Lots received for this item keep a storage snapshot for traceability.'};
+  if(domain==='operations'&&role==='operational_supply'&&area==='sales_floor')return{ok:false,text:'Operational supplies should not use the customer sales floor as storage.'};
+  if(domain==='non_food'&&['pantry','prep_station'].includes(area)&&!String(label||'').trim())return{ok:false,text:'Retail stock using a Food-oriented area needs a clear location label.'};
+  return{ok:true,text:domain==='non_food'?'Retail storage context looks consistent.':'Storage context looks consistent. Lots received for this item keep a storage snapshot for traceability.'};
 }
 function updateStockStorageHint(){
   const out=$('stockStorageHint');if(!out)return;
   const result=storageSafetyMessage({
     type:$('stockInventoryType')?.value||'ingredient',
+    domain:$('stockInventoryDomain')?.value||'food',
+    role:$('stockStockRole')?.value||'ingredient',
     condition:$('stockStorageCondition')?.value||'other',
     area:$('stockStorageArea')?.value||'other',
     label:$('stockStorageLocation')?.value||'',
@@ -146,7 +212,7 @@ function initStockPicker(){
   const renderItems=()=>{
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
     item.replaceChildren();
-    if(group&&$('stockInventoryType'))$('stockInventoryType').value=group.type||'ingredient';
+    if(group&&$('stockInventoryType')){$('stockInventoryType').value=group.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     if(group)applyStockStorageSuggestion(storageSuggestionFor(group,''));
     if(!group){
       item.append(new Option('Choose a category first',''));
@@ -169,21 +235,23 @@ function initStockPicker(){
     $('stockItem').value=option.value;
     const unit=option.dataset.unit||'unit';
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
-    if($('stockInventoryType'))$('stockInventoryType').value=group?.type||'ingredient';
+    if($('stockInventoryType')){$('stockInventoryType').value=group?.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     applyStockStorageSuggestion(storageSuggestionFor(group,option.value));
     syncUnitSelect('stockPurchaseUnit',unit);
     syncUnitSelect('stockReorderUnit',unit);
     stockPurchasePreview();
   });
   $('stockInventoryType')?.addEventListener('change',()=>{
-    if(!category.value)applyStockStorageSuggestion(storageSuggestionForType($('stockInventoryType').value));
-    else updateStockStorageHint();
+    syncUniversalInventoryClassification({fromLegacy:true,storage:!category.value});
   });
+  $('stockInventoryDomain')?.addEventListener('change',()=>syncUniversalInventoryClassification({storage:true}));
+  $('stockStockRole')?.addEventListener('change',()=>syncUniversalInventoryClassification({storage:true}));
   for(const id of ['stockStorageCondition','stockStorageArea','stockStorageLocation'])$(id)?.addEventListener('change',updateStockStorageHint);
   $('stockStorageLocation')?.addEventListener('input',updateStockStorageHint);
   $('stockStorageSegregated')?.addEventListener('change',updateStockStorageHint);
   $('stockItem')?.addEventListener('input',()=>{if($('stockInventoryId'))$('stockInventoryId').value='';});
   renderItems();
+  syncUniversalInventoryClassification({fromLegacy:true,storage:false});
   updateStockStorageHint();
 }
 function unitMeta(unit){return UNIT_META[unit]||UNIT_META[String(unit||'').toLowerCase()]||null}
@@ -541,6 +609,9 @@ function useInventoryForReceiving(item){
   if($('stockInventoryId'))$('stockInventoryId').value=String(item.id||'');
   if($('stockItem'))$('stockItem').value=item.item||'';
   if($('stockInventoryType'))$('stockInventoryType').value=item.inventory_type||'ingredient';
+  if($('stockInventoryDomain'))$('stockInventoryDomain').value=item.inventory_domain||classificationFromLegacyType(item.inventory_type).domain;
+  syncInventoryRoleOptions(item.stock_role||classificationFromLegacyType(item.inventory_type).role);
+  if($('stockStockRole'))$('stockStockRole').value=item.stock_role||classificationFromLegacyType(item.inventory_type).role;
   if($('stockStorageCondition'))$('stockStorageCondition').value=item.storage_condition||'other';
   if($('stockStorageArea'))$('stockStorageArea').value=item.storage_area_type||'other';
   if($('stockStorageLocation'))$('stockStorageLocation').value=item.storage_location_label||'';
@@ -568,23 +639,157 @@ const inventoryScanUi=createInventoryScanUi({
 });
 inventoryScanUi.wire();
 
+function inventoryDomainOf(item={}){
+  return item.inventory_domain||classificationFromLegacyType(item.inventory_type||'ingredient').domain;
+}
+function inventoryRoleOf(item={}){
+  return item.stock_role||classificationFromLegacyType(item.inventory_type||'ingredient').role;
+}
+function renderInventoryList(){
+  const list=$('stockList');if(!list)return;
+  const typeLabelMap={
+    ingredient:'Ingredient',resale_item:'Resale item',production_material:'Production material',
+    packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',
+    hygiene:'Hygiene',operational_supply:'Operational supply'
+  };
+  const visible=inventoryDomainFilter==='all'?inventory:inventory.filter(i=>inventoryDomainOf(i)===inventoryDomainFilter);
+  const nodes=visible.map(i=>{
+    const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);
+    const usable=Number(i.usable_quantity??i.quantity??0);
+    const physical=Number(i.physical_quantity??i.quantity??0);
+    const onHand=Number(i.on_hand_quantity??physical);
+    const reserved=Number(i.reserved_quantity||0);
+    const unavailable=Number(i.unavailable_quantity??i.blocked_quantity??0);
+    const available=Number(i.available_quantity??Math.max(0,usable-reserved));
+    const incoming=Number(i.incoming_quantity||0);
+    const domain=inventoryDomainOf(i),role=inventoryRoleOf(i);
+    const low=available<=Number(i.reorder_level);
+    const purchase=i.last_purchase_quantity
+      ? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}`
+      :'';
+    const foodState=`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)} • unavailable ${num(unavailable,4)} • incoming ${num(incoming,4)}`;
+    const universalState=`on hand ${num(onHand,4)} ${esc(i.unit)} • available ${num(available,4)} • reserved ${num(reserved,4)} • unavailable ${num(unavailable,4)} • incoming ${num(incoming,4)}`;
+    const stockCopy=domain==='food'?foodState:universalState;
+    const condition=STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other';
+    const area=STORAGE_AREA_LABELS[i.storage_area_type]||'Other / not set';
+    const location=i.storage_location_label?` · ${esc(i.storage_location_label)}`:'';
+    const storageCopy=`storage ${esc(condition)} · ${esc(area)}${location}${i.storage_segregated?' · segregated':''}`;
+    const target=Number(i.target_level)>0?Number(i.target_level):Number(i.reorder_level);
+    const classification=`${INVENTORY_DOMAIN_LABELS[domain]||domain} · ${INVENTORY_ROLE_LABELS[role]||typeLabelMap[i.inventory_type]||role}`;
+    const ids=[i.internal_sku?`SKU ${esc(i.internal_sku)}`:'',i.barcode?`GTIN ${esc(i.barcode)}`:''].filter(Boolean).join(' · ');
+    d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(classification)} • ${stockCopy} • ${storageCopy}${ids?' • '+ids:''} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)} • target ${num(target,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;
+    return d;
+  });
+  list.replaceChildren(...(nodes.length?nodes:[emptyRow(inventoryDomainFilter==='all'?'No inventory items yet.':'No items in this Inventory area.')]));
+  document.querySelectorAll('#inventoryDomainFilters [data-inventory-domain]').forEach(button=>{
+    button.classList.toggle('active',button.dataset.inventoryDomain===inventoryDomainFilter);
+  });
+}
+function wireInventoryDomainFilters(){
+  document.querySelectorAll('#inventoryDomainFilters [data-inventory-domain]').forEach(button=>{
+    button.onclick=()=>{
+      const next=button.dataset.inventoryDomain||'all';
+      inventoryDomainFilter=['all','food','non_food','operations'].includes(next)?next:'all';
+      renderInventoryList();
+    };
+  });
+}
+function fillInventoryUnavailableEditor(){
+  const select=$('inventoryUnavailableItem');if(!select)return;
+  const previous=select.value;
+  select.innerHTML=inventory.length
+    ?'<option value="">Choose an item</option>'+inventory.map(i=>`<option value="${i.id}">${esc(i.item)} · available ${num(i.available_quantity??0,4)} ${esc(i.unit||'')}</option>`).join('')
+    :'<option value="">Add stock first</option>';
+  if(previous&&inventory.some(i=>String(i.id)===String(previous)))select.value=previous;
+  updateInventoryUnavailablePreview();
+}
+function updateInventoryUnavailablePreview(){
+  const out=$('inventoryUnavailablePreview');if(!out)return;
+  const item=inventory.find(i=>Number(i.id)===Number($('inventoryUnavailableItem')?.value));
+  const qty=Number($('inventoryUnavailableQuantity')?.value||0);
+  if(!item){out.textContent='Choose an item to see how much is currently available.';return}
+  const available=Number(item.available_quantity||0),onHand=Number(item.on_hand_quantity??item.physical_quantity??item.quantity??0);
+  const unavailable=Number(item.unavailable_quantity||0),reserved=Number(item.reserved_quantity||0);
+  if(qty>available+1e-9){
+    out.innerHTML=`<strong class="negative">Only ${num(available,4)} ${esc(item.unit)} is currently available to place on hold.</strong>`;
+    return;
+  }
+  out.innerHTML=`On hand <strong>${num(onHand,4)} ${esc(item.unit)}</strong> • Available <strong>${num(available,4)}</strong> • Reserved ${num(reserved,4)} • Unavailable ${num(unavailable,4)}${qty>0?` • after this hold: available <strong>${num(Math.max(0,available-qty),4)}</strong>`:''}`;
+}
+async function loadInventoryUnavailableAllocations(){
+  const list=$('inventoryUnavailableList');if(!list)return[];
+  const inventoryId=Number($('inventoryUnavailableItem')?.value);
+  if(!Number.isInteger(inventoryId)){
+    list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
+    return[];
+  }
+  try{
+    const rows=await api(`/api/inventory/${inventoryId}/unavailable`);
+    const nodes=(Array.isArray(rows)?rows:[]).map(row=>{
+      const d=document.createElement('div');d.className='listRow';
+      const active=row.state==='active',when=row.created_at?new Date(row.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'}):'';
+      d.innerHTML=`<div class="rowMain"><strong>${esc(String(row.reason||'other').replaceAll('_',' '))} · ${num(row.quantity,4)} ${esc(row.unit||'')}</strong><small>${row.note?esc(row.note)+' • ':''}${row.location_name?esc(row.location_name)+' • ':''}${esc(when)}${active?'':' • released'}</small></div>${active?`<button type="button" class="miniBtn" data-release-unavailable="${Number(row.id)}">Restore</button>`:'<span>Released</span>'}`;
+      d.querySelector('[data-release-unavailable]')?.addEventListener('click',async()=>{
+        try{
+          await api(`/api/inventory/${inventoryId}/unavailable/${Number(row.id)}/release`,{method:'POST',body:JSON.stringify({note:'Restored from Inventory workspace'})});
+          await loadStock();
+          await loadInventoryUnavailableAllocations();
+        }catch(error){const msg=$('inventoryUnavailableMessage');if(msg)msg.textContent=error.message}
+      });
+      return d;
+    });
+    list.replaceChildren(...(nodes.length?nodes:[emptyRow('No unavailable-stock holds for this item.')]));
+    return rows;
+  }catch(error){
+    list.replaceChildren(emptyRow(error.message||'Unavailable-stock history could not be loaded.'));
+    return[];
+  }
+}
+function wireInventoryUnavailableUi(){
+  const form=$('inventoryUnavailableForm'),select=$('inventoryUnavailableItem'),qty=$('inventoryUnavailableQuantity');
+  if(select)select.onchange=()=>{updateInventoryUnavailablePreview();loadInventoryUnavailableAllocations().catch(()=>{})};
+  if(qty)qty.oninput=updateInventoryUnavailablePreview;
+  if(form)form.onsubmit=async event=>{
+    event.preventDefault();
+    const message=$('inventoryUnavailableMessage');if(message)message.textContent='Saving hold…';
+    try{
+      const inventoryId=Number(select?.value),quantity=Number(qty?.value);
+      if(!Number.isInteger(inventoryId))throw new Error('Choose an Inventory item.');
+      await api(`/api/inventory/${inventoryId}/unavailable`,{method:'POST',body:JSON.stringify({
+        reason:$('inventoryUnavailableReason')?.value||'other',
+        quantity,
+        note:$('inventoryUnavailableNote')?.value||''
+      })});
+      if(message)message.textContent='Stock marked unavailable. No cash or accounting transaction was created.';
+      if(qty)qty.value='';if($('inventoryUnavailableNote'))$('inventoryUnavailableNote').value='';
+      await loadStock();
+      if(select)select.value=String(inventoryId);
+      fillInventoryUnavailableEditor();
+      if(select)select.value=String(inventoryId);
+      updateInventoryUnavailablePreview();
+      await loadInventoryUnavailableAllocations();
+    }catch(error){if(message)message.textContent=error.message}
+  };
+}
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
-  inventory=results[0];
-  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),reserved=Number(i.reserved_quantity||0),available=Number(i.available_quantity??Math.max(0,usable-reserved)),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=reserved>0?`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)}`:blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;const condition=STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other',area=STORAGE_AREA_LABELS[i.storage_area_type]||'Other / not set',location=i.storage_location_label?` · ${esc(i.storage_location_label)}`:'';const storageCopy=`storage ${esc(condition)} · ${esc(area)}${location}${i.storage_segregated?' · segregated':''}`,target=Number(i.target_level)>0?Number(i.target_level):Number(i.reorder_level);d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • ${storageCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)} • target ${num(target,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
-  $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
-  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
+  inventory=Array.isArray(results[0])?results[0]:[];
+  renderInventoryList();
+  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.available_quantity??i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
   await fillIngredientAllergenEditor();
   fillConsumableRuleInventory();
   fillStockAdjustmentInventory();
   fillStorageEditor();
   fillRestockSettingsEditor();
+  fillInventoryUnavailableEditor();
   inventoryScanUi.syncInventory();
   await inventoryLocationUi.load();
   inventoryCountUi.syncScopeOptions();
   await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays),inventoryCountUi.load()]);
+  if(Number.isInteger(Number($('inventoryUnavailableItem')?.value)))await loadInventoryUnavailableAllocations();
 }
+
 function lotExpiryCopy(row){
   if(row.lot_state&&row.lot_state!=='available'&&row.lot_state!=='depleted')return 'Held: '+String(row.lot_state).replaceAll('_',' ');
   if(row.expiry_status==='expired')return 'Expired';
@@ -650,6 +855,8 @@ function updateStorageEditorSafety(){
   if(!item){out.textContent='Choose an Inventory item to review its storage settings.';return}
   const result=storageSafetyMessage({
     type:item.inventory_type||'ingredient',
+    domain:item.inventory_domain||classificationFromLegacyType(item.inventory_type).domain,
+    role:item.stock_role||classificationFromLegacyType(item.inventory_type).role,
     condition:$('storageCondition').value,
     area:$('storageAreaType').value,
     label:$('storageLocationLabel').value,
@@ -1067,7 +1274,7 @@ $('restockSettingsForm')?.addEventListener('submit',async e=>{
     await loadStock();invalidateMerchantToday();
   }catch(error){if(out)out.textContent=error.message}
 });
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({inventory_id:$('stockInventoryId').value?Number($('stockInventoryId').value):null,item:$('stockItem').value,inventory_type:$('stockInventoryType').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,target_quantity:Number($('stockTargetQty').value||0),target_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockInventoryId').value='';$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockTargetQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({inventory_id:$('stockInventoryId').value?Number($('stockInventoryId').value):null,item:$('stockItem').value,inventory_type:$('stockInventoryType').value,inventory_domain:$('stockInventoryDomain').value,stock_role:$('stockStockRole').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,target_quantity:Number($('stockTargetQty').value||0),target_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockInventoryId').value='';$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockTargetQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockInventoryDomain').value='food';syncInventoryRoleOptions('ingredient');$('stockStockRole').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});
@@ -1188,6 +1395,8 @@ window.addEventListener('offline',()=>setOnline(false));
 setOnline(navigator.onLine);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 initStockPicker();
+wireInventoryDomainFilters();
+wireInventoryUnavailableUi();
 (window.ABLSession?.ready||Promise.resolve()).then(()=>{
   token=Boolean(window.ABLSession?.authenticated());
   if(token){

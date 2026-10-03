@@ -385,3 +385,17 @@
   .inventoryLocationBalanceRow,.inventoryTransferRow{flex-direction:column}
   .inventoryTransferRow .miniBtn{min-height:42px}
 }
+
+
+/* Universal Inventory V2 · Food / Retail / Operations */
+.inventoryDomainFilters{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}
+.inventoryDomainFilters::-webkit-scrollbar{display:none}
+.inventoryDomainFilters button{flex:0 0 auto;min-height:40px;padding:8px 14px;border:1px solid var(--line,#dfe5e8);border-radius:999px;background:var(--surface,#fff);font:inherit}
+.inventoryDomainFilters button.active{border-color:var(--accent,#2457d6);background:color-mix(in srgb,var(--accent,#2457d6) 10%,white);font-weight:700}
+#inventoryUnavailableCard .listRow button{min-height:38px}
+#stockLegacyTypeDetails summary{cursor:pointer}
+@media(max-width:520px){
+  #viewStock .sectionHead{align-items:flex-start}
+  #inventoryUnavailableCard .grid2{grid-template-columns:1fr}
+  .inventoryDomainFilters{margin-inline:-2px;padding-bottom:6px}
+}

@@ -219,7 +219,7 @@
       </section>
 
       <section id="viewStock" class="view hidden">
-        <div class="sectionHead"><div><h1>Stock & purchases</h1><p class="muted"><span id="lowStock">0</span> low-stock items · enter what you actually bought</p></div></div>
+        <div class="sectionHead"><div><h1>Inventory & purchases</h1><p class="muted"><span id="lowStock">0</span> low-stock items · Food, Retail and Operations in one workspace</p></div></div>
         <form id="stockForm" class="card stack">
           <input id="stockInventoryId" type="hidden" />
           <div><h2>Add stock from a purchase</h2><p class="muted">Example: 1 kg carrots for ₱80 becomes 1000 g at ₱0.08/g automatically.</p></div>
@@ -237,9 +237,27 @@
           </div>
           <small class="muted">Choose an item from the lists to fill the form faster, or type your own item below.</small>
           <div class="grid2">
+            <label>Inventory area
+              <select id="stockInventoryDomain">
+                <option value="food">Food</option>
+                <option value="non_food">Retail / non-food</option>
+                <option value="operations">Operations & supplies</option>
+              </select>
+            </label>
+            <label>Stock role
+              <select id="stockStockRole">
+                <option value="ingredient">Ingredient</option>
+                <option value="direct_resale">Direct resale</option>
+              </select>
+            </label>
+          </div>
+          <details id="stockLegacyTypeDetails" class="stockStorageDetails">
+            <summary><strong>Detailed stock type</strong><small class="muted">Compatibility detail · normally chosen automatically</small></summary>
             <label>Stock type
               <select id="stockInventoryType">
                 <option value="ingredient">Ingredient</option>
+                <option value="resale_item">Resale item</option>
+                <option value="production_material">Production material</option>
                 <option value="packaging">Packaging / delivery</option>
                 <option value="kitchen_consumable">Kitchen consumable</option>
                 <option value="cleaning_sanitation">Cleaning & sanitation</option>
@@ -247,9 +265,9 @@
                 <option value="operational_supply">Operational supply</option>
               </select>
             </label>
-            <div class="salePreview"><strong>Why this matters</strong><br><span class="muted">Only Ingredients can be added to recipes. Other stock stays tracked for purchasing and low-stock alerts.</span></div>
-          </div>
-          <label>Item / ingredient<input id="stockItem" required placeholder="Carrot" /></label>
+          </details>
+          <div class="salePreview"><strong>One Inventory engine</strong><br><span class="muted">Food ingredients, retail resale stock and operational supplies stay separate by classification, not by duplicate inventory systems.</span></div>
+          <label>Item / stock name<input id="stockItem" required placeholder="Carrot, T-Shirt Black/M, drill, carton box…" /></label>
           <details id="stockStorageDetails" class="stockStorageDetails">
             <summary><strong>Storage & food safety</strong><small class="muted">Optional details · recommended for food and chemicals</small></summary>
             <div class="stack">
@@ -269,6 +287,13 @@
                   <option value="prep_station">Prep station</option>
                   <option value="chemical_storage">Chemical storage</option>
                   <option value="service_storage">Service / supplies storage</option>
+                  <option value="sales_floor">Sales floor</option>
+                  <option value="stock_room">Stock room</option>
+                  <option value="shelf_bin">Shelf / bin</option>
+                  <option value="warehouse">Warehouse</option>
+                  <option value="secure_storage">Secure storage</option>
+                  <option value="returns_inspection">Returns / inspection</option>
+                  <option value="general_supply">General supplies</option>
                 </select></label>
               </div>
               <label>Location label<input id="stockStorageLocation" maxlength="120" placeholder="Example: Fridge 1 · Shelf B" /></label>
@@ -299,7 +324,38 @@
           <div id="stockPurchasePreview" class="salePreview"></div>
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
-        <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
+        <div class="card stack">
+          <div class="sectionHead"><div><h2>Inventory</h2><p class="muted">On hand, reserved, unavailable, available and incoming stock.</p></div><small class="muted">One business-scoped source of truth</small></div>
+          <div id="inventoryDomainFilters" class="inventoryDomainFilters" role="group" aria-label="Filter Inventory">
+            <button type="button" data-inventory-domain="all" class="active">All</button>
+            <button type="button" data-inventory-domain="food">Food</button>
+            <button type="button" data-inventory-domain="non_food">Retail</button>
+            <button type="button" data-inventory-domain="operations">Operations</button>
+          </div>
+          <div id="stockList" class="list"></div>
+        </div>
+        <div class="card stack" id="inventoryUnavailableCard">
+          <div><h2>Unavailable stock</h2><p class="muted">Temporarily block physical stock from sale/use without deleting it or creating a cash transaction.</p></div>
+          <form id="inventoryUnavailableForm" class="stack">
+            <label>Inventory item<select id="inventoryUnavailableItem"><option value="">Choose an item</option></select></label>
+            <div class="grid2">
+              <label>Reason<select id="inventoryUnavailableReason">
+                <option value="damaged">Damaged</option>
+                <option value="quality_control">Quality control</option>
+                <option value="safety_stock">Safety stock</option>
+                <option value="return_pending">Return awaiting inspection</option>
+                <option value="quarantine">Quarantine</option>
+                <option value="other">Other</option>
+              </select></label>
+              <label>Quantity<input id="inventoryUnavailableQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" required /></label>
+            </div>
+            <label>Note<input id="inventoryUnavailableNote" maxlength="500" placeholder="Why this stock cannot currently be sold or used" /></label>
+            <div id="inventoryUnavailablePreview" class="salePreview">Choose an item to see how much is currently available.</div>
+            <button class="secondary">Mark unavailable</button>
+            <div id="inventoryUnavailableMessage" aria-live="polite"></div>
+          </form>
+          <div id="inventoryUnavailableList" class="list"></div>
+        </div>
         <div class="card stack" id="inventoryScanCard">
           <div class="sectionHead">
             <div><h2>Find by SKU or barcode</h2><p class="muted">Search manually at any time, or use the camera on supported mobile devices. Scanning never replaces manual Inventory controls.</p></div>
@@ -372,6 +428,13 @@
                 <option value="prep_station">Prep station</option>
                 <option value="chemical_storage">Chemical storage</option>
                 <option value="service_storage">Service / supplies storage</option>
+                <option value="sales_floor">Sales floor</option>
+                <option value="stock_room">Stock room</option>
+                <option value="shelf_bin">Shelf / bin</option>
+                <option value="warehouse">Warehouse</option>
+                <option value="secure_storage">Secure storage</option>
+                <option value="returns_inspection">Returns / inspection</option>
+                <option value="general_supply">General supplies</option>
               </select></label>
             </div>
             <label>Location label<input id="storageLocationLabel" maxlength="120" placeholder="Example: Chemical cabinet · lower shelf" /></label>
@@ -381,7 +444,7 @@
           </form>
         </div>
         <div class="card stack" id="inventoryLocationsCard">
-          <div class="sectionHead"><div><h2>Storage locations & internal transfers</h2><p class="muted">Split physical stock across Pantry, Fridge, Freezer or Prep. Transfers never create purchase, sale or cash movement.</p></div><button id="inventoryLocationsRefresh" type="button" class="secondary">Refresh</button></div>
+          <div class="sectionHead"><div><h2>Storage locations & internal transfers</h2><p class="muted">Food can use Pantry/Fridge/Freezer; Retail can use Sales floor/Stock room/Shelf/Warehouse. Transfers never create purchase, sale or cash movement.</p></div><button id="inventoryLocationsRefresh" type="button" class="secondary">Refresh</button></div>
 
           <details id="inventoryLocationCreate">
             <summary><strong>Add storage location</strong></summary>
@@ -403,6 +466,13 @@
                   <option value="prep_station">Prep station</option>
                   <option value="chemical_storage">Chemical storage</option>
                   <option value="service_storage">Service / supplies storage</option>
+                  <option value="sales_floor">Sales floor</option>
+                  <option value="stock_room">Stock room</option>
+                  <option value="shelf_bin">Shelf / bin</option>
+                  <option value="warehouse">Warehouse</option>
+                  <option value="secure_storage">Secure storage</option>
+                  <option value="returns_inspection">Returns / inspection</option>
+                  <option value="general_supply">General supplies</option>
                 </select></label>
               </div>
               <label>Location label<input id="inventoryLocationLabel" maxlength="120" placeholder="Optional shelf / cabinet label" /></label>
