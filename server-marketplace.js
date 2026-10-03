@@ -13,6 +13,7 @@ import {ensureOrderStockReservationSchema,reserveOrderStock,consumeOrderReservat
 import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requireMicrobusinessCommerceEligibility,filterCommerceEligibleBusinessIds} from './microbusiness-readiness-core.js';
 import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';
 import {CATALOG_V3_SCHEMA_VERSION,catalogEditorSchema,ensureCatalogV3Schema} from './catalog-v3-core.js';
+import {ensureCatalogVariantSchema,readRetailVariantConfiguration,replaceRetailVariantConfiguration,variantProjectionForProducts} from './catalog-variants-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -205,7 +206,7 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool);await ensureCatalogV3Schema(pool);await ensureCatalogVariantSchema(pool)}
 
 async function storefrontMedia(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
@@ -266,7 +267,9 @@ async function products(businessId,includePrivate=false){
     :`SELECT p.* FROM marketplace_products p WHERE p.business_id=$1 AND p.published=TRUE AND p.active=TRUE ORDER BY p.category,p.name`;
   const{rows}=await pool.query(query,[businessId]);
   const media=await attachProductMedia(rows,!includePrivate);
-  return attachMarketplaceAllergens(media,{publicOnly:!includePrivate})
+  const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:!includePrivate});
+  const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
+  return attachMarketplaceAllergens(withVariants,{publicOnly:!includePrivate})
 }
 
 // Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
@@ -315,9 +318,11 @@ async function attachGuestPublicAllergens(rows,businessId){
 }
 
 async function guestPublicProducts(businessId){
-  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
+  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url,variant_mode FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
   const media=await attachProductMedia(rows,true);
-  return attachGuestPublicAllergens(media,businessId);
+  const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:true});
+  const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
+  return attachGuestPublicAllergens(withVariants,businessId);
 }
 
 async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
@@ -669,6 +674,37 @@ async function merchantOwnedMarketplaceProduct(req){
   const owner=await requireMerchant(req,product.business_id);
   return{product,...owner};
 }
+app.get('/api/merchant/storefront/products/:id/variants',async(req,res,next)=>{
+  try{
+    const{product}=await merchantOwnedMarketplaceProduct(req);
+    if(product.product_domain!=='non_food')return res.status(409).json({error:'Retail variants are available for Non-food products.'});
+    res.set('Cache-Control','private, no-store');
+    res.json(await readRetailVariantConfiguration(pool,{productId:Number(product.id),publicOnly:false}));
+  }catch(e){next(e)}
+});
+app.put('/api/merchant/storefront/products/:id/variants',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const{product,business}=await merchantOwnedMarketplaceProduct(req);
+    if(product.product_domain!=='non_food'||product.product_kind!=='non_food_resale'){
+      return res.status(409).json({error:'Retail variants require a Non-food resale product.'});
+    }
+    await client.query('BEGIN');
+    const locked=await client.query('SELECT id FROM marketplace_products WHERE id=$1 AND business_id=$2 FOR UPDATE',[Number(product.id),Number(business.id)]);
+    if(!locked.rowCount)throw Object.assign(new Error('Product not found.'),{status:404});
+    const config=await replaceRetailVariantConfiguration(client,{
+      businessId:Number(business.id),
+      productId:Number(product.id),
+      configuration:req.body||{}
+    });
+    await client.query('COMMIT');
+    res.json(config);
+  }catch(e){
+    await client.query('ROLLBACK').catch(()=>{});
+    next(e);
+  }finally{client.release()}
+});
+
 async function confirmedRecipeForMarketplaceProduct(product){
   if(!product.legacy_product_id)return[];
   const {rows}=await pool.query(`
