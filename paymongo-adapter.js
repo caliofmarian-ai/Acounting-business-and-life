@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { registerProviderEvent, paymentIntentDetail, serviceJobPaymentSummary, sanitizeProviderPayload } from './payment-core.js';
+import {reserveOrderStock,reservationExpiryForOrder} from './order-stock-reservation.js';
 
 const API_BASE='https://api.paymongo.com';
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
@@ -417,6 +418,7 @@ async function confirmOrderPayMongoSourcePayment(client,{intent,providerPaymentI
     );
   }
   if(paymentStatus==='paid'&&o.order_status==='awaiting_payment'){
+    await reserveOrderStock(client,o,{expiresAt:reservationExpiryForOrder({...o,order_status:'accepted'})});
     await client.query("UPDATE orders SET order_status='accepted',accepted_at=COALESCE(accepted_at,NOW()),updated_at=NOW() WHERE id=$1",[o.id]);
     await client.query(
       "INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,'awaiting_payment','accepted',NULL,'PayMongo webhook confirmed payment')",

@@ -83,22 +83,44 @@ export async function applyPhysicalLotReductions(client,allocations=[]){
   return applied;
 }
 
+async function activeInventoryReservationMap(client,businessId){
+  try{
+    const {rows}=await client.query(
+      `SELECT stock_ref_id inventory_id,COALESCE(SUM(quantity_reserved),0) reserved_quantity
+         FROM order_stock_reservations
+        WHERE business_id=$1 AND stock_kind='inventory' AND state='reserved'
+          AND (expires_at IS NULL OR expires_at>NOW())
+        GROUP BY stock_ref_id`,
+      [Number(businessId)]
+    );
+    return new Map(rows.map(row=>[Number(row.inventory_id),Number(row.reserved_quantity||0)]));
+  }catch(error){
+    if(['42P01','42703'].includes(String(error?.code||'')))return new Map();
+    throw error;
+  }
+}
+
 export async function inventoryAvailabilityRows(client,{businessId}={}){
   const bid=Number(businessId);
-  const inv=await client.query(
-    `SELECT * FROM inventory WHERE business_id=$1 ORDER BY item,id`,
-    [bid]
-  );
+  const [inv,reservedById]=await Promise.all([
+    client.query(`SELECT * FROM inventory WHERE business_id=$1 ORDER BY item,id`,[bid]),
+    activeInventoryReservationMap(client,bid)
+  ]);
   if(!(await supplyLotsAvailable(client))){
-    return inv.rows.map(row=>({
-      ...row,
-      physical_quantity:Number(row.quantity||0),
-      tracked_quantity:0,
-      untracked_quantity:Number(row.quantity||0),
-      usable_tracked_quantity:0,
-      usable_quantity:Number(row.quantity||0),
-      blocked_quantity:0
-    }));
+    return inv.rows.map(row=>{
+      const usable=Number(row.quantity||0),reserved=Math.min(usable,Math.max(0,Number(reservedById.get(Number(row.id))||0)));
+      return{
+        ...row,
+        physical_quantity:usable,
+        tracked_quantity:0,
+        untracked_quantity:usable,
+        usable_tracked_quantity:0,
+        usable_quantity:usable,
+        blocked_quantity:0,
+        reserved_quantity:reserved,
+        available_quantity:Math.max(0,usable-reserved)
+      };
+    });
   }
   const lots=await client.query(
     `SELECT inventory_id,
@@ -122,6 +144,7 @@ export async function inventoryAvailabilityRows(client,{businessId}={}){
     const usableTracked=Math.max(0,Number(lot.usable_tracked_quantity||0));
     const untracked=Math.max(0,physical-tracked);
     const usable=Math.min(physical,untracked+usableTracked);
+    const reserved=Math.min(usable,Math.max(0,Number(reservedById.get(Number(row.id))||0)));
     return{
       ...row,
       physical_quantity:physical,
@@ -129,7 +152,9 @@ export async function inventoryAvailabilityRows(client,{businessId}={}){
       untracked_quantity:untracked,
       usable_tracked_quantity:usableTracked,
       usable_quantity:usable,
-      blocked_quantity:Math.max(0,physical-usable)
+      blocked_quantity:Math.max(0,physical-usable),
+      reserved_quantity:reserved,
+      available_quantity:Math.max(0,usable-reserved)
     };
   });
 }
