@@ -724,28 +724,28 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
                  measurement_family=$3,
                  unit_cost=$4,
                  inventory_type=CASE WHEN $17 THEN $5 ELSE inventory_type END,
-                 inventory_domain=CASE WHEN $17 THEN $6 ELSE inventory_domain END,
-                 stock_role=CASE WHEN $17 THEN $7 ELSE stock_role END,
-                 classification_version=CASE WHEN $17 THEN $8 ELSE classification_version END,
-                 storage_condition=$9,
-                 storage_area_type=$10,
-                 storage_location_label=$11,
-                 storage_segregated=$12,
-                 reorder_level=CASE WHEN $13>0 THEN $13 ELSE reorder_level END,
-                 target_level=CASE WHEN $14>0 THEN $14 ELSE target_level END,
-                 last_purchase_quantity=$15,
-                 last_purchase_unit=$16,
-                 last_purchase_total_cost=$18,
+                 storage_condition=$6,
+                 storage_area_type=$7,
+                 storage_location_label=$8,
+                 storage_segregated=$9,
+                 reorder_level=CASE WHEN $10>0 THEN $10 ELSE reorder_level END,
+                 target_level=CASE WHEN $11>0 THEN $11 ELSE target_level END,
+                 last_purchase_quantity=$12,
+                 last_purchase_unit=$13,
+                 last_purchase_total_cost=$14,
+                 inventory_domain=CASE WHEN $17 THEN $18 ELSE inventory_domain END,
+                 stock_role=CASE WHEN $17 THEN $19 ELSE stock_role END,
+                 classification_version=CASE WHEN $17 THEN $20 ELSE classification_version END,
                  last_purchase_at=NOW(),
                  updated_at=NOW()
-           WHERE id=$19 AND business_id=$20
+           WHERE id=$15 AND business_id=$16
            RETURNING *
         `,[
           purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,inventoryType,
-          classification.inventory_domain,classification.stock_role,classification.classification_version,
           storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
-          purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,
-          classificationExplicit,purchase.total_cost,old.id,ctx.business.id
+          purchase.reorder_base_quantity,purchase.target_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,
+          old.id,ctx.business.id,classificationExplicit,
+          classification.inventory_domain,classification.stock_role,classification.classification_version
         ]);
         inventoryRow=updated.rows[0];
       }else{
