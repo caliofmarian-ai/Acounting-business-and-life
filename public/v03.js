@@ -1,3 +1,4 @@
+import {createInventoryCountUi} from './inventory-count-ui.js';
 const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
@@ -509,6 +510,16 @@ function updateRestockSettingsPreview(){
     ?'<strong class="negative">Target must be equal to or higher than the low-stock alert.</strong>'
     :`Notify when usable stock reaches <strong>${num(alert,4)} ${esc(unit)}</strong>. Replenishment suggestions aim for <strong>${num(target,4)} ${esc(unit)}</strong>.`;
 }
+const inventoryCountUi=createInventoryCountUi({
+  api,
+  getInventory:()=>inventory,
+  refreshInventory:()=>loadStock(),
+  escapeHtml:esc,
+  formatNumber:num,
+  storageAreaLabels:STORAGE_AREA_LABELS
+});
+inventoryCountUi.wire();
+
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
   inventory=results[0];
@@ -521,7 +532,7 @@ async function loadStock(){
   fillStockAdjustmentInventory();
   fillStorageEditor();
   fillRestockSettingsEditor();
-  await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays)]);
+  await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays),inventoryCountUi.load()]);
 }
 function lotExpiryCopy(row){
   if(row.lot_state&&row.lot_state!=='available'&&row.lot_state!=='depleted')return 'Held: '+String(row.lot_state).replaceAll('_',' ');

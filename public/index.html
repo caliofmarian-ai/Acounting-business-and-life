@@ -359,6 +359,68 @@
           </form>
         </div>
 
+        <div class="card stack" id="guidedCountCard">
+          <div class="sectionHead">
+            <div><h2>Guided inventory count</h2><p class="muted">Run a full inventory or a smaller cycle count on mobile. Counted quantities are saved without changing stock until the final review is confirmed.</p></div>
+            <span class="countSessionBadge" id="countSessionStatusBadge">READY</span>
+          </div>
+          <div id="countSessionStartPane" class="stack">
+            <div class="grid2">
+              <label>Count type
+                <select id="countSessionType">
+                  <option value="full">Full inventory</option>
+                  <option value="cycle">Cycle count</option>
+                </select>
+              </label>
+              <label id="countSessionScopeTypeWrap" class="hidden">Cycle-count scope
+                <select id="countSessionScopeType">
+                  <option value="inventory_type">Inventory category</option>
+                  <option value="storage_area_type">Storage area</option>
+                </select>
+              </label>
+            </div>
+            <label id="countSessionScopeValueWrap" class="hidden">What to count
+              <select id="countSessionScopeValue"><option value="">Choose a scope</option></select>
+            </label>
+            <div class="salePreview countBlindNotice"><strong>Blind count</strong><br><span class="muted">Expected stock stays hidden while you count. Starting or saving a count does not change Inventory.</span></div>
+            <button id="countSessionStart" type="button" class="primary">Start new count</button>
+          </div>
+
+          <div id="countSessionActivePane" class="stack hidden">
+            <div id="countSessionProgress" class="salePreview">No active count.</div>
+            <div class="countProgressTrack" aria-hidden="true"><span id="countSessionProgressFill"></span></div>
+            <label>Count item
+              <select id="countSessionItemPicker"><option value="">Count items one by one</option></select>
+            </label>
+            <div class="countCurrentCard">
+              <div class="sectionHead">
+                <div><strong id="countSessionCurrentName">Inventory item</strong><small id="countSessionCurrentMeta" class="muted">Count what is physically present.</small></div>
+                <span class="countSessionBadge">COUNT</span>
+              </div>
+              <label>Physical quantity counted
+                <div class="countQuantityField"><input id="countSessionQuantity" type="number" min="0" step="0.0001" inputmode="decimal" /><span id="countSessionCurrentUnit" class="muted"></span></div>
+              </label>
+              <small class="muted">Expected quantity is intentionally hidden until Review.</small>
+              <button id="countSessionSaveItem" type="button" class="primary">Save item and continue</button>
+            </div>
+            <div class="grid2 countSessionActions">
+              <button id="countSessionSaveExit" type="button" class="secondary">Save &amp; exit</button>
+              <button id="countSessionReviewBtn" type="button" class="secondary">Review count</button>
+            </div>
+          </div>
+
+          <div id="countSessionReviewPane" class="stack hidden">
+            <div id="countSessionReviewSummary" class="salePreview">Complete the count to review variances.</div>
+            <div class="countReviewNotice"><strong>Final review</strong><br><span class="muted">Inventory is still unchanged. Approve every variance or return to counting and recount it.</span></div>
+            <div id="countSessionReviewList" class="list"></div>
+            <div class="grid2 countSessionActions">
+              <button id="countSessionResumeBtn" type="button" class="secondary">Back to counting</button>
+              <button id="countSessionPostBtn" type="button" class="primary">Post approved variances</button>
+            </div>
+          </div>
+          <div id="countSessionMessage" aria-live="polite"></div>
+        </div>
+
         <div class="card stack">
           <div><h2>Waste & stock count</h2><p class="muted">Record real losses or correct stock after a physical count. These changes adjust Inventory only; they do not pretend cash moved.</p></div>
           <form id="stockAdjustmentForm" class="stack">

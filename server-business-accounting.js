@@ -23,6 +23,7 @@ import {
 } from './food-allergen-core.js';
 import {directProductCostEstimate} from './food-cost-core.js';
 import {buildWasteAnalytics} from './inventory-waste-core.js';
+import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -309,6 +310,7 @@ async function initAccountingTenancyDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await ensureInventoryCountSessionSchema(pool);
   await addBusinessForeignKeys();
   await provisionExistingBindings();
   await ensureBudgetRows();
@@ -563,6 +565,17 @@ app.get('/api/inventory',async(req,res,next)=>{try{
   });
   res.json(rows);
 }catch(e){next(e)}});
+registerInventoryCountSessionRoutes(app,{
+  pool,
+  jsonBody,
+  accountingContext,
+  inventoryTypes:INVENTORY_TYPES,
+  canUseSupplyLots,
+  inventoryLotRows,
+  planPhysicalStockReduction,
+  applyPhysicalLotReductions
+});
+
 app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
   const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,target_level=0,unit_cost=0}=req.body||{};
   const inventoryType=normalizeInventoryType(req.body?.inventory_type);

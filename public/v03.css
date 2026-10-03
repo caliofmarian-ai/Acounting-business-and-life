@@ -292,3 +292,49 @@
 @media(max-width:520px){
   #wasteAnalyticsCard .grid2{grid-template-columns:1fr}
 }
+
+
+/* Guided Inventory Count · issue #718 */
+#guidedCountCard{overflow:hidden}
+.countSessionBadge{
+  display:inline-flex;align-items:center;justify-content:center;min-height:28px;
+  padding:5px 9px;border-radius:999px;background:#ebf2ff;color:#1f59b8;
+  font-size:.72rem;font-weight:700;letter-spacing:.02em;white-space:nowrap
+}
+.countProgressTrack{
+  width:100%;height:8px;border-radius:999px;background:#e0e5e8;overflow:hidden
+}
+.countProgressTrack>span{
+  display:block;width:0;height:100%;border-radius:inherit;background:#0d7a5c;
+  transition:width .18s ease
+}
+.countCurrentCard{
+  display:grid;gap:10px;padding:14px;border:1px solid #e0e5e8;border-radius:16px;background:#fff
+}
+.countQuantityField{
+  display:flex;align-items:center;gap:10px;border:1px solid #e0e5e8;border-radius:12px;
+  padding:0 12px;background:#fff
+}
+.countQuantityField input{
+  flex:1;min-width:0;border:0;padding:12px 0;font-size:1.25rem;font-weight:700;background:transparent
+}
+.countQuantityField input:focus{outline:none}
+.countBlindNotice,.countReviewNotice{
+  padding:12px 14px;border-radius:14px;background:#ebf2ff;color:#0e171f
+}
+.countReviewNotice{background:#fff5db}
+.countReviewRow{align-items:center;gap:10px}
+.countApprove{min-height:44px;display:inline-flex;align-items:center;white-space:nowrap}
+.countSessionActions button{min-height:44px}
+#countSessionPostBtn:disabled,#countSessionReviewBtn:disabled,#countSessionSaveItem:disabled{
+  opacity:.55;cursor:not-allowed
+}
+@media(max-width:560px){
+  #guidedCountCard .sectionHead{align-items:flex-start}
+  .countReviewRow{align-items:flex-start;flex-direction:column}
+  .countApprove{width:100%}
+  .countSessionActions{grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce){
+  .countProgressTrack>span{transition:none}
+}
