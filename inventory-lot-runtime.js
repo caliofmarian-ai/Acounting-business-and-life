@@ -83,3 +83,58 @@ export async function applyPhysicalLotReductions(client,allocations=[]){
   return applied;
 }
 
+export async function inventoryAvailabilityRows(client,{businessId}={}){
+  const bid=Number(businessId);
+  const inv=await client.query(
+    `SELECT * FROM inventory WHERE business_id=$1 ORDER BY item,id`,
+    [bid]
+  );
+  if(!(await supplyLotsAvailable(client))){
+    return inv.rows.map(row=>({
+      ...row,
+      physical_quantity:Number(row.quantity||0),
+      tracked_quantity:0,
+      untracked_quantity:Number(row.quantity||0),
+      usable_tracked_quantity:0,
+      usable_quantity:Number(row.quantity||0),
+      blocked_quantity:0
+    }));
+  }
+  const lots=await client.query(
+    `SELECT inventory_id,
+            COALESCE(SUM(quantity_remaining_base),0) tracked_quantity,
+            COALESCE(SUM(quantity_remaining_base) FILTER(
+              WHERE COALESCE(to_jsonb(supply_lots)->>'lot_state','available')='available'
+                AND (expires_at IS NULL OR expires_at>NOW())
+            ),0) usable_tracked_quantity
+       FROM supply_lots
+      WHERE business_id=$1
+        AND inventory_id IS NOT NULL
+        AND quantity_remaining_base>0
+      GROUP BY inventory_id`,
+    [bid]
+  );
+  const byId=new Map(lots.rows.map(x=>[Number(x.inventory_id),x]));
+  return inv.rows.map(row=>{
+    const physical=Math.max(0,Number(row.quantity||0));
+    const lot=byId.get(Number(row.id))||{};
+    const tracked=Math.max(0,Number(lot.tracked_quantity||0));
+    const usableTracked=Math.max(0,Number(lot.usable_tracked_quantity||0));
+    const untracked=Math.max(0,physical-tracked);
+    const usable=Math.min(physical,untracked+usableTracked);
+    return{
+      ...row,
+      physical_quantity:physical,
+      tracked_quantity:tracked,
+      untracked_quantity:untracked,
+      usable_tracked_quantity:usableTracked,
+      usable_quantity:usable,
+      blocked_quantity:Math.max(0,physical-usable)
+    };
+  });
+}
+
+export async function inventoryAvailabilityById(client,{businessId}={}){
+  const rows=await inventoryAvailabilityRows(client,{businessId});
+  return new Map(rows.map(row=>[Number(row.id),row]));
+}
