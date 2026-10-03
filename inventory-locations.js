@@ -14,6 +14,13 @@ function locationNameFromInventory(row={}){
     prep_station:'Prep station',
     chemical_storage:'Chemical storage',
     service_storage:'Service storage',
+    sales_floor:'Sales floor',
+    stock_room:'Stock room',
+    shelf_bin:'Shelf / bin',
+    warehouse:'Warehouse',
+    secure_storage:'Secure storage',
+    returns_inspection:'Returns / inspection',
+    general_supply:'General supplies',
     other:'Primary storage'
   })[row.storage_area_type||'other']||'Primary storage';
 }
@@ -38,7 +45,7 @@ export async function ensureInventoryLocationSchema(pool){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK(storage_condition IN ('ambient','dry','chilled','frozen','other')),
-      CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','other'))
+      CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','sales_floor','stock_room','shelf_bin','warehouse','secure_storage','returns_inspection','general_supply','other'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS inventory_storage_locations_business_name_unique
       ON inventory_storage_locations(business_id,LOWER(name));
@@ -262,7 +269,7 @@ export async function inventoryLocationBalanceRows(client,{businessId,inventoryI
   if(inventoryId!=null){params.push(Number(inventoryId));filter=' AND b.inventory_id=$2'}
   const {rows}=await client.query(`
     SELECT b.business_id,b.inventory_id,b.location_id,b.quantity,
-           i.item,i.unit,i.inventory_type,
+           i.item,i.unit,i.inventory_type,i.inventory_domain,i.stock_role,
            l.name location_name,l.storage_condition,l.storage_area_type,l.location_label,l.storage_segregated
       FROM inventory_location_balances b
       JOIN inventory i ON i.id=b.inventory_id AND i.business_id=b.business_id
