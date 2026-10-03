@@ -13,80 +13,125 @@ const UNIT_META={
   unit:{family:'count',base:'unit',factor:1}
 };
 const STOCK_PICKER_CATALOG=[
-  {category:'Meat & poultry',type:'ingredient',items:[
+  {category:'Meat & poultry',type:'ingredient',storage:{condition:'chilled',area:'fridge',label:'',segregated:false},items:[
     ['Chicken thighs / drumsticks','kg'],['Chicken leg quarters','kg'],['Chicken breast','kg'],['Whole chicken','kg'],
     ['Pork belly','kg'],['Pork shoulder','kg'],['Ground pork','kg'],['Pork ribs','kg'],['Beef brisket','kg'],['Beef sirloin','kg'],
     ['Ground beef','kg'],['Chicken liver','kg']
   ]},
-  {category:'Fish & seafood',type:'ingredient',items:[
+  {category:'Fish & seafood',type:'ingredient',storage:{condition:'chilled',area:'fridge',label:'',segregated:false},items:[
     ['Bangus (milkfish)','kg'],['Tilapia','kg'],['Galunggong','kg'],['Tuna','kg'],['Squid','kg'],['Shrimp','kg'],['Mussels','kg']
   ]},
-  {category:'Vegetables & herbs',type:'ingredient',items:[
+  {category:'Vegetables & herbs',type:'ingredient',storage:{condition:'chilled',area:'fridge',label:'',segregated:false},items:[
     ['Onion','kg'],['Garlic','kg'],['Ginger','kg'],['Tomato','kg'],['Carrot','kg'],['Cabbage','kg'],['Eggplant','kg'],
     ['Green papaya','kg'],['Radish','kg'],['String beans','kg'],['Pechay','kg'],['Kangkong','kg'],['Malunggay leaves','kg'],
     ['Green chili','kg'],['Bell pepper','kg'],['Potato','kg'],['Sweet potato','kg'],['Lemongrass','kg'],['Spring onion','kg']
   ]},
-  {category:'Fruit & citrus',type:'ingredient',items:[
+  {category:'Fruit & citrus',type:'ingredient',storage:{condition:'chilled',area:'fridge',label:'',segregated:false},items:[
     ['Calamansi','kg'],['Banana','kg'],['Mango','kg'],['Pineapple','kg'],['Coconut','unit'],['Lime','kg']
   ]},
-  {category:'Rice, noodles & dry goods',type:'ingredient',items:[
+  {category:'Rice, noodles & dry goods',type:'ingredient',storage:{condition:'dry',area:'pantry',label:'',segregated:false},items:[
     ['Rice','kg'],['Canton noodles','kg'],['Rice noodles','kg'],['Flour','kg'],['Cornstarch','kg'],['Breadcrumbs','kg'],
     ['Ground toasted rice','kg'],['White sugar','kg'],['Brown sugar','kg'],['Salt','kg'],['Black pepper','kg'],['Bay leaves','unit']
   ]},
-  {category:'Sauces, condiments & seasonings',type:'ingredient',items:[
+  {category:'Sauces, condiments & seasonings',type:'ingredient',storage:{condition:'ambient',area:'pantry',label:'',segregated:false},items:[
     ['Soy sauce','L'],['Cane vinegar','L'],['Fish sauce','L'],['Oyster sauce','L'],['Sweet chili sauce','L'],
     ['Banana ketchup','L'],['Mayonnaise','kg'],['Peanut butter','kg'],['Shrimp paste (bagoong)','kg'],['Annatto oil','L'],
     ['Annatto powder','kg'],['Sinigang mix','unit'],['Vanilla extract','L']
   ]},
-  {category:'Eggs, dairy & canned milk',type:'ingredient',items:[
+  {category:'Eggs, dairy & canned milk',type:'ingredient',storage:{condition:'chilled',area:'fridge',label:'',segregated:false},items:[
     ['Eggs','unit'],['Condensed milk','unit'],['Evaporated milk','unit'],['Fresh milk','L'],['Butter','kg'],['Cheese','kg']
   ]},
-  {category:'Cooking oils & fats',type:'ingredient',items:[
+  {category:'Cooking oils & fats',type:'ingredient',storage:{condition:'ambient',area:'pantry',label:'',segregated:false},items:[
     ['Cooking oil','L'],['Coconut oil','L'],['Margarine','kg']
   ]},
-  {category:'Wrappers, canned & packaged ingredients',type:'ingredient',items:[
+  {category:'Wrappers, canned & packaged ingredients',type:'ingredient',storage:{condition:'dry',area:'pantry',label:'',segregated:false},items:[
     ['Lumpia wrappers','unit'],['Coconut milk','L'],['Canned sardines','unit'],['Canned tuna','unit'],['Tomato sauce','L'],
     ['Tomato paste','kg']
   ]},
-  {category:'Drinks & beverage supplies',type:'ingredient',items:[
+  {category:'Drinks & beverage supplies',type:'ingredient',storage:{condition:'ambient',area:'service_storage',label:'',segregated:false},items:[
     ['Bottled water','unit'],['Soft drinks','unit'],['Coffee','kg'],['Tea','unit'],['Ice','kg']
   ]},
-  {category:'Takeout & delivery packaging',type:'packaging',items:[
+  {category:'Takeout & delivery packaging',type:'packaging',storage:{condition:'dry',area:'service_storage',label:'',segregated:false},items:[
     ['Meal boxes / takeout boxes','unit'],['Microwavable food containers','unit'],['Container lids','unit'],
     ['Paper bowls','unit'],['Soup cups / tubs','unit'],['Sauce cups','unit'],['Sauce cup lids','unit'],
     ['Paper bags','unit'],['Takeout carrier bags','unit'],['Pizza boxes','unit'],['Aluminum trays','unit'],
     ['Clamshell containers','unit'],['Ziplock bags','unit'],['Sealing film','unit'],['Packaging tape','unit']
   ]},
-  {category:'Disposable service items',type:'packaging',items:[
+  {category:'Disposable service items',type:'packaging',storage:{condition:'dry',area:'service_storage',label:'',segregated:false},items:[
     ['Napkins / tissue','unit'],['Disposable spoons','unit'],['Disposable forks','unit'],['Disposable knives','unit'],
     ['Chopsticks','unit'],['Straws','unit'],['Wooden stirrers','unit'],['Paper plates','unit'],
     ['Plastic cups','unit'],['Paper cups','unit'],['Cup lids','unit']
   ]},
-  {category:'Kitchen prep consumables',type:'kitchen_consumable',items:[
+  {category:'Kitchen prep consumables',type:'kitchen_consumable',storage:{condition:'dry',area:'service_storage',label:'',segregated:false},items:[
     ['Cling wrap','unit'],['Aluminum foil','unit'],['Wax paper','unit'],['Greaseproof paper','unit'],
     ['Parchment / baking paper','unit'],['Food storage bags','unit'],['Food labels','unit'],
     ['Date labels / stickers','unit'],['Permanent markers','unit'],['Disposable piping bags','unit']
   ]},
-  {category:'Cleaning & sanitation',type:'cleaning_sanitation',items:[
+  {category:'Cleaning & sanitation',type:'cleaning_sanitation',storage:{condition:'ambient',area:'chemical_storage',label:'Chemical storage',segregated:true},items:[
     ['Dishwashing liquid','L'],['Food-safe sanitizer','L'],['Bleach / disinfectant','L'],['Hand soap','L'],
     ['Degreaser','L'],['Glass cleaner','L'],['Floor cleaner','L'],['Sponges','unit'],['Scouring pads','unit'],
     ['Dishcloths','unit'],['Cleaning towels','unit'],['Paper towels','unit'],['Mop heads','unit'],
     ['Trash bags - black','unit'],['Trash bags - green','unit'],['Trash bags - yellow','unit']
   ]},
-  {category:'Food handling & hygiene',type:'hygiene',items:[
+  {category:'Food handling & hygiene',type:'hygiene',storage:{condition:'dry',area:'service_storage',label:'',segregated:false},items:[
     ['Disposable food gloves','unit'],['Hairnets','unit'],['Face masks','unit'],['Aprons','unit'],
     ['Sleeve covers','unit'],['Disposable caps','unit']
   ]},
-  {category:'Storage & organization supplies',type:'operational_supply',items:[
+  {category:'Storage & organization supplies',type:'operational_supply',storage:{condition:'dry',area:'service_storage',label:'',segregated:false},items:[
     ['Food storage containers','unit'],['Ingredient bins','unit'],['Cambro-style containers','unit'],
     ['Storage container lids','unit'],['Shelf labels','unit'],['FIFO labels','unit']
   ]},
-  {category:'Front counter & operations',type:'operational_supply',items:[
+  {category:'Front counter & operations',type:'operational_supply',storage:{condition:'dry',area:'service_storage',label:'',segregated:false},items:[
     ['Receipt paper rolls','unit'],['Order paper / kitchen tickets','unit'],['Pens','unit'],
     ['Thermal labels','unit'],['Delivery stickers / tamper seals','unit']
   ]}
 ];
 
+const STORAGE_CONDITION_LABELS={ambient:'Ambient',dry:'Dry',chilled:'Chilled',frozen:'Frozen',other:'Not set / other'};
+const STORAGE_AREA_LABELS={pantry:'Pantry / dry food storage',fridge:'Fridge / chiller',freezer:'Freezer',prep_station:'Prep station',chemical_storage:'Chemical storage',service_storage:'Service / supplies storage',other:'Other / not set'};
+function storageSuggestionFor(group,itemName=''){
+  const base={...(group?.storage||{condition:'other',area:'other',label:'',segregated:false})};
+  if(itemName==='Ice')return{condition:'frozen',area:'freezer',label:'',segregated:false};
+  if(['Condensed milk','Evaporated milk'].includes(itemName))return{condition:'ambient',area:'pantry',label:'',segregated:false};
+  return base;
+}
+function storageSuggestionForType(type='ingredient'){
+  if(type==='cleaning_sanitation')return{condition:'ambient',area:'chemical_storage',label:'Chemical storage',segregated:true};
+  if(['packaging','kitchen_consumable','hygiene','operational_supply'].includes(type))return{condition:'dry',area:'service_storage',label:'',segregated:false};
+  return{condition:'other',area:'other',label:'',segregated:false};
+}
+function applyStockStorageSuggestion(suggestion={}){
+  if($('stockStorageCondition'))$('stockStorageCondition').value=suggestion.condition||'other';
+  if($('stockStorageArea'))$('stockStorageArea').value=suggestion.area||'other';
+  if($('stockStorageLocation'))$('stockStorageLocation').value=suggestion.label||'';
+  if($('stockStorageSegregated'))$('stockStorageSegregated').checked=Boolean(suggestion.segregated);
+  updateStockStorageHint();
+}
+function storageSafetyMessage({type,condition,area,label,segregated}){
+  if(type==='cleaning_sanitation'){
+    if(['pantry','fridge','freezer','prep_station'].includes(area))return{ok:false,text:'Cleaning & sanitation stock must be stored separately from food.'};
+    if(area==='chemical_storage'&&!segregated)return{ok:false,text:'Chemical storage must be marked as segregated from food.'};
+    if(['service_storage','other'].includes(area)&&(!segregated||!String(label||'').trim()))return{ok:false,text:'Choose a named segregated storage location for cleaning & sanitation stock.'};
+  }
+  if(['ingredient','packaging','kitchen_consumable','hygiene'].includes(type)&&area==='chemical_storage')return{ok:false,text:'Food, packaging and food-handling stock cannot be stored in chemical storage.'};
+  if(area==='fridge'&&condition!=='chilled')return{ok:false,text:'Fridge storage should use the Chilled condition.'};
+  if(area==='freezer'&&condition!=='frozen')return{ok:false,text:'Freezer storage should use the Frozen condition.'};
+  if(condition==='chilled'&&!['fridge','other'].includes(area))return{ok:false,text:'Chilled stock needs a fridge or a labelled custom cold-storage area.'};
+  if(condition==='frozen'&&!['freezer','other'].includes(area))return{ok:false,text:'Frozen stock needs a freezer or a labelled custom frozen-storage area.'};
+  if(['chilled','frozen'].includes(condition)&&area==='other'&&!String(label||'').trim())return{ok:false,text:'Custom chilled/frozen storage needs a location label.'};
+  return{ok:true,text:'Storage context looks consistent. Lots received for this item keep a storage snapshot for traceability.'};
+}
+function updateStockStorageHint(){
+  const out=$('stockStorageHint');if(!out)return;
+  const result=storageSafetyMessage({
+    type:$('stockInventoryType')?.value||'ingredient',
+    condition:$('stockStorageCondition')?.value||'other',
+    area:$('stockStorageArea')?.value||'other',
+    label:$('stockStorageLocation')?.value||'',
+    segregated:Boolean($('stockStorageSegregated')?.checked)
+  });
+  out.innerHTML=`<strong class="${result.ok?'positive':'negative'}">${result.ok?'Storage check':'Storage warning'}</strong><br><span class="muted">${esc(result.text)}</span>`;
+}
 function initStockPicker(){
   const category=$('stockCategoryPicker'),item=$('stockItemPicker');
   if(!category||!item)return;
@@ -95,6 +140,7 @@ function initStockPicker(){
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
     item.replaceChildren();
     if(group&&$('stockInventoryType'))$('stockInventoryType').value=group.type||'ingredient';
+    if(group)applyStockStorageSuggestion(storageSuggestionFor(group,''));
     if(!group){
       item.append(new Option('Choose a category first',''));
       item.disabled=true;
@@ -116,11 +162,20 @@ function initStockPicker(){
     const unit=option.dataset.unit||'unit';
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
     if($('stockInventoryType'))$('stockInventoryType').value=group?.type||'ingredient';
+    applyStockStorageSuggestion(storageSuggestionFor(group,option.value));
     syncUnitSelect('stockPurchaseUnit',unit);
     syncUnitSelect('stockReorderUnit',unit);
     stockPurchasePreview();
   });
+  $('stockInventoryType')?.addEventListener('change',()=>{
+    if(!category.value)applyStockStorageSuggestion(storageSuggestionForType($('stockInventoryType').value));
+    else updateStockStorageHint();
+  });
+  for(const id of ['stockStorageCondition','stockStorageArea','stockStorageLocation'])$(id)?.addEventListener('change',updateStockStorageHint);
+  $('stockStorageLocation')?.addEventListener('input',updateStockStorageHint);
+  $('stockStorageSegregated')?.addEventListener('change',updateStockStorageHint);
   renderItems();
+  updateStockStorageHint();
 }
 function unitMeta(unit){return UNIT_META[unit]||UNIT_META[String(unit||'').toLowerCase()]||null}
 function toBase(qty,unit){const m=unitMeta(unit),q=Number(qty);return m&&Number.isFinite(q)&&q>0?{family:m.family,base:m.base,qty:q*m.factor}:null}
@@ -390,12 +445,13 @@ async function sendRestockRequest(x,row){
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
   inventory=results[0];
-  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),reserved=Number(i.reserved_quantity||0),available=Number(i.available_quantity??Math.max(0,usable-reserved)),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=reserved>0?`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)}`:blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
+  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),reserved=Number(i.reserved_quantity||0),available=Number(i.available_quantity??Math.max(0,usable-reserved)),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=reserved>0?`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)}`:blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;const condition=STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other',area=STORAGE_AREA_LABELS[i.storage_area_type]||'Other / not set',location=i.storage_location_label?` · ${esc(i.storage_location_label)}`:'';const storageCopy=`storage ${esc(condition)} · ${esc(area)}${location}${i.storage_segregated?' · segregated':''}`;d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • ${storageCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
   $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
   if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
   fillConsumableRuleInventory();
   fillStockAdjustmentInventory();
+  fillStorageEditor();
   await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots()]);
 }
 function lotExpiryCopy(row){
@@ -421,7 +477,11 @@ async function loadInventoryLots(){
       const d=document.createElement('div');d.className='listRow';d.dataset.lotId=String(r.id);d.dataset.inventoryId=String(r.inventory_id||'');
       const status=lotExpiryCopy(r),bad=r.expiry_status==='expired'||!['available','depleted'].includes(String(r.lot_state||'available'));
       const code=r.supplier_lot_code||r.internal_lot_code||('Lot '+r.id);
-      d.innerHTML=`<div class="rowMain"><strong>${esc(r.item_name)} · ${esc(code)}</strong><small>${num(r.quantity_remaining_base,4)} ${esc(r.base_unit)} remaining • ${esc(status)}${r.supplier_lot_code&&r.internal_lot_code?' • internal '+esc(r.internal_lot_code):''}</small></div><span class="${bad?'negative':r.expiry_status==='expiring_soon'?'negative':''}">${r.usable?'FEFO':'HOLD'}</span>`;
+      const storageCondition=STORAGE_CONDITION_LABELS[r.storage_condition_snapshot]||STORAGE_CONDITION_LABELS[r.current_storage_condition]||'Not set / other';
+      const storageArea=STORAGE_AREA_LABELS[r.storage_area_type_snapshot]||STORAGE_AREA_LABELS[r.current_storage_area_type]||'Other / not set';
+      const storageLocation=r.storage_location_label_snapshot||r.current_storage_location_label||'';
+      const storageCopy=`${storageCondition} · ${storageArea}${storageLocation?' · '+storageLocation:''}${r.storage_segregated_snapshot?' · segregated':''}`;
+      d.innerHTML=`<div class="rowMain"><strong>${esc(r.item_name)} · ${esc(code)}</strong><small>${num(r.quantity_remaining_base,4)} ${esc(r.base_unit)} remaining • ${esc(status)} • storage ${esc(storageCopy)}${r.supplier_lot_code&&r.internal_lot_code?' • internal '+esc(r.internal_lot_code):''}</small></div><span class="${bad?'negative':r.expiry_status==='expiring_soon'?'negative':''}">${r.usable?'FEFO':'HOLD'}</span>`;
       return d;
     });
     list.replaceChildren(...(nodes.length?nodes:[emptyRow('No lot or expiry records yet.')]));
@@ -431,6 +491,40 @@ async function loadInventoryLots(){
     list.replaceChildren(emptyRow(error.message||'Lot information is unavailable.'));
     return[];
   }
+}
+function fillStorageEditor(){
+  const select=$('storageInventoryId');if(!select)return;
+  const previous=select.value;
+  select.innerHTML=inventory.length
+    ?'<option value="">Choose an item</option>'+inventory.map(i=>`<option value="${i.id}">${esc(i.item)} · ${esc(STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other')}</option>`).join('')
+    :'<option value="">Add stock first</option>';
+  if(previous&&inventory.some(i=>String(i.id)===String(previous)))select.value=previous;
+  loadStorageEditorItem();
+}
+function loadStorageEditorItem(){
+  const id=Number($('storageInventoryId')?.value),item=inventory.find(x=>Number(x.id)===id);
+  if(!item){
+    if($('storageSafetyMessage'))$('storageSafetyMessage').textContent='Choose an Inventory item to review its storage settings.';
+    return;
+  }
+  $('storageCondition').value=item.storage_condition||'other';
+  $('storageAreaType').value=item.storage_area_type||'other';
+  $('storageLocationLabel').value=item.storage_location_label||'';
+  $('storageSegregated').checked=Boolean(item.storage_segregated);
+  updateStorageEditorSafety();
+}
+function updateStorageEditorSafety(){
+  const id=Number($('storageInventoryId')?.value),item=inventory.find(x=>Number(x.id)===id),out=$('storageSafetyMessage');
+  if(!out)return;
+  if(!item){out.textContent='Choose an Inventory item to review its storage settings.';return}
+  const result=storageSafetyMessage({
+    type:item.inventory_type||'ingredient',
+    condition:$('storageCondition').value,
+    area:$('storageAreaType').value,
+    label:$('storageLocationLabel').value,
+    segregated:$('storageSegregated').checked
+  });
+  out.innerHTML=`<strong class="${result.ok?'positive':'negative'}">${result.ok?'Storage check':'Storage warning'}</strong><br><span class="muted">${esc(result.text)}</span>`;
 }
 function fillStockAdjustmentInventory(){
   const select=$('stockAdjustmentInventory');if(!select)return;
@@ -673,7 +767,27 @@ $('consumableRuleForm')?.addEventListener('submit',async e=>{
     await loadConsumableRules();
   }catch(error){if(out)out.textContent=error.message}
 });
-$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
+$('storageInventoryId')?.addEventListener('change',loadStorageEditorItem);
+for(const id of ['storageCondition','storageAreaType','storageLocationLabel'])$(id)?.addEventListener('change',updateStorageEditorSafety);
+$('storageLocationLabel')?.addEventListener('input',updateStorageEditorSafety);
+$('storageSegregated')?.addEventListener('change',updateStorageEditorSafety);
+$('storageForm')?.addEventListener('submit',async e=>{
+  e.preventDefault();const out=$('storageMessage');if(out)out.textContent='Saving…';
+  try{
+    const id=Number($('storageInventoryId').value);
+    if(!Number.isInteger(id))throw new Error('Choose an Inventory item.');
+    const updated=await api(`/api/inventory/${id}/storage`,{method:'PUT',body:JSON.stringify({
+      storage_condition:$('storageCondition').value,
+      storage_area_type:$('storageAreaType').value,
+      storage_location_label:$('storageLocationLabel').value,
+      storage_segregated:$('storageSegregated').checked
+    })});
+    if(out)out.textContent=`Storage saved for ${updated.item}.`;
+    await loadStock();
+    invalidateMerchantToday();
+  }catch(error){if(out)out.textContent=error.message}
+});
+$('stockForm').addEventListener('submit',async e=>{e.preventDefault();$('stockMessage').textContent='Saving purchase…';try{const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({item:$('stockItem').value,inventory_type:$('stockInventoryType').value,storage_condition:$('stockStorageCondition').value,storage_area_type:$('stockStorageArea').value,storage_location_label:$('stockStorageLocation').value,storage_segregated:$('stockStorageSegregated').checked,purchase_quantity:Number($('stockPurchaseQty').value),purchase_unit:$('stockPurchaseUnit').value,total_cost:Number($('stockTotalCost').value),reorder_quantity:Number($('stockReorderQty').value||0),reorder_unit:$('stockReorderUnit').value,lot_code:$('stockLotCode').value,expires_at:$('stockExpiry').value,account:$('stockAccount').value,note:$('stockNote').value,record_expense:true})});const lotCopy=result.lot?(result.lot.supplier_lot_code||result.lot.internal_lot_code):'';$('stockMessage').textContent=`Added ${result.conversion.stored}. New calculated stock cost: ${money(result.inventory.unit_cost)} / ${result.inventory.unit}.${lotCopy?' Lot '+lotCopy+' recorded.':''}`;e.target.reset();$('stockPurchaseQty').value=1;$('stockPurchaseUnit').value='kg';$('stockTotalCost').value=0;$('stockAccount').value='cash';$('stockReorderQty').value=0;$('stockReorderUnit').value='g';$('stockLotCode').value='';$('stockExpiry').value='';$('stockInventoryType').value='ingredient';$('stockStorageCondition').value='other';$('stockStorageArea').value='other';$('stockStorageLocation').value='';$('stockStorageSegregated').checked=false;$('stockCategoryPicker').value='';$('stockItemPicker').replaceChildren(new Option('Choose a category first',''));$('stockItemPicker').disabled=true;updateStockStorageHint();stockPurchasePreview();await Promise.all([loadStock(),loadProducts()]);invalidateMerchantToday()}catch(err){$('stockMessage').textContent=err.message}});
 $('remittanceForm').addEventListener('submit',async e=>{e.preventDefault();$('remitMessage').textContent='Saving…';const optional=id=>$(id).value===''?null:Number($(id).value);try{await api('/api/remittances',{method:'POST',body:JSON.stringify({sent_amount:Number($('remitSent').value),sent_currency:$('remitCurrency').value,fee_amount:Number($('remitFee').value||0),exchange_rate:optional('remitRate'),expected_php:optional('remitExpected'),received_php:Number($('remitReceived').value),account:$('remitAccount').value,provider:$('remitProvider').value,reference:$('remitReference').value,note:$('remitNote').value})});e.target.reset();$('remitCurrency').value='EUR';$('remitFee').value=0;$('remitAccount').value='gcash';$('remitMessage').textContent='Remittance saved and received money added automatically.';await Promise.all([loadRemittances(),loadDay()]);invalidateMerchantToday()}catch(err){$('remitMessage').textContent=err.message}});
 $('openForm').addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/open-day',{method:'POST',body:JSON.stringify({opening_cash:Number($('openingCash').value)})});$('openResult').textContent='Opening cash saved.';await loadDay()}catch(err){$('openResult').textContent=err.message}});
 $('closeForm').addEventListener('submit',async e=>{e.preventDefault();try{const r=await api('/api/close-day',{method:'POST',body:JSON.stringify({actual_cash:Number($('actualCash').value)})});$('closeResult').innerHTML=`Expected ${money(r.expected_cash)} • Actual ${money(r.actual_cash)} • <strong class="${Number(r.variance)<0?'negative':Number(r.variance)>0?'positive':''}">Difference ${money(r.variance)}</strong>`;await loadDay()}catch(err){$('closeResult').textContent=err.message}});

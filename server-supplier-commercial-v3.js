@@ -6,6 +6,7 @@ import {
   commercialPosition,
   returnCreditAmount
 } from './supplier-commercial-core.js';
+import {requireValidInventoryStorage} from './inventory-storage-core.js';
 
 const {exactProfileBusiness}=supplierDomainV2Internals;
 
@@ -261,6 +262,23 @@ export async function recordPoReceiptLot(client,{
   const effectiveBaseUnit=clean(lotBaseUnit||itemRow.base_unit_snapshot,50);
   const handling=clean(itemRow.handling_mode_snapshot||'sealed_resale',30);
   const internal=clean(receiptInput?.internal_lot_code,90)||lotCode();
+  let storage={storage_condition:'other',storage_area_type:'other',storage_location_label:'',storage_segregated:false};
+  if(itemRow.legacy_inventory_id){
+    const inventory=await client.query(
+      `SELECT inventory_type,storage_condition,storage_area_type,storage_location_label,storage_segregated
+         FROM inventory WHERE id=$1 AND business_id=$2`,
+      [Number(itemRow.legacy_inventory_id),Number(businessId)]
+    );
+    if(!inventory.rowCount)throw httpError(409,'Linked Inventory item is unavailable for lot storage validation.');
+    const inv=inventory.rows[0];
+    storage=requireValidInventoryStorage({
+      inventoryType:inv.inventory_type||'ingredient',
+      storageCondition:inv.storage_condition,
+      storageAreaType:inv.storage_area_type,
+      storageLocationLabel:inv.storage_location_label,
+      storageSegregated:inv.storage_segregated
+    });
+  }
 
   const {rows}=await client.query(
     `INSERT INTO supply_lots(
@@ -268,10 +286,12 @@ export async function recordPoReceiptLot(client,{
       inventory_id,catalog_item_id,item_name,internal_lot_code,supplier_lot_code,
       handling_mode,lot_state,base_unit,quantity_received_base,quantity_remaining_base,
       unit_cost_base,package_unit_name,package_size_base,package_count_received,
-      manufactured_at,packed_at,expires_at,received_at,note,created_by_account_id
+      manufactured_at,packed_at,expires_at,
+      storage_condition_snapshot,storage_area_type_snapshot,storage_location_label_snapshot,storage_segregated_snapshot,
+      received_at,note,created_by_account_id
     ) VALUES(
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'available',$11,$12,$12,$13,$14,$15,$16,
-      $17,$18,$19,NOW(),$20,$21
+      $17,$18,$19,$20,$21,$22,$23,NOW(),$24,$25
     ) RETURNING *`,
     [
       Number(businessId),Number(purchaseOrderId),Number(receiptId),Number(itemRow.id),
@@ -280,7 +300,9 @@ export async function recordPoReceiptLot(client,{
       clean(itemRow.name_snapshot,180),internal,supplierLot,handling,
       effectiveBaseUnit,quantity,Number(unitCost),
       clean(itemRow.unit_name_snapshot,50),effectiveBasePerPack,Number(packs),
-      manufactured,packed,expires,clean(receiptInput?.lot_note,1000),Number(actorAccountId)
+      manufactured,packed,expires,
+      storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
+      clean(receiptInput?.lot_note,1000),Number(actorAccountId)
     ]
   );
   return rows[0];
@@ -298,6 +320,10 @@ export async function ensureSupplierCommercialV3Schema(pool){
 
     ALTER TABLE supply_lots
       ADD COLUMN IF NOT EXISTS catalog_item_id BIGINT REFERENCES supplier_catalog_items(id) ON DELETE SET NULL;
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_condition_snapshot TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_area_type_snapshot TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_location_label_snapshot TEXT NOT NULL DEFAULT '';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_segregated_snapshot BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE supply_lots
       ADD COLUMN IF NOT EXISTS lot_state TEXT NOT NULL DEFAULT 'available';
     ALTER TABLE supply_lots

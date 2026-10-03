@@ -234,6 +234,32 @@
             <div class="salePreview"><strong>Why this matters</strong><br><span class="muted">Only Ingredients can be added to recipes. Other stock stays tracked for purchasing and low-stock alerts.</span></div>
           </div>
           <label>Item / ingredient<input id="stockItem" required placeholder="Carrot" /></label>
+          <details id="stockStorageDetails" class="stockStorageDetails">
+            <summary><strong>Storage & food safety</strong><small class="muted">Optional details · recommended for food and chemicals</small></summary>
+            <div class="stack">
+              <div class="grid2">
+                <label>Storage condition<select id="stockStorageCondition">
+                  <option value="other">Not set / other</option>
+                  <option value="ambient">Ambient</option>
+                  <option value="dry">Dry</option>
+                  <option value="chilled">Chilled</option>
+                  <option value="frozen">Frozen</option>
+                </select></label>
+                <label>Storage area<select id="stockStorageArea">
+                  <option value="other">Other / not set</option>
+                  <option value="pantry">Pantry / dry food storage</option>
+                  <option value="fridge">Fridge / chiller</option>
+                  <option value="freezer">Freezer</option>
+                  <option value="prep_station">Prep station</option>
+                  <option value="chemical_storage">Chemical storage</option>
+                  <option value="service_storage">Service / supplies storage</option>
+                </select></label>
+              </div>
+              <label>Location label<input id="stockStorageLocation" maxlength="120" placeholder="Example: Fridge 1 · Shelf B" /></label>
+              <label class="checkLabel"><input id="stockStorageSegregated" type="checkbox" /> Segregated from food</label>
+              <div id="stockStorageHint" class="salePreview">Choose a category or stock type and Business & Life will suggest a safe storage context.</div>
+            </div>
+          </details>
           <div class="grid2">
             <label>Bought quantity<input id="stockPurchaseQty" type="number" min="0.0001" step="0.0001" value="1" required /></label>
             <label>Purchase unit<select id="stockPurchaseUnit"><option value="kg">kg</option><option value="g">g</option><option value="L">L</option><option value="ml">ml</option><option value="unit">unit / piece</option></select></label>
@@ -256,6 +282,34 @@
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
         <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
+        <div class="card stack">
+          <div><h2>Storage & segregation</h2><p class="muted">Update where an existing item is stored without adding or removing stock.</p></div>
+          <form id="storageForm" class="stack">
+            <label>Inventory item<select id="storageInventoryId"><option value="">Choose an item</option></select></label>
+            <div class="grid2">
+              <label>Storage condition<select id="storageCondition">
+                <option value="other">Not set / other</option>
+                <option value="ambient">Ambient</option>
+                <option value="dry">Dry</option>
+                <option value="chilled">Chilled</option>
+                <option value="frozen">Frozen</option>
+              </select></label>
+              <label>Storage area<select id="storageAreaType">
+                <option value="other">Other / not set</option>
+                <option value="pantry">Pantry / dry food storage</option>
+                <option value="fridge">Fridge / chiller</option>
+                <option value="freezer">Freezer</option>
+                <option value="prep_station">Prep station</option>
+                <option value="chemical_storage">Chemical storage</option>
+                <option value="service_storage">Service / supplies storage</option>
+              </select></label>
+            </div>
+            <label>Location label<input id="storageLocationLabel" maxlength="120" placeholder="Example: Chemical cabinet · lower shelf" /></label>
+            <label class="checkLabel"><input id="storageSegregated" type="checkbox" /> Segregated from food</label>
+            <div id="storageSafetyMessage" class="salePreview">Food and cleaning chemicals must not share a storage area.</div>
+            <button class="secondary">Save storage settings</button><div id="storageMessage"></div>
+          </form>
+        </div>
         <div class="card stack">
           <div class="sectionHead"><div><h2>Lots & expiry</h2><p class="muted">Earliest expiry first. Expired or held lots are not considered usable FEFO stock.</p></div><button id="lotRefresh" type="button" class="secondary">Refresh lots</button></div>
           <div id="lotSummary" class="salePreview">No tracked lots yet.</div>

@@ -210,3 +210,29 @@
 @media (prefers-reduced-motion:reduce){
   .inventoryNotificationTarget{animation:none}
 }
+
+
+.stockStorageDetails{
+  border:1px solid var(--line,#e3e6ea);
+  border-radius:14px;
+  background:var(--card,#fff);
+  overflow:hidden
+}
+.stockStorageDetails>summary{
+  min-height:44px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:12px 14px;
+  cursor:pointer;
+  list-style:none
+}
+.stockStorageDetails>summary::-webkit-details-marker{display:none}
+.stockStorageDetails>summary small{text-align:right}
+.stockStorageDetails[open]>summary{border-bottom:1px solid var(--line,#e3e6ea)}
+.stockStorageDetails>.stack{padding:14px}
+@media(max-width:520px){
+  .stockStorageDetails>summary{align-items:flex-start;flex-direction:column}
+  .stockStorageDetails>summary small{text-align:left}
+}

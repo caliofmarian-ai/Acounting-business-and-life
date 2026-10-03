@@ -14,6 +14,7 @@ import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
 import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
 import { inventoryLotExpiryStatus,planPhysicalStockReduction } from './inventory-lot-core.js';
+import {inventoryStorageDefaults,requireValidInventoryStorage} from './inventory-storage-core.js';
 import { planInventoryFefo,applyLotAllocations,canUseSupplyLots,inventoryLotRows,applyPhysicalLotReductions,inventoryAvailabilityRows } from './inventory-lot-runtime.js';
 import {reserveOrderStock,reservationExpiryForOrder} from './order-stock-reservation.js';
 
@@ -76,6 +77,14 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS inventory_type TEXT NOT NULL DEFAULT 'ingredient';
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_inventory_type_check;
     ALTER TABLE inventory ADD CONSTRAINT inventory_inventory_type_check CHECK(inventory_type IN ('ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply'));
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_condition TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_storage_condition_check;
+    ALTER TABLE inventory ADD CONSTRAINT inventory_storage_condition_check CHECK(storage_condition IN ('ambient','dry','chilled','frozen','other'));
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_area_type TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_storage_area_type_check;
+    ALTER TABLE inventory ADD CONSTRAINT inventory_storage_area_type_check CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','other'));
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_location_label TEXT NOT NULL DEFAULT '';
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_segregated BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS measurement_family TEXT;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS base_unit TEXT;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS last_purchase_quantity NUMERIC(14,4);
@@ -527,7 +536,39 @@ app.get('/api/inventory',async(req,res,next)=>{try{
   });
   res.json(rows);
 }catch(e){next(e)}});
-app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,unit_cost=0}=req.body||{},inventoryType=normalizeInventoryType(req.body?.inventory_type);if(!clean(item,100))return res.status(400).json({error:'Item is required'});const{rows}=await pool.query(`INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(business_id,item) DO UPDATE SET unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,unit_cost=EXCLUDED.unit_cost,inventory_type=EXCLUDED.inventory_type,updated_at=NOW() RETURNING *`,[business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(unit_cost)||0,inventoryType]);res.status(201).json(rows[0])}catch(e){next(e)}});
+app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
+  const{business}=await accountingContext(req),{item,unit='pcs',quantity=0,reorder_level=0,unit_cost=0}=req.body||{};
+  const inventoryType=normalizeInventoryType(req.body?.inventory_type);
+  if(!clean(item,100))return res.status(400).json({error:'Item is required'});
+  const defaults=inventoryStorageDefaults(inventoryType);
+  const hasStorage=['storage_condition','storage_area_type','storage_location_label','storage_segregated'].some(key=>Object.prototype.hasOwnProperty.call(req.body||{},key));
+  const storage=requireValidInventoryStorage({
+    inventoryType,
+    storageCondition:req.body?.storage_condition??defaults.storage_condition,
+    storageAreaType:req.body?.storage_area_type??defaults.storage_area_type,
+    storageLocationLabel:req.body?.storage_location_label??defaults.storage_location_label,
+    storageSegregated:req.body?.storage_segregated??defaults.storage_segregated
+  });
+  const{rows}=await pool.query(`
+    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
+      storage_condition,storage_area_type,storage_location_label,storage_segregated)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT(business_id,item) DO UPDATE SET
+      unit=EXCLUDED.unit,quantity=EXCLUDED.quantity,reorder_level=EXCLUDED.reorder_level,
+      unit_cost=EXCLUDED.unit_cost,inventory_type=EXCLUDED.inventory_type,
+      storage_condition=CASE WHEN $12 THEN EXCLUDED.storage_condition ELSE inventory.storage_condition END,
+      storage_area_type=CASE WHEN $12 THEN EXCLUDED.storage_area_type ELSE inventory.storage_area_type END,
+      storage_location_label=CASE WHEN $12 THEN EXCLUDED.storage_location_label ELSE inventory.storage_location_label END,
+      storage_segregated=CASE WHEN $12 THEN EXCLUDED.storage_segregated ELSE inventory.storage_segregated END,
+      updated_at=NOW()
+    RETURNING *
+  `,[
+    business.id,clean(item,100),clean(unit,20)||'pcs',Number(quantity)||0,Number(reorder_level)||0,Number(unit_cost)||0,inventoryType,
+    storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,hasStorage
+  ]);
+  res.status(201).json(rows[0])
+}catch(e){next(e)}});
+
 app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
   try{
     const ctx=await accountingContext(req);
@@ -554,6 +595,16 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
     try{
       await client.query('BEGIN');
       const current=await client.query(`SELECT * FROM inventory WHERE business_id=$1 AND LOWER(item)=LOWER($2) FOR UPDATE`,[ctx.business.id,itemName]);
+      const defaults=inventoryStorageDefaults(inventoryType);
+      const fallback=current.rows[0]||defaults;
+      const storage=requireValidInventoryStorage({
+        inventoryType,
+        storageCondition:req.body?.storage_condition??fallback.storage_condition??defaults.storage_condition,
+        storageAreaType:req.body?.storage_area_type??fallback.storage_area_type??defaults.storage_area_type,
+        storageLocationLabel:req.body?.storage_location_label??fallback.storage_location_label??defaults.storage_location_label,
+        storageSegregated:req.body?.storage_segregated??fallback.storage_segregated??defaults.storage_segregated
+      });
+
       let inventoryRow;
       if(current.rowCount){
         const old=current.rows[0];
@@ -574,24 +625,37 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
                  measurement_family=$3,
                  unit_cost=$4,
                  inventory_type=$5,
-                 reorder_level=CASE WHEN $6>0 THEN $6 ELSE reorder_level END,
-                 last_purchase_quantity=$7,
-                 last_purchase_unit=$8,
-                 last_purchase_total_cost=$9,
+                 storage_condition=$6,
+                 storage_area_type=$7,
+                 storage_location_label=$8,
+                 storage_segregated=$9,
+                 reorder_level=CASE WHEN $10>0 THEN $10 ELSE reorder_level END,
+                 last_purchase_quantity=$11,
+                 last_purchase_unit=$12,
+                 last_purchase_total_cost=$13,
                  last_purchase_at=NOW(),
                  updated_at=NOW()
-           WHERE id=$10 AND business_id=$11
+           WHERE id=$14 AND business_id=$15
            RETURNING *
-        `,[purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,inventoryType,purchase.reorder_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id]);
+        `,[
+          purchase.base_quantity,purchase.base_unit,purchase.measurement_family,nextCost,inventoryType,
+          storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
+          purchase.reorder_base_quantity,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost,old.id,ctx.business.id
+        ]);
         inventoryRow=updated.rows[0];
       }else{
         const inserted=await client.query(`
           INSERT INTO inventory(
             business_id,item,unit,quantity,reorder_level,unit_cost,inventory_type,
+            storage_condition,storage_area_type,storage_location_label,storage_segregated,
             measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at
-          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$3,$9,$10,$11,NOW())
+          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$3,$13,$14,$15,NOW())
           RETURNING *
-        `,[ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.base_unit_cost,inventoryType,purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost]);
+        `,[
+          ctx.business.id,itemName,purchase.base_unit,purchase.base_quantity,purchase.reorder_base_quantity,purchase.base_unit_cost,inventoryType,
+          storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,
+          purchase.measurement_family,purchase.purchase_quantity,purchase.purchase_unit,purchase.total_cost
+        ]);
         inventoryRow=inserted.rows[0];
       }
 
@@ -610,16 +674,21 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
             business_id,supply_party_id,purchase_order_id,purchase_receipt_id,purchase_order_item_id,
             inventory_id,item_name,internal_lot_code,supplier_lot_code,handling_mode,base_unit,
             quantity_received_base,quantity_remaining_base,unit_cost_base,package_unit_name,
-            package_size_base,package_count_received,expires_at,received_at,note,created_by_account_id
+            package_size_base,package_count_received,expires_at,
+            storage_condition_snapshot,storage_area_type_snapshot,storage_location_label_snapshot,storage_segregated_snapshot,
+            received_at,note,created_by_account_id
           ) VALUES(
-            $1,NULL,NULL,NULL,NULL,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$13,NOW(),$14,$15
+            $1,NULL,NULL,NULL,NULL,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$13,
+            $14,$15,$16,$17,NOW(),$18,$19
           ) RETURNING *
         `,[
           ctx.business.id,inventoryRow.id,itemName,internalLot,supplierLotCode,
           inventoryType==='ingredient'?'bulk':'sealed_resale',purchase.base_unit,purchase.base_quantity,
           purchase.base_unit_cost,purchase.purchase_unit,
           purchase.purchase_quantity>0?purchase.base_quantity/purchase.purchase_quantity:null,
-          purchase.purchase_quantity,expiryAt,clean(req.body?.note,1000),ctx.me.account.id
+          purchase.purchase_quantity,expiryAt,
+          inventoryRow.storage_condition,inventoryRow.storage_area_type,inventoryRow.storage_location_label,inventoryRow.storage_segregated,
+          clean(req.body?.note,1000),ctx.me.account.id
         ]);
         lot=lotInsert.rows[0];
       }
@@ -655,6 +724,34 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
   }catch(error){next(error)}
 });
 
+app.put('/api/inventory/:id/storage',jsonBody,async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const id=Number(req.params.id);
+    if(!Number.isInteger(id))return res.status(400).json({error:'Invalid Inventory item'});
+    const current=await pool.query(`SELECT * FROM inventory WHERE id=$1 AND business_id=$2`,[id,ctx.business.id]);
+    if(!current.rowCount)return res.status(404).json({error:'Inventory item not found'});
+    const row=current.rows[0];
+    const storage=requireValidInventoryStorage({
+      inventoryType:row.inventory_type||'ingredient',
+      storageCondition:req.body?.storage_condition??row.storage_condition,
+      storageAreaType:req.body?.storage_area_type??row.storage_area_type,
+      storageLocationLabel:req.body?.storage_location_label??row.storage_location_label,
+      storageSegregated:req.body?.storage_segregated??row.storage_segregated
+    });
+    const {rows}=await pool.query(`
+      UPDATE inventory
+         SET storage_condition=$1,storage_area_type=$2,storage_location_label=$3,storage_segregated=$4,updated_at=NOW()
+       WHERE id=$5 AND business_id=$6
+       RETURNING *
+    `,[
+      storage.storage_condition,storage.storage_area_type,storage.storage_location_label,storage.storage_segregated,id,ctx.business.id
+    ]);
+    res.json(rows[0]);
+  }catch(error){next(error)}
+});
+
 app.get('/api/inventory/lots',async(req,res,next)=>{
   try{
     const ctx=await accountingContext(req);
@@ -671,7 +768,10 @@ app.get('/api/inventory/lots',async(req,res,next)=>{
       SELECT l.id,l.business_id,l.inventory_id,l.item_name,l.internal_lot_code,l.supplier_lot_code,
              COALESCE(to_jsonb(l)->>'lot_state','available') lot_state,
              l.base_unit,l.quantity_received_base,l.quantity_remaining_base,l.unit_cost_base,
-             l.expires_at,l.received_at,l.created_at,i.inventory_type
+             l.expires_at,l.received_at,l.created_at,i.inventory_type,
+             l.storage_condition_snapshot,l.storage_area_type_snapshot,l.storage_location_label_snapshot,l.storage_segregated_snapshot,
+             i.storage_condition current_storage_condition,i.storage_area_type current_storage_area_type,
+             i.storage_location_label current_storage_location_label,i.storage_segregated current_storage_segregated
         FROM supply_lots l
         JOIN inventory i ON i.id=l.inventory_id AND i.business_id=l.business_id
        WHERE l.business_id=$1 ${inventoryFilter}
