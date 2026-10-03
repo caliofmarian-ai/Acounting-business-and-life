@@ -41,7 +41,7 @@ test('non-food Merchant never receives recipe attention',()=>{
 test('Today loads independent evidence in parallel and scopes every source to active business',()=>{
   assert.match(core,/await Promise\.all\(\[/);
   assert.match(core,/WHERE business_id=\$1/);
-  assert.match(core,/FROM inventory WHERE business_id=\$1/);
+  assert.match(core,/inventoryAvailabilityRows\(pool,\{businessId:bid\}\)/);
   assert.match(core,/FROM purchase_orders WHERE business_id=\$1/);
   assert.match(core,/FROM supplier_rfqs WHERE business_id=\$1/);
   assert.match(core,/WHERE p\.business_id=\$1/);
