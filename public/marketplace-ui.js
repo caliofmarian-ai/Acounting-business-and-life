@@ -1399,6 +1399,142 @@ function bindCatalogCreate(inventory=[],schema=merchantCatalogSchema){
     }catch(error){if(msg)msg.textContent=error.message}
   };
 }
+function closeCatalogEditor(){
+  const backdrop=document.getElementById('catalogEditorBackdrop');
+  backdrop?.classList.add('hidden');
+  if(document.getElementById('checkoutBackdrop')?.classList.contains('hidden')!==false&&document.getElementById('productDetailBackdrop')?.classList.contains('hidden')!==false)document.body.style.overflow='';
+}
+function catalogAttributeLabel(schema,code){
+  for(const category of schema?.categories||[]){
+    const mapping=(category.attributes||[]).find(row=>String(row.attribute_code)===String(code));
+    if(mapping)return mapping.definition?.label||code;
+  }
+  return mnice(code);
+}
+function catalogReviewValue(value){
+  if(value==null)return'';
+  if(typeof value==='object')return JSON.stringify(value);
+  if(value===true)return'Yes';
+  if(value===false)return'No';
+  return String(value);
+}
+function catalogEditorReviewMarkup(data){
+  const reviews=Array.isArray(data?.catalog_attribute_reviews)?data.catalog_attribute_reviews:[];
+  if(!reviews.length)return '';
+  return '<section class="catalogReviewPanel"><div class="catalogReviewHead"><div><strong>Previous category details need review</strong><small>These values no longer belong to the current product category. They are preserved for review and are not shown to customers.</small></div><span>'+reviews.length+'</span></div>'+
+    '<div class="catalogReviewList">'+reviews.map(row=>'<div><strong>'+mh(catalogAttributeLabel(data.schema,row.attribute_code))+'</strong><span>'+mh(catalogReviewValue(row.value_json))+'</span></div>').join('')+'</div>'+
+    '<button type="button" id="catalogResolveReviews" class="catalogReviewResolve">Acknowledge previous details</button>'+
+  '</section>';
+}
+function catalogCategoryChangeNotice(schema,fromCode,toCode,currentValues={}){
+  if(String(fromCode||'')===String(toCode||''))return '';
+  const next=catalogCategoryFromSchema(schema,toCode),allowed=new Set((next?.attributes||[]).map(row=>String(row.attribute_code)));
+  const removed=Object.keys(currentValues||{}).filter(code=>!allowed.has(String(code)));
+  if(!removed.length)return '<div class="catalogCategoryChangeNotice safe"><strong>Category change is compatible</strong><span>Existing compatible details will be kept.</span></div>';
+  return '<div class="catalogCategoryChangeNotice"><strong>'+removed.length+' previous detail'+(removed.length===1?'':'s')+' will move to review</strong><span>'+removed.map(code=>mh(catalogAttributeLabel(schema,code))).join(', ')+'</span><small>The product will become Private until you acknowledge those previous-category details.</small></div>';
+}
+function catalogEditorStatus(product){
+  if(product.active===false)return'Archived';
+  return product.published?'Published':'Private';
+}
+function catalogEditorKindLabel(kind){
+  return ({prepared_food:'Prepared food',fresh_direct:'Fresh / direct food',packaged_resale:'Packaged food resale',non_food_resale:'Non-food resale'})[String(kind||'')]||mnice(kind);
+}
+function catalogEditorMarkup(data){
+  const p=data.product||{},schema=data.schema||{},attrs=data.catalog_attributes||{};
+  const categoryCode=p.catalog_category_code||catalogDefaultCategoryForKind(p.product_kind);
+  const review=catalogEditorReviewMarkup(data);
+  return '<div class="catalogEditorTop"><div><small>ADAPTIVE PRODUCT EDITOR</small><h2>'+mh(p.name||'Product')+'</h2><span>'+mh(catalogEditorKindLabel(p.product_kind))+' · '+mh(catalogEditorStatus(p))+'</span></div><button type="button" id="catalogEditorClose" aria-label="Close">×</button></div>'+
+    '<form id="catalogEditorForm" class="catalogEditorForm">'+
+      '<div class="merchantStoreForm two">'+
+        '<label>Customer-facing name<input id="catalogEditName" maxlength="120" required value="'+mh(p.name||'')+'"></label>'+
+        '<label>Selling price ₱<input id="catalogEditPrice" type="number" min="0" step="0.01" required value="'+mh(p.selling_price??'')+'"></label>'+
+      '</div>'+
+      '<label>Product category<select id="catalogEditCategoryCode" required>'+catalogCategoryOptions(schema,p.product_domain,categoryCode)+'</select><span class="storeFieldHelp">Choose the canonical product category. Relevant details below adapt automatically.</span></label>'+
+      '<label>Customer section / shelf<input id="catalogEditCategory" maxlength="100" value="'+mh(p.category||'General')+'"></label>'+
+      '<label>Description<textarea id="catalogEditDescription" rows="3" maxlength="800">'+mh(p.description||'')+'</textarea></label>'+
+      '<div id="catalogCategoryChangeHost"></div>'+
+      '<section id="catalogEditorAdaptiveAttributes" class="catalogAdaptiveAttributes">'+catalogAdaptiveAttributesMarkup(schema,categoryCode,attrs,'catalogEditAttr')+'</section>'+
+      '<div id="catalogEditorAdvancedHost">'+catalogIdentityAdvancedMarkup('catalogEdit',p,p.product_kind)+'</div>'+
+      '<div class="catalogEditorSource"><strong>Stock source</strong><span>'+(
+        p.variant_mode?'Retail variants are linked to Inventory separately.'
+        :p.inventory_id?'Direct Inventory-linked product.'
+        :p.product_kind==='prepared_food'?'Prepared recipe product.'
+        :'No direct Inventory source'
+      )+'</span><small>Stock counts, supplier costs and accounting remain private.</small></div>'+
+      review+
+      '<div class="catalogEditorActions"><button type="button" id="catalogEditorCancel">Cancel</button><button type="submit" class="saveStore">Save product</button></div>'+
+      '<div id="catalogEditorMessage" class="avatarHint" aria-live="polite"></div>'+
+    '</form>';
+}
+async function openCatalogEditor(productId){
+  ensureMarket();
+  const backdrop=document.getElementById('catalogEditorBackdrop'),panel=document.getElementById('catalogEditorPanel');
+  if(!backdrop||!panel)return;
+  panel.innerHTML='<div class="marketEmpty">Loading product editor…</div>';
+  backdrop.classList.remove('hidden');document.body.style.overflow='hidden';
+  try{
+    const data=await mapi('/api/merchant/catalog-v3/products/'+Number(productId)+'/editor');
+    const p=data.product||{},schema=data.schema||{},originalAttrs={...(data.catalog_attributes||{})},originalCategory=p.catalog_category_code||catalogDefaultCategoryForKind(p.product_kind);
+    panel.innerHTML=catalogEditorMarkup(data);
+    document.getElementById('catalogEditorClose').onclick=closeCatalogEditor;
+    document.getElementById('catalogEditorCancel').onclick=closeCatalogEditor;
+
+    const category=document.getElementById('catalogEditCategoryCode'),attrHost=document.getElementById('catalogEditorAdaptiveAttributes'),notice=document.getElementById('catalogCategoryChangeHost');
+    const renderAdaptive=()=>{
+      const current=collectCatalogAttributes(attrHost,{includeEmpty:true});
+      const seed={...originalAttrs,...current};
+      attrHost.innerHTML=catalogAdaptiveAttributesMarkup(schema,category.value,seed,'catalogEditAttr');
+      notice.innerHTML=catalogCategoryChangeNotice(schema,originalCategory,category.value,originalAttrs);
+    };
+    category.onchange=renderAdaptive;
+    notice.innerHTML=catalogCategoryChangeNotice(schema,originalCategory,category.value,originalAttrs);
+
+    document.getElementById('catalogResolveReviews')?.addEventListener('click',async()=>{
+      const button=document.getElementById('catalogResolveReviews');if(button)button.disabled=true;
+      try{
+        const reviewIds=(data.catalog_attribute_reviews||[]).map(row=>Number(row.id));
+        await mapi('/api/merchant/catalog-v3/products/'+Number(p.id)+'/attribute-review',{
+          method:'POST',body:JSON.stringify({review_ids:reviewIds,decision:'resolved'})
+        });
+        mtoast('Previous category details acknowledged.');
+        await openCatalogEditor(Number(p.id));
+        await renderMerchantCatalog();
+      }catch(error){mtoast(error.message);if(button)button.disabled=false}
+    });
+
+    const form=document.getElementById('catalogEditorForm');
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const message=document.getElementById('catalogEditorMessage'),save=form.querySelector('button[type="submit"]');
+      if(message)message.textContent='Saving product…';if(save)save.disabled=true;
+      try{
+        const payload={
+          name:document.getElementById('catalogEditName').value,
+          selling_price:Number(document.getElementById('catalogEditPrice').value),
+          catalog_category_code:category.value,
+          category:document.getElementById('catalogEditCategory').value,
+          description:document.getElementById('catalogEditDescription').value,
+          catalog_attributes:collectCatalogAttributes(attrHost,{includeEmpty:true})
+        };
+        const brand=document.getElementById('catalogEditBrand'),model=document.getElementById('catalogEditModel'),condition=document.getElementById('catalogEditCondition'),mpn=document.getElementById('catalogEditMpn');
+        if(brand)payload.brand=brand.value;if(model)payload.model=model.value;if(condition)payload.condition_code=condition.value;if(mpn)payload.manufacturer_part_number=mpn.value;
+        for(const [field,id] of [['package_length_cm','catalogEditPackageLength'],['package_width_cm','catalogEditPackageWidth'],['package_height_cm','catalogEditPackageHeight'],['package_weight_kg','catalogEditPackageWeight']]){
+          const input=document.getElementById(id);if(input)payload[field]=input.value||null;
+        }
+        const saved=await mapi('/api/merchant/storefront/products/'+Number(p.id),{method:'PATCH',body:JSON.stringify(payload)});
+        const needsReview=Array.isArray(saved.catalog_attribute_reviews)&&saved.catalog_attribute_reviews.length>0;
+        mtoast(needsReview?'Product saved as Private — review previous category details.':'Product saved.');
+        await renderMerchantCatalog();
+        if(needsReview)await openCatalogEditor(Number(p.id));else closeCatalogEditor();
+      }catch(error){if(message)message.textContent=error.message;if(save)save.disabled=false}
+    };
+  }catch(error){
+    panel.innerHTML='<div class="catalogEditorTop"><div><h2>Product editor</h2></div><button type="button" id="catalogEditorClose" aria-label="Close">×</button></div><div class="marketEmpty">'+mh(error.message)+'</div>';
+    document.getElementById('catalogEditorClose').onclick=closeCatalogEditor;
+  }
+}
+
 function bindStoreForm(){const f=document.getElementById('merchantStoreForm');if(!f)return;f.onsubmit=async e=>{e.preventDefault();const msg=document.getElementById('storeMessage');msg.textContent='';try{await mapi('/api/merchant/storefront',{method:'PUT',body:JSON.stringify({business_id:Number(document.getElementById('storeBusinessId').value),store_name:document.getElementById('storeName').value,description:document.getElementById('storeDescription').value,merchant_domain:document.getElementById('storeDomain').value,publication_status:document.getElementById('storeStatus').value,pickup_address:document.getElementById('storeAddress').value,presence_type:document.getElementById('storePresence')?.value||'online',public_location_enabled:Boolean(document.getElementById('storePublicLocation')?.checked),location_label:document.getElementById('storeLocationLabel')?.value||'',finding_instructions:document.getElementById('storeFinding')?.value||'',opening_hours_text:document.getElementById('storeOpeningHours')?.value||'',pickup_lat:document.getElementById('storeLat')?.value||null,pickup_lng:document.getElementById('storeLng')?.value||null,opening_status:document.getElementById('storeOpening').value,preparation_eta_minutes:Number(document.getElementById('storeEta').value),pickup_enabled:document.getElementById('storePickup').checked,delivery_enabled:document.getElementById('storeDelivery').checked,cash_enabled:document.getElementById('storeCash').checked,online_enabled:document.getElementById('storeOnline').checked,public_reputation_enabled:document.getElementById('storeReputation').checked,price_comparison_enabled:document.getElementById('storeCompare').checked,logo_data_url:document.getElementById('storeLogoData')?.value||merchantStore?.logo_data_url||''})});mtoast('Storefront saved.');await renderMerchantStore()}catch(err){msg.textContent=err.message}}}
 function bindCatalog(){
   marketWorkspace.querySelectorAll('[data-toggle-product]').forEach(b=>b.onclick=async()=>{try{const id=Number(b.dataset.toggleProduct),published=b.dataset.published!=='1';await mapi(`/api/merchant/storefront/products/${id}`,{method:'PATCH',body:JSON.stringify({published})});mtoast(published?'Product published.':'Product hidden from Marketplace.');await renderMerchantCatalog()}catch(e){mtoast(e.message)}});
