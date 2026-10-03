@@ -619,8 +619,7 @@ app.post('/api/inventory',jsonBody,async(req,res,next)=>{try{
     storageSegregated:req.body?.storage_segregated??defaults.storage_segregated
   });
   const{rows}=await pool.query(`
-    INSERT INTO inventory(
-      business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
+    INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
       storage_condition,storage_area_type,storage_location_label,storage_segregated,
       inventory_domain,stock_role,classification_version
     )
@@ -750,8 +749,7 @@ app.post('/api/inventory/purchase',jsonBody,async(req,res,next)=>{
         inventoryRow=updated.rows[0];
       }else{
         const inserted=await client.query(`
-          INSERT INTO inventory(
-            business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
+          INSERT INTO inventory(business_id,item,unit,quantity,reorder_level,target_level,unit_cost,inventory_type,
             storage_condition,storage_area_type,storage_location_label,storage_segregated,
             measurement_family,base_unit,last_purchase_quantity,last_purchase_unit,last_purchase_total_cost,last_purchase_at,
             inventory_domain,stock_role,classification_version
