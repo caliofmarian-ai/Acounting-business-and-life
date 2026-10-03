@@ -15,16 +15,19 @@ test('Merchant accounting exposes purchase-based stock intake and batch recipes'
   assert.match(server,/per_sale_quantity/);
 });
 
-test('Merchant Marketplace direct products consume canonical inventory instead of a duplicate stock counter',()=>{
+test('Merchant Marketplace direct products reserve and consume canonical inventory instead of a duplicate stock counter',()=>{
   const server=read('server-marketplace.js');
+  const reservation=read('order-stock-reservation.js');
   assert.match(server,/inventory_id BIGINT REFERENCES inventory/);
   assert.match(server,/fresh_direct/);
   assert.match(server,/packaged_resale/);
   assert.match(server,/non_food_resale/);
-  assert.match(server,/p\.inventory_id/);
-  assert.match(server,/required=Number\(x\.quantity_per_unit\)\*Number\(x\.quantity\)/);
-  assert.match(server,/UPDATE inventory SET quantity=quantity-\$1/);
-  assert.match(server,/order_stock_consumptions/);
+  assert.match(server,/row\.inventory_id/);
+  assert.match(server,/reserveOrderStock\(client/);
+  assert.match(server,/consumeOrderReservations\(client,o\)/);
+  assert.match(reservation,/quantity_per_unit/);
+  assert.match(reservation,/UPDATE inventory SET quantity=quantity-\$1/);
+  assert.match(reservation,/order_stock_consumptions/);
 });
 
 test('Merchant mobile UI asks for purchase facts and batch yield rather than manual unit cost',()=>{
