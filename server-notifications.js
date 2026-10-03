@@ -27,7 +27,7 @@ const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.D
 const jsonBody=express.json({limit:'30mb'});
 const body=(req,res,next)=>req.body!==undefined?next():jsonBody(req,res,next);
 const CATEGORIES=['operational','security','legal','support','compliance','marketing'];
-const THREAD_ENTITY_TYPES=new Set(['support_ticket','order','delivery','purchase_order','service_job']);
+const THREAD_ENTITY_TYPES=new Set(['support_ticket','order','delivery','purchase_order','service_job','inventory_item','inventory_lot']);
 const isNotificationThreadEntity=(type,id)=>Boolean(String(id??'').trim())&&THREAD_ENTITY_TYPES.has(String(type||''));
 let adminApp=null;let adminReady=false;let shuttingDown=false;let workerTimer=null;let workerRunning=false;let inventoryScanLastAt=0;
 const INVENTORY_SCAN_INTERVAL_MS=60*1000;
