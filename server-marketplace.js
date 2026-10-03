@@ -262,6 +262,15 @@ async function attachMarketplaceAllergens(rows,{publicOnly=false}={}){
     return{...row,allergen_information,allergen_review_current:reviewed,allergen_revision:summary?.revision||null};
   }));
 }
+async function attachFoodCommerce(rows,{businessId,publicOnly=false}={}){
+  const foodIds=(rows||[]).filter(row=>row.product_domain==='food').map(row=>Number(row.id));
+  const modifierMap=await modifierProjectionForProducts(pool,{businessId:Number(businessId),productIds:foodIds,publicOnly});
+  return (rows||[]).map(row=>{
+    if(row.product_domain!=='food')return{...row,modifier_groups:[],availability:null};
+    const availability=effectiveFoodAvailability(row);
+    return{...row,modifier_groups:modifierMap.get(Number(row.id))||[],availability};
+  }).filter(row=>!publicOnly||row.product_domain!=='food'||!row.availability?.hidden);
+}
 async function products(businessId,includePrivate=false){
   const query=includePrivate
     ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 ORDER BY p.category,p.name`
@@ -270,7 +279,8 @@ async function products(businessId,includePrivate=false){
   const media=await attachProductMedia(rows,!includePrivate);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:!includePrivate});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
-  return attachMarketplaceAllergens(withVariants,{publicOnly:!includePrivate})
+  const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:!includePrivate});
+  return attachMarketplaceAllergens(withFood,{publicOnly:!includePrivate})
 }
 
 // Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
@@ -319,11 +329,12 @@ async function attachGuestPublicAllergens(rows,businessId){
 }
 
 async function guestPublicProducts(businessId){
-  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url,variant_mode FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
+  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url,variant_mode,availability_state,availability_until,availability_note FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
   const media=await attachProductMedia(rows,true);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:true});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
-  return attachGuestPublicAllergens(withVariants,businessId);
+  const withFood=await attachFoodCommerce(withVariants,{businessId,publicOnly:true});
+  return attachGuestPublicAllergens(withFood,businessId);
 }
 
 async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
