@@ -1178,27 +1178,122 @@ function bindRetailMerchandising(page={},collections=[],inventory=[]){
   });
 }
 
-function catalogCreateSection(inventory=[]){
-  const options=(inventory||[]).map(item=>`<option value="${Number(item.id)}" data-unit="${mh(item.unit||'unit')}" data-name="${mh(item.item)}">${mh(item.item)} · ${Number(item.usable_quantity??item.quantity??0).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(item.unit||'')}</option>`).join('');
-  return `<section class="merchantStoreCard merchantCatalogCreate"><div class="merchantCatalogHead"><div><small>SELL WHAT YOU STOCK</small><h2>Add product from Inventory</h2><p>Creating a Catalog product does not change stock. The quantity below is deducted only when a customer order is fulfilled.</p></div></div>
-    <form id="merchantCatalogCreateForm" class="merchantStoreForm">
-      <input id="merchantCatalogBusinessId" type="hidden" value="${Number(merchantStore?.business_id||0)}">
-      <label>Inventory item<select id="merchantCatalogInventory" required><option value="">Choose recorded stock</option>${options}</select></label>
-      <div class="merchantStoreForm two">
-        <label>Product type<select id="merchantCatalogKind"><option value="fresh_direct">Fresh / direct food</option><option value="packaged_resale">Packaged food resale</option><option value="non_food_resale">Non-food resale</option></select></label>
-        <label>Customer-facing name<input id="merchantCatalogName" maxlength="120" required placeholder="Example: Carrots"></label>
-      </div>
-      <div class="merchantStoreForm two">
-        <label>Selling price ₱<input id="merchantCatalogPrice" type="number" min="0" step="0.01" required></label>
-        <label>Stock used per sale<input id="merchantCatalogQuantity" type="number" min="0.0001" step="0.0001" value="1" required></label>
-      </div>
-      <label>Category<input id="merchantCatalogCategory" maxlength="100" value="General"></label>
-      <label>Description<textarea id="merchantCatalogDescription" rows="2" maxlength="800" placeholder="What customers should know about this product"></textarea></label>
-      <div id="merchantCatalogStockHint" class="catalogBoundaryNote">Choose an Inventory item. Its cost remains private; this form sets only the public selling product.</div>
-      <div class="storeFormActions"><button class="saveStore" type="submit">Create private product</button></div>
-      <div id="merchantCatalogCreateMessage" class="avatarHint"></div>
-    </form>
-  </section>`;
+function catalogDomainForKind(kind){
+  return String(kind||'')==='non_food_resale'?'non_food':'food';
+}
+function catalogDefaultCategoryForKind(kind){
+  return ({fresh_direct:'fresh_food',packaged_resale:'packaged_food_drink',non_food_resale:'general_retail',prepared_food:'prepared_food'})[String(kind||'')]||'';
+}
+function catalogSchemaCategories(schema=merchantCatalogSchema,domain=''){
+  return (Array.isArray(schema?.categories)?schema.categories:[]).filter(category=>!domain||category.domain_hint===domain);
+}
+function catalogCategoryOptions(schema,domain,selected=''){
+  const rows=catalogSchemaCategories(schema,domain);
+  return '<option value="">Choose product category</option>'+rows.map(category=>
+    '<option value="'+mh(category.code)+'" '+(String(selected)===String(category.code)?'selected':'')+'>'+mh(category.label)+'</option>'
+  ).join('');
+}
+function catalogCategoryFromSchema(schema,code){
+  return (schema?.categories||[]).find(category=>String(category.code)===String(code))||null;
+}
+function catalogAttributeValue(values,code){
+  const entry=values&&Object.prototype.hasOwnProperty.call(values,code)?values[code]:'';
+  if(entry&&typeof entry==='object'&&Object.prototype.hasOwnProperty.call(entry,'value'))return entry.value;
+  return entry??'';
+}
+function catalogAttributeField(mapping,value,prefix){
+  const def=mapping?.definition||{},code=String(mapping?.attribute_code||def.code||''),id=prefix+'-'+code;
+  if(!code)return'';
+  const required=mapping.required?' required':'',variant=mapping.variant_axis?'<span class="catalogVariantAxis">Variant option</span>':'';
+  const unit=def.unit_family?'<span class="catalogAttributeUnit">'+mh(def.unit_family)+'</span>':'';
+  let control='';
+  if(def.value_type==='boolean'){
+    control='<select id="'+mh(id)+'" data-catalog-attribute="'+mh(code)+'" data-value-type="boolean"'+required+'><option value="">Choose</option><option value="true" '+(value===true||String(value)==='true'?'selected':'')+'>Yes</option><option value="false" '+(value===false||String(value)==='false'?'selected':'')+'>No</option></select>';
+  }else if(def.value_type==='select'){
+    control='<select id="'+mh(id)+'" data-catalog-attribute="'+mh(code)+'" data-value-type="select"'+required+'><option value="">Choose</option>'+
+      (def.allowed_values||[]).map(option=>'<option value="'+mh(option)+'" '+(String(value)===String(option)?'selected':'')+'>'+mh(mnice(option))+'</option>').join('')+
+    '</select>';
+  }else{
+    const type=def.value_type==='number'?'number':'text',min=type==='number'?' min="0" step="any"':'';
+    control='<input id="'+mh(id)+'" type="'+type+'" data-catalog-attribute="'+mh(code)+'" data-value-type="'+mh(def.value_type||'text')+'" value="'+mh(value)+'"'+min+required+'>';
+  }
+  return '<label class="catalogAdaptiveField"><span>'+mh(def.label||code)+(mapping.required?' *':'')+variant+'</span><span class="catalogAttributeControl">'+control+unit+'</span></label>';
+}
+function catalogAdaptiveAttributesMarkup(schema,categoryCode,values={},prefix='catalogAttr'){
+  const category=catalogCategoryFromSchema(schema,categoryCode);
+  if(!category)return '<div class="catalogAdaptiveEmpty">Choose a product category to show only the details that apply to this product.</div>';
+  const mappings=Array.isArray(category.attributes)?category.attributes:[];
+  if(!mappings.length)return '<div class="catalogAdaptiveEmpty">No extra product details are required for '+mh(category.label)+'.</div>';
+  return '<div class="catalogAdaptiveHead"><div><strong>'+mh(category.label)+' details</strong><small>Only fields relevant to this category are shown.</small></div><span>'+mappings.length+' fields</span></div>'+
+    '<div class="catalogAdaptiveGrid">'+mappings.map(mapping=>catalogAttributeField(mapping,catalogAttributeValue(values,mapping.attribute_code),prefix)).join('')+'</div>';
+}
+function collectCatalogAttributes(root){
+  const values={};
+  root?.querySelectorAll('[data-catalog-attribute]').forEach(input=>{
+    const code=input.dataset.catalogAttribute,type=input.dataset.valueType||'text',raw=input.value;
+    if(raw==='')return;
+    if(type==='number')values[code]=Number(raw);
+    else if(type==='boolean')values[code]=raw==='true';
+    else values[code]=raw;
+  });
+  return values;
+}
+function catalogProductTypeOptions(){
+  const domain=merchantStore?.merchant_domain||'mixed',options=[];
+  if(domain==='food'||domain==='mixed'){
+    options.push(['fresh_direct','Fresh / direct food'],['packaged_resale','Packaged food resale']);
+  }
+  if(domain==='non_food'||domain==='mixed')options.push(['non_food_resale','Non-food resale']);
+  return options;
+}
+function catalogIdentityAdvancedMarkup(prefix='merchantCatalog'){
+  return '<details class="catalogAdvancedDetails"><summary>Brand, condition & delivery package</summary>'+
+    '<div class="merchantStoreForm two catalogAdvancedGrid">'+
+      '<label>Brand<input id="'+prefix+'Brand" maxlength="120" placeholder="Optional"></label>'+
+      '<label>Model<input id="'+prefix+'Model" maxlength="120" placeholder="Optional"></label>'+
+      '<label>Condition<select id="'+prefix+'Condition"><option value="">Not specified</option><option value="new">New</option><option value="used">Used</option><option value="refurbished">Refurbished</option><option value="other">Other</option></select></label>'+
+      '<label>Manufacturer / part number<input id="'+prefix+'Mpn" maxlength="120" placeholder="Optional"></label>'+
+    '</div>'+
+    '<div class="catalogPackageHead"><strong>Delivery package</strong><small>Optional. Used for fulfilment and delivery planning; not shown as private stock/accounting data.</small></div>'+
+    '<div class="merchantStoreForm two catalogPackageGrid">'+
+      '<label>Length (cm)<input id="'+prefix+'PackageLength" type="number" min="0" step="0.01"></label>'+
+      '<label>Width (cm)<input id="'+prefix+'PackageWidth" type="number" min="0" step="0.01"></label>'+
+      '<label>Height (cm)<input id="'+prefix+'PackageHeight" type="number" min="0" step="0.01"></label>'+
+      '<label>Weight (kg)<input id="'+prefix+'PackageWeight" type="number" min="0" step="0.001"></label>'+
+    '</div>'+
+  '</details>';
+}
+function catalogCreateSection(inventory=[],schema=merchantCatalogSchema){
+  const defaultKind=(merchantStore?.merchant_domain==='non_food')?'non_food_resale':'fresh_direct';
+  const defaultDomain=catalogDomainForKind(defaultKind),defaultCategory=catalogDefaultCategoryForKind(defaultKind);
+  const options=(inventory||[]).map(item=>
+    '<option value="'+Number(item.id)+'" data-unit="'+mh(item.unit||'unit')+'" data-name="'+mh(item.item)+'" data-domain="'+mh(item.inventory_domain||'')+'">'+
+      mh(item.item)+' · '+Number(item.usable_quantity??item.quantity??0).toLocaleString('en-PH',{maximumFractionDigits:4})+' '+mh(item.unit||'')+
+    '</option>'
+  ).join('');
+  const kindOptions=catalogProductTypeOptions().map(([value,label])=>'<option value="'+value+'" '+(value===defaultKind?'selected':'')+'>'+label+'</option>').join('');
+  return '<section class="merchantStoreCard merchantCatalogCreate"><div class="merchantCatalogHead"><div><small>ADAPTIVE PRODUCT EDITOR</small><h2>Add product from Inventory</h2><p>Choose what you sell first. Business & Life then shows only the product details that apply to that category.</p></div></div>'+
+    '<form id="merchantCatalogCreateForm" class="merchantStoreForm">'+
+      '<input id="merchantCatalogBusinessId" type="hidden" value="'+Number(merchantStore?.business_id||0)+'">'+
+      '<label>Inventory item<select id="merchantCatalogInventory" required><option value="">Choose recorded stock</option>'+options+'</select><span class="storeFieldHelp">Catalog never duplicates stock. This product points to the Inventory item that fulfils an order.</span></label>'+
+      '<div class="merchantStoreForm two">'+
+        '<label>Product type<select id="merchantCatalogKind">'+kindOptions+'</select></label>'+
+        '<label>Customer-facing name<input id="merchantCatalogName" maxlength="120" required placeholder="Example: Cotton T-Shirt"></label>'+
+      '</div>'+
+      '<div class="merchantStoreForm two">'+
+        '<label>Selling price ₱<input id="merchantCatalogPrice" type="number" min="0" step="0.01" required></label>'+
+        '<label>Stock used per sale<input id="merchantCatalogQuantity" type="number" min="0.0001" step="0.0001" value="1" required></label>'+
+      '</div>'+
+      '<label>Product category<select id="merchantCatalogCategoryCode" required>'+catalogCategoryOptions(schema,defaultDomain,defaultCategory)+'</select><span class="storeFieldHelp">This controls relevant specifications and filters. It is different from a promotional collection.</span></label>'+
+      '<label>Customer section / shelf<input id="merchantCatalogCategory" maxlength="100" value="General" placeholder="Example: Men / Shirts"></label>'+
+      '<label>Description<textarea id="merchantCatalogDescription" rows="2" maxlength="800" placeholder="What customers should know about this product"></textarea></label>'+
+      '<section id="merchantCatalogAdaptiveAttributes" class="catalogAdaptiveAttributes">'+catalogAdaptiveAttributesMarkup(schema,defaultCategory,{},'merchantCatalogCreateAttr')+'</section>'+
+      catalogIdentityAdvancedMarkup('merchantCatalog')+
+      '<div id="merchantCatalogStockHint" class="catalogBoundaryNote">Choose an Inventory item. Its cost remains private; this form sets only the public selling product.</div>'+
+      '<div class="storeFormActions"><button class="saveStore" type="submit">Create private product</button></div>'+
+      '<div id="merchantCatalogCreateMessage" class="avatarHint"></div>'+
+    '</form>'+
+  '</section>';
 }
 function preparedImportSection(){
   return `<section class="merchantStoreCard merchantPreparedImport"><h2>Prepared recipes</h2><p>Recipes are created in Products & recipes, then imported here as private Catalog products. Importing never publishes automatically.</p><button class="importProducts catalogImportPrepared" id="importLegacy" type="button">Import prepared products</button><div id="catalogImportMessage" class="avatarHint"></div></section>`;
@@ -1211,12 +1306,89 @@ function catalogSection(products){
   const archivedHtml=archived.length?`<details class="catalogArchived"><summary>Archived products (${archived.length})</summary><div class="merchantCatalogList">${archived.map(p=>`<div class="merchantProductRow"><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • archived</small></div><button class="publishButton" type="button" data-restore-product="${p.id}">Restore</button></div>`).join('')}</div></details>`:'';
   return `<section class="merchantStoreCard"><h2>Your Catalog</h2><p>These are the products customers can eventually see. Publishing is separate from creating or importing.</p><div class="merchantCatalogList">${rows}</div>${archivedHtml}</section>`;
 }
-function bindCatalogCreate(inventory=[]){
-  const form=document.getElementById('merchantCatalogCreateForm'),select=document.getElementById('merchantCatalogInventory');if(!form||!select)return;
-  const sync=()=>{const option=select.selectedOptions?.[0],id=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===id),name=document.getElementById('merchantCatalogName'),hint=document.getElementById('merchantCatalogStockHint');if(item&&name&&!name.value)name.value=item.item||'';if(hint)hint.textContent=item?`Selling one unit will use the quantity you set from ${item.item} (${item.unit||'stock'}). Inventory cost stays private.`:'Choose an Inventory item. Its cost remains private; this form sets only the public selling product.'};
-  select.onchange=sync;sync();
-  form.onsubmit=async event=>{event.preventDefault();const msg=document.getElementById('merchantCatalogCreateMessage');if(msg)msg.textContent='Creating product…';try{const inventoryId=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===inventoryId);if(!item)throw new Error('Choose an Inventory item.');await mapi('/api/merchant/storefront/products',{method:'POST',body:JSON.stringify({business_id:Number(merchantStore?.business_id),inventory_id:inventoryId,product_kind:document.getElementById('merchantCatalogKind').value,name:document.getElementById('merchantCatalogName').value,description:document.getElementById('merchantCatalogDescription').value,category:document.getElementById('merchantCatalogCategory').value,selling_price:Number(document.getElementById('merchantCatalogPrice').value),quantity_per_unit:Number(document.getElementById('merchantCatalogQuantity').value),unit_code:(document.getElementById('merchantCatalogQuantity').value||'1')+' '+(item.unit||'unit'),published:false})});mtoast('Catalog product created as Private.');await renderMerchantCatalog()}catch(error){if(msg)msg.textContent=error.message}};
-  const importButton=document.getElementById('importLegacy');if(importButton)importButton.onclick=async()=>{const msg=document.getElementById('catalogImportMessage');if(msg)msg.textContent='Importing prepared products…';try{const result=await mapi('/api/merchant/storefront/import-legacy',{method:'POST',body:JSON.stringify({business_id:Number(merchantStore?.business_id)})});mtoast(`${result.imported_or_updated} prepared product${Number(result.imported_or_updated)===1?'':'s'} imported or updated.`);await renderMerchantCatalog()}catch(error){if(msg)msg.textContent=error.message}};
+function bindCatalogCreate(inventory=[],schema=merchantCatalogSchema){
+  const form=document.getElementById('merchantCatalogCreateForm'),select=document.getElementById('merchantCatalogInventory'),kind=document.getElementById('merchantCatalogKind'),category=document.getElementById('merchantCatalogCategoryCode');
+  if(!form||!select||!kind||!category)return;
+
+  const syncInventory=()=>{
+    const domain=catalogDomainForKind(kind.value);
+    [...select.options].forEach(option=>{
+      if(!option.value)return;
+      const optionDomain=String(option.dataset.domain||'');
+      option.disabled=Boolean(optionDomain&&optionDomain!==domain);
+    });
+    if(select.selectedOptions?.[0]?.disabled)select.value='';
+  };
+  const syncCategory=(preserve=false)=>{
+    const domain=catalogDomainForKind(kind.value),previous=preserve?category.value:'',preferred=previous||catalogDefaultCategoryForKind(kind.value);
+    category.innerHTML=catalogCategoryOptions(schema,domain,preferred);
+    if(!category.value){
+      const fallback=catalogDefaultCategoryForKind(kind.value);
+      if([...category.options].some(option=>option.value===fallback))category.value=fallback;
+    }
+    const host=document.getElementById('merchantCatalogAdaptiveAttributes');
+    if(host)host.innerHTML=catalogAdaptiveAttributesMarkup(schema,category.value,{},'merchantCatalogCreateAttr');
+    const advanced=document.querySelector('#merchantCatalogCreateForm .catalogAdvancedDetails');
+    if(advanced)advanced.classList.toggle('foodFreshIdentity',kind.value==='fresh_direct');
+  };
+  const syncStock=()=>{
+    const id=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===id),name=document.getElementById('merchantCatalogName'),hint=document.getElementById('merchantCatalogStockHint');
+    if(item&&name&&!name.value)name.value=item.item||'';
+    if(hint)hint.textContent=item
+      ?`Selling one unit will use the quantity you set from ${item.item} (${item.unit||'stock'}). Inventory cost, supplier data and stock history stay private.`
+      :'Choose an Inventory item. Its cost remains private; this form sets only the public selling product.';
+  };
+  kind.onchange=()=>{syncInventory();syncCategory(false);syncStock()};
+  category.onchange=()=>{
+    const host=document.getElementById('merchantCatalogAdaptiveAttributes');
+    if(host)host.innerHTML=catalogAdaptiveAttributesMarkup(schema,category.value,{},'merchantCatalogCreateAttr');
+  };
+  select.onchange=syncStock;
+  syncInventory();syncCategory(true);syncStock();
+
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const msg=document.getElementById('merchantCatalogCreateMessage');if(msg)msg.textContent='Creating product…';
+    try{
+      const inventoryId=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===inventoryId);
+      if(!item)throw new Error('Choose an Inventory item.');
+      const payload={
+        business_id:Number(merchantStore?.business_id),
+        inventory_id:inventoryId,
+        product_kind:kind.value,
+        name:document.getElementById('merchantCatalogName').value,
+        description:document.getElementById('merchantCatalogDescription').value,
+        category:document.getElementById('merchantCatalogCategory').value,
+        catalog_category_code:category.value,
+        catalog_attributes:collectCatalogAttributes(document.getElementById('merchantCatalogAdaptiveAttributes')),
+        selling_price:Number(document.getElementById('merchantCatalogPrice').value),
+        quantity_per_unit:Number(document.getElementById('merchantCatalogQuantity').value),
+        unit_code:(document.getElementById('merchantCatalogQuantity').value||'1')+' '+(item.unit||'unit'),
+        brand:document.getElementById('merchantCatalogBrand')?.value||'',
+        model:document.getElementById('merchantCatalogModel')?.value||'',
+        condition_code:document.getElementById('merchantCatalogCondition')?.value||'',
+        manufacturer_part_number:document.getElementById('merchantCatalogMpn')?.value||'',
+        package_length_cm:document.getElementById('merchantCatalogPackageLength')?.value||null,
+        package_width_cm:document.getElementById('merchantCatalogPackageWidth')?.value||null,
+        package_height_cm:document.getElementById('merchantCatalogPackageHeight')?.value||null,
+        package_weight_kg:document.getElementById('merchantCatalogPackageWeight')?.value||null,
+        published:false
+      };
+      await mapi('/api/merchant/storefront/products',{method:'POST',body:JSON.stringify(payload)});
+      mtoast('Catalog product created as Private.');
+      await renderMerchantCatalog();
+    }catch(error){if(msg)msg.textContent=error.message}
+  };
+
+  const importButton=document.getElementById('importLegacy');
+  if(importButton)importButton.onclick=async()=>{
+    const msg=document.getElementById('catalogImportMessage');if(msg)msg.textContent='Importing prepared products…';
+    try{
+      const result=await mapi('/api/merchant/storefront/import-legacy',{method:'POST',body:JSON.stringify({business_id:Number(merchantStore?.business_id)})});
+      mtoast(`${result.imported_or_updated} prepared product${Number(result.imported_or_updated)===1?'':'s'} imported or updated.`);
+      await renderMerchantCatalog();
+    }catch(error){if(msg)msg.textContent=error.message}
+  };
 }
 function bindStoreForm(){const f=document.getElementById('merchantStoreForm');if(!f)return;f.onsubmit=async e=>{e.preventDefault();const msg=document.getElementById('storeMessage');msg.textContent='';try{await mapi('/api/merchant/storefront',{method:'PUT',body:JSON.stringify({business_id:Number(document.getElementById('storeBusinessId').value),store_name:document.getElementById('storeName').value,description:document.getElementById('storeDescription').value,merchant_domain:document.getElementById('storeDomain').value,publication_status:document.getElementById('storeStatus').value,pickup_address:document.getElementById('storeAddress').value,presence_type:document.getElementById('storePresence')?.value||'online',public_location_enabled:Boolean(document.getElementById('storePublicLocation')?.checked),location_label:document.getElementById('storeLocationLabel')?.value||'',finding_instructions:document.getElementById('storeFinding')?.value||'',opening_hours_text:document.getElementById('storeOpeningHours')?.value||'',pickup_lat:document.getElementById('storeLat')?.value||null,pickup_lng:document.getElementById('storeLng')?.value||null,opening_status:document.getElementById('storeOpening').value,preparation_eta_minutes:Number(document.getElementById('storeEta').value),pickup_enabled:document.getElementById('storePickup').checked,delivery_enabled:document.getElementById('storeDelivery').checked,cash_enabled:document.getElementById('storeCash').checked,online_enabled:document.getElementById('storeOnline').checked,public_reputation_enabled:document.getElementById('storeReputation').checked,price_comparison_enabled:document.getElementById('storeCompare').checked,logo_data_url:document.getElementById('storeLogoData')?.value||merchantStore?.logo_data_url||''})});mtoast('Storefront saved.');await renderMerchantStore()}catch(err){msg.textContent=err.message}}}
 function bindCatalog(){
