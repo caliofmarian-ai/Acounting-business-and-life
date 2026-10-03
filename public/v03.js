@@ -180,7 +180,7 @@ function storageSafetyMessage({type,domain='',role='',condition,area,label,segre
   if(type==='cleaning_sanitation'){
     if(['pantry','fridge','freezer','prep_station'].includes(area))return{ok:false,text:'Cleaning & sanitation stock must be stored separately from food.'};
     if(area==='chemical_storage'&&!segregated)return{ok:false,text:'Chemical storage must be marked as segregated from food.'};
-    if(['service_storage','other'].includes(area)&&(!segregated||!String(label||'').trim()))return{ok:false,text:'Choose a named segregated storage location for cleaning & sanitation stock.'};
+    if(area!=='chemical_storage'&&!['pantry','fridge','freezer','prep_station'].includes(area)&&(!segregated||!String(label||'').trim()))return{ok:false,text:'Choose a named segregated storage location for cleaning & sanitation stock.'};
   }
   if(['ingredient','packaging','kitchen_consumable','hygiene'].includes(type)&&area==='chemical_storage')return{ok:false,text:'Food, packaging and food-handling stock cannot be stored in chemical storage.'};
   if(area==='fridge'&&condition!=='chilled')return{ok:false,text:'Fridge storage should use the Chilled condition.'};
