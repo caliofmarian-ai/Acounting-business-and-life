@@ -206,31 +206,57 @@ export function registerInventoryCountSessionRoutes(app,deps){
           active_session_id:Number(active.rows[0].id)
         });
       }
+      let location=null;
+      if(scope.scope_type==='location_id'){
+        await reconcileBusinessInventoryLocations(client,{businessId:ctx.business.id,actorAccountId:ctx.me.account.id});
+        const q=await client.query(`
+          SELECT * FROM inventory_storage_locations
+           WHERE id=$1 AND business_id=$2 AND active=TRUE
+           FOR UPDATE
+        `,[scope.location_id,ctx.business.id]);
+        if(!q.rowCount)throw Object.assign(new Error('Storage location is unavailable for this count.'),{status:404});
+        location=q.rows[0];
+      }
+
       const session=await client.query(`
         INSERT INTO inventory_count_sessions(
-          business_id,count_type,scope_type,scope_value,status,actor_account_id
-        ) VALUES($1,$2,$3,$4,'in_progress',$5)
+          business_id,count_type,scope_type,scope_value,location_id,status,actor_account_id
+        ) VALUES($1,$2,$3,$4,$5,'in_progress',$6)
         RETURNING *
-      `,[ctx.business.id,scope.count_type,scope.scope_type,scope.scope_value,ctx.me.account.id]);
+      `,[ctx.business.id,scope.count_type,scope.scope_type,scope.scope_value,location?.id||null,ctx.me.account.id]);
 
       const sessionId=Number(session.rows[0].id);
-      const filter=scope.scope_type==='inventory_type'
-        ?' AND inventory_type=$3'
-        :scope.scope_type==='storage_area_type'
-          ?' AND storage_area_type=$3'
-          :'';
-      const params=scope.scope_type==='all'
-        ?[sessionId,ctx.business.id]
-        :[sessionId,ctx.business.id,scope.scope_value];
-      const inserted=await client.query(`
-        INSERT INTO inventory_count_session_items(
-          session_id,inventory_id,expected_quantity,unit_snapshot,unit_cost_snapshot
-        )
-        SELECT $1,id,quantity,unit,unit_cost
-          FROM inventory
-         WHERE business_id=$2${filter}
-      `,params);
-      if(!inserted.rowCount)throw Object.assign(new Error('No Inventory items match this count scope.'),{status:409});
+      let inserted;
+      if(location){
+        inserted=await client.query(`
+          INSERT INTO inventory_count_session_items(
+            session_id,inventory_id,expected_quantity,unit_snapshot,unit_cost_snapshot,location_id
+          )
+          SELECT $1,b.inventory_id,b.quantity,i.unit,i.unit_cost,$3
+            FROM inventory_location_balances b
+            JOIN inventory i ON i.id=b.inventory_id AND i.business_id=b.business_id
+           WHERE b.business_id=$2 AND b.location_id=$3 AND b.quantity>0
+           ORDER BY i.item,i.id
+        `,[sessionId,ctx.business.id,Number(location.id)]);
+      }else{
+        const filter=scope.scope_type==='inventory_type'
+          ?' AND inventory_type=$3'
+          :scope.scope_type==='storage_area_type'
+            ?' AND storage_area_type=$3'
+            :'';
+        const params=scope.scope_type==='all'
+          ?[sessionId,ctx.business.id]
+          :[sessionId,ctx.business.id,scope.scope_value];
+        inserted=await client.query(`
+          INSERT INTO inventory_count_session_items(
+            session_id,inventory_id,expected_quantity,unit_snapshot,unit_cost_snapshot
+          )
+          SELECT $1,id,quantity,unit,unit_cost
+            FROM inventory
+           WHERE business_id=$2${filter}
+        `,params);
+      }
+      if(!inserted.rowCount)throw Object.assign(new Error('No Inventory items match this count scope or location.'),{status:409});
       const payload=await loadSession(client,{businessId:ctx.business.id,sessionId});
       await client.query('COMMIT');
       res.status(201).json(payload);
