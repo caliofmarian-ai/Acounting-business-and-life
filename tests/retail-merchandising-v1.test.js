@@ -150,6 +150,9 @@ test('Merchant Retail UI provides search, filters, collections, pagination and e
   assert.match(ui,/retailPrevPage/);
   assert.match(ui,/retailNextPage/);
   assert.match(ui,/retailCollectionCreateForm/);
+  assert.match(ui,/storefrontCollections/);
+  assert.match(ui,/data-store-collection/);
+  assert.match(ui,/storeVisibleProducts/);
   assert.match(ui,/confirm\(/);
   assert.match(ui,/confirm:true/);
 });
@@ -169,6 +172,7 @@ test('Retail Catalog styles collapse to mobile without horizontal form overflow'
   assert.match(css,/\.retailCatalogFilters/);
   assert.match(css,/@media\(max-width:520px\)/);
   assert.match(css,/\.retailCatalogRow\{grid-template-columns:auto 56px minmax\(0,1fr\)/);
+  assert.match(css,/\.storeCollectionBar/);
 });
 
 test('package syntax contract includes Retail Merchandising V1',()=>{
