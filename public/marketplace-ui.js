@@ -844,18 +844,20 @@ async function renderMerchantCatalog(){
   try{
     const [store,inventory]=await Promise.all([mapi('/api/merchant/storefront?product_domain=food'),mapi('/api/inventory')]);
     merchantStore=store;
-    const [retailPage,collections]=await Promise.all([
+    const [retailPage,collections,schema]=await Promise.all([
       mapi('/api/merchant/catalog-v3/items?'+retailCatalogQuery()),
-      mapi('/api/merchant/catalog-v3/collections?business_id='+encodeURIComponent(Number(store.business_id)))
+      mapi('/api/merchant/catalog-v3/collections?business_id='+encodeURIComponent(Number(store.business_id))),
+      mapi('/api/merchant/catalog-v3/schema?business_id='+encodeURIComponent(Number(store.business_id)))
     ]);
+    merchantCatalogSchema=schema;
     marketWorkspace.innerHTML=
       marketHeader('Catalog','Food menus and Retail products share one Catalog engine')+
-      catalogCreateSection(inventory||[])+
+      catalogCreateSection(inventory||[],schema)+
       retailMerchandisingSection(retailPage,collections||[])+
       ((store.merchant_domain==='food'||store.merchant_domain==='mixed')?preparedImportSection():'')+
       catalogSection(store.products||[]);
     bindBack();
-    bindCatalogCreate(inventory||[]);
+    bindCatalogCreate(inventory||[],schema);
     bindRetailMerchandising(retailPage,collections||[],inventory||[]);
     bindCatalog();
   }catch(e){
