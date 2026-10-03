@@ -1,5 +1,10 @@
 let marketMe=null,marketWorkspace=null,marketMode='food',currentStore=null,basket=new Map(),merchantStore=null;
 let currentStoreCollection='';
+let currentStoreDomain='all';
+let currentFoodSection='';
+let currentRetailSearch='';
+let currentRetailCategory='';
+let currentRetailFacetValues={};
 let retailCatalogState={q:'',category:'',status:'all',stock:'all',media:'all',collection_id:'',offset:0,limit:50};
 let retailCatalogSelection=new Set();
 let retailCatalogScannerStream=null;
@@ -11,9 +16,29 @@ const mphp=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).f
 const mnice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 async function mapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}
 function mtoast(msg){const t=document.getElementById('roleToast');if(t){t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800)}else alert(msg)}
-function ensureMarket(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('marketWorkspace')){marketWorkspace=document.createElement('section');marketWorkspace.id='marketWorkspace';marketWorkspace.className='marketWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',marketWorkspace)}else marketWorkspace=document.getElementById('marketWorkspace');if(!document.getElementById('basketBar')){const b=document.createElement('div');b.id='basketBar';b.className='basketBar hidden';b.innerHTML='<div class="basketSummary"><small id="basketStore">Basket</small><strong id="basketText">0 items</strong></div><button id="basketClear" class="basketClear" type="button">Clear</button><button id="basketCheckout" class="basketCheckout" type="button">Checkout</button>';document.body.appendChild(b);b.querySelector('#basketClear').onclick=clearBasket;b.querySelector('#basketCheckout').onclick=openCheckout}if(!document.getElementById('checkoutBackdrop')){const c=document.createElement('div');c.id='checkoutBackdrop';c.className='checkoutBackdrop hidden';c.innerHTML='<section id="checkoutPanel" class="checkoutPanel"></section>';document.body.appendChild(c);c.onclick=e=>{if(e.target===c)closeCheckout()}}return true}
+function ensureMarket(){
+  const shell=document.getElementById('shell');if(!shell)return false;
+  if(!document.getElementById('marketWorkspace')){
+    marketWorkspace=document.createElement('section');marketWorkspace.id='marketWorkspace';marketWorkspace.className='marketWorkspace hidden';
+    shell.querySelector('.topbar')?.insertAdjacentElement('afterend',marketWorkspace);
+  }else marketWorkspace=document.getElementById('marketWorkspace');
+  if(!document.getElementById('basketBar')){
+    const b=document.createElement('div');b.id='basketBar';b.className='basketBar hidden';
+    b.innerHTML='<div class="basketSummary"><small id="basketStore">Basket</small><strong id="basketText">0 items</strong></div><button id="basketClear" class="basketClear" type="button">Clear</button><button id="basketCheckout" class="basketCheckout" type="button">Checkout</button>';
+    document.body.appendChild(b);b.querySelector('#basketClear').onclick=clearBasket;b.querySelector('#basketCheckout').onclick=openCheckout;
+  }
+  if(!document.getElementById('checkoutBackdrop')){
+    const checkout=document.createElement('div');checkout.id='checkoutBackdrop';checkout.className='checkoutBackdrop hidden';checkout.innerHTML='<section id="checkoutPanel" class="checkoutPanel"></section>';
+    document.body.appendChild(checkout);checkout.onclick=e=>{if(e.target===checkout)closeCheckout()};
+  }
+  if(!document.getElementById('productDetailBackdrop')){
+    const detail=document.createElement('div');detail.id='productDetailBackdrop';detail.className='productDetailBackdrop hidden';detail.innerHTML='<section id="productDetailPanel" class="productDetailPanel"></section>';
+    document.body.appendChild(detail);detail.onclick=e=>{if(e.target===detail)closeProductDetail()};
+  }
+  return true;
+}
 function hideBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('roleHub')?.classList.add('hidden');document.getElementById('ordersWorkspace')?.classList.add('hidden')}
-function closeMarket(){document.getElementById('basketBar')?.classList.add('hidden');closeCheckout();marketWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closeMarket(){document.getElementById('basketBar')?.classList.add('hidden');closeCheckout();closeProductDetail();marketWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function marketHeader(title,sub){return `<div class="marketHeader"><button class="marketBack" type="button" data-market-back>‹</button><div class="marketHeaderCopy"><h1>${mh(title)}</h1><p>${mh(sub)}</p></div></div>`}
 function bindBack(){const b=marketWorkspace.querySelector('[data-market-back]');if(b)b.onclick=closeMarket}
 function logo(store,size=''){if(store.logo_data_url)return `<span class="storeLogo ${size}"><img src="${store.logo_data_url}" alt=""></span>`;return `<span class="storeLogo ${size}">${mh((store.store_name||'S').trim()[0]?.toUpperCase()||'S')}</span>`}
@@ -232,8 +257,24 @@ function enhancePublicStorefrontV2(store){
 
 async function openMarketplace(domain='food'){ensureMarket();marketMode=domain;basket.clear();currentStore=null;if(!window.BusinessLifeShell?.openFeatureWorkspace?.('marketWorkspace')){hideBase();marketWorkspace.classList.remove('hidden')}updateBasket();await renderStoreList()}
 async function renderStoreList(){marketWorkspace.innerHTML=marketHeader(marketMode==='food'?'Food Marketplace':'Non-food Marketplace','Local merchants in the Philippines Edition')+`<section class="marketHero"><span>Business & Life • Local marketplace</span><h2>${marketMode==='food'?'Good food, closer to home.':'Useful products from local sellers.'}</h2><p>Browse participating merchants, compare their published offers and place orders directly inside the ecosystem.</p></section><div class="marketFilters"><button class="marketFilter ${marketMode==='food'?'active':''}" data-domain="food">🍲 Food</button><button class="marketFilter ${marketMode==='non_food'?'active':''}" data-domain="non_food">🧺 Non-food</button></div><div id="storeGrid" class="storeGrid"><div class="marketEmpty">Loading merchants…</div></div>`;bindBack();marketWorkspace.querySelectorAll('[data-domain]').forEach(b=>b.onclick=()=>{marketMode=b.dataset.domain;renderStoreList()});try{const stores=await mapi(`/api/marketplace/storefronts?domain=${encodeURIComponent(marketMode)}`);const host=document.getElementById('storeGrid');host.innerHTML=stores.length?stores.map(s=>`<button class="storeCard" type="button" data-store="${s.business_id}">${logo(s)}<span class="storeCardCopy"><strong>${mh(s.store_name)}</strong><p>${mh(s.description||'Local merchant')}</p><span class="storeMeta"><span class="${s.opening_status}">${mh(mnice(s.opening_status))}</span><span>~${Number(s.preparation_eta_minutes)||15} min</span><span>${s.product_count} products</span>${s.min_price!=null?`<span>from ${mphp(s.min_price)}</span>`:''}</span></span><span class="storeOpen">›</span></button>`).join(''):'<div class="marketEmpty">No participating merchants have published a store in this category yet.</div>';host.querySelectorAll('[data-store]').forEach(b=>b.onclick=()=>openStore(Number(b.dataset.store)))}catch(e){document.getElementById('storeGrid').innerHTML=`<div class="marketEmpty">${mh(e.message)}</div>`}}
-async function openStore(businessId){try{currentStore=await mapi(`/api/marketplace/storefronts/${businessId}`);currentStoreCollection='';basket.clear();updateBasket();renderStore()}catch(e){mtoast(e.message)}}
+async function openStore(businessId){try{
+  currentStore=await mapi(`/api/marketplace/storefronts/${businessId}`);
+  currentStoreCollection='';currentFoodSection='';currentRetailSearch='';currentRetailCategory='';currentRetailFacetValues={};
+  currentStoreDomain=storefrontMode(currentStore)==='mixed'?'all':storefrontMode(currentStore);
+  basket.clear();updateBasket();renderStore()
+}catch(e){mtoast(e.message)}}
 async function openMarketplaceReport(context){const loader=window.BusinessLifeFeatureLoader;if(!loader?.openSafetyReport)return mtoast('Safety reporting is not available yet.');try{await loader.openSafetyReport(context)}catch{}}
+function storefrontMode(store=currentStore){
+  const mode=String(store?.presentation_mode||store?.merchant_domain||'food');
+  return ['food','non_food','mixed'].includes(mode)?mode:'food';
+}
+function storefrontDomainTabs(store){
+  if(storefrontMode(store)!=='mixed')return '';
+  const tabs=[['all','All'],['food','Food'],['non_food','Shop']];
+  return '<div class="adaptiveStoreTabs" role="tablist">'+tabs.map(([value,label])=>
+    '<button type="button" role="tab" data-store-domain="'+value+'" class="'+(currentStoreDomain===value?'active':'')+'">'+label+'</button>'
+  ).join('')+'</div>';
+}
 function storefrontCollections(store){
   const rows=(Array.isArray(store?.collections)?store.collections:[]).filter(collection=>Array.isArray(collection.product_ids)&&collection.product_ids.length);
   if(!rows.length)return '';
@@ -242,35 +283,109 @@ function storefrontCollections(store){
     rows.map(collection=>'<button type="button" data-store-collection="'+mh(collection.code||String(collection.id))+'" class="'+(String(currentStoreCollection)===String(collection.code||collection.id)?'active':'')+'">'+mh(collection.name)+'</button>').join('')+
   '</div>';
 }
-function storeVisibleProducts(store){
-  const all=Array.isArray(store?.products)?store.products:[];
-  if(!currentStoreCollection)return all;
-  const collection=(store.collections||[]).find(row=>String(row.code||row.id)===String(currentStoreCollection));
-  if(!collection)return all;
-  const ids=new Set((collection.product_ids||[]).map(Number));
-  return all.filter(product=>ids.has(Number(product.id)));
+function foodSectionEntries(store){
+  const out=[];
+  for(const menu of Array.isArray(store?.menus)?store.menus:[]){
+    for(const section of Array.isArray(menu.sections)?menu.sections:[]){
+      const ids=(section.items||[]).map(item=>Number(item.product_id)).filter(Number.isInteger);
+      if(!ids.length)continue;
+      out.push({
+        key:String(menu.id)+':'+String(section.id||section.code),
+        label:section.name||section.code||'Menu',
+        product_ids:ids
+      });
+    }
+  }
+  return out;
 }
-function renderStore(){
-  const s=currentStore,visible=storeVisibleProducts(s);
-  marketWorkspace.innerHTML=
-    marketHeader(s.store_name,`${mnice(s.merchant_domain)} • ${mnice(s.opening_status)}`)+
-    `<section class="storefrontHero">${logo(s)}<div class="storefrontHeroCopy"><h2>${mh(s.store_name)}</h2><p>${mh(s.description||'Local merchant')}</p><span class="storeMeta"><span class="${s.opening_status}">${mh(mnice(s.opening_status))}</span><span>Prep ~${Number(s.preparation_eta_minutes)||15} min</span>${s.pickup_enabled?'<span>Pickup</span>':''}${s.delivery_enabled?'<span>Delivery</span>':''}</span></div></section>`+
-    storefrontCollections(s)+
-    '<div class="marketSafetyBar"><button class="marketSafetyAction" id="reportMerchant" type="button">Report merchant</button><span>Private report · not a public review</span></div>'+
-    '<div class="productGridMarket">'+(visible.length?visible.map(product=>productCard(product)).join(''):'<div class="marketEmpty">No products are available in this collection right now.</div>')+'</div>';
-  bindBack();
-  marketWorkspace.querySelector('[data-market-back]').onclick=renderStoreList;
-  document.getElementById('reportMerchant').onclick=()=>openMarketplaceReport({related_type:'merchant',related_id:Number(s.business_id),display_label:`Merchant: ${s.store_name}`,suggested_category:'Scam / fraud / suspicious activity'});
-  marketWorkspace.querySelectorAll('[data-store-collection]').forEach(button=>button.onclick=()=>{
-    currentStoreCollection=button.dataset.storeCollection||'';
-    renderStore();
-  });
-  marketWorkspace.querySelectorAll('[data-report-product]').forEach(button=>button.onclick=()=>{
-    const product=s.products.find(x=>Number(x.id)===Number(button.dataset.reportProduct));
-    if(product)openMarketplaceReport({related_type:'marketplace_product',related_id:Number(product.id),display_label:`Product: ${product.name} — ${s.store_name}`,suggested_category:'Illegal / restricted item or service'});
-  });
-  marketWorkspace.querySelectorAll('[data-add-product]').forEach(button=>button.onclick=()=>addBasket(Number(button.dataset.addProduct)));
-  enhancePublicStorefrontV2(s);
+function storefrontFoodMenuBar(store){
+  const sections=foodSectionEntries(store);
+  if(!sections.length)return '';
+  return '<div class="foodMenuBar" aria-label="Menu categories">'+
+    '<button type="button" data-food-section="" class="'+(!currentFoodSection?'active':'')+'">All</button>'+
+    sections.map(section=>'<button type="button" data-food-section="'+mh(section.key)+'" class="'+(currentFoodSection===section.key?'active':'')+'">'+mh(section.label)+'</button>').join('')+
+  '</div>';
+}
+function storefrontRetailDiscovery(store){
+  const facets=store?.retail_facets||{},categories=Array.isArray(facets.categories)?facets.categories:[],attributes=(Array.isArray(facets.attributes)?facets.attributes:[]).slice(0,3);
+  return '<section class="retailDiscovery">'+
+    '<label class="retailStoreSearch"><span>Search products</span><input id="storeRetailSearch" value="'+mh(currentRetailSearch)+'" placeholder="Search this store"></label>'+
+    '<label><span>Category</span><select id="storeRetailCategory"><option value="">All categories</option>'+
+      categories.map(item=>'<option value="'+mh(item.value)+'" '+(currentRetailCategory===item.value?'selected':'')+'>'+mh(item.value)+' ('+Number(item.count||0)+')</option>').join('')+
+    '</select></label>'+
+    attributes.map(attribute=>'<label><span>'+mh(attribute.label)+'</span><select data-store-facet="'+mh(attribute.code)+'"><option value="">All</option>'+
+      (attribute.values||[]).map(value=>'<option value="'+mh(value)+'" '+(String(currentRetailFacetValues[attribute.code]||'')===String(value)?'selected':'')+'>'+mh(value)+'</option>').join('')+
+    '</select></label>').join('')+
+    '<button id="clearRetailStoreFilters" type="button">Clear</button>'+
+  '</section>';
+}
+function productFacetValues(product,code){
+  const out=new Set(),entry=product?.catalog_attributes?.[code];
+  if(entry&&entry.value!==undefined&&entry.value!==null&&entry.value!=='')out.add(String(entry.value));
+  for(const variant of Array.isArray(product?.variants)?product.variants:[]){
+    for(const option of Array.isArray(variant.option_values)?variant.option_values:[]){
+      if(String(option.option_code)===String(code)&&option.value_label)out.add(String(option.value_label));
+    }
+  }
+  return [...out];
+}
+function storeVisibleProducts(store){
+  let all=Array.isArray(store?.products)?store.products:[];
+  const mode=storefrontMode(store);
+  if(mode==='mixed'&&currentStoreDomain!=='all')all=all.filter(product=>product.product_domain===currentStoreDomain);
+  else if(mode==='food')all=all.filter(product=>product.product_domain==='food');
+  else if(mode==='non_food')all=all.filter(product=>product.product_domain==='non_food');
+
+  if(currentStoreDomain==='food'||mode==='food'){
+    if(currentFoodSection){
+      const section=foodSectionEntries(store).find(row=>row.key===currentFoodSection);
+      if(section){const ids=new Set(section.product_ids);all=all.filter(product=>product.product_domain!=='food'||ids.has(Number(product.id)))}
+    }
+  }
+
+  const retailActive=currentStoreDomain==='non_food'||mode==='non_food';
+  if(retailActive){
+    if(currentStoreCollection){
+      const collection=(store.collections||[]).find(row=>String(row.code||row.id)===String(currentStoreCollection));
+      if(collection){
+        const ids=new Set((collection.product_ids||[]).map(Number));
+        all=all.filter(product=>product.product_domain!=='non_food'||ids.has(Number(product.id)));
+      }
+    }
+    const q=String(currentRetailSearch||'').trim().toLowerCase();
+    if(q)all=all.filter(product=>product.product_domain!=='non_food'||[
+      product.name,product.description,product.brand,product.model,product.category
+    ].some(value=>String(value||'').toLowerCase().includes(q)));
+    if(currentRetailCategory)all=all.filter(product=>product.product_domain!=='non_food'||String(product.category||'')===String(currentRetailCategory));
+    for(const [code,value] of Object.entries(currentRetailFacetValues||{})){
+      if(!value)continue;
+      all=all.filter(product=>product.product_domain!=='non_food'||productFacetValues(product,code).some(candidate=>String(candidate)===String(value)));
+    }
+  }
+  return all;
+}
+function productOrderable(product){
+  if(product?.orderability&&product.orderability.orderable===false)return false;
+  if(product?.product_domain==='food'&&product?.availability&&product.availability.orderable===false)return false;
+  return true;
+}
+function productAvailabilityCopy(product){
+  const orderable=productOrderable(product);
+  if(orderable)return product.product_domain==='food'?'Available now':'In stock';
+  const reason=String(product?.orderability?.reason||product?.orderability?.state||product?.availability?.state||'unavailable');
+  if(reason==='outside_menu_schedule')return'Not available at this time';
+  if(reason==='sold_out_today')return'Sold out today';
+  if(reason==='unavailable_until')return'Temporarily unavailable';
+  if(reason==='out_of_stock')return'Out of stock';
+  return'Unavailable';
+}
+function productNeedsConfiguration(product){
+  return Boolean(product?.variant_mode&&(product.variants||[]).length)||Boolean((product?.modifier_groups||[]).length);
+}
+function productStartingPrice(product){
+  const values=[Number(product?.selling_price)||0];
+  for(const variant of Array.isArray(product?.variants)?product.variants:[])if(variant.price_override!=null)values.push(Number(variant.price_override));
+  return Math.min(...values.filter(Number.isFinite));
 }
 function marketplaceAllergenInfo(p){
   if(p?.product_domain!=='food'||p?.product_kind!=='prepared_food')return '';
@@ -284,13 +399,281 @@ function marketplaceAllergenInfo(p){
     '<span><b>Cross-contact risk:</b> '+(cross.length?cross.join(', '):'None declared')+'</span>'+
     '<small>'+mh(info.notice||'Contact the Merchant if you need more ingredient information before ordering.')+'</small></div>';
 }
-function productCard(p){const icon=p.product_domain==='food'?'🍽️':'📦';const ai=p.image_source_type==='ai_generated';return `<article class="marketProduct"><div class="marketProductImage">${p.image_data_url?`<img src="${p.image_data_url}" alt="${mh(p.name)}">`:icon}</div>${ai?'<span class="aiReferenceLabel">AI-generated reference image</span>':''}<small>${mh(p.category)} • ${mh(p.unit_code)}</small><strong>${mh(p.name)}</strong><p>${mh(p.description||'')}</p>${marketplaceAllergenInfo(p)}<button class="marketProductReport" type="button" data-report-product="${p.id}">Report product</button><div class="productBottom"><span class="productPrice">${mphp(p.selling_price)}</span><button class="addBasket" type="button" data-add-product="${p.id}" aria-label="Add ${mh(p.name)}">+</button></div></article>`}
-function addBasket(id){const p=currentStore?.products?.find(x=>Number(x.id)===id);if(!p)return;basket.set(id,(basket.get(id)||0)+1);updateBasket();mtoast(`${p.name} added`)}
+function productCard(p){
+  const food=p.product_domain==='food',icon=food?'🍽️':'📦',ai=p.image_source_type==='ai_generated',orderable=productOrderable(p),config=productNeedsConfiguration(p);
+  const price=productStartingPrice(p),pricePrefix=(p.variants||[]).some(v=>v.price_override!=null)?'From ':'';
+  const meta=food
+    ?mh(p.category)+' · '+mh(p.unit_code)
+    :[p.brand,p.model,p.category].filter(Boolean).map(mh).join(' · ');
+  return '<article class="marketProduct '+(food?'foodProductCard':'retailProductCard')+'" data-open-product="'+Number(p.id)+'">'+
+    '<div class="marketProductImage">'+(p.image_data_url?'<img src="'+p.image_data_url+'" alt="'+mh(p.name)+'">':icon)+'</div>'+
+    (ai?'<span class="aiReferenceLabel">AI-generated reference image</span>':'')+
+    '<small>'+meta+'</small><strong>'+mh(p.name)+'</strong><p>'+mh(p.description||'')+'</p>'+
+    (food?marketplaceAllergenInfo(p):'')+
+    '<span class="productAvailability '+(orderable?'available':'unavailable')+'">'+mh(productAvailabilityCopy(p))+'</span>'+
+    '<button class="marketProductReport" type="button" data-report-product="'+Number(p.id)+'">Report product</button>'+
+    '<div class="productBottom"><span class="productPrice">'+pricePrefix+mphp(price)+'</span>'+
+      '<button class="addBasket" type="button" data-add-product="'+Number(p.id)+'" '+(orderable?'':'disabled')+' aria-label="'+(config?'Choose options for ':'Add ')+mh(p.name)+'">'+(config?'Choose':'+')+'</button></div>'+
+  '</article>';
+}
+function renderStoreProductGroups(store,visible){
+  if(storefrontMode(store)==='mixed'&&currentStoreDomain==='all'){
+    const food=visible.filter(product=>product.product_domain==='food'),retail=visible.filter(product=>product.product_domain==='non_food');
+    return '<section class="adaptiveDomainGroup"><div class="adaptiveGroupHead"><h3>Food</h3><span>'+food.length+' items</span></div><div class="productGridMarket foodGrid">'+
+      (food.length?food.map(productCard).join(''):'<div class="marketEmpty">No Food items available right now.</div>')+
+      '</div></section><section class="adaptiveDomainGroup"><div class="adaptiveGroupHead"><h3>Shop products</h3><span>'+retail.length+' items</span></div><div class="productGridMarket retailGrid">'+
+      (retail.length?retail.map(productCard).join(''):'<div class="marketEmpty">No Retail products available right now.</div>')+
+      '</div></section>';
+  }
+  return '<div class="productGridMarket '+((currentStoreDomain==='food'||storefrontMode(store)==='food')?'foodGrid':'retailGrid')+'">'+
+    (visible.length?visible.map(productCard).join(''):'<div class="marketEmpty">No products match this view right now.</div>')+
+  '</div>';
+}
+function renderStore(){
+  const s=currentStore,mode=storefrontMode(s);
+  if(mode!=='mixed')currentStoreDomain=mode;
+  const retailView=currentStoreDomain==='non_food'||mode==='non_food';
+  const foodView=currentStoreDomain==='food'||mode==='food';
+  const visible=storeVisibleProducts(s);
+  marketWorkspace.innerHTML=
+    marketHeader(s.store_name,`${mnice(s.merchant_domain)} • ${mnice(s.opening_status)}`)+
+    `<section class="storefrontHero">${logo(s)}<div class="storefrontHeroCopy"><h2>${mh(s.store_name)}</h2><p>${mh(s.description||'Local merchant')}</p><span class="storeMeta"><span class="${s.opening_status}">${mh(mnice(s.opening_status))}</span><span>Prep ~${Number(s.preparation_eta_minutes)||15} min</span>${s.pickup_enabled?'<span>Pickup</span>':''}${s.delivery_enabled?'<span>Delivery</span>':''}</span></div></section>`+
+    storefrontDomainTabs(s)+
+    (foodView?storefrontFoodMenuBar(s):'')+
+    (retailView?storefrontCollections(s)+storefrontRetailDiscovery(s):'')+
+    '<div class="marketSafetyBar"><button class="marketSafetyAction" id="reportMerchant" type="button">Report merchant</button><span>Private report · not a public review</span></div>'+
+    renderStoreProductGroups(s,visible);
+  bindBack();
+  marketWorkspace.querySelector('[data-market-back]').onclick=renderStoreList;
+  document.getElementById('reportMerchant').onclick=()=>openMarketplaceReport({related_type:'merchant',related_id:Number(s.business_id),display_label:`Merchant: ${s.store_name}`,suggested_category:'Scam / fraud / suspicious activity'});
+  marketWorkspace.querySelectorAll('[data-store-domain]').forEach(button=>button.onclick=()=>{
+    currentStoreDomain=button.dataset.storeDomain||'all';currentStoreCollection='';currentFoodSection='';currentRetailSearch='';currentRetailCategory='';currentRetailFacetValues={};renderStore();
+  });
+  marketWorkspace.querySelectorAll('[data-food-section]').forEach(button=>button.onclick=()=>{currentFoodSection=button.dataset.foodSection||'';renderStore()});
+  marketWorkspace.querySelectorAll('[data-store-collection]').forEach(button=>button.onclick=()=>{currentStoreCollection=button.dataset.storeCollection||'';renderStore()});
+  const retailSearch=document.getElementById('storeRetailSearch');if(retailSearch){
+    retailSearch.onchange=()=>{currentRetailSearch=retailSearch.value;renderStore()};
+    retailSearch.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();currentRetailSearch=retailSearch.value;renderStore()}};
+  }
+  const retailCategory=document.getElementById('storeRetailCategory');if(retailCategory)retailCategory.onchange=()=>{currentRetailCategory=retailCategory.value;renderStore()};
+  marketWorkspace.querySelectorAll('[data-store-facet]').forEach(select=>select.onchange=()=>{
+    const code=select.dataset.storeFacet;if(select.value)currentRetailFacetValues[code]=select.value;else delete currentRetailFacetValues[code];renderStore();
+  });
+  document.getElementById('clearRetailStoreFilters')?.addEventListener('click',()=>{currentRetailSearch='';currentRetailCategory='';currentRetailFacetValues={};currentStoreCollection='';renderStore()});
+  marketWorkspace.querySelectorAll('[data-open-product]').forEach(card=>card.onclick=event=>{
+    if(event.target.closest('[data-report-product]')||event.target.closest('[data-add-product]'))return;
+    openProductDetail(Number(card.dataset.openProduct));
+  });
+  marketWorkspace.querySelectorAll('[data-report-product]').forEach(button=>button.onclick=event=>{
+    event.stopPropagation();const product=s.products.find(x=>Number(x.id)===Number(button.dataset.reportProduct));
+    if(product)openMarketplaceReport({related_type:'marketplace_product',related_id:Number(product.id),display_label:`Product: ${product.name} — ${s.store_name}`,suggested_category:'Illegal / restricted item or service'});
+  });
+  marketWorkspace.querySelectorAll('[data-add-product]').forEach(button=>button.onclick=event=>{event.stopPropagation();addBasket(Number(button.dataset.addProduct))});
+  enhancePublicStorefrontV2(s);
+}
+function productVariantAxes(product){
+  const map=new Map();
+  for(const variant of Array.isArray(product?.variants)?product.variants:[]){
+    for(const option of Array.isArray(variant.option_values)?variant.option_values:[]){
+      const code=String(option.option_code||''),label=String(option.option_label||code),valueCode=String(option.value_code||''),valueLabel=String(option.value_label||valueCode);
+      if(!code||!valueCode)continue;
+      const axis=map.get(code)||{code,label,values:new Map()};
+      axis.values.set(valueCode,valueLabel);map.set(code,axis);
+    }
+  }
+  return [...map.values()].map(axis=>({...axis,values:[...axis.values.entries()].map(([code,label])=>({code,label}))}));
+}
+function defaultVariant(product){
+  const variants=Array.isArray(product?.variants)?product.variants:[];
+  return variants.find(variant=>variant.active!==false&&variant.in_stock!==false)||variants.find(variant=>variant.active!==false)||variants[0]||null;
+}
+function variantSelectionMap(variant){
+  return Object.fromEntries((variant?.option_values||[]).map(option=>[String(option.option_code),String(option.value_code)]));
+}
+function selectedDetailVariant(product,panel=document.getElementById('productDetailPanel')){
+  const axes=productVariantAxes(product);if(!axes.length)return null;
+  const controls=[...(panel?.querySelectorAll('[data-variant-axis]')||[])];
+  const selected=Object.fromEntries(axes.map(axis=>{
+    const control=controls.find(item=>String(item.dataset.variantAxis||'')===String(axis.code));
+    return[axis.code,String(control?.value||'')];
+  }));
+  return (product.variants||[]).find(variant=>(variant.option_values||[]).every(option=>selected[String(option.option_code)]===String(option.value_code)))||null;
+}
+function modifierOptionLookup(product){
+  const map=new Map();
+  for(const group of Array.isArray(product?.modifier_groups)?product.modifier_groups:[])for(const option of Array.isArray(group.options)?group.options:[])map.set(Number(option.id),{group,option});
+  return map;
+}
+function selectedDetailModifierIds(product,panel=document.getElementById('productDetailPanel')){
+  const ids=[];
+  panel?.querySelectorAll('[data-modifier-option]:checked').forEach(input=>ids.push(Number(input.value)));
+  panel?.querySelectorAll('select[data-modifier-select]').forEach(select=>{if(select.value)ids.push(Number(select.value))});
+  return ids.filter(Number.isInteger).sort((a,b)=>a-b);
+}
+function validateModifierSelection(product,ids){
+  const selected=new Set(ids.map(Number));
+  for(const group of Array.isArray(product?.modifier_groups)?product.modifier_groups:[]){
+    const count=(group.options||[]).filter(option=>selected.has(Number(option.id))).length;
+    if(count<Number(group.min_select||0)||count>Number(group.max_select||1)){
+      const exact=Number(group.min_select)===Number(group.max_select);
+      throw new Error(exact?`Choose ${Number(group.min_select)} option${Number(group.min_select)===1?'':'s'} for ${group.name}.`:`Choose ${group.min_select}–${group.max_select} options for ${group.name}.`);
+    }
+  }
+}
+function productConfiguredUnitPrice(product,variant,modifierIds=[]){
+  let price=variant?.price_override==null?Number(product.selling_price||0):Number(variant.price_override);
+  const lookup=modifierOptionLookup(product);
+  for(const id of modifierIds)price+=Number(lookup.get(Number(id))?.option?.price_delta||0);
+  return Math.round((price+Number.EPSILON)*100)/100;
+}
+function productSelectionLabel(product,variant,modifierIds=[]){
+  const parts=[];
+  if(variant)parts.push((variant.option_values||[]).map(option=>option.value_label).filter(Boolean).join(' / '));
+  const lookup=modifierOptionLookup(product);
+  for(const id of modifierIds){const item=lookup.get(Number(id));if(item?.option?.name)parts.push(item.option.name)}
+  return parts.filter(Boolean).join(' · ');
+}
+function productDetailGallery(product){
+  const images=Array.isArray(product?.images)?product.images.filter(image=>image.approval_status==='approved'&&image.public_visible!==false):[];
+  const urls=[product?.image_data_url,...images.map(image=>image.data_url)].filter(Boolean);
+  const unique=[...new Set(urls)];
+  if(!unique.length)return '<div class="productDetailHero productDetailFallback">'+(product?.product_domain==='food'?'🍽️':'📦')+'</div>';
+  return '<div class="productDetailGallery"><div class="productDetailHero"><img id="productDetailHeroImage" src="'+unique[0]+'" alt="'+mh(product.name)+'"></div>'+
+    (unique.length>1?'<div class="productDetailThumbs">'+unique.map((url,index)=>'<button type="button" data-detail-image="'+index+'" class="'+(index===0?'active':'')+'"><img src="'+url+'" alt=""></button>').join('')+'</div>':'')+
+  '</div>';
+}
+function productAttributeMarkup(product){
+  const entries=Object.values(product?.catalog_attributes||{});
+  if(!entries.length)return '';
+  return '<dl class="productDetailSpecs">'+entries.map(entry=>{
+    const value=entry.value===true?'Yes':entry.value===false?'No':String(entry.value??'');
+    return '<div><dt>'+mh(entry.label||'Detail')+'</dt><dd>'+mh(value)+(entry.unit_family?' '+mh(entry.unit_family):'')+'</dd></div>';
+  }).join('')+'</dl>';
+}
+function productVariantMarkup(product){
+  const axes=productVariantAxes(product);if(!axes.length)return '';
+  const initial=variantSelectionMap(defaultVariant(product));
+  return '<section class="productConfigSection"><h3>Choose variant</h3>'+axes.map(axis=>
+    '<label>'+mh(axis.label)+'<select data-variant-axis="'+mh(axis.code)+'">'+axis.values.map(value=>'<option value="'+mh(value.code)+'" '+(initial[axis.code]===value.code?'selected':'')+'>'+mh(value.label)+'</option>').join('')+'</select></label>'
+  ).join('')+'<div id="productVariantStatus" class="productVariantStatus"></div></section>';
+}
+function productModifierMarkup(product){
+  const groups=Array.isArray(product?.modifier_groups)?product.modifier_groups:[];
+  if(!groups.length)return '';
+  return groups.map(group=>{
+    const min=Number(group.min_select||0),max=Number(group.max_select||1),required=min>0;
+    const helper=required?(min===max?`Choose ${min}`:`Choose ${min}–${max}`):max>1?`Optional · up to ${max}`:'Optional';
+    if(max===1){
+      return '<section class="productConfigSection"><div class="productConfigHead"><h3>'+mh(group.name)+'</h3><span>'+mh(helper)+'</span></div><select data-modifier-select="'+Number(group.id)+'">'+
+        (!required?'<option value="">No selection</option>':'<option value="">Choose one</option>')+
+        (group.options||[]).filter(option=>option.active!==false).map(option=>'<option value="'+Number(option.id)+'">'+mh(option.name)+(Number(option.price_delta||0)>0?' +'+mphp(option.price_delta):'')+'</option>').join('')+
+      '</select></section>';
+    }
+    return '<section class="productConfigSection"><div class="productConfigHead"><h3>'+mh(group.name)+'</h3><span>'+mh(helper)+'</span></div><div class="modifierChoices">'+
+      (group.options||[]).filter(option=>option.active!==false).map(option=>'<label><input type="checkbox" data-modifier-option="'+Number(group.id)+'" value="'+Number(option.id)+'"><span><strong>'+mh(option.name)+'</strong>'+(Number(option.price_delta||0)>0?'<small>+'+mphp(option.price_delta)+'</small>':'')+'</span></label>').join('')+
+    '</div></section>';
+  }).join('');
+}
+function closeProductDetail(){
+  const backdrop=document.getElementById('productDetailBackdrop');backdrop?.classList.add('hidden');
+  if(document.getElementById('checkoutBackdrop')?.classList.contains('hidden')!==false)document.body.style.overflow='';
+}
+function refreshProductDetailPrice(product){
+  const panel=document.getElementById('productDetailPanel');if(!panel)return;
+  const variant=selectedDetailVariant(product,panel),modifierIds=selectedDetailModifierIds(product,panel);
+  const price=productConfiguredUnitPrice(product,variant,modifierIds),button=panel.querySelector('[data-detail-add]'),priceNode=panel.querySelector('#productDetailPrice'),status=panel.querySelector('#productVariantStatus');
+  if(priceNode)priceNode.textContent=mphp(price);
+  let orderable=productOrderable(product);
+  if(productVariantAxes(product).length){
+    orderable=orderable&&Boolean(variant)&&variant.in_stock!==false;
+    if(status)status.textContent=!variant?'Choose a valid combination.':variant.in_stock===false?'This variant is out of stock.':'Variant in stock.';
+  }
+  if(button){button.disabled=!orderable;button.textContent=orderable?'Add to basket · '+mphp(price):productAvailabilityCopy(product)}
+}
+function openProductDetail(id){
+  const product=currentStore?.products?.find(row=>Number(row.id)===Number(id));if(!product)return;
+  const backdrop=document.getElementById('productDetailBackdrop'),panel=document.getElementById('productDetailPanel');if(!backdrop||!panel)return;
+  const brandLine=product.product_domain==='non_food'?[product.brand,product.model,product.condition_code?mnice(product.condition_code):''].filter(Boolean).map(mh).join(' · '):mh(product.category||'');
+  panel.innerHTML='<div class="productDetailTop"><button type="button" class="productDetailClose" aria-label="Close">×</button></div>'+
+    productDetailGallery(product)+
+    '<div class="productDetailBody"><small>'+brandLine+'</small><h2>'+mh(product.name)+'</h2><p>'+mh(product.description||'')+'</p>'+
+    '<div class="productDetailPriceRow"><strong id="productDetailPrice">'+mphp(productStartingPrice(product))+'</strong><span class="productAvailability '+(productOrderable(product)?'available':'unavailable')+'">'+mh(productAvailabilityCopy(product))+'</span></div>'+
+    productAttributeMarkup(product)+
+    productVariantMarkup(product)+
+    productModifierMarkup(product)+
+    (product.product_domain==='food'?marketplaceAllergenInfo(product):'')+
+    '<label class="productQuantity">Quantity<input id="productDetailQuantity" type="number" min="1" max="99" step="1" value="1" inputmode="numeric"></label>'+
+    '<button type="button" class="productDetailAdd" data-detail-add="'+Number(product.id)+'"></button>'+
+    '<button type="button" class="marketProductReport productDetailReport" data-report-product="'+Number(product.id)+'">Report product</button>'+
+    '</div>';
+  backdrop.classList.remove('hidden');document.body.style.overflow='hidden';
+  panel.querySelector('.productDetailClose').onclick=closeProductDetail;
+  panel.querySelectorAll('[data-detail-image]').forEach(button=>button.onclick=()=>{
+    const image=button.querySelector('img'),hero=panel.querySelector('#productDetailHeroImage');if(hero&&image)hero.src=image.src;
+    panel.querySelectorAll('[data-detail-image]').forEach(x=>x.classList.toggle('active',x===button));
+  });
+  panel.querySelectorAll('[data-variant-axis],select[data-modifier-select],[data-modifier-option]').forEach(control=>control.onchange=()=>{
+    if(control.matches('[data-modifier-option]')){
+      const groupId=Number(control.dataset.modifierOption),group=(product.modifier_groups||[]).find(row=>Number(row.id)===groupId);
+      if(group&&Number(group.max_select)>1){
+        const checked=[...panel.querySelectorAll('[data-modifier-option="'+groupId+'"]:checked')];
+        if(checked.length>Number(group.max_select)){control.checked=false;mtoast('Choose up to '+group.max_select+' options for '+group.name+'.')}
+      }
+    }
+    refreshProductDetailPrice(product);
+  });
+  panel.querySelector('[data-detail-add]').onclick=()=>{
+    try{
+      const variant=selectedDetailVariant(product,panel),modifierIds=selectedDetailModifierIds(product,panel),quantity=Math.max(1,Math.min(99,Number(panel.querySelector('#productDetailQuantity')?.value)||1));
+      if(productVariantAxes(product).length&&(!variant||variant.in_stock===false))throw new Error('Choose an in-stock variant.');
+      validateModifierSelection(product,modifierIds);
+      addBasketLine(product,{variant,modifierIds,quantity});
+      closeProductDetail();
+    }catch(error){mtoast(error.message)}
+  };
+  panel.querySelector('[data-report-product]').onclick=()=>openMarketplaceReport({related_type:'marketplace_product',related_id:Number(product.id),display_label:`Product: ${product.name} — ${currentStore?.store_name||''}`,suggested_category:'Illegal / restricted item or service'});
+  refreshProductDetailPrice(product);
+}
+function basketSelectionKey(productId,variantId=null,modifierIds=[]){
+  return [Number(productId),Number(variantId)||0,[...modifierIds].map(Number).filter(Number.isInteger).sort((a,b)=>a-b).join(',')].join(':');
+}
+function addBasketLine(product,{variant=null,modifierIds=[],quantity=1}={}){
+  if(!productOrderable(product))return mtoast(productAvailabilityCopy(product));
+  const qty=Math.max(1,Math.min(99,Number(quantity)||1)),variantId=variant?.id?Number(variant.id):null,mods=[...modifierIds].map(Number).filter(Number.isInteger).sort((a,b)=>a-b);
+  const key=basketSelectionKey(product.id,variantId,mods),existing=basket.get(key),unitPrice=productConfiguredUnitPrice(product,variant,mods),selectionLabel=productSelectionLabel(product,variant,mods);
+  if(existing)existing.quantity+=qty;
+  else basket.set(key,{
+    key,product_id:Number(product.id),variant_id:variantId,modifier_option_ids:mods,quantity:qty,
+    unit_price:unitPrice,display_name:product.name,selection_label:selectionLabel
+  });
+  updateBasket();mtoast(product.name+' added');
+}
+function addBasket(id){
+  const product=currentStore?.products?.find(row=>Number(row.id)===Number(id));if(!product)return;
+  if(!productOrderable(product))return mtoast(productAvailabilityCopy(product));
+  if(productNeedsConfiguration(product))return openProductDetail(id);
+  addBasketLine(product,{quantity:1});
+}
 function clearBasket(){basket.clear();updateBasket()}
-function basketTotals(){let count=0,total=0;if(!currentStore)return{count,total};for(const[id,q]of basket){const p=currentStore.products.find(x=>Number(x.id)===id);if(p){count+=q;total+=Number(p.selling_price)*q}}return{count,total}}
-function updateBasket(){const bar=document.getElementById('basketBar');const t=basketTotals();if(!bar)return;if(!t.count){bar.classList.add('hidden');return}bar.classList.remove('hidden');document.getElementById('basketStore').textContent=currentStore?.store_name||'Basket';document.getElementById('basketText').textContent=`${t.count} item${t.count===1?'':'s'} • ${mphp(t.total)}`}
-function closeCheckout(){document.getElementById('checkoutBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
-function checkoutItemsPayload(){return [...basket].map(([product_id,quantity])=>({product_id,quantity}))}
+function basketTotals(){
+  let count=0,total=0;
+  for(const line of basket.values()){count+=Number(line.quantity||0);total+=Number(line.unit_price||0)*Number(line.quantity||0)}
+  return{count,total:Math.round((total+Number.EPSILON)*100)/100};
+}
+function updateBasket(){
+  const bar=document.getElementById('basketBar'),total=basketTotals();if(!bar)return;
+  if(!total.count){bar.classList.add('hidden');return}
+  bar.classList.remove('hidden');document.getElementById('basketStore').textContent=currentStore?.store_name||'Basket';
+  document.getElementById('basketText').textContent=`${total.count} item${total.count===1?'':'s'} • ${mphp(total.total)}`;
+}
+function closeCheckout(){document.getElementById('checkoutBackdrop')?.classList.add('hidden');if(document.getElementById('productDetailBackdrop')?.classList.contains('hidden')!==false)document.body.style.overflow=''}
+function checkoutItemsPayload(){return [...basket.values()].map(line=>({
+  product_id:Number(line.product_id),
+  variant_id:line.variant_id==null?null:Number(line.variant_id),
+  modifier_option_ids:[...(line.modifier_option_ids||[])],
+  quantity:Number(line.quantity)
+}))}
+
 function checkoutDeliverySelected(){return document.getElementById('checkoutFulfil')?.value==='delivery'}
 function checkoutDeliveryFee(quote=activeDeliveryQuote){return Number(quote?.customer_delivery_total??quote?.fee??0)||0}
 function checkoutQuoteExpired(quote=activeDeliveryQuote){const expiry=Date.parse(quote?.expires_at||'');return !Number.isFinite(expiry)||expiry<=Date.now()}
@@ -383,10 +766,13 @@ function openCheckout(){
   if(!currentStore||!basket.size)return;
   activeDeliveryQuote=null;activeDeliveryDestination=null;deliveryQuoteSeq++;
   const c=document.getElementById('checkoutBackdrop'),p=document.getElementById('checkoutPanel'),t=basketTotals();
-  const items=[...basket].map(([id,q])=>({p:currentStore.products.find(x=>Number(x.id)===id),q})).filter(x=>x.p);
+  const items=[...basket.values()].map(line=>({
+    line,
+    product:currentStore.products.find(product=>Number(product.id)===Number(line.product_id))
+  })).filter(item=>item.product);
   const fulfil=[];if(currentStore.pickup_enabled)fulfil.push('<option value="pickup">Pickup at merchant</option>');if(currentStore.delivery_enabled)fulfil.push('<option value="delivery">Delivery</option>');
   const pays=[];if(currentStore.cash_enabled)pays.push('<option value="cash">Cash</option>');if(currentStore.online_enabled)pays.push('<option value="online">Online / digital</option>');
-  p.innerHTML='<h2>Checkout</h2><p>'+mh(currentStore.store_name)+' • prices in PHP</p><div data-bl-pricing="customer_checkout"></div><div class="checkoutItems">'+items.map(x=>'<div class="checkoutLine"><span>'+x.q+' × '+mh(x.p.name)+'</span><strong>'+mphp(Number(x.p.selling_price)*x.q)+'</strong></div>').join('')+'<div class="checkoutLine checkoutTotal"><span>Total products</span><strong>'+mphp(t.total)+'</strong></div><div id="checkoutDeliveryLine" class="checkoutLine hidden"><span>Delivery</span><strong id="checkoutDeliveryAmount">Calculate delivery</strong></div><div id="checkoutFinalLine" class="checkoutLine checkoutGrandTotal"><span>Final total</span><strong id="checkoutFinalAmount">'+mphp(t.total)+'</strong></div></div><form id="marketCheckoutForm" class="checkoutForm"><label>Fulfilment<select id="checkoutFulfil">'+fulfil.join('')+'</select></label><label>Payment<select id="checkoutPayment">'+pays.join('')+'</select></label><section id="checkoutDeliveryBox" class="checkoutDeliveryBox hidden"><label>Delivery address<textarea id="checkoutAddress" rows="2">'+mh(marketMe?.account?.address||'')+'</textarea></label><div class="checkoutDeliveryActions"><button id="checkoutAddressSearch" type="button">Confirm address & calculate price</button><button id="checkoutUseGps" type="button">Use current location</button></div><div id="checkoutAddressResults" class="checkoutAddressResults" aria-live="polite"></div><div id="checkoutDeliveryQuote" class="checkoutDeliveryQuote"><span>Delivery price will appear here before you place the order.</span></div></section><label>Order note<textarea id="checkoutNote" rows="2" placeholder="Optional preparation note"></textarea></label><div id="checkoutMessage" class="checkoutMessage"></div><div class="checkoutActions"><button class="closeCheckout" type="button">Back</button><button class="placeOrder" type="submit">Place order</button></div></form>';
+  p.innerHTML='<h2>Checkout</h2><p>'+mh(currentStore.store_name)+' • prices in PHP</p><div data-bl-pricing="customer_checkout"></div><div class="checkoutItems">'+items.map(item=>'<div class="checkoutLine"><span>'+Number(item.line.quantity)+' × '+mh(item.product.name)+(item.line.selection_label?'<small>'+mh(item.line.selection_label)+'</small>':'')+'</span><strong>'+mphp(Number(item.line.unit_price)*Number(item.line.quantity))+'</strong></div>').join('')+'<div class="checkoutLine checkoutTotal"><span>Total products</span><strong>'+mphp(t.total)+'</strong></div><div id="checkoutDeliveryLine" class="checkoutLine hidden"><span>Delivery</span><strong id="checkoutDeliveryAmount">Calculate delivery</strong></div><div id="checkoutFinalLine" class="checkoutLine checkoutGrandTotal"><span>Final total</span><strong id="checkoutFinalAmount">'+mphp(t.total)+'</strong></div></div><form id="marketCheckoutForm" class="checkoutForm"><label>Fulfilment<select id="checkoutFulfil">'+fulfil.join('')+'</select></label><label>Payment<select id="checkoutPayment">'+pays.join('')+'</select></label><section id="checkoutDeliveryBox" class="checkoutDeliveryBox hidden"><label>Delivery address<textarea id="checkoutAddress" rows="2">'+mh(marketMe?.account?.address||'')+'</textarea></label><div class="checkoutDeliveryActions"><button id="checkoutAddressSearch" type="button">Confirm address & calculate price</button><button id="checkoutUseGps" type="button">Use current location</button></div><div id="checkoutAddressResults" class="checkoutAddressResults" aria-live="polite"></div><div id="checkoutDeliveryQuote" class="checkoutDeliveryQuote"><span>Delivery price will appear here before you place the order.</span></div></section><label>Order note<textarea id="checkoutNote" rows="2" placeholder="Optional preparation note"></textarea></label><div id="checkoutMessage" class="checkoutMessage"></div><div class="checkoutActions"><button class="closeCheckout" type="button">Back</button><button class="placeOrder" type="submit">Place order</button></div></form>';
   c.classList.remove('hidden');document.body.style.overflow='hidden';
   const form=p.querySelector('#marketCheckoutForm'),ful=p.querySelector('#checkoutFulfil'),payment=p.querySelector('#checkoutPayment'),deliveryBox=p.querySelector('#checkoutDeliveryBox'),address=p.querySelector('#checkoutAddress');
   const sync=()=>{

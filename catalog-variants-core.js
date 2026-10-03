@@ -140,6 +140,42 @@ export async function ensureCatalogVariantSchema(db){
 export async function readRetailVariantConfiguration(db,{productId,publicOnly=false}={}){
   const id=Number(productId);
   if(!positiveInt(id))return{version:VARIANT_SCHEMA_VERSION,options:[],variants:[]};
+  let lotsAvailable=true,holdsAvailable=true;
+  if(publicOnly){
+    try{
+      const rel=await db.query("SELECT to_regclass('public.supply_lots') lots_rel, to_regclass('public.inventory_unavailable_allocations') holds_rel");
+      lotsAvailable=Boolean(rel.rows[0]?.lots_rel);holdsAvailable=Boolean(rel.rows[0]?.holds_rel);
+    }catch(error){
+      if(!['42P01','42703'].includes(String(error?.code||'')))throw error;
+      lotsAvailable=false;holdsAvailable=false;
+    }
+  }
+  const unavailableSql=holdsAvailable?`COALESCE((
+    SELECT SUM(h.quantity)
+      FROM inventory_unavailable_allocations h
+     WHERE h.business_id=p.business_id AND h.inventory_id=i.id AND h.state='active'
+  ),0)`:'0';
+  const lotBlockedSql=lotsAvailable?`COALESCE((
+    SELECT SUM(GREATEST(0,sl.quantity_remaining_base))
+      FROM supply_lots sl
+     WHERE sl.business_id=p.business_id AND sl.inventory_id=i.id
+       AND sl.quantity_remaining_base>0
+       AND (COALESCE(sl.lot_state,'available')<>'available' OR (sl.expires_at IS NOT NULL AND sl.expires_at<=NOW()))
+  ),0)`:'0';
+  const availableSql=`GREATEST(0,
+    COALESCE(i.quantity,0)
+    - COALESCE((
+        SELECT SUM(r.quantity_reserved)
+          FROM order_stock_reservations r
+         WHERE r.business_id=p.business_id
+           AND r.stock_kind='inventory'
+           AND r.stock_ref_id=i.id
+           AND r.state='reserved'
+           AND (r.expires_at IS NULL OR r.expires_at>NOW())
+      ),0)
+    - ${unavailableSql}
+    - ${lotBlockedSql}
+  )`;
   const optionsQ=await db.query(`
     SELECT o.id,o.code,o.label,o.sort_order,
            COALESCE(json_agg(json_build_object(
@@ -153,9 +189,11 @@ export async function readRetailVariantConfiguration(db,{productId,publicOnly=fa
   `,[id]);
   const variantsQ=await db.query(`
     SELECT v.id,v.product_id,v.variant_key,v.inventory_id,v.price_override,v.active,v.sort_order,
-           i.item inventory_item,i.internal_sku,i.barcode,i.quantity inventory_quantity,i.unit inventory_unit
+           i.item inventory_item,i.internal_sku,i.barcode,i.quantity inventory_quantity,i.unit inventory_unit,
+           CASE WHEN i.id IS NULL THEN 0 ELSE ${availableSql} END inventory_available_quantity
       FROM catalog_product_variants v
-      LEFT JOIN inventory i ON i.id=v.inventory_id
+      JOIN marketplace_products p ON p.id=v.product_id
+      LEFT JOIN inventory i ON i.id=v.inventory_id AND i.business_id=p.business_id
      WHERE v.product_id=$1 ${publicOnly?'AND v.active=TRUE':''}
      ORDER BY v.sort_order,v.id
   `,[id]);
@@ -187,7 +225,10 @@ export async function readRetailVariantConfiguration(db,{productId,publicOnly=fa
       active:Boolean(row.active),
       option_values:byVariant.get(Number(row.id))||[]
     };
-    if(publicOnly)return{...base,in_stock:Boolean(row.inventory_id)&&Number(row.inventory_quantity||0)>0};
+    if(publicOnly)return{
+      ...base,
+      in_stock:Boolean(row.inventory_id)&&Number(row.inventory_available_quantity||0)>0
+    };
     return{
       ...base,
       inventory_id:row.inventory_id==null?null:Number(row.inventory_id),
@@ -195,6 +236,7 @@ export async function readRetailVariantConfiguration(db,{productId,publicOnly=fa
       internal_sku:row.internal_sku||'',
       barcode:row.barcode||'',
       inventory_quantity:Number(row.inventory_quantity||0),
+      inventory_available_quantity:Number(row.inventory_available_quantity||0),
       inventory_unit:row.inventory_unit||''
     };
   });
