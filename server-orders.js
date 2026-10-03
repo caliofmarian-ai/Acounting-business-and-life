@@ -8,7 +8,8 @@ import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetiza
 import { readOrderDetail } from './orders-read-core.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
-import {planInventoryFefo,applyLotAllocations,restoreLotAllocation} from './inventory-lot-runtime.js';
+import {restoreLotAllocation} from './inventory-lot-runtime.js';
+import {ensureOrderStockReservationSchema,reserveOrderStock,consumeOrderReservations,releaseOrderReservations,reservationExpiryForOrder} from './order-stock-reservation.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -235,12 +236,14 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS orders_business_idx ON orders(business_id,created_at DESC);
     CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(business_id,order_status,created_at DESC);
   `);
+  await ensureOrderStockReservationSchema(pool);
 }
 
 async function orderDetail(id,client=pool){return readOrderDetail(client,id)}
 async function setStatus(client, order, toStatus, actorId, note='') {
   if (!ORDER_STATUSES.has(toStatus)) throw Object.assign(new Error('Unknown order status'),{status:400});
   if (order.order_status === toStatus) return order;
+  if(toStatus==='accepted')await reserveOrderStock(client,order,{expiresAt:reservationExpiryForOrder({...order,order_status:'accepted'})});
   await client.query(`UPDATE orders SET order_status=$1,updated_at=NOW(),
     accepted_at=CASE WHEN $1='accepted' THEN COALESCE(accepted_at,NOW()) ELSE accepted_at END,
     preparing_at=CASE WHEN $1='preparing' THEN COALESCE(preparing_at,NOW()) ELSE preparing_at END,
@@ -300,80 +303,15 @@ async function createOrder({ businessId, customerAccountId=null, customerName=''
     const id=Number(order.rows[0].id);const orderNumber=`BL-${manilaDateStamp()}-${String(id).padStart(5,'0')}`;await client.query(`UPDATE orders SET order_number=$1 WHERE id=$2`,[orderNumber,id]);
     for(const i of itemRows) await client.query(`INSERT INTO order_items(order_id,source_kind,source_id,name_snapshot,category_snapshot,quantity,unit_price_snapshot,unit_cost_snapshot,line_total,estimated_cogs,estimated_gross_profit) VALUES($1,'product',$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[id,i.source_id,i.name_snapshot,i.category_snapshot,i.quantity,i.unit_price_snapshot,i.unit_cost_snapshot,i.line_total,i.estimated_cogs,i.estimated_gross_profit]);
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Order created')`,[id,status,customerAccountId]);
+    await reserveOrderStock(client,{...order.rows[0],id,order_number:orderNumber,order_status:status,business_id:businessId,fulfilment_method:fulfilmentMethod});
     await client.query('COMMIT');return orderDetail(id);
   }catch(e){try{await client.query('ROLLBACK')}catch{}throw e}finally{client.release()}
 }
 
 async function consumeStock(client, order) {
-  if(order.stock_consumed_at) return;
-  const rows=await client.query(`
-    SELECT oi.source_id product_id,oi.quantity order_quantity,r.inventory_id,r.quantity recipe_quantity,
-           i.item,i.quantity stock_quantity,i.unit_cost
-      FROM order_items oi
-      JOIN recipes r ON r.product_id=oi.source_id
-      JOIN inventory i ON i.id=r.inventory_id
-     WHERE oi.order_id=$1 AND oi.source_kind='product' AND i.business_id=$2
-     ORDER BY i.id
-     FOR UPDATE OF i
-  `,[order.id,order.business_id]);
-  const needs=new Map();
-  for(const r of rows.rows){
-    const id=Number(r.inventory_id),used=Number(r.order_quantity)*Number(r.recipe_quantity);
-    const existing=needs.get(id)||{inventory_id:id,item:r.item,stock:Number(r.stock_quantity),unit_cost:Number(r.unit_cost),used:0};
-    existing.used+=used;needs.set(id,existing);
-  }
-  const itemCount=Number((await client.query(`SELECT COALESCE(SUM(quantity),0) item_count FROM order_items WHERE order_id=$1`,[order.id])).rows[0]?.item_count||0);
-  const consumables=await client.query(`
-    SELECT r.inventory_id,r.quantity_used,r.usage_basis,i.item,i.quantity stock_quantity,i.unit_cost
-      FROM merchant_order_consumable_rules r
-      JOIN inventory i ON i.id=r.inventory_id AND i.business_id=r.business_id
-     WHERE r.business_id=$1 AND r.active=TRUE
-       AND (r.fulfilment_scope='all' OR r.fulfilment_scope=$2)
-     ORDER BY i.id
-     FOR UPDATE OF i
-  `,[order.business_id,order.fulfilment_method]);
-  for(const r of consumables.rows){
-    const id=Number(r.inventory_id),multiplier=r.usage_basis==='per_item'?itemCount:1;
-    const used=Number(r.quantity_used)*multiplier;
-    const existing=needs.get(id)||{inventory_id:id,item:r.item,stock:Number(r.stock_quantity),unit_cost:Number(r.unit_cost),used:0};
-    existing.used+=used;needs.set(id,existing);
-  }
-
-  const plans=new Map(),shortages=[];
-  for(const n of needs.values()){
-    const plan=await planInventoryFefo(client,{
-      businessId:order.business_id,inventoryId:n.inventory_id,inventoryQuantity:n.stock,quantityNeeded:n.used,lock:true
-    });
-    plans.set(n.inventory_id,plan);
-    if(!plan.ok)shortages.push({
-      item:n.item,required:n.used,available:plan.usable_quantity,
-      short:Math.max(0,n.used-plan.usable_quantity),reason:'expired_or_held_lot_stock'
-    });
-  }
-  if(shortages.length)throw Object.assign(new Error('Not enough usable stock to start preparation. Expired or held lots are excluded.'),{status:409,shortages});
-
-  for(const n of needs.values()){
-    const plan=plans.get(n.inventory_id);
-    await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2`,[n.used,n.inventory_id]);
-    await client.query(`
-      INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot)
-      VALUES($1,$2,$3,$4,$5,$6)
-      ON CONFLICT(order_id,inventory_id) DO UPDATE SET
-        quantity_used=order_stock_consumptions.quantity_used+EXCLUDED.quantity_used,
-        cost_snapshot=order_stock_consumptions.cost_snapshot+EXCLUDED.cost_snapshot
-    `,[order.id,n.inventory_id,n.item,n.used,n.unit_cost,n.used*n.unit_cost]);
-    await applyLotAllocations(client,plan?.allocations||[]);
-    for(const allocation of plan?.allocations||[]){
-      await client.query(`
-        INSERT INTO order_stock_lot_allocations(order_id,inventory_id,lot_id,quantity_used,expires_at_snapshot)
-        VALUES($1,$2,$3,$4,$5)
-        ON CONFLICT(order_id,inventory_id,lot_id) DO UPDATE SET
-          quantity_used=order_stock_lot_allocations.quantity_used+EXCLUDED.quantity_used
-      `,[order.id,n.inventory_id,allocation.lot_id,allocation.quantity,allocation.expires_at]);
-    }
-  }
-  await client.query(`UPDATE orders SET stock_consumed_at=NOW(),updated_at=NOW() WHERE id=$1 AND stock_consumed_at IS NULL`,[order.id]);
+  return consumeOrderReservations(client,order);
 }
+
 async function reverseStock(client, order) {
   if(!order.stock_consumed_at||order.stock_reversed_at) return;
   const c=await client.query(`SELECT * FROM order_stock_consumptions WHERE order_id=$1 AND reversed_at IS NULL FOR UPDATE`,[order.id]);
@@ -466,7 +404,7 @@ app.post('/api/orders/merchant/:id/ready',body,async(req,res,next)=>{try{const i
 app.post('/api/orders/merchant/:id/handoff',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.fulfilment_method!=='delivery'||o.order_status!=='ready')throw Object.assign(new Error('Only a ready delivery order can be handed off'),{status:409});await setStatus(client,o,'handoff_to_delivery',me.account.id,'Ready for delivery handoff');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
 app.post('/api/orders/merchant/:id/payment',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);await recordPayment(client,o,{amount:req.body?.amount,account:req.body?.account,method_code:req.body?.method_code||o.payment_method,provider_code:req.body?.provider_code||'manual_merchant_confirmation',provider_reference:req.body?.provider_reference,receiverId:me.account.id});await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
 app.post('/api/orders/merchant/:id/complete',body,async(req,res,next)=>{try{const id=Number(req.params.id),client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];const{me}=await requireMerchant(req,o.business_id);if(o.fulfilment_method!=='pickup'||o.order_status!=='ready')throw Object.assign(new Error('Only a ready pickup order can be completed here'),{status:409});if(Number(o.outstanding_amount)>0.001&&!req.body?.allow_credit)throw Object.assign(new Error('Record payment or explicitly leave the balance as credit'),{status:409});await setStatus(client,o,'completed',me.account.id,req.body?.allow_credit?'Completed with receivable':'Collected');const done=await client.query(`SELECT o.completed_at,b.territory_id FROM orders o JOIN businesses b ON b.id=o.business_id WHERE o.id=$1`,[o.id]);await recordMonetizableCompletion(client,{serviceScope:'marketplace',subjectType:'business',subjectId:o.business_id,sourceType:'order',sourceId:o.id,territoryId:done.rows[0]?.territory_id,completedAt:done.rows[0]?.completed_at,grossValue:o.subtotal,currencyCode:o.currency_code||'PHP'});await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
-app.post('/api/orders/merchant/:id/cancel',body,async(req,res,next)=>{try{const id=Number(req.params.id),pre=await pool.query(`SELECT business_id,order_status FROM orders WHERE id=$1`,[id]);if(!pre.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const{me}=await requireMerchant(req,pre.rows[0].business_id);if(['completed','cancelled'].includes(pre.rows[0].order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'order_cancel',subjectType:'order',subjectId:id});const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});await reverseStock(client,o);await client.query(`UPDATE orders SET cancellation_reason=$1 WHERE id=$2`,[clean(req.body?.reason,300),id]);await setStatus(client,o,'cancelled',me.account.id,clean(req.body?.reason,300)||'Cancelled');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
+app.post('/api/orders/merchant/:id/cancel',body,async(req,res,next)=>{try{const id=Number(req.params.id),pre=await pool.query(`SELECT business_id,order_status FROM orders WHERE id=$1`,[id]);if(!pre.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const{me}=await requireMerchant(req,pre.rows[0].business_id);if(['completed','cancelled'].includes(pre.rows[0].order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});await enforceHighRiskVelocity(pool,{actorAccountId:me.account.id,actionCode:'order_cancel',subjectType:'order',subjectId:id});const client=await pool.connect();try{await client.query('BEGIN');const r=await client.query(`SELECT * FROM orders WHERE id=$1 FOR UPDATE`,[id]);if(!r.rowCount)throw Object.assign(new Error('Order not found'),{status:404});const o=r.rows[0];if(['completed','cancelled'].includes(o.order_status))throw Object.assign(new Error('Order can no longer be cancelled'),{status:409});await releaseOrderReservations(client,{orderId:id,reason:'cancelled'});await reverseStock(client,o);await client.query(`UPDATE orders SET cancellation_reason=$1 WHERE id=$2`,[clean(req.body?.reason,300),id]);await setStatus(client,o,'cancelled',me.account.id,clean(req.body?.reason,300)||'Cancelled');await client.query('COMMIT');res.json(await orderDetail(id))}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}catch(e){next(e)}});
 app.get('/api/orders/merchant/customers/:customerId/trust',async(req,res,next)=>{try{const customerId=Number(req.params.customerId);const{business}=await requireMerchant(req,Number(req.query.business_id||1));res.json(await trustInfo(Number(business.id),customerId))}catch(e){next(e)}});
 app.put('/api/orders/merchant/customers/:customerId/trust',body,async(req,res,next)=>{try{const customerId=Number(req.params.customerId);const{business}=await requireMerchant(req,Number(req.body?.business_id||1));const info=await trustInfo(Number(business.id),customerId);const allow=Boolean(req.body?.allow_remote_cash_prep);if(allow&&!info.eligible) return res.status(409).json({error:'Customer needs 5 successful completed orders with this Merchant before remote cash preparation can be enabled.',completed_orders:info.completed_orders});await pool.query(`INSERT INTO merchant_customer_settings(business_id,customer_account_id,allow_remote_cash_prep,updated_at) VALUES($1,$2,$3,NOW()) ON CONFLICT(business_id,customer_account_id) DO UPDATE SET allow_remote_cash_prep=EXCLUDED.allow_remote_cash_prep,updated_at=NOW()`,[business.id,customerId,allow]);res.json(await trustInfo(Number(business.id),customerId))}catch(e){next(e)}});
 
