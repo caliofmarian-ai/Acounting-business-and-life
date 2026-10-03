@@ -299,6 +299,45 @@
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
         <div class="card stack"><div class="sectionHead"><h2>Inventory</h2><small class="muted">Stored in a consistent base unit for recipe accuracy</small></div><div id="stockList" class="list"></div></div>
+        <div class="card stack" id="inventoryScanCard">
+          <div class="sectionHead">
+            <div><h2>Find by SKU or barcode</h2><p class="muted">Search manually at any time, or use the camera on supported mobile devices. Scanning never replaces manual Inventory controls.</p></div>
+            <button id="inventoryScanStart" type="button" class="secondary">Scan barcode</button>
+          </div>
+          <form id="inventoryLookupForm" class="inventoryLookupForm">
+            <label>Search Inventory
+              <input id="inventoryLookupQuery" autocomplete="off" placeholder="Item name, SKU or barcode" />
+            </label>
+            <button type="submit" class="secondary">Search</button>
+          </form>
+          <div id="inventoryScanSupport" class="salePreview">Checking camera scan support…</div>
+          <div id="inventoryScannerPane" class="inventoryScannerPane hidden">
+            <video id="inventoryScanVideo" playsinline muted></video>
+            <div class="inventoryScannerGuide" aria-hidden="true"><span></span></div>
+            <div class="sectionHead">
+              <small class="muted">Align one barcode in the frame. No image is uploaded or stored.</small>
+              <button id="inventoryScanStop" type="button" class="secondary">Stop camera</button>
+            </div>
+          </div>
+          <div id="inventoryLookupMessage" aria-live="polite"></div>
+          <div id="inventoryLookupResults" class="list"></div>
+
+          <details id="inventoryIdentifiersEditor">
+            <summary>Inventory identifiers</summary>
+            <div class="stack inventoryIdentifierEditor">
+              <p class="muted">SKU and barcode are optional. Fresh ingredients can remain code-free.</p>
+              <label>Inventory item
+                <select id="inventoryIdentifierItem"><option value="">Choose an item</option></select>
+              </label>
+              <div class="grid2">
+                <label>Internal SKU / code<input id="inventoryInternalSku" maxlength="80" placeholder="Optional, e.g. CM-COCO-400" /></label>
+                <label>Barcode / GTIN<input id="inventoryBarcode" maxlength="120" inputmode="text" autocomplete="off" placeholder="Optional scanned retail code" /></label>
+              </div>
+              <button id="inventoryIdentifierSave" type="button" class="secondary">Save identifiers</button>
+              <div id="inventoryIdentifierMessage" aria-live="polite"></div>
+            </div>
+          </details>
+        </div>
         <div class="card stack">
           <div><h2>Restock settings</h2><p class="muted">Change the low-stock alert and Target / Par level without recording a purchase.</p></div>
           <form id="restockSettingsForm" class="stack">
