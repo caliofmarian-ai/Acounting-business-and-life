@@ -148,6 +148,18 @@ async function renderDiscover(domain=''){
   }catch(error){ renderGuestError(error.message); }
 }
 
+function guestIngredientDisclosure(product){
+  if(product?.product_domain!=='food'||product?.product_kind!=='prepared_food')return '';
+  if(!product?.allergen_review_current)return '<div class="guestAllergenPending"><strong>Ingredient disclosure pending review</strong><span>Contact the Merchant for current ingredient information.</span></div>';
+  const info=product?.allergen_information;if(!info)return '';
+  const names=rows=>(Array.isArray(rows)?rows:[]).map(x=>gh(x.label||x.code||'')).filter(Boolean);
+  const contains=names(info.contains),may=names(info.may_contain),cross=names(info.cross_contact);
+  return '<div class="guestAllergenInfo"><strong>Ingredient disclosure</strong>'+
+    '<span><b>Contains:</b> '+(contains.length?contains.join(', '):'None declared')+'</span>'+
+    '<span><b>May contain:</b> '+(may.length?may.join(', '):'None declared')+'</span>'+
+    '<span><b>Cross-contact risk:</b> '+(cross.length?cross.join(', '):'None declared')+'</span>'+
+    '<small>'+gh(info.notice||'Contact the Merchant if you need more ingredient information.')+'</small></div>';
+}
 async function renderStore(businessId){
   guestBody.innerHTML='<div class="guestLoading">Loading public storefront…</div>';
   try{
@@ -168,7 +180,7 @@ async function renderStore(businessId){
             (product.image_source_type==='ai_generated'?'<span class="guestAiReference">AI-generated reference image</span>':'')+
             '<small>'+gh(product.category||'General')+'</small>'+
             '<strong>'+gh(product.name)+'</strong>'+
-            '<p>'+gh(product.description||'')+'</p>'+
+            '<p>'+gh(product.description||'')+'</p>'+guestIngredientDisclosure(product)+
             '<div><b>'+gh(gmoney(product.selling_price,currency))+'</b><button type="button" data-guest-order>Sign in to order</button></div>'+
           '</article>'
         ).join(''):'<div class="guestState"><strong>No published products.</strong><p>This business has not made any products public yet.</p></div>')+
