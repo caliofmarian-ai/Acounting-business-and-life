@@ -21,6 +21,7 @@ import {
   FOOD_ALLERGENS,normalizeAllergenCodes,ensureFoodAllergenSchema,
   deriveProductAllergenSummary,invalidateProductAllergenReview,invalidateAllergenReviewForInventory
 } from './food-allergen-core.js';
+import {directProductCostEstimate} from './food-cost-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -413,11 +414,19 @@ async function dayStatus(businessId){
   return{business_date:new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Manila'}),has_opening:opening.rowCount>0,opening_cash:openingCash,cash_movement:cashMovement,expected_cash:openingCash+cashMovement,closing:closing.rows[0]||null};
 }
 async function productsWithRecipes(businessId){
-  const [products,recipe,batches,batchComponents]=await Promise.all([
+  const [products,recipe,batches,batchComponents,consumableRules]=await Promise.all([
     pool.query(`SELECT * FROM products WHERE business_id=$1 ORDER BY active DESC,name`,[businessId]),
     pool.query(`SELECT r.product_id,r.inventory_id,r.quantity,i.item,i.unit,i.measurement_family,i.base_unit,i.quantity stock_quantity,i.unit_cost,(r.quantity*i.unit_cost) component_cost FROM recipes r JOIN products p ON p.id=r.product_id JOIN inventory i ON i.id=r.inventory_id WHERE p.business_id=$1 AND i.business_id=$1 ORDER BY r.product_id,i.item`,[businessId]),
     pool.query(`SELECT b.* FROM product_recipe_batches b JOIN products p ON p.id=b.product_id WHERE p.business_id=$1`,[businessId]),
-    pool.query(`SELECT c.*,i.item,i.unit,i.unit_cost FROM recipe_batch_components c JOIN products p ON p.id=c.product_id JOIN inventory i ON i.id=c.inventory_id WHERE p.business_id=$1 AND i.business_id=$1 ORDER BY c.product_id,i.item`,[businessId])
+    pool.query(`SELECT c.*,i.item,i.unit,i.unit_cost FROM recipe_batch_components c JOIN products p ON p.id=c.product_id JOIN inventory i ON i.id=c.inventory_id WHERE p.business_id=$1 AND i.business_id=$1 ORDER BY c.product_id,i.item`,[businessId]),
+    pool.query(`
+      SELECT r.inventory_id,r.fulfilment_scope,r.usage_basis,r.quantity_used,r.active,
+             i.item,i.unit,i.unit_cost,i.inventory_type
+        FROM merchant_order_consumable_rules r
+        JOIN inventory i ON i.id=r.inventory_id AND i.business_id=r.business_id
+       WHERE r.business_id=$1 AND r.active=TRUE
+       ORDER BY i.item,r.fulfilment_scope,r.usage_basis
+    `,[businessId])
   ]);
   const recipeMap=new Map();
   for(const row of recipe.rows){
@@ -449,16 +458,28 @@ async function productsWithRecipes(businessId){
       batch_cost:Number(row.base_quantity)*Number(row.unit_cost)
     });
   }
+  const directRules=consumableRules.rows.map(row=>({
+    ...row,
+    inventory_id:Number(row.inventory_id),
+    quantity_used:Number(row.quantity_used),
+    unit_cost:Number(row.unit_cost)
+  }));
   return products.rows.map(p=>{
     const components=recipeMap.get(String(p.id))||[];
     const unitCost=components.reduce((sum,x)=>sum+x.quantity*x.unit_cost,0);
     const price=Number(p.selling_price),gp=price-unitCost;
+    const directCost=directProductCostEstimate({ingredientCost:unitCost,rules:directRules});
     return{
       ...p,id:Number(p.id),selling_price:price,recipe:components,
       recipe_batch:batchMap.get(String(p.id))||null,
       recipe_batch_components:batchComponentMap.get(String(p.id))||[],
       estimated_unit_cost:money(unitCost),estimated_gross_profit:money(gp),
-      estimated_margin_pct:price>0?Math.round((gp/price)*1000)/10:0
+      estimated_margin_pct:price>0?Math.round((gp/price)*1000)/10:0,
+      direct_food_cost_estimate:directCost,
+      estimated_direct_food_cost_pickup:money(directCost.pickup.direct_food_cost_per_item),
+      estimated_direct_food_cost_delivery:money(directCost.delivery.direct_food_cost_per_item),
+      estimated_direct_gross_pickup:money(price-directCost.pickup.direct_food_cost_per_item),
+      estimated_direct_gross_delivery:money(price-directCost.delivery.direct_food_cost_per_item)
     };
   });
 }
@@ -1261,7 +1282,69 @@ app.post('/api/product-sales',jsonBody,async(req,res,next)=>{
   }catch(e){next(e)}
 });
 app.get('/api/product-sales',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT ps.*,t.created_at transaction_created_at FROM product_sales ps JOIN transactions t ON t.id=ps.transaction_id WHERE ps.business_id=$1 ORDER BY ps.occurred_at DESC,ps.id DESC LIMIT 250`,[business.id]);res.json(rows)}catch(e){next(e)}});
-app.get('/api/product-profitability',async(req,res,next)=>{try{const{business}=await accountingContext(req),days=Number(req.query.days)===30?30:7;const totals=await pool.query(`SELECT COALESCE(SUM(quantity),0) portions,COALESCE(SUM(revenue),0) revenue,COALESCE(SUM(estimated_cogs),0) cogs,COALESCE(SUM(gross_profit),0) gross_profit FROM product_sales WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day')`,[business.id,days]);const products=await pool.query(`SELECT product_id,product_name_snapshot name,COALESCE(SUM(quantity),0) quantity,COALESCE(SUM(revenue),0) revenue,COALESCE(SUM(estimated_cogs),0) cogs,COALESCE(SUM(gross_profit),0) gross_profit FROM product_sales WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day') GROUP BY product_id,product_name_snapshot ORDER BY gross_profit DESC,revenue DESC`,[business.id,days]);const t=totals.rows[0],revenue=Number(t.revenue),gross=Number(t.gross_profit);res.json({days,totals:{portions:Number(t.portions),revenue,cogs:Number(t.cogs),gross_profit:gross,margin_pct:revenue>0?Math.round((gross/revenue)*1000)/10:0},products:products.rows.map(r=>{const rev=Number(r.revenue),gp=Number(r.gross_profit);return{...r,product_id:Number(r.product_id),quantity:Number(r.quantity),revenue:rev,cogs:Number(r.cogs),gross_profit:gp,margin_pct:rev>0?Math.round((gp/rev)*1000)/10:0}})})}catch(e){next(e)}});
+app.get('/api/product-profitability',async(req,res,next)=>{try{
+  const{business}=await accountingContext(req),days=Number(req.query.days)===30?30:7;
+  const [totals,products,orderRows]=await Promise.all([
+    pool.query(`SELECT COALESCE(SUM(quantity),0) portions,COALESCE(SUM(revenue),0) revenue,COALESCE(SUM(estimated_cogs),0) cogs,COALESCE(SUM(gross_profit),0) gross_profit FROM product_sales WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day')`,[business.id,days]),
+    pool.query(`SELECT product_id,product_name_snapshot name,COALESCE(SUM(quantity),0) quantity,COALESCE(SUM(revenue),0) revenue,COALESCE(SUM(estimated_cogs),0) cogs,COALESCE(SUM(gross_profit),0) gross_profit FROM product_sales WHERE business_id=$1 AND occurred_at>=NOW()-($2::int*INTERVAL '1 day') GROUP BY product_id,product_name_snapshot ORDER BY gross_profit DESC,revenue DESC`,[business.id,days]),
+    pool.query(`
+      SELECT o.id,o.order_number,o.fulfilment_method,o.subtotal,o.completed_at,
+             COALESCE(SUM(CASE
+               WHEN COALESCE(osc.inventory_type_snapshot,i.inventory_type,'ingredient')='ingredient'
+               THEN osc.cost_snapshot ELSE 0 END),0) ingredient_cost,
+             COALESCE(SUM(CASE
+               WHEN COALESCE(osc.inventory_type_snapshot,i.inventory_type,'ingredient') IN ('packaging','kitchen_consumable','hygiene')
+               THEN osc.cost_snapshot ELSE 0 END),0) direct_consumable_cost,
+             COALESCE(SUM(CASE
+               WHEN COALESCE(osc.inventory_type_snapshot,i.inventory_type,'ingredient') IN ('cleaning_sanitation','operational_supply')
+               THEN osc.cost_snapshot ELSE 0 END),0) excluded_overhead_cost
+        FROM orders o
+        LEFT JOIN order_stock_consumptions osc
+          ON osc.order_id=o.id AND osc.reversed_at IS NULL
+        LEFT JOIN inventory i
+          ON i.id=osc.inventory_id AND i.business_id=o.business_id
+       WHERE o.business_id=$1
+         AND o.order_status='completed'
+         AND COALESCE(o.completed_at,o.updated_at)>=NOW()-($2::int*INTERVAL '1 day')
+       GROUP BY o.id,o.order_number,o.fulfilment_method,o.subtotal,o.completed_at
+       ORDER BY o.completed_at DESC NULLS LAST,o.id DESC
+    `,[business.id,days])
+  ]);
+  const t=totals.rows[0],revenue=Number(t.revenue),gross=Number(t.gross_profit);
+  const completedOrders=orderRows.rows.map(row=>{
+    const ingredient=Number(row.ingredient_cost||0),direct=Number(row.direct_consumable_cost||0),subtotal=Number(row.subtotal||0);
+    const directFood=money(ingredient+direct),directGross=money(subtotal-directFood);
+    return{
+      order_id:Number(row.id),order_number:row.order_number,fulfilment_method:row.fulfilment_method,
+      revenue:subtotal,ingredient_cost:money(ingredient),direct_consumable_cost:money(direct),
+      direct_food_cost:directFood,excluded_overhead_cost:money(row.excluded_overhead_cost),
+      direct_gross_profit:directGross,direct_margin_pct:subtotal>0?Math.round((directGross/subtotal)*1000)/10:0,
+      completed_at:row.completed_at
+    };
+  });
+  const orderTotals=completedOrders.reduce((acc,row)=>{
+    acc.orders+=1;acc.revenue+=row.revenue;acc.ingredient_cost+=row.ingredient_cost;
+    acc.direct_consumable_cost+=row.direct_consumable_cost;acc.direct_food_cost+=row.direct_food_cost;
+    acc.excluded_overhead_cost+=row.excluded_overhead_cost;return acc;
+  },{orders:0,revenue:0,ingredient_cost:0,direct_consumable_cost:0,direct_food_cost:0,excluded_overhead_cost:0});
+  orderTotals.revenue=money(orderTotals.revenue);orderTotals.ingredient_cost=money(orderTotals.ingredient_cost);
+  orderTotals.direct_consumable_cost=money(orderTotals.direct_consumable_cost);orderTotals.direct_food_cost=money(orderTotals.direct_food_cost);
+  orderTotals.excluded_overhead_cost=money(orderTotals.excluded_overhead_cost);
+  orderTotals.direct_gross_profit=money(orderTotals.revenue-orderTotals.direct_food_cost);
+  orderTotals.direct_margin_pct=orderTotals.revenue>0?Math.round((orderTotals.direct_gross_profit/orderTotals.revenue)*1000)/10:0;
+  res.json({
+    days,
+    totals:{portions:Number(t.portions),revenue,cogs:Number(t.cogs),gross_profit:gross,margin_pct:revenue>0?Math.round((gross/revenue)*1000)/10:0},
+    products:products.rows.map(r=>{const rev=Number(r.revenue),gp=Number(r.gross_profit);return{...r,product_id:Number(r.product_id),quantity:Number(r.quantity),revenue:rev,cogs:Number(r.cogs),gross_profit:gp,margin_pct:rev>0?Math.round((gp/rev)*1000)/10:0}}),
+    completed_order_direct_cost:{totals:orderTotals,orders:completedOrders},
+    cost_scope:{
+      ingredient_types:['ingredient'],
+      direct_consumable_types:['packaging','kitchen_consumable','hygiene'],
+      excluded_from_direct_food_cost:['cleaning_sanitation','operational_supply'],
+      note:'Quick Sale history keeps its original ingredient-cost basis. Completed-order direct food cost is reconciled from actual Inventory consumption evidence.'
+    }
+  })
+}catch(e){next(e)}});
 
 app.get('/api/export.csv',async(req,res,next)=>{try{const{business}=await accountingContext(req);const{rows}=await pool.query(`SELECT id,type,category,amount,account,source,note,occurred_at FROM transactions WHERE business_id=$1 ORDER BY occurred_at`,[business.id]);const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;const csv=['id,type,category,amount,account,source,note,occurred_at',...rows.map(r=>[r.id,r.type,r.category,r.amount,r.account,r.source,r.note,r.occurred_at.toISOString()].map(esc).join(','))].join('\n');res.type('text/csv').set('Content-Disposition',`attachment; filename="transactions-business-${business.id}.csv"`).send(csv)}catch(e){next(e)}});
 

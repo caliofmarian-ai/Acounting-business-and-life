@@ -291,16 +291,18 @@ export async function consumeOrderReservations(client,order){
   for(const r of reservations.rows){
     const qty=Number(r.quantity_reserved);
     if(r.stock_kind==='inventory'){
-      const inv=await client.query(`SELECT id,item,quantity,unit_cost FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,[r.stock_ref_id,order.business_id]);
+      const inv=await client.query(`SELECT id,item,quantity,unit_cost,inventory_type FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,[r.stock_ref_id,order.business_id]);
       if(!inv.rowCount||Number(inv.rows[0].quantity)+EPS<qty)throw Object.assign(new Error('Reserved Inventory quantity changed before preparation started.'),{status:409});
       await client.query(`UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3`,[qty,r.stock_ref_id,order.business_id]);
       const unitCost=Number(inv.rows[0].unit_cost||0);
       await client.query(`
-        INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot)
-        VALUES($1,$2,$3,$4,$5,$6)
+        INSERT INTO order_stock_consumptions(order_id,inventory_id,item_name_snapshot,inventory_type_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot)
+        VALUES($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT(order_id,inventory_id) DO UPDATE SET
+          item_name_snapshot=EXCLUDED.item_name_snapshot,
+          inventory_type_snapshot=EXCLUDED.inventory_type_snapshot,
           quantity_used=EXCLUDED.quantity_used,unit_cost_snapshot=EXCLUDED.unit_cost_snapshot,cost_snapshot=EXCLUDED.cost_snapshot
-      `,[order.id,r.stock_ref_id,inv.rows[0].item,qty,unitCost,qty*unitCost]);
+      `,[order.id,r.stock_ref_id,inv.rows[0].item,inv.rows[0].inventory_type||'ingredient',qty,unitCost,qty*unitCost]);
       const lotRows=await client.query(`
         SELECT lot_id,quantity_reserved,expires_at_snapshot
           FROM order_stock_reservation_lots WHERE reservation_id=$1 ORDER BY lot_id

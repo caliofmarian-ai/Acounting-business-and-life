@@ -159,7 +159,7 @@ async function profileFinanceContext(pool,{accountId,role,businessId}){
 }
 async function merchantOverview(pool,ctx){
   const bid=Number(ctx.business.id);
-  const [store,orders,profitability,refunds,ledger,financeContext,merchandiseAlloc,merchantNet,fees]=await Promise.all([
+  const [store,orders,profitability,directCost,refunds,ledger,financeContext,merchandiseAlloc,merchantNet,fees]=await Promise.all([
     optionalQuery(pool,`
       SELECT merchant_domain,publication_status,store_name
       FROM merchant_storefronts WHERE business_id=$1
@@ -190,6 +190,22 @@ async function merchantOverview(pool,ctx){
       WHERE o.business_id=$1 AND o.order_status='completed'
     `,[bid]),
     optionalQuery(pool,`
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN COALESCE(osc.inventory_type_snapshot,i.inventory_type,'ingredient')='ingredient'
+          THEN osc.cost_snapshot ELSE 0 END),0) ingredient_cost,
+        COALESCE(SUM(CASE
+          WHEN COALESCE(osc.inventory_type_snapshot,i.inventory_type,'ingredient') IN ('packaging','kitchen_consumable','hygiene')
+          THEN osc.cost_snapshot ELSE 0 END),0) direct_consumable_cost,
+        COALESCE(SUM(CASE
+          WHEN COALESCE(osc.inventory_type_snapshot,i.inventory_type,'ingredient') IN ('cleaning_sanitation','operational_supply')
+          THEN osc.cost_snapshot ELSE 0 END),0) excluded_overhead_cost
+      FROM orders o
+      JOIN order_stock_consumptions osc ON osc.order_id=o.id AND osc.reversed_at IS NULL
+      LEFT JOIN inventory i ON i.id=osc.inventory_id AND i.business_id=o.business_id
+      WHERE o.business_id=$1 AND o.order_status='completed'
+    `,[bid],[{ingredient_cost:0,direct_consumable_cost:0,excluded_overhead_cost:0}]),
+    optionalQuery(pool,`
       SELECT COUNT(*) FILTER(WHERE r.status='succeeded')::int succeeded_refunds,
         COALESCE(SUM(r.amount) FILTER(WHERE r.status='succeeded'),0) refunded_amount
       FROM refunds r JOIN payment_intents pi ON pi.id=r.payment_intent_id
@@ -201,9 +217,10 @@ async function merchantOverview(pool,ctx){
     allocationStatus(pool,{componentCode:'merchant_net',economicPartyId:bid,businessId:bid}),
     chargedFeeSummary(pool,{businessId:bid,chargedTo:'merchant_deduction'})
   ]);
-  const o=orders.rows[0]||{},p=profitability.rows[0]||{},rf=refunds.rows[0]||{};
+  const o=orders.rows[0]||{},p=profitability.rows[0]||{},dc=directCost.rows[0]||{},rf=refunds.rows[0]||{};
   const domain=store.rows[0]?.merchant_domain||'unknown';
   const lineCount=n(p.line_count),costed=n(p.costed_line_count),rev=money(p.revenue),cogs=money(p.estimated_cogs);
+  const directIngredientCost=money(dc.ingredient_cost),directConsumableCost=money(dc.direct_consumable_cost),directFoodCost=money(directIngredientCost+directConsumableCost),directGross=money(rev-directFoodCost);
   const confirmedCustomerPayments=money(o.confirmed_merchandise_received);
   const recordedLedgerBalance=money(ledger.ledger.recorded_available_balance);
   const ledgerPaymentDifference=money(recordedLedgerBalance-confirmedCustomerPayments);
@@ -261,11 +278,17 @@ async function merchantOverview(pool,ctx){
       estimated_cogs:cogs,
       estimated_gross_profit:money(p.estimated_gross_profit),
       estimated_margin_pct:rev>0&&cogsStatus==='COST_EVIDENCE_COMPLETE'?Math.round(((rev-cogs)/rev)*10000)/100:null,
+      actual_ingredient_consumption_cost:directIngredientCost,
+      actual_direct_consumable_cost:directConsumableCost,
+      actual_direct_food_cost:directFoodCost,
+      actual_direct_gross_profit:directGross,
+      actual_direct_margin_pct:rev>0?Math.round((directGross/rev)*10000)/100:null,
+      excluded_overhead_consumption_cost:money(dc.excluded_overhead_cost),
       costed_line_count:costed,line_count:lineCount,
       status:cogsStatus,
       note:domain==='non_food'&&cogsStatus!=='COST_EVIDENCE_COMPLETE'
         ?'Non-food COGS is not inferred from recipe tables.'
-        :'COGS uses stored order-item cost evidence where available.'
+        :'Estimated COGS keeps stored order-line history; actual direct food cost adds reconciled ingredient plus packaging/direct-consumable Inventory consumption and excludes cleaning/general operational supplies.'
     },
     settlement:{
       merchant_net:merchantNet,
