@@ -1,4 +1,5 @@
 let marketMe=null,marketWorkspace=null,marketMode='food',currentStore=null,basket=new Map(),merchantStore=null;
+let merchantCatalogSchema=null;
 let currentStoreCollection='';
 let currentStoreDomain='all';
 let currentFoodSection='';
@@ -35,10 +36,14 @@ function ensureMarket(){
     const detail=document.createElement('div');detail.id='productDetailBackdrop';detail.className='productDetailBackdrop hidden';detail.innerHTML='<section id="productDetailPanel" class="productDetailPanel"></section>';
     document.body.appendChild(detail);detail.onclick=e=>{if(e.target===detail)closeProductDetail()};
   }
+  if(!document.getElementById('catalogEditorBackdrop')){
+    const editor=document.createElement('div');editor.id='catalogEditorBackdrop';editor.className='catalogEditorBackdrop hidden';editor.innerHTML='<section id="catalogEditorPanel" class="catalogEditorPanel"></section>';
+    document.body.appendChild(editor);editor.onclick=e=>{if(e.target===editor)closeCatalogEditor()};
+  }
   return true;
 }
 function hideBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('roleHub')?.classList.add('hidden');document.getElementById('ordersWorkspace')?.classList.add('hidden')}
-function closeMarket(){document.getElementById('basketBar')?.classList.add('hidden');closeCheckout();closeProductDetail();marketWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closeMarket(){document.getElementById('basketBar')?.classList.add('hidden');closeCheckout();closeProductDetail();closeCatalogEditor();marketWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function marketHeader(title,sub){return `<div class="marketHeader"><button class="marketBack" type="button" data-market-back>‹</button><div class="marketHeaderCopy"><h1>${mh(title)}</h1><p>${mh(sub)}</p></div></div>`}
 function bindBack(){const b=marketWorkspace.querySelector('[data-market-back]');if(b)b.onclick=closeMarket}
 function logo(store,size=''){if(store.logo_data_url)return `<span class="storeLogo ${size}"><img src="${store.logo_data_url}" alt=""></span>`;return `<span class="storeLogo ${size}">${mh((store.store_name||'S').trim()[0]?.toUpperCase()||'S')}</span>`}
