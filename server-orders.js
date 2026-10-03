@@ -8,7 +8,7 @@ import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetiza
 import { readOrderDetail } from './orders-read-core.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
-import {restoreLotAllocation} from './inventory-lot-runtime.js';
+import {restoreLotAllocation,inventoryAvailabilityRows} from './inventory-lot-runtime.js';
 import {ensureOrderStockReservationSchema,reserveOrderStock,consumeOrderReservations,releaseOrderReservations,reservationExpiryForOrder} from './order-stock-reservation.js';
 
 const { Pool } = pg;
@@ -351,13 +351,8 @@ app.get('/api/orders/inventory',async(req,res,next)=>{try{
   const businessId=Number(req.query.business_id);
   if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});
   const{business}=await requireMerchant(req,businessId);
-  const{rows}=await pool.query(
-    `SELECT id,item,unit,quantity,reorder_level,unit_cost,inventory_type
-       FROM inventory
-      WHERE business_id=$1
-      ORDER BY (quantity<=reorder_level) DESC,item`,
-    [business.id]
-  );
+  const rows=await inventoryAvailabilityRows(pool,{businessId:business.id});
+  rows.sort((a,b)=>Number(a.available_quantity)-Number(b.available_quantity)||String(a.item||'').localeCompare(String(b.item||'')));
   res.json(rows)
 }catch(e){next(e)}})
 
