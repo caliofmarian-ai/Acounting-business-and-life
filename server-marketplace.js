@@ -391,7 +391,8 @@ async function marketplaceStart(req,res,next){
       if(x.inventory_id){
         const inv=await client.query(`SELECT id,item,quantity,unit,unit_cost FROM inventory WHERE id=$1 AND business_id=$2 FOR UPDATE`,[x.inventory_id,o.business_id]);
         if(!inv.rowCount)throw Object.assign(new Error(`${x.name} is not linked to valid Merchant stock`),{status:409});
-        addNeed(inv.rows[0],Number(x.quantity_per_unit)*Number(x.quantity));
+        const required=Number(x.quantity_per_unit)*Number(x.quantity);
+        addNeed(inv.rows[0],required);
       }else if(x.stock_tracked&&x.stock_quantity!=null){
         if(Number(x.stock_quantity)+1e-9<Number(x.quantity))throw Object.assign(new Error(`${x.name} does not have enough stock`),{status:409});
         marketplaceOwnStock.push({id:Number(x.source_id),quantity:Number(x.quantity)});
