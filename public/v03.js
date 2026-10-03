@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
 let inventory = [];
+let inventoryDomainFilter='all';
 let stockAdjustmentLots = [];
 let restockSuggestions = [];
 let wasteAnalyticsDays = 7;
@@ -95,7 +96,62 @@ const STOCK_PICKER_CATALOG=[
 ];
 
 const STORAGE_CONDITION_LABELS={ambient:'Ambient',dry:'Dry',chilled:'Chilled',frozen:'Frozen',other:'Not set / other'};
-const STORAGE_AREA_LABELS={pantry:'Pantry / dry food storage',fridge:'Fridge / chiller',freezer:'Freezer',prep_station:'Prep station',chemical_storage:'Chemical storage',service_storage:'Service / supplies storage',other:'Other / not set'};
+const STORAGE_AREA_LABELS={
+  pantry:'Pantry / dry food storage',fridge:'Fridge / chiller',freezer:'Freezer',prep_station:'Prep station',
+  chemical_storage:'Chemical storage',service_storage:'Service / supplies storage',
+  sales_floor:'Sales floor',stock_room:'Stock room',shelf_bin:'Shelf / bin',warehouse:'Warehouse',
+  secure_storage:'Secure storage',returns_inspection:'Returns / inspection',general_supply:'General supplies',
+  other:'Other / not set'
+};
+const INVENTORY_DOMAIN_LABELS={food:'Food',non_food:'Retail',operations:'Operations'};
+const INVENTORY_ROLE_LABELS={
+  ingredient:'Ingredient',direct_resale:'Direct resale',production_material:'Production material',
+  packaging:'Packaging',operational_consumable:'Operational consumable',operational_supply:'Operational supply'
+};
+const INVENTORY_ROLES_BY_DOMAIN={
+  food:[['ingredient','Ingredient'],['direct_resale','Direct resale']],
+  non_food:[['direct_resale','Direct resale'],['production_material','Production material']],
+  operations:[['packaging','Packaging'],['operational_consumable','Operational consumable'],['operational_supply','Operational supply']]
+};
+function classificationFromLegacyType(type='ingredient'){
+  if(type==='ingredient')return{domain:'food',role:'ingredient'};
+  if(type==='resale_item')return{domain:'non_food',role:'direct_resale'};
+  if(type==='production_material')return{domain:'non_food',role:'production_material'};
+  if(type==='packaging')return{domain:'operations',role:'packaging'};
+  if(['kitchen_consumable','hygiene'].includes(type))return{domain:'operations',role:'operational_consumable'};
+  return{domain:'operations',role:'operational_supply'};
+}
+function legacyTypeForClassification(domain,role,current=''){
+  if(domain==='food'&&role==='ingredient')return'ingredient';
+  if(role==='direct_resale')return'resale_item';
+  if(role==='production_material')return'production_material';
+  if(role==='packaging')return'packaging';
+  if(role==='operational_consumable')return ['kitchen_consumable','hygiene'].includes(current)?current:'kitchen_consumable';
+  if(role==='operational_supply')return ['cleaning_sanitation','operational_supply'].includes(current)?current:'operational_supply';
+  return'ingredient';
+}
+function syncInventoryRoleOptions(preferred=''){
+  const domain=$('stockInventoryDomain')?.value||'food',select=$('stockStockRole');if(!select)return;
+  const choices=INVENTORY_ROLES_BY_DOMAIN[domain]||INVENTORY_ROLES_BY_DOMAIN.food;
+  const wanted=preferred||select.value;
+  select.replaceChildren(...choices.map(([value,label])=>new Option(label,value)));
+  if(choices.some(([value])=>value===wanted))select.value=wanted;
+  else select.value=choices[0][0];
+}
+function syncUniversalInventoryClassification({fromLegacy=false,storage=true}={}){
+  const domain=$('stockInventoryDomain'),role=$('stockStockRole'),legacy=$('stockInventoryType');if(!domain||!role||!legacy)return;
+  if(fromLegacy){
+    const mapped=classificationFromLegacyType(legacy.value);
+    domain.value=mapped.domain;syncInventoryRoleOptions(mapped.role);role.value=mapped.role;
+  }else{
+    syncInventoryRoleOptions(role.value);
+    legacy.value=legacyTypeForClassification(domain.value,role.value,legacy.value);
+  }
+  if(storage){
+    const suggestion=storageSuggestionForClassification(domain.value,role.value,legacy.value);
+    applyStockStorageSuggestion(suggestion);
+  }else updateStockStorageHint();
+}
 function storageSuggestionFor(group,itemName=''){
   const base={...(group?.storage||{condition:'other',area:'other',label:'',segregated:false})};
   if(itemName==='Ice')return{condition:'frozen',area:'freezer',label:'',segregated:false};
@@ -107,6 +163,12 @@ function storageSuggestionForType(type='ingredient'){
   if(['packaging','kitchen_consumable','hygiene','operational_supply'].includes(type))return{condition:'dry',area:'service_storage',label:'',segregated:false};
   return{condition:'other',area:'other',label:'',segregated:false};
 }
+function storageSuggestionForClassification(domain='food',role='ingredient',legacyType='ingredient'){
+  if(legacyType==='cleaning_sanitation')return{condition:'ambient',area:'chemical_storage',label:'Chemical storage',segregated:true};
+  if(domain==='non_food')return{condition:'dry',area:role==='production_material'?'warehouse':'stock_room',label:'',segregated:false};
+  if(domain==='operations')return{condition:'dry',area:role==='packaging'?'general_supply':'service_storage',label:'',segregated:false};
+  return storageSuggestionForType(legacyType);
+}
 function applyStockStorageSuggestion(suggestion={}){
   if($('stockStorageCondition'))$('stockStorageCondition').value=suggestion.condition||'other';
   if($('stockStorageArea'))$('stockStorageArea').value=suggestion.area||'other';
@@ -114,7 +176,7 @@ function applyStockStorageSuggestion(suggestion={}){
   if($('stockStorageSegregated'))$('stockStorageSegregated').checked=Boolean(suggestion.segregated);
   updateStockStorageHint();
 }
-function storageSafetyMessage({type,condition,area,label,segregated}){
+function storageSafetyMessage({type,domain='',role='',condition,area,label,segregated}){
   if(type==='cleaning_sanitation'){
     if(['pantry','fridge','freezer','prep_station'].includes(area))return{ok:false,text:'Cleaning & sanitation stock must be stored separately from food.'};
     if(area==='chemical_storage'&&!segregated)return{ok:false,text:'Chemical storage must be marked as segregated from food.'};
@@ -126,12 +188,16 @@ function storageSafetyMessage({type,condition,area,label,segregated}){
   if(condition==='chilled'&&!['fridge','other'].includes(area))return{ok:false,text:'Chilled stock needs a fridge or a labelled custom cold-storage area.'};
   if(condition==='frozen'&&!['freezer','other'].includes(area))return{ok:false,text:'Frozen stock needs a freezer or a labelled custom frozen-storage area.'};
   if(['chilled','frozen'].includes(condition)&&area==='other'&&!String(label||'').trim())return{ok:false,text:'Custom chilled/frozen storage needs a location label.'};
-  return{ok:true,text:'Storage context looks consistent. Lots received for this item keep a storage snapshot for traceability.'};
+  if(domain==='operations'&&role==='operational_supply'&&area==='sales_floor')return{ok:false,text:'Operational supplies should not use the customer sales floor as storage.'};
+  if(domain==='non_food'&&['pantry','prep_station'].includes(area)&&!String(label||'').trim())return{ok:false,text:'Retail stock using a Food-oriented area needs a clear location label.'};
+  return{ok:true,text:domain==='non_food'?'Retail storage context looks consistent.':'Storage context looks consistent. Lots received for this item keep a storage snapshot for traceability.'};
 }
 function updateStockStorageHint(){
   const out=$('stockStorageHint');if(!out)return;
   const result=storageSafetyMessage({
     type:$('stockInventoryType')?.value||'ingredient',
+    domain:$('stockInventoryDomain')?.value||'food',
+    role:$('stockStockRole')?.value||'ingredient',
     condition:$('stockStorageCondition')?.value||'other',
     area:$('stockStorageArea')?.value||'other',
     label:$('stockStorageLocation')?.value||'',
@@ -146,7 +212,7 @@ function initStockPicker(){
   const renderItems=()=>{
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
     item.replaceChildren();
-    if(group&&$('stockInventoryType'))$('stockInventoryType').value=group.type||'ingredient';
+    if(group&&$('stockInventoryType')){$('stockInventoryType').value=group.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     if(group)applyStockStorageSuggestion(storageSuggestionFor(group,''));
     if(!group){
       item.append(new Option('Choose a category first',''));
@@ -169,21 +235,23 @@ function initStockPicker(){
     $('stockItem').value=option.value;
     const unit=option.dataset.unit||'unit';
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
-    if($('stockInventoryType'))$('stockInventoryType').value=group?.type||'ingredient';
+    if($('stockInventoryType')){$('stockInventoryType').value=group?.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     applyStockStorageSuggestion(storageSuggestionFor(group,option.value));
     syncUnitSelect('stockPurchaseUnit',unit);
     syncUnitSelect('stockReorderUnit',unit);
     stockPurchasePreview();
   });
   $('stockInventoryType')?.addEventListener('change',()=>{
-    if(!category.value)applyStockStorageSuggestion(storageSuggestionForType($('stockInventoryType').value));
-    else updateStockStorageHint();
+    syncUniversalInventoryClassification({fromLegacy:true,storage:!category.value});
   });
+  $('stockInventoryDomain')?.addEventListener('change',()=>syncUniversalInventoryClassification({storage:true}));
+  $('stockStockRole')?.addEventListener('change',()=>syncUniversalInventoryClassification({storage:true}));
   for(const id of ['stockStorageCondition','stockStorageArea','stockStorageLocation'])$(id)?.addEventListener('change',updateStockStorageHint);
   $('stockStorageLocation')?.addEventListener('input',updateStockStorageHint);
   $('stockStorageSegregated')?.addEventListener('change',updateStockStorageHint);
   $('stockItem')?.addEventListener('input',()=>{if($('stockInventoryId'))$('stockInventoryId').value='';});
   renderItems();
+  syncUniversalInventoryClassification({fromLegacy:true,storage:false});
   updateStockStorageHint();
 }
 function unitMeta(unit){return UNIT_META[unit]||UNIT_META[String(unit||'').toLowerCase()]||null}
@@ -541,6 +609,9 @@ function useInventoryForReceiving(item){
   if($('stockInventoryId'))$('stockInventoryId').value=String(item.id||'');
   if($('stockItem'))$('stockItem').value=item.item||'';
   if($('stockInventoryType'))$('stockInventoryType').value=item.inventory_type||'ingredient';
+  if($('stockInventoryDomain'))$('stockInventoryDomain').value=item.inventory_domain||classificationFromLegacyType(item.inventory_type).domain;
+  syncInventoryRoleOptions(item.stock_role||classificationFromLegacyType(item.inventory_type).role);
+  if($('stockStockRole'))$('stockStockRole').value=item.stock_role||classificationFromLegacyType(item.inventory_type).role;
   if($('stockStorageCondition'))$('stockStorageCondition').value=item.storage_condition||'other';
   if($('stockStorageArea'))$('stockStorageArea').value=item.storage_area_type||'other';
   if($('stockStorageLocation'))$('stockStorageLocation').value=item.storage_location_label||'';
@@ -650,6 +721,8 @@ function updateStorageEditorSafety(){
   if(!item){out.textContent='Choose an Inventory item to review its storage settings.';return}
   const result=storageSafetyMessage({
     type:item.inventory_type||'ingredient',
+    domain:item.inventory_domain||classificationFromLegacyType(item.inventory_type).domain,
+    role:item.stock_role||classificationFromLegacyType(item.inventory_type).role,
     condition:$('storageCondition').value,
     area:$('storageAreaType').value,
     label:$('storageLocationLabel').value,
