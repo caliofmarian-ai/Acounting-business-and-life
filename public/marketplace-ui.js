@@ -1248,22 +1248,29 @@ function catalogProductTypeOptions(){
   if(domain==='non_food'||domain==='mixed')options.push(['non_food_resale','Non-food resale']);
   return options;
 }
-function catalogIdentityAdvancedMarkup(prefix='merchantCatalog'){
-  return '<details class="catalogAdvancedDetails"><summary>Brand, condition & delivery package</summary>'+
-    '<div class="merchantStoreForm two catalogAdvancedGrid">'+
-      '<label>Brand<input id="'+prefix+'Brand" maxlength="120" placeholder="Optional"></label>'+
-      '<label>Model<input id="'+prefix+'Model" maxlength="120" placeholder="Optional"></label>'+
-      '<label>Condition<select id="'+prefix+'Condition"><option value="">Not specified</option><option value="new">New</option><option value="used">Used</option><option value="refurbished">Refurbished</option><option value="other">Other</option></select></label>'+
-      '<label>Manufacturer / part number<input id="'+prefix+'Mpn" maxlength="120" placeholder="Optional"></label>'+
-    '</div>'+
-    '<div class="catalogPackageHead"><strong>Delivery package</strong><small>Optional. Used for fulfilment and delivery planning; not shown as private stock/accounting data.</small></div>'+
-    '<div class="merchantStoreForm two catalogPackageGrid">'+
-      '<label>Length (cm)<input id="'+prefix+'PackageLength" type="number" min="0" step="0.01"></label>'+
-      '<label>Width (cm)<input id="'+prefix+'PackageWidth" type="number" min="0" step="0.01"></label>'+
-      '<label>Height (cm)<input id="'+prefix+'PackageHeight" type="number" min="0" step="0.01"></label>'+
-      '<label>Weight (kg)<input id="'+prefix+'PackageWeight" type="number" min="0" step="0.001"></label>'+
-    '</div>'+
-  '</details>';
+function catalogIdentityAdvancedMarkup(prefix='merchantCatalog',values={},kind='non_food_resale'){
+  const retail=kind==='non_food_resale',packaged=kind==='packaged_resale',direct=kind!=='prepared_food';
+  const identityFields=retail
+    ?'<div class="merchantStoreForm two catalogAdvancedGrid">'+
+      '<label>Brand<input id="'+prefix+'Brand" maxlength="120" value="'+mh(values.brand||'')+'" placeholder="Optional"></label>'+
+      '<label>Model<input id="'+prefix+'Model" maxlength="120" value="'+mh(values.model||'')+'" placeholder="Optional"></label>'+
+      '<label>Condition<select id="'+prefix+'Condition"><option value="">Not specified</option><option value="new" '+(values.condition_code==='new'?'selected':'')+'>New</option><option value="used" '+(values.condition_code==='used'?'selected':'')+'>Used</option><option value="refurbished" '+(values.condition_code==='refurbished'?'selected':'')+'>Refurbished</option><option value="other" '+(values.condition_code==='other'?'selected':'')+'>Other</option></select></label>'+
+      '<label>Manufacturer / part number<input id="'+prefix+'Mpn" maxlength="120" value="'+mh(values.manufacturer_part_number||'')+'" placeholder="Optional"></label>'+
+    '</div>'
+    :packaged
+      ?'<div class="merchantStoreForm catalogAdvancedGrid"><label>Brand<input id="'+prefix+'Brand" maxlength="120" value="'+mh(values.brand||'')+'" placeholder="Optional"></label></div>'
+      :'';
+  const packageFields=direct
+    ?'<div class="catalogPackageHead"><strong>Delivery package</strong><small>Optional. Used for fulfilment and delivery planning; not exposed as private stock/accounting data.</small></div>'+
+      '<div class="merchantStoreForm two catalogPackageGrid">'+
+        '<label>Length (cm)<input id="'+prefix+'PackageLength" type="number" min="0" step="0.01" value="'+mh(values.package_length_cm??'')+'"></label>'+
+        '<label>Width (cm)<input id="'+prefix+'PackageWidth" type="number" min="0" step="0.01" value="'+mh(values.package_width_cm??'')+'"></label>'+
+        '<label>Height (cm)<input id="'+prefix+'PackageHeight" type="number" min="0" step="0.01" value="'+mh(values.package_height_cm??'')+'"></label>'+
+        '<label>Weight (kg)<input id="'+prefix+'PackageWeight" type="number" min="0" step="0.001" value="'+mh(values.package_weight_kg??'')+'"></label>'+
+      '</div>'
+    :'';
+  if(!identityFields&&!packageFields)return'';
+  return '<details class="catalogAdvancedDetails"><summary>'+(retail?'Brand, condition & delivery package':packaged?'Brand & delivery package':'Delivery package')+'</summary>'+identityFields+packageFields+'</details>';
 }
 function catalogCreateSection(inventory=[],schema=merchantCatalogSchema){
   const defaultKind=(merchantStore?.merchant_domain==='non_food')?'non_food_resale':'fresh_direct';
@@ -1290,7 +1297,7 @@ function catalogCreateSection(inventory=[],schema=merchantCatalogSchema){
       '<label>Customer section / shelf<input id="merchantCatalogCategory" maxlength="100" value="General" placeholder="Example: Men / Shirts"></label>'+
       '<label>Description<textarea id="merchantCatalogDescription" rows="2" maxlength="800" placeholder="What customers should know about this product"></textarea></label>'+
       '<section id="merchantCatalogAdaptiveAttributes" class="catalogAdaptiveAttributes">'+catalogAdaptiveAttributesMarkup(schema,defaultCategory,{},'merchantCatalogCreateAttr')+'</section>'+
-      catalogIdentityAdvancedMarkup('merchantCatalog')+
+      '<div id="merchantCatalogAdvancedHost">'+catalogIdentityAdvancedMarkup('merchantCatalog',{},defaultKind)+'</div>'+
       '<div id="merchantCatalogStockHint" class="catalogBoundaryNote">Choose an Inventory item. Its cost remains private; this form sets only the public selling product.</div>'+
       '<div class="storeFormActions"><button class="saveStore" type="submit">Create private product</button></div>'+
       '<div id="merchantCatalogCreateMessage" class="avatarHint"></div>'+
@@ -1330,8 +1337,8 @@ function bindCatalogCreate(inventory=[],schema=merchantCatalogSchema){
     }
     const host=document.getElementById('merchantCatalogAdaptiveAttributes');
     if(host)host.innerHTML=catalogAdaptiveAttributesMarkup(schema,category.value,{},'merchantCatalogCreateAttr');
-    const advanced=document.querySelector('#merchantCatalogCreateForm .catalogAdvancedDetails');
-    if(advanced)advanced.classList.toggle('foodFreshIdentity',kind.value==='fresh_direct');
+    const advancedHost=document.getElementById('merchantCatalogAdvancedHost');
+    if(advancedHost)advancedHost.innerHTML=catalogIdentityAdvancedMarkup('merchantCatalog',{},kind.value);
   };
   const syncStock=()=>{
     const id=Number(select.value),item=(inventory||[]).find(x=>Number(x.id)===id),name=document.getElementById('merchantCatalogName'),hint=document.getElementById('merchantCatalogStockHint');
