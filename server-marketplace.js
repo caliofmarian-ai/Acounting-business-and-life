@@ -283,11 +283,13 @@ async function attachFoodCommerce(rows,{businessId,publicOnly=false}={}){
     };
   }).filter(row=>!publicOnly||row.product_domain!=='food'||!row.availability?.hidden);
 }
-async function products(businessId,includePrivate=false){
+async function products(businessId,includePrivate=false,domain=''){
+  const safeDomain=['food','non_food'].includes(domain)?domain:'';
+  const args=[businessId];const domainSql=safeDomain?(args.push(safeDomain),' AND p.product_domain=$2'):'';
   const query=includePrivate
-    ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 ORDER BY p.category,p.name`
-    :`SELECT p.* FROM marketplace_products p WHERE p.business_id=$1 AND p.published=TRUE AND p.active=TRUE ORDER BY p.category,p.name`;
-  const{rows}=await pool.query(query,[businessId]);
+    ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1${domainSql} ORDER BY p.category,p.name`
+    :`SELECT p.* FROM marketplace_products p WHERE p.business_id=$1 AND p.published=TRUE AND p.active=TRUE${domainSql} ORDER BY p.category,p.name`;
+  const{rows}=await pool.query(query,args);
   const media=await attachProductMedia(rows,!includePrivate);
   const variantMap=await variantProjectionForProducts(pool,{productIds:media.filter(row=>row.variant_mode).map(row=>row.id),publicOnly:!includePrivate});
   const withVariants=media.map(row=>row.variant_mode?{...row,variants:variantMap.get(Number(row.id))||[]}:{...row,variants:[]});
@@ -756,7 +758,19 @@ app.patch('/api/merchant/storefront/products/:id/availability',body,async(req,re
   res.json(await setFoodProductAvailability(pool,{businessId:Number(business.id),productId:Number(product.id),input:req.body||{}}));
 }catch(e){next(e)}})
 
-app.get('/api/merchant/storefront',async(req,res,next)=>{try{const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));let s=await storefront(business.id,true);if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}const readiness=await microbusinessReadinessSnapshot(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id});res.json({...s,readiness,products:await products(business.id,true),collections:await listCatalogCollections(pool,{businessId:Number(business.id),publicOnly:false})})}catch(e){next(e)}})
+app.get('/api/merchant/storefront',async(req,res,next)=>{try{
+  const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  let s=await storefront(business.id,true);
+  if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}
+  const readiness=await microbusinessReadinessSnapshot(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id});
+  const includeProducts=String(req.query.include_products||'true').toLowerCase()!=='false';
+  const domain=['food','non_food'].includes(clean(req.query.product_domain,20))?clean(req.query.product_domain,20):'';
+  res.json({
+    ...s,readiness,
+    products:includeProducts?await products(business.id,true,domain):[],
+    collections:await listCatalogCollections(pool,{businessId:Number(business.id),publicOnly:false})
+  });
+}catch(e){next(e)}})
 app.get('/api/merchant/storefront/geocode',async(req,res,next)=>{try{
   const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
   const results=await geocodeAddress(req.query.q,business.country_code||'PH');
