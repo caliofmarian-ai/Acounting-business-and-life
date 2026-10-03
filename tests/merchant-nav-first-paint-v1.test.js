@@ -27,7 +27,8 @@ test('Catalog and Storefront are separate Merchant desktop destinations before f
 test('shell routes reserved Merchant destinations without eager domain data requests',()=>{
   const route=slice(shell,'function openMerchantDestination','function ensureShellChrome');
   assert.match(route,/destination==='ordersQuickButton'\?window\.BusinessLifeOrders\?\.openMerchantOrders/);
-  assert.match(route,/destination==='catalogQuickButton'\?window\.BusinessLifeMarketplace\?\.openMerchantCatalog/);\n  assert.match(route,/destination==='marketQuickButton'\?window\.BusinessLifeMarketplace\?\.openMerchantStore/);
+  assert.match(route,/destination==='catalogQuickButton'\?window\.BusinessLifeMarketplace\?\.openMerchantCatalog/);
+  assert.match(route,/destination==='marketQuickButton'\?window\.BusinessLifeMarketplace\?\.openMerchantStore/);
   assert.match(route,/destination==='supQuickButton'\?window\.BusinessLifeSuppliers\?\.openMerchantProcurement/);
   assert.match(route,/destination==='deliveryQuickButton'\?window\.BusinessLifeDelivery\?\.openMerchantDelivery/);
   assert.doesNotMatch(route,/\/api\/|fetch\(|\.api\(/);
@@ -48,7 +49,8 @@ test('feature decorators never append remove or recreate canonical Merchant nav 
 
 test('all Merchant destination modules expose the action expected by shell routing',()=>{
   assert.match(orders,/BusinessLifeOrders=Object\.freeze\(\{[^}]*openMerchantOrders/);
-  assert.match(marketplace,/BusinessLifeMarketplace=Object\.freeze\(\{[^}]*openMerchantStore/);\n  assert.match(marketplace,/BusinessLifeMarketplace=Object\.freeze\(\{[^}]*openMerchantCatalog/);
+  assert.match(marketplace,/BusinessLifeMarketplace=Object\.freeze\(\{[^}]*openMerchantStore/);
+  assert.match(marketplace,/BusinessLifeMarketplace=Object\.freeze\(\{[^}]*openMerchantCatalog/);
   assert.match(suppliers,/BusinessLifeSuppliers=Object\.freeze\(\{[^}]*openMerchantProcurement/);
   assert.match(delivery,/BusinessLifeDelivery=Object\.freeze\(\{[^}]*openMerchantDelivery/);
 });
