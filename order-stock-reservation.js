@@ -79,7 +79,7 @@ async function addRecipeNeeds(client,{businessId,productId,orderQuantity,invento
 export async function orderReservationNeeds(client,order){
   const inventoryNeeds=new Map(),marketplaceNeeds=new Map();
   const items=await client.query(`
-    SELECT id,source_kind,source_id,name_snapshot,quantity
+    SELECT id,source_kind,source_id,catalog_variant_id,name_snapshot,quantity
       FROM order_items WHERE order_id=$1 ORDER BY id
   `,[Number(order.id)]);
   const addInventory=(id,item,unitCost,qty)=>{
@@ -93,12 +93,27 @@ export async function orderReservationNeeds(client,order){
     }
     if(item.source_kind!=='marketplace_product')continue;
     const p=await client.query(`
-      SELECT id,name,stock_tracked,stock_quantity,legacy_product_id,inventory_id,quantity_per_unit
+      SELECT id,name,stock_tracked,stock_quantity,legacy_product_id,inventory_id,quantity_per_unit,variant_mode
         FROM marketplace_products WHERE id=$1 AND business_id=$2
     `,[Number(item.source_id),Number(order.business_id)]);
     if(!p.rowCount)throw Object.assign(new Error('Marketplace product is no longer available for stock reservation'),{status:409});
     const row=p.rows[0];
-    if(row.inventory_id){
+    if(row.variant_mode&&!item.catalog_variant_id){
+      throw Object.assign(new Error(`${row.name} requires a retail variant selection`),{status:409});
+    }
+    if(item.catalog_variant_id){
+      const variant=await client.query(`
+        SELECT v.id,v.inventory_id
+          FROM catalog_product_variants v
+         WHERE v.id=$1 AND v.product_id=$2 AND v.active=TRUE
+      `,[Number(item.catalog_variant_id),Number(row.id)]);
+      if(!variant.rowCount||!variant.rows[0].inventory_id){
+        throw Object.assign(new Error(`${row.name} variant is no longer linked to valid Merchant stock`),{status:409});
+      }
+      const inv=await client.query(`SELECT id,item,unit_cost FROM inventory WHERE id=$1 AND business_id=$2`,[variant.rows[0].inventory_id,order.business_id]);
+      if(!inv.rowCount)throw Object.assign(new Error(`${row.name} variant stock is no longer available in this business`),{status:409});
+      addInventory(inv.rows[0].id,inv.rows[0].item,inv.rows[0].unit_cost,Number(row.quantity_per_unit)*Number(item.quantity));
+    }else if(row.inventory_id){
       const inv=await client.query(`SELECT id,item,unit_cost FROM inventory WHERE id=$1 AND business_id=$2`,[row.inventory_id,order.business_id]);
       if(!inv.rowCount)throw Object.assign(new Error(`${row.name} is not linked to valid Merchant stock`),{status:409});
       addInventory(inv.rows[0].id,inv.rows[0].item,inv.rows[0].unit_cost,Number(row.quantity_per_unit)*Number(item.quantity));
