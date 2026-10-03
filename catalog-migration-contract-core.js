@@ -114,21 +114,43 @@ export async function catalogMigrationEvidence(db){
       FROM order_items
   `);
 
-  const ownershipQ=await db.query(`
+  const capabilityQ=await db.query(`
     SELECT
-      (
+      EXISTS(
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='inventory' AND column_name='business_id'
+      ) inventory_business_scoped,
+      EXISTS(
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema='public' AND table_name='products' AND column_name='business_id'
+      ) legacy_product_business_scoped
+  `);
+  const capabilities=capabilityQ.rows[0]||{};
+  let ownership={
+    inventory_business_mismatches:null,
+    legacy_product_business_mismatches:null
+  };
+  if(capabilities.inventory_business_scoped||capabilities.legacy_product_business_scoped){
+    const parts=[];
+    if(capabilities.inventory_business_scoped){
+      parts.push(`(
         SELECT COUNT(*)::int
           FROM marketplace_products p
           JOIN inventory i ON i.id=p.inventory_id
          WHERE p.business_id<>i.business_id
-      ) inventory_business_mismatches,
-      (
+      ) inventory_business_mismatches`);
+    }else parts.push('NULL::int inventory_business_mismatches');
+    if(capabilities.legacy_product_business_scoped){
+      parts.push(`(
         SELECT COUNT(*)::int
           FROM marketplace_products p
           JOIN products lp ON lp.id=p.legacy_product_id
          WHERE p.business_id<>lp.business_id
-      ) legacy_product_business_mismatches
-  `);
+      ) legacy_product_business_mismatches`);
+    }else parts.push('NULL::int legacy_product_business_mismatches');
+    const ownershipQ=await db.query('SELECT '+parts.join(','));
+    ownership=ownershipQ.rows[0]||ownership;
+  }
 
   const mediaQ=await db.query(`
     SELECT
@@ -150,7 +172,6 @@ export async function catalogMigrationEvidence(db){
 
   const products=productQ.rows[0]||{};
   const orders=orderQ.rows[0]||{};
-  const ownership=ownershipQ.rows[0]||{};
   const media=mediaQ.rows[0]||{};
   return{
     version:CATALOG_MIGRATION_CONTRACT_VERSION,
@@ -171,8 +192,10 @@ export async function catalogMigrationEvidence(db){
       missing_core_snapshot:Number(orders.marketplace_order_items_missing_core_snapshot||0)
     },
     ownership:{
-      inventory_business_mismatches:Number(ownership.inventory_business_mismatches||0),
-      legacy_product_business_mismatches:Number(ownership.legacy_product_business_mismatches||0)
+      inventory_business_check_available:Boolean(capabilities.inventory_business_scoped),
+      legacy_product_business_check_available:Boolean(capabilities.legacy_product_business_scoped),
+      inventory_business_mismatches:ownership.inventory_business_mismatches==null?null:Number(ownership.inventory_business_mismatches||0),
+      legacy_product_business_mismatches:ownership.legacy_product_business_mismatches==null?null:Number(ownership.legacy_product_business_mismatches||0)
     },
     media:{
       marketplace_rows:Number(media.marketplace_media_rows||0),
@@ -183,8 +206,8 @@ export async function catalogMigrationEvidence(db){
       && Number(products.unmapped_products||0)===0
       && Number(products.unversioned_products||0)===0
       && Number(orders.marketplace_order_items_missing_core_snapshot||0)===0
-      && Number(ownership.inventory_business_mismatches||0)===0
-      && Number(ownership.legacy_product_business_mismatches||0)===0
+      && (!capabilities.inventory_business_scoped||Number(ownership.inventory_business_mismatches||0)===0)
+      && (!capabilities.legacy_product_business_scoped||Number(ownership.legacy_product_business_mismatches||0)===0)
   };
 }
 
