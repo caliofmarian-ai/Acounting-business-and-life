@@ -84,15 +84,18 @@ export function serializeInventoryCountSession(session,items=[]){
 
 async function loadSession(db,{businessId,sessionId}){
   const sessionQuery=await db.query(`
-    SELECT *
-      FROM inventory_count_sessions
-     WHERE id=$1 AND business_id=$2
+    SELECT s.*,l.name location_name
+      FROM inventory_count_sessions s
+      LEFT JOIN inventory_storage_locations l ON l.id=s.location_id AND l.business_id=s.business_id
+     WHERE s.id=$1 AND s.business_id=$2
   `,[sessionId,businessId]);
   if(!sessionQuery.rowCount)return null;
   const items=await db.query(`
-    SELECT si.*,i.item,i.inventory_type,i.storage_area_type,i.storage_condition,i.storage_location_label,i.unit
+    SELECT si.*,i.item,i.inventory_type,i.storage_area_type,i.storage_condition,i.storage_location_label,i.unit,
+           l.name location_name
       FROM inventory_count_session_items si
       JOIN inventory i ON i.id=si.inventory_id AND i.business_id=$2
+      LEFT JOIN inventory_storage_locations l ON l.id=si.location_id AND l.business_id=$2
      WHERE si.session_id=$1
      ORDER BY i.inventory_type,i.storage_area_type,i.item,i.id
   `,[sessionId,businessId]);
@@ -105,8 +108,9 @@ export async function ensureInventoryCountSessionSchema(pool){
       id BIGSERIAL PRIMARY KEY,
       business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
       count_type TEXT NOT NULL CHECK(count_type IN ('full','cycle')),
-      scope_type TEXT NOT NULL CHECK(scope_type IN ('all','inventory_type','storage_area_type')),
+      scope_type TEXT NOT NULL CHECK(scope_type IN ('all','inventory_type','storage_area_type','location_id')),
       scope_value TEXT NOT NULL DEFAULT '',
+      location_id BIGINT REFERENCES inventory_storage_locations(id) ON DELETE RESTRICT,
       status TEXT NOT NULL DEFAULT 'in_progress' CHECK(status IN ('in_progress','review','posted','cancelled')),
       actor_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
       reviewed_by_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
@@ -117,6 +121,11 @@ export async function ensureInventoryCountSessionSchema(pool){
       posted_at TIMESTAMPTZ,
       cancelled_at TIMESTAMPTZ
     );
+    ALTER TABLE inventory_count_sessions ADD COLUMN IF NOT EXISTS location_id BIGINT REFERENCES inventory_storage_locations(id) ON DELETE RESTRICT;
+    ALTER TABLE inventory_count_sessions DROP CONSTRAINT IF EXISTS inventory_count_sessions_scope_type_check;
+    ALTER TABLE inventory_count_sessions ADD CONSTRAINT inventory_count_sessions_scope_type_check
+      CHECK(scope_type IN ('all','inventory_type','storage_area_type','location_id'));
+
     CREATE INDEX IF NOT EXISTS inventory_count_sessions_business_idx
       ON inventory_count_sessions(business_id,started_at DESC,id DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS inventory_count_sessions_one_active_per_business
@@ -135,6 +144,8 @@ export async function ensureInventoryCountSessionSchema(pool){
       posted_adjustment_id BIGINT REFERENCES inventory_adjustments(id) ON DELETE SET NULL,
       PRIMARY KEY(session_id,inventory_id)
     );
+    ALTER TABLE inventory_count_session_items ADD COLUMN IF NOT EXISTS location_id BIGINT REFERENCES inventory_storage_locations(id) ON DELETE RESTRICT;
+
     CREATE INDEX IF NOT EXISTS inventory_count_session_items_inventory_idx
       ON inventory_count_session_items(inventory_id,session_id DESC);
   `);
@@ -143,7 +154,8 @@ export async function ensureInventoryCountSessionSchema(pool){
 export function registerInventoryCountSessionRoutes(app,deps){
   const {
     pool,jsonBody,accountingContext,inventoryTypes,
-    canUseSupplyLots,inventoryLotRows,planPhysicalStockReduction,applyPhysicalLotReductions
+    canUseSupplyLots,inventoryLotRows,planPhysicalStockReduction,applyPhysicalLotReductions,
+    reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions,reconcileInventoryLocationBalance
   }=deps;
 
   async function merchantContext(req){
