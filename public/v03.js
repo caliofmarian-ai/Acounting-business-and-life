@@ -1,5 +1,6 @@
 import {createInventoryCountUi} from './inventory-count-ui.js';
 import {createInventoryScanUi} from './inventory-scan-ui.js';
+import {createInventoryLocationUi} from './inventory-location-ui.js';
 const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
@@ -513,9 +514,21 @@ function updateRestockSettingsPreview(){
     ?'<strong class="negative">Target must be equal to or higher than the low-stock alert.</strong>'
     :`Notify when usable stock reaches <strong>${num(alert,4)} ${esc(unit)}</strong>. Replenishment suggestions aim for <strong>${num(target,4)} ${esc(unit)}</strong>.`;
 }
-const inventoryCountUi=createInventoryCountUi({
+let inventoryCountUi=null;
+const inventoryLocationUi=createInventoryLocationUi({
   api,
   getInventory:()=>inventory,
+  refreshInventory:()=>loadStock(),
+  escapeHtml:esc,
+  formatNumber:num,
+  onLocationsChanged:()=>inventoryCountUi?.syncScopeOptions()
+});
+inventoryLocationUi.wire();
+
+inventoryCountUi=createInventoryCountUi({
+  api,
+  getInventory:()=>inventory,
+  getLocations:()=>inventoryLocationUi.getLocations(),
   refreshInventory:()=>loadStock(),
   escapeHtml:esc,
   formatNumber:num,
@@ -568,6 +581,8 @@ async function loadStock(){
   fillStorageEditor();
   fillRestockSettingsEditor();
   inventoryScanUi.syncInventory();
+  await inventoryLocationUi.load();
+  inventoryCountUi.syncScopeOptions();
   await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays),inventoryCountUi.load()]);
 }
 function lotExpiryCopy(row){
