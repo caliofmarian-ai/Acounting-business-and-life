@@ -11,6 +11,7 @@ import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocit
 import {restoreLotAllocation} from './inventory-lot-runtime.js';
 import {ensureOrderStockReservationSchema,reserveOrderStock,consumeOrderReservations,releaseOrderReservations} from './order-stock-reservation.js';
 import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,requireMicrobusinessCommerceEligibility,filterCommerceEligibleBusinessIds} from './microbusiness-readiness-core.js';
+import {ensureFoodAllergenSchema,deriveProductAllergenSummary,allergenPublicProjection} from './food-allergen-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -202,7 +203,7 @@ async function initDb(){await pool.query(`
     SELECT b.id,b.name,'Local business on Business & Life','food','draft','',15,TRUE,TRUE
     FROM businesses b WHERE b.id=1
     ON CONFLICT(business_id) DO NOTHING;
-`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool)}
+`);await ensureCatalogMediaSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await ensureOrderStockReservationSchema(pool);await ensureFoodAllergenSchema(pool)}
 
 async function storefrontMedia(businessId){
   const {rows}=await pool.query(`SELECT id,business_id,media_kind,data_url,alt_text,sort_order,created_at FROM merchant_storefront_media WHERE business_id=$1 ORDER BY media_kind='cover' DESC,sort_order,id`,[businessId]);
@@ -242,11 +243,27 @@ async function attachProductMedia(rows,publicOnly=false){
     return{...row,images,image_data_url:primary?.data_url||row.image_data_url||'',image_source_type:primary?.source_type||(row.image_data_url?'legacy_upload':'')};
   });
 }
+async function attachMarketplaceAllergens(rows,{publicOnly=false}={}){
+  return Promise.all((rows||[]).map(async row=>{
+    if(row.product_domain!=='food'||row.product_kind!=='prepared_food'||!row.legacy_product_id){
+      return{...row,allergen_information:null,allergen_review_current:null};
+    }
+    const summary=await deriveProductAllergenSummary(pool,{businessId:row.business_id,productId:row.legacy_product_id});
+    const allergen_information=summary?allergenPublicProjection(summary):null;
+    if(publicOnly){
+      const {legacy_product_id,...safe}=row;
+      return{...safe,allergen_information,allergen_review_current:Boolean(summary?.review_current)};
+    }
+    return{...row,allergen_information,allergen_review_current:Boolean(summary?.review_current),allergen_revision:summary?.revision||null};
+  }));
+}
 async function products(businessId,includePrivate=false){
   const query=includePrivate
     ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1 ORDER BY p.category,p.name`
     :`SELECT p.* FROM marketplace_products p WHERE p.business_id=$1 AND p.published=TRUE AND p.active=TRUE ORDER BY p.category,p.name`;
-  const{rows}=await pool.query(query,[businessId]);return attachProductMedia(rows,!includePrivate)
+  const{rows}=await pool.query(query,[businessId]);
+  const media=await attachProductMedia(rows,!includePrivate);
+  return attachMarketplaceAllergens(media,{publicOnly:!includePrivate})
 }
 
 // Guest/public read-only boundary. These projections intentionally do not reuse internal objects.
@@ -270,8 +287,9 @@ async function guestPublicStorefront(businessId){
   };
 }
 async function guestPublicProducts(businessId){
-  const {rows}=await pool.query(`SELECT id,business_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
-  return attachProductMedia(rows,true);
+  const {rows}=await pool.query(`SELECT id,business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,image_data_url FROM marketplace_products WHERE business_id=$1 AND published=TRUE AND active=TRUE ORDER BY category,name`,[businessId]);
+  const media=await attachProductMedia(rows,true);
+  return attachMarketplaceAllergens(media,{publicOnly:true});
 }
 
 async function importLegacyProducts(businessId){const r=await pool.query(`INSERT INTO marketplace_products(business_id,legacy_product_id,name,description,category,product_domain,product_kind,unit_code,quantity_per_unit,selling_price,stock_tracked,stock_quantity,active,published) SELECT p.business_id,p.id,p.name,'',p.category,'food','prepared_food','item',1,p.selling_price,FALSE,NULL,p.active,FALSE FROM products p WHERE p.business_id=$1 AND COALESCE(p.product_kind,'prepared_recipe')='prepared_recipe' ON CONFLICT(business_id,legacy_product_id) WHERE legacy_product_id IS NOT NULL DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,selling_price=EXCLUDED.selling_price,active=EXCLUDED.active,updated_at=NOW() RETURNING id`,[businessId]);return r.rowCount}
@@ -581,6 +599,12 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
     }else inventoryId=null;
     const quantityPerUnit=Number(req.body?.quantity_per_unit??old.quantity_per_unit);
     if(!positive(quantityPerUnit))return res.status(400).json({error:'Stock quantity per sold unit must be greater than zero'});
+    const publishRequested=req.body?.published===true&&old.published!==true;
+    if(publishRequested&&kind==='prepared_food'){
+      if(!old.legacy_product_id)return res.status(409).json({error:'Prepared food must be linked to a confirmed prepared product before publication.'});
+      const allergen=await deriveProductAllergenSummary(pool,{businessId:business.id,productId:old.legacy_product_id});
+      if(!allergen?.review_current)return res.status(409).json({error:'Review and confirm the current allergen information before publishing this prepared food.',code:'ALLERGEN_REVIEW_REQUIRED'});
+    }
     const{rows}=await pool.query(`
       UPDATE marketplace_products SET
         inventory_id=$1,name=$2,description=$3,category=$4,product_domain=$5,product_kind=$6,
