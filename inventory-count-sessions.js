@@ -428,8 +428,11 @@ export function registerInventoryCountSessionRoutes(app,deps){
       const lotTracking=await canUseSupplyLots(client);
       const postedAdjustments=[];
       for(const row of variances){
-        const inventoryId=Number(row.inventory_id),before=Number(row.expected_quantity);
-        const safeAfter=Math.max(0,Number(row.counted_quantity)),delta=safeAfter-before;
+        const inventoryId=Number(row.inventory_id),countBefore=Number(row.expected_quantity);
+        const countAfter=Math.max(0,Number(row.counted_quantity)),delta=countAfter-countBefore;
+        const canonicalBefore=Number(row.canonical_quantity??row.current_quantity);
+        const canonicalAfter=locationId==null?countAfter:canonicalBefore+delta;
+        if(canonicalAfter<-1e-9)throw Object.assign(new Error('Location count variance would make business-total Inventory negative.'),{status:409,inventory_id:inventoryId});
         if(delta<0){
           const reserved=await client.query(`
             SELECT COALESCE(SUM(quantity_reserved),0) reserved
@@ -445,35 +448,55 @@ export function registerInventoryCountSessionRoutes(app,deps){
         }
         let physicalPlan={ok:true,allocations:[],untracked_used:0},appliedLots=[];
         if(delta<0&&lotTracking){
-          const lots=await inventoryLotRows(client,{businessId:ctx.business.id,inventoryId,lock:true});
-          physicalPlan=planPhysicalStockReduction({
-            quantityToRemove:-delta,
-            inventoryQuantity:before,
-            lots,
-            explicitLotId:null,
-            mode:'count',
-            expiredOnly:false,
-            now:Date.now()
-          });
+          if(locationId!=null){
+            physicalPlan=await planLocationStockReduction(client,{
+              businessId:ctx.business.id,inventoryId,locationId,quantityToRemove:-delta,actorAccountId:ctx.me.account.id
+            });
+          }else{
+            const lots=await inventoryLotRows(client,{businessId:ctx.business.id,inventoryId,lock:true});
+            physicalPlan=planPhysicalStockReduction({
+              quantityToRemove:-delta,
+              inventoryQuantity:canonicalBefore,
+              lots,
+              explicitLotId:null,
+              mode:'count',
+              expiredOnly:false,
+              now:Date.now()
+            });
+          }
           if(!physicalPlan.ok){
-            throw Object.assign(new Error('Lot quantities cannot be reconciled with this physical count. Recount the item or correct lot evidence first.'),{
+            throw Object.assign(new Error(locationId!=null
+              ?'Location lot quantities cannot be reconciled with this physical count. Recount the location or correct transfer/lot evidence first.'
+              :'Lot quantities cannot be reconciled with this physical count. Recount the item or correct lot evidence first.'),{
               status:409,inventory_id:inventoryId,lot_reconciliation:physicalPlan
             });
           }
           appliedLots=await applyPhysicalLotReductions(client,physicalPlan.allocations||[]);
+          if(locationId!=null)await applyLocationLotReductions(client,{
+            businessId:ctx.business.id,inventoryId,locationId,allocations:physicalPlan.allocations||[]
+          });
         }
 
         await client.query(`
           UPDATE inventory SET quantity=$1,updated_at=NOW()
            WHERE id=$2 AND business_id=$3
-        `,[safeAfter,inventoryId,ctx.business.id]);
+        `,[Math.max(0,canonicalAfter),inventoryId,ctx.business.id]);
+        if(locationId!=null){
+          await client.query(`
+            UPDATE inventory_location_balances
+               SET quantity=$1,updated_at=NOW()
+             WHERE business_id=$2 AND inventory_id=$3 AND location_id=$4
+          `,[countAfter,ctx.business.id,inventoryId,locationId]);
+        }else{
+          await reconcileBusinessInventoryLocations(client,{businessId:ctx.business.id,actorAccountId:ctx.me.account.id});
+        }
 
         if(lotTracking){
           const afterLots=await inventoryLotRows(client,{businessId:ctx.business.id,inventoryId,lock:false});
           const trackedAfter=afterLots.reduce((sum,x)=>sum+Number(x.quantity_remaining_base||0),0);
-          if(trackedAfter>safeAfter+1e-6){
+          if(trackedAfter>Math.max(0,canonicalAfter)+1e-6){
             throw Object.assign(new Error('Lot quantities would exceed the corrected Inventory quantity. Review the count or lot evidence.'),{
-              status:409,inventory_id:inventoryId,tracked_quantity:trackedAfter,inventory_quantity:safeAfter
+              status:409,inventory_id:inventoryId,tracked_quantity:trackedAfter,inventory_quantity:Math.max(0,canonicalAfter)
             });
           }
         }
@@ -487,9 +510,9 @@ export function registerInventoryCountSessionRoutes(app,deps){
           ) VALUES($1,$2,'count_correction',$3,$4,$5,$6,$7,$8,$9,$10,$11)
           RETURNING *
         `,[
-          ctx.business.id,inventoryId,before,delta,safeAfter,row.current_unit,Number(row.current_unit_cost||0),
+          ctx.business.id,inventoryId,canonicalBefore,delta,Math.max(0,canonicalAfter),row.current_unit,Number(row.current_unit_cost||0),
           delta*Number(row.current_unit_cost||0),
-          cleanText(`Inventory count session #${sessionId}${note?' · '+note:''}`,300),
+          cleanText(`Inventory ${locationId!=null?'location ':''}count session #${sessionId}${locationId!=null?' · '+(row.location_name||('location '+locationId)):''}${note?' · '+note:''}`,300),
           ctx.me.account.id,untrackedDelta
         ]);
         const adjustmentId=Number(saved.rows[0].id);
@@ -504,6 +527,17 @@ export function registerInventoryCountSessionRoutes(app,deps){
             cleanText(allocation.lot_state||'',30),allocation.expires_at||null
           ]);
         }
+        if(locationId!=null){
+          const check=await client.query(`
+            SELECT COALESCE(SUM(quantity),0) total
+              FROM inventory_location_balances
+             WHERE business_id=$1 AND inventory_id=$2
+          `,[ctx.business.id,inventoryId]);
+          if(Math.abs(Number(check.rows[0].total)-Math.max(0,canonicalAfter))>1e-6){
+            throw Object.assign(new Error('Location count posting must conserve business-total stock across locations.'),{status:409,inventory_id:inventoryId});
+          }
+        }
+
         await client.query(`
           UPDATE inventory_count_session_items SET posted_adjustment_id=$1
            WHERE session_id=$2 AND inventory_id=$3
