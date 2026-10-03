@@ -24,6 +24,7 @@ import {
 import {directProductCostEstimate} from './food-cost-core.js';
 import {buildWasteAnalytics} from './inventory-waste-core.js';
 import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
+import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -310,6 +311,7 @@ async function initAccountingTenancyDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await ensureInventoryIdentifierSchema(pool);
   await ensureInventoryCountSessionSchema(pool);
   await addBusinessForeignKeys();
   await provisionExistingBindings();
@@ -565,6 +567,13 @@ app.get('/api/inventory',async(req,res,next)=>{try{
   });
   res.json(rows);
 }catch(e){next(e)}});
+registerInventoryIdentifierRoutes(app,{
+  pool,
+  jsonBody,
+  accountingContext,
+  inventoryAvailabilityRows
+});
+
 registerInventoryCountSessionRoutes(app,{
   pool,
   jsonBody,
