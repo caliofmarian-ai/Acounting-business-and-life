@@ -639,23 +639,157 @@ const inventoryScanUi=createInventoryScanUi({
 });
 inventoryScanUi.wire();
 
+function inventoryDomainOf(item={}){
+  return item.inventory_domain||classificationFromLegacyType(item.inventory_type||'ingredient').domain;
+}
+function inventoryRoleOf(item={}){
+  return item.stock_role||classificationFromLegacyType(item.inventory_type||'ingredient').role;
+}
+function renderInventoryList(){
+  const list=$('stockList');if(!list)return;
+  const typeLabelMap={
+    ingredient:'Ingredient',resale_item:'Resale item',production_material:'Production material',
+    packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',
+    hygiene:'Hygiene',operational_supply:'Operational supply'
+  };
+  const visible=inventoryDomainFilter==='all'?inventory:inventory.filter(i=>inventoryDomainOf(i)===inventoryDomainFilter);
+  const nodes=visible.map(i=>{
+    const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);
+    const usable=Number(i.usable_quantity??i.quantity??0);
+    const physical=Number(i.physical_quantity??i.quantity??0);
+    const onHand=Number(i.on_hand_quantity??physical);
+    const reserved=Number(i.reserved_quantity||0);
+    const unavailable=Number(i.unavailable_quantity??i.blocked_quantity??0);
+    const available=Number(i.available_quantity??Math.max(0,usable-reserved));
+    const incoming=Number(i.incoming_quantity||0);
+    const domain=inventoryDomainOf(i),role=inventoryRoleOf(i);
+    const low=available<=Number(i.reorder_level);
+    const purchase=i.last_purchase_quantity
+      ? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}`
+      :'';
+    const foodState=`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)} • unavailable ${num(unavailable,4)} • incoming ${num(incoming,4)}`;
+    const universalState=`on hand ${num(onHand,4)} ${esc(i.unit)} • available ${num(available,4)} • reserved ${num(reserved,4)} • unavailable ${num(unavailable,4)} • incoming ${num(incoming,4)}`;
+    const stockCopy=domain==='food'?foodState:universalState;
+    const condition=STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other';
+    const area=STORAGE_AREA_LABELS[i.storage_area_type]||'Other / not set';
+    const location=i.storage_location_label?` · ${esc(i.storage_location_label)}`:'';
+    const storageCopy=`storage ${esc(condition)} · ${esc(area)}${location}${i.storage_segregated?' · segregated':''}`;
+    const target=Number(i.target_level)>0?Number(i.target_level):Number(i.reorder_level);
+    const classification=`${INVENTORY_DOMAIN_LABELS[domain]||domain} · ${INVENTORY_ROLE_LABELS[role]||typeLabelMap[i.inventory_type]||role}`;
+    const ids=[i.internal_sku?`SKU ${esc(i.internal_sku)}`:'',i.barcode?`GTIN ${esc(i.barcode)}`:''].filter(Boolean).join(' · ');
+    d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(classification)} • ${stockCopy} • ${storageCopy}${ids?' • '+ids:''} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)} • target ${num(target,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;
+    return d;
+  });
+  list.replaceChildren(...(nodes.length?nodes:[emptyRow(inventoryDomainFilter==='all'?'No inventory items yet.':'No items in this Inventory area.')]));
+  document.querySelectorAll('#inventoryDomainFilters [data-inventory-domain]').forEach(button=>{
+    button.classList.toggle('active',button.dataset.inventoryDomain===inventoryDomainFilter);
+  });
+}
+function wireInventoryDomainFilters(){
+  document.querySelectorAll('#inventoryDomainFilters [data-inventory-domain]').forEach(button=>{
+    button.onclick=()=>{
+      const next=button.dataset.inventoryDomain||'all';
+      inventoryDomainFilter=['all','food','non_food','operations'].includes(next)?next:'all';
+      renderInventoryList();
+    };
+  });
+}
+function fillInventoryUnavailableEditor(){
+  const select=$('inventoryUnavailableItem');if(!select)return;
+  const previous=select.value;
+  select.innerHTML=inventory.length
+    ?'<option value="">Choose an item</option>'+inventory.map(i=>`<option value="${i.id}">${esc(i.item)} · available ${num(i.available_quantity??0,4)} ${esc(i.unit||'')}</option>`).join('')
+    :'<option value="">Add stock first</option>';
+  if(previous&&inventory.some(i=>String(i.id)===String(previous)))select.value=previous;
+  updateInventoryUnavailablePreview();
+}
+function updateInventoryUnavailablePreview(){
+  const out=$('inventoryUnavailablePreview');if(!out)return;
+  const item=inventory.find(i=>Number(i.id)===Number($('inventoryUnavailableItem')?.value));
+  const qty=Number($('inventoryUnavailableQuantity')?.value||0);
+  if(!item){out.textContent='Choose an item to see how much is currently available.';return}
+  const available=Number(item.available_quantity||0),onHand=Number(item.on_hand_quantity??item.physical_quantity??item.quantity??0);
+  const unavailable=Number(item.unavailable_quantity||0),reserved=Number(item.reserved_quantity||0);
+  if(qty>available+1e-9){
+    out.innerHTML=`<strong class="negative">Only ${num(available,4)} ${esc(item.unit)} is currently available to place on hold.</strong>`;
+    return;
+  }
+  out.innerHTML=`On hand <strong>${num(onHand,4)} ${esc(item.unit)}</strong> • Available <strong>${num(available,4)}</strong> • Reserved ${num(reserved,4)} • Unavailable ${num(unavailable,4)}${qty>0?` • after this hold: available <strong>${num(Math.max(0,available-qty),4)}</strong>`:''}`;
+}
+async function loadInventoryUnavailableAllocations(){
+  const list=$('inventoryUnavailableList');if(!list)return[];
+  const inventoryId=Number($('inventoryUnavailableItem')?.value);
+  if(!Number.isInteger(inventoryId)){
+    list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
+    return[];
+  }
+  try{
+    const rows=await api(`/api/inventory/${inventoryId}/unavailable`);
+    const nodes=(Array.isArray(rows)?rows:[]).map(row=>{
+      const d=document.createElement('div');d.className='listRow';
+      const active=row.state==='active',when=row.created_at?new Date(row.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'}):'';
+      d.innerHTML=`<div class="rowMain"><strong>${esc(String(row.reason||'other').replaceAll('_',' '))} · ${num(row.quantity,4)} ${esc(row.unit||'')}</strong><small>${row.note?esc(row.note)+' • ':''}${row.location_name?esc(row.location_name)+' • ':''}${esc(when)}${active?'':' • released'}</small></div>${active?`<button type="button" class="miniBtn" data-release-unavailable="${Number(row.id)}">Restore</button>`:'<span>Released</span>'}`;
+      d.querySelector('[data-release-unavailable]')?.addEventListener('click',async()=>{
+        try{
+          await api(`/api/inventory/${inventoryId}/unavailable/${Number(row.id)}/release`,{method:'POST',body:JSON.stringify({note:'Restored from Inventory workspace'})});
+          await loadStock();
+          await loadInventoryUnavailableAllocations();
+        }catch(error){const msg=$('inventoryUnavailableMessage');if(msg)msg.textContent=error.message}
+      });
+      return d;
+    });
+    list.replaceChildren(...(nodes.length?nodes:[emptyRow('No unavailable-stock holds for this item.')]));
+    return rows;
+  }catch(error){
+    list.replaceChildren(emptyRow(error.message||'Unavailable-stock history could not be loaded.'));
+    return[];
+  }
+}
+function wireInventoryUnavailableUi(){
+  const form=$('inventoryUnavailableForm'),select=$('inventoryUnavailableItem'),qty=$('inventoryUnavailableQuantity');
+  if(select)select.onchange=()=>{updateInventoryUnavailablePreview();loadInventoryUnavailableAllocations().catch(()=>{})};
+  if(qty)qty.oninput=updateInventoryUnavailablePreview;
+  if(form)form.onsubmit=async event=>{
+    event.preventDefault();
+    const message=$('inventoryUnavailableMessage');if(message)message.textContent='Saving hold…';
+    try{
+      const inventoryId=Number(select?.value),quantity=Number(qty?.value);
+      if(!Number.isInteger(inventoryId))throw new Error('Choose an Inventory item.');
+      await api(`/api/inventory/${inventoryId}/unavailable`,{method:'POST',body:JSON.stringify({
+        reason:$('inventoryUnavailableReason')?.value||'other',
+        quantity,
+        note:$('inventoryUnavailableNote')?.value||''
+      })});
+      if(message)message.textContent='Stock marked unavailable. No cash or accounting transaction was created.';
+      if(qty)qty.value='';if($('inventoryUnavailableNote'))$('inventoryUnavailableNote').value='';
+      await loadStock();
+      if(select)select.value=String(inventoryId);
+      fillInventoryUnavailableEditor();
+      if(select)select.value=String(inventoryId);
+      updateInventoryUnavailablePreview();
+      await loadInventoryUnavailableAllocations();
+    }catch(error){if(message)message.textContent=error.message}
+  };
+}
 async function loadStock(){
   const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
-  inventory=results[0];
-  const typeLabelMap={ingredient:'Ingredient',packaging:'Packaging',kitchen_consumable:'Kitchen consumable',cleaning_sanitation:'Cleaning & sanitation',hygiene:'Hygiene',operational_supply:'Operational supply'};const nodes=inventory.map(i=>{const d=document.createElement('div');d.className='listRow';d.dataset.inventoryId=String(i.id);const usable=Number(i.usable_quantity??i.quantity??0),physical=Number(i.physical_quantity??i.quantity??0),blocked=Number(i.blocked_quantity||0),reserved=Number(i.reserved_quantity||0),available=Number(i.available_quantity??Math.max(0,usable-reserved)),low=usable<=Number(i.reorder_level);const purchase=i.last_purchase_quantity? ` • last bought ${num(i.last_purchase_quantity,4)} ${esc(i.last_purchase_unit||'')}${i.last_purchase_total_cost!=null?' for '+money(i.last_purchase_total_cost):''}` : '';const kind=i.inventory_type||'ingredient';const stockCopy=reserved>0?`available ${num(available,4)} ${esc(i.unit)} • reserved ${num(reserved,4)} • usable ${num(usable,4)} • physical ${num(physical,4)}`:blocked>0?`usable ${num(usable,4)} ${esc(i.unit)} • physical ${num(physical,4)} • blocked ${num(blocked,4)}`:`${num(usable,4)} ${esc(i.unit)} usable`;const condition=STORAGE_CONDITION_LABELS[i.storage_condition]||'Not set / other',area=STORAGE_AREA_LABELS[i.storage_area_type]||'Other / not set',location=i.storage_location_label?` · ${esc(i.storage_location_label)}`:'';const storageCopy=`storage ${esc(condition)} · ${esc(area)}${location}${i.storage_segregated?' · segregated':''}`,target=Number(i.target_level)>0?Number(i.target_level):Number(i.reorder_level);d.innerHTML=`<div class="rowMain"><strong>${esc(i.item)}</strong><small>${esc(typeLabelMap[kind]||kind)} • ${stockCopy} • ${storageCopy} • cost ${money(i.unit_cost)} / ${esc(i.unit)} • notify below ${num(i.reorder_level,4)} ${esc(i.unit)} • target ${num(target,4)} ${esc(i.unit)}${purchase}</small></div><span class="${low?'negative':''}">${low?'LOW':'OK'}</span>`;return d});
-  $('stockList').replaceChildren(...(nodes.length?nodes:[emptyRow('No inventory items yet.')]));
-  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
+  inventory=Array.isArray(results[0])?results[0]:[];
+  renderInventoryList();
+  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.available_quantity??i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
   fillIngredientSelect();
   await fillIngredientAllergenEditor();
   fillConsumableRuleInventory();
   fillStockAdjustmentInventory();
   fillStorageEditor();
   fillRestockSettingsEditor();
+  fillInventoryUnavailableEditor();
   inventoryScanUi.syncInventory();
   await inventoryLocationUi.load();
   inventoryCountUi.syncScopeOptions();
   await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays),inventoryCountUi.load()]);
+  if(Number.isInteger(Number($('inventoryUnavailableItem')?.value)))await loadInventoryUnavailableAllocations();
 }
+
 function lotExpiryCopy(row){
   if(row.lot_state&&row.lot_state!=='available'&&row.lot_state!=='depleted')return 'Held: '+String(row.lot_state).replaceAll('_',' ');
   if(row.expiry_status==='expired')return 'Expired';
