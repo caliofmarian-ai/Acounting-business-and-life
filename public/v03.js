@@ -187,8 +187,9 @@ function stockPurchasePreview(){
   const out=$('stockPurchasePreview');if(!out)return;
   const x=toBase($('stockPurchaseQty')?.value,$('stockPurchaseUnit')?.value),cost=Number($('stockTotalCost')?.value||0);
   if(!x||!Number.isFinite(cost)||cost<0){out.textContent='Enter a purchase quantity and total cost.';return}
-  const unitCost=x.qty>0?cost/x.qty:0;
-  out.innerHTML=`Stored as <strong>${num(x.qty,4)} ${esc(x.base)}</strong> • calculated cost <strong>${money(unitCost)} / ${esc(x.base)}</strong>`;
+  const unitCost=x.qty>0?cost/x.qty:0,alert=Math.max(0,Number($('stockReorderQty')?.value||0)),targetInput=Math.max(0,Number($('stockTargetQty')?.value||0)),target=targetInput>0?targetInput:alert,levelUnit=$('stockReorderUnit')?.value||x.base;
+  if(targetInput>0&&targetInput<alert){out.innerHTML='<strong class="negative">Restock target must be equal to or higher than the low-stock alert.</strong>';return}
+  out.innerHTML=`Stored as <strong>${num(x.qty,4)} ${esc(x.base)}</strong> • calculated cost <strong>${money(unitCost)} / ${esc(x.base)}</strong> • notify below <strong>${num(alert,4)} ${esc(levelUnit)}</strong> • target <strong>${num(target,4)} ${esc(levelUnit)}</strong>`;
 }
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cacheKey = (key) => `abl_cache_${key}`;
