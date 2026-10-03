@@ -1229,11 +1229,11 @@ function catalogAdaptiveAttributesMarkup(schema,categoryCode,values={},prefix='c
   return '<div class="catalogAdaptiveHead"><div><strong>'+mh(category.label)+' details</strong><small>Only fields relevant to this category are shown.</small></div><span>'+mappings.length+' fields</span></div>'+
     '<div class="catalogAdaptiveGrid">'+mappings.map(mapping=>catalogAttributeField(mapping,catalogAttributeValue(values,mapping.attribute_code),prefix)).join('')+'</div>';
 }
-function collectCatalogAttributes(root){
+function collectCatalogAttributes(root,{includeEmpty=false}={}){
   const values={};
   root?.querySelectorAll('[data-catalog-attribute]').forEach(input=>{
     const code=input.dataset.catalogAttribute,type=input.dataset.valueType||'text',raw=input.value;
-    if(raw==='')return;
+    if(raw===''){if(includeEmpty)values[code]='';return}
     if(type==='number')values[code]=Number(raw);
     else if(type==='boolean')values[code]=raw==='true';
     else values[code]=raw;
