@@ -14,6 +14,7 @@ import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
 import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
 import { inventoryLotExpiryStatus,planPhysicalStockReduction } from './inventory-lot-core.js';
+import {inventoryStorageDefaults,requireValidInventoryStorage} from './inventory-storage-core.js';
 import { planInventoryFefo,applyLotAllocations,canUseSupplyLots,inventoryLotRows,applyPhysicalLotReductions,inventoryAvailabilityRows } from './inventory-lot-runtime.js';
 import {reserveOrderStock,reservationExpiryForOrder} from './order-stock-reservation.js';
 
@@ -76,6 +77,14 @@ async function initAccountingTenancyDb() {
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS inventory_type TEXT NOT NULL DEFAULT 'ingredient';
     ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_inventory_type_check;
     ALTER TABLE inventory ADD CONSTRAINT inventory_inventory_type_check CHECK(inventory_type IN ('ingredient','packaging','kitchen_consumable','cleaning_sanitation','hygiene','operational_supply'));
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_condition TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_storage_condition_check;
+    ALTER TABLE inventory ADD CONSTRAINT inventory_storage_condition_check CHECK(storage_condition IN ('ambient','dry','chilled','frozen','other'));
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_area_type TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE inventory DROP CONSTRAINT IF EXISTS inventory_storage_area_type_check;
+    ALTER TABLE inventory ADD CONSTRAINT inventory_storage_area_type_check CHECK(storage_area_type IN ('pantry','fridge','freezer','prep_station','chemical_storage','service_storage','other'));
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_location_label TEXT NOT NULL DEFAULT '';
+    ALTER TABLE inventory ADD COLUMN IF NOT EXISTS storage_segregated BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS measurement_family TEXT;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS base_unit TEXT;
     ALTER TABLE inventory ADD COLUMN IF NOT EXISTS last_purchase_quantity NUMERIC(14,4);
@@ -219,6 +228,11 @@ async function initAccountingTenancyDb() {
     );
     CREATE INDEX IF NOT EXISTS inventory_adjustment_lot_allocations_lot_idx
       ON inventory_adjustment_lot_allocations(lot_id,created_at DESC);
+
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_condition_snapshot TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_area_type_snapshot TEXT NOT NULL DEFAULT 'other';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_location_label_snapshot TEXT NOT NULL DEFAULT '';
+    ALTER TABLE supply_lots ADD COLUMN IF NOT EXISTS storage_segregated_snapshot BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS product_sale_lot_allocations (
       sale_id BIGINT NOT NULL REFERENCES product_sales(id) ON DELETE CASCADE,
