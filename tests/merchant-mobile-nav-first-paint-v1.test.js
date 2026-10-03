@@ -27,7 +27,8 @@ test('shell owns mobile Merchant routing without eager data requests',()=>{
   assert.match(route,/destination==='merchantHome'/);
   assert.match(route,/destination==='profileSettings'/);
   assert.match(route,/BusinessLifeOrders\?\.openMerchantOrders/);
-  assert.match(route,/BusinessLifeMarketplace\?\.openMerchantCatalog/);\n  assert.match(route,/BusinessLifeMarketplace\?\.openMerchantStore/);
+  assert.match(route,/BusinessLifeMarketplace\?\.openMerchantCatalog/);
+  assert.match(route,/BusinessLifeMarketplace\?\.openMerchantStore/);
   assert.match(route,/BusinessLifeSuppliers\?\.openMerchantProcurement/);
   assert.match(route,/BusinessLifeDelivery\?\.openMerchantDelivery/);
   assert.doesNotMatch(route,/fetch\(|\/api\//);
