@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {buildOwnerControlTowerRuntime} from '../owner-control-tower-runtime.js';
 
-test('Owner runtime composes canonical evidence without inventing a decision queue',async()=>{
+test('Owner runtime composes canonical evidence with repository-backed release decisions',async()=>{
   const result=await buildOwnerControlTowerRuntime({},{
     homeSummary:{support:{open:2,urgent:0,oldest_urgent_at:null}},
     runtimeHealthy:true,
@@ -30,10 +30,14 @@ test('Owner runtime composes canonical evidence without inventing a decision que
   assert.equal(result.model.health.money.state,'healthy');
   assert.equal(result.model.health.support.state,'healthy');
   assert.equal(result.model.health.safety.state,'healthy');
-  assert.equal(result.model.decision_status.state,'unknown');
+  assert.equal(result.model.decision_status.state,'available');
+  assert.equal(result.model.decision_status.open_count,3);
   assert.equal(result.model.territories[0].health,'supply_constrained');
   assert.equal(result.model.finance.operating_result,60);
-  assert.equal(result.evidence_status.owner_decisions,'unavailable');
+  assert.equal(result.evidence_status.owner_decisions,'available');
+  assert.equal(result.evidence_status.release_quality,'available');
+  assert.equal(result.model.release_evidence.source_issue,758);
+  assert.equal(result.model.product_quality.open_p1,0);
 });
 
 test('Owner runtime keeps unavailable domains unknown instead of zero',async()=>{
