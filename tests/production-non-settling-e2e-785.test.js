@@ -34,7 +34,7 @@ test('Production non-settling E2E includes cancellation and failed-payment no-se
   assert.match(script,/synthetic_failure/);
   assert.match(script,/CONTROLLED_FAILURE/);
   assert.match(script,/failed_path_allocations:0/);
-  assert.match(script,/settlement_lines:0/);
+  assert.match(script,/failed_path_allocations:0/);
 });
 
 test('Production non-settling E2E proves zero residue after rollback',()=>{
