@@ -1368,7 +1368,30 @@ app.post('/api/admin/finance/entries',body,async(req,res,next)=>{try{
   res.status(201).json(row);
 }catch(e){next(e)}});
 
-app.get('/api/admin/audit',async(req,res,next)=>{try{const{me}=await adminFor(req,'audit.view');const ids=await visibleTerritoryIds(pool,me.account.id,'audit.view'),countryWide=await isCountryWide(me.account.id,'audit.view'),limit=Math.max(1,Math.min(300,Number(req.query.limit)||100));const{rows}=await pool.query(`SELECT e.*,a.display_name actor_name FROM admin_audit_events e LEFT JOIN accounts a ON a.id=e.actor_account_id WHERE ${countryWide?"e.country_code='PH'":"e.territory_id=ANY($1::bigint[])"} ORDER BY e.created_at DESC LIMIT ${limit}`,countryWide?[]:[ids.length?ids:[-1]]);res.json(rows)}catch(e){next(e)}});
+app.get('/api/admin/audit',async(req,res,next)=>{try{
+  const{me}=await adminFor(req,'audit.view');
+  const ids=await visibleTerritoryIds(pool,me.account.id,'audit.view');
+  const countryWide=await isCountryWide(me.account.id,'audit.view');
+  const limit=Math.max(1,Math.min(300,Number(req.query.limit)||100));
+  const{rows}=await pool.query(`
+    SELECT
+      e.id,e.actor_account_id,a.display_name actor_name,e.assignment_id,e.permission_code,
+      e.country_code,e.territory_id,t.name territory_name,e.target_type,e.target_id,
+      e.event_code,e.reason,e.correlation_id,e.created_at
+    FROM admin_audit_events e
+    LEFT JOIN accounts a ON a.id=e.actor_account_id
+    LEFT JOIN territories t ON t.id=e.territory_id
+    WHERE ${countryWide?"e.country_code='PH'":"e.territory_id=ANY($1::bigint[])"}
+    ORDER BY e.created_at DESC
+    LIMIT ${limit}
+  `,countryWide?[]:[ids.length?ids:[-1]]);
+  res.json(rows.map(row=>({
+    ...row,
+    actor:{account_id:row.actor_account_id||null,name:row.actor_name||null},
+    target:{type:row.target_type||null,id:row.target_id||null},
+    request:{correlation_id:row.correlation_id||null}
+  })));
+}catch(e){next(e)}});
 
 app.get('/api/support/assist/status',async(req,res,next)=>{try{
   await identity(req);
