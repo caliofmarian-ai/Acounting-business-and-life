@@ -31,7 +31,7 @@ test('Owner runtime composes canonical evidence with repository-backed release d
   assert.equal(result.model.health.support.state,'healthy');
   assert.equal(result.model.health.safety.state,'healthy');
   assert.equal(result.model.decision_status.state,'available');
-  assert.equal(result.model.decision_status.open_count,3);
+  assert.equal(result.model.decision_status.open_count,2);
   assert.equal(result.model.territories[0].health,'supply_constrained');
   assert.equal(result.model.finance.operating_result,60);
   assert.equal(result.evidence_status.owner_decisions,'available');
