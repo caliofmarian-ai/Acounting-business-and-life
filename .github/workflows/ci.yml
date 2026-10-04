@@ -16,5 +16,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - name: Pin npm
+        run: npm install --global npm@10.8.2
+      - name: Dependency evidence
+        run: |
+          node --version
+          npm --version
+          sha256sum package-lock.json
+      - run: npm ci
       - run: npm test

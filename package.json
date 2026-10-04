@@ -32,7 +32,8 @@
     "private-evidence:migrate": "node --import ./bootstrap-env.js private-evidence-migration.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x",
+    "npm": "10.8.2"
   },
   "dependencies": {
     "express": "^5.1.0",
