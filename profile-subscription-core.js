@@ -13,6 +13,23 @@ export const SUBSCRIPTION_SUBJECT_TYPES=Object.freeze({
 });
 export const SUBSCRIPTION_POLICY_STATUSES=Object.freeze(['draft','approved','active','superseded','withdrawn']);
 export const SUBSCRIPTION_INVOICE_STATUSES=Object.freeze(['draft','open','paid','past_due','waived','void']);
+export const SUBSCRIPTION_MONTHLY_TARGET_PHP=99;
+export const SUBSCRIPTION_PROMO_DAYS=90;
+export const SUBSCRIPTION_LIFECYCLE_RULES=Object.freeze({
+  renewal:'monthly_on_cycle_anchor_after_promo',
+  cancellation:'cancel_at_period_end_no_new_cycle',
+  payment_failure:'retry_days_1_3_7_then_hold',
+  grace_days:7,
+  retry_schedule_days:Object.freeze([1,3,7]),
+  grandfathering:'invoice_keeps_policy_snapshot_new_cycles_use_current_accepted_active_policy',
+  promo_transition:'no_bill_before_promo_end_and_notice_before_first_bill',
+  first_bill_notice_days:7
+});
+export const SUBSCRIPTION_CANONICAL_PLAN_DRAFTS=Object.freeze({
+  marketplace:Object.freeze({policy_code:'subscription_marketplace',label:'Merchant',monthly_amount:99}),
+  supplier:Object.freeze({policy_code:'subscription_supplier',label:'Supplier',monthly_amount:99}),
+  local_services:Object.freeze({policy_code:'subscription_local_services',label:'Artisan / Local Services',monthly_amount:99})
+});
 
 const clean=(v,max=500)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
@@ -44,6 +61,9 @@ export async function ensureProfileSubscriptionSchema(pool){
       billing_interval TEXT NOT NULL DEFAULT 'monthly',
       promo_days INTEGER NOT NULL DEFAULT 90,
       description TEXT NOT NULL DEFAULT '',
+      policy_hash TEXT NOT NULL DEFAULT '',
+      lifecycle_rules JSONB NOT NULL DEFAULT '{}'::jsonb,
+      activation_requirements JSONB NOT NULL DEFAULT '{}'::jsonb,
       effective_from TIMESTAMPTZ,
       effective_until TIMESTAMPTZ,
       created_by_account_id BIGINT REFERENCES accounts(id),
@@ -88,7 +108,138 @@ export async function ensureProfileSubscriptionSchema(pool){
       ON profile_subscription_invoices(status,due_at,created_at DESC);
     CREATE INDEX IF NOT EXISTS profile_subscription_invoice_entitlement_idx
       ON profile_subscription_invoices(entitlement_id,billing_period_start DESC);
+
+    ALTER TABLE profile_subscription_policy_versions
+      ADD COLUMN IF NOT EXISTS policy_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE profile_subscription_policy_versions
+      ADD COLUMN IF NOT EXISTS lifecycle_rules JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE profile_subscription_policy_versions
+      ADD COLUMN IF NOT EXISTS activation_requirements JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);
+  await ensureCanonicalSubscriptionPlanDrafts(pool);
+}
+
+function canonicalPolicyPayload({serviceScope,policyCode,monthlyAmount,description=''}) {
+  const scope=validScope(serviceScope);
+  const amount=nullableMoney(monthlyAmount);
+  const payload={
+    country_code:'PH',
+    service_scope:scope,
+    currency_code:'PHP',
+    monthly_amount:amount,
+    billing_interval:'monthly',
+    promo_days:SUBSCRIPTION_PROMO_DAYS,
+    description:clean(description,1200),
+    lifecycle_rules:SUBSCRIPTION_LIFECYCLE_RULES,
+    activation_requirements:{
+      legal_reviewed_terms:true,
+      provider_live_evidence:true,
+      explicit_policy_approval:true,
+      profile_acceptance_before_charge:true
+    }
+  };
+  const hash=crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  return{...payload,policy_code:clean(policyCode||('subscription_'+scope),120),policy_hash:hash};
+}
+
+export async function ensureCanonicalSubscriptionPlanDrafts(pool){
+  for(const scope of SUBSCRIPTION_SERVICE_SCOPES){
+    const draft=SUBSCRIPTION_CANONICAL_PLAN_DRAFTS[scope];
+    const existing=await pool.query(
+      `SELECT id FROM profile_subscription_policy_versions WHERE country_code='PH' AND policy_code=$1 ORDER BY version DESC LIMIT 1`,
+      [draft.policy_code]
+    );
+    if(existing.rowCount)continue;
+    const payload=canonicalPolicyPayload({
+      serviceScope:scope,policyCode:draft.policy_code,monthlyAmount:draft.monthly_amount,
+      description:`Owner pricing draft: ${draft.label} · PHP ${draft.monthly_amount}/month after the 90-day promotion. Billing remains gated.`
+    });
+    await pool.query(`
+      INSERT INTO profile_subscription_policy_versions(
+        public_id,policy_code,version,status,country_code,service_scope,currency_code,
+        monthly_amount,billing_interval,promo_days,description,policy_hash,lifecycle_rules,activation_requirements
+      ) VALUES($1,$2,1,'draft','PH',$3,'PHP',$4,'monthly',$5,$6,$7,$8::jsonb,$9::jsonb)
+      ON CONFLICT(policy_code,version) DO NOTHING
+    `,[
+      publicId('subpol'),payload.policy_code,scope,payload.monthly_amount,SUBSCRIPTION_PROMO_DAYS,
+      payload.description,payload.policy_hash,JSON.stringify(payload.lifecycle_rules),
+      JSON.stringify(payload.activation_requirements)
+    ]);
+  }
+}
+
+export async function subscriptionActivationEvidence(pool){
+  const provider=await pool.query(`
+    SELECT provider_code,status,config_metadata,updated_at
+      FROM payment_provider_configs
+     WHERE country_code='PH' AND provider_code='paymongo'
+     LIMIT 1
+  `).catch(error=>error?.code==='42P01'?{rows:[]}:(()=>{throw error})());
+  const legal=await pool.query(`
+    SELECT COUNT(*)::int count
+      FROM legal_document_versions v
+      JOIN legal_documents d ON d.id=v.document_id
+     WHERE d.country_code='PH'
+       AND d.code='platform_fee_terms'
+       AND d.active=TRUE
+       AND v.status='active'
+       AND v.authoritative=TRUE
+       AND v.legal_review_status='reviewed'
+       AND (v.effective_at IS NULL OR v.effective_at<=NOW())
+  `).catch(error=>error?.code==='42P01'?{rows:[{count:0}]}:(()=>{throw error})());
+  const p=provider.rows[0]||null,meta=p?.config_metadata||{};
+  const providerReady=Boolean(
+    p&&p.status==='active'&&String(meta.mode||'').toLowerCase()==='live'
+    &&meta.secret_ready===true&&meta.webhook_ready===true
+  );
+  const legalReady=Number(legal.rows[0]?.count||0)>0;
+  return{
+    provider:{
+      ready:providerReady,
+      code:p?.provider_code||'paymongo',
+      status:p?.status||'missing',
+      mode:String(meta.mode||''),
+      secret_ready:meta.secret_ready===true,
+      webhook_ready:meta.webhook_ready===true,
+      updated_at:p?.updated_at||null
+    },
+    legal:{
+      ready:legalReady,
+      document_code:'platform_fee_terms',
+      active_reviewed_versions:Number(legal.rows[0]?.count||0)
+    }
+  };
+}
+
+export function subscriptionPolicyActivationState({policy=null,evidence={}}={}){
+  if(!policy)return{state:'MISSING_DRAFT',ready:false,blockers:['plan_draft_missing']};
+  if(policy.status==='active')return{state:'ACTIVE',ready:true,blockers:[]};
+  const blockers=[];
+  if(policy.monthly_amount==null)blockers.push('monthly_amount_missing');
+  if(policy.status!=='approved')blockers.push('explicit_policy_approval_required');
+  if(!evidence?.legal?.ready)blockers.push('legal_terms_not_active_reviewed');
+  if(!evidence?.provider?.ready)blockers.push('live_provider_evidence_missing');
+  return{state:blockers.length?'HOLD':'READY',ready:blockers.length===0,blockers};
+}
+
+export function subscriptionLifecycleSimulation({
+  scenario='renewal_success',monthlyAmount=SUBSCRIPTION_MONTHLY_TARGET_PHP,promoEndsAt=null,at=new Date()
+}={}){
+  const allowed=['renewal_success','payment_failure','cancellation','grandfathering'];
+  if(!allowed.includes(scenario))throw Object.assign(new Error('Unsupported subscription lifecycle scenario'),{status:400});
+  const amount=nullableMoney(monthlyAmount);
+  const now=at instanceof Date?at:new Date(at);
+  const promo=promoEndsAt?new Date(promoEndsAt):null;
+  if(Number.isNaN(now.getTime())||(promo&&Number.isNaN(promo.getTime())))throw Object.assign(new Error('Invalid lifecycle simulation date'),{status:400});
+  if(promo&&now<promo)return{
+    scenario,state:'PROMOTIONAL',charge_attempted:false,amount:0,
+    next_action:'wait_until_promo_end',rules:SUBSCRIPTION_LIFECYCLE_RULES
+  };
+  const base={scenario,charge_attempted:false,amount:amount??0,rules:SUBSCRIPTION_LIFECYCLE_RULES};
+  if(scenario==='renewal_success')return{...base,state:'TEST_RENEWAL_READY',next_action:'create_test_invoice_only_after_all_activation_gates'};
+  if(scenario==='payment_failure')return{...base,state:'TEST_PAST_DUE',retry_schedule_days:[1,3,7],grace_days:7,next_action:'retry_in_test_mode_then_hold_without_real_charge'};
+  if(scenario==='cancellation')return{...base,state:'CANCEL_AT_PERIOD_END',next_action:'stop_new_cycles_keep_existing_records'};
+  return{...base,state:'POLICY_SNAPSHOT_PRESERVED',next_action:'existing_invoice_keeps_snapshot_new_cycle_uses_current_accepted_policy'};
 }
 
 export async function createSubscriptionPolicyDraft(pool,input={}){
@@ -105,12 +256,16 @@ export async function createSubscriptionPolicyDraft(pool,input={}){
     const q=await client.query(`
       INSERT INTO profile_subscription_policy_versions(
         public_id,policy_code,version,status,country_code,service_scope,currency_code,
-        monthly_amount,billing_interval,promo_days,description,created_by_account_id
-      ) VALUES($1,$2,$3,'draft','PH',$4,'PHP',$5,'monthly',90,$6,$7)
+        monthly_amount,billing_interval,promo_days,description,policy_hash,lifecycle_rules,activation_requirements,created_by_account_id
+      ) VALUES($1,$2,$3,'draft','PH',$4,'PHP',$5,'monthly',$6,$7,$8,$9::jsonb,$10::jsonb,$11)
       RETURNING *
     `,[
-      publicId('subpol'),code,version,scope,amount,
-      clean(input.description,1200),input.createdByAccountId||null
+      publicId('subpol'),code,version,scope,amount,SUBSCRIPTION_PROMO_DAYS,
+      canonicalPolicyPayload({serviceScope:scope,policyCode:code,monthlyAmount:amount,description:input.description}).description,
+      canonicalPolicyPayload({serviceScope:scope,policyCode:code,monthlyAmount:amount,description:input.description}).policy_hash,
+      JSON.stringify(SUBSCRIPTION_LIFECYCLE_RULES),
+      JSON.stringify({legal_reviewed_terms:true,provider_live_evidence:true,explicit_policy_approval:true,profile_acceptance_before_charge:true}),
+      input.createdByAccountId||null
     ]);
     await client.query('COMMIT');
     return q.rows[0];
@@ -162,6 +317,7 @@ function activePolicySql(alias='e'){
 
 export async function subscriptionBillingReadiness(pool,{at=new Date()}={}){
   const now=at instanceof Date?at:new Date(at);
+  const activationEvidence=await subscriptionActivationEvidence(pool);
   if(Number.isNaN(now.getTime()))throw Object.assign(new Error('Invalid subscription readiness date'),{status:400});
   const {rows}=await pool.query(`
     SELECT e.*,
@@ -237,6 +393,12 @@ export async function subscriptionBillingReadiness(pool,{at=new Date()}={}){
     const states={};
     for(const x of scoped)states[x.state]=(states[x.state]||0)+1;
     const activeAmount=scoped.find(x=>x.active_policy?.monthly_amount!=null)?.active_policy?.monthly_amount??null;
+    const latestPolicy=(await pool.query(`
+      SELECT * FROM profile_subscription_policy_versions
+       WHERE country_code='PH' AND service_scope=$1
+       ORDER BY version DESC,id DESC LIMIT 1
+    `,[scope])).rows[0]||null;
+    const activation=subscriptionPolicyActivationState({policy:latestPolicy,evidence:activationEvidence});
     summary[scope]={
       label:SUBSCRIPTION_SCOPE_LABELS[scope],
       entitlement_count:scoped.length,
@@ -245,7 +407,17 @@ export async function subscriptionBillingReadiness(pool,{at=new Date()}={}){
       ready_to_invoice:states.READY_TO_INVOICE||0,
       promotional:states.PROMOTIONAL||0,
       hold_no_active_policy:states.HOLD_NO_ACTIVE_POLICY||0,
-      projected_monthly_revenue_if_ready:activeAmount==null?null:money((states.READY_TO_INVOICE||0)*activeAmount)
+      projected_monthly_revenue_if_ready:activeAmount==null?null:money((states.READY_TO_INVOICE||0)*activeAmount),
+      activation_state:activation.state,
+      activation_ready:activation.ready,
+      activation_blockers:activation.blockers,
+      latest_plan:latestPolicy?{
+        public_id:latestPolicy.public_id,policy_code:latestPolicy.policy_code,version:Number(latestPolicy.version),
+        status:latestPolicy.status,monthly_amount:latestPolicy.monthly_amount==null?null:money(latestPolicy.monthly_amount),
+        promo_days:Number(latestPolicy.promo_days),policy_hash:latestPolicy.policy_hash||'',
+        lifecycle_rules:latestPolicy.lifecycle_rules||SUBSCRIPTION_LIFECYCLE_RULES,
+        activation_requirements:latestPolicy.activation_requirements||{}
+      }:null
     };
   }
   return{
@@ -253,12 +425,16 @@ export async function subscriptionBillingReadiness(pool,{at=new Date()}={}){
     country_code:'PH',
     scopes:summary,
     subjects,
+    activation_evidence:activationEvidence,
+    lifecycle_rules:SUBSCRIPTION_LIFECYCLE_RULES,
     guardrails:{
       customer_subscription:false,
       delivery_subscription:false,
-      promotional_days:90,
+      promotional_days:SUBSCRIPTION_PROMO_DAYS,
       invoice_generation:'NOT_PERFORMED',
-      live_policy_activation:'NOT_AVAILABLE_IN_THIS_SLICE'
+      live_policy_activation:'BLOCKED_UNTIL_LEGAL_PROVIDER_APPROVAL_AND_PROFILE_ACCEPTANCE',
+      automatic_collection:false,
+      production_charge_path:false
     }
   };
 }

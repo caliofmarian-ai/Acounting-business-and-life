@@ -16,7 +16,7 @@ import {
 } from './finance-core.js';
 import { requireAdminPermission,appendAdminAudit } from './admin-authorization.js';
 import { ensureMonetizationSchema,backfillMonetizationHistory } from './monetization-core.js';
-import {ensureProfileSubscriptionSchema,createSubscriptionPolicyDraft,listSubscriptionPolicies,subscriptionBillingReadiness,SUBSCRIPTION_SERVICE_SCOPES,SUBSCRIPTION_SCOPE_LABELS} from './profile-subscription-core.js';
+import {ensureProfileSubscriptionSchema,createSubscriptionPolicyDraft,listSubscriptionPolicies,subscriptionBillingReadiness,subscriptionLifecycleSimulation,SUBSCRIPTION_SERVICE_SCOPES,SUBSCRIPTION_SCOPE_LABELS} from './profile-subscription-core.js';
 import {
   ensureProfileFinanceSchema,listProfileFinancialAccounts,listMoneyPreferences,
   createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
@@ -707,6 +707,28 @@ app.post('/api/payments/admin/subscriptions/policies/drafts',body,async(req,res,
     reason:req.body?.reason||'Subscription policy draft',correlationId:correlation(req)
   });
   res.status(201).json(policy);
+}catch(e){next(e)}});
+
+app.post('/api/payments/admin/subscriptions/simulate',body,async(req,res,next)=>{try{
+  const me=await identity(req);
+  await requireAdminPermission(pool,me.account.id,'finance.summary.view',null);
+  const scenario=subscriptionLifecycleSimulation({
+    scenario:req.body?.scenario,
+    monthlyAmount:req.body?.monthly_amount,
+    promoEndsAt:req.body?.promo_ends_at||null,
+    at:req.body?.at||new Date()
+  });
+  await appendAdminAudit(pool,{
+    actorAccountId:me.account.id,permission:'finance.summary.view',
+    targetType:'subscription_lifecycle_simulation',targetId:clean(req.body?.service_scope||'all',40),
+    eventCode:'subscription_lifecycle_simulation_run',
+    after:{
+      service_scope:clean(req.body?.service_scope||'',40),
+      scenario:scenario.scenario,state:scenario.state,charge_attempted:false
+    },
+    reason:'Read-only subscription lifecycle simulation',correlationId:correlation(req)
+  });
+  res.json({...scenario,simulation_only:true,provider_call:false,real_charge:false});
 }catch(e){next(e)}});
 
 app.get('/api/payments/admin/digital-payment-incentive/benchmarks',async(req,res,next)=>{try{
