@@ -1,6 +1,6 @@
 # Profile Subscriptions V1
 
-Status: **OWNER-APPROVED ₱99/MONTH TARGET / BILLING READINESS IMPLEMENTED / LIVE BILLING DISABLED**
+Status: **OWNER-APPROVED ₱99/MONTH TARGET / IMMUTABLE PLAN DRAFTS + ACTIVATION EVIDENCE IMPLEMENTED / LIVE COLLECTION DISABLED**
 
 Canonical issue: #236.
 
@@ -140,6 +140,53 @@ Creating a draft:
 - does not activate billing;
 - does not charge a profile;
 - does not create an invoice.
+
+## Billing readiness P2
+
+Every subscription-bearing Philippines scope now has a canonical immutable draft when the subscription schema is initialized:
+
+- Merchant / `marketplace` — ₱99/month;
+- Supplier / `supplier` — ₱99/month;
+- Artisan / Local Services / `local_services` — ₱99/month.
+
+Each plan version records:
+
+- a SHA-256 policy hash;
+- the 90-day promotion rule;
+- deterministic renewal/cancellation/failure-retry/grandfathering rules;
+- activation prerequisites.
+
+Current lifecycle rules are:
+
+- renewal: monthly cycle only after the promotion and all activation gates;
+- cancellation: cancel at period end, with no new cycle;
+- payment failure simulation: retry on days 1, 3 and 7, then hold;
+- grace period: 7 days;
+- grandfathering: an existing invoice keeps its policy snapshot; a new cycle uses the then-current accepted active policy;
+- first paid-cycle notice target: at least 7 days before first billing.
+
+### Activation evidence
+
+Admin Finance now shows the evidence gate separately from the plan draft.
+
+Activation remains blocked unless all of these are true:
+
+1. the plan is explicitly approved and priced;
+2. `platform_fee_terms` has an authoritative, active, legally reviewed Philippines version;
+3. the configured PayMongo provider evidence is LIVE-ready, including secret and signed-webhook readiness;
+4. the affected profile has accepted the required billing/platform-fee policy before any billable action.
+
+There is still **no plan activation endpoint** and no automatic invoice scheduler in this slice. This means missing legal/provider evidence cannot accidentally become a billable state.
+
+### No-charge lifecycle simulation
+
+Admin Finance can run renewal-success, payment-failure, cancellation and grandfathering simulations. These simulations:
+
+- do not call a payment provider;
+- do not generate a real invoice;
+- do not create a payment intent;
+- do not alter the subscription policy;
+- exist only to verify deterministic lifecycle behavior before activation.
 
 ## Safety boundaries
 
