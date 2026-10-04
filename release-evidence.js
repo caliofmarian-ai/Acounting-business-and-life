@@ -40,7 +40,7 @@ export const CURRENT_RELEASE_EVIDENCE=Object.freeze({
       decision_code:'SEC-001',
       source_domain:'release_evidence',
       source_type:'github_issue',
-      source_id:'760',
+      source_id:'788',
       required_authority:'project_owner',
       severity:'high',
       state:'open',
