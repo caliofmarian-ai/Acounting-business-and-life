@@ -201,6 +201,27 @@ function productQualitySummary(raw={}){
   };
 }
 
+function releaseEvidenceSummary(raw={}){
+  const status=clean(raw.status,30).toLowerCase();
+  const reasons={};
+  for(const [key,value] of Object.entries(raw.unavailable_reasons||raw.unavailableReasons||{})){
+    const safeKey=clean(key,80);
+    const safeValue=clean(value,500);
+    if(safeKey&&safeValue)reasons[safeKey]=safeValue;
+  }
+  return{
+    version:clean(raw.version,100)||null,
+    source_issue:intOrNull(raw.source_issue??raw.sourceIssue),
+    source_title:clean(raw.source_title??raw.sourceTitle,220)||null,
+    status:['hold','review','ready'].includes(status)?status:'unknown',
+    summary:clean(raw.summary,1000)||'Release evidence summary unavailable.',
+    observed_at:isoOrNull(raw.observed_at??raw.observedAt),
+    runtime_revision:shortRevision(raw.runtime_revision??raw.runtimeRevision),
+    unavailable_reasons:reasons,
+    source:clean(raw.source||'repository_release_evidence',80)||'repository_release_evidence'
+  };
+}
+
 export function buildOwnerControlTower(input={}){
   const generatedAt=isoOrNull(input.generated_at??input.generatedAt)||new Date().toISOString();
   const decisions=ownerDecisionQueue(input.owner_decisions??input.ownerDecisions);
@@ -225,7 +246,8 @@ export function buildOwnerControlTower(input={}){
     owner_decisions:decisions,
     territories:(Array.isArray(input.territories)?input.territories:[]).slice(0,50).map(territorySummary),
     finance:financeSummary(input.finance),
-    product_quality:productQualitySummary(input.product_quality??input.productQuality)
+    product_quality:productQualitySummary(input.product_quality??input.productQuality),
+    release_evidence:releaseEvidenceSummary(input.release_evidence??input.releaseEvidence)
   };
 }
 
