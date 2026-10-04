@@ -153,7 +153,7 @@ function mountWorkspaceBar() {
       accountingState={role:state.role,activeBusinessId:Number(state.active_business_id),businesses:state.businesses||[]};
       mountWorkspaceBar();
       wireSupplierAccountingTile();
-      if(accountingState.role==='supplier'&&document.body.classList.contains('supplierAccountingMode'))await mountEconomicSummary('viewDashboard');
+      if(accountingState.role==='supplier'&&document.body.classList.contains('supplierAccountingMode'))await mountEconomicSummary('supplierFinanceSummary');
       document.dispatchEvent(new CustomEvent('abl:business-workspace-changed',{detail:{role:accountingState.role,activeBusinessId:accountingState.activeBusinessId}}));
     }catch(err){
       accountingState.activeBusinessId=previous;
@@ -171,15 +171,44 @@ function wireSupplierAccountingTile() {
   tile.removeAttribute('aria-disabled');
 }
 
-async function openSupplierAccounting() {
-  document.getElementById('roleHub')?.classList.add('hidden');
-  document.querySelector('.bottomNav')?.classList.remove('hidden');
-  document.body.classList.add('supplierAccountingMode');
-  document.querySelector('.bottomNav [data-view="Dashboard"]')?.click();
-  let back=document.getElementById('supplierAccountingBack');
-  if(!back){back=document.createElement('button');back.id='supplierAccountingBack';back.className='supplierAccountingBack';back.type='button';back.textContent='← Supplier workspace';back.onclick=()=>{document.body.classList.remove('supplierAccountingMode');document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('roleHub')?.classList.remove('hidden');back.remove()};document.body.appendChild(back)}
-  await mountEconomicSummary();
+function closeSupplierAccounting(){
+  document.body.classList.remove('supplierAccountingMode');
+  document.getElementById('supplierAccountingWorkspace')?.classList.add('hidden');
+  window.BusinessLifeShell?.showActiveWorkspace?.();
 }
+async function ensureSupplierAccountingContext(){
+  if(accountingState.role==='supplier'&&accountingState.activeBusinessId)return accountingState;
+  const state=await api('/api/accounting/workspaces');
+  if(state?.role!=='supplier'||!applyWorkspaceState(state))throw new Error('Supplier business workspace is unavailable.');
+  return accountingState;
+}
+async function openSupplierAccounting() {
+  const workspace=document.getElementById('supplierAccountingWorkspace');
+  if(!workspace)return accountingToast('Supplier Finance is unavailable. Try again in a moment.');
+  document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));
+  document.getElementById('roleHub')?.classList.add('hidden');
+  document.querySelector('.bottomNav')?.classList.add('hidden');
+  workspace.classList.remove('hidden');
+  document.body.classList.add('supplierAccountingMode');
+  const target=document.getElementById('supplierFinanceSummary');
+  if(target)target.innerHTML='<div class="businessFinanceLoading" role="status"><strong>Preparing Supplier finances…</strong><span>Confirming the active Supplier business before financial evidence is loaded.</span></div>';
+  try{
+    await ensureSupplierAccountingContext();
+    const business=accountingState.businesses.find(b=>Number(b.id)===Number(accountingState.activeBusinessId));
+    const name=document.getElementById('supplierFinanceBusinessName');
+    if(name)name.textContent=business?.name||'Your Supplier business';
+    await mountEconomicSummary('supplierFinanceSummary');
+  }catch(error){
+    const mounted=ensureFinancePanel('supplierFinanceSummary');
+    if(mounted.panel){
+      const contextKey=currentFinanceContextKey();
+      mounted.panel.dataset.financeContext=contextKey;
+      showFinanceLoadError(mounted.panel,mounted.targetId,contextKey,error,false);
+    }
+  }
+}
+
+document.querySelector('#supplierAccountingWorkspace .supplierFinanceBack')?.addEventListener('click',closeSupplierAccounting);
 
 function accountingToast(message){
   let toast=document.getElementById('roleToast');
@@ -248,8 +277,12 @@ async function mountEconomicSummary(targetId=null) {
   const contextKey=currentFinanceContextKey();
   const preserve=beginFinanceLoad(panel,contextKey);
   try{
-    const overview=await api('/api/accounting/finance-overview');
-    if(currentFinanceContextKey()!==contextKey)return null;
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
+    let overview;
+    try{overview=await api('/api/accounting/finance-overview',{signal:controller.signal})}
+    catch(error){if(error?.name==='AbortError')throw new Error('Business finances took too long to load. Try again.');throw error}
+    finally{clearTimeout(timeout)}
+    if(currentFinanceContextKey()!==contextKey)return mountEconomicSummary(resolvedTargetId);
     panel.removeAttribute('aria-busy');
     panel.dataset.financeReady='true';
     panel.dataset.financeContext=contextKey;
@@ -269,6 +302,8 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     const me=state?.snapshot,role=state?.surface==='profile'?state.activeRole:null;
     if(!me||!['merchant','supplier'].includes(role)){
       document.getElementById('businessWorkspaceBar')?.remove();
+      document.getElementById('supplierAccountingWorkspace')?.classList.add('hidden');
+      document.body.classList.remove('supplierAccountingMode');
       return;
     }
     const profile=me.profiles?.find(p=>p.role===role);

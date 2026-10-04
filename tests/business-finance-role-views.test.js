@@ -153,7 +153,9 @@ test('Finance overview has visible loading, failure and retry without stale cros
   assert.match(ui,/data-finance-retry/);
   assert.match(ui,/retry\.onclick=\(\)=>mountEconomicSummary\(targetId\)/);
   assert.match(ui,/panel\.dataset\.financeReady==='true'&&panel\.dataset\.financeContext===contextKey/);
-  assert.match(ui,/if\(currentFinanceContextKey\(\)!==contextKey\)return null/);
+  assert.match(ui,/if\(currentFinanceContextKey\(\)!==contextKey\)return mountEconomicSummary\(resolvedTargetId\)/);
+  assert.match(ui,/controller\.abort\(\),20000/);
+  assert.match(ui,/Business finances took too long to load\. Try again\./);
   assert.doesNotMatch(ui,/Business Finance overview:',err\.message/);
   assert.match(css,/\.businessFinanceLoadError\{/);
 });

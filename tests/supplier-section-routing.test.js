@@ -39,3 +39,14 @@ test('Supplier actions return to the correct workflow section',()=>{
   assert.match(ui,/renderSupplierWorkspace\('ETA'\)/);
   assert.match(ui,/renderSupplierWorkspace\(\['ready_for_pickup','out_for_delivery','delivered'\]\.includes\(status\)\?'Fulfilment':'ETA'\)/);
 });
+
+test('multi-profile procurement reads respect the active Merchant or Supplier profile',()=>{
+  const server=read('server-suppliers.js');
+  assert.match(server,/function activeProcurementRole\(me\)/);
+  assert.match(server,/me\?\.account\?\.active_role/);
+  assert.match(server,/const me=await identity\(req\),role=activeProcurementRole\(me\)/);
+  assert.match(server,/if\(role==='merchant'\)/);
+  assert.match(server,/if\(role==='supplier'\)/);
+  assert.doesNotMatch(server,/api\/procurement\/orders'[\s\S]{0,300}if\(enabled\(me,'merchant'\)\)/);
+  assert.match(ui,/abl:clear-context-help/);
+});
