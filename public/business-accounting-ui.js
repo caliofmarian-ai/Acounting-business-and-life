@@ -322,6 +322,8 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     accountingState={role:'supplier',activeBusinessId:null,businesses:[]};
     wireSupplierAccountingTile();
     const workspaceState=await api('/api/accounting/workspaces');
+    const stateIsCurrent=window.BusinessLifeShell?.isProfileStateCurrent;
+    if(typeof stateIsCurrent==='function'&&!stateIsCurrent(state))return;
     applyWorkspaceState(workspaceState);
   }catch(err){console.warn('Accounting workspace:',err.message)}
 }

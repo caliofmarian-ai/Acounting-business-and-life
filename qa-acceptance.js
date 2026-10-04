@@ -50,6 +50,7 @@ const ACCOUNTING_RUNTIME_V15_WAVE='accounting_runtime_v15';
 const NOTIFICATIONS_RUNTIME_V16_WAVE='notifications_runtime_v16';
 const PROFILE_SELECTOR_BASELINE_WAVE='profile_selector_baseline_v1';
 const PROFILE_SELECTOR_RUNTIME_WAVE='profile_selector_runtime_v1';
+const PROFILE_LIFECYCLE_ATOMIC_V1_WAVE='profile_lifecycle_atomic_v1';
 const CUSTOMER_PERFORMANCE_BASELINE_WAVE='customer_performance_baseline_v1';
 const CUSTOMER_PERFORMANCE_RUNTIME_WAVE='customer_performance_runtime_v1';
 const MERCHANT_PERFORMANCE_BASELINE_WAVE='merchant_performance_baseline_v1';
@@ -66,7 +67,7 @@ const SESSION_SECURITY_V2_WAVE='session_security_v2';
 const PRIVATE_EVIDENCE_STORAGE_V1_WAVE='private_evidence_storage_v1';
 const OWNER_CONTROL_TOWER_V1_WAVE='owner_control_tower_v1';
 const MICROBUSINESS_READINESS_V1_WAVE='microbusiness_readiness_v1';
-const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,SUPPLIER_OPERATING_LOCATION_V1_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,SERVICE_PROVIDER_BASE_LOCATION_V1_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE]);
+const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,SUPPLIER_OPERATING_LOCATION_V1_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,SERVICE_PROVIDER_BASE_LOCATION_V1_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,PROFILE_LIFECYCLE_ATOMIC_V1_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE]);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -4722,6 +4723,82 @@ async function runProfileSelectorRuntimeAcceptance({pool,base,secret}){
   };
 }
 
+async function runProfileLifecycleAtomicV1Acceptance({pool,base,secret}){
+  const customer=await qaAccountSession({
+    pool,base,secret,email:CUSTOMER_ALIAS,role:'customer',label:'Profile Lifecycle Atomic Customer QA'
+  });
+
+  const activated=await requestJson(base,'/api/profiles/customer/activate',{
+    method:'POST',token:customer.token,body:{}
+  });
+  expectStatus(activated,[200,201],'Profile Lifecycle Atomic Customer activation');
+
+  const switchStarted=performance.now();
+  const switchResponse=await fetch(base+'/api/me/active-role',{
+    method:'PATCH',
+    headers:{
+      Accept:'application/json',
+      Authorization:'Bearer '+customer.token,
+      'Content-Type':'application/json',
+      'X-BL-Profile-Switch':'compact'
+    },
+    body:JSON.stringify({role:'customer'})
+  });
+  const switchText=await switchResponse.text();
+  const switchDuration=Number((performance.now()-switchStarted).toFixed(2));
+  let switchJson={};try{switchJson=switchText?JSON.parse(switchText):{}}catch{}
+  if(switchResponse.status!==200)throw new Error('Profile Lifecycle Atomic compact switch returned an unexpected status.');
+  if(switchJson.active_role!=='customer'||switchJson.ok!==true)throw new Error('Profile Lifecycle Atomic compact switch lost the canonical role result.');
+  if(switchJson.account!==undefined||switchJson.profiles!==undefined||switchJson.businesses!==undefined)throw new Error('Profile Lifecycle Atomic compact switch returned the redundant full profile snapshot.');
+  const switchKeys=Object.keys(switchJson).filter(key=>!['ok','active_role','updated_at'].includes(key));
+  if(switchKeys.length)throw new Error('Profile Lifecycle Atomic compact switch returned an unexpected field.');
+  const switchPayloadBytes=Buffer.byteLength(switchText,'utf8');
+  if(switchPayloadBytes>512)throw new Error('Profile Lifecycle Atomic compact switch payload is unexpectedly large.');
+
+  const denied=await requestJson(base,'/api/me/active-role',{
+    method:'PATCH',token:customer.token,headers:{'X-BL-Profile-Switch':'compact'},body:{role:'supplier'}
+  });
+  expectStatus(denied,403,'Profile Lifecycle Atomic cross-role switch denial');
+
+  const me=await requestJson(base,'/api/me',{token:customer.token});
+  expectStatus(me,200,'Profile Lifecycle Atomic canonical profile snapshot');
+  if(me.json?.account?.active_role!=='customer')throw new Error('Profile Lifecycle Atomic denied request changed the active role.');
+
+  async function asset(path){
+    const response=await fetch(base+path,{headers:{Accept:'text/plain'}});
+    const text=await response.text();
+    if(response.status!==200)throw new Error('Profile Lifecycle Atomic asset '+path+' is unavailable.');
+    return text;
+  }
+  const [shellAsset,cssAsset,onboardingAsset,accountingAsset]=await Promise.all([
+    asset('/shell.js'),asset('/shell.css'),asset('/guided-onboarding.js'),asset('/business-accounting-ui.js')
+  ]);
+  for(const marker of ['beginProfileTransition','activeSurface=\'transition\'','profileTransitionGrid','navigationEpoch','X-BL-Profile-Switch']){
+    if(!shellAsset.includes(marker))throw new Error('Profile Lifecycle Atomic shell asset is missing '+marker+'.');
+  }
+  if(!cssAsset.includes('@media(max-width:420px){.profileTransitionHub'))throw new Error('Profile Lifecycle Atomic Android transition contract is missing.');
+  if(!onboardingAsset.includes('Promise.resolve().then(()=>renderGuide())')||onboardingAsset.includes('renderGuide().catch'))throw new Error('Profile Lifecycle Atomic onboarding scheduler is unsafe.');
+  if(!accountingAsset.includes('isProfileStateCurrent'))throw new Error('Profile Lifecycle Atomic Supplier finance stale-response guard is missing.');
+
+  const logout=await requestJson(base,'/api/auth/logout',{method:'POST',token:customer.token,body:{}});
+  expectStatus(logout,200,'Profile Lifecycle Atomic logout');
+
+  return{
+    status:'PASS',
+    wave:PROFILE_LIFECYCLE_ATOMIC_V1_WAVE,
+    compact_switch:true,
+    compact_switch_ms:switchDuration,
+    compact_payload_bytes:switchPayloadBytes,
+    canonical_role_preserved:true,
+    cross_role_denial:true,
+    atomic_transition_asset:true,
+    stale_response_guard:true,
+    onboarding_scheduler_safe:true,
+    android_css_contract:true,
+    logout:true
+  };
+}
+
 
 async function runProfileSelectorBaseline({pool,base,secret}){
   const customer=await qaAccountSession({
@@ -6335,6 +6412,8 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
       ?await runCustomerPerformanceRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===CUSTOMER_PERFORMANCE_BASELINE_WAVE
       ?await runCustomerPerformanceBaseline({pool,base,secret:config.secret})
+      :config.wave===PROFILE_LIFECYCLE_ATOMIC_V1_WAVE
+      ?await runProfileLifecycleAtomicV1Acceptance({pool,base,secret:config.secret})
       :config.wave===PROFILE_SELECTOR_RUNTIME_WAVE
       ?await runProfileSelectorRuntimeAcceptance({pool,base,secret:config.secret})
       :config.wave===PROFILE_SELECTOR_BASELINE_WAVE
@@ -6445,5 +6524,5 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
 
 export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
-  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,SUPPLIER_OPERATING_LOCATION_V1_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,SERVICE_PROVIDER_BASE_LOCATION_V1_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE
+  CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,SUPPLIER_OPERATING_LOCATION_V1_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,SERVICE_PROVIDER_BASE_LOCATION_V1_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,PROFILE_LIFECYCLE_ATOMIC_V1_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE
 };
