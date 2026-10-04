@@ -1783,13 +1783,14 @@ app.get('/api/admin/delivery/pricing',async(req,res,next)=>{try{
   const me=await requireAdmin(req,'delivery.pricing.manage');
   if(me.admin_assertion.territoryId!=null)return res.status(403).json({error:'Delivery pricing is country-scoped'});
   const {rows}=await pool.query(`
-    SELECT r.*,
+    SELECT r.*,creator.display_name created_by_name,
       COALESCE((
         SELECT jsonb_agg(v ORDER BY v.priority,v.vehicle_class)
         FROM delivery_vehicle_pricing_rules v
         WHERE v.pricing_rule_id=r.id
       ),'[]'::jsonb) vehicle_rules
     FROM delivery_pricing_rules r
+    LEFT JOIN accounts creator ON creator.id=r.created_by_account_id
     WHERE r.country_code='PH'
     ORDER BY r.version DESC
   `);
