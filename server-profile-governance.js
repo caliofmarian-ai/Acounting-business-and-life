@@ -76,7 +76,7 @@ async function ensureSuperAdminSelfProfile(client,me,role){
 async function applicationReviewHistory(applicationId,db=pool){const r=await db.query(`
   SELECT h.id,h.application_id,h.from_status,h.decision,h.to_status,h.reviewer_account_id,
          reviewer.display_name reviewer_name,h.reviewer_note,h.evidence_attested,
-         h.adult_eligibility_attested,h.approved_category_ids,h.created_at
+         h.adult_eligibility_attested,h.approved_category_ids,h.correlation_id,h.created_at
     FROM profile_application_reviews h
     JOIN accounts reviewer ON reviewer.id=h.reviewer_account_id
    WHERE h.application_id=$1

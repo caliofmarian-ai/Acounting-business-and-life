@@ -113,7 +113,12 @@ function wireOverview(){
   document.querySelector('[data-owner-control-refresh]')?.addEventListener('click',()=>renderActive().catch(showError));
   const sourceModule={payments:'finance',payment_core:'finance',finance:'finance',support:'support',trust_safety:'safety',territory:'territories',territory_governance:'territories'};
   document.querySelectorAll('[data-owner-decision-source]').forEach(button=>button.onclick=()=>{
-    const target=sourceModule[String(button.dataset.ownerDecisionSource||'')];
+    const source=String(button.dataset.ownerDecisionSource||'');
+    if(source==='release_evidence'){
+      document.getElementById('ownerReleaseEvidence')?.scrollIntoView({behavior:'smooth',block:'center'});
+      return;
+    }
+    const target=sourceModule[source];
     if(target)activateModule(target);
   });
 }
@@ -182,7 +187,15 @@ function setAdminApplicationRoute(id=null){
 }
 function applicationReviewHistoryHtml(a){
   const history=Array.isArray(a?.review_history)?a.review_history:[];
-  return '<section class="card" id="applicationReviewHistory"><h3>Review history</h3><p class="muted">Committed decisions retain the reviewer, time, note and evidence attestation.</p>'+(history.length?'<div class="memberTimeline">'+history.map(item=>'<article class="memberTimelineItem"><div><strong>'+esc(readableCode(item.to_status||item.decision||'updated'))+'</strong><span>'+esc(item.created_at?new Date(item.created_at).toLocaleString('en-PH'):'Time unavailable')+'</span></div><p class="muted">'+esc(item.reviewer_name||('Admin account '+item.reviewer_account_id))+' · evidence '+(item.evidence_attested?'attested':'not attested')+(item.adult_eligibility_attested?' · adult eligibility attested':'')+'</p>'+(item.reviewer_note?'<p>'+esc(item.reviewer_note)+'</p>':'')+'</article>').join('')+'</div>':'<p class="muted">No committed review decisions yet.</p>')+'</section>';
+  return '<section class="card" id="applicationReviewHistory"><h3>Review history</h3><p class="muted">Committed decisions retain who decided, what changed, when, the review note, evidence attestation and the request correlation reference.</p>'+(history.length?'<div class="memberTimeline">'+history.map(item=>{
+    const categories=Array.isArray(item.approved_category_ids)?item.approved_category_ids:[];
+    return '<article class="memberTimelineItem"><div><strong>'+esc(readableCode(item.decision||item.to_status||'updated'))+'</strong><span>'+esc(item.created_at?adminEventTime(item.created_at):'Time unavailable')+'</span></div>'
+      +'<p class="muted">Reviewer: '+esc(item.reviewer_name||('Admin account '+item.reviewer_account_id))+' (#'+esc(item.reviewer_account_id||'—')+')</p>'
+      +'<p class="muted">State: '+esc(readableCode(item.from_status||'unknown'))+' → '+esc(readableCode(item.to_status||'unknown'))+' · evidence '+(item.evidence_attested?'attested':'not attested')+(item.adult_eligibility_attested?' · adult eligibility attested':'')+'</p>'
+      +(categories.length?'<p class="muted">Approved category IDs: '+esc(categories.join(', '))+'</p>':'')
+      +(item.reviewer_note?'<p>'+esc(item.reviewer_note)+'</p>':'<p class="muted">No reviewer note recorded.</p>')
+      +'<details class="adminAuditTechnical"><summary>Decision reference</summary><div class="supportMeta"><span>Application #'+esc(item.application_id||a?.id||'—')+'</span><span>Review #'+esc(item.id||'—')+'</span><span>Request '+esc(item.correlation_id||'Not recorded')+'</span></div></details></article>';
+  }).join('')+'</div>':'<p class="muted">No committed review decisions yet.</p>')+'</section>';
 }
 function expectedApplicationReviewStatus(decision){return({approve:'approved',reject:'rejected',under_review:'under_review',requirements_pending:'requirements_pending'})[decision]||''}
 function patchCommittedApplicationOverview(previous,committed){
@@ -833,7 +846,26 @@ async function wireMembers(){
 }
 
 function deliveryRuleFields(prefix,label,weighted){return '<fieldset><legend>'+esc(label)+'</legend><div class="supportControls"><label>Base fee<input id="'+prefix+'Base" type="number" min="0" step="0.01" required></label><label>Per km<input id="'+prefix+'Km" type="number" min="0" step="0.01" required></label></div>'+(weighted?'<div class="supportControls"><label>Per kg<input id="'+prefix+'Kg" type="number" min="0" step="0.01" required></label><label>Per litre<input id="'+prefix+'Liter" type="number" min="0" step="0.01" required></label></div>':'')+'<div class="supportControls"><label>Minimum fee<input id="'+prefix+'Min" type="number" min="0" step="0.01" required></label><label>Max distance km<input id="'+prefix+'Distance" type="number" min="0" step="0.1"></label></div><div class="supportControls"><label>Max weight kg<input id="'+prefix+'Weight" type="number" min="0" step="0.1"></label><label>Max volume L<input id="'+prefix+'Volume" type="number" min="0" step="0.1"></label></div></fieldset>'}
-function deliveryPricingPanel(rules){const active=(rules||[]).find(x=>x.active);return '<details class="adminDisclosure deliveryPricingDisclosure"><summary><span class="adminDisclosureCopy"><small>COUNTRY-LEVEL CONTROL</small><strong>Delivery pricing</strong><span>Vehicle fees, distance rules and delivery capacity</span></span><span class="status">'+esc(active?'Active v'+active.version:'HOLD')+'</span></summary><div class="adminDisclosureBody"><p class="muted">Create a new immutable vehicle-pricing version. No PHP tariff is hardcoded.</p><form id="adminDeliveryPricingForm" class="adminForm">'+deliveryRuleFields('bike','Bicycle · small parcel',false)+deliveryRuleFields('car','Car',true)+deliveryRuleFields('van','Van',true)+'<label>Route factor<input id="deliveryRouteFactor" type="number" min="1" step="0.01" value="1" required></label><button class="primary" type="submit">Save and activate version</button><div id="deliveryPricingResult"></div></form></div></details>'}
+function deliveryPricingAmount(value){return value==null||value===''?'—':new Intl.NumberFormat('en-PH',{minimumFractionDigits:0,maximumFractionDigits:4}).format(Number(value))}
+function deliveryPricingRuleEvidence(rule){
+  const bands=Array.isArray(rule.distance_bands)?rule.distance_bands:[];
+  return '<details class="adminDisclosure"><summary><span class="adminDisclosureCopy"><small>VEHICLE RULE</small><strong>'+esc(readableCode(rule.vehicle_class||'vehicle'))+'</strong><span>'+esc(readableCode(rule.formula_type||'formula'))+' · priority '+esc(rule.priority??'—')+'</span></span></summary><div class="adminDisclosureBody">'
+    +'<div class="supportMeta"><span>Base ₱'+esc(deliveryPricingAmount(rule.base_fee))+'</span><span>Per km ₱'+esc(deliveryPricingAmount(rule.per_km))+'</span><span>Per kg ₱'+esc(deliveryPricingAmount(rule.per_kg))+'</span><span>Per liter ₱'+esc(deliveryPricingAmount(rule.per_liter))+'</span><span>Minimum ₱'+esc(deliveryPricingAmount(rule.minimum_fee))+'</span></div>'
+    +'<div class="supportMeta"><span>Max distance '+esc(deliveryPricingAmount(rule.maximum_distance_km))+' km</span><span>Max weight '+esc(deliveryPricingAmount(rule.max_weight_kg))+' kg</span><span>Max volume '+esc(deliveryPricingAmount(rule.max_volume_l))+' L</span><span>Included distance '+esc(deliveryPricingAmount(rule.included_distance_km))+' km</span></div>'
+    +'<div class="supportMeta"><span>Extra stop ₱'+esc(deliveryPricingAmount(rule.extra_stop_fee))+'</span><span>Free wait '+esc(rule.free_wait_minutes??0)+' min</span><span>Wait/min ₱'+esc(deliveryPricingAmount(rule.waiting_fee_per_minute))+'</span><span>Demand cap '+esc(deliveryPricingAmount(rule.demand_adjustment_cap_pct))+'%</span></div>'
+    +'<div class="supportMeta"><span>Route '+esc(rule.route_profile||'default')+'</span><span>Expressway '+(rule.expressway_eligible?'eligible':'not eligible')+'</span><span>Toll '+esc(readableCode(rule.toll_policy||'pass through'))+'</span><span>Parking '+esc(readableCode(rule.parking_policy||'pass through'))+'</span><span>Stacking '+esc(readableCode(rule.stacking_policy||'direct only'))+'</span></div>'
+    +(bands.length?'<details><summary>Distance bands ('+bands.length+')</summary><pre>'+esc(JSON.stringify(bands,null,2))+'</pre></details>':'')
+    +'</div></details>';
+}
+function activeDeliveryTariffEvidence(active){
+  if(!active)return '<div class="notice"><strong>No active delivery tariff.</strong><br>Customer delivery quoting remains fail-closed until a country-level pricing version is active.</div>';
+  const vehicleRules=Array.isArray(active.vehicle_rules)?active.vehicle_rules:[];
+  return '<section class="card"><div class="sectionTitle"><div><small class="muted">ACTIVE IMMUTABLE TARIFF</small><h3>Version '+esc(active.version)+'</h3></div><span class="status">Active</span></div>'
+    +'<div class="supportMeta"><span>Country '+esc(active.country_code||'PH')+'</span><span>Route factor '+esc(deliveryPricingAmount(active.route_factor))+'</span><span>Created '+esc(active.created_at?adminEventTime(active.created_at):'Time unavailable')+'</span><span>Creator '+esc(active.created_by_name||('Admin #'+(active.created_by_account_id||'—')))+'</span></div>'
+    +(vehicleRules.length?vehicleRules.map(deliveryPricingRuleEvidence).join(''):'<div class="notice">This active version has no vehicle rules. Quoting should remain unavailable.</div>')
+    +'</section>';
+}
+function deliveryPricingPanel(rules){const active=(rules||[]).find(x=>x.active);return '<details class="adminDisclosure deliveryPricingDisclosure"><summary><span class="adminDisclosureCopy"><small>COUNTRY-LEVEL CONTROL</small><strong>Delivery pricing</strong><span>Vehicle fees, distance rules and delivery capacity</span></span><span class="status">'+esc(active?'Active v'+active.version:'HOLD')+'</span></summary><div class="adminDisclosureBody">'+activeDeliveryTariffEvidence(active)+'<p class="muted">Creating pricing never edits the active version in place. Saving creates a new immutable version and makes it active.</p><form id="adminDeliveryPricingForm" class="adminForm">'+deliveryRuleFields('bike','Bicycle · small parcel',false)+deliveryRuleFields('car','Car',true)+deliveryRuleFields('van','Van',true)+'<label>Route factor<input id="deliveryRouteFactor" type="number" min="1" step="0.01" value="1" required></label><button class="primary" type="submit">Save and activate new version</button><div id="deliveryPricingResult"></div></form></div></details>'}
 function deliveryCourierPanel(couriers){
   return '<section><div class="sectionTitle"><h3>Courier verification</h3></div>'+rows(couriers,c=>{
     const eligibility=c.eligibility||{},missing=Array.isArray(eligibility.missing_requirements)?eligibility.missing_requirements.length:0;
@@ -1799,7 +1831,17 @@ async function auditPanel(){
     hasAny(['metrics.view'])?api('/api/admin/metrics').catch(e=>({error:e.message})):Promise.resolve({})
   ]);
   const events=Array.isArray(audit)?audit:(audit.events||[]);
-  const activity=audit.error?'<div class="notice">'+esc(audit.error)+'</div>':rows(events,x=>'<div class="row adminAuditEvent"><div class="rowHeader"><strong>'+esc(adminEventLabel(x.event_code))+'</strong><time class="adminEventTime">'+esc(adminEventTime(x.created_at))+'</time></div><span class="muted">'+esc(readableCode(x.permission_code||'Admin scope'))+(x.reason?' · '+esc(x.reason):'')+'</span><details class="adminAuditTechnical"><summary>Audit reference</summary><code>'+esc(x.event_code||'admin_event')+'</code></details></div>');
+  const activity=audit.error?'<div class="notice">'+esc(audit.error)+'</div>':rows(events,x=>{
+    const actor=x.actor||{},target=x.target||{},request=x.request||{};
+    return '<div class="row adminAuditEvent"><div class="rowHeader"><strong>'+esc(adminEventLabel(x.event_code))+'</strong><time class="adminEventTime">'+esc(adminEventTime(x.created_at))+'</time></div>'
+      +'<span class="muted">'+esc(readableCode(x.permission_code||'Admin scope'))+(x.reason?' · '+esc(x.reason):'')+'</span>'
+      +'<details class="adminAuditTechnical"><summary>Audit reference</summary><div class="supportMeta">'
+      +'<span>Actor '+esc(actor.name||x.actor_name||'System')+(actor.account_id||x.actor_account_id?' #'+esc(actor.account_id||x.actor_account_id):'')+'</span>'
+      +'<span>Target '+esc(readableCode(target.type||x.target_type||'none'))+(target.id||x.target_id?' #'+esc(target.id||x.target_id):'')+'</span>'
+      +'<span>Territory '+esc(x.territory_name||x.territory_id||'Country scope')+'</span>'
+      +'<span>Request '+esc(request.correlation_id||x.correlation_id||'Not recorded')+'</span>'
+      +'</div><code>'+esc(x.event_code||'admin_event')+'</code></details></div>';
+  });
   return hero()+'<p class="moduleIntro">A readable overview of operational activity. Technical audit references remain available inside each event.</p><div class="sectionTitle"><h3>Operational snapshot</h3></div>'+(metric.error?'<div class="notice">'+esc(metric.error)+'</div>':auditMetricCards(metric))+'<div class="sectionTitle"><h3>Recent Admin activity</h3></div>'+activity;
 }
 function delegationForm(){
