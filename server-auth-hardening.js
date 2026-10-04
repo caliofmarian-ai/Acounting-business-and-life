@@ -221,7 +221,8 @@ const SUPER_ADMIN_MFA_ADMIN_PREFIXES=Object.freeze([
   '/api/admin',
   '/api/governance/admin',
   '/api/legal/admin',
-  '/api/payments/admin'
+  '/api/payments/admin',
+  '/api/accounting/admin'
 ]);
 
 function privilegedAdminPath(path=''){
