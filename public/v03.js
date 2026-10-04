@@ -734,6 +734,7 @@ async function loadInventoryUnavailableAllocations(){
   }
   try{
     const rows=await api(`/api/inventory/${inventoryId}/unavailable`);
+    if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
     const nodes=(Array.isArray(rows)?rows:[]).map(row=>{
       const d=document.createElement('div');d.className='listRow';
       const active=row.state==='active',when=row.created_at?new Date(row.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila'}):'';
