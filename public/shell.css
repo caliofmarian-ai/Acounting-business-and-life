@@ -826,3 +826,16 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
 .accountSettingsGrid>button.accountDeleteTile{border-color:#efb5b0;background:#fff7f6}
 .accountSettingsGrid>button.accountDeleteTile>span{background:#ffe5e1}
 .accountSettingsGrid>button.accountDeleteTile strong{color:#9d2f28}
+
+/* PROFILE LIFECYCLE ATOMIC TRANSITION V1 — #762 */
+.profileTransitionActive .shellProfileControls button:disabled{cursor:wait;opacity:.72}
+.profileTransitionHub{min-height:calc(100dvh - 84px)}
+.profileTransitionHero{min-height:154px}
+.profileTransitionHeading{min-height:42px}
+.profileTransitionGrid{pointer-events:none}
+.profileTransitionTile{min-height:122px;align-content:center;overflow:hidden;border-color:#dce7e3;background:#fff}
+.profileTransitionIcon,.profileTransitionTile strong,.profileTransitionTile small{display:block;border-radius:999px;background:#edf2f0;background-image:linear-gradient(105deg,transparent 25%,rgba(255,255,255,.82) 42%,transparent 60%);background-size:220% 100%;animation:profileTransitionShimmer 1.15s linear infinite}
+.profileTransitionIcon{width:42px;height:42px;border-radius:14px}.profileTransitionTile strong{width:58%;height:11px}.profileTransitionTile small{width:82%;height:8px}.profileTransitionTile small.short{width:64%}
+@keyframes profileTransitionShimmer{to{background-position-x:-220%}}
+@media(prefers-reduced-motion:reduce){.profileTransitionIcon,.profileTransitionTile strong,.profileTransitionTile small{animation:none}}
+@media(max-width:420px){.profileTransitionHub{min-height:calc(100dvh - 70px)}.profileTransitionHero{min-height:166px}.profileTransitionTile{min-height:118px}}

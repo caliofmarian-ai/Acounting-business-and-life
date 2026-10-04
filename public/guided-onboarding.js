@@ -103,7 +103,7 @@ function firstVisible(...selectors){
   }
   return null;
 }
-function scheduleRender(delay=80){clearTimeout(renderTimer);renderTimer=setTimeout(()=>renderGuide().catch(()=>{}),delay)}
+function scheduleRender(delay=80){clearTimeout(renderTimer);renderTimer=setTimeout(()=>Promise.resolve().then(()=>renderGuide()).catch(error=>console.error('Guided onboarding render:',error)),delay)}
 function scheduleRefresh(delay=250){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>refreshGuide().catch(()=>{}),delay)}
 
 async function refreshGuide({render=true}={}){

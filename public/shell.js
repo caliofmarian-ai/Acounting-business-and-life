@@ -17,6 +17,11 @@ let adminContextFetchedAt = 0;
 let adminContextRefreshPromise = null;
 let activeRole = null;
 let activeSurface = 'account';
+let navigationEpoch = 0;
+let profileTransitionSequence = 0;
+let profileTransitionController = null;
+let profileTransitionTimeout = null;
+let profileTransitionTarget = null;
 let accountSettingsView = 'home';
 let toastTimer;
 const PROFILE_CACHE_MS = 30000;
@@ -139,6 +144,88 @@ function showToast(message) {
   toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function profileTransitionMeta(target){
+  if(target==='admin')return{label:'Admin',icon:'🛡️',detail:'Loading delegated administration and release controls.'};
+  const meta=ROLE_META[target]||{};
+  return{label:meta.label||'Profile',icon:meta.icon||'•',detail:meta.desc||'Preparing the selected workspace.'};
+}
+function clearProfileTransition(transition=null){
+  if(transition&&transition.id!==profileTransitionSequence)return false;
+  if(profileTransitionTimeout)clearTimeout(profileTransitionTimeout);
+  profileTransitionTimeout=null;
+  profileTransitionController=null;
+  profileTransitionTarget=null;
+  document.body.classList.remove('profileTransitionActive');
+  const hub=document.getElementById('roleHub');
+  hub?.classList.remove('profileTransitionHub');
+  hub?.removeAttribute('aria-busy');
+  if(hub)delete hub.dataset.profileTransition;
+  return true;
+}
+function renderProfileTransition(target){
+  const hub=document.getElementById('roleHub'),meta=profileTransitionMeta(target);
+  if(!hub)return;
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  hub.dataset.profileTransition=target;
+  hub.classList.add('profileTransitionHub');
+  hub.setAttribute('aria-busy','true');
+  hub.innerHTML=`<div class="hubHero profileTransitionHero" role="status" aria-live="polite"><div class="hubEyebrow">${escapeHtml(meta.label)} workspace</div><h1>${escapeHtml(meta.icon)} Opening ${escapeHtml(meta.label)}…</h1><p>${escapeHtml(meta.detail)}</p><span class="hubStatus">Switching securely</span></div><div class="hubSectionTitle profileTransitionHeading"><h2>Preparing your destination</h2><span>Previous profile actions are closed</span></div><div class="hubGrid profileTransitionGrid" aria-hidden="true">${Array.from({length:6},(_,index)=>`<div class="hubTile profileTransitionTile"><span class="profileTransitionIcon"></span><strong></strong><small class="${index%2?'short':''}"></small></div>`).join('')}</div>`;
+  hub.classList.remove('hidden');
+  document.body.classList.add('profileTransitionActive');
+}
+function beginProfileTransition(role){
+  profileTransitionController?.abort();
+  if(profileTransitionTimeout)clearTimeout(profileTransitionTimeout);
+  const id=++profileTransitionSequence,controller=new AbortController(),startedAt=performance.now();
+  navigationEpoch+=1;
+  perfMark('profile_transition_intent');
+  profileTransitionController=controller;
+  profileTransitionTarget=role;
+  activeSurface='transition';
+  activeRole=null;
+  closeDrawer();
+  hideFeatureWorkspaces();
+  hideMerchantWorkspace();
+  renderTopAccount();
+  renderProfileTransition(role);
+  publishProfileState();
+  profileTransitionTimeout=setTimeout(()=>controller.abort(),10000);
+  return{id,role,controller,navigationEpoch,startedAt};
+}
+function profileTransitionIsCurrent(transition){
+  return Boolean(transition&&transition.id===profileTransitionSequence&&profileTransitionController===transition.controller&&!transition.controller.signal.aborted);
+}
+function beginLocalNavigation(){
+  profileTransitionController?.abort();
+  profileTransitionSequence+=1;
+  navigationEpoch+=1;
+  clearProfileTransition();
+}
+function beginAdminNavigation(){
+  beginLocalNavigation();
+  profileTransitionTarget='admin';
+  activeSurface='transition';
+  activeRole=null;
+  closeDrawer();
+  hideFeatureWorkspaces();
+  hideMerchantWorkspace();
+  renderTopAccount();
+  renderProfileTransition('admin');
+  publishProfileState();
+  window.location.assign('/admin');
+}
+function mergeActiveRoleResponse(base,response,role){
+  if(response?.account)return response;
+  if(!base?.account)return base;
+  return{...base,account:{...base.account,active_role:response?.active_role||role,updated_at:response?.updated_at||base.account.updated_at}};
+}
+function isProfileStateCurrent(state){
+  return Boolean(state&&Number(state.navigationEpoch)===navigationEpoch&&state.surface===activeSurface&&(state.surface!=='profile'||state.activeRole===activeRole));
+}
+function isNavigationCurrent(epoch,role){
+  return Number(epoch)===navigationEpoch&&activeSurface==='profile'&&activeRole===role;
 }
 
 function openProfileSettingsForRole(role){
@@ -287,11 +374,19 @@ function renderTopAccount() {
   if (!snapshot?.account) return;
   const button = document.getElementById('accountAvatarButton');
   const pill = document.getElementById('activeRolePill');
-  if (button) button.innerHTML = avatarMarkup(snapshot.account);
+  const transitioning=activeSurface==='transition'&&profileTransitionTarget;
+  const transition=transitioning?profileTransitionMeta(profileTransitionTarget):null;
+  if (button) {
+    button.innerHTML = avatarMarkup(snapshot.account);
+    button.disabled=Boolean(transitioning);
+    if(transitioning)button.setAttribute('aria-busy','true');else button.removeAttribute('aria-busy');
+  }
   if (pill) {
-    pill.textContent = activeSurface === 'profile' ? (ROLE_META[activeRole]?.label || activeRole || 'Account') : activeSurface === 'admin' ? 'Admin' : 'Account';
+    pill.textContent = transitioning ? `Opening ${transition.label}…` : activeSurface === 'profile' ? (ROLE_META[activeRole]?.label || activeRole || 'Account') : activeSurface === 'admin' ? 'Admin' : 'Account';
     pill.dataset.surface=activeSurface;
-    pill.setAttribute('aria-label',activeSurface==='profile'&&activeRole?`Open ${ROLE_META[activeRole]?.label||activeRole} home`:'Open Account Home');
+    pill.disabled=Boolean(transitioning);
+    if(transitioning)pill.setAttribute('aria-busy','true');else pill.removeAttribute('aria-busy');
+    pill.setAttribute('aria-label',transitioning?`Opening ${transition.label}`:activeSurface==='profile'&&activeRole?`Open ${ROLE_META[activeRole]?.label||activeRole} home`:'Open Account Home');
   }
   syncMerchantWorkspaceNavVisibility();
   syncBusinessWorkspacePlaceholder();
@@ -323,10 +418,10 @@ function renderDrawer() {
     <button id="accountSettingsButton" class="accountSettingsEntry" type="button"><span>⚙️</span><span><strong>Account Settings</strong><small>${isCompanyTestAccount(account)?'Test identity, security and assigned role':'Personal details, security and profile management'}</small></span><b>›</b></button>
     <button id="drawerSignOutButton" class="accountSignOutEntry" type="button"><span>↪</span><span><strong>Sign out</strong><small>End this account session on this device</small></span></button>`;
   panel.querySelector('#drawerClose').onclick = closeDrawer;
-  panel.querySelector('#accountHomeButton').onclick = () => { closeDrawer(); renderAccountHome(); };
+  panel.querySelector('#accountHomeButton').onclick = openAccountHome;
   panel.querySelector('#accountSettingsButton').onclick = () => openAccountSettings();
   panel.querySelector('#drawerSignOutButton').onclick = event => signOutCurrentAccount(event.currentTarget);
-  panel.querySelector('#adminWorkspaceButton')?.addEventListener('click',()=>{closeDrawer();window.location.assign('/admin')});
+  panel.querySelector('#adminWorkspaceButton')?.addEventListener('click',beginAdminNavigation);
   panel.querySelectorAll('[data-role-action]').forEach(btn => btn.onclick = () => enableOrSwitch(btn.dataset.roleAction));
   bindCopyIds(panel);
   document.dispatchEvent(new CustomEvent('abl:drawer-rendered', { detail: { activeRole, accountId: Number(account.id) || null, view:'profiles' } }));
@@ -544,6 +639,7 @@ function renderAccountSettings(view=accountSettingsView){
 }
 
 async function openAccountSettings(view='home'){
+  beginLocalNavigation();
   closeDrawer();
   activeSurface='account';
   hideMerchantWorkspace();
@@ -568,6 +664,7 @@ async function openAccountSettings(view='home'){
 }
 
 function closeAccountSettings(){
+  beginLocalNavigation();
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
   renderAccountHome();
   publishProfileState();
@@ -575,6 +672,7 @@ function closeAccountSettings(){
 }
 
 function openAccountHome(){
+  beginLocalNavigation();
   closeDrawer();
   renderAccountHome();
   publishProfileState();
@@ -785,17 +883,33 @@ async function removeAvatar() {
 }
 
 async function enableOrSwitch(role) {
+  const transition=beginProfileTransition(role);
+  let nextSnapshot=snapshot;
   try {
-    if (!isEnabled(role)) snapshot = await profileApi(`/api/profiles/${role}`, { method: 'PUT', body: JSON.stringify({ enabled: true, visibility: role === 'merchant' ? 'public' : 'private' }) });
-    snapshot = await profileApi('/api/me/active-role', { method: 'PATCH', body: JSON.stringify({ role }) });
+    if (!isEnabled(role)) nextSnapshot = await profileApi(`/api/profiles/${role}`, { method: 'PUT', body: JSON.stringify({ enabled: true, visibility: role === 'merchant' ? 'public' : 'private' }), signal:transition.controller.signal });
+    const switched = await profileApi('/api/me/active-role', { method: 'PATCH', headers:{'X-BL-Profile-Switch':'compact'}, body: JSON.stringify({ role }), signal:transition.controller.signal });
+    if(!profileTransitionIsCurrent(transition))return;
+    const confirmedAt=performance.now();
+    perfMark('profile_transition_confirmed');
+    snapshot = mergeActiveRoleResponse(nextSnapshot,switched,role);
     activeRole = snapshot.account.active_role || role;
     activeSurface = 'profile';
     profileFetchedAt=Date.now();
+    clearProfileTransition(transition);
     applyActiveRole();
     publishProfileState();
-    renderDrawer();
+    perfMark('profile_transition_rendered');
+    if(PERF_TRACE_ENABLED)PERF_TRACE.notes.push({event:'profile_transition',role,server_ms:Number((confirmedAt-transition.startedAt).toFixed(2)),ready_ms:Number((performance.now()-transition.startedAt).toFixed(2))});
     closeDrawer();
-  } catch (err) { showToast(err.message); }
+  } catch (err) {
+    if(transition.id!==profileTransitionSequence)return;
+    clearProfileTransition(transition);
+    activeRole=snapshot?.account?.active_role||null;
+    activeSurface='account';
+    renderAccountHome();
+    publishProfileState();
+    showToast(err.message);
+  }
 }
 
 function hideMerchantWorkspace() {
@@ -879,6 +993,7 @@ function openFeatureWorkspace(workspaceId){
   return true;
 }
 function showActiveWorkspace() {
+  beginLocalNavigation();
   hideFeatureWorkspaces();
   closeDrawer();
   activeSurface = 'profile';
@@ -895,7 +1010,8 @@ window.BusinessLifeShell=Object.freeze({
   openAccountSettings,
   signOutCurrentAccount,
   refreshProfile,
-  getProfileState:()=>window.BusinessLifeProfileState||null
+  getProfileState:()=>window.BusinessLifeProfileState||null,
+  isProfileStateCurrent
 });
 
 const HUBS = {
@@ -1102,6 +1218,7 @@ function renderCustomerHomeData(hub,data){
   hub.querySelectorAll('[data-customer-home-retry]').forEach(button=>button.onclick=()=>loadCustomerHome(hub,{force:true}));
 }
 async function loadCustomerHome(hub,{force=false}={}){
+  const requestNavigationEpoch=navigationEpoch;
   const loading=hub.querySelector('#customerHomeLoading');
   const error=hub.querySelector('#customerHomeError');
   const dynamic=hub.querySelector('#customerHomeDynamic');
@@ -1112,16 +1229,17 @@ async function loadCustomerHome(hub,{force=false}={}){
   }
   try{
     const data=await loadCustomerHomeData(force);
-    if(!hub.isConnected||activeRole!=='customer')return;
+    if(!hub.isConnected||activeRole!=='customer'||!isNavigationCurrent(requestNavigationEpoch,'customer'))return;
     renderCustomerHomeData(hub,data);
   }catch(err){
+    if(!isNavigationCurrent(requestNavigationEpoch,'customer'))return;
     loading?.classList.add('hidden');
     if(!force)dynamic?.classList.add('hidden');
     const message=hub.querySelector('#customerHomeErrorMessage');
     if(message)message.textContent=err.message||'Customer Home could not be loaded.';
     error?.classList.remove('hidden');
   }finally{
-    if(force)setProfileHomeRefreshBusy(hub,'customerHomeRefresh',false);
+    if(force&&isNavigationCurrent(requestNavigationEpoch,'customer'))setProfileHomeRefreshBusy(hub,'customerHomeRefresh',false);
   }
 }
 function setCustomerHubPanel(hub,panel){
@@ -1340,6 +1458,7 @@ function renderCourierHomeData(hub,data){
   hub.querySelectorAll('[data-courier-home-retry]').forEach(button=>button.onclick=()=>loadCourierHome(hub,{force:true}));
 }
 async function loadCourierHome(hub,{force=false}={}){
+  const requestNavigationEpoch=navigationEpoch;
   const loading=hub.querySelector('#courierHomeLoading');
   const error=hub.querySelector('#courierHomeError');
   const dynamic=hub.querySelector('#courierHomeDynamic');
@@ -1350,16 +1469,17 @@ async function loadCourierHome(hub,{force=false}={}){
   }
   try{
     const data=await loadCourierHomeData(force);
-    if(!hub.isConnected||activeRole!=='courier')return;
+    if(!hub.isConnected||activeRole!=='courier'||!isNavigationCurrent(requestNavigationEpoch,'courier'))return;
     renderCourierHomeData(hub,data);
   }catch(err){
+    if(!isNavigationCurrent(requestNavigationEpoch,'courier'))return;
     loading?.classList.add('hidden');
     if(!force)dynamic?.classList.add('hidden');
     const message=hub.querySelector('#courierHomeErrorMessage');
     if(message)message.textContent=err.message||'Courier Home could not be loaded.';
     error?.classList.remove('hidden');
   }finally{
-    if(force)setProfileHomeRefreshBusy(hub,'courierHomeRefresh',false);
+    if(force&&isNavigationCurrent(requestNavigationEpoch,'courier'))setProfileHomeRefreshBusy(hub,'courierHomeRefresh',false);
   }
 }
 function renderCourierHub(){
@@ -1570,6 +1690,7 @@ function renderServiceProviderHomeData(hub,data){
   bindServiceProviderHomeDynamic(hub);
 }
 async function loadServiceProviderHome(hub,{force=false}={}){
+  const requestNavigationEpoch=navigationEpoch;
   const loading=hub.querySelector('#serviceProviderHomeLoading');
   const error=hub.querySelector('#serviceProviderHomeError');
   const dynamic=hub.querySelector('#serviceProviderHomeDynamic');
@@ -1580,16 +1701,17 @@ async function loadServiceProviderHome(hub,{force=false}={}){
   }
   try{
     const data=await loadServiceProviderHomeData(force);
-    if(!hub.isConnected||activeRole!=='service_provider')return;
+    if(!hub.isConnected||activeRole!=='service_provider'||!isNavigationCurrent(requestNavigationEpoch,'service_provider'))return;
     renderServiceProviderHomeData(hub,data);
   }catch(err){
+    if(!isNavigationCurrent(requestNavigationEpoch,'service_provider'))return;
     loading?.classList.add('hidden');
     if(!force)dynamic?.classList.add('hidden');
     const message=hub.querySelector('#serviceProviderHomeErrorMessage');
     if(message)message.textContent=err.message||'Local Services Home could not be loaded.';
     error?.classList.remove('hidden');
   }finally{
-    if(force)setProfileHomeRefreshBusy(hub,'serviceProviderHomeRefresh',false);
+    if(force&&isNavigationCurrent(requestNavigationEpoch,'service_provider'))setProfileHomeRefreshBusy(hub,'serviceProviderHomeRefresh',false);
   }
 }
 function openServiceProviderSection(section){
@@ -1707,7 +1829,7 @@ function renderAccountHome(){
   const test=isCompanyTestAccount(account);
   hub.innerHTML=`<div class="hubHero accountHomeHero ${test?'companyTestHero':''}"><div class="hubEyebrow">${test?'COMPANY TEST ACCOUNT':'PERSON ACCOUNT'}</div><h1>${escapeHtml(account.display_name||'Your account')}</h1><div class="accountHomeIdentity"><span>${test?'🧪 '+escapeHtml(testAccountRoleLabel(account))+' · managed by '+escapeHtml(account.managed_by||'Business & Life'):country.flag+' '+escapeHtml(country.label)+' account'}</span>${identityLine(account.personal_id,accountIdentityLabel(account))}</div><span class="hubStatus">${test?'Controlled testing only':'Choose where you want to continue'}</span></div><div class="hubSectionTitle"><h2>${test?'Assigned active profile':'Your active profiles'}</h2><span>${test?escapeHtml(testAccountRoleLabel(account)):'You choose every time'}</span></div><div class="hubGrid accountProfileGrid">${profiles||`<p class="hubEmpty">No active ${test?'test ':''}profile yet. Open Account Settings to start onboarding.</p>`}</div>${admin}<section class="accountHomeSection accountSettingsAccess"><div class="hubSectionTitle"><h2>Account</h2><span>${test?'Company-managed':'Shared settings'}</span></div><button class="hubTile accountHomeAction profileSettingsTile" id="accountHomeSettings" type="button"><span class="hubTileIcon">⚙️</span><span class="accountHomeActionCopy"><strong>Account Settings</strong><small>${test?'Test identity, security and assigned-role onboarding':'Personal details, security, Money &amp; Banking and profile onboarding'}</small></span><span class="accountHomeOpen">Open settings ›</span></button><button class="hubTile accountHomeAction accountSignOutAction" id="accountHomeSignOut" type="button"><span class="hubTileIcon">↪</span><span class="accountHomeActionCopy"><strong>Sign out</strong><small>End the current session and return to the sign-in screen</small></span><span class="accountHomeOpen">Sign out ›</span></button></section>`;
   hub.querySelectorAll('[data-account-role]').forEach(button=>button.onclick=()=>enableOrSwitch(button.dataset.accountRole));
-  hub.querySelector('#accountAdminProfile')?.addEventListener('click',()=>window.location.assign('/admin'));
+  hub.querySelector('#accountAdminProfile')?.addEventListener('click',beginAdminNavigation);
   hub.querySelector('#accountHomeSettings')?.addEventListener('click',()=>openAccountSettings());
   hub.querySelector('#accountHomeSignOut')?.addEventListener('click',event=>signOutCurrentAccount(event.currentTarget));
   bindCopyIds(hub);
@@ -1744,7 +1866,7 @@ function applyActiveRole() {
 }
 
 function publishProfileState(){
-  const detail={surface:activeSurface,activeRole:activeSurface==='profile'?activeRole:null,accountId:Number(snapshot?.account?.id)||null,snapshot};
+  const detail={surface:activeSurface,activeRole:activeSurface==='profile'?activeRole:null,transitionTargetRole:activeSurface==='transition'?profileTransitionTarget:null,navigationEpoch,accountId:Number(snapshot?.account?.id)||null,snapshot};
   window.BusinessLifeProfileState=Object.freeze(detail);
   document.dispatchEvent(new CustomEvent('abl:profile-state',{detail}));
 }
@@ -1752,10 +1874,12 @@ async function refreshProfile(force=false) {
   if (!token()) return null;
   if(!force&&snapshot?.account&&profileFetchedAt&&Date.now()-profileFetchedAt<PROFILE_CACHE_MS)return snapshot;
   if(profileRefreshPromise)return profileRefreshPromise;
+  const refreshNavigationEpoch=navigationEpoch;
   profileRefreshPromise=(async()=>{
     perfMark('profile_bootstrap_start');
     const bootstrap = await profileApi('/api/session/bootstrap');
     perfMark('profile_bootstrap_end');
+    if(refreshNavigationEpoch!==navigationEpoch)return bootstrap.profile;
     snapshot = bootstrap.profile;
     adminContext = bootstrap.admin?.is_admin ? bootstrap.admin : null;
     adminContextFetchedAt=Date.now();

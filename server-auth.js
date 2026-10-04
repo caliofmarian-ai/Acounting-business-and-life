@@ -1078,7 +1078,10 @@ app.patch('/api/me/active-role', body, auth, async (req, res, next) => {
     if(classified?.account_mode==='company_test'&&companyTestProfileRole(classified.test_role)!==role)return res.status(403).json({error:`This company test account is reserved for ${classified.test_role.replaceAll('_',' ')}.`});
     const enabled = await pool.query(`SELECT 1 FROM profiles WHERE account_id=$1 AND role=$2 AND enabled=TRUE AND status='active'`, [req.accountId, role]);
     if (!enabled.rowCount) return res.status(403).json({ error: 'Enable this profile first' });
-    await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2`, [role, req.accountId]);
+    const switched=await pool.query(`UPDATE accounts SET active_role=$1,updated_at=NOW() WHERE id=$2 RETURNING active_role,updated_at`, [role, req.accountId]);
+    if(String(req.get('x-bl-profile-switch')||'').toLowerCase()==='compact'){
+      return res.json({ok:true,active_role:switched.rows[0]?.active_role||role,updated_at:switched.rows[0]?.updated_at||null});
+    }
     res.json(await profileSnapshot(req.accountId));
   } catch (err) { next(err); }
 });
