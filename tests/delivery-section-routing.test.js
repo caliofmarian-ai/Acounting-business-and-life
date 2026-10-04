@@ -26,7 +26,7 @@ test('Courier workspace separates eligibility, availability, assigned work and t
 
 test('availability remains visibly blocked until explicit courier approval',()=>{
   assert.match(ui,/p\.eligibility_status==='approved'/);
-  assert.match(ui,/Availability stays locked until Admin explicitly approves eligibility/);
+  assert.match(ui,/Availability stays locked until the evidence, vehicle, operating area, expiry and Admin review are complete/);
   assert.match(ui,/approved\?'':'disabled'/);
   assert.match(ui,/Enabling this profile alone does not authorize delivery work/);
 });

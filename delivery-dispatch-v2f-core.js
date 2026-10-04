@@ -36,12 +36,27 @@ export function deliveryOfferSafeView(row={}){
 export function deliveryOfferCourierGate(courier={},delivery={},{
   territoryAuthorized=false,
   hasActiveDelivery=false,
+  eligibilityAssessment=null,
+  controlledTestDelivery=false,
   nowMs=Date.now()
 }={}){
   if(!territoryAuthorized)return Object.freeze({allowed:false,reason:'COURIER_TERRITORY_NOT_AUTHORIZED'});
+  if(eligibilityAssessment&&eligibilityAssessment.eligible!==true){
+    return Object.freeze({
+      allowed:false,
+      reason:'COURIER_ELIGIBILITY_INCOMPLETE',
+      missing_requirements:Object.freeze([...(eligibilityAssessment.missing_requirements||[])])
+    });
+  }
+  if(eligibilityAssessment?.non_commercial===true&&controlledTestDelivery!==true){
+    return Object.freeze({allowed:false,reason:'COURIER_NON_COMMERCIAL_TEST_ONLY'});
+  }
+  if(eligibilityAssessment?.non_commercial===false&&controlledTestDelivery===true){
+    return Object.freeze({allowed:false,reason:'COURIER_COMMERCIAL_PROFILE_EXCLUDED_FROM_TEST'});
+  }
   if(courier.available!==true)return Object.freeze({allowed:false,reason:'COURIER_NOT_AVAILABLE'});
   if(String(courier.eligibility_status||'')!=='approved')return Object.freeze({allowed:false,reason:'COURIER_NOT_APPROVED'});
-  if(courier.eligibility_expires_at){
+  if(!eligibilityAssessment&&courier.eligibility_expires_at){
     const expiry=new Date(courier.eligibility_expires_at).getTime();
     if(Number.isFinite(expiry)&&expiry<=Number(nowMs))return Object.freeze({allowed:false,reason:'COURIER_APPROVAL_EXPIRED'});
   }

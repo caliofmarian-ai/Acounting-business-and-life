@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {deliveryFetch,startEmbeddedDelivery,stopEmbeddedDelivery} from './server-delivery.js';
 import {readOrderDetail} from './orders-read-core.js';
 import {reserveOrderStock,reservationExpiryForOrder} from './order-stock-reservation.js';
+import {courierEligibilityProfileView,readCourierEligibility} from './courier-eligibility-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -85,6 +86,7 @@ app.get('/health',async(req,res)=>{
 });
 
 app.put('/api/courier/delivery-profile',body,async(req,res,next)=>{
+  const client=await pool.connect();
   try{
     const me=await identity(req);
     if(!enabled(me,'courier')) throw Object.assign(new Error('Delivery profile required'),{status:403});
@@ -92,10 +94,35 @@ app.put('/api/courier/delivery-profile',body,async(req,res,next)=>{
     const weight=optionalNonNegative(req.body?.max_weight_kg,'Max weight');
     const volume=optionalNonNegative(req.body?.max_volume_l,'Max volume');
     const radius=optionalNonNegative(req.body?.service_radius_km,'Service radius');
-    const q=await pool.query(`UPDATE courier_profiles SET vehicle_type=$1,max_weight_kg=$2,max_volume_l=$3,service_radius_km=$4,updated_at=NOW() WHERE account_id=$5 RETURNING *`,[vehicle,weight,volume,radius,me.account.id]);
-    if(!q.rowCount) return res.status(404).json({error:'Courier profile missing'});
-    res.json(q.rows[0]);
-  }catch(e){next(e)}
+    await client.query('BEGIN');
+    const current=await client.query(`SELECT * FROM courier_profiles WHERE account_id=$1 FOR UPDATE`,[me.account.id]);
+    if(!current.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Courier profile missing'})}
+    const before=current.rows[0];
+    const numericChanged=(beforeValue,nextValue)=>beforeValue==null||beforeValue===''
+      ?nextValue!=null
+      :nextValue==null||Number(beforeValue)!==Number(nextValue);
+    const eligibilityChanged=String(before.vehicle_type||'')!==vehicle||
+      numericChanged(before.max_weight_kg,weight)||numericChanged(before.max_volume_l,volume)||
+      numericChanged(before.service_radius_km,radius);
+    const q=await client.query(`
+      UPDATE courier_profiles SET vehicle_type=$1,max_weight_kg=$2,max_volume_l=$3,service_radius_km=$4,
+             eligibility_status=CASE WHEN $6 AND eligibility_status='approved' THEN 'pending' ELSE eligibility_status END,
+             available=CASE WHEN $6 THEN FALSE ELSE available END,
+             updated_at=NOW()
+       WHERE account_id=$5 RETURNING *
+    `,[vehicle,weight,volume,radius,me.account.id,eligibilityChanged]);
+    if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Courier profile missing'})}
+    if(eligibilityChanged){
+      await client.query(`
+        UPDATE delivery_offers SET status='withdrawn',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW()
+         WHERE courier_account_id=$1 AND status='pending'
+      `,[me.account.id]);
+    }
+    const record=await readCourierEligibility(client,me.account.id);
+    await client.query('COMMIT');
+    res.json(courierEligibilityProfileView(record.profile,record.documents));
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
+  finally{client.release()}
 });
 
 // Standalone rollback compatibility only. In the composed runtime the public payment path is owned by Payment Core -> Notifications -> Multi-business Accounting before requests can reach Delivery Finance.

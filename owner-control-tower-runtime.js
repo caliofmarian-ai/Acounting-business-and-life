@@ -44,9 +44,12 @@ export async function territoryCapacitySummary(pool){
       (SELECT COUNT(DISTINCT pa.account_id)::int
          FROM profile_authorizations pa
          JOIN courier_profiles c ON c.account_id=pa.account_id
+         JOIN accounts courier_account ON courier_account.id=pa.account_id
         WHERE pa.territory_id=t.id AND pa.role='courier' AND pa.status='active'
+          AND courier_account.account_mode<>'company_test'
+          AND c.non_commercial_test_only=FALSE
           AND c.eligibility_status='approved' AND c.available=TRUE
-          AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW())) eligible_couriers
+          AND c.eligibility_expires_at::date>=CURRENT_DATE) eligible_couriers
     FROM territories t
     WHERE t.country_code='PH' AND t.status<>'closed'
     ORDER BY t.id

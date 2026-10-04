@@ -289,6 +289,7 @@ async function emitDeliveryOffers(req,deliveryId,{courierId=null}={}){
       emailDefault:false,
       pushDefault:true,
       data:{
+        delivery_id:Number(offer.delivery_id),
         order_number:offer.order_number||offer.delivery_id,
         business_name:offer.business_name||'Merchant',
         route_distance_km:Number(offer.route_distance_km||0),
