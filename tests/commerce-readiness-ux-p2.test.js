@@ -38,7 +38,9 @@ test('commerce review progress updates live and server rejection does not rebuil
   assert.match(submit,/error\.payload\?\.decision_policy/);
   assert.match(submit,/commerceServerBlockersHtml/);
   assert.match(submit,/syncCommerceDecisionControls\(readiness,p\)/);
-  assert.doesNotMatch(submit,/openAdminCommerceReadiness\([^\n]*\)\s*;?\s*}\s*catch/);
+  const rejection=submit.slice(submit.indexOf('}catch(error){'));
+  assert.doesNotMatch(rejection,/openAdminCommerceReadiness/);
+  assert.doesNotMatch(rejection,/loadBase\(/);
 });
 
 test('legacy Super Admin readiness surface follows the same fail-closed interaction contract',()=>{
