@@ -124,31 +124,132 @@ function normalizeEvidenceItem(raw={}){
   };
 }
 
-export function validateMicrobusinessEligibilityEvidence(state,evidenceChecklist=[]){
+function evidenceBlocker(requirement,item,errorCode,field,message,status=400){
+  return Object.freeze({
+    requirement_code:requirement.code,
+    label:requirement.label,
+    error_code:errorCode,
+    field,
+    message,
+    status,
+    source_authority_required:true,
+    reference_required:item?.outcome==='verified',
+    note_required:item?.outcome==='not_applicable',
+    allow_not_applicable:Boolean(requirement.allow_not_applicable)
+  });
+}
+
+export function assessMicrobusinessEligibilityEvidence(state,evidenceChecklist=[]){
   const normalized=microbusinessReadinessState(state||{});
   const requirements=microbusinessReadinessReviewRequirements(normalized);
-  if(!requirements.length)throw Object.assign(new Error('Complete the activity track and operating context before commerce eligibility review'),{status:409,code:'READINESS_CONTEXT_REQUIRED'});
+  if(!requirements.length){
+    return Object.freeze({
+      context_ready:false,
+      complete:false,
+      total_count:0,
+      resolved_count:0,
+      missing:[],
+      accepted_evidence:[],
+      blockers:Object.freeze([Object.freeze({
+        requirement_code:null,
+        label:'Business setup',
+        error_code:'READINESS_CONTEXT_REQUIRED',
+        field:'activity_track_or_operating_context',
+        message:'Complete the activity type and operating context before commerce eligibility can be reviewed.',
+        status:409,
+        source_authority_required:false,
+        reference_required:false,
+        note_required:false,
+        allow_not_applicable:false
+      })]),
+      items:Object.freeze([])
+    });
+  }
   const items=Array.isArray(evidenceChecklist)?evidenceChecklist.map(normalizeEvidenceItem):[];
   const byCode=new Map(items.map(item=>[item.code,item]));
+  const blockers=[];
   const missing=[];
+  const assessed=[];
+  const accepted=[];
+  let resolvedCount=0;
+
   for(const requirement of requirements){
-    const item=byCode.get(requirement.code);
-    if(!item||!REVIEW_OUTCOMES.has(item.outcome)){missing.push(requirement.code);continue;}
-    if(item.outcome==='not_applicable'&&!requirement.allow_not_applicable){
-      throw Object.assign(new Error(requirement.label+' cannot be marked not applicable'),{status:400,code:'READINESS_EVIDENCE_NOT_APPLICABLE_DENIED',requirement:requirement.code});
+    const item=byCode.get(requirement.code)||normalizeEvidenceItem({code:requirement.code});
+    const itemBlockers=[];
+    if(!REVIEW_OUTCOMES.has(item.outcome)){
+      missing.push(requirement.code);
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_INCOMPLETE','outcome',
+        requirement.label+': choose Verified, or Not applicable only when the review allows it.',409
+      ));
+    }else if(item.outcome==='not_applicable'&&!requirement.allow_not_applicable){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_NOT_APPLICABLE_DENIED','outcome',
+        requirement.label+' must be verified for this review and cannot be marked Not applicable.'
+      ));
+    }else if(item.outcome==='verified'&&!item.reference){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_REFERENCE_REQUIRED','reference',
+        requirement.label+': identify the evidence or platform/official record you checked.'
+      ));
+    }else if(!item.source_authority){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_SOURCE_REQUIRED','source_authority',
+        requirement.label+': name the issuer, competent authority, official source or Business & Life platform record that supports this decision.'
+      ));
+    }else if(item.outcome==='not_applicable'&&!item.note){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_NA_SOURCE_REQUIRED','note',
+        requirement.label+': explain why the sourced requirement does not apply to this exact business.'
+      ));
     }
-    if(item.outcome==='verified'&&!item.reference){
-      throw Object.assign(new Error(requirement.label+' requires an evidence/reference identifier'),{status:400,code:'READINESS_EVIDENCE_REFERENCE_REQUIRED',requirement:requirement.code});
-    }
-    if(!item.source_authority){
-      throw Object.assign(new Error(requirement.label+' requires the source or authority used for the decision'),{status:400,code:'READINESS_EVIDENCE_SOURCE_REQUIRED',requirement:requirement.code});
-    }
-    if(item.outcome==='not_applicable'&&!item.note){
-      throw Object.assign(new Error(requirement.label+' needs a source/authority and reason when marked not applicable'),{status:400,code:'READINESS_EVIDENCE_NA_SOURCE_REQUIRED',requirement:requirement.code});
-    }
+
+    const resolved=itemBlockers.length===0;
+    if(resolved){
+      resolvedCount+=1;
+      accepted.push(item);
+    }else blockers.push(...itemBlockers);
+    assessed.push(Object.freeze({
+      ...requirement,
+      evidence:item,
+      resolved,
+      blockers:Object.freeze(itemBlockers)
+    }));
   }
-  if(missing.length)throw Object.assign(new Error('Resolve every required readiness review item before commerce eligibility can be granted'),{status:409,code:'READINESS_EVIDENCE_INCOMPLETE',missing});
-  return requirements.map(requirement=>byCode.get(requirement.code));
+
+  return Object.freeze({
+    context_ready:true,
+    complete:resolvedCount===requirements.length,
+    total_count:requirements.length,
+    resolved_count:resolvedCount,
+    missing:Object.freeze(missing),
+    accepted_evidence:Object.freeze(accepted),
+    blockers:Object.freeze(blockers),
+    items:Object.freeze(assessed)
+  });
+}
+
+export function validateMicrobusinessEligibilityEvidence(state,evidenceChecklist=[]){
+  const assessment=assessMicrobusinessEligibilityEvidence(state,evidenceChecklist);
+  if(!assessment.context_ready){
+    throw Object.assign(new Error('Complete the activity track and operating context before commerce eligibility review'),{status:409,code:'READINESS_CONTEXT_REQUIRED'});
+  }
+  const specific=assessment.blockers.find(blocker=>blocker.error_code!=='READINESS_EVIDENCE_INCOMPLETE');
+  if(specific){
+    throw Object.assign(new Error(specific.message),{
+      status:specific.status||400,
+      code:specific.error_code,
+      requirement:specific.requirement_code
+    });
+  }
+  if(assessment.missing.length){
+    throw Object.assign(new Error('Resolve every required readiness review item before commerce eligibility can be granted'),{
+      status:409,
+      code:'READINESS_EVIDENCE_INCOMPLETE',
+      missing:[...assessment.missing]
+    });
+  }
+  return [...assessment.accepted_evidence];
 }
 
 export function microbusinessReadinessEnforcementMode(env=process.env){
