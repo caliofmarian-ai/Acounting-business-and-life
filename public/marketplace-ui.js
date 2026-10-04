@@ -844,14 +844,17 @@ async function renderMerchantCatalog(){
   try{
     const [store,inventory]=await Promise.all([mapi('/api/merchant/storefront?product_domain=food'),mapi('/api/inventory')]);
     merchantStore=store;
-    const [retailPage,collections,schema]=await Promise.all([
+    const [retailPage,collections,schema,summary]=await Promise.all([
       mapi('/api/merchant/catalog-v3/items?'+retailCatalogQuery()),
       mapi('/api/merchant/catalog-v3/collections?business_id='+encodeURIComponent(Number(store.business_id))),
-      mapi('/api/merchant/catalog-v3/schema?business_id='+encodeURIComponent(Number(store.business_id)))
+      mapi('/api/merchant/catalog-v3/schema?business_id='+encodeURIComponent(Number(store.business_id))),
+      mapi('/api/merchant/catalog-v3/summary?business_id='+encodeURIComponent(Number(store.business_id)))
     ]);
     merchantCatalogSchema=schema;
+    const catalogSummary=`<section class="merchantStoreCard catalogProjectionSummary"><h2>Catalog summary</h2><p><strong>${Number(summary.all_products||0)} total Merchant products</strong> · ${Number(summary.food_products||0)} Food · ${Number(summary.retail_products||0)} Retail · ${Number(summary.published_products||0)} published · ${Number(summary.private_products||0)} private · ${Number(summary.archived_products||0)} archived.</p><small>Published means product-level publication only. Public discovery still also requires an active storefront and commerce readiness.</small></section>`;
     marketWorkspace.innerHTML=
       marketHeader('Catalog','Food menus and Retail products share one Catalog engine')+
+      catalogSummary+
       catalogCreateSection(inventory||[])+
       retailMerchandisingSection(retailPage,collections||[])+
       ((store.merchant_domain==='food'||store.merchant_domain==='mixed')?preparedImportSection():'')+
@@ -955,7 +958,7 @@ function retailMerchandisingSection(page={},collections=[]){
       <div><button type="button" class="imageAction" data-edit-collection="${Number(collection.id)}">Edit</button><button type="button" class="imageAction danger" data-archive-collection="${Number(collection.id)}">Archive</button></div>
     </div>`).join(''):'<div class="marketEmpty">No Retail collections yet.</div>';
   return `<section class="merchantStoreCard retailMerchandising">
-    <div class="retailCatalogHead"><div><small>RETAIL MERCHANDISING</small><h2>Products & collections</h2><p>Search, scan, organise and publish Retail products without duplicating Inventory.</p></div><span>${total} product${total===1?'':'s'}</span></div>
+    <div class="retailCatalogHead"><div><small>RETAIL MERCHANDISING</small><h2>Retail products & collections</h2><p>This count is only the current Retail result set after these filters. Food / prepared products are counted separately in Catalog summary below.</p></div><span>${total} Retail product${total===1?'':'s'} in this view</span></div>
 
     <form id="retailCatalogFilterForm" class="retailCatalogFilters">
       <label class="retailSearch">Search<input id="retailCatalogSearch" value="${mh(retailCatalogState.q)}" placeholder="Name, brand, SKU or barcode"></label>
@@ -1313,7 +1316,8 @@ function catalogSection(products){
   const active=all.filter(p=>p.active!==false),archived=all.filter(p=>p.active===false);
   const rows=active.length?active.map(p=>{const images=Array.isArray(p.images)?p.images:[];const primary=images.find(x=>x.is_primary&&x.approval_status==='approved'&&x.public_visible);const draft=images.find(x=>x.source_type==='ai_generated'&&x.approval_status==='draft');const visual=primary?.data_url||draft?.data_url||p.image_data_url||'';const aiPrimary=primary?.source_type==='ai_generated';const canGenerate=p.product_domain==='food'&&p.product_kind==='prepared_food'&&Boolean(p.legacy_product_id);const allergenState=canGenerate?(p.allergen_review_current?'<span class="allergenReviewBadge current">Ingredient disclosure reviewed</span>':'<span class="allergenReviewBadge required">Ingredient disclosure review required</span>'):'';return `<div class="merchantProductRow merchantProductMediaRow"><div class="merchantProductVisual">${visual?`<img src="${visual}" alt="${mh(p.name)}">`:'<span>＋ photo</span>'}</div><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • ${p.legacy_product_id?'Prepared recipe':p.inventory_id?`${mnice(p.product_kind)} · ${Number(p.quantity_per_unit).toLocaleString('en-PH',{maximumFractionDigits:4})} ${mh(p.inventory_unit||'stock')}/sale`:'Marketplace product'}</small>${aiPrimary?'<span class="aiReferenceLabel">AI-generated reference image</span>':''}${draft?'<span class="aiDraftLabel">AI image draft · review before use</span>':''}${allergenState}${p.catalog_review_required?'<span class="catalogReviewBadge">Product details need review</span>':''}<div class="merchantImageActions"><button class="imageAction" type="button" data-edit-catalog-product="${p.id}">Edit product</button>${canGenerate?`<button class="imageAction" type="button" data-generate-image="${p.id}">${draft?'Generate another':'Generate AI image'}</button>`:''}${draft?`<button class="imageAction primary" type="button" data-approve-image="${p.id}" data-media-id="${draft.id}">Use as primary</button><button class="imageAction danger" type="button" data-archive-image="${p.id}" data-media-id="${draft.id}">Discard image</button>`:''}<button class="imageAction danger" type="button" data-archive-product="${p.id}">Archive product</button></div></div><button class="publishButton ${p.published?'on':''}" type="button" data-toggle-product="${p.id}" data-published="${p.published?'1':'0'}">${p.published?'Published':'Private'}</button></div>`}).join(''):'<div class="marketEmpty">No active Catalog products yet. Add one from Inventory or import prepared recipes above.</div>';
   const archivedHtml=archived.length?`<details class="catalogArchived"><summary>Archived products (${archived.length})</summary><div class="merchantCatalogList">${archived.map(p=>`<div class="merchantProductRow"><div class="merchantProductCopy"><strong>${mh(p.name)}</strong><small>${mh(p.category)} • ${mphp(p.selling_price)} • archived</small></div><div class="merchantImageActions"><button class="imageAction" type="button" data-edit-catalog-product="${p.id}">Edit</button><button class="publishButton" type="button" data-restore-product="${p.id}">Restore</button></div></div>`).join('')}</div></details>`:'';
-  return `<section class="merchantStoreCard"><h2>Your Catalog</h2><p>These are the products customers can eventually see. Publishing is separate from creating or importing.</p><div class="merchantCatalogList">${rows}</div>${archivedHtml}</section>`;
+  const published=active.filter(p=>p.published===true).length,privateCount=active.length-published;
+  return `<section class="merchantStoreCard"><h2>Food / prepared products</h2><p>This section is only the Food projection of your private Merchant Catalog. Active: ${active.length} · Published: ${published} · Private: ${privateCount} · Archived: ${archived.length}. A private product is never exposed by the public product API.</p><div class="merchantCatalogList">${rows}</div>${archivedHtml}</section>`;
 }
 function bindCatalogCreate(inventory=[],schema=merchantCatalogSchema){
   const form=document.getElementById('merchantCatalogCreateForm'),select=document.getElementById('merchantCatalogInventory'),kind=document.getElementById('merchantCatalogKind'),category=document.getElementById('merchantCatalogCategoryCode');
