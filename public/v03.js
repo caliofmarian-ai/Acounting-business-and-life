@@ -703,9 +703,16 @@ function fillInventoryUnavailableEditor(){
   if(previous&&inventory.some(i=>String(i.id)===String(previous)))select.value=previous;
   updateInventoryUnavailablePreview();
 }
+function selectedPositiveInventoryId(select){
+  const raw=String(select?.value??'').trim();
+  if(!raw)return null;
+  const id=Number(raw);
+  return Number.isInteger(id)&&id>0?id:null;
+}
 function updateInventoryUnavailablePreview(){
   const out=$('inventoryUnavailablePreview');if(!out)return;
-  const item=inventory.find(i=>Number(i.id)===Number($('inventoryUnavailableItem')?.value));
+  const selectedId=selectedPositiveInventoryId($('inventoryUnavailableItem'));
+  const item=selectedId==null?null:inventory.find(i=>Number(i.id)===selectedId);
   const qty=Number($('inventoryUnavailableQuantity')?.value||0);
   if(!item){out.textContent='Choose an item to see how much is currently available.';return}
   const available=Number(item.available_quantity||0),onHand=Number(item.on_hand_quantity??item.physical_quantity??item.quantity??0);
@@ -718,9 +725,11 @@ function updateInventoryUnavailablePreview(){
 }
 async function loadInventoryUnavailableAllocations(){
   const list=$('inventoryUnavailableList');if(!list)return[];
-  const inventoryId=Number($('inventoryUnavailableItem')?.value);
-  if(!Number.isInteger(inventoryId)){
+  const select=$('inventoryUnavailableItem'),message=$('inventoryUnavailableMessage');
+  const inventoryId=selectedPositiveInventoryId(select);
+  if(inventoryId==null){
     list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
+    if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
     return[];
   }
   try{
@@ -753,8 +762,8 @@ function wireInventoryUnavailableUi(){
     event.preventDefault();
     const message=$('inventoryUnavailableMessage');if(message)message.textContent='Saving hold…';
     try{
-      const inventoryId=Number(select?.value),quantity=Number(qty?.value);
-      if(!Number.isInteger(inventoryId))throw new Error('Choose an Inventory item.');
+      const inventoryId=selectedPositiveInventoryId(select),quantity=Number(qty?.value);
+      if(inventoryId==null)throw new Error('Choose an Inventory item.');
       await api(`/api/inventory/${inventoryId}/unavailable`,{method:'POST',body:JSON.stringify({
         reason:$('inventoryUnavailableReason')?.value||'other',
         quantity,
@@ -787,7 +796,12 @@ async function loadStock(){
   await inventoryLocationUi.load();
   inventoryCountUi.syncScopeOptions();
   await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays),inventoryCountUi.load()]);
-  if(Number.isInteger(Number($('inventoryUnavailableItem')?.value)))await loadInventoryUnavailableAllocations();
+  if(selectedPositiveInventoryId($('inventoryUnavailableItem'))!=null)await loadInventoryUnavailableAllocations();
+  else{
+    const list=$('inventoryUnavailableList'),message=$('inventoryUnavailableMessage');
+    if(list)list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
+    if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
+  }
 }
 
 function lotExpiryCopy(row){
