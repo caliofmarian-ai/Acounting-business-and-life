@@ -3,6 +3,7 @@ import {financeKpiOverview} from './finance-core.js';
 import {paymentExceptionSummary} from './payment-core.js';
 import {territoryDemandOverview} from './territory-demand-core.js';
 import {publicDeploymentEvidence} from './deployment-evidence.js';
+import {currentReleaseEvidence} from './release-evidence.js';
 
 const clean=(value,max=120)=>String(value??'').trim().slice(0,max);
 const numberOrNull=value=>{
@@ -121,6 +122,7 @@ export async function buildOwnerControlTowerRuntime(pool,{
   });
 
   const deployment=deploymentRead(env)||{};
+  const releaseEvidence=currentReleaseEvidence();
   const financeValue=finance.value||{};
   const paymentValue=payment.value||{};
   const safetyValue=safety.value||{};
@@ -172,8 +174,16 @@ export async function buildOwnerControlTowerRuntime(pool,{
       source:'finance_kpi',
       updated_at:observedAt
     }:{currency:'PHP',source:'finance_kpi'},
-    product_quality:{source:'quality_evidence'}
-    // owner_decisions is deliberately omitted until a canonical protected-decision source exists.
+    product_quality:{
+      ...releaseEvidence.product_quality,
+      source:'repository_release_evidence'
+    },
+    release_evidence:{
+      ...releaseEvidence,
+      runtime_revision:deployment.revision||null,
+      source:'repository_release_evidence'
+    },
+    owner_decisions:releaseEvidence.owner_decisions
   });
 
   return{
@@ -185,7 +195,8 @@ export async function buildOwnerControlTowerRuntime(pool,{
       safety:safety.available?'available':'unavailable',
       territory_capacity:capacity.available?'available':'unavailable',
       territory_demand:demand.available?'available':'unavailable',
-      owner_decisions:'unavailable'
+      release_quality:'available',
+      owner_decisions:'available'
     }
   };
 }
