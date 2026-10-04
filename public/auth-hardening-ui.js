@@ -241,10 +241,11 @@ async function decorateSecurity(){
   if(panel.dataset.authSecurityDecorating==='1')return;
   panel.dataset.authSecurityDecorating='1';
   try{
-    const [ids,stepUp,closureAssessment]=await Promise.all([
+    const [ids,stepUp,closureAssessment,mfaState]=await Promise.all([
       api('/api/auth/identities'),
       api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10})),
-      api('/api/auth/account-closure/preflight').catch(()=>null)
+      api('/api/auth/account-closure/preflight').catch(()=>null),
+      api('/api/auth/mfa/status').catch(()=>({required:false}))
     ]);
     if(!document.body.contains(panel))return;
     const googleLinked=ids.some(x=>x.provider==='google');
@@ -257,7 +258,12 @@ async function decorateSecurity(){
         :'<div class="avatarHint authStepUpNotice">Sensitive actions require recent identity confirmation. Sign out and sign back in with Google to refresh this session.</div>';
 
     const protection=document.createElement('section');protection.className='accountSettingsCard authUpgradeCard authProtectionCard';
-    protection.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<div id="accountProtectionMsg" class="avatarHint"></div>`;
+    const mfaProtection=mfaState?.required
+      ?mfaState.enrolled
+        ?'<div class="authSecurityLine"><span>Super Admin MFA</span><strong>Active</strong></div><button id="resetSuperAdminMfa" type="button">Reset authenticator</button>'
+        :'<div class="authSecurityLine"><span>Super Admin MFA</span><strong>'+ (mfaState.enrollment_pending?'Setup incomplete':'Required') +'</strong></div><button id="setupSuperAdminMfa" type="button">Set up authenticator</button>'
+      :'';
+    protection.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}${mfaProtection}<div id="accountProtectionMsg" class="avatarHint"></div>`;
     const sensitive=document.createElement('section');sensitive.className='accountSettingsCard authUpgradeCard authSensitiveCard';
     sensitive.innerHTML=`<h2>Sensitive-action confirmation</h2><p class="authSectionIntro">Confirm your identity only when a protected action requires it. This is separate from changing your password.</p>${stepUpMarkup}`;
     const sessions=document.createElement('section');sessions.className='accountSettingsCard authUpgradeCard authSessionsCard';
@@ -278,6 +284,22 @@ async function decorateSecurity(){
       });
     }
 
+    protection.querySelector('#setupSuperAdminMfa')?.addEventListener('click',async event=>{
+      event.currentTarget.disabled=true;
+      const ok=await openSuperAdminMfa();
+      if(ok)decorateSecurity().catch(()=>{});
+      else event.currentTarget.disabled=false;
+    });
+    protection.querySelector('#resetSuperAdminMfa')?.addEventListener('click',async event=>{
+      const button=event.currentTarget,out=protection.querySelector('#accountProtectionMsg');button.disabled=true;out.textContent='Confirming Super Admin MFA…';
+      try{
+        await api('/api/auth/mfa/reset',{method:'POST',body:'{}'});
+        out.textContent='Scan the new authenticator QR code to finish the reset.';
+        const ok=await openSuperAdminMfa({freshRequired:true});
+        if(ok)decorateSecurity().catch(()=>{});
+        else button.disabled=false;
+      }catch(error){out.textContent=error.message;button.disabled=false}
+    });
     protection.querySelector('#sendVerify')?.addEventListener('click',async()=>{
       const out=protection.querySelector('#accountProtectionMsg');out.textContent='Preparing verification…';
       try{
