@@ -200,7 +200,10 @@ export async function courierMoneySnapshot(pool,accountId){
 async function serviceProviderPaymentEvidence(pool,accountId){
   const {rows}=await pool.query(`
     WITH completed_jobs AS (
-      SELECT id,COALESCE(final_price,quote_amount,0)::numeric payable
+      SELECT id,
+        CASE WHEN accepted_quote_id IS NOT NULL OR agreed_total IS NOT NULL
+          THEN COALESCE(agreed_total+COALESCE(legacy_final_adjustment,0),0)
+          ELSE COALESCE(final_price,quote_amount,0) END::numeric payable
       FROM service_jobs
       WHERE provider_account_id=$1
         AND status='completed'
@@ -267,10 +270,14 @@ async function serviceProviderMoneyHomeSummary(pool,accountId){
     pool.query(`
       SELECT
         COUNT(*) FILTER(WHERE status='completed' AND customer_confirmed_at IS NOT NULL)::int confirmed_completed_count,
-        COALESCE(SUM(COALESCE(final_price,quote_amount,0))
+        COALESCE(SUM(CASE WHEN accepted_quote_id IS NOT NULL OR agreed_total IS NOT NULL
+          THEN COALESCE(agreed_total+COALESCE(legacy_final_adjustment,0),0)
+          ELSE COALESCE(final_price,quote_amount,0) END)
           FILTER(WHERE status='completed' AND customer_confirmed_at IS NOT NULL),0) confirmed_job_value,
         COUNT(*) FILTER(WHERE status IN ('quoted','accepted','scheduled','in_progress'))::int open_commercial_jobs,
-        COALESCE(SUM(COALESCE(final_price,quote_amount,0))
+        COALESCE(SUM(CASE WHEN accepted_quote_id IS NOT NULL OR agreed_total IS NOT NULL
+          THEN COALESCE(agreed_total+COALESCE(legacy_final_adjustment,0),0)
+          ELSE COALESCE(final_price,quote_amount,0) END)
           FILTER(WHERE status IN ('quoted','accepted','scheduled','in_progress')),0) open_commercial_value
       FROM service_jobs WHERE provider_account_id=$1
     `,[Number(accountId)]),
@@ -311,8 +318,12 @@ export async function serviceProviderMoneySnapshot(pool,accountId){
     serviceProviderMoneyHomeSummary(pool,accountId),
     pool.query(`
       WITH recent AS (
-        SELECT id,service_label,status,quote_amount,final_price,currency_code,scheduled_at,
-               provider_completed_at,customer_confirmed_at,created_at
+        SELECT id,service_label,status,quote_amount,final_price,accepted_quote_id,agreed_total,
+               legacy_final_adjustment,currency_code,scheduled_at,provider_completed_at,
+               customer_confirmed_at,created_at,
+               CASE WHEN accepted_quote_id IS NOT NULL OR agreed_total IS NOT NULL
+                 THEN COALESCE(agreed_total+COALESCE(legacy_final_adjustment,0),0)
+                 ELSE COALESCE(final_price,quote_amount,0) END::numeric payable_value
         FROM service_jobs
         WHERE provider_account_id=$1
         ORDER BY created_at DESC LIMIT 40
@@ -347,7 +358,7 @@ export async function serviceProviderMoneySnapshot(pool,accountId){
         COALESCE(p.pending_amount,0)::numeric payment_pending,
         COALESCE(f.refunded_amount,0)::numeric payment_refunded,
         CASE WHEN r.status='completed' AND r.customer_confirmed_at IS NOT NULL
-          THEN GREATEST(COALESCE(r.final_price,r.quote_amount,0)
+          THEN GREATEST(r.payable_value
             - GREATEST(COALESCE(c.gross_confirmed,0)-COALESCE(f.refunded_amount,0),0),0)
           ELSE 0 END::numeric outstanding_receivable
       FROM recent r
