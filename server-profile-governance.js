@@ -274,11 +274,11 @@ async function initDb(){await ensurePrivateEvidenceSchema(pool);await ensureMicr
      AND p.role=latest.role
      AND latest.status IN ('application_started','requirements_pending','submitted','under_review','rejected','suspended','revoked')
      AND NOT EXISTS(
-       SELECT 1 FROM profile_authorizations authorization
-        WHERE authorization.account_id=p.account_id
-          AND authorization.role=p.role
-          AND authorization.status='active'
-          AND (authorization.expires_at IS NULL OR authorization.expires_at>NOW())
+       SELECT 1 FROM profile_authorizations authz
+        WHERE authz.account_id=p.account_id
+          AND authz.role=p.role
+          AND authz.status='active'
+          AND (authz.expires_at IS NULL OR authz.expires_at>NOW())
      )
      AND (p.enabled IS DISTINCT FROM FALSE OR p.status IS DISTINCT FROM latest.status OR p.visibility IS DISTINCT FROM 'private');
 `);await ensureAccountSafetyEligibilitySchema(pool);await ensurePhGeographicRegistrySchema(pool);await ensureTerritoryDemandSchema(pool)}

@@ -54,6 +54,8 @@ test('save, submit and review commit application and profile projection together
     assert.match(route,/query\('COMMIT'\)/);
   }
   assert.doesNotMatch(governance,/status='requirements_pending',updated_at=NOW\(\) WHERE id=\$5/);
+  assert.doesNotMatch(governance,/profile_authorizations authorization/);
+  assert.match(governance,/profile_authorizations authz/);
 });
 
 test('review completion retains immutable actor, time, note and attestations',()=>{
