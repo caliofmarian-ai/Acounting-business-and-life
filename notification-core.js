@@ -217,6 +217,7 @@ export async function ensureNotificationSchema(pool){
     CREATE INDEX IF NOT EXISTS push_subscriptions_account_idx ON push_subscriptions(account_id,revoked_at,last_seen_at DESC);
   `);
   await ensureResendObservabilitySchema(pool);
+  await reconcileEmailVerificationNotificationState(pool).catch(()=>{});
   for(const [eventCode,locale,title,body] of templates){
     for(const channel of CHANNELS){
       await pool.query(`
@@ -449,11 +450,118 @@ export async function sendDirectSecurityEmail({to,subject,html,text='',eventCode
   return resendEmail({to,subject,html,text,eventCode,category:'security'});
 }
 
+export function emailVerificationNotificationEventKey(accountId,email){
+  const id=Number(accountId);
+  if(!Number.isInteger(id)||id<1)throw new Error('Valid account identifier required for email verification notification');
+  const normalized=clean(email,180).toLowerCase();
+  if(!normalized)throw new Error('Email verification notification requires an email identity');
+  const emailDigest=crypto.createHash('sha256').update(normalized).digest('hex').slice(0,24);
+  return `auth:verify_email:${id}:${emailDigest}`;
+}
+
+export async function reconcileEmailVerificationNotificationState(pool,{
+  accountId=null,activeEventKey='',verified=null,reopenActive=false
+}={}){
+  const tables=await pool.query(`
+    SELECT to_regclass('public.notification_events') events,
+           to_regclass('public.notification_recipients') recipients,
+           to_regclass('public.accounts') accounts
+  `).catch(()=>({rows:[{}]}));
+  if(!tables.rows[0]?.events||!tables.rows[0]?.recipients||!tables.rows[0]?.accounts)return{available:false,changed:0};
+
+  const id=accountId==null?null:Number(accountId);
+  if(id!=null&&(!Number.isInteger(id)||id<1))throw new Error('Valid account identifier required for verification notification reconciliation');
+
+  if(id!=null&&verified===true){
+    const q=await pool.query(`
+      UPDATE notification_recipients r
+         SET dismissed_at=COALESCE(r.dismissed_at,NOW()),
+             read_at=COALESCE(r.read_at,NOW())
+        FROM notification_events e
+       WHERE r.event_id=e.id
+         AND r.account_id=$1
+         AND e.event_code='auth.email_verification'
+         AND r.dismissed_at IS NULL
+      RETURNING r.id
+    `,[id]);
+    return{available:true,changed:q.rowCount,verified:true};
+  }
+
+  const key=clean(activeEventKey,220);
+  if(id!=null&&key){
+    const old=await pool.query(`
+      UPDATE notification_recipients r
+         SET dismissed_at=COALESCE(r.dismissed_at,NOW()),
+             read_at=COALESCE(r.read_at,NOW())
+        FROM notification_events e
+       WHERE r.event_id=e.id
+         AND r.account_id=$1
+         AND e.event_code='auth.email_verification'
+         AND e.event_key<>$2
+         AND r.dismissed_at IS NULL
+      RETURNING r.id
+    `,[id,key]);
+    const current=await pool.query(`
+      UPDATE notification_recipients r
+         SET dismissed_at=NULL,
+             read_at=CASE WHEN $3::boolean THEN NULL ELSE r.read_at END,
+             created_at=CASE WHEN $3::boolean THEN NOW() ELSE r.created_at END
+        FROM notification_events e
+       WHERE r.event_id=e.id
+         AND r.account_id=$1
+         AND e.event_code='auth.email_verification'
+         AND e.event_key=$2
+      RETURNING r.id
+    `,[id,key,Boolean(reopenActive)]);
+    return{available:true,changed:old.rowCount+current.rowCount,reused:Boolean(current.rowCount)};
+  }
+
+  const ranked=await pool.query(`
+    WITH ranked AS (
+      SELECT r.id,a.email_verified_at,
+             ROW_NUMBER() OVER(
+               PARTITION BY r.account_id
+               ORDER BY CASE WHEN r.dismissed_at IS NULL THEN 0 ELSE 1 END,
+                        r.created_at DESC,e.created_at DESC,r.id DESC
+             ) rn
+        FROM notification_recipients r
+        JOIN notification_events e ON e.id=r.event_id
+        JOIN accounts a ON a.id=r.account_id
+       WHERE e.event_code='auth.email_verification'
+    )
+    UPDATE notification_recipients r
+       SET dismissed_at=CASE
+             WHEN ranked.email_verified_at IS NOT NULL OR ranked.rn>1 THEN COALESCE(r.dismissed_at,NOW())
+             ELSE NULL
+           END,
+           read_at=CASE
+             WHEN ranked.email_verified_at IS NOT NULL OR ranked.rn>1 THEN COALESCE(r.read_at,NOW())
+             ELSE r.read_at
+           END
+      FROM ranked
+     WHERE r.id=ranked.id
+       AND (
+         (ranked.email_verified_at IS NOT NULL AND r.dismissed_at IS NULL)
+         OR (ranked.rn>1 AND r.dismissed_at IS NULL)
+         OR (ranked.email_verified_at IS NULL AND ranked.rn=1 AND r.dismissed_at IS NOT NULL)
+       )
+    RETURNING r.id
+  `);
+  return{available:true,changed:ranked.rowCount};
+}
+
 export async function sendTransientEmailNotification(pool,{
-  eventKey,eventCode,accountId,to,subject,html,category='security',priority='high',data={}
+  eventKey,eventCode,accountId,to,subject,html,category='security',priority='high',data={},reopenInApp=false
 }){
   const eventId=await emitNotificationEvent(pool,{eventKey,eventCode,sourceService:'auth',entityType:'account',entityId:String(accountId),category,priority,mandatory:true,emailDefault:true,pushDefault:false,data,recipients:[{accountId,roleHint:''}]});
   if(!eventId)return{sent:false};
+  if(reopenInApp){
+    await pool.query(`
+      UPDATE notification_recipients
+         SET read_at=NULL,dismissed_at=NULL,created_at=NOW()
+       WHERE event_id=$1 AND account_id=$2
+    `,[eventId,Number(accountId)]);
+  }
   const q=await pool.query(`
     SELECT d.id FROM notification_deliveries d
     JOIN notification_recipients r ON r.id=d.recipient_id

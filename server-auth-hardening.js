@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendTransientEmailNotification } from './notification-core.js';
+import { emailVerificationNotificationEventKey,reconcileEmailVerificationNotificationState,sendTransientEmailNotification } from './notification-core.js';
 import {accountClosureAssessment,closeAccountSafely,ensureAccountLifecycleSchema,purgeEmptyUnverifiedAccount} from './account-lifecycle-core.js';
 import {accountGeographySnapshot} from './account-geography.js';
 import {appendAdminAudit,requireAdminPermission} from './admin-authorization.js';
@@ -401,17 +401,26 @@ async function recordEmail(accountId, template, recipient, status, provider = ''
   await pool.query(`INSERT INTO auth_email_deliveries(account_id,template_code,provider,recipient_hash,status,provider_reference,error_code,delivered_at) VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $5='sent' THEN NOW() END)`, [accountId, template, provider, sha256(normalizeEmail(recipient)), status, clean(reference, 300), clean(error, 300)]).catch(() => {});
 }
 async function sendEmail({ accountId, to, subject, html, template }) {
+  const verification=template==='verify_email';
   const eventCode=template==='password_reset'?'auth.password_reset':'auth.email_verification';
-  const eventKey=`auth:${template}:${accountId}:${Date.now()}:${crypto.randomBytes(5).toString('hex')}`;
+  const eventKey=verification
+    ?emailVerificationNotificationEventKey(accountId,to)
+    :`auth:${template}:${accountId}:${Date.now()}:${crypto.randomBytes(5).toString('hex')}`;
   const safeBody=template==='password_reset'
     ?'Password reset instructions were requested for your account.'
     :'Email verification instructions were requested for your account.';
   const result=await sendTransientEmailNotification(pool,{
     eventKey,eventCode,accountId,to,subject,html,category:'security',priority:'high',
-    data:{title:subject,body:safeBody}
+    data:{title:subject,body:safeBody},
+    reopenInApp:verification
   });
+  if(verification){
+    await reconcileEmailVerificationNotificationState(pool,{
+      accountId,activeEventKey:eventKey,reopenActive:true
+    }).catch(()=>{});
+  }
   await recordEmail(accountId,template,to,result.sent?'sent':result.not_configured?'not_configured':'failed',result.sent?'resend':AUTH_EMAIL_PROVIDER||'none',result.reference||'',result.sent?'':result.not_configured?'provider_not_configured':'notification_delivery_failed');
-  return {sent:Boolean(result.sent),not_configured:Boolean(result.not_configured),reference:result.reference||''};
+  return {sent:Boolean(result.sent),not_configured:Boolean(result.not_configured),reference:result.reference||'',event_key:eventKey,reused_notification:verification};
 }
 async function ownerMigrationRequired() {
   const q = await pool.query(`SELECT email,(password_hash IS NOT NULL) has_password,legacy_pin_retired_at FROM accounts WHERE id=1`);
@@ -575,6 +584,7 @@ app.post('/api/auth/email-verification/verify', jsonBody, async (req, res, next)
         ? 'same_account'
         : 'different_account';
     await maybeRetireOwnerPin(used.account_id);
+    await reconcileEmailVerificationNotificationState(pool,{accountId:used.account_id,verified:true}).catch(()=>{});
     await audit(used.account_id, 'email_verified', req, { verification_session: verificationSession });
     res.json({ ok: true, verification_session: verificationSession });
   } catch (e) { next(e); }
