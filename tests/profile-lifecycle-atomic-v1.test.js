@@ -9,6 +9,7 @@ const onboarding=read('public/guided-onboarding.js');
 const accounting=read('public/business-accounting-ui.js');
 const auth=read('server-auth.js');
 const unified=read('server-unified.js');
+const qa=read('qa-acceptance.js');
 
 function block(source,start,end){
   const from=source.indexOf(start);
@@ -80,4 +81,16 @@ test('guided onboarding schedules synchronous rendering through a real Promise a
   assert.doesNotMatch(scheduler,/renderGuide\(\)\.catch/);
   assert.match(scheduler,/Promise\.resolve\(\)\.then\(\(\)=>renderGuide\(\)\)/);
   assert.match(scheduler,/console\.error\('Guided onboarding render:',error\)/);
+});
+
+test('isolated Preview acceptance verifies compact switching denial and exact deployed assets',()=>{
+  assert.match(qa,/PROFILE_LIFECYCLE_ATOMIC_V1_WAVE='profile_lifecycle_atomic_v1'/);
+  assert.match(qa,/runProfileLifecycleAtomicV1Acceptance/);
+  assert.match(qa,/'X-BL-Profile-Switch':'compact'/);
+  assert.match(qa,/compact_payload_bytes:switchPayloadBytes/);
+  assert.match(qa,/cross_role_denial:true/);
+  assert.match(qa,/atomic_transition_asset:true/);
+  assert.match(qa,/stale_response_guard:true/);
+  assert.match(qa,/onboarding_scheduler_safe:true/);
+  assert.match(qa,/android_css_contract:true/);
 });
