@@ -2,10 +2,13 @@ const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(path,options={}){
   const headers={'Content-Type':'application/json',...(options.headers||{})};
-
   const r=await fetch(path,{...options,headers});
   const data=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(data.error||('Request failed ('+r.status+')'));
+  if(!r.ok){
+    const error=new Error(data.error||('Request failed ('+r.status+')'));
+    error.status=r.status;error.code=String(data.code||'');error.payload=data;
+    throw error;
+  }
   return data;
 }
 async function adminPrivateBlob(path){
@@ -332,14 +335,18 @@ function commerceReviewGuide(code,readiness={}){
 }
 function commerceReviewItemMarkup(req,index,total,item,readiness){
   const guide=commerceReviewGuide(String(req.code||''),readiness);
-  const resolved=['verified','not_applicable'].includes(String(item.outcome||''));
+  const outcome=String(item.outcome||'');
+  const resolved=(outcome==='verified'||(outcome==='not_applicable'&&req.allow_not_applicable===true))
+    &&Boolean(item.source_authority)
+    &&(outcome!=='verified'||Boolean(item.reference))
+    &&(outcome!=='not_applicable'||Boolean(item.note));
   const setupCheck=['activity_scope_confirmed','operating_context_confirmed'].includes(String(req.code||''));
   const outcomeHelp=req.allow_not_applicable
     ?'<strong>Verified</strong> = you checked evidence and it resolves this item. <strong>Not applicable</strong> = the requirement truly does not apply; name the official source and explain why.'
     :'<strong>Verified is required.</strong> Confirm that the platform record matches the real business before continuing.';
   const renderList=items=>'<ul>'+items.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>';
   return '<section class="card commerceReviewItem '+(resolved?'resolved':'')+'" data-commerce-evidence="'+esc(req.code||'')+'">'
-    +'<div class="commerceReviewItemHead"><span class="commerceReviewStep">Check '+(index+1)+' of '+total+'</span>'+(resolved?'<span class="commerceReviewResolved">Resolved</span>':'')+'</div>'
+    +'<div class="commerceReviewItemHead"><span class="commerceReviewStep">Check '+(index+1)+' of '+total+'</span><span data-commerce-card-status class="'+(resolved?'commerceReviewResolved':'commerceReviewMissing')+'">'+(resolved?'Resolved':'Needs evidence')+'</span></div>'
     +'<h3>'+esc(guide.question)+'</h3><p class="commerceReviewPlain">'+esc(guide.plain)+'</p>'
     +(guide.current?'<div class="commerceCurrentValue"><small>Current platform value</small><strong>'+esc(guide.current)+'</strong></div>':'')
     +'<div class="commerceReviewHelpGrid"><div><h4>What to check</h4>'+renderList(guide.checks)+'</div><div><h4>Useful evidence</h4>'+renderList(guide.evidence)+'</div></div>'
@@ -350,6 +357,94 @@ function commerceReviewItemMarkup(req,index,total,item,readiness){
     +'<label>Official source / authority<input data-commerce-source value="'+esc(item.source_authority||'')+'" placeholder="Name the authority, issuer, official source or Business & Life platform record"><small class="commerceFieldHelp">Record who issued the evidence or which official/platform source supports the decision.</small></label>'
     +'<label>Reviewer explanation<textarea data-commerce-note rows="3" placeholder="Explain briefly why this evidence resolves the check, or why it is not applicable">'+esc(item.note||'')+'</textarea><small class="commerceFieldHelp">For Not applicable, state why it does not apply to this exact business.</small></label>'
     +'</section>';
+}
+
+
+function commerceDraftEvidence(root){
+  return [...root.querySelectorAll('[data-commerce-evidence]')].map(card=>({
+    code:String(card.dataset.commerceEvidence||''),
+    outcome:String(card.querySelector('[data-commerce-outcome]')?.value||''),
+    reference:String(card.querySelector('[data-commerce-reference]')?.value||'').trim(),
+    source_authority:String(card.querySelector('[data-commerce-source]')?.value||'').trim(),
+    note:String(card.querySelector('[data-commerce-note]')?.value||'').trim()
+  }));
+}
+function commerceDraftReviewStatus(readiness,root){
+  const requirements=Array.isArray(readiness?.review_requirements)?readiness.review_requirements:[];
+  const byCode=new Map(commerceDraftEvidence(root).map(item=>[item.code,item]));
+  const checks=requirements.map(req=>{
+    const item=byCode.get(String(req.code||''))||{outcome:'',reference:'',source_authority:'',note:''};
+    const missing=[];
+    const validOutcome=item.outcome==='verified'||(item.outcome==='not_applicable'&&req.allow_not_applicable===true);
+    if(!validOutcome)missing.push('decision');
+    if(item.outcome==='verified'&&!item.reference)missing.push('evidence / record reference');
+    if(!item.source_authority)missing.push('official source / authority');
+    if(item.outcome==='not_applicable'&&!item.note)missing.push('reviewer explanation');
+    return{...req,item,complete:missing.length===0,missing};
+  });
+  const resolved=checks.filter(item=>item.complete).length;
+  const profileAuthorized=readiness?.decision_policy?.profile_authorized===true;
+  return{
+    checks,total:checks.length,resolved,
+    context_complete:checks.length>0,
+    profile_authorized:profileAuthorized,
+    complete:checks.length>0&&resolved===checks.length,
+    can_grant_commerce:profileAuthorized&&checks.length>0&&resolved===checks.length
+  };
+}
+function commerceDraftBlockersHtml(status){
+  const missing=status.checks.filter(item=>!item.complete);
+  const items=[];
+  if(!status.profile_authorized)items.push('<li><strong>Profile Authorization:</strong> active profile approval is required before public commerce can be granted.</li>');
+  if(!status.context_complete)items.push('<li><strong>Business setup:</strong> choose the activity track and operating context first.</li>');
+  for(const item of missing){
+    items.push('<li><strong>'+esc(item.label||readableCode(item.code))+'</strong> — missing '+esc(item.missing.join(', '))+'.</li>');
+  }
+  return items.length
+    ?'<div class="commerceDecisionBlocked"><strong>Eligibility is still blocked</strong><p>Resolve these items before Limited or Full can be selected:</p><ul>'+items.join('')+'</ul></div>'
+    :'<div class="commerceDecisionReady"><strong>Eligibility evidence is complete.</strong><p>Limited or Full may now be selected. The server will still make the final authoritative check.</p></div>';
+}
+function commerceServerBlockersHtml(policy){
+  const blockers=Array.isArray(policy?.blockers)?policy.blockers:[];
+  if(!blockers.length)return '';
+  return '<div class="commerceDecisionBlocked"><strong>The server kept commerce locked.</strong><ul>'+blockers.map(item=>{
+    const fields=Array.isArray(item.missing_fields)&&item.missing_fields.length?' Missing: '+item.missing_fields.join(', ')+'.':'';
+    return '<li><strong>'+esc(item.label||readableCode(item.code||'requirement'))+'</strong> — '+esc(item.description||'This requirement is not complete.')+esc(fields)+'</li>';
+  }).join('')+'</ul></div>';
+}
+function syncCommerceDecisionControls(readiness,root){
+  const status=commerceDraftReviewStatus(readiness,root);
+  const form=root.querySelector('#adminCommerceReviewForm');
+  if(!form)return status;
+  const select=form.elements.commerce_state,save=form.querySelector('button[type="submit"]');
+  const limited=select?.querySelector('option[value="eligible_limited"]');
+  const full=select?.querySelector('option[value="eligible_full"]');
+  if(limited)limited.disabled=!status.can_grant_commerce;
+  if(full)full.disabled=!status.can_grant_commerce;
+  const grantSelected=select&&select.value!=='readiness_only';
+  if(save)save.disabled=Boolean(grantSelected&&!status.can_grant_commerce);
+  const blockerMount=root.querySelector('#commerceDecisionBlockers');
+  if(blockerMount)blockerMount.innerHTML=commerceDraftBlockersHtml(status);
+  const summary=root.querySelector('#commerceReviewProgressText');
+  if(summary)summary.textContent=status.resolved+' of '+status.total+' checks resolved';
+  const pct=status.total?Math.round((status.resolved/status.total)*100):0;
+  const pctLabel=root.querySelector('#commerceReviewProgressPct');
+  if(pctLabel)pctLabel.textContent=pct+'%';
+  const bar=root.querySelector('#commerceReviewProgressBar');
+  if(bar)bar.style.width=pct+'%';
+  for(const check of status.checks){
+    const card=root.querySelector('[data-commerce-evidence="'+CSS.escape(String(check.code||''))+'"]');
+    if(!card)continue;
+    card.classList.toggle('resolved',check.complete);
+    card.classList.toggle('needsEvidence',!check.complete);
+    const badge=card.querySelector('[data-commerce-card-status]');
+    if(badge){
+      badge.textContent=check.complete?'Resolved':'Needs evidence';
+      badge.classList.toggle('commerceReviewResolved',check.complete);
+      badge.classList.toggle('commerceReviewMissing',!check.complete);
+    }
+  }
+  return status;
 }
 
 async function openAdminCommerceReadiness(accountId,role,businessId,label='',returnMemberId=null){
@@ -365,7 +460,6 @@ async function openAdminCommerceReadiness(accountId,role,businessId,label='',ret
     const readiness=await api('/api/governance/admin/readiness/'+account+'/'+encodeURIComponent(role)+qs);
     const existing=new Map((Array.isArray(readiness.eligibility_evidence)?readiness.eligibility_evidence:[]).map(item=>[String(item.code||''),item]));
     const requirements=Array.isArray(readiness.review_requirements)?readiness.review_requirements:[];
-    const resolvedCount=requirements.filter(req=>['verified','not_applicable'].includes(String(existing.get(String(req.code||''))?.outcome||''))).length;
     const setupCodes=new Set(['activity_scope_confirmed','operating_context_confirmed']);
     const setupRequirements=requirements.filter(req=>setupCodes.has(String(req.code||'')));
     const evidenceRequirements=requirements.filter(req=>!setupCodes.has(String(req.code||'')));
@@ -379,14 +473,18 @@ async function openAdminCommerceReadiness(accountId,role,businessId,label='',ret
         +(evidenceRequirements.length?'<section class="commerceReviewGroup"><div class="commerceReviewGroupHead"><small>PART 2 · BUSINESS EVIDENCE</small><h3>Resolve the requirements that apply</h3><p>Review the evidence or official source that applies to this exact business, activity and operating context.</p></div>'+renderItems(evidenceRequirements)+'</section>':'')
        +'</div>'
       :'<div class="notice">Set the Merchant activity track and operating context before commerce eligibility can be reviewed.</div>';
-    const progressPct=requirements.length?Math.round((resolvedCount/requirements.length)*100):0;
+    const savedReview=readiness.review_status||readiness.decision_policy?.review_status||{};
+    const resolvedCount=Number(savedReview.resolved||0),progressPct=requirements.length?Math.round((resolvedCount/requirements.length)*100):0;
+    const grantAllowed=readiness.decision_policy?.can_grant_commerce===true;
+    const currentGrantState=['eligible_limited','eligible_full'].includes(readiness.commerce_state)?readiness.commerce_state:'readiness_only';
     p.innerHTML='<button type="button" class="secondary supportBack" id="commerceReviewBack">← Back to Commerce readiness</button>'
       +'<section class="adminDetail commerceReviewDetail"><div class="sectionTitle"><div><small class="muted">GOVERNED COMMERCE REVIEW</small><h2>'+esc(label||profileRoleLabel(role))+'</h2><p class="muted">Review what the business does, how it operates and the evidence that applies before allowing public commerce.</p></div><span class="status">'+esc(readableCode(readiness.commerce_state||'readiness_only'))+'</span></div>'
-      +'<section class="card commerceReviewSummary"><div class="commerceReviewSummaryTop"><div><small>REVIEW PROGRESS</small><strong>'+resolvedCount+' of '+requirements.length+' checks resolved</strong></div><span>'+progressPct+'%</span></div><div class="commerceReviewProgress"><i style="width:'+progressPct+'%"></i></div><div class="commerceReviewFacts"><span><small>Stage</small><b>'+esc(readableCode(readiness.readiness_stage||'starting'))+'</b></span><span><small>Activity</small><b>'+esc(readableCode(readiness.activity_track||'not set'))+'</b></span><span><small>Operating context</small><b>'+esc(readableCode(readiness.operating_context||'not set'))+'</b></span><span><small>Commerce state</small><b>'+esc(readableCode(readiness.commerce_state||'readiness_only'))+'</b></span></div></section>'
-      +'<section class="card commerceReviewHow"><h3>How to review this business</h3><ol><li>Read what each check means.</li><li>Compare the platform data with the evidence or official source.</li><li>Choose <strong>Verified</strong>, or <strong>Not applicable</strong> only where the policy allows it.</li><li>Record the evidence/reference and source you relied on.</li><li>Grant commerce eligibility only after every required check is resolved.</li></ol><p>Profile Authorization remains a separate gate. Business & Life records whether requirements were resolved; it does not issue or replace government permits, tax registrations or professional licences.</p></section>'
+      +'<section class="card commerceReviewSummary"><div class="commerceReviewSummaryTop"><div><small>REVIEW PROGRESS</small><strong id="commerceReviewProgressText">'+resolvedCount+' of '+requirements.length+' checks resolved</strong></div><span id="commerceReviewProgressPct">'+progressPct+'%</span></div><div class="commerceReviewProgress"><i id="commerceReviewProgressBar" style="width:'+progressPct+'%"></i></div><div class="commerceReviewFacts"><span><small>Stage</small><b>'+esc(readableCode(readiness.readiness_stage||'starting'))+'</b></span><span><small>Activity</small><b>'+esc(readableCode(readiness.activity_track||'not set'))+'</b></span><span><small>Operating context</small><b>'+esc(readableCode(readiness.operating_context||'not set'))+'</b></span><span><small>Current server state</small><b>'+esc(readableCode(readiness.commerce_state||'readiness_only'))+'</b></span></div></section>'
+      +'<section class="card commerceReviewHow"><h3>How to review this business</h3><ol><li>Read what each check means.</li><li>Compare the platform data with the evidence or official source.</li><li>Choose <strong>Verified</strong>, or <strong>Not applicable</strong> only where the policy allows it.</li><li>Record the evidence/reference and source you relied on.</li><li>Limited and Full stay disabled until every required check is complete.</li></ol><p>Profile Authorization remains a separate gate. Business & Life records whether requirements were resolved; it does not issue or replace government permits, tax registrations or professional licences.</p></section>'
       +checklist
-      +'<form id="adminCommerceReviewForm" class="adminForm commerceDecisionForm"><section class="card commerceDecisionCard"><small class="commerceDecisionEyebrow">FINAL STEP</small><h3>Super Admin commerce decision</h3><p>Choose the level of public commerce this business may use after you finish the checks above.</p>'
-      +'<label>Commerce decision<select name="commerce_state"><option value="readiness_only" '+(readiness.commerce_state==='readiness_only'?'selected':'')+'>Readiness only — keep public commerce locked</option><option value="eligible_limited" '+(readiness.commerce_state==='eligible_limited'?'selected':'')+'>Eligible — limited scope</option><option value="eligible_full" '+(readiness.commerce_state==='eligible_full'?'selected':'')+'>Eligible — full platform scope</option></select><small class="commerceFieldHelp">Eligible does not mean government-approved; it means the Business & Life commerce gate has been satisfied for the recorded scope.</small></label>'
+      +'<form id="adminCommerceReviewForm" class="adminForm commerceDecisionForm"><section class="card commerceDecisionCard"><small class="commerceDecisionEyebrow">FINAL STEP</small><h3>Super Admin commerce decision</h3><p>Readiness only is always available as the safe decision. Limited and Full unlock only when the same evidence requirements enforced by the server are complete.</p>'
+      +'<div id="commerceDecisionBlockers"></div>'
+      +'<label>Commerce decision<select name="commerce_state"><option value="readiness_only" '+(currentGrantState==='readiness_only'?'selected':'')+'>Readiness only — keep public commerce locked</option><option value="eligible_limited" '+(currentGrantState==='eligible_limited'?'selected':'')+' '+(!grantAllowed?'disabled':'')+'>Eligible — limited scope'+(!grantAllowed?' (complete evidence first)':'')+'</option><option value="eligible_full" '+(currentGrantState==='eligible_full'?'selected':'')+' '+(!grantAllowed?'disabled':'')+'>Eligible — full platform scope'+(!grantAllowed?' (complete evidence first)':'')+'</option></select><small class="commerceFieldHelp">Eligible does not mean government-approved; it means the Business & Life commerce gate has been satisfied for the recorded scope.</small></label>'
       +'<label>Why are you making this decision?<textarea name="reason" rows="3" maxlength="500" placeholder="Summarise what you reviewed and why this platform decision is justified"></textarea></label>'
       +'<label>Limited-scope restrictions<textarea name="scope_note" rows="2" maxlength="500" placeholder="Required only for limited eligibility: territory, activity/category or capability limits"></textarea><small class="commerceFieldHelp">Leave this blank for Readiness only or Eligible — full platform scope.</small></label>'
       +'<button class="primary" type="submit">Save commerce decision</button><div id="adminCommerceReviewResult"></div></section></form></section>';
@@ -399,20 +497,25 @@ async function openAdminCommerceReadiness(accountId,role,businessId,label='',ret
       }
       shell();await renderActive()
     };
-    document.getElementById('adminCommerceReviewForm').onsubmit=async e=>{
+    const form=document.getElementById('adminCommerceReviewForm');
+    const sync=()=>syncCommerceDecisionControls(readiness,p);
+    p.querySelectorAll('[data-commerce-outcome],[data-commerce-reference],[data-commerce-source],[data-commerce-note]').forEach(control=>{
+      control.addEventListener('input',sync);control.addEventListener('change',sync);
+    });
+    form.commerce_state.addEventListener('change',sync);
+    sync();
+    form.onsubmit=async e=>{
       e.preventDefault();
-      const form=e.currentTarget,out=document.getElementById('adminCommerceReviewResult'),button=form.querySelector('button[type="submit"]');
+      const out=document.getElementById('adminCommerceReviewResult'),button=form.querySelector('button[type="submit"]');
       const commerceState=String(form.commerce_state.value||''),reason=String(form.reason.value||'').trim(),scopeNote=String(form.scope_note.value||'').trim();
-      if(commerceState!=='readiness_only'&&!reason)return out.innerHTML='<div class="error">Record the review reason before granting commerce eligibility.</div>';
-      if(commerceState==='eligible_limited'&&!scopeNote)return out.innerHTML='<div class="error">Define the limited commerce scope before granting limited eligibility.</div>';
-      const eligibilityEvidence=[...p.querySelectorAll('[data-commerce-evidence]')].map(card=>({
-        code:String(card.dataset.commerceEvidence||''),
-        outcome:String(card.querySelector('[data-commerce-outcome]')?.value||''),
-        reference:String(card.querySelector('[data-commerce-reference]')?.value||'').trim(),
-        source_authority:String(card.querySelector('[data-commerce-source]')?.value||'').trim(),
-        note:String(card.querySelector('[data-commerce-note]')?.value||'').trim()
-      }));
-      if(commerceState!=='readiness_only'&&eligibilityEvidence.some(item=>!item.outcome))return out.innerHTML='<div class="error">Resolve every evidence checklist item before granting commerce eligibility.</div>';
+      const draft=syncCommerceDecisionControls(readiness,p);
+      if(commerceState!=='readiness_only'&&!draft.can_grant_commerce){
+        out.innerHTML='<div class="error" role="alert">Limited and Full remain locked until every required evidence item is complete.</div>';
+        return;
+      }
+      if(commerceState!=='readiness_only'&&!reason)return out.innerHTML='<div class="error" role="alert">Record the review reason before granting commerce eligibility.</div>';
+      if(commerceState==='eligible_limited'&&!scopeNote)return out.innerHTML='<div class="error" role="alert">Define the limited commerce scope before granting limited eligibility.</div>';
+      const eligibilityEvidence=commerceDraftEvidence(p);
       const payload={commerce_state:commerceState,reason,eligibility_evidence:commerceState==='readiness_only'?[]:eligibilityEvidence,commerce_scope:commerceState==='eligible_limited'?{note:scopeNote}:{}};
       if(role==='merchant')payload.business_id=Number(businessId);
       button.disabled=true;out.innerHTML='<div class="notice">Saving governed commerce decision…</div>';
@@ -420,11 +523,14 @@ async function openAdminCommerceReadiness(accountId,role,businessId,label='',ret
         await api('/api/governance/admin/readiness/'+account+'/'+encodeURIComponent(role)+'/review',{method:'POST',body:JSON.stringify(payload)});
         await loadBase();
         await openAdminCommerceReadiness(account,role,businessId,label,returnMemberId);
-      }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+      }catch(error){
+        const serverPolicy=error.payload?.decision_policy;
+        out.innerHTML='<div class="error" role="alert"><strong>'+esc(error.message)+'</strong></div>'+commerceServerBlockersHtml(serverPolicy);
+        syncCommerceDecisionControls(readiness,p);
+      }
     };
   }catch(error){showError(error)}
 }
-
 async function openAdminAuthorization(id){
   const a=(state.overview?.authorizations||[]).find(x=>Number(x.id)===Number(id));
   if(!a)return showError(new Error('Authorization is no longer available in this scope.'));
