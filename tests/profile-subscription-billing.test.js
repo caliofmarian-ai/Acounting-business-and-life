@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  SUBSCRIPTION_SERVICE_SCOPES,SUBSCRIPTION_SUBJECT_TYPES,
+  SUBSCRIPTION_SERVICE_SCOPES,SUBSCRIPTION_SUBJECT_TYPES,SUBSCRIPTION_CANONICAL_PLAN_DRAFTS,
+  SUBSCRIPTION_LIFECYCLE_RULES,subscriptionLifecycleSimulation,subscriptionPolicyActivationState,
   subscriptionReadinessState
 } from '../profile-subscription-core.js';
 
@@ -60,17 +61,29 @@ test('existing invoice state takes precedence after promo',()=>{
   assert.equal(subscriptionReadinessState({...base,latestInvoiceStatus:'void'}),'VOID');
 });
 
-test('schema provides versioned policy and immutable invoice foundation without auto-generation',()=>{
+test('schema provides versioned immutable plan and invoice foundations without automatic collection',()=>{
   assert.match(core,/CREATE TABLE IF NOT EXISTS profile_subscription_policy_versions/);
   assert.match(core,/CREATE TABLE IF NOT EXISTS profile_subscription_invoices/);
   assert.match(core,/UNIQUE\(policy_code,version\)/);
   assert.match(core,/UNIQUE\(entitlement_id,billing_period_start\)/);
+  assert.match(core,/policy_hash TEXT NOT NULL/);
+  assert.match(core,/lifecycle_rules JSONB NOT NULL/);
+  assert.match(core,/activation_requirements JSONB NOT NULL/);
   assert.match(core,/status<>'active' OR monthly_amount IS NOT NULL/);
   assert.match(core,/invoice_generation:'NOT_PERFORMED'/);
-  assert.match(core,/live_policy_activation:'NOT_AVAILABLE_IN_THIS_SLICE'/);
+  assert.match(core,/automatic_collection:false/);
+  assert.match(core,/production_charge_path:false/);
 });
 
-test('draft policy creation allows undecided price and has no activation API in this slice',()=>{
+test('canonical Merchant Supplier and Local Services plan drafts are seeded at the Owner-approved target',()=>{
+  assert.deepEqual(Object.keys(SUBSCRIPTION_CANONICAL_PLAN_DRAFTS),['marketplace','supplier','local_services']);
+  for(const draft of Object.values(SUBSCRIPTION_CANONICAL_PLAN_DRAFTS))assert.equal(draft.monthly_amount,99);
+  assert.match(core,/ensureCanonicalSubscriptionPlanDrafts/);
+  assert.match(core,/ON CONFLICT\(policy_code,version\) DO NOTHING/);
+  assert.match(core,/policy_hash/);
+});
+
+test('draft policy creation remains versioned and no activation endpoint is introduced',()=>{
   assert.match(core,/monthly_amount NUMERIC\(14,2\)/);
   assert.match(core,/VALUES\(\$1,\$2,\$3,'draft'/);
   assert.match(server,/\/api\/payments\/admin\/subscriptions\/policies\/drafts/);
@@ -78,6 +91,38 @@ test('draft policy creation allows undecided price and has no activation API in 
   assert.match(server,/subscription_policy_draft_created/);
   assert.doesNotMatch(server,/\/api\/payments\/admin\/subscriptions\/policies\/activate/);
   assert.doesNotMatch(server,/subscription_policy_activated/);
+});
+
+test('activation readiness stays fail-closed until policy approval legal terms and live provider evidence exist',()=>{
+  const policy={status:'draft',monthly_amount:99};
+  const hold=subscriptionPolicyActivationState({policy,evidence:{legal:{ready:false},provider:{ready:false}}});
+  assert.equal(hold.state,'HOLD');
+  assert.equal(hold.ready,false);
+  assert.deepEqual(new Set(hold.blockers),new Set([
+    'explicit_policy_approval_required','legal_terms_not_active_reviewed','live_provider_evidence_missing'
+  ]));
+  const ready=subscriptionPolicyActivationState({
+    policy:{status:'approved',monthly_amount:99},
+    evidence:{legal:{ready:true},provider:{ready:true}}
+  });
+  assert.equal(ready.state,'READY');
+  assert.equal(ready.ready,true);
+});
+
+test('lifecycle rules define renewal failure retry cancellation and grandfathering deterministically',()=>{
+  assert.equal(SUBSCRIPTION_LIFECYCLE_RULES.grace_days,7);
+  assert.deepEqual(SUBSCRIPTION_LIFECYCLE_RULES.retry_schedule_days,[1,3,7]);
+  assert.match(SUBSCRIPTION_LIFECYCLE_RULES.cancellation,/period_end/);
+  assert.match(SUBSCRIPTION_LIFECYCLE_RULES.grandfathering,/policy_snapshot/);
+  const renewal=subscriptionLifecycleSimulation({scenario:'renewal_success',monthlyAmount:99});
+  const failure=subscriptionLifecycleSimulation({scenario:'payment_failure',monthlyAmount:99});
+  const cancellation=subscriptionLifecycleSimulation({scenario:'cancellation',monthlyAmount:99});
+  const grandfathering=subscriptionLifecycleSimulation({scenario:'grandfathering',monthlyAmount:99});
+  for(const x of [renewal,failure,cancellation,grandfathering])assert.equal(x.charge_attempted,false);
+  assert.equal(renewal.state,'TEST_RENEWAL_READY');
+  assert.deepEqual(failure.retry_schedule_days,[1,3,7]);
+  assert.equal(cancellation.state,'CANCEL_AT_PERIOD_END');
+  assert.equal(grandfathering.state,'POLICY_SNAPSHOT_PRESERVED');
 });
 
 test('Admin readiness API is Finance-read scoped',()=>{
@@ -90,15 +135,20 @@ test('Admin readiness API is Finance-read scoped',()=>{
   assert.match(block,/listSubscriptionPolicies/);
 });
 
-test('Admin Finance UI shows promo HOLD READY and non-billable Customer Delivery boundaries',()=>{
+test('Admin Finance UI shows plan evidence blockers lifecycle rules and no-charge simulation',()=>{
   assert.match(ui,/SUBSCRIPTION BILLING/);
   assert.match(ui,/90-day promo → billing readiness/);
   assert.match(ui,/Customer = FREE/);
   assert.match(ui,/Delivery = no monthly subscription/);
-  assert.match(ui,/Create subscription plan draft/);
-  assert.match(ui,/value="99"/);
-  assert.match(ui,/Owner-approved price is ₱99\/month/);
-  assert.match(ui,/Billing is still inactive/);
+  assert.match(ui,/Create a new immutable plan draft/);
+  assert.match(ui,/Immutable plan hash/);
+  assert.match(ui,/Activation evidence/);
+  assert.match(ui,/Lifecycle policy/);
+  assert.match(ui,/Test renewal, failure, cancellation and grandfathering/);
+  assert.match(ui,/\/api\/payments\/admin\/subscriptions\/simulate/);
+  assert.match(ui,/No provider request and no real charge/);
+  assert.match(server,/subscriptionLifecycleSimulation/);
+  assert.match(server,/simulation_only:true,provider_call:false,real_charge:false/);
   assert.match(css,/\.subscriptionBillingCard/);
   assert.match(css,/\.subscriptionStateGrid/);
 });
