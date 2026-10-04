@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {serviceJobPayableSnapshot} from './local-services-pricing-core.js';
 
 export const FINANCIAL_DOCUMENT_TYPES=Object.freeze([
   'sale_invoice_candidate','service_invoice_candidate','subscription_invoice','payment_receipt',
@@ -454,12 +455,17 @@ async function syncProviderCommercialSources(pool,{accountId,profileRole}){
       ORDER BY customer_confirmed_at,id
     `,[Number(accountId)]);
     for(const j of jobs.rows){
-      const value=money(j.final_price??j.quote_amount??0);
+      const pricing=serviceJobPayableSnapshot(j),value=money(pricing.payable_value);
       await upsertDocument(pool,{
         documentKey:`service_job_completed:${j.id}`,ownerScope:'account',accountId:Number(accountId),
         profileRole:'service_provider',documentType:'service_invoice_candidate',sourceType:'service_job',sourceId:String(j.id),
         currencyCode:j.currency_code||'PHP',grossAmount:value,title:'Completed service',
-        sourceSnapshot:{id:Number(j.id),service_label:j.service_label,status:j.status,quote_amount:j.quote_amount,final_price:j.final_price,customer_confirmed_at:j.customer_confirmed_at},
+        sourceSnapshot:{
+          id:Number(j.id),service_label:j.service_label,status:j.status,quote_amount:j.quote_amount,
+          final_price:j.final_price,accepted_quote_id:pricing.accepted_quote_id,agreed_total:pricing.agreed_total,
+          legacy_final_adjustment:pricing.legacy_final_adjustment,payable_value:value,
+          payable_authority:pricing.payable_authority,customer_confirmed_at:j.customer_confirmed_at
+        },
         metadata:{fiscal_note:'Internal service evidence; fiscal invoice status is determined separately.'},occurredAt:j.customer_confirmed_at
       },[{lineCode:'service_value',lineKind:'service_value',impactClass:'revenue',economicOwner:'service_provider',amount:value}]);
       count++;
