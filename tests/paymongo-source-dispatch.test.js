@@ -57,13 +57,19 @@ test('Service Job checkout descriptor uses Customer-owned payable job and generi
       return{rowCount:1,rows:[{
         id:44,customer_account_id:9,provider_account_id:15,service_label:'Aircon cleaning',
         status:'completed',quote_amount:'1250.00',final_price:'1250.00',currency_code:'PHP',
-        customer_confirmed_at:'2026-09-26T10:00:00Z'
+        accepted_quote_id:77,agreed_total:'1250.00',pricing_locked_at:'2026-09-25T10:00:00Z',
+        legacy_final_adjustment:null,customer_confirmed_at:'2026-09-26T10:00:00Z'
       }]};
     }
     if(call===4)return{rows:[{gross_confirmed:'0',pending_amount:'1250',confirmed_count:0,pending_count:1}]};
     if(call===5)return{rows:[{refunded_amount:'0',refund_count:0}]};
     if(call===6)return{rows:[{allocation_count:0,pending:'0',eligible:'0',processing:'0',paid:'0',held:'0',reversed:'0'}]};
     if(call===7)return{rows:[{id:92,public_id:'pi_service_92',provider_code:'paymongo',logical_method:'online_other',amount:'1250.00',status:'requires_provider'}]};
+    if(call===8){
+      assert.match(sql,/FROM service_job_quotes WHERE id=\$1/);
+      assert.deepEqual(args,[77]);
+      return{rows:[{id:77,job_id:44,status:'accepted',total_amount:'1250.00',currency_code:'PHP',legacy_record:false}]};
+    }
     throw new Error('Unexpected query '+sql);
   }};
   const d=await resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_service_92',accountId:9});
@@ -76,6 +82,8 @@ test('Service Job checkout descriptor uses Customer-owned payable job and generi
   assert.equal(d.metadata.bl_source_id,'44');
   assert.equal('bl_order_id' in d.metadata,false);
   assert.equal(d.context.provider_account_id,15);
+  assert.equal(d.context.accepted_quote_id,77);
+  assert.equal(d.context.payable_authority,'accepted_quote');
 });
 
 test('unsupported checkout sources fail closed before source-domain queries',async()=>{
