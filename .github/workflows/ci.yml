@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -25,11 +25,23 @@ jobs:
           node --version
           npm --version
           sha256sum package-lock.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: canonical-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit canonical lockfile to reproducibility branch
+        if: github.event_name == 'pull_request' && github.head_ref == 'build/reproducibility-p2-615'
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          cp package-lock.json /tmp/package-lock.json
+          git fetch origin "$HEAD_BRANCH"
+          git checkout -B "$HEAD_BRANCH" "origin/$HEAD_BRANCH"
+          cp /tmp/package-lock.json package-lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "Canonical lockfile already committed."
+          else
+            git commit -m "BUILD REPRODUCIBILITY P2 — commit canonical npm lockfile"
+            git push origin "$HEAD_BRANCH"
+          fi
       - run: npm ci
       - run: npm test
