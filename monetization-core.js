@@ -220,7 +220,10 @@ async function historicalRows(pool){
     },
     {
       serviceScope:'local_services',subjectType:'account',sourceType:'service_job',
-      sql:`SELECT j.id source_id,j.provider_account_id subject_id,NULL::bigint territory_id,j.customer_confirmed_at completed_at,COALESCE(j.final_price,j.quote_amount,0) gross_value,j.currency_code
+      sql:`SELECT j.id source_id,j.provider_account_id subject_id,NULL::bigint territory_id,j.customer_confirmed_at completed_at,
+                  CASE WHEN j.accepted_quote_id IS NOT NULL OR j.agreed_total IS NOT NULL
+                    THEN COALESCE(j.agreed_total+COALESCE(j.legacy_final_adjustment,0),0)
+                    ELSE COALESCE(j.final_price,j.quote_amount,0) END gross_value,j.currency_code
            FROM service_jobs j
            LEFT JOIN service_monetization_events e ON e.event_key=('local_services:account:'||j.provider_account_id||':service_job:'||j.id)
            WHERE j.status='completed' AND j.customer_confirmed_at IS NOT NULL AND e.id IS NULL
