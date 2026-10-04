@@ -715,6 +715,36 @@ app.get('/api/merchant/catalog-v3/items',async(req,res,next)=>{try{
   res.json(page);
 }catch(e){next(e)}})
 
+app.get('/api/merchant/catalog-v3/summary',async(req,res,next)=>{try{
+  const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
+  const{rows}=await pool.query(`
+    SELECT
+      COUNT(*)::int all_products,
+      COUNT(*) FILTER (WHERE product_domain='food')::int food_products,
+      COUNT(*) FILTER (WHERE product_domain='non_food')::int retail_products,
+      COUNT(*) FILTER (WHERE active=TRUE)::int active_products,
+      COUNT(*) FILTER (WHERE active=FALSE)::int archived_products,
+      COUNT(*) FILTER (WHERE active=TRUE AND published=TRUE)::int published_products,
+      COUNT(*) FILTER (WHERE active=TRUE AND published=FALSE)::int private_products,
+      COUNT(*) FILTER (WHERE product_domain='food' AND active=TRUE)::int food_active,
+      COUNT(*) FILTER (WHERE product_domain='food' AND active=TRUE AND published=TRUE)::int food_published,
+      COUNT(*) FILTER (WHERE product_domain='food' AND active=TRUE AND published=FALSE)::int food_private,
+      COUNT(*) FILTER (WHERE product_domain='non_food' AND active=TRUE)::int retail_active,
+      COUNT(*) FILTER (WHERE product_domain='non_food' AND active=TRUE AND published=TRUE)::int retail_published,
+      COUNT(*) FILTER (WHERE product_domain='non_food' AND active=TRUE AND published=FALSE)::int retail_private
+    FROM marketplace_products
+    WHERE business_id=$1
+  `,[Number(business.id)]);
+  res.set('Cache-Control','private, no-store');
+  res.json({
+    business_id:Number(business.id),
+    projection:'merchant_private_catalog',
+    ...rows[0],
+    public_discovery_rule:'Only active + published products can enter public product projection; storefront publication and commerce readiness remain separate gates.'
+  });
+}catch(e){next(e)}})
+
+
 app.get('/api/merchant/catalog-v3/collections',async(req,res,next)=>{try{
   const{business}=await requireMerchant(req,Number(req.query.business_id||undefined));
   res.set('Cache-Control','private, no-store');
