@@ -17,7 +17,7 @@ import {
   bindPrivateEvidenceSource,deletePrivateEvidence,ensurePrivateEvidenceSchema,
   readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence
 } from './private-evidence-core.js';
-import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,setMicrobusinessCommerceState} from './microbusiness-readiness-core.js';
+import {ensureMicrobusinessReadinessSchema,microbusinessCommerceReviewPolicy,microbusinessReadinessSnapshot,setMicrobusinessCommerceState} from './microbusiness-readiness-core.js';
 import {
   PROFILE_APPLICATION_STATES,
   applicationStatusAfterReview,
@@ -651,7 +651,14 @@ app.get('/api/governance/admin/readiness/:accountId/:role',async(req,res,next)=>
   if(!['merchant','service_provider'].includes(role))return res.status(400).json({error:'Readiness review is available only for Merchant or Local Services'});
   const businessId=role==='merchant'?Number(req.query?.business_id):null;
   if(role==='merchant'&&(!Number.isInteger(businessId)||businessId<1))return res.status(400).json({error:'Merchant business_id is required'});
-  res.json(await microbusinessReadinessSnapshot(pool,{accountId,profileRole:role,businessId,verifyOwnership:true}));
+  const readiness=await microbusinessReadinessSnapshot(pool,{accountId,profileRole:role,businessId,verifyOwnership:true});
+  const authorization=await activeAuthorization(accountId,role);
+  const decisionPolicy=microbusinessCommerceReviewPolicy(
+    readiness,
+    readiness.eligibility_evidence,
+    {profileAuthorized:Boolean(authorization)}
+  );
+  res.json({...readiness,decision_policy:decisionPolicy});
 }catch(e){next(e)}})
 
 app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(req,res,next)=>{try{
@@ -665,14 +672,41 @@ app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(re
   const commerceScope=req.body?.commerce_scope&&typeof req.body.commerce_scope==='object'&&!Array.isArray(req.body.commerce_scope)?req.body.commerce_scope:{};
   const evidenceChecklist=Array.isArray(req.body?.eligibility_evidence)?req.body.eligibility_evidence:[];
   if(!['readiness_only','eligible_limited','eligible_full'].includes(commerceState))return res.status(400).json({error:'Choose readiness_only, eligible_limited or eligible_full'});
-  if(commerceState==='eligible_limited'&&!Object.keys(commerceScope).length)return res.status(400).json({error:'Define the limited commerce scope before granting limited eligibility'});
+  if(commerceState==='eligible_limited'&&!Object.keys(commerceScope).length)return res.status(400).json({error:'Define the limited commerce scope before granting limited eligibility',code:'READINESS_LIMITED_SCOPE_REQUIRED'});
+
   const before=await microbusinessReadinessSnapshot(pool,{accountId,profileRole:role,businessId,verifyOwnership:true});
   const authorization=await activeAuthorization(accountId,role);
+  const decisionPolicy=microbusinessCommerceReviewPolicy(
+    before,
+    evidenceChecklist,
+    {profileAuthorized:Boolean(authorization)}
+  );
+
   if(commerceState!=='readiness_only'){
-    if(!authorization)return res.status(409).json({error:'Active platform profile authorization is required before commerce eligibility can be granted'});
-    if(!before.activity_track||!before.operating_context)return res.status(409).json({error:'Complete the activity track and operating context before commerce eligibility review'});
-    if(!reason)return res.status(400).json({error:'Review reason is required when granting commerce eligibility'});
+    if(!authorization){
+      return res.status(409).json({
+        error:'Active platform profile authorization is required before commerce eligibility can be granted',
+        code:'READINESS_PROFILE_AUTHORIZATION_REQUIRED',
+        decision_policy:decisionPolicy
+      });
+    }
+    if(!decisionPolicy.review_status.context_complete){
+      return res.status(409).json({
+        error:'Complete the activity track and operating context before commerce eligibility review',
+        code:'READINESS_CONTEXT_REQUIRED',
+        decision_policy:decisionPolicy
+      });
+    }
+    if(!decisionPolicy.can_grant_commerce){
+      return res.status(409).json({
+        error:'Resolve every required readiness review item before commerce eligibility can be granted',
+        code:'READINESS_EVIDENCE_INCOMPLETE',
+        decision_policy:decisionPolicy
+      });
+    }
+    if(!reason)return res.status(400).json({error:'Review reason is required when granting commerce eligibility',code:'READINESS_REVIEW_REASON_REQUIRED'});
   }
+
   const readiness=await setMicrobusinessCommerceState(pool,{
     accountId,profileRole:role,businessId,actorAccountId:me.account.id,
     commerceState,reason,commerceScope,evidenceChecklist
@@ -687,7 +721,12 @@ app.post('/api/governance/admin/readiness/:accountId/:role/review',body,async(re
     policy_version:readiness.policy_version,
     profile_authorization_separate:true
   });
-  res.json(readiness);
+  const committedPolicy=microbusinessCommerceReviewPolicy(
+    readiness,
+    readiness.eligibility_evidence,
+    {profileAuthorized:Boolean(authorization)}
+  );
+  res.json({...readiness,decision_policy:committedPolicy});
 }catch(e){next(e)}})
 
 app.post('/api/governance/admin/authorizations/:id/status',body,async(req,res,next)=>{try{const me=await requireAdmin(req),id=Number(req.params.id),status=clean(req.body?.status,30);if(!['active','suspended','revoked'].includes(status))return res.status(400).json({error:'Choose active, suspended or revoked'});const client=await pool.connect();try{await client.query('BEGIN');const q=await client.query(`SELECT * FROM profile_authorizations WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Authorization not found'),{status:404});const a=q.rows[0];if(status==='active'){const accountState=await client.query(`SELECT email_verified_at,account_mode FROM accounts WHERE id=$1 FOR UPDATE`,[a.account_id]);if(!accountState.rowCount)throw Object.assign(new Error('Profile account not found'),{status:404});if(accountState.rows[0].account_mode!=='company_test'&&!accountState.rows[0].email_verified_at)throw Object.assign(new Error('Email ownership must be verified before an operational profile can be reactivated'),{status:409,code:'EMAIL_VERIFICATION_REQUIRED'});await requireAdultEligibility(client,a.account_id,{action:'reactivate an operational profile'});}await client.query(`UPDATE profile_authorizations SET status=$1,reason=$2,updated_at=NOW() WHERE id=$3`,[status,clean(req.body?.reason,1000),id]);if(status==='active')await client.query(`UPDATE profiles SET enabled=TRUE,status='active',updated_at=NOW() WHERE account_id=$1 AND role=$2`,[a.account_id,a.role]);else{await client.query(`UPDATE profiles SET enabled=FALSE,status=$1,visibility='private',updated_at=NOW() WHERE account_id=$2 AND role=$3`,[status,a.account_id,a.role]);if(a.role==='merchant')await client.query(`UPDATE merchant_storefronts ms SET publication_status='paused',updated_at=NOW() FROM business_memberships bm WHERE bm.business_id=ms.business_id AND bm.account_id=$1`,[a.account_id]);if(a.role==='courier'){await client.query(`UPDATE courier_profiles SET available=FALSE,eligibility_status=CASE WHEN eligibility_status='approved' THEN 'suspended' ELSE eligibility_status END,updated_at=NOW() WHERE account_id=$1`,[a.account_id]);const offersTable=await client.query(`SELECT to_regclass('public.delivery_offers') table_name`);if(offersTable.rows[0]?.table_name)await client.query(`UPDATE delivery_offers SET status='withdrawn',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW() WHERE courier_account_id=$1 AND status='pending'`,[a.account_id]);}}await client.query('COMMIT');await audit(me.account.id,`authorization_${status}`,a.account_id,a.role,a.territory_id,{authorization_id:id,reason:clean(req.body?.reason,300)});res.json({ok:true,status})}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
@@ -714,7 +753,7 @@ function proxy(req,res,next){
 app.post('/api/governance/profiles/:role/start',body,async(req,res,next)=>{try{const me=await identity(req),role=clean(req.params.role,40);const assigned=await assignedOnboardingTerritory(me,req.body?.territory_id,role);const territoryId=Number(assigned.id);if(!['merchant','supplier','courier','service_provider'].includes(role))return res.status(400).json({error:'This profile does not use operational onboarding'});if(['supplier','courier'].includes(role)&&!me.account.is_test_account)return res.status(403).json({error:'This launch profile requires an invitation before onboarding can start'});const t=await pool.query(`SELECT id FROM territories WHERE id=$1 AND country_code=$2 AND status IN ('onboarding','active')`,[territoryId,me.account.country_code||'PH']);if(!t.rowCount)return res.status(409).json({error:'Choose an available operating territory'});const client=await pool.connect();try{await client.query('BEGIN');const a=await client.query(`INSERT INTO profile_applications(account_id,role,territory_id,status,application_data) VALUES($1,$2,$3,'application_started',$4::jsonb) ON CONFLICT(account_id,role,territory_id) WHERE status NOT IN ('rejected','revoked') DO UPDATE SET updated_at=NOW() RETURNING *`,[me.account.id,role,territoryId,JSON.stringify({onboarding_version:'person-first-v1'})]);await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,$2,FALSE,'private','application_started') ON CONFLICT(account_id,role) DO UPDATE SET enabled=FALSE,visibility='private',status='application_started',updated_at=NOW()`,[me.account.id,role]);await client.query('COMMIT');await audit(me.account.id,'profile_onboarding_started',me.account.id,role,territoryId,{application_id:a.rows[0].id});res.status(201).json(a.rows[0])}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
 app.use(proxy)
-app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:status<500?err.message:'Unexpected governance error'};res.status(status).json(payload)})
+app.use((err,_req,res,_next)=>{const status=Number(err?.status)||500;if(status>=500)console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:status<500?err.message:'Unexpected governance error'};if(status<500&&err?.code)payload.code=clean(err.code,100);if(status<500&&err?.review_status)payload.review_status=err.review_status;res.status(status).json(payload)})
 
 let embeddedStartPromise=null;
 export async function startEmbeddedProfileGovernance(){
