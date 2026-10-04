@@ -1748,7 +1748,8 @@ app.post('/api/governance/admin/applications/:id/review',jsonBody,async(req,res,
         if(a.rowCount&&['merchant','supplier'].includes(a.rows[0].role)){
           const asserted=verifyAdminAssertion(TOKEN_SECRET,assertionHeader,null);
           const actorId=asserted?.accountId||1;
-          await ensureProfileBusinessBinding(Number(a.rows[0].account_id),a.rows[0].role,Number(a.rows[0].territory_id)||null,a.rows[0].proposed_business_name||'',actorId);
+          await ensureProfileBusinessBinding(Number(a.rows[0].account_id),a.rows[0].role,Number(a.rows[0].territory_id)||null,a.rows[0].proposed_business_name||'',actorId)
+            .catch(error=>console.error('Post-approval business binding reconciliation:',error.message));
         }
       }
     });

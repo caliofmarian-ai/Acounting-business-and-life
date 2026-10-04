@@ -75,7 +75,8 @@ async function ensureServiceProviderApproved({
       body:{
         decision:'approve',
         reason:'Controlled internal QA Local Services acceptance fixture',
-        approved_category_ids:[Number(categoryId)]
+        approved_category_ids:[Number(categoryId)],
+        evidence_attested:true
       }
     });
     expectStatus(reviewed,200,'Local Services Admin approval');

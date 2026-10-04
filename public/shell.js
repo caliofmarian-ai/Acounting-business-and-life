@@ -1889,7 +1889,9 @@ async function refreshProfile(force=false) {
     profileFetchedAt=Date.now();
     activeRole = snapshot.account?.active_role || null;
     ensureShellChrome();
-    renderAccountHome();
+    const accountSettingsWorkspace=document.getElementById('accountSettingsWorkspace');
+    const accountSettingsVisible=Boolean(accountSettingsWorkspace&&!accountSettingsWorkspace.classList.contains('hidden'));
+    if(accountSettingsVisible)renderAccountSettings(accountSettingsView);else renderAccountHome();
     perfMark('account_home_rendered');
     const params=new URLSearchParams(location.search),requested=params.get('account_settings');
     if(['home','personal','security','profiles'].includes(requested)){

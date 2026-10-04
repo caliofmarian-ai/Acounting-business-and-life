@@ -93,10 +93,10 @@ test('Mission Center and launcher preserve user control',()=>{
 });
 
 test('real governance actions notify the guide only after successful transitions',()=>{
-  assert.match(governanceUi,/reason:'application_saved'/);
-  assert.match(governanceUi,/reason:'application_submitted'/);
-  assert.match(governanceUi,/reason:'application_started'/);
-  assert.match(governanceUi,/reason:'invitation_accepted'/);
+  assert.match(governanceUi,/reconcileGovApplication\(committed,'application_saved'\)/);
+  assert.match(governanceUi,/reconcileGovApplication\(committed,'application_submitted'\)/);
+  assert.match(governanceUi,/reconcileGovApplication\(application,'application_started'\)/);
+  assert.match(governanceUi,/reconcileGovApplication\(application,'invitation_accepted'\)/);
   assert.match(ui,/abl:guided-onboarding-refresh/);
 });
 

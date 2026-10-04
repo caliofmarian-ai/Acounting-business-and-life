@@ -71,7 +71,9 @@ test('Commerce readiness is reachable from the current Admin Members Hub and kee
   assert.match(ui,/eligible_limited/);
   assert.match(ui,/eligible_full/);
   assert.match(ui,/Profile approval does not publish a business/);
-  assert.match(ui,/state\.memberHubTab=decision==='approve'&&isSuperAdmin\(\)&&\['merchant','service_provider'\]\.includes\(a\.role\)\?'commerce':'requests'/);
+  assert.match(ui,/setAdminApplicationRoute\(a\.id\)/);
+  assert.match(ui,/Use “Back to Profile requests” to see the updated queue/);
+  assert.match(ui,/tab==='commerce'/);
 });
 
 test('Members Hub V5 removes Profiles as a separate sidebar module',()=>{

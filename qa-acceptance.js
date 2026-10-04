@@ -11,6 +11,7 @@ import {deliveryRoutingPublicConfig,resolveDeliveryRoute} from './delivery-routi
 import {runDeliveryRefundEconomicsV2DAcceptance} from './qa-delivery-refund-economics-v2d.js';
 import {privateEvidenceConfig,readPrivateEvidence} from './private-evidence-core.js';
 import {legacyPrivateEvidenceCounts,migratePrivateEvidenceV1} from './private-evidence-migration.js';
+import {runMerchantGovernanceV1Acceptance} from './qa-merchant-governance-v1.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
@@ -67,7 +68,9 @@ const SESSION_SECURITY_V2_WAVE='session_security_v2';
 const PRIVATE_EVIDENCE_STORAGE_V1_WAVE='private_evidence_storage_v1';
 const OWNER_CONTROL_TOWER_V1_WAVE='owner_control_tower_v1';
 const MICROBUSINESS_READINESS_V1_WAVE='microbusiness_readiness_v1';
+const MERCHANT_GOVERNANCE_V1_WAVE='merchant_governance_v1';
 const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,SUPPLIER_OPERATING_LOCATION_V1_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,SERVICE_PROVIDER_BASE_LOCATION_V1_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,PROFILE_LIFECYCLE_ATOMIC_V1_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE]);
+ACCEPTANCE_WAVES.add(MERCHANT_GOVERNANCE_V1_WAVE);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -401,7 +404,8 @@ async function ensureMerchantApproved({pool,base,merchant,adminToken,territoryId
       token:adminToken,
       body:{
         decision:'approve',
-        reason:'Controlled internal QA Merchant acceptance fixture'
+        reason:'Controlled internal QA Merchant acceptance fixture',
+        evidence_attested:true
       }
     });
     expectStatus(reviewed,200,'Merchant Admin approval');
@@ -1474,7 +1478,7 @@ async function ensureSupplierApproved({pool,base,supplier,adminToken,territoryId
   if(['submitted','under_review'].includes(application?.status)){
     const reviewed=await requestJson(base,`/api/governance/admin/applications/${Number(application.id)}/review`,{
       method:'POST',token:adminToken,
-      body:{decision:'approve',reason:'Controlled internal QA Supplier acceptance fixture'}
+      body:{decision:'approve',reason:'Controlled internal QA Supplier acceptance fixture',evidence_attested:true}
     });
     expectStatus(reviewed,200,'Supplier Admin approval');
   }
@@ -5776,7 +5780,7 @@ async function runAdultEligibilityRuntimeAcceptance({pool,base,secret}){
     expectStatus(adminUnconfirmed,422,'Adult eligibility Admin review denial');
     const adminReviewed=await requestJson(base,`/api/governance/admin/applications/${applicationId}/review`,{
       method:'POST',token:admin.token,
-      body:{decision:'approve',reason:'Controlled QA adult eligibility review',approved_category_ids:[],adult_eligibility_reviewed:true}
+      body:{decision:'approve',reason:'Controlled QA adult eligibility review',approved_category_ids:[],adult_eligibility_reviewed:true,evidence_attested:true}
     });
     expectStatus(adminReviewed,200,'Adult eligibility Admin review');
 
@@ -5976,7 +5980,8 @@ async function ensureReadinessQaServiceProviderApproved({pool,base,provider,admi
       body:{
         decision:'approve',
         reason:'Controlled internal QA Local Services readiness fixture',
-        approved_category_ids:[categoryId]
+        approved_category_ids:[categoryId],
+        evidence_attested:true
       }
     });
     expectStatus(reviewed,200,'Readiness Local Services Admin approval');
@@ -6379,7 +6384,13 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===MICROBUSINESS_READINESS_V1_WAVE
+    const result=config.wave===MERCHANT_GOVERNANCE_V1_WAVE
+      ?await runMerchantGovernanceV1Acceptance({
+        pool,base,secret:config.secret,
+        aliases:{merchant:MERCHANT_ALIAS,superAdmin:SUPER_ADMIN_ALIAS},
+        helpers:{requestJson,expectStatus,qaAccountSession,ensureQaTerritory}
+      })
+      :config.wave===MICROBUSINESS_READINESS_V1_WAVE
       ?await runMicrobusinessReadinessV1Acceptance({pool,base,secret:config.secret})
       :config.wave===OWNER_CONTROL_TOWER_V1_WAVE
       ?await runOwnerControlTowerV1Acceptance({pool,base,secret:config.secret})
@@ -6526,3 +6537,5 @@ export {
   CUSTOMER_ALIAS,MERCHANT_ALIAS,SUPPLIER_ALIAS,COURIER_ALIAS,SERVICE_PROVIDER_ALIAS,TERRITORY_ADMIN_ALIAS,SUPER_ADMIN_ALIAS,
   CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXPERIENCE_WAVE,SUPPLIER_EXPERIENCE_WAVE,SUPPLIER_DOMAIN_V2_WAVE,SUPPLIER_COMMERCIAL_V3_WAVE,SUPPLIER_SOURCING_V4_WAVE,SUPPLIER_DAILY_V5_WAVE,SUPPLIER_BUSINESS_ATTRIBUTION_V2E_WAVE,SUPPLIER_OPERATING_LOCATION_V1_WAVE,COURIER_EXPERIENCE_WAVE,SERVICE_PROVIDER_EXPERIENCE_WAVE,SERVICE_PROVIDER_BASE_LOCATION_V1_WAVE,CUSTOMER_MARKETPLACE_WAVE,CUSTOMER_EXPERIENCE_WAVE,AUTH_RUNTIME_V6_WAVE,INCIDENT_RUNTIME_V7_WAVE,DELIVERY_FINANCE_RUNTIME_V8_WAVE,DELIVERY_RUNTIME_V9_WAVE,SUPPLIER_RUNTIME_V10_WAVE,LOCAL_SERVICES_RUNTIME_V11_WAVE,MARKETPLACE_RUNTIME_V12_WAVE,ORDERS_RUNTIME_V13_WAVE,ACCOUNT_AUTH_RUNTIME_V14_WAVE,ACCOUNT_LIFECYCLE_V1_WAVE,EMAIL_OWNERSHIP_V2_WAVE,ACCOUNTING_RUNTIME_V15_WAVE,NOTIFICATIONS_RUNTIME_V16_WAVE,PROFILE_SELECTOR_BASELINE_WAVE,PROFILE_SELECTOR_RUNTIME_WAVE,PROFILE_LIFECYCLE_ATOMIC_V1_WAVE,CUSTOMER_PERFORMANCE_BASELINE_WAVE,CUSTOMER_PERFORMANCE_RUNTIME_WAVE,MERCHANT_PERFORMANCE_BASELINE_WAVE,MERCHANT_PERFORMANCE_RUNTIME_WAVE,SUPPLIER_PERFORMANCE_BASELINE_WAVE,SUPPLIER_PERFORMANCE_RUNTIME_WAVE,COURIER_PERFORMANCE_BASELINE_WAVE,COURIER_PERFORMANCE_RUNTIME_WAVE,DELIVERY_PRICING_V2B_RUNTIME_WAVE,DELIVERY_ROUTING_V2C_RUNTIME_WAVE,DELIVERY_REFUND_ECONOMICS_V2D_RUNTIME_WAVE,ADULT_ELIGIBILITY_RUNTIME_WAVE,SESSION_SECURITY_V2_WAVE,PRIVATE_EVIDENCE_STORAGE_V1_WAVE,OWNER_CONTROL_TOWER_V1_WAVE,MICROBUSINESS_READINESS_V1_WAVE
 };
+
+export {MERCHANT_GOVERNANCE_V1_WAVE};

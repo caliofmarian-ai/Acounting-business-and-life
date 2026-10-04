@@ -155,9 +155,31 @@ async function incidentInfo(id){
   const key=positiveId(id);if(!key)return null;
   const q=await pool.query(`SELECT * FROM incident_reports WHERE id=$1`,[key]);return q.rows[0]||null;
 }
-async function applicationInfo(id){
+async function applicationInfo(id,reviewEventId=null){
   const key=positiveId(id);if(!key)return null;
-  const q=await pool.query(`SELECT pa.*,a.display_name applicant_name,t.name territory_name FROM profile_applications pa JOIN accounts a ON a.id=pa.account_id JOIN territories t ON t.id=pa.territory_id WHERE pa.id=$1`,[key]);return q.rows[0]||null;
+  const exactReviewId=positiveId(reviewEventId);
+  const q=await pool.query(`
+    SELECT pa.*,
+           COALESCE(latest_review.to_status,pa.status) status,
+           COALESCE(latest_review.reviewer_note,pa.decision_reason) decision_reason,
+           COALESCE(latest_review.created_at,pa.reviewed_at) reviewed_at,
+           a.display_name applicant_name,t.name territory_name,
+           latest_review.id review_event_id,latest_review.decision review_decision,
+           latest_review.created_at review_recorded_at,latest_review.evidence_attested
+      FROM profile_applications pa
+      JOIN accounts a ON a.id=pa.account_id
+      JOIN territories t ON t.id=pa.territory_id
+      LEFT JOIN LATERAL (
+        SELECT review.id,review.decision,review.created_at,review.evidence_attested
+              ,review.to_status,review.reviewer_note
+          FROM profile_application_reviews review
+         WHERE review.application_id=pa.id
+           AND ($2::bigint IS NULL OR review.id=$2)
+         ORDER BY review.created_at DESC,review.id DESC
+         LIMIT 1
+      ) latest_review ON TRUE
+     WHERE pa.id=$1
+  `,[key,exactReviewId]);return q.rows[0]||null;
 }
 function profileRoleLabel(role){
   return({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'})[String(role||'')]||clean(role,60)||'Profile';
@@ -204,6 +226,8 @@ function profileReviewNotificationData(a){
     role:a.role,role_label:roleLabel,status,status_label:status.replaceAll('_',' '),
     status_title:copy.title,status_summary:copy.summary,status_explanation:copy.explanation,next_step:copy.next,
     reviewer_note:note,reviewer_note_text:note?`Admin note: ${note}`:'',
+    review_event_id:a?.review_event_id?Number(a.review_event_id):null,
+    reviewed_at:a?.review_recorded_at||a?.reviewed_at||null,
     business_name:clean(a?.proposed_business_name,180),territory_name:clean(a?.territory_name,180),
     application_label:applicationLabel
   };
@@ -397,7 +421,7 @@ app.patch('/api/admin/incidents/:id',body,(req,res)=>forwardJson(req,res,async()
 // Profile governance
 app.post('/api/governance/applications/:id/documents',body,(req,res)=>forwardJson(req,res,async data=>{const a=await applicationInfo(req.params.id);if(!a||!['submitted','under_review'].includes(String(a.status||'')))return;const perm=a.role==='merchant'?'merchant.approve':a.role==='supplier'?'supplier.approve':a.role==='courier'?'courier.verify':'profiles.review_service_provider';const admins=await adminNotificationRecipients(pool,{territoryId:a.territory_id,permission:perm,destination:'support'});await safeEmit({eventKey:`profile-app:${a.id}:evidence:${data.id||Date.now()}`,eventCode:'profile.application_evidence_added',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:false,pushDefault:true,data:{application_id:a.id,role:a.role,role_label:profileRoleLabel(a.role),applicant_name:a.applicant_name||'Applicant',application_label:profileApplicationLabel(a),business_name:clean(a.proposed_business_name,180),territory_name:a.territory_name||''},recipients:admins})}));
 app.post('/api/governance/applications/:id/submit',body,(req,res)=>forwardJson(req,res,async data=>{const a=await applicationInfo(data.id||req.params.id);if(!a)return;const perm=a.role==='merchant'?'merchant.approve':a.role==='supplier'?'supplier.approve':a.role==='courier'?'courier.verify':'profiles.review_service_provider';const admins=await adminNotificationRecipients(pool,{territoryId:a.territory_id,permission:perm,destination:'support'});const roleLabel=({merchant:'Merchant',supplier:'Supplier',courier:'Delivery',service_provider:'Local Services'})[a.role]||a.role;const businessName=clean(a.proposed_business_name,180);await safeEmit({eventKey:`profile-app:${a.id}:submitted`,eventCode:'profile.application_submitted',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:false,pushDefault:true,data:{application_id:a.id,role:a.role,role_label:roleLabel,status:a.status,applicant_name:a.applicant_name||'Applicant',territory_name:a.territory_name||'assigned area',business_name:businessName,business_context:businessName?'Business: '+businessName+'. ':''},recipients:admins})}));
-app.post('/api/governance/admin/applications/:id/review',body,(req,res)=>forwardJson(req,res,async()=>{const a=await applicationInfo(req.params.id);if(!a)return;await safeEmit({eventKey:`profile-app:${a.id}:review:${a.status}:${clean(a.updated_at,80)}`,eventCode:'profile.application_reviewed',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:true,pushDefault:true,data:{application_id:a.id,...profileReviewNotificationData(a)},recipients:[{accountId:Number(a.account_id),roleHint:a.role}]})}));
+app.post('/api/governance/admin/applications/:id/review',body,(req,res)=>forwardJson(req,res,async committed=>{const a=await applicationInfo(req.params.id,committed?.review_event_id);if(!a)return;await safeEmit({eventKey:`profile-app:${a.id}:review:${a.review_event_id||clean(a.updated_at,80)}`,eventCode:'profile.application_reviewed',sourceService:'governance',entityType:'profile_application',entityId:String(a.id),correlationId:correlation(req),category:'operational',priority:'high',emailDefault:true,pushDefault:true,data:{application_id:a.id,...profileReviewNotificationData(a)},recipients:[{accountId:Number(a.account_id),roleHint:a.role}]})}));
 app.post('/api/governance/admin/authorizations/:id/status',body,(req,res)=>forwardJson(req,res,async()=>{const a=await authorizationInfo(req.params.id);if(!a)return;await safeEmit({eventKey:`profile-auth:${a.id}:${a.status}`,eventCode:'profile.authorization_changed',sourceService:'governance',entityType:'profile_authorization',entityId:String(a.id),correlationId:correlation(req),category:'security',priority:'high',mandatory:true,emailDefault:true,pushDefault:true,data:{role:a.role,status:a.status},recipients:[{accountId:Number(a.account_id),roleHint:a.role}]})}));
 
 // Notification APIs
