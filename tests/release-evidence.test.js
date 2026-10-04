@@ -15,6 +15,7 @@ test('release evidence is explicit, Production-only and source-linked',()=>{
   assert.match(evidence.summary,/controlled non-settling Production lifecycle is accepted/i);
   assert.equal(evidence.owner_decisions.length,2);
   assert.deepEqual(new Set(evidence.owner_decisions.map(x=>x.decision_code)),new Set(['LEGAL-001','SEC-001']));
+  assert.equal(evidence.owner_decisions.find(x=>x.decision_code==='SEC-001')?.source_id,'788');
 });
 
 test('callers receive an isolated release evidence snapshot',()=>{
