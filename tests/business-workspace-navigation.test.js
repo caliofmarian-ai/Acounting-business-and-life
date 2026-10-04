@@ -33,6 +33,8 @@ test('Supplier Finance owns a dedicated surface and waits for exact Supplier bus
   assert.match(accounting,/ensureSupplierAccountingContext/);
   assert.match(accounting,/state\?\.role!=='supplier'/);
   assert.match(accounting,/mountEconomicSummary\('supplierFinanceSummary'\)/);
+  assert.match(accounting,/data-supplier-finance-preparing/);
+  assert.equal((accounting.match(/clearSupplierFinancePreparation\(target\);/g)||[]).length,2);
   assert.doesNotMatch(accounting,/querySelector\('\.bottomNav \[data-view="Dashboard"\]'\)\?\.click/);
 });
 

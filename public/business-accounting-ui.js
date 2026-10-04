@@ -191,14 +191,16 @@ async function openSupplierAccounting() {
   workspace.classList.remove('hidden');
   document.body.classList.add('supplierAccountingMode');
   const target=document.getElementById('supplierFinanceSummary');
-  if(target)target.innerHTML='<div class="businessFinanceLoading" role="status"><strong>Preparing Supplier finances…</strong><span>Confirming the active Supplier business before financial evidence is loaded.</span></div>';
+  if(target)target.innerHTML='<div class="businessFinanceLoading" data-supplier-finance-preparing role="status"><strong>Preparing Supplier finances…</strong><span>Confirming the active Supplier business before financial evidence is loaded.</span></div>';
   try{
     await ensureSupplierAccountingContext();
     const business=accountingState.businesses.find(b=>Number(b.id)===Number(accountingState.activeBusinessId));
     const name=document.getElementById('supplierFinanceBusinessName');
     if(name)name.textContent=business?.name||'Your Supplier business';
+    clearSupplierFinancePreparation(target);
     await mountEconomicSummary('supplierFinanceSummary');
   }catch(error){
+    clearSupplierFinancePreparation(target);
     const mounted=ensureFinancePanel('supplierFinanceSummary');
     if(mounted.panel){
       const contextKey=currentFinanceContextKey();
@@ -206,6 +208,10 @@ async function openSupplierAccounting() {
       showFinanceLoadError(mounted.panel,mounted.targetId,contextKey,error,false);
     }
   }
+}
+
+function clearSupplierFinancePreparation(target){
+  target?.querySelector('[data-supplier-finance-preparing]')?.remove();
 }
 
 document.querySelector('#supplierAccountingWorkspace .supplierFinanceBack')?.addEventListener('click',closeSupplierAccounting);
