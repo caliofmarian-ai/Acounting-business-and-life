@@ -2,7 +2,8 @@ const esc=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt
 const sourceLabel=source=>({
   deployment_evidence:'Deployment evidence',payment_core:'Payment Core',support:'Support',
   trust_safety:'Trust & Safety',territory_governance:'Territory governance',
-  finance_kpi:'Finance KPI',quality_evidence:'Quality evidence'
+  finance_kpi:'Finance KPI',quality_evidence:'Quality evidence',
+  repository_release_evidence:'Production release evidence'
 })[String(source||'')]||String(source||'Evidence');
 const observedLabel=value=>{
   const d=value?new Date(value):null;
@@ -66,6 +67,7 @@ export function renderOwnerControlTower(model,headline){
   const territories=Array.isArray(model?.territories)?model.territories:[];
   const finance=model?.finance||{};
   const quality=model?.product_quality||{};
+  const release=model?.release_evidence||{};
   const productionValue=production.production_revision
     ?(production.state==='attention'&&production.intended_revision&&production.production_revision!==production.intended_revision?'Behind intended release':'Revision '+production.production_revision)
     :null;
@@ -111,10 +113,18 @@ export function renderOwnerControlTower(model,headline){
       ${metric('Operating result',money(finance.operating_result,finance.currency),'Revenue minus verified costs')}
     </div>
 
+    <h3 class="ownerSectionTitle">Release evidence</h3>
+    <article class="ownerQualityCard" id="ownerReleaseEvidence">
+      <div class="ownerCardHead"><strong>${esc(release.status==='hold'?'Launch hold':release.status==='ready'?'Release ready':'Release review')}</strong><b>${esc(release.runtime_revision?'Revision '+release.runtime_revision:'Revision unavailable')}</b></div>
+      <p>${esc(release.summary||'Release evidence summary unavailable.')}</p>
+      <small>${release.source_issue?'Source issue #'+esc(release.source_issue):'Source issue unavailable'} · ${esc(observedLabel(release.observed_at))}</small>
+    </article>
+
     <h3 class="ownerSectionTitle">Product quality</h3>
     <article class="ownerQualityCard">
-      <strong>P0 ${quality.open_p0??'—'} · P1 ${quality.open_p1??'—'} · parity ${quality.parity_issues??'—'}</strong>
-      <p>Only actionable exceptions belong here. Engineering detail stays in the canonical issue/release evidence.</p>
+      <strong>P0 ${quality.open_p0??'—'} · P1 ${quality.open_p1??'—'} · Production regressions ${quality.production_regressions??'—'}</strong>
+      <p>${quality.parity_issues==null?esc(release.unavailable_reasons?.parity_issues||'Parity evidence unavailable.'):('Parity issues '+esc(quality.parity_issues))}</p>
+      <small>Failed acceptance waves ${quality.failed_acceptance_waves??'—'}${quality.last_functional_qa_at?' · QA '+esc(observedLabel(quality.last_functional_qa_at)):''}</small>
     </article>
   </section>`;
 }
