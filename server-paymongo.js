@@ -10,6 +10,10 @@ import { emitNotificationEvent,businessNotificationRecipients } from './notifica
 import { payMongoPilotReadiness,payMongoCheckoutPolicy } from './pilot-payment-readiness.js';
 import { publicDeploymentEvidence } from './deployment-evidence.js';
 import { runQaAcceptanceIfRequested } from './qa-acceptance.js';
+import {
+  controlledRoleFixtureGateRequired,
+  runControlledRoleFixturesIfRequested
+} from './controlled-role-fixtures.js';
 import { startEmbeddedPaymentCore,stopEmbeddedPaymentCore } from './server-payments.js';
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {ensureQaPhTestContext} from './qa-ph-test-context.js';
@@ -22,6 +26,7 @@ const port=Number(process.env.PORT||3000);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
 const body=express.json({limit:'30mb',verify:(req,_res,buf)=>{req.rawBody=Buffer.from(buf)}});
 let paymentCoreReady=false;let shuttingDown=false;
+let controlledRoleFixtureReady=!controlledRoleFixtureGateRequired();
 
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const authHeader=req=>req.headers.authorization||'';
@@ -106,7 +111,7 @@ app.get('/sw.js',allowPwaAsset);
 app.get('/health',async(_req,res)=>{
   try{
     await pool.query('SELECT 1');
-    const childAlive=paymentCoreReady;
+    const childAlive=paymentCoreReady&&controlledRoleFixtureReady;
     const cfg=payMongoRuntimeConfig();
     res.status(childAlive?200:503).json({
       ok:childAlive,db:true,payment_core:childAlive,paymongo:true,
@@ -242,5 +247,16 @@ startEmbeddedPaymentCore().then(paymentApp=>{
   return initDb();
 }).then(()=>app.listen(port,'0.0.0.0',()=>{
   console.log('Business & Life PayMongo + Payment Core runtime listening on '+port);
-  runQaAcceptanceIfRequested({pool,port}).catch(e=>console.error('QA acceptance runner failed safely:',clean(e?.message||'unknown',240)));
+  (async()=>{
+    try{
+      await runControlledRoleFixturesIfRequested({pool,port});
+      controlledRoleFixtureReady=true;
+    }catch(error){
+      controlledRoleFixtureReady=false;
+      console.error('Controlled startup acceptance failed:',clean(error?.message||'unknown',240));
+      setTimeout(()=>process.exit(1),50);
+      return;
+    }
+    runQaAcceptanceIfRequested({pool,port}).catch(e=>console.error('QA acceptance runner failed safely:',clean(e?.message||'unknown',240)));
+  })();
 })).catch(e=>{console.error(e);process.exit(1)});

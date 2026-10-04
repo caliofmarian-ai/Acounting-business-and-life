@@ -79,7 +79,7 @@ export async function ensureAccountSafetyEligibilitySchema(pool){
       account_id,actor_account_id,event_code,status_before,status_after,policy_version,source,detail_json
     )
     SELECT id,NULL,'company_test_exempted','','company_test_exempt','${ADULT_ELIGIBILITY_POLICY_VERSION}',
-           'company_test_policy','{"scope":"controlled_qa_only"}'::jsonb
+           'company_test_policy','{"scope":"controlled_company_test_only"}'::jsonb
       FROM exempted;
   `);
 }
@@ -164,7 +164,7 @@ export async function recordCompanyTestEligibilityExemption(db,{accountId,source
   return withEligibilityTransaction(db,async client=>{
     const before=await accountAdultEligibilitySnapshot(client,id,{lock:true});
     if(before.company_test_exempt)return before;
-    if(before.status==='restricted')throw Object.assign(new Error('A restricted account cannot receive the controlled QA exemption'),{status:403});
+    if(before.status==='restricted')throw Object.assign(new Error('A restricted account cannot receive the controlled company-test exemption'),{status:403});
     const updated=await client.query(`
       UPDATE accounts
          SET safety_eligibility_status='company_test_exempt',
@@ -177,8 +177,8 @@ export async function recordCompanyTestEligibilityExemption(db,{accountId,source
        WHERE id=$3 AND account_mode='company_test'
        RETURNING id
     `,[ADULT_ELIGIBILITY_POLICY_VERSION,clean(source,80),id]);
-    if(!updated.rowCount)throw Object.assign(new Error('Only a classified company test account can receive the QA eligibility exemption'),{status:409});
-    await appendEligibilityEvent(client,{accountId:id,actorAccountId:null,eventCode:'company_test_exempted',before:before.status,after:'company_test_exempt',source,detail:{scope:'controlled_qa_only'}});
+    if(!updated.rowCount)throw Object.assign(new Error('Only a classified company test account can receive the company-test eligibility exemption'),{status:409});
+    await appendEligibilityEvent(client,{accountId:id,actorAccountId:null,eventCode:'company_test_exempted',before:before.status,after:'company_test_exempt',source,detail:{scope:'controlled_company_test_only'}});
     return accountAdultEligibilitySnapshot(client,id);
   });
 }
