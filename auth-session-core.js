@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 export const AUTH_SESSION_TTL_MS=24*60*60*1000;
 export const AUTH_STEP_UP_TTL_MS=10*60*1000;
+export const AUTH_MFA_SESSION_TTL_MS=12*60*60*1000;
 
 function safeEqualHex(a,b){
   try{
@@ -92,5 +93,51 @@ export async function resolveV2SessionStepUp(pool,tokenSecret,token='',{
     ...session,
     stepUpVerifiedAt:verifiedAt,
     stepUpValid:Number.isFinite(age)&&age>=0&&age<=maxAgeMs
+  };
+}
+
+
+export async function markV2SessionMfa(pool,{accountId,sessionId,method='totp'}){
+  const normalizedMethod=['totp','recovery_code'].includes(String(method||''))?String(method):'totp';
+  const q=await pool.query(
+    `UPDATE account_sessions
+        SET mfa_verified_at=NOW(),mfa_method=$3
+      WHERE session_id=$1 AND account_id=$2 AND revoked_at IS NULL AND expires_at>NOW()
+      RETURNING mfa_verified_at,mfa_method`,
+    [String(sessionId||''),Number(accountId),normalizedMethod]
+  );
+  if(!q.rowCount)return null;
+  return{verifiedAt:q.rows[0].mfa_verified_at,method:q.rows[0].mfa_method};
+}
+
+export async function clearV2SessionMfa(pool,{accountId,sessionId}){
+  await pool.query(
+    `UPDATE account_sessions
+        SET mfa_verified_at=NULL,mfa_method=''
+      WHERE session_id=$1 AND account_id=$2`,
+    [String(sessionId||''),Number(accountId)]
+  );
+}
+
+export async function resolveV2SessionMfa(pool,tokenSecret,token='',{
+  now=Date.now(),ttlMs=AUTH_SESSION_TTL_MS,maxAgeMs=AUTH_MFA_SESSION_TTL_MS
+}={}){
+  const session=await resolveV2SessionToken(pool,tokenSecret,token,{now,ttlMs});
+  if(!session)return null;
+  const q=await pool.query(
+    `SELECT mfa_verified_at,mfa_method
+       FROM account_sessions
+      WHERE session_id=$1 AND account_id=$2 AND revoked_at IS NULL AND expires_at>NOW()`,
+    [session.sessionId,session.accountId]
+  );
+  if(!q.rowCount)return null;
+  const verifiedAt=q.rows[0].mfa_verified_at||null;
+  const verifiedMs=verifiedAt?new Date(verifiedAt).getTime():NaN;
+  const age=Number.isFinite(verifiedMs)?now-verifiedMs:Infinity;
+  return{
+    ...session,
+    mfaVerifiedAt:verifiedAt,
+    mfaMethod:String(q.rows[0].mfa_method||''),
+    mfaValid:Number.isFinite(age)&&age>=0&&age<=maxAgeMs
   };
 }

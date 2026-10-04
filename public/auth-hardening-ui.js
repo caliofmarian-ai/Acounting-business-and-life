@@ -2,10 +2,176 @@ import {phGeographyCascadeMarkup,bindPhGeographyCascade} from './ph-geography-ca
 const ADULT_ELIGIBILITY_POLICY_VERSION='ph-adult-eligibility-v1';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 function sessionActive(){return Boolean(window.ABLSession?.authenticated())}
-async function api(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}
+async function api(path,options={}){
+  const headers={'Content-Type':'application/json',...(options.headers||{})};
+  const r=await fetch(path,{...options,headers});
+  const b=await r.json().catch(()=>({}));
+  if(!r.ok){
+    const error=new Error(b.error||`Request failed (${r.status})`);
+    error.status=r.status;error.code=b.code||'';error.payload=b;
+    if(b.assessment)error.assessment=b.assessment;
+    throw error;
+  }
+  return b;
+}
 function clearQuery(){history.replaceState({},'',location.pathname)}
 function msg(text,kind=''){const el=document.getElementById('modernAuthMessage');if(el){el.textContent=text||'';el.className=`modernAuthMessage ${kind}`}}
 let status={google_enabled:false,email_delivery_configured:false,preview_link_enabled:false,qa_preview_context:{enabled:false}};
+let mfaDialogPromise=null;
+let mfaFetchGuardInstalled=false;
+
+function ensureMfaDialogStyle(){
+  if(document.getElementById('superAdminMfaStyle'))return;
+  const style=document.createElement('style');style.id='superAdminMfaStyle';
+  style.textContent=`
+    .superAdminMfaBackdrop{position:fixed;inset:0;z-index:2147483600;background:rgba(12,18,28,.72);display:flex;align-items:center;justify-content:center;padding:12px}
+    .superAdminMfaCard{width:min(440px,100%);max-height:calc(100dvh - 24px);overflow:auto;background:#fff;color:#172033;border-radius:20px;padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.28)}
+    .superAdminMfaCard h2{margin:0 0 8px;font-size:1.35rem}.superAdminMfaCard p{line-height:1.45}
+    .superAdminMfaQr{display:block;width:min(300px,82vw);height:auto;margin:14px auto;border-radius:14px;border:1px solid #dfe5ee}
+    .superAdminMfaForm{display:grid;gap:12px}.superAdminMfaForm label{display:grid;gap:6px;font-weight:650}
+    .superAdminMfaForm input,.superAdminMfaForm select{font:inherit;padding:12px 13px;border:1px solid #b7c1cf;border-radius:12px;background:#fff;color:#172033}
+    .superAdminMfaActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.superAdminMfaActions button{font:inherit;padding:11px 14px;border-radius:12px;border:1px solid #c9d2df;background:#f6f8fb;color:#172033;font-weight:700}
+    .superAdminMfaActions .primary{background:#172033;color:#fff;border-color:#172033}
+    .superAdminMfaMsg{min-height:1.3em;margin-top:10px;color:#4a5568}.superAdminMfaMsg.error{color:#9a1c1c}
+    .superAdminMfaRecovery{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px;background:#f5f7fa;border-radius:12px;user-select:all}
+    @media(max-width:420px){.superAdminMfaRecovery{grid-template-columns:1fr}.superAdminMfaCard{padding:16px;border-radius:16px}}
+  `;
+  document.head.appendChild(style);
+}
+
+function mfaShell(){
+  ensureMfaDialogStyle();
+  const backdrop=document.createElement('div');backdrop.className='superAdminMfaBackdrop';
+  backdrop.innerHTML='<section class="superAdminMfaCard" role="dialog" aria-modal="true" aria-labelledby="superAdminMfaTitle"><div id="superAdminMfaBody"></div></section>';
+  document.body.appendChild(backdrop);
+  return{backdrop,body:backdrop.querySelector('#superAdminMfaBody')};
+}
+
+async function superAdminMfaStatus(){
+  try{return await api('/api/auth/mfa/status')}
+  catch(error){
+    if(error.code==='SUPER_ADMIN_MFA_CONFIG_REQUIRED')throw error;
+    return{required:false};
+  }
+}
+
+function renderRecoveryCodes(body,codes,resolve){
+  const safeCodes=(Array.isArray(codes)?codes:[]).map(code=>esc(code));
+  body.innerHTML=`<h2 id="superAdminMfaTitle">Save your recovery codes</h2>
+    <p>Store these offline. Each code works once if you lose access to your authenticator app. They will not be shown again.</p>
+    <div class="superAdminMfaRecovery">${safeCodes.map(code=>'<span>'+code+'</span>').join('')}</div>
+    <div class="superAdminMfaMsg" id="superAdminMfaMsg"></div>
+    <div class="superAdminMfaActions"><button type="button" id="superAdminMfaCopy">Copy codes</button><button type="button" class="primary" id="superAdminMfaSaved">I saved these codes</button></div>`;
+  body.querySelector('#superAdminMfaCopy').onclick=async()=>{
+    const msg=body.querySelector('#superAdminMfaMsg');
+    try{await navigator.clipboard.writeText((codes||[]).join('\n'));msg.textContent='Recovery codes copied.'}
+    catch{msg.textContent='Copy is unavailable on this device. Save the codes manually.'}
+  };
+  body.querySelector('#superAdminMfaSaved').onclick=()=>resolve(true);
+}
+
+async function runMfaEnrollment(body,resolve){
+  let state=await superAdminMfaStatus();
+  if(!state.enrollment_pending){
+    await api('/api/auth/mfa/enroll/start',{method:'POST',body:'{}'});
+    state=await superAdminMfaStatus();
+  }
+  body.innerHTML=`<h2 id="superAdminMfaTitle">Protect Super Admin</h2>
+    <p>Scan this QR code with an authenticator app, then enter the 6-digit code. Admin access stays locked until setup is complete.</p>
+    <img class="superAdminMfaQr" src="/api/auth/mfa/enroll/qr?t=${Date.now()}" alt="Authenticator setup QR code">
+    <form class="superAdminMfaForm" id="superAdminMfaEnrollForm">
+      <label>Authenticator code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+      <div class="superAdminMfaMsg" id="superAdminMfaMsg"></div>
+      <div class="superAdminMfaActions"><button type="button" id="superAdminMfaCancel">Cancel</button><button class="primary" type="submit">Activate MFA</button></div>
+    </form>`;
+  const form=body.querySelector('#superAdminMfaEnrollForm'),msg=body.querySelector('#superAdminMfaMsg');
+  body.querySelector('#superAdminMfaCancel').onclick=()=>resolve(false);
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const code=String(new FormData(form).get('code')||'').trim();
+    const button=form.querySelector('button[type="submit"]');button.disabled=true;msg.className='superAdminMfaMsg';msg.textContent='Verifying authenticator…';
+    try{
+      const result=await api('/api/auth/mfa/enroll/confirm',{method:'POST',body:JSON.stringify({code})});
+      renderRecoveryCodes(body,result.recovery_codes||[],resolve);
+    }catch(error){
+      msg.className='superAdminMfaMsg error';msg.textContent=error.message;button.disabled=false;
+      form.querySelector('input[name="code"]').value='';
+      form.querySelector('input[name="code"]').focus();
+    }
+  };
+  requestAnimationFrame(()=>form.querySelector('input[name="code"]')?.focus());
+}
+
+async function runMfaChallenge(body,resolve,{freshRequired=false}={}){
+  body.innerHTML=`<h2 id="superAdminMfaTitle">${freshRequired?'Confirm this Admin change':'Unlock Admin'}</h2>
+    <p>${freshRequired?'This sensitive Admin action needs a fresh second factor.':'Enter your second factor to open the Super Admin workspace.'}</p>
+    <form class="superAdminMfaForm" id="superAdminMfaChallengeForm">
+      <label>Method<select name="method"><option value="totp">Authenticator code</option><option value="recovery">Recovery code</option></select></label>
+      <label id="superAdminMfaCodeLabel">Authenticator code<input name="value" inputmode="numeric" autocomplete="one-time-code" maxlength="24" required></label>
+      <div class="superAdminMfaMsg" id="superAdminMfaMsg"></div>
+      <div class="superAdminMfaActions"><button type="button" id="superAdminMfaCancel">Cancel</button><button class="primary" type="submit">Verify</button></div>
+    </form>`;
+  const form=body.querySelector('#superAdminMfaChallengeForm'),select=form.querySelector('select[name="method"]'),input=form.querySelector('input[name="value"]'),label=body.querySelector('#superAdminMfaCodeLabel'),msg=body.querySelector('#superAdminMfaMsg');
+  const sync=()=>{
+    const recovery=select.value==='recovery';
+    label.firstChild.textContent=recovery?'Recovery code':'Authenticator code';
+    input.value='';input.inputMode=recovery?'text':'numeric';input.maxLength=recovery?32:6;
+  };
+  select.onchange=sync;sync();
+  body.querySelector('#superAdminMfaCancel').onclick=()=>resolve(false);
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const value=String(new FormData(form).get('value')||'').trim();
+    const button=form.querySelector('button[type="submit"]');button.disabled=true;msg.className='superAdminMfaMsg';msg.textContent='Verifying…';
+    try{
+      const payload=select.value==='recovery'?{recovery_code:value}:{code:value};
+      await api('/api/auth/mfa/challenge',{method:'POST',body:JSON.stringify(payload)});
+      resolve(true);
+    }catch(error){
+      msg.className='superAdminMfaMsg error';msg.textContent=error.message;button.disabled=false;input.value='';input.focus();
+    }
+  };
+  requestAnimationFrame(()=>input.focus());
+}
+
+async function openSuperAdminMfa({freshRequired=false}={}){
+  if(mfaDialogPromise)return mfaDialogPromise;
+  mfaDialogPromise=new Promise(async resolveOuter=>{
+    const {backdrop,body}=mfaShell();
+    const finish=value=>{backdrop.remove();resolveOuter(Boolean(value))};
+    try{
+      const state=await superAdminMfaStatus();
+      if(!state.required){finish(true);return}
+      if(!state.enrolled)await runMfaEnrollment(body,finish);
+      else await runMfaChallenge(body,finish,{freshRequired});
+    }catch(error){
+      body.innerHTML=`<h2 id="superAdminMfaTitle">Super Admin security</h2><p>${esc(error.message)}</p><div class="superAdminMfaActions"><button type="button" id="superAdminMfaClose">Close</button></div>`;
+      body.querySelector('#superAdminMfaClose').onclick=()=>finish(false);
+    }
+  }).finally(()=>{mfaDialogPromise=null});
+  return mfaDialogPromise;
+}
+
+function installMfaFetchGuard(){
+  if(mfaFetchGuardInstalled)return;
+  mfaFetchGuardInstalled=true;
+  const originalFetch=window.fetch.bind(window);
+  window.fetch=async(input,init)=>{
+    let replayInput=input;
+    if(input instanceof Request){
+      try{replayInput=input.clone()}catch{}
+    }
+    const response=await originalFetch(input,init);
+    if(response.status!==428)return response;
+    const payload=await response.clone().json().catch(()=>({}));
+    const code=String(payload?.code||'');
+    if(!code.startsWith('SUPER_ADMIN_MFA_'))return response;
+    const verified=await openSuperAdminMfa({freshRequired:code==='SUPER_ADMIN_MFA_STEP_UP_REQUIRED'});
+    if(!verified)return response;
+    return originalFetch(replayInput,init);
+  };
+}
+
 
 function bindModernBarangayPicker(){
   return bindPhGeographyCascade({prefix:'reg',fetchJson:api});
@@ -75,10 +241,11 @@ async function decorateSecurity(){
   if(panel.dataset.authSecurityDecorating==='1')return;
   panel.dataset.authSecurityDecorating='1';
   try{
-    const [ids,stepUp,closureAssessment]=await Promise.all([
+    const [ids,stepUp,closureAssessment,mfaState]=await Promise.all([
       api('/api/auth/identities'),
       api('/api/auth/step-up/status').catch(()=>({verified:false,valid_for_minutes:10})),
-      api('/api/auth/account-closure/preflight').catch(()=>null)
+      api('/api/auth/account-closure/preflight').catch(()=>null),
+      api('/api/auth/mfa/status').catch(()=>({required:false}))
     ]);
     if(!document.body.contains(panel))return;
     const googleLinked=ids.some(x=>x.provider==='google');
@@ -91,7 +258,12 @@ async function decorateSecurity(){
         :'<div class="avatarHint authStepUpNotice">Sensitive actions require recent identity confirmation. Sign out and sign back in with Google to refresh this session.</div>';
 
     const protection=document.createElement('section');protection.className='accountSettingsCard authUpgradeCard authProtectionCard';
-    protection.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}<div id="accountProtectionMsg" class="avatarHint"></div>`;
+    const mfaProtection=mfaState?.required
+      ?mfaState.enrolled
+        ?'<div class="authSecurityLine"><span>Super Admin MFA</span><strong>Active</strong></div><button id="resetSuperAdminMfa" type="button">Reset authenticator</button>'
+        :'<div class="authSecurityLine"><span>Super Admin MFA</span><strong>'+ (mfaState.enrollment_pending?'Setup incomplete':'Required') +'</strong></div><button id="setupSuperAdminMfa" type="button">Set up authenticator</button>'
+      :'';
+    protection.innerHTML=`<h2>Account protection</h2><div class="authSecurityLine"><span>Email</span><strong>${account.email_verified_at?'Verified':'Not verified'}</strong></div>${!account.email_verified_at?'<button id="sendVerify" type="button">Verify email</button>':''}${deliveryNote}${status.google_enabled&&!googleLinked?'<a class="authDrawerLink" href="/api/auth/google/link/start">Link Google account</a>':status.google_enabled?'<div class="authSecurityLine"><span>Google</span><strong>Linked</strong></div>':''}${mfaProtection}<div id="accountProtectionMsg" class="avatarHint"></div>`;
     const sensitive=document.createElement('section');sensitive.className='accountSettingsCard authUpgradeCard authSensitiveCard';
     sensitive.innerHTML=`<h2>Sensitive-action confirmation</h2><p class="authSectionIntro">Confirm your identity only when a protected action requires it. This is separate from changing your password.</p>${stepUpMarkup}`;
     const sessions=document.createElement('section');sessions.className='accountSettingsCard authUpgradeCard authSessionsCard';
@@ -112,6 +284,22 @@ async function decorateSecurity(){
       });
     }
 
+    protection.querySelector('#setupSuperAdminMfa')?.addEventListener('click',async event=>{
+      event.currentTarget.disabled=true;
+      const ok=await openSuperAdminMfa();
+      if(ok)decorateSecurity().catch(()=>{});
+      else event.currentTarget.disabled=false;
+    });
+    protection.querySelector('#resetSuperAdminMfa')?.addEventListener('click',async event=>{
+      const button=event.currentTarget,out=protection.querySelector('#accountProtectionMsg');button.disabled=true;out.textContent='Confirming Super Admin MFA…';
+      try{
+        await api('/api/auth/mfa/reset',{method:'POST',body:'{}'});
+        out.textContent='Scan the new authenticator QR code to finish the reset.';
+        const ok=await openSuperAdminMfa({freshRequired:true});
+        if(ok)decorateSecurity().catch(()=>{});
+        else button.disabled=false;
+      }catch(error){out.textContent=error.message;button.disabled=false}
+    });
     protection.querySelector('#sendVerify')?.addEventListener('click',async()=>{
       const out=protection.querySelector('#accountProtectionMsg');out.textContent='Preparing verification…';
       try{
@@ -162,6 +350,7 @@ async function decorateSecurity(){
 function watchDrawer(){document.addEventListener('abl:account-settings-rendered',event=>{if(event.detail?.view==='security')decorateSecurity().catch(()=>{})});document.addEventListener('abl:open-password-recovery',event=>openPasswordRecovery(event.detail?.email||''))}
 async function boot(){
   await (window.ABLSession?.ready||Promise.resolve());
+  installMfaFetchGuard();
   const params=new URLSearchParams(location.search);
   if(params.get('registration_verify_token'))return verifyRegistrationFromUrl(params.get('registration_verify_token'));
   if(params.get('verify_token'))return verifyFromUrl(params.get('verify_token'));
@@ -180,5 +369,5 @@ async function boot(){
   const flash=sessionStorage.getItem('abl_flash');if(flash){sessionStorage.removeItem('abl_flash');setTimeout(()=>{const t=document.getElementById('roleToast');if(t){t.textContent=flash;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3500)}},500)}
   watchDrawer();
 }
-window.BusinessLifeAuthHardening=Object.freeze({openPasswordRecovery});
+window.BusinessLifeAuthHardening=Object.freeze({openPasswordRecovery,openSuperAdminMfa});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();

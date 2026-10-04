@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
+import QRCode from 'qrcode';
 import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -10,7 +11,8 @@ import {accountClosureAssessment,closeAccountSafely,ensureAccountLifecycleSchema
 import {accountGeographySnapshot} from './account-geography.js';
 import {appendAdminAudit,requireAdminPermission} from './admin-authorization.js';
 import { companyTestAccountForEmail } from './company-test-accounts.js';
-import {AUTH_STEP_UP_TTL_MS,createV2Session,isLegacyBearerToken,markV2SessionStepUp,resolveV2SessionStepUp,resolveV2SessionToken} from './auth-session-core.js';
+import {AUTH_MFA_SESSION_TTL_MS,AUTH_STEP_UP_TTL_MS,clearV2SessionMfa,createV2Session,isLegacyBearerToken,markV2SessionMfa,markV2SessionStepUp,resolveV2SessionMfa,resolveV2SessionStepUp,resolveV2SessionToken} from './auth-session-core.js';
+import {buildTotpUri,decryptMfaSecret,encryptMfaSecret,generateRecoveryCodes,generateTotpSecret,hashRecoveryCode,verifyTotpCode} from './super-admin-mfa-core.js';
 import {incidentsFetch,startEmbeddedIncidents,stopEmbeddedIncidents} from './server-incidents.js';
 import {clearBrowserSessionCookies,issueBrowserSessionCookies,sessionCredentialFromHeaders,sessionSecurityMiddleware} from './session-cookie-core.js';
 
@@ -21,6 +23,7 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : undefined });
 const TOKEN_SECRET = process.env.TOKEN_SECRET || '';
+const SUPER_ADMIN_MFA_ENCRYPTION_KEY = String(process.env.SUPER_ADMIN_MFA_ENCRYPTION_KEY || TOKEN_SECRET || '');
 const APP_PIN = process.env.APP_PIN || '';
 const OWNER_MIGRATION_ENABLED = process.env.OWNER_MIGRATION_ENABLED === 'true';
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
@@ -43,6 +46,7 @@ let incidentsReady=false;
 let shuttingDown = false;
 
 app.use(sessionSecurityMiddleware);
+app.use('/api',superAdminMfaBoundary);
 
 function clean(value, max = 500) { return String(value ?? '').trim().slice(0, max); }
 function normalizeEmail(value) { return clean(value, 160).toLowerCase(); }
@@ -107,6 +111,8 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE accounts ADD COLUMN IF NOT EXISTS legacy_pin_retired_at TIMESTAMPTZ;
     ALTER TABLE account_sessions ADD COLUMN IF NOT EXISTS step_up_verified_at TIMESTAMPTZ;
+    ALTER TABLE account_sessions ADD COLUMN IF NOT EXISTS mfa_verified_at TIMESTAMPTZ;
+    ALTER TABLE account_sessions ADD COLUMN IF NOT EXISTS mfa_method TEXT NOT NULL DEFAULT '';
     CREATE TABLE IF NOT EXISTS auth_action_tokens (
       id BIGSERIAL PRIMARY KEY,
       account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -167,6 +173,37 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS auth_security_events_account_idx ON auth_security_events(account_id,created_at DESC);
+    CREATE TABLE IF NOT EXISTS super_admin_mfa_factors (
+      account_id BIGINT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      secret_ciphertext TEXT NOT NULL,
+      last_totp_counter BIGINT NOT NULL DEFAULT -1,
+      enrolled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK(status IN ('pending','active'))
+    );
+    CREATE TABLE IF NOT EXISTS super_admin_mfa_recovery_codes (
+      id BIGSERIAL PRIMARY KEY,
+      account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(account_id,code_hash)
+    );
+    CREATE INDEX IF NOT EXISTS super_admin_mfa_recovery_lookup_idx
+      ON super_admin_mfa_recovery_codes(account_id,used_at,created_at DESC);
+    CREATE TABLE IF NOT EXISTS auth_mfa_attempt_windows (
+      key_hash TEXT PRIMARY KEY,
+      account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      purpose TEXT NOT NULL,
+      window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS auth_mfa_attempt_windows_account_idx
+      ON auth_mfa_attempt_windows(account_id,purpose,updated_at DESC);
   `);
   await ensureAccountLifecycleSchema(pool);
   await pool.query(`
@@ -177,6 +214,168 @@ async function initDb() {
        AND email<>''
        AND auth_status='active'
   `);
+}
+
+
+const SUPER_ADMIN_MFA_ADMIN_PREFIXES=Object.freeze([
+  '/api/admin',
+  '/api/governance/admin',
+  '/api/legal/admin',
+  '/api/payments/admin',
+  '/api/accounting/admin'
+]);
+
+function privilegedAdminPath(path=''){
+  const pathname=String(path||'').split('?')[0];
+  return SUPER_ADMIN_MFA_ADMIN_PREFIXES.some(prefix=>pathname===prefix||pathname.startsWith(prefix+'/'));
+}
+
+function mfaKeyReady(){return SUPER_ADMIN_MFA_ENCRYPTION_KEY.length>=16}
+
+async function activeSuperAdmin(accountId){
+  const q=await pool.query(`
+    SELECT 1
+      FROM platform_admin_assignments
+     WHERE account_id=$1
+       AND status='active'
+       AND effective_from<=NOW()
+       AND (effective_until IS NULL OR effective_until>NOW())
+       AND COALESCE(NULLIF(authority_rank,''),admin_role)='super_admin'
+     LIMIT 1
+  `,[Number(accountId)]);
+  return Boolean(q.rowCount);
+}
+
+async function mfaFactor(accountId,client=pool){
+  const q=await client.query(
+    `SELECT account_id,status,secret_ciphertext,last_totp_counter,enrolled_at,created_at,updated_at
+       FROM super_admin_mfa_factors
+      WHERE account_id=$1`,
+    [Number(accountId)]
+  );
+  return q.rows[0]||null;
+}
+
+function mfaAttemptHash(accountId,purpose,req,scope='account_ip'){
+  const ip=scope==='account_ip'?':'+requestIpHash(req):'';
+  return sha256('super-admin-mfa:'+Number(accountId)+':'+clean(purpose,80)+ip);
+}
+
+async function durableMfaRateLimited(accountId,purpose,req,{
+  maxAttempts=5,windowSeconds=15*60,lockSeconds=15*60,scope='account_ip'
+}={}){
+  const keyHash=mfaAttemptHash(accountId,purpose,req,scope);
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const found=await client.query(
+      `SELECT attempts,window_started_at,locked_until
+         FROM auth_mfa_attempt_windows
+        WHERE key_hash=$1
+        FOR UPDATE`,
+      [keyHash]
+    );
+    if(!found.rowCount){
+      await client.query(
+        `INSERT INTO auth_mfa_attempt_windows(key_hash,account_id,purpose,attempts)
+         VALUES($1,$2,$3,1)`,
+        [keyHash,Number(accountId),clean(purpose,80)]
+      );
+      await client.query('COMMIT');
+      return false;
+    }
+    const row=found.rows[0],now=Date.now();
+    const lockedUntil=row.locked_until?new Date(row.locked_until).getTime():0;
+    if(Number.isFinite(lockedUntil)&&lockedUntil>now){
+      await client.query('COMMIT');
+      return true;
+    }
+    const started=new Date(row.window_started_at).getTime();
+    if(!Number.isFinite(started)||now-started>Number(windowSeconds)*1000){
+      await client.query(
+        `UPDATE auth_mfa_attempt_windows
+            SET attempts=1,window_started_at=NOW(),locked_until=NULL,updated_at=NOW()
+          WHERE key_hash=$1`,
+        [keyHash]
+      );
+      await client.query('COMMIT');
+      return false;
+    }
+    if(Number(row.attempts||0)>=Number(maxAttempts)){
+      await client.query(
+        `UPDATE auth_mfa_attempt_windows
+            SET locked_until=NOW()+($2::int*INTERVAL '1 second'),updated_at=NOW()
+          WHERE key_hash=$1`,
+        [keyHash,Number(lockSeconds)]
+      );
+      await client.query('COMMIT');
+      return true;
+    }
+    await client.query(
+      `UPDATE auth_mfa_attempt_windows
+          SET attempts=attempts+1,updated_at=NOW()
+        WHERE key_hash=$1`,
+      [keyHash]
+    );
+    await client.query('COMMIT');
+    return false;
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    throw error;
+  }finally{client.release()}
+}
+
+async function clearDurableMfaRateLimit(accountId,purpose){
+  await pool.query(
+    `DELETE FROM auth_mfa_attempt_windows WHERE account_id=$1 AND purpose=$2`,
+    [Number(accountId),clean(purpose,80)]
+  ).catch(()=>{});
+}
+
+async function requireSuperAdminSession(req){
+  const session=await requireV2(req);
+  if(!(await activeSuperAdmin(session.accountId))){
+    throw Object.assign(new Error('Super Admin access is required'),{status:403,code:'SUPER_ADMIN_REQUIRED'});
+  }
+  if(!mfaKeyReady()){
+    throw Object.assign(new Error('Super Admin MFA encryption is not configured'),{status:503,code:'SUPER_ADMIN_MFA_CONFIG_REQUIRED'});
+  }
+  return session;
+}
+
+function mfaError(res,status,error,code,extra={}){
+  return res.status(status).json({error,code,...extra});
+}
+
+async function superAdminMfaBoundary(req,res,next){
+  const fullPath=`/api${req.path}`;
+  if(!privilegedAdminPath(fullPath))return next();
+  try{
+    const session=await optionalV2(req);
+    if(!session)return next();
+    if(!(await activeSuperAdmin(session.accountId)))return next();
+    if(!mfaKeyReady())return mfaError(res,503,'Super Admin MFA is not configured','SUPER_ADMIN_MFA_CONFIG_REQUIRED');
+    const factor=await mfaFactor(session.accountId);
+    if(!factor||factor.status!=='active'){
+      await audit(session.accountId,'super_admin_mfa_admin_blocked',req,{reason:'enrollment_required',path:fullPath,method:req.method});
+      return mfaError(res,428,'Set up your authenticator before opening Admin','SUPER_ADMIN_MFA_ENROLLMENT_REQUIRED',{mfa_required:true});
+    }
+    const raw=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
+    const verb=String(req.method||'GET').toUpperCase();
+    const sensitive=!['GET','HEAD','OPTIONS'].includes(verb);
+    const maxAgeMs=sensitive?AUTH_STEP_UP_TTL_MS:AUTH_MFA_SESSION_TTL_MS;
+    const state=await resolveV2SessionMfa(pool,TOKEN_SECRET,raw,{maxAgeMs});
+    if(!state?.mfaValid){
+      await audit(session.accountId,'super_admin_mfa_admin_blocked',req,{reason:sensitive?'fresh_mfa_required':'mfa_required',path:fullPath,method:verb});
+      return mfaError(
+        res,428,
+        sensitive?'Confirm a fresh authenticator code before this Admin change':'Enter your authenticator code to open Admin',
+        sensitive?'SUPER_ADMIN_MFA_STEP_UP_REQUIRED':'SUPER_ADMIN_MFA_REQUIRED',
+        {mfa_required:true,fresh_required:sensitive}
+      );
+    }
+    next();
+  }catch(error){next(error)}
 }
 
 async function issueActionToken(accountId, purpose, ttlExpression) {
@@ -411,6 +610,224 @@ app.post('/api/auth/owner-migrate', jsonBody, async (req, res, next) => {
     await audit(1, 'owner_migration_password_set', req);
     const result = { ok: true, message: 'Owner email/password configured. Verify the email to permanently retire the legacy PIN.' }; if (PREVIEW_SHOW_LINK) result.preview_verify_url = verifyLink; res.json(result);
   } catch (e) { next(e); }
+});
+
+
+app.get('/api/auth/mfa/status',async(req,res,next)=>{
+  try{
+    const session=await requireV2(req);
+    const required=await activeSuperAdmin(session.accountId);
+    if(!required){
+      res.set('Cache-Control','private, no-store, max-age=0');
+      return res.json({ok:true,required:false,enrolled:false,session_verified:false});
+    }
+    if(!mfaKeyReady())return mfaError(res,503,'Super Admin MFA encryption is not configured','SUPER_ADMIN_MFA_CONFIG_REQUIRED');
+    const factor=await mfaFactor(session.accountId);
+    const raw=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
+    const state=await resolveV2SessionMfa(pool,TOKEN_SECRET,raw,{maxAgeMs:AUTH_MFA_SESSION_TTL_MS});
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({
+      ok:true,
+      required:true,
+      enrolled:Boolean(factor?.status==='active'),
+      enrollment_pending:Boolean(factor?.status==='pending'),
+      session_verified:Boolean(state?.mfaValid),
+      verified_at:state?.mfaVerifiedAt||null,
+      method:state?.mfaMethod||'',
+      session_valid_for_minutes:Math.round(AUTH_MFA_SESSION_TTL_MS/60_000),
+      sensitive_valid_for_minutes:Math.round(AUTH_STEP_UP_TTL_MS/60_000)
+    });
+  }catch(error){next(error)}
+});
+
+app.post('/api/auth/mfa/enroll/start',jsonBody,async(req,res,next)=>{
+  try{
+    const session=await requireSuperAdminSession(req);
+    if(await durableMfaRateLimited(session.accountId,'enroll_start',req,{maxAttempts:4,windowSeconds:30*60,lockSeconds:30*60,scope:'account'})){
+      await audit(session.accountId,'super_admin_mfa_enroll_rate_limited',req);
+      return mfaError(res,429,'Too many MFA setup attempts. Try again later.','SUPER_ADMIN_MFA_RATE_LIMITED');
+    }
+    const existing=await mfaFactor(session.accountId);
+    if(existing?.status==='active')return mfaError(res,409,'MFA is already active. Confirm MFA and reset it before enrolling again.','SUPER_ADMIN_MFA_ALREADY_ACTIVE');
+    const secret=generateTotpSecret();
+    const envelope=encryptMfaSecret(secret,SUPER_ADMIN_MFA_ENCRYPTION_KEY);
+    await pool.query(`
+      INSERT INTO super_admin_mfa_factors(account_id,status,secret_ciphertext,last_totp_counter,enrolled_at,updated_at)
+      VALUES($1,'pending',$2,-1,NULL,NOW())
+      ON CONFLICT(account_id) DO UPDATE SET
+        status='pending',secret_ciphertext=EXCLUDED.secret_ciphertext,last_totp_counter=-1,
+        enrolled_at=NULL,updated_at=NOW()
+    `,[session.accountId,envelope]);
+    await pool.query(`DELETE FROM super_admin_mfa_recovery_codes WHERE account_id=$1`,[session.accountId]);
+    await clearV2SessionMfa(pool,{accountId:session.accountId,sessionId:session.sessionId});
+    await audit(session.accountId,'super_admin_mfa_enrollment_started',req);
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({ok:true,status:'pending',qr_url:'/api/auth/mfa/enroll/qr'});
+  }catch(error){next(error)}
+});
+
+app.get('/api/auth/mfa/enroll/qr',async(req,res,next)=>{
+  try{
+    const session=await requireSuperAdminSession(req);
+    const factor=await mfaFactor(session.accountId);
+    if(!factor||factor.status!=='pending')return mfaError(res,409,'Start MFA setup before requesting the QR code','SUPER_ADMIN_MFA_ENROLLMENT_NOT_PENDING');
+    const account=await pool.query(`SELECT email FROM accounts WHERE id=$1`,[session.accountId]);
+    const secret=decryptMfaSecret(factor.secret_ciphertext,SUPER_ADMIN_MFA_ENCRYPTION_KEY);
+    const uri=buildTotpUri({secret,accountLabel:account.rows[0]?.email||'Super Admin'});
+    const png=await QRCode.toBuffer(uri,{type:'png',errorCorrectionLevel:'M',margin:1,width:320});
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.type('png').send(png);
+  }catch(error){next(error)}
+});
+
+app.post('/api/auth/mfa/enroll/confirm',jsonBody,async(req,res,next)=>{
+  try{
+    const session=await requireSuperAdminSession(req);
+    if(
+      await durableMfaRateLimited(session.accountId,'enroll_confirm',req,{maxAttempts:8,windowSeconds:15*60,lockSeconds:30*60,scope:'account'})
+      ||await durableMfaRateLimited(session.accountId,'enroll_confirm_ip',req,{maxAttempts:5,windowSeconds:15*60,lockSeconds:30*60,scope:'account_ip'})
+    ){
+      await audit(session.accountId,'super_admin_mfa_enroll_rate_limited',req);
+      return mfaError(res,429,'Too many MFA confirmation attempts. Try again later.','SUPER_ADMIN_MFA_RATE_LIMITED');
+    }
+    const code=clean(req.body?.code,12);
+    const client=await pool.connect();
+    let counter=null;
+    try{
+      await client.query('BEGIN');
+      const locked=await client.query(
+        `SELECT status,secret_ciphertext,last_totp_counter FROM super_admin_mfa_factors WHERE account_id=$1 FOR UPDATE`,
+        [session.accountId]
+      );
+      const factor=locked.rows[0];
+      if(!factor||factor.status!=='pending')throw Object.assign(new Error('MFA setup is not pending'),{status:409,code:'SUPER_ADMIN_MFA_ENROLLMENT_NOT_PENDING'});
+      const secret=decryptMfaSecret(factor.secret_ciphertext,SUPER_ADMIN_MFA_ENCRYPTION_KEY);
+      const verified=verifyTotpCode(secret,code,{window:1,minCounter:Number(factor.last_totp_counter??-1)});
+      if(!verified.ok)throw Object.assign(new Error('Authenticator code is incorrect or has already been used'),{status:403,code:'SUPER_ADMIN_MFA_CODE_INVALID'});
+      counter=verified.counter;
+      await client.query(
+        `UPDATE super_admin_mfa_factors
+            SET status='active',last_totp_counter=$2,enrolled_at=NOW(),updated_at=NOW()
+          WHERE account_id=$1`,
+        [session.accountId,counter]
+      );
+      const recoveryCodes=generateRecoveryCodes(10);
+      for(const recoveryCode of recoveryCodes){
+        await client.query(
+          `INSERT INTO super_admin_mfa_recovery_codes(account_id,code_hash) VALUES($1,$2)`,
+          [session.accountId,hashRecoveryCode(recoveryCode,SUPER_ADMIN_MFA_ENCRYPTION_KEY)]
+        );
+      }
+      await client.query('COMMIT');
+      const marked=await markV2SessionMfa(pool,{accountId:session.accountId,sessionId:session.sessionId,method:'totp'});
+      await clearDurableMfaRateLimit(session.accountId,'enroll_confirm');
+      await clearDurableMfaRateLimit(session.accountId,'enroll_confirm_ip');
+      await audit(session.accountId,'super_admin_mfa_enrollment_completed',req,{session_id_hash:sha256(session.sessionId),counter:Number(counter)});
+      res.set('Cache-Control','private, no-store, max-age=0');
+      return res.json({
+        ok:true,enrolled:true,session_verified:Boolean(marked),
+        recovery_codes:recoveryCodes,
+        recovery_notice:'Save these recovery codes offline now. They are shown only once.'
+      });
+    }catch(error){
+      await client.query('ROLLBACK').catch(()=>{});
+      await audit(session.accountId,'super_admin_mfa_enrollment_failed',req,{code:clean(error.code||'invalid',80)});
+      throw error;
+    }finally{client.release()}
+  }catch(error){next(error)}
+});
+
+app.post('/api/auth/mfa/challenge',jsonBody,async(req,res,next)=>{
+  try{
+    const session=await requireSuperAdminSession(req);
+    if(
+      await durableMfaRateLimited(session.accountId,'challenge',req,{maxAttempts:10,windowSeconds:15*60,lockSeconds:30*60,scope:'account'})
+      ||await durableMfaRateLimited(session.accountId,'challenge_ip',req,{maxAttempts:5,windowSeconds:15*60,lockSeconds:30*60,scope:'account_ip'})
+    ){
+      await audit(session.accountId,'super_admin_mfa_challenge_rate_limited',req,{session_id_hash:sha256(session.sessionId)});
+      return mfaError(res,429,'Too many MFA attempts. Try again later.','SUPER_ADMIN_MFA_RATE_LIMITED');
+    }
+    const code=clean(req.body?.code,40);
+    const recoveryCode=clean(req.body?.recovery_code,80);
+    if(!code&&!recoveryCode)return mfaError(res,400,'Authenticator or recovery code is required','SUPER_ADMIN_MFA_CODE_REQUIRED');
+    const client=await pool.connect();
+    let method='';
+    try{
+      await client.query('BEGIN');
+      const locked=await client.query(
+        `SELECT status,secret_ciphertext,last_totp_counter FROM super_admin_mfa_factors WHERE account_id=$1 FOR UPDATE`,
+        [session.accountId]
+      );
+      const factor=locked.rows[0];
+      if(!factor||factor.status!=='active')throw Object.assign(new Error('MFA enrollment is required'),{status:428,code:'SUPER_ADMIN_MFA_ENROLLMENT_REQUIRED'});
+      if(recoveryCode){
+        let hash='';
+        try{hash=hashRecoveryCode(recoveryCode,SUPER_ADMIN_MFA_ENCRYPTION_KEY)}catch{}
+        const used=hash?await client.query(
+          `UPDATE super_admin_mfa_recovery_codes
+              SET used_at=NOW()
+            WHERE account_id=$1 AND code_hash=$2 AND used_at IS NULL
+            RETURNING id`,
+          [session.accountId,hash]
+        ):{rowCount:0};
+        if(!used.rowCount)throw Object.assign(new Error('Authenticator or recovery code is incorrect'),{status:403,code:'SUPER_ADMIN_MFA_CODE_INVALID'});
+        method='recovery_code';
+      }else{
+        const secret=decryptMfaSecret(factor.secret_ciphertext,SUPER_ADMIN_MFA_ENCRYPTION_KEY);
+        const verified=verifyTotpCode(secret,code,{window:1,minCounter:Number(factor.last_totp_counter??-1)});
+        if(!verified.ok)throw Object.assign(new Error('Authenticator code is incorrect or has already been used'),{status:403,code:'SUPER_ADMIN_MFA_CODE_INVALID'});
+        await client.query(
+          `UPDATE super_admin_mfa_factors SET last_totp_counter=$2,updated_at=NOW() WHERE account_id=$1`,
+          [session.accountId,verified.counter]
+        );
+        method='totp';
+      }
+      await client.query('COMMIT');
+    }catch(error){
+      await client.query('ROLLBACK').catch(()=>{});
+      await audit(session.accountId,'super_admin_mfa_challenge_failed',req,{code:clean(error.code||'invalid',80)});
+      throw error;
+    }finally{client.release()}
+    const marked=await markV2SessionMfa(pool,{accountId:session.accountId,sessionId:session.sessionId,method});
+    await clearDurableMfaRateLimit(session.accountId,'challenge');
+    await clearDurableMfaRateLimit(session.accountId,'challenge_ip');
+    await audit(session.accountId,'super_admin_mfa_challenge_succeeded',req,{method,session_id_hash:sha256(session.sessionId)});
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({ok:true,verified:Boolean(marked),method,sensitive_valid_for_minutes:Math.round(AUTH_STEP_UP_TTL_MS/60_000)});
+  }catch(error){next(error)}
+});
+
+app.post('/api/auth/mfa/reset',jsonBody,async(req,res,next)=>{
+  try{
+    const session=await requireSuperAdminSession(req);
+    const raw=req.ablSessionToken||sessionCredentialFromHeaders(req.headers||{}).token;
+    const state=await resolveV2SessionMfa(pool,TOKEN_SECRET,raw,{maxAgeMs:AUTH_STEP_UP_TTL_MS});
+    if(!state?.mfaValid)return mfaError(res,428,'Confirm a fresh authenticator or recovery code before resetting MFA','SUPER_ADMIN_MFA_STEP_UP_REQUIRED');
+    if(await durableMfaRateLimited(session.accountId,'reset',req,{maxAttempts:3,windowSeconds:60*60,lockSeconds:60*60,scope:'account'})){
+      await audit(session.accountId,'super_admin_mfa_reset_rate_limited',req);
+      return mfaError(res,429,'Too many MFA reset attempts. Try again later.','SUPER_ADMIN_MFA_RATE_LIMITED');
+    }
+    const secret=generateTotpSecret();
+    const envelope=encryptMfaSecret(secret,SUPER_ADMIN_MFA_ENCRYPTION_KEY);
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO super_admin_mfa_factors(account_id,status,secret_ciphertext,last_totp_counter,enrolled_at,updated_at)
+         VALUES($1,'pending',$2,-1,NULL,NOW())
+         ON CONFLICT(account_id) DO UPDATE SET
+           status='pending',secret_ciphertext=EXCLUDED.secret_ciphertext,last_totp_counter=-1,
+           enrolled_at=NULL,updated_at=NOW()`,
+        [session.accountId,envelope]
+      );
+      await client.query(`DELETE FROM super_admin_mfa_recovery_codes WHERE account_id=$1`,[session.accountId]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}finally{client.release()}
+    await clearV2SessionMfa(pool,{accountId:session.accountId,sessionId:session.sessionId});
+    await audit(session.accountId,'super_admin_mfa_reset_started',req,{session_id_hash:sha256(session.sessionId)});
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({ok:true,status:'pending',qr_url:'/api/auth/mfa/enroll/qr'});
+  }catch(error){next(error)}
 });
 
 app.get('/api/auth/step-up/status', async (req,res,next) => {
@@ -671,7 +1088,7 @@ function proxy(req,res,next){
   return incidentsApp(req,res,next);
 }
 app.use(proxy);
-app.use((err, _req, res, _next) => { console.error(err); if (res.headersSent) return; res.status(err.status || 500).json({ error: err.status ? err.message : 'Unexpected authentication error' }); });
+app.use((err, _req, res, _next) => { console.error(err); if (res.headersSent) return; const payload={ error: err.status ? err.message : 'Unexpected authentication error' }; if(err?.code)payload.code=String(err.code); res.status(err.status || 500).json(payload); });
 
 let embeddedStartPromise = null;
 export async function startEmbeddedAuthHardening() {
