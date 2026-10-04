@@ -12,6 +12,7 @@ Protected Admin surfaces include:
 - `/api/governance/admin/**`
 - `/api/legal/admin/**`
 - `/api/payments/admin/**`
+- `/api/accounting/admin/**`
 
 Read-only Admin access requires MFA on the current session. Mutating Admin requests require a fresh MFA verification within the same short step-up window used for other sensitive actions.
 
