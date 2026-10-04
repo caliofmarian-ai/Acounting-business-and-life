@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { payMongoRuntimeConfig } from './paymongo-adapter.js';
 
 const COURIER_QA_ORDER_NOTE='Controlled QA Courier Delivery E2E v1';
-const COURIER_QA_DOCUMENT_REFERENCE='QA-COURIER-ID-V1';
+const COURIER_QA_DOCUMENT_REFERENCE='QA-COURIER-VEHICLE-V2';
 const COURIER_QA_PRODUCT='QA Bottled Juice';
 const QA_PICKUP={lat:14.5995,lng:120.9842};
 const QA_DROPOFF={lat:14.6010,lng:120.9860};
@@ -134,25 +134,35 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
   }
 
   let document=(await pool.query(
-    "SELECT id,verification_status FROM courier_documents WHERE account_id=$1 AND reference_number=$2 ORDER BY id DESC LIMIT 1",
+    "SELECT id,verification_status,private_evidence_object_id FROM courier_documents WHERE account_id=$1 AND reference_number=$2 ORDER BY id DESC LIMIT 1",
     [courier.accountId,COURIER_QA_DOCUMENT_REFERENCE]
   )).rows[0]||null;
+
+  if(document&&!document.private_evidence_object_id)document=null;
 
   if(!document){
     const uploaded=await requestJson(base,'/api/courier/documents',{
       method:'POST',
       token:courier.token,
       body:{
-        document_type:'identity_support',
+        document_type:'vehicle_attestation',
         vehicle_class:'bicycle',
         reference_number:COURIER_QA_DOCUMENT_REFERENCE,
-        file_name:'qa-courier-document.png',
+        issue_date:'2026-01-01',
+        expiry_date:'2030-12-31',
+        file_name:'qa-courier-vehicle.png',
         evidence_data_url:QA_IDENTITY_IMAGE
       }
     });
     expectStatus(uploaded,201,'Courier QA identity evidence');
     document=uploaded.json;
   }
+  await pool.query(`
+    UPDATE courier_documents
+       SET document_type='vehicle_attestation',vehicle_class='bicycle',
+           issue_date=DATE '2026-01-01',expiry_date=DATE '2030-12-31',updated_at=NOW()
+     WHERE id=$1 AND account_id=$2
+  `,[Number(document.id),courier.accountId]);
 
   const approved=await requestJson(base,'/api/admin/couriers/'+courier.accountId,{
     method:'PATCH',
@@ -162,6 +172,7 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
       approved_vehicle_class:'bicycle',
       eligibility_expires_at:'2030-12-31',
       approval_note:'Controlled internal QA Courier eligibility.',
+      evidence_review_attested:true,
       document_updates:[{id:Number(document.id),status:'verified',rejection_reason:''}]
     }
   });
@@ -184,7 +195,63 @@ async function configureCourierEligibility({pool,base,courier,adminToken,request
     throw new Error('Courier operating area did not survive profile reload.');
   }
   if(qaDoc?.verification_status!=='verified')throw new Error('Courier QA identity evidence was not verified.');
-  return{documentId:Number(document.id),operatingPsgc};
+
+  const expired=await requestJson(base,'/api/admin/couriers/'+courier.accountId,{
+    method:'PATCH',
+    token:adminToken,
+    body:{
+      eligibility_status:'approved',
+      approved_vehicle_class:'bicycle',
+      eligibility_expires_at:'2030-12-31',
+      approval_note:'Controlled QA evidence-expiry fail-closed check.',
+      evidence_review_attested:true,
+      document_updates:[{id:Number(document.id),status:'expired',rejection_reason:'Controlled QA expiry check'}]
+    }
+  });
+  expectStatus(expired,200,'Courier evidence expiry reclassification');
+  if(expired.json?.reclassified!==true||expired.json?.eligibility?.effective_status!=='expired'||
+    expired.json?.courier?.available!==false){
+    throw new Error('Expired Courier evidence did not reclassify eligibility and availability atomically.');
+  }
+  const persisted=await pool.query(`
+    SELECT c.eligibility_status,c.available,
+           (SELECT COUNT(*)::int FROM delivery_offers o WHERE o.courier_account_id=c.account_id AND o.status='pending') pending_offers
+      FROM courier_profiles c WHERE c.account_id=$1
+  `,[courier.accountId]);
+  if(persisted.rows[0]?.eligibility_status!=='expired'||persisted.rows[0]?.available!==false||
+    Number(persisted.rows[0]?.pending_offers||0)!==0){
+    throw new Error('Courier expiry state or pending-offer withdrawal did not commit atomically.');
+  }
+  const blocked=await requestJson(base,'/api/courier/availability',{
+    method:'PUT',token:courier.token,body:{available:true}
+  });
+  expectStatus(blocked,409,'Courier expired-evidence availability block');
+  if(blocked.json?.code!=='COURIER_ELIGIBILITY_INCOMPLETE'||
+    !(blocked.json?.missing_requirements||[]).includes('VERIFIED_VEHICLE_EVIDENCE')){
+    throw new Error('Expired Courier evidence did not return the canonical availability requirements.');
+  }
+
+  const restored=await requestJson(base,'/api/admin/couriers/'+courier.accountId,{
+    method:'PATCH',
+    token:adminToken,
+    body:{
+      eligibility_status:'approved',
+      approved_vehicle_class:'bicycle',
+      eligibility_expires_at:'2030-12-31',
+      approval_note:'Controlled internal QA Courier eligibility restored after expiry check.',
+      evidence_review_attested:true,
+      document_updates:[{id:Number(document.id),status:'verified',rejection_reason:''}]
+    }
+  });
+  expectStatus(restored,200,'Courier eligibility restoration');
+  const restoredAvailability=await requestJson(base,'/api/courier/availability',{
+    method:'PUT',token:courier.token,body:{available:true}
+  });
+  expectStatus(restoredAvailability,200,'Courier availability restoration');
+  return{
+    documentId:Number(document.id),operatingPsgc,
+    incomplete_approval_blocked:true,evidence_expiry_atomic:true,non_commercial:true
+  };
 }
 
 async function configureQaDeliveryPricing({base,adminToken,requestJson,expectStatus}){
@@ -801,7 +868,7 @@ export async function runCourierExperienceAcceptance({
     invitation_id:governance.invitationId,
     application_id:governance.applicationId,
     authorization_id:governance.authorizationId,
-    identity_document_id:eligibility.documentId,
+    vehicle_document_id:eligibility.documentId,
     territory_id:territoryId,
     business_id:businessId,
     pricing_version:pricingVersion,
@@ -812,6 +879,9 @@ export async function runCourierExperienceAcceptance({
     payment_mode:paymentMode,
     paymongo_mode:paymentMode==='paymongo'?'test':'not_used',
     courier_eligible:true,
+    incomplete_approval_blocked:eligibility.incomplete_approval_blocked,
+    evidence_expiry_atomic:eligibility.evidence_expiry_atomic,
+    courier_non_commercial:eligibility.non_commercial,
     admin_dispatch:true,
     live_tracking_closed_after_completion:true,
     completion_code_required:true,

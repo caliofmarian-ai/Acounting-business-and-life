@@ -20,7 +20,9 @@ test('Courier profile configuration cannot self-enable dispatch availability or 
   const end=auth.indexOf("app.get('/api/context/:role'",start);
   const block=auth.slice(start,end);
   assert.match(block,/available=FALSE/);
-  assert.doesNotMatch(block,/eligibility_status=/);
+  assert.match(block,/eligibility_status=CASE/);
+  assert.match(block,/THEN 'pending'/);
+  assert.doesNotMatch(block,/THEN 'approved'/);
   assert.doesNotMatch(block,/approved_vehicle_class=/);
   assert.match(block,/Courier capacity values must be zero or greater/);
 });

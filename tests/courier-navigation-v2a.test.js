@@ -73,7 +73,7 @@ test('Courier Money remains canonical and delivery fee is not treated as earning
 
 test('Courier eligibility remains Admin-authorized and availability remains locked until approval',()=>{
   assert.match(delivery,/eligibility_status==='approved'/);
-  assert.match(delivery,/Availability stays locked until Admin explicitly approves eligibility/);
+  assert.match(delivery,/Availability stays locked until the evidence, vehicle, operating area, expiry and Admin review are complete/);
   assert.match(delivery,/\$\{approved\?'':'disabled'\}/);
   assert.match(server,/eligibility_status/);
 });

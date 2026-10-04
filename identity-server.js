@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import pg from 'pg';
 import { ensurePersonIdentitySchema, withPublicProfileIds } from './person-profile-identity.js';
+import {courierEligibilityProfileView} from './courier-eligibility-core.js';
 
 const { Pool } = pg;
 const app = express();
@@ -80,8 +81,33 @@ async function initDb(){
       max_weight_kg NUMERIC(10,2),
       max_volume_l NUMERIC(10,2),
       service_radius_km NUMERIC(10,2),
+      eligibility_status TEXT NOT NULL DEFAULT 'not_requested',
+      approved_vehicle_class TEXT NOT NULL DEFAULT '',
+      eligibility_expires_at TIMESTAMPTZ,
+      approval_note TEXT NOT NULL DEFAULT '',
+      eligibility_reviewed_by_account_id BIGINT REFERENCES accounts(id),
+      eligibility_reviewed_at TIMESTAMPTZ,
+      eligibility_policy_version TEXT NOT NULL DEFAULT '',
+      non_commercial_test_only BOOLEAN NOT NULL DEFAULT FALSE,
+      operating_psgc_code TEXT NOT NULL DEFAULT '',
+      operating_area_name TEXT NOT NULL DEFAULT '',
+      operating_area_path TEXT NOT NULL DEFAULT '',
+      operating_area_source_version TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_status TEXT NOT NULL DEFAULT 'not_requested';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS approved_vehicle_class TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_expires_at TIMESTAMPTZ;
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS approval_note TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_reviewed_by_account_id BIGINT REFERENCES accounts(id);
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_reviewed_at TIMESTAMPTZ;
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_policy_version TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS non_commercial_test_only BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_psgc_code TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_name TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_path TEXT NOT NULL DEFAULT '';
+    ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_source_version TEXT NOT NULL DEFAULT '';
 
     INSERT INTO accounts(id,display_name) VALUES(1,'Business owner') ON CONFLICT(id) DO NOTHING;
     INSERT INTO profiles(account_id,role,enabled) VALUES(1,'merchant',TRUE) ON CONFLICT(account_id,role) DO NOTHING;
@@ -94,15 +120,23 @@ async function initDb(){
 }
 
 async function profileSnapshot(accountId=1){
-  const [account,profiles,business,cust,supp,cour]=await Promise.all([
+  const [account,profiles,business,cust,supp,cour,courierDocuments]=await Promise.all([
     pool.query(`SELECT id,display_name,phone,email,address,identity_country_code,personal_public_id,account_mode,test_role,created_at,updated_at FROM accounts WHERE id=$1`,[accountId]),
     pool.query(`SELECT role,enabled,created_at,updated_at FROM profiles WHERE account_id=$1 ORDER BY role`,[accountId]),
     pool.query(`SELECT b.id,b.name,bm.membership_role,bm.active FROM businesses b JOIN business_memberships bm ON bm.business_id=b.id WHERE bm.account_id=$1 AND bm.active=TRUE ORDER BY b.id`,[accountId]),
     pool.query(`SELECT * FROM customer_profiles WHERE account_id=$1`,[accountId]),
     pool.query(`SELECT * FROM supplier_profiles WHERE account_id=$1`,[accountId]),
-    pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[accountId])
+    pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[accountId]),
+    pool.query(`SELECT document_type,vehicle_class,issue_date,expiry_date,private_evidence_object_id,verification_status,verified_by_account_id,verified_at FROM courier_documents WHERE account_id=$1`,[accountId]).catch(error=>{
+      if(['42P01','42703'].includes(error?.code))return{rows:[]};
+      throw error;
+    })
   ]);
-  return withPublicProfileIds({account:account.rows[0],profiles:profiles.rows,businesses:business.rows,customer:cust.rows[0]||null,supplier:supp.rows[0]||null,courier:cour.rows[0]||null});
+  const accountRow=account.rows[0];
+  const courier=cour.rows[0]?courierEligibilityProfileView({
+    ...cour.rows[0],account_mode:accountRow?.account_mode,test_role:accountRow?.test_role
+  },courierDocuments.rows):null;
+  return withPublicProfileIds({account:accountRow,profiles:profiles.rows,businesses:business.rows,customer:cust.rows[0]||null,supplier:supp.rows[0]||null,courier});
 }
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');res.json({ok:true,db:true,version:'0.3.5-profile-foundation'})}catch{res.status(503).json({ok:false,db:false,version:'0.3.5-profile-foundation'})}});
@@ -142,13 +176,23 @@ app.get('/api/context/:role',auth,async(req,res)=>{
   res.json({role,capabilities:capabilities[role]});
 });
 
-app.patch('/api/courier',auth,async(req,res)=>{
-  const enabled=await pool.query(`SELECT 1 FROM profiles WHERE account_id=$1 AND role='courier' AND enabled=TRUE`,[req.accountId]);if(!enabled.rowCount)return res.status(403).json({error:'Enable Courier profile first'});
-  const vehicle=clean(req.body?.vehicle_type,80),available=Boolean(req.body?.available);
-  const n=v=>v==null||v===''?null:Number(v);
-  for(const v of [n(req.body?.max_weight_kg),n(req.body?.max_volume_l),n(req.body?.service_radius_km)])if(v!=null&&(!Number.isFinite(v)||v<0))return res.status(400).json({error:'Courier capacity values must be zero or greater'});
-  await pool.query(`UPDATE courier_profiles SET display_name=COALESCE(NULLIF($1,''),display_name),vehicle_type=$2,available=$3,max_weight_kg=$4,max_volume_l=$5,service_radius_km=$6,updated_at=NOW() WHERE account_id=$7`,[clean(req.body?.display_name,120),vehicle,available,n(req.body?.max_weight_kg),n(req.body?.max_volume_l),n(req.body?.service_radius_km),req.accountId]);
-  res.json(await profileSnapshot(req.accountId));
+app.patch('/api/courier',auth,async(req,res,next)=>{
+  try{
+    const enabled=await pool.query(`SELECT 1 FROM profiles WHERE account_id=$1 AND role='courier' AND enabled=TRUE`,[req.accountId]);if(!enabled.rowCount)return res.status(403).json({error:'Enable Courier profile first'});
+    const vehicle=clean(req.body?.vehicle_type,80);
+    const n=v=>v==null||v===''?null:Number(v);
+    for(const v of [n(req.body?.max_weight_kg),n(req.body?.max_volume_l),n(req.body?.service_radius_km)])if(v!=null&&(!Number.isFinite(v)||v<0))return res.status(400).json({error:'Courier capacity values must be zero or greater'});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await client.query(`UPDATE courier_profiles SET display_name=COALESCE(NULLIF($1,''),display_name),vehicle_type=$2,available=FALSE,max_weight_kg=$3,max_volume_l=$4,service_radius_km=$5,eligibility_status=CASE WHEN eligibility_status='approved' THEN 'pending' ELSE eligibility_status END,updated_at=NOW() WHERE account_id=$6`,[clean(req.body?.display_name,120),vehicle,n(req.body?.max_weight_kg),n(req.body?.max_volume_l),n(req.body?.service_radius_km),req.accountId]);
+      const offersTable=await client.query(`SELECT to_regclass('public.delivery_offers') table_name`);
+      if(offersTable.rows[0]?.table_name)await client.query(`UPDATE delivery_offers SET status='withdrawn',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW() WHERE courier_account_id=$1 AND status='pending'`,[req.accountId]);
+      await client.query('COMMIT');
+    }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+    finally{client.release()}
+    res.json(await profileSnapshot(req.accountId));
+  }catch(error){next(error)}
 });
 
 app.use((err,_req,res,_next)=>{console.error(err);res.status(500).json({error:'Unexpected server error'})});

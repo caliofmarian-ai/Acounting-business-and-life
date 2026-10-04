@@ -25,13 +25,14 @@ test('Courier Home runtime loads slim Delivery and Money views in parallel',()=>
   assert.match(block,/renderCourierHomeData/);
 });
 
-test('current Courier delivery profile endpoint carries documents and up to 100 delivery-history rows',()=>{
+test('current Courier delivery profile endpoint carries canonical eligibility documents and up to 100 delivery-history rows',()=>{
   const start=deliveryServer.indexOf("app.get('/api/courier/delivery-profile'");
   const end=deliveryServer.indexOf("app.post('/api/courier/documents'",start);
   const block=deliveryServer.slice(start,end);
-  assert.match(block,/courier_documents/);
+  assert.match(block,/reconciledCourierRecord/);
   assert.match(block,/LIMIT 100/);
-  assert.match(block,/documents:docs\.rows/);
+  assert.match(block,/documents=\(eligibilityRecord\?\.documents\|\|\[\]\)\.map/);
+  assert.doesNotMatch(block,/private_evidence_object_id|verified_by_account_id/);
   assert.match(block,/deliveries:deliveries\.rows/);
 });
 

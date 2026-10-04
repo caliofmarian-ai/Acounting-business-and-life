@@ -114,7 +114,7 @@ async function run(){
     },{
       required_vehicle_class:'motorcycle',estimated_weight_kg:2,
       estimated_volume_l:5,route_distance_km:3.5
-    },{territoryAuthorized:true,hasActiveDelivery:false});
+    },{territoryAuthorized:true,hasActiveDelivery:false,eligibilityAssessment:{eligible:true,missing_requirements:[]}});
     if(!gateReady.allowed)fail('Eligible Courier gate rejected a valid Courier.');
 
     const gateUnavailable=deliveryOfferCourierGate({
@@ -123,7 +123,7 @@ async function run(){
     },{
       required_vehicle_class:'motorcycle',estimated_weight_kg:2,
       estimated_volume_l:5,route_distance_km:3.5
-    },{territoryAuthorized:true,hasActiveDelivery:false});
+    },{territoryAuthorized:true,hasActiveDelivery:false,eligibilityAssessment:{eligible:true,missing_requirements:[]}});
     if(gateUnavailable.allowed||gateUnavailable.reason!=='COURIER_NOT_AVAILABLE')fail('Unavailable Courier gate was not rejected.');
 
     const declineDelivery=await createDelivery('DECLINE');

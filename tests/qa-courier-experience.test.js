@@ -23,6 +23,9 @@ test('Courier acceptance uses invite-first governance and Admin eligibility',()=
   ]) assert.ok(courier.includes(marker),'missing Courier governance marker: '+marker);
   assert.match(courier,/approved_vehicle_class:'bicycle'/);
   assert.match(courier,/eligibility_status:'approved'/);
+  assert.match(courier,/document_type:'vehicle_attestation'/);
+  assert.match(courier,/evidence_expiry_atomic:true/);
+  assert.match(courier,/COURIER_ELIGIBILITY_INCOMPLETE/);
 });
 
 test('Courier acceptance exercises real delivery lifecycle and secure completion',()=>{

@@ -21,6 +21,7 @@ import {
   readPrivateEvidence,
   storePrivateEvidence
 } from './private-evidence-core.js';
+import {COURIER_ELIGIBILITY_POLICY_VERSION} from './courier-eligibility-core.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const FIXTURE_WAVE='operational_v1';
@@ -440,16 +441,20 @@ async function ensureSupplierDomain(client,{account,territoryId,geography,enviro
 async function ensureCourierDomain(client,{account,geography}){
   await client.query(`
     INSERT INTO courier_profiles(
-      account_id,display_name,vehicle_type,available,max_weight_kg,max_volume_l,
+      account_id,display_name,vehicle_type,available,non_commercial_test_only,max_weight_kg,max_volume_l,
       service_radius_km,eligibility_status,approved_vehicle_class,eligibility_expires_at,
-      approval_note,operating_psgc_code,operating_area_name,operating_area_path,
+      approval_note,eligibility_reviewed_by_account_id,eligibility_reviewed_at,
+      eligibility_policy_version,operating_psgc_code,operating_area_name,operating_area_path,
       operating_area_source_version,updated_at
-    ) VALUES($1,$2,'motorcycle',FALSE,20,80,12,'pending','',NULL,$3,$4,$5,$6,$7,NOW())
+    ) VALUES($1,$2,'motorcycle',FALSE,TRUE,20,80,12,'pending','',NULL,$3,NULL,NULL,'',$4,$5,$6,$7,NOW())
     ON CONFLICT(account_id) DO UPDATE SET
       display_name=EXCLUDED.display_name,vehicle_type='motorcycle',available=FALSE,
+      non_commercial_test_only=TRUE,
       max_weight_kg=20,max_volume_l=80,service_radius_km=12,
       eligibility_status='pending',approved_vehicle_class='',eligibility_expires_at=NULL,
-      approval_note=EXCLUDED.approval_note,operating_psgc_code=EXCLUDED.operating_psgc_code,
+      approval_note=EXCLUDED.approval_note,eligibility_reviewed_by_account_id=NULL,
+      eligibility_reviewed_at=NULL,eligibility_policy_version='',
+      operating_psgc_code=EXCLUDED.operating_psgc_code,
       operating_area_name=EXCLUDED.operating_area_name,operating_area_path=EXCLUDED.operating_area_path,
       operating_area_source_version=EXCLUDED.operating_area_source_version,updated_at=NOW()
   `,[
@@ -656,10 +661,15 @@ async function ensureCourierEvidence({pool,state,config}){
     `,[state.ownerId,documentId,courierId]);
     const approved=await client.query(`
       UPDATE courier_profiles SET eligibility_status='approved',approved_vehicle_class='motorcycle',
-        eligibility_expires_at=CURRENT_DATE+365,approval_note=$1,available=FALSE,updated_at=NOW()
-       WHERE account_id=$2 AND operating_psgc_code=$3
+        eligibility_expires_at=CURRENT_DATE+365,approval_note=$1,
+        eligibility_reviewed_by_account_id=$2,eligibility_reviewed_at=NOW(),
+        eligibility_policy_version=$3,available=FALSE,updated_at=NOW()
+       WHERE account_id=$4 AND operating_psgc_code=$5
        RETURNING account_id
-    `,['Controlled company-test vehicle evidence verified; non-settling and unavailable by default.',courierId,config.psgcCode]);
+    `,[
+      'Controlled company-test vehicle evidence verified; non-settling and unavailable by default.',
+      state.ownerId,COURIER_ELIGIBILITY_POLICY_VERSION,courierId,config.psgcCode
+    ]);
     if(approved.rowCount!==1)throw new Error('Controlled Courier operating area changed before evidence approval.');
     await client.query(`
       INSERT INTO profile_governance_events(

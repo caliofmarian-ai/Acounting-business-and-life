@@ -23,6 +23,14 @@ import {geographyAvailabilityForCode} from './account-geography.js';
 import {DELIVERY_ROUTE_POINT_LIMIT,deliveryRouteTrackingActive,deliveryRoutePointDecision,deliveryProofAllowed} from './delivery-tracking-v2e-core.js';
 import {deliveryOfferSafeView,deliveryOfferCourierGate,deliveryAssignmentActive} from './delivery-dispatch-v2f-core.js';
 import {deliveryOfferTtlSeconds,deliveryOfferExpired} from './delivery-dispatch-v2g-core.js';
+import {
+  COURIER_ELIGIBILITY_POLICY_VERSION,
+  courierEligibilityAssessment,
+  courierEligibilityError,
+  courierEligibilityProfileView,
+  readCourierEligibility,
+  reconcileCourierEligibility
+} from './courier-eligibility-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -116,11 +124,26 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivate
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS approved_vehicle_class TEXT NOT NULL DEFAULT '';
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_expires_at TIMESTAMPTZ;
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS approval_note TEXT NOT NULL DEFAULT '';
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_reviewed_by_account_id BIGINT REFERENCES accounts(id);
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_reviewed_at TIMESTAMPTZ;
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS eligibility_policy_version TEXT NOT NULL DEFAULT '';
+  ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS non_commercial_test_only BOOLEAN NOT NULL DEFAULT FALSE;
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_psgc_code TEXT NOT NULL DEFAULT '';
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_name TEXT NOT NULL DEFAULT '';
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_path TEXT NOT NULL DEFAULT '';
   ALTER TABLE courier_profiles ADD COLUMN IF NOT EXISTS operating_area_source_version TEXT NOT NULL DEFAULT '';
   CREATE INDEX IF NOT EXISTS courier_profiles_operating_psgc_idx ON courier_profiles(operating_psgc_code) WHERE operating_psgc_code<>'';
+
+  UPDATE courier_profiles c
+     SET non_commercial_test_only=TRUE,available=FALSE,updated_at=NOW()
+    FROM accounts a
+   WHERE a.id=c.account_id
+     AND c.non_commercial_test_only=FALSE
+     AND (
+       a.account_mode='company_test' OR
+       c.approval_note='Super Admin testing only' OR
+       c.approval_note LIKE 'Super Admin self-test only%'
+     );
 
   CREATE TABLE IF NOT EXISTS courier_documents (
     id BIGSERIAL PRIMARY KEY,
@@ -419,6 +442,22 @@ async function initDb(){await ensureMonetizationSchema(pool);await ensurePrivate
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS merchandise_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
   ALTER TABLE order_payments ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 `);
+  const inconsistent=await pool.query(`
+    SELECT account_id FROM courier_profiles
+     WHERE eligibility_status='approved' OR available=TRUE
+     ORDER BY account_id
+  `);
+  for(const row of inconsistent.rows){
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      await reconcileCourierEligibility(client,row.account_id,{lock:true,withdrawOffers:true});
+      await client.query('COMMIT');
+    }catch(error){
+      await client.query('ROLLBACK').catch(()=>{});
+      throw error;
+    }finally{client.release()}
+  }
   const offerTtl=deliveryOfferTtlSeconds(process.env);
   await pool.query(`
     UPDATE delivery_offers
@@ -544,13 +583,54 @@ async function courierHasActiveDelivery(db,accountId,{excludeDeliveryId=null}={}
     );
   return Boolean(q.rowCount);
 }
+async function deliveryIsControlledTestWork(db,delivery){
+  const q=await db.query(`
+    SELECT
+      EXISTS(
+        SELECT 1 FROM accounts customer
+         WHERE customer.id=$1 AND customer.account_mode='company_test'
+      ) customer_is_test,
+      EXISTS(
+        SELECT 1 FROM business_memberships membership
+        JOIN accounts member ON member.id=membership.account_id
+         WHERE membership.business_id=$2 AND membership.active=TRUE
+      ) has_active_member,
+      NOT EXISTS(
+        SELECT 1 FROM business_memberships membership
+        JOIN accounts member ON member.id=membership.account_id
+         WHERE membership.business_id=$2 AND membership.active=TRUE
+           AND COALESCE(member.account_mode,'')<>'company_test'
+      ) only_test_members
+  `,[Number(delivery.customer_account_id),Number(delivery.business_id)]);
+  const classification=q.rows[0]||{};
+  return classification.customer_is_test===true&&
+    classification.has_active_member===true&&classification.only_test_members===true;
+}
+async function reconciledCourierRecord(accountId){
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const record=await reconcileCourierEligibility(client,accountId,{lock:true,withdrawOffers:true});
+    await client.query('COMMIT');
+    return record;
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
+}
 async function courierOfferGateFromDb(db,courier,delivery){
   const territoryId=await deliveryTerritoryId(db,delivery.business_id);
-  const [territoryAuthorized,hasActiveDelivery]=await Promise.all([
+  const [territoryAuthorized,hasActiveDelivery,eligibilityRecord,controlledTestDelivery]=await Promise.all([
     courierTerritoryAuthorized(db,courier.account_id,territoryId),
-    courierHasActiveDelivery(db,courier.account_id,{excludeDeliveryId:delivery.id})
+    courierHasActiveDelivery(db,courier.account_id,{excludeDeliveryId:delivery.id}),
+    reconcileCourierEligibility(db,courier.account_id,{lock:true,withdrawOffers:true}),
+    deliveryIsControlledTestWork(db,delivery)
   ]);
-  return deliveryOfferCourierGate(courier,delivery,{territoryAuthorized,hasActiveDelivery});
+  const canonical=eligibilityRecord
+    ?courierEligibilityProfileView(eligibilityRecord.profile,eligibilityRecord.documents):courier;
+  return deliveryOfferCourierGate(canonical,delivery,{
+    territoryAuthorized,hasActiveDelivery,
+    eligibilityAssessment:eligibilityRecord?.assessment||null,
+    controlledTestDelivery
+  });
 }
 async function eligibleCouriersForDelivery(db,delivery){
   const q=await db.query(`
@@ -561,7 +641,6 @@ async function eligibleCouriersForDelivery(db,delivery){
      WHERE p.enabled=TRUE AND p.status='active'
        AND c.eligibility_status='approved'
        AND c.available=TRUE
-       AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW())
      ORDER BY c.account_id
   `);
   const eligible=[];
@@ -603,10 +682,18 @@ async function expireStaleDeliveryOffers(db,{deliveryId=null,courierAccountId=nu
 async function pendingCourierOffers(db,accountId,{limit=20}={}){
   await expireStaleDeliveryOffers(db,{courierAccountId:accountId});
   const safeLimit=Math.max(1,Math.min(50,Number(limit)||20));
+  const profileMode=await db.query(`
+    SELECT a.account_mode,c.non_commercial_test_only
+      FROM accounts a JOIN courier_profiles c ON c.account_id=a.id
+     WHERE a.id=$1
+  `,[Number(accountId)]);
+  const nonCommercial=profileMode.rows[0]?.account_mode==='company_test'||
+    profileMode.rows[0]?.non_commercial_test_only===true;
   const{rows}=await db.query(`
     SELECT dof.id,dof.delivery_id,dof.offer_round,dof.status,dof.offered_at,dof.expires_at,dof.responded_at,
            o.order_number,b.name business_name,d.route_distance_km,d.estimated_weight_kg,
-           d.estimated_volume_l,d.required_vehicle_class,d.delivery_fee,d.currency_code
+           d.estimated_volume_l,d.required_vehicle_class,d.delivery_fee,d.currency_code,
+           d.customer_account_id,d.business_id
       FROM delivery_offers dof
       JOIN deliveries d ON d.id=dof.delivery_id
       JOIN orders o ON o.id=d.order_id
@@ -619,7 +706,26 @@ async function pendingCourierOffers(db,accountId,{limit=20}={}){
      ORDER BY dof.offered_at ASC,dof.id ASC
      LIMIT $2
   `,[Number(accountId),safeLimit]);
-  return rows.map(deliveryOfferSafeView);
+  const visible=[];
+  for(const row of rows){
+    const controlledTestDelivery=await deliveryIsControlledTestWork(db,row);
+    if(nonCommercial!==controlledTestDelivery){
+      const withdrawn=await db.query(`
+        UPDATE delivery_offers
+           SET status='withdrawn',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW()
+         WHERE id=$1 AND status='pending'
+         RETURNING id
+      `,[Number(row.id)]);
+      if(withdrawn.rowCount)await recordDispatchEvent(db,{
+        deliveryId:row.delivery_id,courierAccountId:accountId,
+        eventCode:'offer_withdrawn_test_isolation',offerRound:row.offer_round,
+        detail:{reason:nonCommercial?'COURIER_NON_COMMERCIAL_TEST_ONLY':'COURIER_COMMERCIAL_PROFILE_EXCLUDED_FROM_TEST'}
+      });
+      continue;
+    }
+    visible.push(deliveryOfferSafeView(row));
+  }
+  return visible;
 }
 async function recordDispatchEvent(db,{deliveryId,actorAccountId=null,courierAccountId=null,eventCode,offerRound=null,detail={}}){
   await db.query(`
@@ -739,6 +845,9 @@ async function auditDeliveryEvidenceView({deliveryId,actorAccountId,eventCode,de
 function etaMinutes(d,rule){if(!d.last_lat||!d.last_lng||!rule||!d.vehicle_class)return null;const dist=haversine(Number(d.last_lat),Number(d.last_lng),Number(d.dropoff_lat),Number(d.dropoff_lng))*Number(rule.route_factor||1);let cls;try{cls=canonicalDeliveryVehicleClass(d.vehicle_class)}catch{return null}let speed=null;if(cls==='bicycle')speed=rule.average_speed_bicycle_kmh;else if(cls==='motorcycle')speed=rule.average_speed_motorbike_kmh;else speed=rule.average_speed_car_kmh;if(!speed||Number(speed)<=0)return null;return Math.ceil(dist/Number(speed)*60)}
 
 async function courierHomeSnapshot(accountId,profile=null){
+  const eligibilityRecord=await reconciledCourierRecord(accountId);
+  const canonicalProfile=eligibilityRecord
+    ?courierEligibilityProfileView(eligibilityRecord.profile,eligibilityRecord.documents):profile;
   const [workResult,complianceResult]=await Promise.all([
     pool.query(`
       SELECT d.id,d.order_id,d.status,o.order_number,b.name business_name,d.created_at
@@ -772,15 +881,19 @@ async function courierHomeSnapshot(accountId,profile=null){
   const offers=await pendingCourierOffers(pool,accountId,{limit:3});
   return{
     detail_mode:'home',
-    profile:profile?{
-      eligibility_status:profile.eligibility_status,
-      eligibility_expires_at:profile.eligibility_expires_at,
-      approved_vehicle_class:profile.approved_vehicle_class,
-      vehicle_type:profile.vehicle_type,
-      available:Boolean(profile.available),
-      operating_psgc_code:profile.operating_psgc_code||'',
-      operating_area_name:profile.operating_area_name||'',
-      operating_area_path:profile.operating_area_path||''
+    profile:canonicalProfile?{
+      eligibility_status:canonicalProfile.eligibility_status,
+      eligibility_expires_at:canonicalProfile.eligibility_expires_at,
+      approved_vehicle_class:canonicalProfile.approved_vehicle_class,
+      vehicle_type:canonicalProfile.vehicle_type,
+      available:Boolean(canonicalProfile.available),
+      max_weight_kg:canonicalProfile.max_weight_kg,
+      max_volume_l:canonicalProfile.max_volume_l,
+      service_radius_km:canonicalProfile.service_radius_km,
+      operating_psgc_code:canonicalProfile.operating_psgc_code||'',
+      operating_area_name:canonicalProfile.operating_area_name||'',
+      operating_area_path:canonicalProfile.operating_area_path||'',
+      eligibility:canonicalProfile.eligibility
     }:null,
     deliveries:workResult.rows,
     offers,
@@ -1089,13 +1202,26 @@ app.post('/api/delivery/:id/request-courier',body,async(req,res,next)=>{
 app.get('/api/courier/home',async(req,res,next)=>{try{const me=await requireCourier(req);res.json(await courierHomeSnapshot(me.account.id,me.courier))}catch(e){next(e)}})
 app.get('/api/courier/delivery-profile',async(req,res,next)=>{try{
   const me=await requireCourier(req);
-  const [p,docs,deliveries,offers]=await Promise.all([
-    pool.query(`SELECT * FROM courier_profiles WHERE account_id=$1`,[me.account.id]),
-    pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at FROM courier_documents WHERE account_id=$1 ORDER BY created_at DESC`,[me.account.id]),
+  const [eligibilityRecord,deliveries,offers]=await Promise.all([
+    reconciledCourierRecord(me.account.id),
     pool.query(`SELECT d.*,o.order_number,b.name business_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id WHERE d.courier_account_id=$1 ORDER BY d.created_at DESC LIMIT 100`,[me.account.id]),
     pendingCourierOffers(pool,me.account.id,{limit:20})
   ]);
-  res.json({profile:p.rows[0]||null,documents:docs.rows,deliveries:deliveries.rows.map(d=>deliveryPrivacyView(d,'courier')),offers})
+  const profile=eligibilityRecord
+    ?courierEligibilityProfileView(eligibilityRecord.profile,eligibilityRecord.documents):null;
+  const documents=(eligibilityRecord?.documents||[]).map(document=>({
+    id:document.id,document_type:document.document_type,vehicle_class:document.vehicle_class,
+    reference_number:document.reference_number,issue_date:document.issue_date,expiry_date:document.expiry_date,
+    verification_status:document.verification_status,rejection_reason:document.rejection_reason,
+    verified_at:document.verified_at,created_at:document.created_at,updated_at:document.updated_at
+  }));
+  res.json({
+    profile,
+    eligibility:profile?.eligibility||null,
+    documents,
+    deliveries:deliveries.rows.map(d=>deliveryPrivacyView(d,'courier')),
+    offers
+  })
 }catch(e){next(e)}})
 app.put('/api/courier/operating-area',body,async(req,res,next)=>{try{
   const me=await requireCourier(req);
@@ -1103,25 +1229,44 @@ app.put('/api/courier/operating-area',body,async(req,res,next)=>{try{
   if(!psgcCode)return res.status(400).json({error:'Choose an official operating barangay'});
   const area=await geographyAvailabilityForCode(pool,psgcCode);
   if(!area)return res.status(400).json({error:'Choose an official Philippine barangay from the PSGC list'});
-  const q=await pool.query(`
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const q=await client.query(`
     UPDATE courier_profiles
        SET operating_psgc_code=$1,
            operating_area_name=$2,
            operating_area_path=$3,
            operating_area_source_version=$4,
+           eligibility_status=CASE
+             WHEN eligibility_status='approved' AND operating_psgc_code IS DISTINCT FROM $1 THEN 'pending'
+             ELSE eligibility_status
+           END,
+           available=CASE WHEN operating_psgc_code IS DISTINCT FROM $1 THEN FALSE ELSE available END,
            updated_at=NOW()
      WHERE account_id=$5
      RETURNING operating_psgc_code,operating_area_name,operating_area_path,operating_area_source_version,service_radius_km
   `,[area.psgc_code,area.name,area.path_text||'',area.source_version||'',me.account.id]);
-  if(!q.rowCount)return res.status(404).json({error:'Courier profile missing'});
-  res.set('Cache-Control','private, no-store, max-age=0');
-  res.json({
-    ok:true,
-    operating_area:q.rows[0],
-    territory_status:area.exact_territory?.status||area.nearest_opened_scope?.status||'not_opened',
-    operational_onboarding_available:Boolean(area.operational_onboarding_available),
-    authorization_boundary:'Preferred operating area does not grant Courier authority. Active profile authorization remains required for dispatch.'
-  });
+    if(!q.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Courier profile missing'})}
+    await client.query(`
+      UPDATE delivery_offers SET status='withdrawn',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW()
+       WHERE courier_account_id=$1 AND status='pending'
+         AND EXISTS(
+           SELECT 1 FROM courier_profiles c
+            WHERE c.account_id=$1 AND c.available=FALSE
+         )
+    `,[me.account.id]);
+    await client.query('COMMIT');
+    res.set('Cache-Control','private, no-store, max-age=0');
+    res.json({
+      ok:true,
+      operating_area:q.rows[0],
+      territory_status:area.exact_territory?.status||area.nearest_opened_scope?.status||'not_opened',
+      operational_onboarding_available:Boolean(area.operational_onboarding_available),
+      authorization_boundary:'Preferred operating area does not grant Courier authority. Active profile authorization remains required for dispatch.'
+    });
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
 }catch(e){next(e)}})
 app.post('/api/courier/documents',body,async(req,res,next)=>{
   let stored=null,me=null;
@@ -1158,45 +1303,66 @@ app.post('/api/courier/documents',body,async(req,res,next)=>{
     next(e);
   }
 })
-app.put('/api/courier/availability',body,async(req,res,next)=>{try{
-  const me=await requireCourier(req),available=Boolean(req.body?.available);
-  const p=await pool.query(`SELECT eligibility_status,eligibility_expires_at FROM courier_profiles WHERE account_id=$1`,[me.account.id]);
-  if(!p.rowCount)return res.status(404).json({error:'Courier profile missing'});
-  const row=p.rows[0],expired=row.eligibility_expires_at&&new Date(row.eligibility_expires_at)<new Date();
-  if(available&&(row.eligibility_status!=='approved'||expired))return res.status(403).json({error:'Admin approval is required before becoming available'});
-  if(available&&await courierHasActiveDelivery(pool,me.account.id))return res.status(409).json({error:'Finish the active delivery before becoming available for another offer'});
-  await pool.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[available,me.account.id]);
-  let created=[],withdrawn=[];
-  if(available){
-    created=await offerWaitingDeliveriesToCourier(pool,me.account.id,{limit:5});
-  }else{
-    const q=await pool.query(`
-      UPDATE delivery_offers
-         SET status='withdrawn',responded_at=NOW(),updated_at=NOW()
-       WHERE courier_account_id=$1 AND status='pending'
-       RETURNING delivery_id,offer_round
-    `,[me.account.id]);
-    withdrawn=q.rows;
-    for(const offer of withdrawn){
-      await recordDispatchEvent(pool,{
-        deliveryId:offer.delivery_id,
-        actorAccountId:me.account.id,
-        courierAccountId:me.account.id,
-        eventCode:'offer_withdrawn_unavailable',
-        offerRound:offer.offer_round,
-        detail:{}
+app.put('/api/courier/availability',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireCourier(req),available=Boolean(req.body?.available);
+    await client.query('BEGIN');
+    const record=await reconcileCourierEligibility(client,me.account.id,{lock:true,withdrawOffers:true});
+    if(!record){await client.query('ROLLBACK');return res.status(404).json({error:'Courier profile missing'})}
+    if(available&&!record.assessment.eligible){
+      await client.query('COMMIT');
+      return res.status(409).json({
+        error:'Complete every Courier eligibility requirement before becoming available.',
+        code:'COURIER_ELIGIBILITY_INCOMPLETE',
+        missing_requirements:record.assessment.missing_requirements,
+        eligibility:record.assessment
       });
     }
-  }
-  res.json({
-    ok:true,available,
-    new_offer_count:created.length,
-    new_offer_delivery_ids:created.map(x=>x.delivery_id),
-    withdrawn_offer_count:withdrawn.length
-  });
-}catch(e){next(e)}})
+    if(available&&await courierHasActiveDelivery(client,me.account.id)){
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Finish the active delivery before becoming available for another offer'});
+    }
+    await client.query(`UPDATE courier_profiles SET available=$1,updated_at=NOW() WHERE account_id=$2`,[available,me.account.id]);
+    const availabilityAssessment=courierEligibilityAssessment(
+      {...record.profile,available},record.documents
+    );
+    let created=[],withdrawn=[];
+    if(available){
+      created=await offerWaitingDeliveriesToCourier(client,me.account.id,{limit:5});
+    }else{
+      const q=await client.query(`
+        UPDATE delivery_offers
+           SET status='withdrawn',responded_at=NOW(),updated_at=NOW()
+         WHERE courier_account_id=$1 AND status='pending'
+         RETURNING delivery_id,offer_round
+      `,[me.account.id]);
+      withdrawn=q.rows;
+      for(const offer of withdrawn){
+        await recordDispatchEvent(client,{
+          deliveryId:offer.delivery_id,
+          actorAccountId:me.account.id,
+          courierAccountId:me.account.id,
+          eventCode:'offer_withdrawn_unavailable',
+          offerRound:offer.offer_round,
+          detail:{}
+        });
+      }
+    }
+    await client.query('COMMIT');
+    res.json({
+      ok:true,available,
+      eligibility:availabilityAssessment,
+      new_offer_count:created.length,
+      new_offer_delivery_ids:created.map(x=>x.delivery_id),
+      withdrawn_offer_count:withdrawn.length
+    });
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
+  finally{client.release()}
+})
 app.get('/api/courier/delivery-offers',async(req,res,next)=>{try{
   const me=await requireCourier(req);
+  await reconciledCourierRecord(me.account.id);
   res.set('Cache-Control','private, no-store, max-age=0');
   res.json(await pendingCourierOffers(pool,me.account.id,{limit:req.query?.limit}));
 }catch(e){next(e)}})
@@ -1278,7 +1444,19 @@ app.post('/api/courier/delivery-offers/:offerId/accept',body,async(req,res,next)
     if(!courierQ.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Courier profile missing'})}
     const courier=courierQ.rows[0];
     const gate=await courierOfferGateFromDb(client,courier,d);
-    if(!gate.allowed){await client.query('ROLLBACK');return res.status(409).json({error:'You are no longer eligible for this delivery',code:gate.reason})}
+    if(!gate.allowed){
+      const withdrawn=await client.query(`
+        UPDATE delivery_offers SET status='withdrawn',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW()
+         WHERE id=$1 AND status='pending' RETURNING id
+      `,[offerId]);
+      if(withdrawn.rowCount)await recordDispatchEvent(client,{
+        deliveryId,actorAccountId:me.account.id,courierAccountId:me.account.id,
+        eventCode:'offer_withdrawn_ineligible',offerRound:row.offer_round,
+        detail:{offer_id:offerId,reason:gate.reason}
+      });
+      await client.query('COMMIT');
+      return res.status(409).json({error:'You are no longer eligible for this delivery',code:gate.reason});
+    }
     await client.query(`
       UPDATE deliveries
          SET courier_account_id=$1,vehicle_class=$2,status='courier_assigned',
@@ -1749,17 +1927,52 @@ app.post('/api/admin/delivery/pricing/preview',body,async(req,res,next)=>{try{
   });
 }catch(e){next(e)}})
 
-app.get('/api/admin/couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'courier.verify'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=a.id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note,(SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id WHERE ${scope} ORDER BY c.eligibility_status='approved' DESC,a.display_name`,values);res.json(rows)}catch(e){next(e)}})
+app.get('/api/admin/couriers',async(req,res,next)=>{try{
+  const me=await requireAdmin(req,'courier.verify'),territoryId=me.admin_assertion.territoryId;
+  const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=a.id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;
+  if(territoryId!=null)values.push(territoryId);
+  const{rows}=await pool.query(`
+    SELECT a.id account_id,a.display_name,a.email,a.account_mode,a.test_role,
+           c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,
+           c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path,
+           c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,
+           c.approval_note,c.eligibility_reviewed_by_account_id,c.eligibility_reviewed_at,
+           c.eligibility_policy_version,
+           (SELECT COUNT(*) FROM courier_documents d WHERE d.account_id=a.id AND d.verification_status='submitted')::int submitted_documents
+      FROM accounts a
+      JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE
+      JOIN courier_profiles c ON c.account_id=a.id
+     WHERE ${scope}
+     ORDER BY c.eligibility_status='approved' DESC,a.display_name
+  `,values);
+  const projected=[];
+  for(const row of rows){
+    const record=await reconciledCourierRecord(row.account_id);
+    const profile=record?courierEligibilityProfileView(record.profile,record.documents):row;
+    projected.push({...row,...profile,eligibility:profile.eligibility});
+  }
+  res.json(projected);
+}catch(e){next(e)}})
 app.get('/api/admin/couriers/:accountId',async(req,res,next)=>{try{
   const me=await requireAdmin(req,'courier.verify'),id=Number(req.params.accountId),territoryId=me.admin_assertion.territoryId;
   if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'Valid Courier account required'});
   if(territoryId!=null){const scope=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[id,territoryId]);if(!scope.rowCount)return res.status(403).json({error:'Courier is outside your delegated territory'})}
-  const [courier,documents]=await Promise.all([
-    pool.query(`SELECT a.id account_id,a.display_name,a.email,c.display_name courier_name,c.vehicle_type,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path,c.available,c.eligibility_status,c.approved_vehicle_class,c.eligibility_expires_at,c.approval_note FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id WHERE a.id=$1`,[id]),
-    pool.query(`SELECT id,document_type,vehicle_class,reference_number,issue_date,expiry_date,verification_status,rejection_reason,created_at,updated_at FROM courier_documents WHERE account_id=$1 ORDER BY created_at DESC,id DESC`,[id])
+  const [courier,record]=await Promise.all([
+    pool.query(`SELECT a.id account_id,a.display_name,a.email,a.account_mode,a.test_role,c.display_name courier_name FROM accounts a JOIN profiles p ON p.account_id=a.id AND p.role='courier' AND p.enabled=TRUE JOIN courier_profiles c ON c.account_id=a.id WHERE a.id=$1`,[id]),
+    reconciledCourierRecord(id)
   ]);
   if(!courier.rowCount)return res.status(404).json({error:'Courier not found'});
-  res.json({courier:courier.rows[0],documents:documents.rows});
+  if(!record)return res.status(404).json({error:'Courier profile missing'});
+  const profile=courierEligibilityProfileView(record.profile,record.documents);
+  const documents=record.documents.map(document=>({
+    id:document.id,document_type:document.document_type,vehicle_class:document.vehicle_class,
+    reference_number:document.reference_number,issue_date:document.issue_date,expiry_date:document.expiry_date,
+    verification_status:document.verification_status,rejection_reason:document.rejection_reason,
+    verified_by_account_id:document.verified_by_account_id,verified_at:document.verified_at,
+    has_private_evidence:Boolean(document.private_evidence_object_id),
+    created_at:document.created_at,updated_at:document.updated_at
+  }));
+  res.json({courier:{...courier.rows[0],...profile},documents,eligibility:profile.eligibility});
 }catch(e){next(e)}})
 app.get('/api/admin/couriers/:accountId/documents/:documentId',async(req,res,next)=>{try{
   const me=await requireAdmin(req,'courier.verify'),accountId=Number(req.params.accountId),documentId=Number(req.params.documentId),territoryId=me.admin_assertion.territoryId;
@@ -1773,7 +1986,107 @@ app.get('/api/admin/couriers/:accountId/documents/:documentId',async(req,res,nex
   });
   return sendPrivateEvidence(res,evidence);
 }catch(e){next(e)}})
-app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{try{const me=await requireAdmin(req,'courier.verify'),id=Number(req.params.accountId),territoryId=me.admin_assertion.territoryId,status=clean(req.body?.eligibility_status,30);if(!['pending','approved','suspended','revoked','expired'].includes(status))return res.status(400).json({error:'Invalid eligibility status'});if(territoryId!=null){const scope=await pool.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[id,territoryId]);if(!scope.rowCount)return res.status(403).json({error:'Courier is outside your delegated territory'})}await pool.query(`UPDATE courier_profiles SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,approval_note=$4,available=CASE WHEN $1='approved' THEN available ELSE FALSE END,updated_at=NOW() WHERE account_id=$5`,[status,clean(req.body?.approved_vehicle_class,40),req.body?.eligibility_expires_at||null,clean(req.body?.approval_note,600),id]);if(Array.isArray(req.body?.document_updates))for(const d of req.body.document_updates){if(!['verified','rejected','expired'].includes(d.status))continue;await pool.query(`UPDATE courier_documents SET verification_status=$1,verified_by_account_id=$2,verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,rejection_reason=$3,updated_at=NOW() WHERE id=$4 AND account_id=$5`,[d.status,me.account.id,clean(d.rejection_reason,500),Number(d.id),id])}res.json({ok:true})}catch(e){next(e)}})
+app.patch('/api/admin/couriers/:accountId',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireAdmin(req,'courier.verify');
+    const id=Number(req.params.accountId),territoryId=me.admin_assertion.territoryId;
+    const requestedStatus=clean(req.body?.eligibility_status,30);
+    const note=clean(req.body?.approval_note,600);
+    if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'Valid Courier account required'});
+    if(!['pending','approved','suspended','revoked','expired'].includes(requestedStatus))return res.status(400).json({error:'Invalid eligibility status'});
+    if(note.length<8)return res.status(400).json({error:'Record a clear Courier eligibility review note'});
+    if(req.body?.evidence_review_attested!==true)return res.status(400).json({error:'Confirm that the Courier profile and evidence were reviewed'});
+    let approvedVehicle='';
+    const requestedVehicle=clean(req.body?.approved_vehicle_class,40);
+    if(requestedVehicle){
+      try{approvedVehicle=canonicalDeliveryVehicleClass(requestedVehicle)}
+      catch(error){return res.status(error.status||400).json({error:error.message})}
+    }
+    await client.query('BEGIN');
+    if(territoryId!=null){
+      const scope=await client.query(`SELECT 1 FROM profile_authorizations WHERE account_id=$1 AND role='courier' AND territory_id=$2 AND status='active'`,[id,territoryId]);
+      if(!scope.rowCount){await client.query('ROLLBACK');return res.status(403).json({error:'Courier is outside your delegated territory'})}
+    }
+    const before=await readCourierEligibility(client,id,{lock:true});
+    if(!before){await client.query('ROLLBACK');return res.status(404).json({error:'Courier profile missing'})}
+    const updates=Array.isArray(req.body?.document_updates)?req.body.document_updates:[];
+    for(const update of updates){
+      const documentId=Number(update?.id),documentStatus=clean(update?.status,30);
+      if(!Number.isInteger(documentId)||documentId<=0||!['verified','rejected','expired'].includes(documentStatus))continue;
+      const changed=await client.query(`
+        UPDATE courier_documents
+           SET verification_status=$1,
+               verified_by_account_id=CASE WHEN $1='verified' THEN $2 ELSE verified_by_account_id END,
+               verified_at=CASE WHEN $1='verified' THEN NOW() ELSE verified_at END,
+               rejection_reason=$3,
+               updated_at=NOW()
+         WHERE id=$4 AND account_id=$5
+         RETURNING id
+      `,[documentStatus,me.account.id,clean(update?.rejection_reason,500),documentId,id]);
+      if(!changed.rowCount)throw Object.assign(new Error('Courier document is no longer available in this profile'),{status:409,code:'COURIER_DOCUMENT_CHANGED'});
+    }
+    const afterDocuments=await readCourierEligibility(client,id);
+    const nowMs=Date.now();
+    const candidate={
+      ...afterDocuments.profile,
+      eligibility_status:requestedStatus,
+      approved_vehicle_class:approvedVehicle,
+      eligibility_expires_at:req.body?.eligibility_expires_at||null,
+      approval_note:note,
+      eligibility_reviewed_by_account_id:me.account.id,
+      eligibility_reviewed_at:new Date(nowMs).toISOString(),
+      eligibility_policy_version:COURIER_ELIGIBILITY_POLICY_VERSION
+    };
+    const candidateAssessment=courierEligibilityAssessment(candidate,afterDocuments.documents,{nowMs});
+    let finalStatus=requestedStatus,reclassified=false;
+    if(requestedStatus==='approved'&&!candidateAssessment.can_approve){
+      if(before.profile.eligibility_status==='approved'){
+        finalStatus=candidateAssessment.effective_status;
+        reclassified=true;
+      }else{
+        throw courierEligibilityError(candidateAssessment);
+      }
+    }
+    const saved=await client.query(`
+      UPDATE courier_profiles
+         SET eligibility_status=$1,approved_vehicle_class=$2,eligibility_expires_at=$3,
+             approval_note=$4,eligibility_reviewed_by_account_id=$5,
+             eligibility_reviewed_at=NOW(),eligibility_policy_version=$6,
+             available=CASE WHEN $1='approved' AND $7 THEN available ELSE FALSE END,
+             updated_at=NOW()
+       WHERE account_id=$8 RETURNING *
+    `,[
+      finalStatus,approvedVehicle,req.body?.eligibility_expires_at||null,note,me.account.id,
+      COURIER_ELIGIBILITY_POLICY_VERSION,candidateAssessment.can_approve,id
+    ]);
+    if(finalStatus!=='approved'||!candidateAssessment.can_approve){
+      await client.query(`
+        UPDATE delivery_offers SET status='withdrawn',responded_at=COALESCE(responded_at,NOW()),updated_at=NOW()
+         WHERE courier_account_id=$1 AND status='pending'
+      `,[id]);
+    }
+    const finalRecord=await readCourierEligibility(client,id);
+    const finalProfile=courierEligibilityProfileView(saved.rows[0],finalRecord.documents,{nowMs});
+    await client.query(`
+      INSERT INTO profile_governance_events(
+        actor_account_id,event_code,target_account_id,role,territory_id,detail_json
+      ) VALUES($1,$2,$3,'courier',$4,$5::jsonb)
+    `,[
+      me.account.id,reclassified?'courier_eligibility_reclassified':'courier_eligibility_decided',id,territoryId,
+      JSON.stringify({
+        requested_status:requestedStatus,final_status:finalProfile.eligibility_status,
+        policy_version:COURIER_ELIGIBILITY_POLICY_VERSION,
+        approved_vehicle_class:finalProfile.approved_vehicle_class,
+        missing_requirements:finalProfile.eligibility.missing_requirements,
+        evidence_review_attested:true,reclassified
+      })
+    ]);
+    await client.query('COMMIT');
+    res.json({ok:true,reclassified,courier:finalProfile,eligibility:finalProfile.eligibility});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
+  finally{client.release()}
+})
 app.get('/api/admin/deliveries/:id/route-evidence',async(req,res,next)=>{try{
   const id=Number(req.params.id),{me,d}=await scopedAdminDelivery(req,id);
   const points=await deliveryRoutePoints(id,{afterSequence:req.query?.after_sequence,limit:req.query?.limit});
@@ -1803,7 +2116,26 @@ app.get('/api/admin/deliveries/:id/proofs/:proofId/file',async(req,res,next)=>{t
 }catch(e){next(e)}})
 
 app.get('/api/admin/deliveries',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId,status=clean(req.query?.status,40);const values=[],where=[];if(territoryId!=null){values.push(territoryId);where.push(`b.territory_id=$${values.length}`)}if(status){values.push(status);where.push(`d.status=$${values.length}`)}const{rows}=await pool.query(`SELECT d.*,o.order_number,o.order_status,o.payment_status,b.name business_name,b.territory_id,cp.display_name courier_name FROM deliveries d JOIN orders o ON o.id=d.order_id JOIN businesses b ON b.id=d.business_id LEFT JOIN courier_profiles cp ON cp.account_id=d.courier_account_id ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY d.updated_at DESC LIMIT 150`,values);res.json(rows.map(d=>deliveryPrivacyView(d,'admin')))}catch(e){next(e)}})
-app.get('/api/admin/delivery/eligible-couriers',async(req,res,next)=>{try{const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId;const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=c.account_id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active')`;if(territoryId!=null)values.push(territoryId);const{rows}=await pool.query(`SELECT c.account_id,c.display_name courier_name,c.vehicle_type,c.approved_vehicle_class,c.max_weight_kg,c.max_volume_l,c.service_radius_km,c.operating_psgc_code,c.operating_area_name,c.operating_area_path FROM courier_profiles c WHERE c.eligibility_status='approved' AND c.available=TRUE AND (c.eligibility_expires_at IS NULL OR c.eligibility_expires_at>NOW()) AND ${scope} ORDER BY c.display_name`,values);res.json(rows)}catch(e){next(e)}})
+app.get('/api/admin/delivery/eligible-couriers',async(req,res,next)=>{try{
+  const me=await requireAdmin(req,'delivery.dispatch.manage'),territoryId=me.admin_assertion.territoryId;
+  const values=[],scope=territoryId==null?'TRUE':`EXISTS(SELECT 1 FROM profile_authorizations pa WHERE pa.account_id=c.account_id AND pa.role='courier' AND pa.territory_id=$1 AND pa.status='active' AND (pa.expires_at IS NULL OR pa.expires_at>NOW()))`;
+  if(territoryId!=null)values.push(territoryId);
+  const{rows}=await pool.query(`SELECT c.* FROM courier_profiles c WHERE c.available=TRUE AND ${scope} ORDER BY c.display_name`,values);
+  const eligible=[];
+  for(const row of rows){
+    const record=await reconciledCourierRecord(row.account_id);
+    if(!record?.assessment?.eligible||record.assessment.non_commercial)continue;
+    const profile=courierEligibilityProfileView(record.profile,record.documents);
+    eligible.push({
+      account_id:profile.account_id,courier_name:profile.display_name,
+      vehicle_type:profile.vehicle_type,approved_vehicle_class:profile.approved_vehicle_class,
+      max_weight_kg:profile.max_weight_kg,max_volume_l:profile.max_volume_l,
+      service_radius_km:profile.service_radius_km,operating_psgc_code:profile.operating_psgc_code,
+      operating_area_name:profile.operating_area_name,operating_area_path:profile.operating_area_path
+    });
+  }
+  res.json(eligible);
+}catch(e){next(e)}})
 app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{
   const client=await pool.connect();
   try{
@@ -1832,7 +2164,7 @@ app.post('/api/admin/deliveries/:id/assign',body,async(req,res,next)=>{
     const cq=await client.query('SELECT * FROM courier_profiles WHERE account_id=$1 FOR UPDATE',[courierId]);
     if(!cq.rowCount){await client.query('ROLLBACK');return res.status(409).json({error:'Courier profile missing'})}
     const gate=await courierOfferGateFromDb(client,cq.rows[0],d);
-    if(!gate.allowed){await client.query('ROLLBACK');return res.status(409).json({error:'Courier is not currently eligible and available for this delivery',code:gate.reason})}
+    if(!gate.allowed){await client.query('COMMIT');return res.status(409).json({error:'Courier is not currently eligible and available for this delivery',code:gate.reason})}
     await client.query(`
       UPDATE deliveries
          SET courier_account_id=$1,vehicle_class=$2,status='courier_assigned',
@@ -1866,7 +2198,21 @@ function proxy(req,res,next){
   return suppliersApp(req,res,next);
 }
 app.use(proxy)
-app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'?highRiskVelocityErrorBody(err):{error:err.status?err.message:'Unexpected server error'};res.status(err.status||500).json(payload)})
+app.use((err,_req,res,_next)=>{
+  console.error(err);
+  if(res.headersSent)return;
+  if(err?.code==='HIGH_RISK_VELOCITY_LIMIT')res.set('Retry-After',String(Math.max(1,Number(err.retryAfterSeconds)||1)));
+  const payload=err?.code==='HIGH_RISK_VELOCITY_LIMIT'
+    ?highRiskVelocityErrorBody(err)
+    :err?.code==='COURIER_ELIGIBILITY_INCOMPLETE'
+      ?{
+        error:err.message,code:err.code,
+        missing_requirements:err.missing_requirements||[],
+        eligibility:err.eligibility||null
+      }
+      :{error:err.status?err.message:'Unexpected server error',...(err?.code?{code:err.code}:{})};
+  res.status(err.status||500).json(payload);
+})
 
 let embeddedStartPromise=null;
 export async function startEmbeddedDelivery(){

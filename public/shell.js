@@ -1321,6 +1321,7 @@ let courierHomeCache={accountId:null,data:null,loadedAt:0,promise:null};
 
 function invalidateCourierHome(){courierHomeCache={accountId:null,data:null,loadedAt:0,promise:null}}
 function courierHomeApproved(profile){
+  if(profile?.eligibility)return profile.eligibility.eligible===true;
   if(!profile||profile.eligibility_status!=='approved')return false;
   if(!profile.eligibility_expires_at)return true;
   const expiry=new Date(profile.eligibility_expires_at).getTime();
@@ -1408,13 +1409,15 @@ function renderCourierHomeData(hub,data){
   const statusLabel=!profile?'Status unavailable':expired?'Approval expired':customerNice(profile.eligibility_status||'not requested');
   const vehicle=profile?.approved_vehicle_class||profile?.vehicle_type||'No approved vehicle';
   const operatingArea=profile?.operating_area_name||'Start area not set';
+  const missing=Array.isArray(profile?.eligibility?.missing_labels)?profile.eligibility.missing_labels:[];
   const status=hub.querySelector('#courierHomeStatus');
   if(status){
     status.innerHTML=
       '<div class="courierStatusMain"><div><span class="courierStatusEyebrow">Eligibility</span><strong>'+escapeHtml(statusLabel)+'</strong><small>'+escapeHtml(vehicle)+' · '+escapeHtml(operatingArea)+'</small></div>'+
       '<button type="button" data-courier-home-open="Eligibility">'+(approved?'Review':'Fix eligibility')+'</button></div>'+
-      '<div class="courierAvailabilityRow"><div><strong>'+(profile?.available&&approved?'Available':'Not available')+'</strong><small>'+(approved?'You decide when you are open for new delivery offers.':'Admin approval is required before availability can be enabled.')+'</small></div>'+
-      '<button id="courierHomeAvailabilityAction" type="button" data-next-available="'+String(!(profile?.available&&approved))+'" '+(!approved?'disabled':'')+'>'+(profile?.available&&approved?'Pause availability':'Go available')+'</button></div>';
+      '<div class="courierAvailabilityRow"><div><strong>'+(profile?.available&&approved?'Available':'Not available')+'</strong><small>'+(approved?'You decide when you are open for new delivery offers.':missing.length?String(missing.length)+' eligibility requirement'+(missing.length===1?' is':'s are')+' still incomplete.':'Admin approval is required before availability can be enabled.')+'</small></div>'+
+      '<button id="courierHomeAvailabilityAction" type="button" data-next-available="'+String(!(profile?.available&&approved))+'" '+(!approved?'disabled':'')+'>'+(profile?.available&&approved?'Pause availability':'Go available')+'</button></div>'+
+      (profile?.eligibility?.non_commercial?'<div class="courierHomeEmpty"><strong>Controlled non-commercial test</strong><span>This private profile is restricted to controlled test deliveries and cannot receive real customer work.</span></div>':'');
   }
 
   const work=courierHomeCurrentWork(data.delivery);
