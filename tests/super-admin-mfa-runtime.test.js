@@ -42,7 +42,8 @@ test('privileged Admin requests fail closed until MFA is active and fresh',()=>{
     "/api/admin",
     "/api/governance/admin",
     "/api/legal/admin",
-    "/api/payments/admin"
+    "/api/payments/admin",
+    "/api/accounting/admin"
   ])assert.ok(server.includes(prefix),`missing protected Admin prefix: ${prefix}`);
   assert.match(server,/SUPER_ADMIN_MFA_ENROLLMENT_REQUIRED/);
   assert.match(server,/SUPER_ADMIN_MFA_STEP_UP_REQUIRED/);
