@@ -574,6 +574,15 @@
 .commerceReviewStep,.commerceReviewResolved{display:inline-flex;align-items:center;min-height:26px;padding:5px 9px;border-radius:999px;font-size:9px;font-weight:900;letter-spacing:.04em;text-transform:uppercase}
 .commerceReviewStep{background:#142c43;color:#a9d5ff;border:1px solid #31506d}
 .commerceReviewResolved{background:rgba(96,214,180,.12);color:var(--accent);border:1px solid rgba(96,214,180,.45)}
+.commerceReviewMissing{display:inline-flex;align-items:center;min-height:26px;padding:5px 9px;border-radius:999px;font-size:9px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;background:rgba(245,158,11,.1);color:#f8c96a;border:1px solid rgba(245,158,11,.35)}
+.commerceReviewItem.needsEvidence{border-color:rgba(245,158,11,.28)}
+.commerceDecisionBlocked,.commerceDecisionReady{padding:11px 12px;border-radius:12px;font-size:11px;line-height:1.5}
+.commerceDecisionBlocked{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#f6dfb2}
+.commerceDecisionBlocked p,.commerceDecisionReady p{margin:4px 0 0}
+.commerceDecisionBlocked ul{margin:7px 0 0;padding-left:18px;display:grid;gap:5px}
+.commerceDecisionReady{background:rgba(96,214,180,.08);border:1px solid rgba(96,214,180,.3);color:#c8f4e7}
+.commerceDecisionCard select option:disabled{color:#6f8091}
+.commerceDecisionCard button:disabled{cursor:not-allowed;opacity:.48}
 .commerceReviewItem h3{margin:0;font-size:17px;line-height:1.35}
 .commerceReviewPlain{margin:-4px 0 0;color:#b8c6d6;font-size:12px;line-height:1.55}
 .commerceCurrentValue{display:grid;gap:3px;padding:11px 12px;border-radius:12px;border:1px solid rgba(96,214,180,.35);background:rgba(96,214,180,.07)}

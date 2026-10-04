@@ -124,31 +124,246 @@ function normalizeEvidenceItem(raw={}){
   };
 }
 
-export function validateMicrobusinessEligibilityEvidence(state,evidenceChecklist=[]){
+function evidenceBlocker(requirement,item,errorCode,field,message,status=400){
+  return Object.freeze({
+    requirement_code:requirement.code,
+    label:requirement.label,
+    error_code:errorCode,
+    field,
+    message,
+    status,
+    source_authority_required:true,
+    reference_required:item?.outcome==='verified',
+    note_required:item?.outcome==='not_applicable',
+    allow_not_applicable:Boolean(requirement.allow_not_applicable)
+  });
+}
+
+export function assessMicrobusinessEligibilityEvidence(state,evidenceChecklist=[]){
   const normalized=microbusinessReadinessState(state||{});
   const requirements=microbusinessReadinessReviewRequirements(normalized);
-  if(!requirements.length)throw Object.assign(new Error('Complete the activity track and operating context before commerce eligibility review'),{status:409,code:'READINESS_CONTEXT_REQUIRED'});
+  if(!requirements.length){
+    return Object.freeze({
+      context_ready:false,
+      complete:false,
+      total_count:0,
+      resolved_count:0,
+      missing:[],
+      accepted_evidence:[],
+      blockers:Object.freeze([Object.freeze({
+        requirement_code:null,
+        label:'Business setup',
+        error_code:'READINESS_CONTEXT_REQUIRED',
+        field:'activity_track_or_operating_context',
+        message:'Complete the activity type and operating context before commerce eligibility can be reviewed.',
+        status:409,
+        source_authority_required:false,
+        reference_required:false,
+        note_required:false,
+        allow_not_applicable:false
+      })]),
+      items:Object.freeze([])
+    });
+  }
   const items=Array.isArray(evidenceChecklist)?evidenceChecklist.map(normalizeEvidenceItem):[];
   const byCode=new Map(items.map(item=>[item.code,item]));
+  const blockers=[];
   const missing=[];
+  const assessed=[];
+  const accepted=[];
+  let resolvedCount=0;
+
   for(const requirement of requirements){
-    const item=byCode.get(requirement.code);
-    if(!item||!REVIEW_OUTCOMES.has(item.outcome)){missing.push(requirement.code);continue;}
-    if(item.outcome==='not_applicable'&&!requirement.allow_not_applicable){
-      throw Object.assign(new Error(requirement.label+' cannot be marked not applicable'),{status:400,code:'READINESS_EVIDENCE_NOT_APPLICABLE_DENIED',requirement:requirement.code});
+    const item=byCode.get(requirement.code)||normalizeEvidenceItem({code:requirement.code});
+    const itemBlockers=[];
+    if(!REVIEW_OUTCOMES.has(item.outcome)){
+      missing.push(requirement.code);
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_INCOMPLETE','outcome',
+        requirement.label+': choose Verified, or Not applicable only when the review allows it.',409
+      ));
+    }else if(item.outcome==='not_applicable'&&!requirement.allow_not_applicable){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_NOT_APPLICABLE_DENIED','outcome',
+        requirement.label+' must be verified for this review and cannot be marked Not applicable.'
+      ));
+    }else if(item.outcome==='verified'&&!item.reference){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_REFERENCE_REQUIRED','reference',
+        requirement.label+': identify the evidence or platform/official record you checked.'
+      ));
+    }else if(!item.source_authority){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_SOURCE_REQUIRED','source_authority',
+        requirement.label+': name the issuer, competent authority, official source or Business & Life platform record that supports this decision.'
+      ));
+    }else if(item.outcome==='not_applicable'&&!item.note){
+      itemBlockers.push(evidenceBlocker(
+        requirement,item,'READINESS_EVIDENCE_NA_SOURCE_REQUIRED','note',
+        requirement.label+': explain why the sourced requirement does not apply to this exact business.'
+      ));
     }
-    if(item.outcome==='verified'&&!item.reference){
-      throw Object.assign(new Error(requirement.label+' requires an evidence/reference identifier'),{status:400,code:'READINESS_EVIDENCE_REFERENCE_REQUIRED',requirement:requirement.code});
-    }
-    if(!item.source_authority){
-      throw Object.assign(new Error(requirement.label+' requires the source or authority used for the decision'),{status:400,code:'READINESS_EVIDENCE_SOURCE_REQUIRED',requirement:requirement.code});
-    }
-    if(item.outcome==='not_applicable'&&!item.note){
-      throw Object.assign(new Error(requirement.label+' needs a source/authority and reason when marked not applicable'),{status:400,code:'READINESS_EVIDENCE_NA_SOURCE_REQUIRED',requirement:requirement.code});
-    }
+
+    const resolved=itemBlockers.length===0;
+    if(resolved){
+      resolvedCount+=1;
+      accepted.push(item);
+    }else blockers.push(...itemBlockers);
+    assessed.push(Object.freeze({
+      ...requirement,
+      evidence:item,
+      resolved,
+      blockers:Object.freeze(itemBlockers)
+    }));
   }
-  if(missing.length)throw Object.assign(new Error('Resolve every required readiness review item before commerce eligibility can be granted'),{status:409,code:'READINESS_EVIDENCE_INCOMPLETE',missing});
-  return requirements.map(requirement=>byCode.get(requirement.code));
+
+  return Object.freeze({
+    context_ready:true,
+    complete:resolvedCount===requirements.length,
+    total_count:requirements.length,
+    resolved_count:resolvedCount,
+    missing:Object.freeze(missing),
+    accepted_evidence:Object.freeze(accepted),
+    blockers:Object.freeze(blockers),
+    items:Object.freeze(assessed)
+  });
+}
+
+export function microbusinessReadinessReviewStatus(state,evidenceChecklist=[]){
+  const normalized=microbusinessReadinessState(state||{});
+  const requirements=microbusinessReadinessReviewRequirements(normalized);
+  const items=Array.isArray(evidenceChecklist)?evidenceChecklist.map(normalizeEvidenceItem):[];
+  const byCode=new Map(items.map(item=>[item.code,item]));
+  const checks=requirements.map(requirement=>{
+    const item=byCode.get(requirement.code)||normalizeEvidenceItem({code:requirement.code});
+    const missing_fields=[];
+    let blocker_code='';
+    if(!REVIEW_OUTCOMES.has(item.outcome)){
+      missing_fields.push('outcome');
+      blocker_code='outcome_required';
+    }else{
+      if(item.outcome==='not_applicable'&&!requirement.allow_not_applicable){
+        missing_fields.push('outcome');
+        blocker_code='not_applicable_not_allowed';
+      }
+      if(item.outcome==='verified'&&!item.reference){
+        missing_fields.push('reference');
+        blocker_code=blocker_code||'reference_required';
+      }
+      if(!item.source_authority){
+        missing_fields.push('source_authority');
+        blocker_code=blocker_code||'source_authority_required';
+      }
+      if(item.outcome==='not_applicable'&&!item.note){
+        missing_fields.push('note');
+        blocker_code=blocker_code||'not_applicable_reason_required';
+      }
+    }
+    return Object.freeze({
+      code:requirement.code,
+      label:requirement.label,
+      description:requirement.description,
+      allow_not_applicable:Boolean(requirement.allow_not_applicable),
+      outcome:item.outcome,
+      reference:item.reference,
+      source_authority:item.source_authority,
+      note:item.note,
+      complete:missing_fields.length===0,
+      missing_fields:Object.freeze([...new Set(missing_fields)]),
+      blocker_code:blocker_code||null
+    });
+  });
+  const resolved=checks.filter(item=>item.complete).length;
+  const contextComplete=requirements.length>0;
+  return Object.freeze({
+    context_complete:contextComplete,
+    total:requirements.length,
+    resolved,
+    complete:contextComplete&&resolved===requirements.length,
+    checks:Object.freeze(checks),
+    missing:Object.freeze(checks.filter(item=>!item.complete))
+  });
+}
+
+export function microbusinessCommerceReviewPolicy(state,evidenceChecklist=[],{profileAuthorized=false}={}){
+  const normalized=microbusinessReadinessState(state||{});
+  const review=microbusinessReadinessReviewStatus(normalized,evidenceChecklist);
+  const blockers=[];
+  if(!review.context_complete){
+    blockers.push(Object.freeze({
+      code:'readiness_context_required',
+      label:'Activity and operating context are required',
+      description:'Set the activity track and operating context before a commerce eligibility decision.'
+    }));
+  }
+  if(!profileAuthorized){
+    blockers.push(Object.freeze({
+      code:'profile_authorization_required',
+      label:'Active Profile Authorization is required',
+      description:'Profile approval is a separate prerequisite and does not itself grant public commerce.'
+    }));
+  }
+  for(const item of review.missing){
+    blockers.push(Object.freeze({
+      code:item.code,
+      label:item.label,
+      description:item.description,
+      missing_fields:item.missing_fields,
+      blocker_code:item.blocker_code
+    }));
+  }
+  const canGrant=Boolean(profileAuthorized)&&review.complete;
+  return Object.freeze({
+    profile_authorized:Boolean(profileAuthorized),
+    can_keep_readiness_only:true,
+    can_grant_commerce:canGrant,
+    allowed_states:Object.freeze({
+      readiness_only:true,
+      eligible_limited:canGrant,
+      eligible_full:canGrant
+    }),
+    review_status:review,
+    blockers:Object.freeze(blockers)
+  });
+}
+
+export function validateMicrobusinessEligibilityEvidence(state,evidenceChecklist=[]){
+  const review=microbusinessReadinessReviewStatus(state,evidenceChecklist);
+  if(!review.context_complete){
+    throw Object.assign(
+      new Error('Complete the activity track and operating context before commerce eligibility review'),
+      {status:409,code:'READINESS_CONTEXT_REQUIRED',review_status:review}
+    );
+  }
+  const first=review.missing[0];
+  if(first){
+    const requirement=first.code;
+    if(first.blocker_code==='not_applicable_not_allowed'){
+      throw Object.assign(new Error(first.label+' cannot be marked not applicable'),{
+        status:400,code:'READINESS_EVIDENCE_NOT_APPLICABLE_DENIED',requirement,review_status:review
+      });
+    }
+    if(first.blocker_code==='reference_required'){
+      throw Object.assign(new Error(first.label+' requires an evidence/reference identifier'),{
+        status:400,code:'READINESS_EVIDENCE_REFERENCE_REQUIRED',requirement,review_status:review
+      });
+    }
+    if(first.blocker_code==='source_authority_required'){
+      throw Object.assign(new Error(first.label+' requires the source or authority used for the decision'),{
+        status:400,code:'READINESS_EVIDENCE_SOURCE_REQUIRED',requirement,review_status:review
+      });
+    }
+    if(first.blocker_code==='not_applicable_reason_required'){
+      throw Object.assign(new Error(first.label+' needs a source/authority and reason when marked not applicable'),{
+        status:400,code:'READINESS_EVIDENCE_NA_SOURCE_REQUIRED',requirement,review_status:review
+      });
+    }
+    throw Object.assign(
+      new Error('Resolve every required readiness review item before commerce eligibility can be granted'),
+      {status:409,code:'READINESS_EVIDENCE_INCOMPLETE',missing:review.missing.map(item=>item.code),review_status:review}
+    );
+  }
+  return review.checks.map(item=>normalizeEvidenceItem(item));
 }
 
 export function microbusinessReadinessEnforcementMode(env=process.env){
@@ -407,10 +622,12 @@ export async function microbusinessReadinessSnapshot(pool,{accountId=null,profil
     commerce_state:'readiness_only',
     source:'default_readiness'
   });
+  const reviewStatus=microbusinessReadinessReviewStatus(state,state.eligibility_evidence);
   return{
     ...state,
     next_action_code:nextMicrobusinessReadinessAction(state),
     review_requirements:microbusinessReadinessReviewRequirements(state),
+    review_status:reviewStatus,
     enforcement_enabled:microbusinessReadinessEnforcementEnabled(),
     enforcement_mode:microbusinessReadinessEnforcementMode()
   };

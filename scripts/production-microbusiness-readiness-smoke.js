@@ -107,6 +107,20 @@ async function expectBlocked(promise,label){
   throw new Error(label+' unexpectedly allowed readiness-only commerce');
 }
 
+async function expectIncompleteEligibility(promise,label){
+  try{
+    await promise;
+  }catch(error){
+    if(
+      error?.code==='READINESS_EVIDENCE_INCOMPLETE'
+      &&Number(error?.review_status?.total)===6
+      &&Number(error?.review_status?.resolved)===0
+    )return true;
+    throw new Error(label+' failed with unexpected error: '+String(error?.message||error));
+  }
+  throw new Error(label+' unexpectedly granted commerce with 0/6 evidence.');
+}
+
 async function run(){
   if(process.env.RAILWAY_ENVIRONMENT_NAME!=='production')fail('Production readiness smoke requires Railway production environment.');
   if(process.env.NODE_ENV!=='production')fail('Production readiness smoke requires NODE_ENV=production.');
@@ -161,6 +175,18 @@ async function run(){
         env:process.env
       }),
       'Merchant readiness gate'
+    );
+    await expectIncompleteEligibility(
+      setMicrobusinessCommerceState(client,{
+        accountId:merchant.accountId,
+        profileRole:'merchant',
+        businessId:merchant.businessId,
+        actorAccountId:merchant.accountId,
+        commerceState:'eligible_full',
+        reason:'Rollback-only Production smoke incomplete evidence denial',
+        evidenceChecklist:[]
+      }),
+      'Merchant 0/6 evidence gate'
     );
 
     await setMicrobusinessCommerceState(client,{
@@ -242,6 +268,7 @@ async function run(){
       enforcement_mode:'transition',
       rollback:true,
       merchant_readiness_only_blocked:true,
+      merchant_zero_of_six_grant_blocked:true,
       merchant_evidence_review_unlock:true,
       local_services_readiness_only_blocked:true,
       local_services_evidence_review_unlock:true,

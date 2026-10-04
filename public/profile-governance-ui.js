@@ -5,7 +5,7 @@ const GOV_META={merchant:{label:'Merchant',icon:'🏪',invite:false},supplier:{l
 const gtok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const gh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const gn=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
-async function gapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||`Request failed (${r.status})`);return b}catch(e){if(e?.name==='AbortError')throw new Error('The app is taking too long to respond. Try again.');throw e}finally{if(timer)clearTimeout(timer)}}
+async function gapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const ctl=options.signal?null:new AbortController();const timer=ctl?setTimeout(()=>ctl.abort(),12000):null;try{const r=await fetch(path,{...options,headers,signal:options.signal||ctl?.signal});const b=await r.json().catch(()=>({}));if(!r.ok){const error=new Error(b.error||`Request failed (${r.status})`);error.status=r.status;error.code=String(b.code||'');error.payload=b;throw error}return b}catch(e){if(e?.name==='AbortError')throw new Error('The app is taking too long to respond. Try again.');throw e}finally{if(timer)clearTimeout(timer)}}
 function gtoast(text){const t=document.getElementById('roleToast');if(t){t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200)}else alert(text)}
 function ensureGovModal(){if(document.getElementById('govModalBg'))return;const bg=document.createElement('div');bg.id='govModalBg';bg.className='govModalBg hidden';bg.innerHTML='<section id="govModal" class="govModal"><div class="govHandle"></div></section>';document.body.appendChild(bg);bg.onclick=e=>{if(e.target===bg)closeGov()}}
 function setProfileApplicationRoute(id=null){const url=new URL(location.href);if(Number.isSafeInteger(Number(id))&&Number(id)>0)url.searchParams.set('profile_application',String(Number(id)));else url.searchParams.delete('profile_application');history.replaceState({profile_application:id?Number(id):null},'',url.pathname+(url.searchParams.toString()?'?'+url.searchParams.toString():'')+url.hash)}
@@ -238,6 +238,58 @@ async function reviewApp(e,a,decision){
     govOverview=await gapi('/api/governance/admin/overview');await refreshGov(true);renderAdmin('queue');
   }catch(err){message.textContent=err.message;message.className='govMessage error';buttons.forEach(button=>{button.disabled=false});form.removeAttribute('aria-busy')}
 }
+function govCommerceEvidence(){
+  return [...document.querySelectorAll('[data-readiness-evidence]')].map(card=>({
+    code:String(card.dataset.readinessEvidence||''),
+    outcome:String(card.querySelector('[data-evidence-outcome]')?.value||''),
+    reference:String(card.querySelector('[data-evidence-reference]')?.value||'').trim(),
+    source_authority:String(card.querySelector('[data-evidence-source]')?.value||'').trim(),
+    note:String(card.querySelector('[data-evidence-note]')?.value||'').trim()
+  }));
+}
+function govCommerceDraftStatus(readiness){
+  const requirements=Array.isArray(readiness?.review_requirements)?readiness.review_requirements:[];
+  const byCode=new Map(govCommerceEvidence().map(item=>[item.code,item]));
+  const checks=requirements.map(req=>{
+    const item=byCode.get(String(req.code||''))||{outcome:'',reference:'',source_authority:'',note:''};
+    const missing=[];
+    const valid=item.outcome==='verified'||(item.outcome==='not_applicable'&&req.allow_not_applicable===true);
+    if(!valid)missing.push('decision');
+    if(item.outcome==='verified'&&!item.reference)missing.push('evidence / record reference');
+    if(!item.source_authority)missing.push('source / authority');
+    if(item.outcome==='not_applicable'&&!item.note)missing.push('reviewer note');
+    return{...req,complete:missing.length===0,missing};
+  });
+  const resolved=checks.filter(item=>item.complete).length;
+  const authorized=readiness?.decision_policy?.profile_authorized===true;
+  return{checks,total:checks.length,resolved,authorized,canGrant:authorized&&checks.length>0&&resolved===checks.length};
+}
+function govCommerceBlockers(status){
+  const items=[];
+  if(!status.authorized)items.push('<li><strong>Profile Authorization</strong> — an active profile approval is required.</li>');
+  if(!status.total)items.push('<li><strong>Business setup</strong> — set the activity track and operating context first.</li>');
+  for(const check of status.checks.filter(item=>!item.complete))items.push('<li><strong>'+gh(check.label||gn(check.code))+'</strong> — missing '+gh(check.missing.join(', '))+'.</li>');
+  return items.length
+    ?'<div class="govNotice"><strong>Eligibility is still blocked.</strong><ul>'+items.join('')+'</ul></div>'
+    :'<div class="govNotice"><strong>Eligibility evidence is complete.</strong><br>Limited or Full may now be selected; the server remains authoritative.</div>';
+}
+function syncGovCommerceControls(readiness){
+  const status=govCommerceDraftStatus(readiness),form=document.getElementById('commerceReviewForm');
+  if(!form)return status;
+  const select=document.getElementById('commerceReviewState'),save=form.querySelector('button[type="submit"]');
+  const limited=select?.querySelector('option[value="eligible_limited"]'),full=select?.querySelector('option[value="eligible_full"]');
+  if(limited)limited.disabled=!status.canGrant;
+  if(full)full.disabled=!status.canGrant;
+  if(save)save.disabled=Boolean(select&&select.value!=='readiness_only'&&!status.canGrant);
+  const mount=document.getElementById('commerceReviewBlockers');if(mount)mount.innerHTML=govCommerceBlockers(status);
+  const progress=document.getElementById('commerceReviewProgress');if(progress)progress.textContent=status.resolved+' of '+status.total+' checks complete';
+  document.querySelectorAll('[data-readiness-evidence]').forEach(card=>{
+    const check=status.checks.find(item=>String(item.code)===String(card.dataset.readinessEvidence));
+    card.classList.toggle('govEvidenceComplete',Boolean(check?.complete));
+    card.classList.toggle('govEvidenceMissing',!check?.complete);
+  });
+  return status;
+}
 async function openCommerceReadiness(accountId,role,businessId,label=''){
   try{
     const qs=role==='merchant'?('?business_id='+encodeURIComponent(businessId)):'';
@@ -248,27 +300,27 @@ async function openCommerceReadiness(accountId,role,businessId,label=''){
       ?requirements.map((req,index)=>{
         const item=currentEvidence.get(req.code)||{};
         const verified=item.outcome==='verified',na=item.outcome==='not_applicable';
-        return `<div class="govCard" data-readiness-evidence="${gh(req.code)}"><small>REVIEW ITEM ${index+1}</small><h3>${gh(req.label||req.code)}</h3><p>${gh(req.description||'')}</p><label>Outcome<select data-evidence-outcome><option value="">Choose…</option><option value="verified" ${verified?'selected':''}>Verified</option>${req.allow_not_applicable?`<option value="not_applicable" ${na?'selected':''}>Not applicable — sourced decision</option>`:''}</select></label><label>Evidence / record reference<input data-evidence-reference value="${gh(item.reference||'')}" placeholder="Document ID, credential ID, official record or internal evidence reference"></label><label>Source / authority<input data-evidence-source value="${gh(item.source_authority||'')}" placeholder="e.g. Bacoor BPLO, BIR, DTI, PRC, TESDA, platform record"></label><label>Reviewer note<textarea data-evidence-note rows="2" placeholder="Why this satisfies the requirement, or why it is not applicable">${gh(item.note||'')}</textarea></label></div>`;
+        return `<div class="govCard" data-readiness-evidence="${gh(req.code)}"><small>REVIEW ITEM ${index+1}</small><h3>${gh(req.label||req.code)}</h3><p>${gh(req.description||'')}</p><label>Outcome<select data-evidence-outcome><option value="">Choose…</option><option value="verified" ${verified?'selected':''}>Verified</option>${req.allow_not_applicable?`<option value="not_applicable" ${na?'selected':''}>Not applicable — sourced decision</option>`:''}</select></label><label>Evidence / record reference<input data-evidence-reference value="${gh(item.reference||'')}" placeholder="Document ID, credential ID, official record or internal evidence reference"></label><label>Source / authority<input data-evidence-source value="${gh(item.source_authority||'')}" placeholder="Name the issuer, official source or Business & Life platform record"></label><label>Reviewer note<textarea data-evidence-note rows="2" placeholder="Why this satisfies the requirement, or why it is not applicable">${gh(item.note||'')}</textarea></label></div>`;
       }).join('')
       :'<div class="govNotice">Set the activity track and operating context before commerce eligibility can be reviewed.</div>';
+    const grantAllowed=r.decision_policy?.can_grant_commerce===true;
+    const selected=['eligible_limited','eligible_full'].includes(r.commerce_state)?r.commerce_state:'readiness_only';
     openGov(head('Commerce readiness',label||GOV_META[role]?.label||role,true)+
-      `<section class="govCard"><h3>Current readiness</h3><div class="govStatusLine"><span>Readiness stage</span><strong>${gh(gn(r.readiness_stage||'starting'))}</strong></div><div class="govStatusLine"><span>Activity track</span><strong>${gh(gn(r.activity_track||'not set'))}</strong></div><div class="govStatusLine"><span>Operating context</span><strong>${gh(gn(r.operating_context||'not set'))}</strong></div><div class="govStatusLine"><span>Commerce capability</span><strong>${gh(gn(r.commerce_state||'readiness_only'))}</strong></div><div class="govStatusLine"><span>Policy version</span><strong>${gh(r.policy_version||'')}</strong></div><div class="govNotice">Profile Authorization remains a separate gate. Who decides: an active Super Admin performs the Business & Life commerce-readiness review. Government agencies or professional regulators remain the authority for their own permits, registrations and licences. Business & Life only records whether the applicable requirement was resolved; it does not issue or replace government authority.</div></section><section class="govCard"><h3>Evidence checklist</h3><p>Every required item must be resolved before eligibility is granted. “Not applicable” is allowed only where the policy permits it and requires a source/authority plus a reason.</p></section>${checklist}<section class="govCard"><h3>Super Admin commerce decision</h3><form id="commerceReviewForm" class="govForm"><label>Decision<select id="commerceReviewState"><option value="readiness_only" ${r.commerce_state==='readiness_only'?'selected':''}>Readiness only</option><option value="eligible_limited" ${r.commerce_state==='eligible_limited'?'selected':''}>Eligible — limited scope</option><option value="eligible_full" ${r.commerce_state==='eligible_full'?'selected':''}>Eligible — full platform scope</option></select></label><label>Review reason<textarea id="commerceReviewReason" rows="3" placeholder="Summarise what was reviewed and why the platform decision is justified"></textarea></label><label>Limited-scope note<textarea id="commerceScopeNote" rows="2" placeholder="Required for limited eligibility: territory, activity/category and capability limitations"></textarea></label><button class="govBtn" type="submit">Save commerce decision</button><div id="commerceReviewMsg" class="govMessage"></div></form></section>`);
+      `<section class="govCard"><h3>Current readiness</h3><div class="govStatusLine"><span>Readiness stage</span><strong>${gh(gn(r.readiness_stage||'starting'))}</strong></div><div class="govStatusLine"><span>Activity track</span><strong>${gh(gn(r.activity_track||'not set'))}</strong></div><div class="govStatusLine"><span>Operating context</span><strong>${gh(gn(r.operating_context||'not set'))}</strong></div><div class="govStatusLine"><span>Current server state</span><strong>${gh(gn(r.commerce_state||'readiness_only'))}</strong></div><div class="govStatusLine"><span>Policy version</span><strong>${gh(r.policy_version||'')}</strong></div><div class="govNotice">Profile Authorization remains a separate gate. Government agencies or professional regulators remain the authority for their own permits, registrations and licences. Business & Life records evidence; it does not replace those authorities.</div></section><section class="govCard"><h3>Evidence checklist</h3><p id="commerceReviewProgress">${Number(r.review_status?.resolved||0)} of ${requirements.length} checks complete</p><p>Every required item must be complete before Limited or Full becomes selectable. “Not applicable” is allowed only where the policy permits it and still requires a source/authority plus a reason.</p></section>${checklist}<section class="govCard"><h3>Super Admin commerce decision</h3><div id="commerceReviewBlockers"></div><form id="commerceReviewForm" class="govForm"><label>Decision<select id="commerceReviewState"><option value="readiness_only" ${selected==='readiness_only'?'selected':''}>Readiness only — keep public commerce locked</option><option value="eligible_limited" ${selected==='eligible_limited'?'selected':''} ${!grantAllowed?'disabled':''}>Eligible — limited scope${!grantAllowed?' (complete evidence first)':''}</option><option value="eligible_full" ${selected==='eligible_full'?'selected':''} ${!grantAllowed?'disabled':''}>Eligible — full platform scope${!grantAllowed?' (complete evidence first)':''}</option></select></label><label>Review reason<textarea id="commerceReviewReason" rows="3" placeholder="Summarise what was reviewed and why the platform decision is justified"></textarea></label><label>Limited-scope note<textarea id="commerceScopeNote" rows="2" placeholder="Required for limited eligibility: territory, activity/category and capability limitations"></textarea></label><button class="govBtn" type="submit">Save commerce decision</button><div id="commerceReviewMsg" class="govMessage"></div></form></section>`);
     document.querySelector('[data-gov-back]')?.addEventListener('click',()=>renderAdmin('commerce'));
+    document.querySelectorAll('[data-evidence-outcome],[data-evidence-reference],[data-evidence-source],[data-evidence-note]').forEach(control=>{control.addEventListener('input',()=>syncGovCommerceControls(r));control.addEventListener('change',()=>syncGovCommerceControls(r))});
+    document.getElementById('commerceReviewState').addEventListener('change',()=>syncGovCommerceControls(r));
+    syncGovCommerceControls(r);
     document.getElementById('commerceReviewForm').onsubmit=async event=>{
       event.preventDefault();
       const state=document.getElementById('commerceReviewState').value;
       const reason=document.getElementById('commerceReviewReason').value.trim();
       const scopeNote=document.getElementById('commerceScopeNote').value.trim();
+      const draft=syncGovCommerceControls(r);
+      if(state!=='readiness_only'&&!draft.canGrant){document.getElementById('commerceReviewMsg').textContent='Limited and Full stay locked until every required evidence item is complete.';document.getElementById('commerceReviewMsg').className='govMessage error';return}
       if(state!=='readiness_only'&&!reason)return gtoast('Record the review reason before granting commerce eligibility.');
       if(state==='eligible_limited'&&!scopeNote)return gtoast('Define the limited commerce scope before granting limited eligibility.');
-      const eligibility_evidence=[...document.querySelectorAll('[data-readiness-evidence]')].map(card=>({
-        code:card.dataset.readinessEvidence,
-        outcome:card.querySelector('[data-evidence-outcome]')?.value||'',
-        reference:card.querySelector('[data-evidence-reference]')?.value.trim()||'',
-        source_authority:card.querySelector('[data-evidence-source]')?.value.trim()||'',
-        note:card.querySelector('[data-evidence-note]')?.value.trim()||''
-      }));
-      if(state!=='readiness_only'&&eligibility_evidence.some(item=>!item.outcome))return gtoast('Resolve every evidence checklist item before granting commerce eligibility.');
+      const eligibility_evidence=govCommerceEvidence();
       const payload={
         commerce_state:state,
         reason,
@@ -276,13 +328,18 @@ async function openCommerceReadiness(accountId,role,businessId,label=''){
         commerce_scope:state==='eligible_limited'?{note:scopeNote}:{}
       };
       if(role==='merchant')payload.business_id=businessId;
-      const msg=document.getElementById('commerceReviewMsg');msg.textContent='Saving governed decision…';
+      const msg=document.getElementById('commerceReviewMsg'),button=document.querySelector('#commerceReviewForm button[type="submit"]');button.disabled=true;msg.textContent='Saving governed decision…';msg.className='govMessage';
       try{
         await gapi('/api/governance/admin/readiness/'+accountId+'/'+encodeURIComponent(role)+'/review',{method:'POST',body:JSON.stringify(payload)});
         gtoast('Commerce readiness decision saved.');
         govOverview=await gapi('/api/governance/admin/overview');
         renderAdmin('commerce');
-      }catch(error){msg.textContent=error.message;msg.className='govMessage error'}
+      }catch(error){
+        const blockers=Array.isArray(error.payload?.decision_policy?.blockers)?error.payload.decision_policy.blockers:[];
+        msg.innerHTML='<strong>'+gh(error.message)+'</strong>'+(blockers.length?'<ul>'+blockers.map(item=>'<li>'+gh(item.label||gn(item.code||'requirement'))+'</li>').join('')+'</ul>':'');
+        msg.className='govMessage error';
+        syncGovCommerceControls(r);
+      }
     };
   }catch(error){gtoast(error.message)}
 }
