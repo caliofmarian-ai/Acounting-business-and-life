@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const accounting=read('public/business-accounting-ui.js');
 const production=read('public/v03.js');
+const index=read('public/index.html');
 
 test('business workspace selector switches context in-app without hard reload',()=>{
   assert.doesNotMatch(accounting,/location\.reload\(\)/);
@@ -18,11 +19,21 @@ test('workspace switch refreshes only the visible role surface without rebuildin
   assert.match(accounting,/mountWorkspaceBar\(\)/);
   assert.match(accounting,/wireSupplierAccountingTile\(\)/);
   assert.match(accounting,/supplierAccountingMode/);
-  assert.match(accounting,/mountEconomicSummary\('viewDashboard'\)/);
+  assert.match(accounting,/mountEconomicSummary\('supplierFinanceSummary'\)/);
   assert.match(production,/abl:business-workspace-changed/);
   assert.match(production,/invalidateMerchantToday\(\)/);
   assert.match(production,/loadMerchantToday\(\{force:true\}\)/);
   assert.doesNotMatch(production,/refreshAll\(/);
+});
+
+test('Supplier Finance owns a dedicated surface and waits for exact Supplier business context',()=>{
+  assert.match(index,/id="supplierAccountingWorkspace"/);
+  assert.match(index,/Finance &amp; Accounting/);
+  assert.match(index,/id="supplierFinanceSummary"/);
+  assert.match(accounting,/ensureSupplierAccountingContext/);
+  assert.match(accounting,/state\?\.role!=='supplier'/);
+  assert.match(accounting,/mountEconomicSummary\('supplierFinanceSummary'\)/);
+  assert.doesNotMatch(accounting,/querySelector\('\.bottomNav \[data-view="Dashboard"\]'\)\?\.click/);
 });
 
 test('accounting workspace requires canonical Profile surface and never refetches identity',()=>{

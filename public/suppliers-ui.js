@@ -729,6 +729,7 @@ async function renderSupplierWorkspace(section=supSupplierSection){
     else body=supplierOrdersPanel(pos,normalized);
     supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supHero"><h2>Supply local businesses from one account.</h2><p>Catalog, order response, ETA and fulfilment stay separate so Merchants can rely on the right status.</p></section><div data-bl-pricing="supplier"></div>`+body;
     bindSupBack();bindSupplierWorkspace();
+    document.dispatchEvent(new CustomEvent('abl:clear-context-help'));
   }catch(err){
     supplierWorkspaceError(normalized,err);
   }
