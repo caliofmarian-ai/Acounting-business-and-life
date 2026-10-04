@@ -618,12 +618,13 @@ async function reconciledCourierRecord(accountId){
 }
 async function courierOfferGateFromDb(db,courier,delivery){
   const territoryId=await deliveryTerritoryId(db,delivery.business_id);
-  const [territoryAuthorized,hasActiveDelivery,eligibilityRecord,controlledTestDelivery]=await Promise.all([
-    courierTerritoryAuthorized(db,courier.account_id,territoryId),
-    courierHasActiveDelivery(db,courier.account_id,{excludeDeliveryId:delivery.id}),
-    reconcileCourierEligibility(db,courier.account_id,{lock:true,withdrawOffers:true}),
-    deliveryIsControlledTestWork(db,delivery)
-  ]);
+  // This helper also runs inside an explicit transaction with a checked-out
+  // pg Client. Keep its queries ordered: pg Clients do not support concurrent
+  // queries, and doing so can race the eligibility reconciliation lock.
+  const territoryAuthorized=await courierTerritoryAuthorized(db,courier.account_id,territoryId);
+  const hasActiveDelivery=await courierHasActiveDelivery(db,courier.account_id,{excludeDeliveryId:delivery.id});
+  const eligibilityRecord=await reconcileCourierEligibility(db,courier.account_id,{lock:true,withdrawOffers:true});
+  const controlledTestDelivery=await deliveryIsControlledTestWork(db,delivery);
   const canonical=eligibilityRecord
     ?courierEligibilityProfileView(eligibilityRecord.profile,eligibilityRecord.documents):courier;
   return deliveryOfferCourierGate(canonical,delivery,{

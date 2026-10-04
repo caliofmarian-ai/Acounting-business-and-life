@@ -53,6 +53,11 @@ test('Courier acceptance exercises real delivery lifecycle and secure completion
   assert.match(courier,/live_tracking_closed_after_completion:true/);
 });
 
+test('Courier acceptance correlates offer notifications to their Delivery',()=>{
+  assert.match(courier,/x\.event_code==='delivery\.offer_received'/);
+  assert.match(courier,/x\.data_json\?\.delivery_id/);
+});
+
 test('Courier acceptance does not reuse terminal Delivery economics evidence',()=>{
   assert.match(courier,/o\.order_status NOT IN \('completed','cancelled'\)/);
   assert.match(courier,/d\.status NOT IN \('delivered','failed','cancelled'\)/);

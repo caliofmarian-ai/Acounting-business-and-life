@@ -491,8 +491,9 @@ async function verifyDeliveryNotifications({base,customerToken,merchantToken,cou
     expectStatus(merchant,200,'Merchant Delivery notifications');
     expectStatus(courier,200,'Courier Delivery notifications');
 
-    const pick=result=>(Array.isArray(result.json)?result.json:[]).filter(
-      x=>x.entity_type==='delivery'&&Number(x.entity_id)===Number(deliveryId)
+    const pick=result=>(Array.isArray(result.json)?result.json:[]).filter(x=>
+      (x.entity_type==='delivery'&&Number(x.entity_id)===Number(deliveryId))||
+      (x.event_code==='delivery.offer_received'&&Number(x.data_json?.delivery_id)===Number(deliveryId))
     );
     customerRows=pick(customer);merchantRows=pick(merchant);courierRows=pick(courier);
     const has=(rows,codes)=>codes.every(code=>rows.some(x=>x.event_code===code));

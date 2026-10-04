@@ -41,6 +41,11 @@ test('priority commerce and operations events are wired into one notification ga
   ]) assert.match(server,new RegExp(marker.replace('.','\\.')));
 });
 
+test('Courier offer notifications preserve their offer identity and Delivery correlation',()=>{
+  assert.match(server,/entityType:'delivery_offer'/);
+  assert.match(server,/delivery_id:Number\(offer\.delivery_id\)/);
+});
+
 test('Marketplace checkout emits the same Merchant new-order notification as legacy order creation',()=>{
   assert.match(server,/async function emitOrderCreated/);
   assert.ok(server.includes("app.post('/api/orders'"));

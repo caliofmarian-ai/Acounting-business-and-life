@@ -187,6 +187,7 @@ test('runtime routes use the canonical policy for approval availability and disp
   assert.match(server,/COURIER_ELIGIBILITY_INCOMPLETE/);
   assert.match(server,/missing_requirements/);
   assert.match(server,/offer_withdrawn_test_isolation/);
+  assert.doesNotMatch(server,/const \[territoryAuthorized,hasActiveDelivery,eligibilityRecord,controlledTestDelivery\]=await Promise\.all/);
   assert.match(finance,/eligibility_status=CASE WHEN \$6 AND eligibility_status='approved' THEN 'pending'/);
   assert.match(auth,/UPDATE delivery_offers SET status='withdrawn'/);
   assert.match(auth,/SELECT id,document_type,vehicle_class,issue_date,expiry_date,private_evidence_object_id,verification_status/);
