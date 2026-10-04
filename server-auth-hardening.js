@@ -1087,7 +1087,7 @@ function proxy(req,res,next){
   return incidentsApp(req,res,next);
 }
 app.use(proxy);
-app.use((err, _req, res, _next) => { console.error(err); if (res.headersSent) return; res.status(err.status || 500).json({ error: err.status ? err.message : 'Unexpected authentication error' }); });
+app.use((err, _req, res, _next) => { console.error(err); if (res.headersSent) return; const payload={ error: err.status ? err.message : 'Unexpected authentication error' }; if(err?.code)payload.code=String(err.code); res.status(err.status || 500).json(payload); });
 
 let embeddedStartPromise = null;
 export async function startEmbeddedAuthHardening() {
