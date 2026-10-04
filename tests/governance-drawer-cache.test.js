@@ -20,8 +20,9 @@ test('drawer and foreground refreshes use cache instead of forcing three request
 
 test('Governance mutations force fresh state after writes',()=>{
   const forced=(ui.match(/refreshGov\(true\)/g)||[]).length;
-  assert.ok(forced>=8,'expected mutation paths to force governance refresh');
-  assert.match(ui,/invitations\/\$\{inv\.id\}\/accept[\s\S]{0,180}refreshGov\(true\)/);
-  assert.match(ui,/applications\/\$\{a\.id\}\/submit[\s\S]{0,180}refreshGov\(true\)/);
+  assert.ok(forced>=6,'expected mutation paths to force governance refresh');
+  assert.match(ui,/invitations\/\$\{inv\.id\}\/accept[\s\S]{0,240}reconcileGovApplication/);
+  assert.match(ui,/applications\/\$\{a\.id\}\/submit[\s\S]{0,420}reconcileGovApplication/);
+  assert.match(ui,/reconcileGovApplication[\s\S]{0,260}refreshGov\(true\)/);
   assert.match(ui,/Application .*approved[\s\S]{0,500}refreshGov\(true\)/);
 });

@@ -9,6 +9,7 @@ const governance=read('server-profile-governance.js');
 const notifications=read('server-notifications.js');
 const notificationUi=read('public/notifications-ui.js');
 const core=read('notification-core.js');
+const stateCore=read('profile-application-state-core.js');
 
 test('applicant review screen explains status next steps and profile lock',()=>{
   assert.match(userUi,/Application under review/);
@@ -23,7 +24,7 @@ test('submitted and under-review applications can append evidence without rewrit
   assert.match(userUi,/canAddEvidence=canEdit\|\|pendingReview/);
   assert.match(userUi,/Your application details stay locked while Admin reviews the submitted version/);
   assert.match(governance,/status IN \('application_started','requirements_pending','rejected','submitted','under_review'\)/);
-  assert.match(governance,/Application can no longer be edited in its current state/);
+  assert.match(stateCore,/Application can no longer be edited in its current state/);
   assert.match(governance,/application_evidence_added/);
   assert.match(governance,/UPDATE profile_applications SET updated_at=NOW\(\) WHERE id=\$1/);
 });
@@ -40,8 +41,8 @@ test('Admin can explicitly request more information with applicant-facing reason
   assert.match(adminUi,/Request more information/);
   assert.match(adminUi,/Message to applicant \/ review note/);
   assert.match(adminUi,/included in their review update/);
-  assert.match(governance,/requirements_pending'\]\.includes\(decision\)|'requirements_pending'\]\.includes/);
-  assert.match(governance,/decision==='requirements_pending'/);
+  assert.match(stateCore,/requirements_pending:'requirements_pending'/);
+  assert.match(governance,/applicationStatusAfterReview\(application\.status,decision\)/);
   assert.match(governance,/Explain what information or correction is required/);
 });
 
@@ -51,7 +52,8 @@ test('profile review notifications carry human-readable status guidance and revi
   assert.match(notifications,/status_explanation/);
   assert.match(notifications,/next_step/);
   assert.match(notifications,/reviewer_note_text/);
-  assert.match(notifications,/review:\$\{a\.status\}:\$\{clean\(a\.updated_at,80\)\}/);
+  assert.match(notifications,/review:\$\{a\.review_event_id\|\|clean\(a\.updated_at,80\)\}/);
+  assert.match(notifications,/applicationInfo\(req\.params\.id,committed\?\.review_event_id\)/);
   assert.match(core,/profileReviewEmailHtml/);
   assert.match(core,/Current review status/);
   assert.match(core,/What this means/);

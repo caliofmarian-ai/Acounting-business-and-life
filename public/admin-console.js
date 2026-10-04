@@ -180,6 +180,28 @@ function setAdminApplicationRoute(id=null){
   if(Number.isSafeInteger(Number(id))&&Number(id)>0)url.searchParams.set('application',String(Number(id)));
   history.replaceState({application:id?Number(id):null},'',url.pathname+url.search);
 }
+function applicationReviewHistoryHtml(a){
+  const history=Array.isArray(a?.review_history)?a.review_history:[];
+  return '<section class="card" id="applicationReviewHistory"><h3>Review history</h3><p class="muted">Committed decisions retain the reviewer, time, note and evidence attestation.</p>'+(history.length?'<div class="memberTimeline">'+history.map(item=>'<article class="memberTimelineItem"><div><strong>'+esc(readableCode(item.to_status||item.decision||'updated'))+'</strong><span>'+esc(item.created_at?new Date(item.created_at).toLocaleString('en-PH'):'Time unavailable')+'</span></div><p class="muted">'+esc(item.reviewer_name||('Admin account '+item.reviewer_account_id))+' · evidence '+(item.evidence_attested?'attested':'not attested')+(item.adult_eligibility_attested?' · adult eligibility attested':'')+'</p>'+(item.reviewer_note?'<p>'+esc(item.reviewer_note)+'</p>':'')+'</article>').join('')+'</div>':'<p class="muted">No committed review decisions yet.</p>')+'</section>';
+}
+function expectedApplicationReviewStatus(decision){return({approve:'approved',reject:'rejected',under_review:'under_review',requirements_pending:'requirements_pending'})[decision]||''}
+function patchCommittedApplicationOverview(previous,committed){
+  if(!state.overview||!committed?.id)return{...previous,...committed};
+  const merged={...previous,...committed},applications=[...(state.overview.applications||[])],index=applications.findIndex(row=>Number(row.id)===Number(committed.id));
+  if(index>=0)applications[index]=merged;else applications.unshift(merged);
+  const pending=applications.filter(row=>['submitted','under_review'].includes(String(row.status||''))).length;
+  const byRole={};for(const row of applications)if(['submitted','under_review'].includes(String(row.status||'')))byRole[row.role]=Number(byRole[row.role]||0)+1;
+  state.overview={...state.overview,applications,summary:{...(state.overview.summary||{}),pending_applications:pending,pending_applications_by_role:byRole}};
+  return merged;
+}
+function setApplicationReviewBusy(form,busy,decision=''){
+  form.setAttribute('aria-busy',busy?'true':'false');
+  form.querySelectorAll('[data-review-decision]').forEach(action=>{action.disabled=busy});
+  if(busy){const out=form.querySelector('#applicationReviewResult'),label=decision==='approve'?'Approving profile':decision==='reject'?'Rejecting application':decision==='requirements_pending'?'Requesting more information':'Saving review state';if(out)out.innerHTML='<div class="notice" role="status">'+esc(label)+'… The committed result will appear here.</div>'}
+}
+function refreshAdminOverviewAfterReview(){
+  api('/api/admin/overview').then(overview=>{if(overview&&Array.isArray(overview.applications))state.overview=overview}).catch(error=>console.warn('Admin application overview reconciliation:',error.message));
+}
 async function openAdminApplication(id){
   const applicationId=Number(id);if(!Number.isSafeInteger(applicationId)||applicationId<1)return showError(new Error('Application ID is invalid.'));
   setAdminApplicationRoute(applicationId);
@@ -193,7 +215,7 @@ async function openAdminApplication(id){
     const adultEligibilityReview=adultEligibility.company_test_exempt
       ?'<section class="card"><h3>Adult eligibility</h3><p><strong>Controlled QA exemption.</strong> This company-managed test identity is not a personal applicant.</p></section>'
       :'<section class="card"><h3>Adult eligibility</h3><p>Status: <strong>'+esc(String(adultEligibility.status||'pending').replaceAll('_',' '))+'</strong>. Self-declaration is not represented as verified age.</p>'+(reviewable?'<label class="inlineChoice"><input type="checkbox" name="adult_eligibility_reviewed"><span>I completed a human review of the available eligibility and identity context and confirm this applicant may enter the adult-only PH pilot. I am not recording a date of birth or claiming automated verification.</span></label>':'')+'</section>';
-    p.innerHTML='<button type="button" class="secondary supportBack" id="profileReviewBack">← Back to Profile requests</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">APPLICATION #'+Number(a.id)+'</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status">'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Scoped territory')+'</span><span>'+esc(a.email||'')+'</span></div>'+(a.proposed_business_name?'<section class="card"><h3>Proposed business</h3><p>'+esc(a.proposed_business_name)+'</p></section>':'')+(a.applicant_note?'<section class="card"><h3>Applicant note</h3><p>'+esc(a.applicant_note)+'</p></section>':'')+(data.professional_headline||data.about||data.service_area?'<section class="card"><h3>Application details</h3>'+(data.professional_headline?'<p><strong>'+esc(data.professional_headline)+'</strong></p>':'')+(data.about?'<p>'+esc(data.about)+'</p>':'')+(data.service_area?'<p class="muted">Service area: '+esc(data.service_area)+'</p>':'')+'</section>':'')+applicationEvidenceHtml(a)+adultEligibilityReview+(reviewable?'<form id="adminApplicationReview" class="adminForm">'+applicationCategoryChoices(a)+'<label>Message to applicant / review note<textarea name="reason" maxlength="1000" placeholder="Explain the review status or what the applicant needs to provide"></textarea><small class="muted">This message is visible to the applicant and is included in their review update.</small></label><label class="inlineChoice"><input type="checkbox" name="confirmed"><span>I reviewed enough evidence to make an approve or reject access decision.</span></label><div class="adminDecisionGrid"><button class="secondary" type="button" data-review-decision="under_review">Keep under review</button><button class="secondary" type="button" data-review-decision="requirements_pending">Request more information</button><button class="secondary adminDanger" type="button" data-review-decision="reject">Reject</button><button class="primary" type="button" data-review-decision="approve">Approve profile</button></div><div id="applicationReviewResult"></div></form>':'<div class="notice">This application is not awaiting a review decision.</div>')+'</section>';
+    p.innerHTML='<button type="button" class="secondary supportBack" id="profileReviewBack">← Back to Profile requests</button><section class="adminDetail"><div class="sectionTitle"><div><small class="muted">APPLICATION #'+Number(a.id)+'</small><h2>'+esc(a.display_name||a.email||('Account '+a.account_id))+'</h2></div><span class="status" data-application-status>'+esc(a.status)+'</span></div><div class="supportMeta"><span>'+esc(profileRoleLabel(a.role))+'</span><span>'+esc(a.territory_name||'Scoped territory')+'</span><span>'+esc(a.email||'')+'</span></div>'+(a.proposed_business_name?'<section class="card"><h3>Proposed business</h3><p>'+esc(a.proposed_business_name)+'</p></section>':'')+(a.applicant_note?'<section class="card"><h3>Applicant note</h3><p>'+esc(a.applicant_note)+'</p></section>':'')+(data.professional_headline||data.about||data.service_area?'<section class="card"><h3>Application details</h3>'+(data.professional_headline?'<p><strong>'+esc(data.professional_headline)+'</strong></p>':'')+(data.about?'<p>'+esc(data.about)+'</p>':'')+(data.service_area?'<p class="muted">Service area: '+esc(data.service_area)+'</p>':'')+'</section>':'')+applicationEvidenceHtml(a)+adultEligibilityReview+applicationReviewHistoryHtml(a)+(reviewable?'<form id="adminApplicationReview" class="adminForm">'+applicationCategoryChoices(a)+'<label>Message to applicant / review note<textarea name="reason" maxlength="1000" placeholder="Explain the review status or what the applicant needs to provide"></textarea><small class="muted">This message is visible to the applicant and is included in their review update.</small></label><label class="inlineChoice"><input type="checkbox" name="confirmed"><span>I reviewed enough evidence to make an approve or reject access decision.</span></label><div class="adminDecisionGrid"><button class="secondary" type="button" data-review-decision="under_review">Keep under review</button><button class="secondary" type="button" data-review-decision="requirements_pending">Request more information</button><button class="secondary adminDanger" type="button" data-review-decision="reject">Reject</button><button class="primary" type="button" data-review-decision="approve">Approve profile</button></div><div id="applicationReviewResult"></div></form>':'<div class="notice">This application is not awaiting a review decision. Its committed review history remains available above.</div>')+'</section>';
     document.getElementById('profileReviewBack').onclick=async()=>{setAdminApplicationRoute(null);state.active='members';state.memberHubTab='requests';shell();await renderActive()};
     p.querySelectorAll('[data-application-document]').forEach(b=>b.onclick=()=>viewAdminApplicationDocument(b.dataset.applicationDocument));
     const form=document.getElementById('adminApplicationReview');
@@ -205,16 +227,24 @@ async function openAdminApplication(id){
       if(decision==='reject'&&!reason){out.innerHTML='<div class="error">Add a reason before rejecting an application.</div>';return}
       if(decision==='requirements_pending'&&!reason){out.innerHTML='<div class="error">Tell the applicant exactly what information or document is needed.</div>';return}
       const approvedCategoryIds=[...form.querySelectorAll('[name="approved_category_ids"]:checked')].map(x=>Number(x.value));
-      button.disabled=true;
+      setApplicationReviewBusy(form,true,decision);
       try{
-        await api('/api/governance/admin/applications/'+Number(a.id)+'/review',{method:'POST',body:JSON.stringify({decision,reason,approved_category_ids:approvedCategoryIds,adult_eligibility_reviewed:adultEligibilityReviewed})});
-        await loadBase();
-        if(decision==='under_review'){state.active='members';state.memberHubTab='requests';shell();await openAdminApplication(a.id)}
-        else{setAdminApplicationRoute(null);state.active='members';
-          state.memberHubTab=decision==='approve'&&isSuperAdmin()&&['merchant','service_provider'].includes(a.role)?'commerce':'requests';
-          shell();await renderActive()
+        const committed=await api('/api/governance/admin/applications/'+Number(a.id)+'/review',{method:'POST',body:JSON.stringify({decision,reason,approved_category_ids:approvedCategoryIds,adult_eligibility_reviewed:adultEligibilityReviewed,evidence_attested:Boolean(form.confirmed.checked)})});
+        const expected=expectedApplicationReviewStatus(decision);
+        if(committed?.committed!==true||committed?.status!==expected)throw new Error('The server did not return the committed review state. Refresh before retrying.');
+        const merged=patchCommittedApplicationOverview(a,committed);
+        p.querySelector('[data-application-status]').textContent=committed.status;
+        const history=p.querySelector('#applicationReviewHistory');if(history)history.outerHTML=applicationReviewHistoryHtml(merged);
+        setAdminApplicationRoute(a.id);
+        if(['approve','reject','requirements_pending'].includes(decision)){
+          form.outerHTML='<div class="notice" id="applicationReviewCommitted" role="status"><strong>'+esc(readableCode(committed.status))+' — committed.</strong><br>The queue, applicant notification and immutable review history now use this same state. Use “Back to Profile requests” to see the updated queue; this application URL remains valid.</div>';
+        }else{
+          setApplicationReviewBusy(form,false);
+          form.reason.value='';
+          out.innerHTML='<div class="notice" role="status"><strong>Under review — committed.</strong><br>The applicant and queue now show the same state.</div>';
         }
-      }catch(error){out.innerHTML='<div class="error">'+esc(error.message)+'</div>';button.disabled=false}
+        refreshAdminOverviewAfterReview();
+      }catch(error){out.innerHTML='<div class="error" role="alert">'+esc(error.message)+'</div>';setApplicationReviewBusy(form,false)}
     });
   }catch(error){showError(error)}
 }

@@ -18,6 +18,13 @@ import {
   readPrivateEvidence,sendPrivateEvidence,storePrivateEvidence
 } from './private-evidence-core.js';
 import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,setMicrobusinessCommerceState} from './microbusiness-readiness-core.js';
+import {
+  PROFILE_APPLICATION_STATES,
+  applicationStatusAfterReview,
+  applicationStatusAfterSave,
+  applicationStatusAfterSubmit,
+  profileProjectionForApplication
+} from './profile-application-state-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,7 +35,7 @@ const body = express.json({ limit: '2800kb' });
 const INVITE_ROLES = new Set(['merchant','supplier','courier']);
 const GOVERNED_ROLES = new Set(['merchant','supplier','courier','service_provider']);
 const TOKEN_SECRET=process.env.TOKEN_SECRET||'';
-const APPLICATION_STATES = new Set(['application_started','requirements_pending','submitted','under_review','approved','rejected','suspended','revoked']);
+const APPLICATION_STATES = new Set(PROFILE_APPLICATION_STATES);
 const APPLICATION_EVIDENCE_MIMES=new Set(['application/pdf','image/png','image/jpeg','image/webp']);
 const MAX_APPLICATION_EVIDENCE_BYTES=2_000_000;
 let authHardeningApp=null;
@@ -66,7 +73,47 @@ async function ensureSuperAdminSelfProfile(client,me,role){
   if(role==='courier')await client.query(`INSERT INTO courier_profiles(account_id,display_name,eligibility_status,available,non_commercial_test_only,approval_note) VALUES($1,$2,'pending',FALSE,TRUE,'Super Admin self-test only — private, non-commercial and blocked from real delivery work.') ON CONFLICT(account_id) DO UPDATE SET display_name=COALESCE(NULLIF(courier_profiles.display_name,''),EXCLUDED.display_name),eligibility_status='pending',available=FALSE,non_commercial_test_only=TRUE,approval_note='Super Admin self-test only — private, non-commercial and blocked from real delivery work.',updated_at=NOW()`,[accountId,displayName]);
   if(role==='service_provider')await client.query(`INSERT INTO service_provider_profiles(account_id,display_name,professional_headline,about,service_area,years_experience) VALUES($1,$2,'','','',NULL) ON CONFLICT(account_id) DO UPDATE SET display_name=CASE WHEN service_provider_profiles.display_name='' THEN EXCLUDED.display_name ELSE service_provider_profiles.display_name END,updated_at=NOW()`,[accountId,displayName]);
 }
-async function applicationFor(accountId,role){const r=await pool.query(`SELECT pa.*,t.name territory_name,t.status territory_status FROM profile_applications pa LEFT JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 AND pa.role=$2 ORDER BY pa.created_at DESC LIMIT 1`,[accountId,role]);return r.rows[0]||null}
+async function applicationReviewHistory(applicationId,db=pool){const r=await db.query(`
+  SELECT h.id,h.application_id,h.from_status,h.decision,h.to_status,h.reviewer_account_id,
+         reviewer.display_name reviewer_name,h.reviewer_note,h.evidence_attested,
+         h.adult_eligibility_attested,h.approved_category_ids,h.created_at
+    FROM profile_application_reviews h
+    JOIN accounts reviewer ON reviewer.id=h.reviewer_account_id
+   WHERE h.application_id=$1
+   ORDER BY h.created_at DESC,h.id DESC
+`,[Number(applicationId)]);return r.rows}
+async function applicationSnapshot(applicationId,db=pool){const r=await db.query(`
+  SELECT pa.*,t.name territory_name,t.status territory_status,reviewer.display_name reviewer_name,
+         p.status profile_status,p.enabled profile_enabled
+    FROM profile_applications pa
+    LEFT JOIN territories t ON t.id=pa.territory_id
+    LEFT JOIN accounts reviewer ON reviewer.id=pa.reviewed_by_account_id
+    LEFT JOIN profiles p ON p.account_id=pa.account_id AND p.role=pa.role
+   WHERE pa.id=$1
+`,[Number(applicationId)]);if(!r.rowCount)return null;return{...r.rows[0],review_history:await applicationReviewHistory(applicationId,db)}}
+async function syncProfileApplicationProjection(client,application){
+  const projection=profileProjectionForApplication(application.status);
+  await client.query(`
+    INSERT INTO profiles(account_id,role,enabled,visibility,status)
+    VALUES($1,$2,$3,$4,$5)
+    ON CONFLICT(account_id,role) DO UPDATE SET
+      enabled=EXCLUDED.enabled,
+      visibility=CASE WHEN EXCLUDED.enabled=TRUE AND profiles.visibility='public' THEN 'public' ELSE EXCLUDED.visibility END,
+      status=EXCLUDED.status,
+      updated_at=NOW()
+  `,[application.account_id,application.role,projection.enabled,projection.visibility,projection.status]);
+  return projection;
+}
+async function recordApplicationReview(client,{application,decision,toStatus,reviewerAccountId,reviewerNote,evidenceAttested,adultEligibilityAttested,approvedCategoryIds,correlationId}){
+  const r=await client.query(`
+    INSERT INTO profile_application_reviews(
+      application_id,from_status,decision,to_status,reviewer_account_id,reviewer_note,
+      evidence_attested,adult_eligibility_attested,approved_category_ids,correlation_id
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+    RETURNING *
+  `,[application.id,application.status,decision,toStatus,reviewerAccountId,reviewerNote,Boolean(evidenceAttested),Boolean(adultEligibilityAttested),JSON.stringify(approvedCategoryIds),correlationId]);
+  return r.rows[0];
+}
 async function audit(actorId,eventCode,targetAccountId=null,role='',territoryId=null,detail={}){await pool.query(`INSERT INTO profile_governance_events(actor_account_id,event_code,target_account_id,role,territory_id,detail_json) VALUES($1,$2,$3,$4,$5,$6::jsonb)`,[actorId,clean(eventCode,100),targetAccountId,clean(role,40),territoryId,JSON.stringify(detail)]).catch(()=>{})}
 
 async function initDb(){await ensurePrivateEvidenceSchema(pool);await ensureMicrobusinessReadinessSchema(pool);await pool.query(`
@@ -127,6 +174,26 @@ async function initDb(){await ensurePrivateEvidenceSchema(pool);await ensureMicr
   );
   CREATE UNIQUE INDEX IF NOT EXISTS profile_applications_live_unique ON profile_applications(account_id,role,territory_id) WHERE status NOT IN ('rejected','revoked');
   CREATE INDEX IF NOT EXISTS profile_applications_review_idx ON profile_applications(status,territory_id,created_at);
+
+  CREATE TABLE IF NOT EXISTS profile_application_reviews (
+    id BIGSERIAL PRIMARY KEY,
+    application_id BIGINT NOT NULL REFERENCES profile_applications(id) ON DELETE CASCADE,
+    from_status TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    to_status TEXT NOT NULL,
+    reviewer_account_id BIGINT NOT NULL REFERENCES accounts(id),
+    reviewer_note TEXT NOT NULL DEFAULT '',
+    evidence_attested BOOLEAN NOT NULL DEFAULT FALSE,
+    adult_eligibility_attested BOOLEAN NOT NULL DEFAULT FALSE,
+    approved_category_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    correlation_id TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK(from_status IN ('application_started','requirements_pending','submitted','under_review','approved','rejected','suspended','revoked')),
+    CHECK(decision IN ('approve','reject','under_review','requirements_pending')),
+    CHECK(to_status IN ('requirements_pending','under_review','approved','rejected')),
+    CHECK(jsonb_typeof(approved_category_ids)='array')
+  );
+  CREATE INDEX IF NOT EXISTS profile_application_reviews_application_idx ON profile_application_reviews(application_id,created_at DESC,id DESC);
 
   CREATE TABLE IF NOT EXISTS profile_application_documents (
     id BIGSERIAL PRIMARY KEY,
@@ -194,10 +261,30 @@ async function initDb(){await ensurePrivateEvidenceSchema(pool);await ensureMicr
   UPDATE profiles p SET enabled=FALSE,status='requirements_pending',visibility='private',updated_at=NOW()
   WHERE p.account_id<>1 AND p.role IN ('merchant','supplier','courier','service_provider')
     AND NOT EXISTS(SELECT 1 FROM profile_authorizations a WHERE a.account_id=p.account_id AND a.role=p.role AND a.status='active');
+
+  WITH latest_application AS (
+    SELECT DISTINCT ON (account_id,role) account_id,role,status
+      FROM profile_applications
+     ORDER BY account_id,role,created_at DESC,id DESC
+  )
+  UPDATE profiles p
+     SET enabled=FALSE,status=latest.status,visibility='private',updated_at=NOW()
+    FROM latest_application latest
+   WHERE p.account_id=latest.account_id
+     AND p.role=latest.role
+     AND latest.status IN ('application_started','requirements_pending','submitted','under_review','rejected','suspended','revoked')
+     AND NOT EXISTS(
+       SELECT 1 FROM profile_authorizations authz
+        WHERE authz.account_id=p.account_id
+          AND authz.role=p.role
+          AND authz.status='active'
+          AND (authz.expires_at IS NULL OR authz.expires_at>NOW())
+     )
+     AND (p.enabled IS DISTINCT FROM FALSE OR p.status IS DISTINCT FROM latest.status OR p.visibility IS DISTINCT FROM 'private');
 `);await ensureAccountSafetyEligibilitySchema(pool);await ensurePhGeographicRegistrySchema(pool);await ensureTerritoryDemandSchema(pool)}
 
 async function profileState(me){const id=Number(me.account.id);const [apps,auths,invites,cats]=await Promise.all([
-  pool.query(`SELECT pa.id,pa.role,pa.territory_id,t.name territory_name,pa.status,pa.proposed_business_name,pa.applicant_note,pa.responsibility_acknowledged,pa.application_data,pa.submitted_at,pa.reviewed_at,pa.decision_reason,pa.created_at,
+  pool.query(`SELECT pa.id,pa.role,pa.territory_id,t.name territory_name,pa.status,pa.proposed_business_name,pa.applicant_note,pa.responsibility_acknowledged,pa.application_data,pa.submitted_at,pa.reviewed_by_account_id,pa.reviewed_at,pa.decision_reason,pa.created_at,pa.updated_at,reviewer.display_name reviewer_name,
     COALESCE((
       SELECT jsonb_agg(jsonb_build_object(
         'id',d.id,
@@ -212,8 +299,27 @@ async function profileState(me){const id=Number(me.account.id);const [apps,auths
       FROM profile_application_documents d
       LEFT JOIN private_evidence_objects pe ON pe.id=d.private_evidence_object_id
       WHERE d.application_id=pa.id
-    ),'[]'::jsonb) documents
-    FROM profile_applications pa JOIN territories t ON t.id=pa.territory_id WHERE pa.account_id=$1 ORDER BY pa.created_at DESC`,[id]),
+    ),'[]'::jsonb) documents,
+    COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+        'id',history.id,
+        'from_status',history.from_status,
+        'decision',history.decision,
+        'to_status',history.to_status,
+        'reviewer_name',history_reviewer.display_name,
+        'reviewer_note',history.reviewer_note,
+        'evidence_attested',history.evidence_attested,
+        'adult_eligibility_attested',history.adult_eligibility_attested,
+        'created_at',history.created_at
+      ) ORDER BY history.created_at DESC,history.id DESC)
+      FROM profile_application_reviews history
+      JOIN accounts history_reviewer ON history_reviewer.id=history.reviewer_account_id
+      WHERE history.application_id=pa.id
+    ),'[]'::jsonb) review_history
+    FROM profile_applications pa
+    JOIN territories t ON t.id=pa.territory_id
+    LEFT JOIN accounts reviewer ON reviewer.id=pa.reviewed_by_account_id
+    WHERE pa.account_id=$1 ORDER BY pa.created_at DESC,pa.id DESC`,[id]),
   pool.query(`SELECT a.id,a.role,a.territory_id,t.name territory_name,a.status,a.approved_at,a.expires_at,a.reason FROM profile_authorizations a LEFT JOIN territories t ON t.id=a.territory_id WHERE a.account_id=$1 ORDER BY a.created_at DESC`,[id]),
   pool.query(`SELECT i.id,i.role,i.territory_id,t.name territory_name,i.status,i.note,i.expires_at,i.created_at FROM profile_invitations i JOIN territories t ON t.id=i.territory_id WHERE LOWER(i.target_email)=LOWER($1) AND i.status='invited' AND i.expires_at>NOW() ORDER BY i.created_at DESC`,[me.account.email||'']),
   pool.query(`SELECT sa.category_id,c.code,c.name,c.credential_gate,sa.territory_id,t.name territory_name,sa.status,sa.reason FROM service_category_authorizations sa JOIN service_categories c ON c.id=sa.category_id JOIN territories t ON t.id=sa.territory_id WHERE sa.account_id=$1 ORDER BY c.sort_order,c.name`,[id])
@@ -241,7 +347,21 @@ app.post('/api/governance/invitations/:id/accept',body,async(req,res,next)=>{try
 
 app.post('/api/governance/service-provider/start',body,async(req,res,next)=>{try{const me=await identity(req);const assigned=await assignedOnboardingTerritory(me,req.body?.territory_id,'service_provider');const territoryId=Number(assigned.id);const t=await pool.query(`SELECT id FROM territories WHERE id=$1 AND country_code='PH' AND status IN ('onboarding','active')`,[territoryId]);if(!t.rowCount)return res.status(409).json({error:'Your assigned barangay is not open for onboarding'});const client=await pool.connect();try{await client.query('BEGIN');const a=await client.query(`INSERT INTO profile_applications(account_id,role,territory_id,status) VALUES($1,'service_provider',$2,'application_started') ON CONFLICT(account_id,role,territory_id) WHERE status NOT IN ('rejected','revoked') DO UPDATE SET updated_at=NOW() RETURNING *`,[me.account.id,territoryId]);await client.query(`INSERT INTO profiles(account_id,role,enabled,visibility,status) VALUES($1,'service_provider',FALSE,'private','application_started') ON CONFLICT(account_id,role) DO UPDATE SET enabled=FALSE,visibility='private',status='application_started',updated_at=NOW()`,[me.account.id]);await client.query('COMMIT');await audit(me.account.id,'service_application_started',me.account.id,'service_provider',territoryId);res.status(201).json(a.rows[0])}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
 
-app.put('/api/governance/applications/:id',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id),appRow=await pool.query(`SELECT * FROM profile_applications WHERE id=$1 AND account_id=$2`,[id,me.account.id]);if(!appRow.rowCount)return res.status(404).json({error:'Application not found'});const current=appRow.rows[0];if(!['application_started','requirements_pending','rejected'].includes(current.status))return res.status(409).json({error:'Application can no longer be edited in its current state'});const data=req.body?.application_data&&typeof req.body.application_data==='object'?req.body.application_data:{};const{rows}=await pool.query(`UPDATE profile_applications SET proposed_business_name=$1,applicant_note=$2,responsibility_acknowledged=$3,application_data=$4::jsonb,status='requirements_pending',updated_at=NOW() WHERE id=$5 RETURNING *`,[clean(req.body?.proposed_business_name,180),clean(req.body?.applicant_note,1600),Boolean(req.body?.responsibility_acknowledged),JSON.stringify(data),id]);res.json(rows[0])}catch(e){next(e)}})
+app.put('/api/governance/applications/:id',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await identity(req),id=Number(req.params.id),data=req.body?.application_data&&typeof req.body.application_data==='object'?req.body.application_data:{};
+    await client.query('BEGIN');
+    const appRow=await client.query(`SELECT * FROM profile_applications WHERE id=$1 AND account_id=$2 FOR UPDATE`,[id,me.account.id]);
+    if(!appRow.rowCount)throw Object.assign(new Error('Application not found'),{status:404});
+    const current=appRow.rows[0],status=applicationStatusAfterSave(current.status);
+    const{rows}=await client.query(`UPDATE profile_applications SET proposed_business_name=$1,applicant_note=$2,responsibility_acknowledged=$3,application_data=$4::jsonb,status=$5,updated_at=NOW() WHERE id=$6 RETURNING *`,[clean(req.body?.proposed_business_name,180),clean(req.body?.applicant_note,1600),Boolean(req.body?.responsibility_acknowledged),JSON.stringify(data),status,id]);
+    await syncProfileApplicationProjection(client,rows[0]);
+    const committed=await applicationSnapshot(id,client);
+    await client.query('COMMIT');
+    res.json(committed);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}
+})
 
 app.post('/api/governance/applications/:id/documents',body,async(req,res,next)=>{
   let stored=null;
@@ -292,7 +412,29 @@ app.post('/api/governance/applications/:id/documents',body,async(req,res,next)=>
   }
 })
 
-app.post('/api/governance/applications/:id/submit',body,async(req,res,next)=>{try{const me=await identity(req),id=Number(req.params.id);await requireAdultEligibility(pool,me.account.id,{action:'submit an operational profile application'});const a=await pool.query(`SELECT * FROM profile_applications WHERE id=$1 AND account_id=$2`,[id,me.account.id]);if(!a.rowCount)return res.status(404).json({error:'Application not found'});const x=a.rows[0];if(!x.responsibility_acknowledged)return res.status(409).json({error:'Acknowledge the role responsibility declaration before submitting'});if(x.role==='merchant'&&!clean(x.proposed_business_name,180))return res.status(409).json({error:'Merchant application needs a business/store name'});if(x.role==='service_provider'){const ids=Array.isArray(x.application_data?.requested_category_ids)?x.application_data.requested_category_ids.map(Number).filter(Number.isInteger):[];if(!ids.length)return res.status(409).json({error:'Choose at least one Local Services category'});}const{rows}=await pool.query(`UPDATE profile_applications SET status='submitted',submitted_at=NOW(),decision_reason='',updated_at=NOW() WHERE id=$1 AND status IN ('application_started','requirements_pending','rejected') RETURNING *`,[id]);if(!rows.length)return res.status(409).json({error:'Application cannot be submitted from its current state'});await audit(me.account.id,'application_submitted',me.account.id,x.role,x.territory_id,{application_id:id});res.json(rows[0])}catch(e){next(e)}})
+app.post('/api/governance/applications/:id/submit',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await identity(req),id=Number(req.params.id);
+    await requireAdultEligibility(pool,me.account.id,{action:'submit an operational profile application'});
+    await client.query('BEGIN');
+    const a=await client.query(`SELECT * FROM profile_applications WHERE id=$1 AND account_id=$2 FOR UPDATE`,[id,me.account.id]);
+    if(!a.rowCount)throw Object.assign(new Error('Application not found'),{status:404});
+    const current=a.rows[0],status=applicationStatusAfterSubmit(current.status);
+    if(!current.responsibility_acknowledged)throw Object.assign(new Error('Acknowledge the role responsibility declaration before submitting'),{status:409});
+    if(current.role==='merchant'&&!clean(current.proposed_business_name,180))throw Object.assign(new Error('Merchant application needs a business/store name'),{status:409});
+    if(current.role==='service_provider'){
+      const ids=Array.isArray(current.application_data?.requested_category_ids)?current.application_data.requested_category_ids.map(Number).filter(Number.isInteger):[];
+      if(!ids.length)throw Object.assign(new Error('Choose at least one Local Services category'),{status:409});
+    }
+    const{rows}=await client.query(`UPDATE profile_applications SET status=$1,submitted_at=NOW(),reviewed_by_account_id=NULL,reviewed_at=NULL,decision_reason='',updated_at=NOW() WHERE id=$2 RETURNING *`,[status,id]);
+    await syncProfileApplicationProjection(client,rows[0]);
+    const committed=await applicationSnapshot(id,client);
+    await client.query('COMMIT');
+    await audit(me.account.id,'application_submitted',me.account.id,current.role,current.territory_id,{application_id:id,status});
+    res.json(committed);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}
+})
 
 app.get('/api/governance/admin/geography/status',async(req,res,next)=>{try{await requireAdmin(req);res.json(await phGeographicRegistryStatus(pool))}catch(e){next(e)}})
 app.get('/api/governance/admin/territory-demand',async(req,res,next)=>{try{await requireAdmin(req);res.json(await territoryDemandOverview(pool,{level:req.query.level,limit:req.query.limit}))}catch(e){next(e)}})
@@ -376,10 +518,13 @@ app.get('/api/governance/admin/applications/:id',async(req,res,next)=>{
     await requireAdmin(req);
     const id=Number(req.params.id);
     const a=await pool.query(`
-      SELECT pa.*,ac.display_name,ac.email,t.name territory_name
+      SELECT pa.*,ac.display_name,ac.email,t.name territory_name,reviewer.display_name reviewer_name,
+             p.status profile_status,p.enabled profile_enabled
         FROM profile_applications pa
         JOIN accounts ac ON ac.id=pa.account_id
         JOIN territories t ON t.id=pa.territory_id
+        LEFT JOIN accounts reviewer ON reviewer.id=pa.reviewed_by_account_id
+        LEFT JOIN profiles p ON p.account_id=pa.account_id AND p.role=pa.role
        WHERE pa.id=$1
     `,[id]);
     if(!a.rowCount)return res.status(404).json({error:'Application not found'});
@@ -417,11 +562,12 @@ app.get('/api/governance/admin/applications/:id',async(req,res,next)=>{
     const requestedCategoriesPromise=serviceProvider&&requestedIds.length
       ?pool.query(`SELECT id,code,name,credential_gate FROM service_categories WHERE id=ANY($1::bigint[]) AND active=TRUE ORDER BY sort_order,name`,[requestedIds])
       :Promise.resolve({rows:[]});
-    const[docs,services,credentials,requestedCategories,adultEligibility]=await Promise.all([
+    const reviewHistoryPromise=applicationReviewHistory(id);
+    const[docs,services,credentials,requestedCategories,adultEligibility,reviewHistory]=await Promise.all([
       docsPromise,servicesPromise,credentialsPromise,requestedCategoriesPromise,
-      accountAdultEligibilitySnapshot(pool,application.account_id)
+      accountAdultEligibilitySnapshot(pool,application.account_id),reviewHistoryPromise
     ]);
-    res.json({...application,adult_eligibility:adultEligibility,documents:docs.rows,existing_services:services.rows,credentials:credentials.rows,requested_categories:requestedCategories.rows});
+    res.json({...application,adult_eligibility:adultEligibility,documents:docs.rows,existing_services:services.rows,credentials:credentials.rows,requested_categories:requestedCategories.rows,review_history:reviewHistory});
   }catch(e){next(e)}
 })
 app.get('/api/governance/admin/application-documents/:id',async(req,res,next)=>{
@@ -450,11 +596,53 @@ if(role==='service_provider'){
   const requested=Array.isArray(appRow.application_data?.requested_category_ids)?appRow.application_data.requested_category_ids.map(Number).filter(Number.isInteger):[];const allow=new Set((Array.isArray(approvedCategoryIds)?approvedCategoryIds:[]).map(Number));for(const categoryId of requested){const c=await client.query(`SELECT id,name,credential_gate FROM service_categories WHERE id=$1 AND active=TRUE`,[categoryId]);if(!c.rowCount)continue;let ok=allow.has(categoryId);let reason='Not approved in this review';if(ok&&c.rows[0].credential_gate){const verified=await client.query(`SELECT 1 FROM profile_credentials WHERE account_id=$1 AND verification_status='verified' AND (expiry_date IS NULL OR expiry_date>=CURRENT_DATE) LIMIT 1`,[accountId]);if(!verified.rowCount){ok=false;reason='Credential-gated category requires verified evidence before activation'}}await client.query(`INSERT INTO service_category_authorizations(account_id,category_id,territory_id,status,approved_by_account_id,approved_at,reason) VALUES($1,$2,$3,$4,$5,CASE WHEN $4='active' THEN NOW() END,$6) ON CONFLICT(account_id,category_id,territory_id) DO UPDATE SET status=EXCLUDED.status,approved_by_account_id=EXCLUDED.approved_by_account_id,approved_at=EXCLUDED.approved_at,reason=EXCLUDED.reason,updated_at=NOW()`,[accountId,categoryId,territoryId,ok?'active':'pending',adminId,ok?'Approved':reason]);if(ok)await client.query(`INSERT INTO service_provider_services(account_id,category_id,service_label,active) VALUES($1,$2,$3,TRUE) ON CONFLICT(account_id,category_id,service_label) DO UPDATE SET active=TRUE`,[accountId,categoryId,c.rows[0].name]);}
 }}
 
-app.post('/api/governance/admin/applications/:id/review',body,async(req,res,next)=>{try{const me=await requireAdmin(req),id=Number(req.params.id),decision=clean(req.body?.decision,30),reason=clean(req.body?.reason,1000);if(!['approve','reject','under_review','requirements_pending'].includes(decision))return res.status(400).json({error:'Choose approve, reject, under_review or requirements_pending'});if(decision==='requirements_pending'&&!reason)return res.status(400).json({error:'Explain what information or correction is required'});const client=await pool.connect();try{await client.query('BEGIN');const q=await client.query(`SELECT * FROM profile_applications WHERE id=$1 FOR UPDATE`,[id]);if(!q.rowCount)throw Object.assign(new Error('Application not found'),{status:404});const a=q.rows[0];if(!['submitted','under_review'].includes(a.status))throw Object.assign(new Error('Application is not awaiting review'),{status:409});if(decision==='under_review'){await client.query(`UPDATE profile_applications SET status='under_review',reviewed_by_account_id=$1,decision_reason=$2,updated_at=NOW() WHERE id=$3`,[me.account.id,reason,id]);}
-else if(decision==='requirements_pending'){await client.query(`UPDATE profile_applications SET status='requirements_pending',reviewed_by_account_id=$1,reviewed_at=NULL,decision_reason=$2,updated_at=NOW() WHERE id=$3`,[me.account.id,reason,id]);await client.query(`UPDATE profiles SET enabled=FALSE,status='requirements_pending',visibility='private',updated_at=NOW() WHERE account_id=$1 AND role=$2`,[a.account_id,a.role]);}
-else if(decision==='reject'){await client.query(`UPDATE profile_applications SET status='rejected',reviewed_by_account_id=$1,reviewed_at=NOW(),decision_reason=$2,updated_at=NOW() WHERE id=$3`,[me.account.id,reason||'Requirements not approved',id]);await client.query(`UPDATE profiles SET enabled=FALSE,status='rejected',visibility='private',updated_at=NOW() WHERE account_id=$1 AND role=$2`,[a.account_id,a.role]);}
-else{const accountState=await client.query(`SELECT email_verified_at,account_mode FROM accounts WHERE id=$1 FOR UPDATE`,[a.account_id]);if(!accountState.rowCount)throw Object.assign(new Error('Applicant account not found'),{status:404});if(accountState.rows[0].account_mode!=='company_test'&&!accountState.rows[0].email_verified_at)throw Object.assign(new Error('Email ownership must be verified before an operational profile can be approved'),{status:409,code:'EMAIL_VERIFICATION_REQUIRED'});const eligibility=await accountAdultEligibilitySnapshot(client,a.account_id,{lock:true});if(!eligibility.company_test_exempt)await recordAdultEligibilityAdminReview(client,{accountId:a.account_id,actorAccountId:me.account.id,confirmed:req.body?.adult_eligibility_reviewed===true,source:'profile_application_review'});await ensureApprovedProfile(client,a,me.account.id,req.body?.approved_category_ids);await client.query(`UPDATE profile_applications SET status='approved',reviewed_by_account_id=$1,reviewed_at=NOW(),decision_reason=$2,updated_at=NOW() WHERE id=$3`,[me.account.id,reason||'Approved',id]);}
-await client.query('COMMIT');await audit(me.account.id,`application_${decision}`,a.account_id,a.role,a.territory_id,{application_id:id,reason:clean(reason,300),adult_eligibility_reviewed:decision==='approve'?Boolean(req.body?.adult_eligibility_reviewed):false});res.json(await applicationFor(a.account_id,a.role))}catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}catch(e){next(e)}})
+app.post('/api/governance/admin/applications/:id/review',body,async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    const me=await requireAdmin(req),id=Number(req.params.id),decision=clean(req.body?.decision,30),reason=clean(req.body?.reason,1000);
+    const evidenceAttested=req.body?.evidence_attested===true;
+    const adultEligibilityAttested=req.body?.adult_eligibility_reviewed===true;
+    const approvedCategoryIds=[...new Set((Array.isArray(req.body?.approved_category_ids)?req.body.approved_category_ids:[]).map(Number).filter(Number.isSafeInteger))];
+    if(decision==='requirements_pending'&&!reason)return res.status(400).json({error:'Explain what information or correction is required'});
+    await client.query('BEGIN');
+    const q=await client.query(`SELECT * FROM profile_applications WHERE id=$1 FOR UPDATE`,[id]);
+    if(!q.rowCount)throw Object.assign(new Error('Application not found'),{status:404});
+    const application=q.rows[0],toStatus=applicationStatusAfterReview(application.status,decision);
+    let reviewerNote=reason;
+    if(decision==='approve'){
+      const accountState=await client.query(`SELECT email_verified_at,account_mode FROM accounts WHERE id=$1 FOR UPDATE`,[application.account_id]);
+      if(!accountState.rowCount)throw Object.assign(new Error('Applicant account not found'),{status:404});
+      if(accountState.rows[0].account_mode!=='company_test'&&!accountState.rows[0].email_verified_at)throw Object.assign(new Error('Email ownership must be verified before an operational profile can be approved'),{status:409,code:'EMAIL_VERIFICATION_REQUIRED'});
+      const eligibility=await accountAdultEligibilitySnapshot(client,application.account_id,{lock:true});
+      if(!eligibility.company_test_exempt)await recordAdultEligibilityAdminReview(client,{accountId:application.account_id,actorAccountId:me.account.id,confirmed:adultEligibilityAttested,source:'profile_application_review'});
+      if(!evidenceAttested)throw Object.assign(new Error('Confirm that the application evidence was reviewed before approval'),{status:400,code:'REVIEW_ATTESTATION_REQUIRED'});
+      reviewerNote=reason||'Approved';
+      await ensureApprovedProfile(client,application,me.account.id,approvedCategoryIds);
+    }else if(decision==='reject'){
+      if(!evidenceAttested)throw Object.assign(new Error('Confirm that the application evidence was reviewed before rejection'),{status:400,code:'REVIEW_ATTESTATION_REQUIRED'});
+      reviewerNote=reason||'Requirements not approved';
+    }
+    const updated=await client.query(`
+      UPDATE profile_applications
+         SET status=$1,reviewed_by_account_id=$2,reviewed_at=NOW(),decision_reason=$3,updated_at=NOW()
+       WHERE id=$4
+       RETURNING *
+    `,[toStatus,me.account.id,reviewerNote,id]);
+    await syncProfileApplicationProjection(client,updated.rows[0]);
+    const reviewEvent=await recordApplicationReview(client,{
+      application,decision,toStatus,reviewerAccountId:me.account.id,reviewerNote,
+      evidenceAttested,adultEligibilityAttested,approvedCategoryIds,correlationId:correlation(req)
+    });
+    const committed=await applicationSnapshot(id,client);
+    await client.query('COMMIT');
+    await audit(me.account.id,`application_${decision}`,application.account_id,application.role,application.territory_id,{
+      application_id:id,review_event_id:reviewEvent.id,from_status:application.status,to_status:toStatus,
+      reason:clean(reviewerNote,300),evidence_attested:evidenceAttested,
+      adult_eligibility_reviewed:decision==='approve'?adultEligibilityAttested:false
+    });
+    res.json({...committed,committed:true,review_event_id:Number(reviewEvent.id)});
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}finally{client.release()}
+})
 
 app.get('/api/governance/admin/readiness/:accountId/:role',async(req,res,next)=>{try{
   await requireAdmin(req);

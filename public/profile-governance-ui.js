@@ -28,6 +28,24 @@ async function refreshGov(force=false){
   finally{govRefreshPromise=null}
 }
 function latestApp(role){return govState?.applications?.find(x=>x.role===role)||null}
+function upsertGovApplication(application){
+  if(!application?.id||!govState)return application;
+  const rows=Array.isArray(govState.applications)?[...govState.applications]:[],index=rows.findIndex(x=>Number(x.id)===Number(application.id));
+  if(index>=0)rows[index]={...rows[index],...application};else rows.unshift(application);
+  govState={...govState,applications:rows};
+  return application;
+}
+async function reconcileGovApplication(application,reason){
+  upsertGovApplication(application);
+  const shellRefresh=window.BusinessLifeShell?.refreshProfile;
+  await Promise.all([
+    refreshGov(true),
+    shellRefresh?shellRefresh(true):Promise.resolve(null)
+  ]);
+  document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason,role:application?.role||''}}));
+  decorateDrawer();
+  return latestApp(application?.role)||application;
+}
 async function openApplicationById(applicationId){
   const id=Number(applicationId);if(!Number.isSafeInteger(id)||id<1)throw new Error('Application ID is invalid.');
   if(!govState)await refreshGov();
@@ -43,7 +61,7 @@ function roleControl(role){if(authFor(role))return{kind:'active',label:'Approved
 function decorateDrawer(){const panel=document.getElementById('profileDrawerPanel');if(!panel||!govState)return;panel.querySelectorAll('[data-role-action]').forEach(btn=>{const role=btn.dataset.roleAction;if(!GOV_ROLES.includes(role))return;const c=roleControl(role);if(c.kind==='active'&&['Switch','Active'].includes(btn.textContent.trim()))return;if(btn.textContent.trim()!==c.label)btn.textContent=c.label;btn.classList.add('governed');btn.classList.toggle('pending',c.kind==='pending');btn.classList.toggle('locked',c.kind==='locked');btn.classList.toggle('apply',c.kind==='apply')})}
 function interceptRole(e){const btn=e.target.closest?.('[data-role-action]');if(!btn||!GOV_ROLES.includes(btn.dataset.roleAction)||!govState)return;const role=btn.dataset.roleAction;if(authFor(role))return;const c=roleControl(role);e.preventDefault();e.stopImmediatePropagation();if(c.kind==='locked')return gtoast(`${GOV_META[role].label} is invitation-only in this launch area.`);openRoleFlow(role)}
 async function loadCategories(){if(!govCategories.length)govCategories=await gapi('/api/services/categories').catch(()=>[]);return govCategories}
-async function acceptInvite(inv){try{await gapi(`/api/governance/invitations/${inv.id}/accept`,{method:'POST',body:'{}'});await refreshGov(true);document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason:'invitation_accepted',role:inv.role}}));decorateDrawer();openApplication(inv.role)}catch(e){gtoast(e.message)}}
+async function acceptInvite(inv){try{const application=await gapi(`/api/governance/invitations/${inv.id}/accept`,{method:'POST',body:'{}'});await reconcileGovApplication(application,'invitation_accepted');openApplication(inv.role)}catch(e){gtoast(e.message)}}
 async function openRoleFlow(role){const inv=inviteFor(role),a=latestApp(role);if(inv&&!a)return acceptInvite(inv);if(a){await openApplication(role,a);enhanceRoleOnboarding(role,a);return}return chooseProfileTerritory(role)}
 
 function territoryOptions(selected=''){return govTerritories.map(t=>'<option value="'+t.id+'" '+(Number(selected)===Number(t.id)?'selected':'')+'>'+gh(t.name)+' • '+gh(gn(t.territory_type))+'</option>').join('')}
@@ -64,12 +82,12 @@ function chooseServiceTerritory(){
     if(!personalAreaCanOnboard())return openGov(head('Local Services','Your barangay is not open for onboarding yet.')+assignedAreaCard());
     const territoryId=Number(geo.exact_territory.id);
     openGov(head('Apply for Local Services','Your application will be scoped to your assigned barangay.')+assignedAreaCard()+'<form id="startServiceApp" class="govForm"><div class="govNotice">Your profile stays private and non-operational until an authorized Admin reviews the application and approves eligible service categories.</div><button class="govBtn dark">Start application in '+gh(geo.name)+'</button><div id="govMsg" class="govMessage"></div></form>');
-    document.getElementById('startServiceApp').onsubmit=async e=>{e.preventDefault();try{await gapi('/api/governance/service-provider/start',{method:'POST',body:JSON.stringify({territory_id:territoryId})});await refreshGov(true);document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason:'application_started',role:'service_provider'}}));openApplication('service_provider')}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
+    document.getElementById('startServiceApp').onsubmit=async e=>{e.preventDefault();try{const application=await gapi('/api/governance/service-provider/start',{method:'POST',body:JSON.stringify({territory_id:territoryId})});await reconcileGovApplication(application,'application_started');openApplication('service_provider')}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
     return;
   }
   if(!govTerritories.length)return openGov(head('Local Services','Applications open only inside an onboarding or active territory.')+'<div class="govEmpty">No Philippines operating territory is accepting Local Services applications yet.</div>');
   openGov(head('Apply for Local Services','Choose the operating cell for this company-managed test.')+'<form id="startServiceApp" class="govForm"><label>Operating territory<select id="serviceTerritory">'+territoryOptions()+'</select></label><div class="govNotice">Test fallback only. Personal accounts are automatically scoped to their assigned barangay.</div><button class="govBtn dark">Start application</button><div id="govMsg" class="govMessage"></div></form>');
-  document.getElementById('startServiceApp').onsubmit=async e=>{e.preventDefault();try{await gapi('/api/governance/service-provider/start',{method:'POST',body:JSON.stringify({territory_id:Number(document.getElementById('serviceTerritory').value)})});await refreshGov(true);openApplication('service_provider')}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
+  document.getElementById('startServiceApp').onsubmit=async e=>{e.preventDefault();try{const application=await gapi('/api/governance/service-provider/start',{method:'POST',body:JSON.stringify({territory_id:Number(document.getElementById('serviceTerritory').value)})});await reconcileGovApplication(application,'application_started');openApplication('service_provider')}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
 }
 async function fileData(file){if(!file)return'';if(file.size>2_000_000)throw new Error('Keep application evidence under about 2 MB per file in this preview.');if(!['application/pdf','image/png','image/jpeg','image/webp'].includes(file.type))throw new Error('Evidence must be PDF, PNG, JPEG or WebP.');return await new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=()=>reject(new Error('Could not read the selected file.'));r.onload=()=>resolve(String(r.result||''));r.readAsDataURL(file)})}
 function govEvidenceSize(bytes){
@@ -93,6 +111,11 @@ function govUploadedEvidenceHtml(a){
 }
 function govEvidenceUploadHtml(pendingReview){
   return '<section class="govCard"><h3>Add supporting documents</h3><p>'+(pendingReview?'Your application details stay locked while Admin reviews the submitted version, but you can still add supporting documents. Adding evidence does not restart or cancel the review.':'Upload requested or optional evidence. Original files remain private and are available only to authorized reviewers.')+'</p><form id="govEvidenceForm" class="govForm"><label>Document type<select id="govDocType"><option value="business_registration">Business registration / permit</option><option value="identity_support">Identity/supporting evidence</option><option value="insurance">Insurance</option><option value="qualification">Qualification / certificate</option><option value="other">Other supporting document</option></select></label><label>Label<input id="govDocLabel" placeholder="What is this document?"></label><label>PDF or image<input id="govDocFile" type="file" accept="application/pdf,image/png,image/jpeg,image/webp"></label><button class="govBtn secondary">Upload private evidence</button></form></section>';
+}
+function govReviewHistoryHtml(a){
+  const history=Array.isArray(a.review_history)?a.review_history:[];
+  if(!history.length)return'';
+  return '<section class="govCard"><h3>Review history</h3><div class="govList">'+history.slice(0,8).map(item=>'<div class="govRow"><div><strong>'+gh(gn(item.to_status||item.decision||'updated'))+'</strong><small>'+gh(item.created_at?new Date(item.created_at).toLocaleString():'Time unavailable')+'</small>'+(item.reviewer_note?'<div class="govNotice">'+gh(item.reviewer_note)+'</div>':'')+'</div></div>').join('')+'</div></section>';
 }
 async function openApplication(role){
   await loadCategories();
@@ -119,6 +142,7 @@ async function openApplication(role){
     +'<section class="govHero"><small>Controlled Philippines rollout</small><h3>'+gh(statusCopy.title)+'</h3><p>'+gh(statusCopy.body)+'</p></section>'
     +reviewWaiting
     +reviewerNote
+    +govReviewHistoryHtml(a)
     +'<section class="govCard"><h3>Application details</h3><form id="govApplicationForm" class="govForm">'
     +(['merchant','supplier'].includes(role)?'<label>'+(role==='merchant'?'Business / store':'Supplier / business')+' name<input id="appBusiness" value="'+gh(a.proposed_business_name||'')+'" '+(fieldsDisabled?'disabled':'')+'></label>':'')
     +(role==='service_provider'?'<label>Professional headline<input id="appHeadline" value="'+gh(data.professional_headline||'')+'" placeholder="e.g. Carpenter • Furniture repair" '+(fieldsDisabled?'disabled':'')+'></label><label>About / experience<textarea id="appAbout" rows="4" '+(fieldsDisabled?'disabled':'')+'>'+gh(data.about||'')+'</textarea></label><div class="govTwo"><label>Service area<input id="appArea" value="'+gh(data.service_area||a.territory_name||'')+'" '+(fieldsDisabled?'disabled':'')+'></label><label>Years experience<input id="appYears" type="number" min="0" step="0.5" value="'+gh(data.years_experience??'')+'" '+(fieldsDisabled?'disabled':'')+'></label></div>'+categories:'')
@@ -135,9 +159,27 @@ async function openApplication(role){
   if(canAddEvidence)document.getElementById('govEvidenceForm').onsubmit=e=>uploadEvidence(e,a);
   if(canEdit)document.getElementById('submitGovApp').onclick=()=>submitApplication(a);
 }
-async function saveApplication(e,a,role){e.preventDefault();const data={...(a.application_data||{})};if(role==='service_provider'){data.professional_headline=document.getElementById('appHeadline').value;data.about=document.getElementById('appAbout').value;data.service_area=document.getElementById('appArea').value;data.years_experience=document.getElementById('appYears').value;data.requested_category_ids=[...document.querySelectorAll('[data-req-cat]:checked')].map(x=>Number(x.dataset.reqCat))}try{await gapi(`/api/governance/applications/${a.id}`,{method:'PUT',body:JSON.stringify({proposed_business_name:document.getElementById('appBusiness')?.value||'',applicant_note:document.getElementById('appNote').value,responsibility_acknowledged:document.getElementById('appAck').checked,application_data:data})});await refreshGov(true);document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason:'application_saved',role}}));gtoast('Application saved.');openApplication(role)}catch(err){const x=document.getElementById('govAppMsg');x.textContent=err.message;x.className='govMessage error'}}
+async function saveApplication(e,a,role){
+  e.preventDefault();
+  const form=e.currentTarget,button=form.querySelector('button[type="submit"]'),out=document.getElementById('govAppMsg'),data={...(a.application_data||{})};
+  if(role==='service_provider'){data.professional_headline=document.getElementById('appHeadline').value;data.about=document.getElementById('appAbout').value;data.service_area=document.getElementById('appArea').value;data.years_experience=document.getElementById('appYears').value;data.requested_category_ids=[...document.querySelectorAll('[data-req-cat]:checked')].map(x=>Number(x.dataset.reqCat))}
+  button.disabled=true;form.setAttribute('aria-busy','true');out.textContent='Saving application…';out.className='govMessage';
+  let committed;
+  try{committed=await gapi(`/api/governance/applications/${a.id}`,{method:'PUT',body:JSON.stringify({proposed_business_name:document.getElementById('appBusiness')?.value||'',applicant_note:document.getElementById('appNote').value,responsibility_acknowledged:document.getElementById('appAck').checked,application_data:data})})}
+  catch(err){out.textContent=err.message;out.className='govMessage error';button.disabled=false;form.removeAttribute('aria-busy');return}
+  upsertGovApplication(committed);gtoast('Application saved.');await openApplication(role);
+  reconcileGovApplication(committed,'application_saved').then(()=>openApplication(role)).catch(error=>console.warn('Application state reconciliation:',error.message));
+}
 async function uploadEvidence(e,a){e.preventDefault();try{const file=document.getElementById('govDocFile').files?.[0];if(!file)throw new Error('Choose a document first.');const evidence_data_url=await fileData(file);await gapi(`/api/governance/applications/${a.id}/documents`,{method:'POST',body:JSON.stringify({document_type:document.getElementById('govDocType').value,label:document.getElementById('govDocLabel').value,file_name:file.name,evidence_data_url})});await refreshGov(true);gtoast('Supporting document added to your application.');await openApplication(a.role)}catch(err){gtoast(err.message)}}
-async function submitApplication(a){try{await gapi(`/api/governance/applications/${a.id}/submit`,{method:'POST',body:'{}'});await refreshGov(true);document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason:'application_submitted',role:a.role}}));decorateDrawer();gtoast('Application submitted for review.');openApplication(a.role)}catch(err){gtoast(err.message)}}
+async function submitApplication(a){
+  const button=document.getElementById('submitGovApp'),out=document.getElementById('govAppMsg');if(!button||button.disabled)return;
+  const original=button.textContent;button.disabled=true;button.textContent='Submitting for review…';out.textContent='Submitting the current application state…';out.className='govMessage';
+  let committed;
+  try{committed=await gapi(`/api/governance/applications/${a.id}/submit`,{method:'POST',body:'{}'})}
+  catch(err){button.disabled=false;button.textContent=original;out.textContent=err.message;out.className='govMessage error';return}
+  upsertGovApplication(committed);gtoast('Application submitted for review.');await openApplication(a.role);
+  reconcileGovApplication(committed,'application_submitted').then(()=>openApplication(a.role)).catch(error=>console.warn('Submitted application reconciliation:',error.message));
+}
 
 async function openAdminConsole(tab='queue'){try{govOverview=await gapi('/api/governance/admin/overview');renderAdmin(tab)}catch(e){gtoast(e.message)}}
 function renderAdmin(tab){const tabs=[['queue','Applications'],['territories','Territories'],['invites','Invitations'],['commerce','Commerce readiness'],['access','Access']];openGov(head('Governance & approvals','Bootstrap Super Admin • Philippines pilot')+`<section class="govHero"><small>Profile governance</small><h3>Controlled access, explicit responsibility.</h3><p>Create an operating cell first, then invite and approve only the operational profiles needed in that territory.</p></section><div class="govTabs">${tabs.map(t=>`<button class="govTab ${tab===t[0]?'active':''}" data-gov-tab="${t[0]}">${t[1]}</button>`).join('')}</div><div id="govAdminBody">${adminBody(tab)}</div>`);document.querySelectorAll('[data-gov-tab]').forEach(b=>b.onclick=()=>renderAdmin(b.dataset.govTab));bindAdmin(tab)}
@@ -178,7 +220,24 @@ async function viewGovDoc(id){
     setTimeout(()=>URL.revokeObjectURL(objectUrl),120000);
   }catch(e){w.close();gtoast(e.message)}
 }
-async function reviewApp(e,a,decision){e?.preventDefault();try{const approved_category_ids=[...document.querySelectorAll('[data-approve-cat]:checked')].map(x=>Number(x.dataset.approveCat));const adult_eligibility_reviewed=Boolean(document.getElementById('adultEligibilityReviewed')?.checked);if(decision==='approve'&&!a.adult_eligibility?.company_test_exempt&&!adult_eligibility_reviewed)throw new Error('Complete the adult eligibility review before approval.');await gapi(`/api/governance/admin/applications/${a.id}/review`,{method:'POST',body:JSON.stringify({decision,reason:document.getElementById('reviewReason')?.value||'',approved_category_ids,adult_eligibility_reviewed})});gtoast(`Application ${decision==='approve'?'approved':decision==='reject'?'rejected':'moved to review'}.`);govOverview=await gapi('/api/governance/admin/overview');await refreshGov(true);renderAdmin('queue')}catch(err){gtoast(err.message)}}
+async function reviewApp(e,a,decision){
+  e?.preventDefault();
+  const form=document.getElementById('reviewDecision'),buttons=[...form.querySelectorAll('button')],message=form.querySelector('.govMessage')||document.createElement('div');
+  if(!message.parentElement){message.className='govMessage';form.appendChild(message)}
+  try{
+    const approved_category_ids=[...document.querySelectorAll('[data-approve-cat]:checked')].map(x=>Number(x.dataset.approveCat));
+    const adult_eligibility_reviewed=Boolean(document.getElementById('adultEligibilityReviewed')?.checked);
+    const explicitAttestation=document.getElementById('reviewEvidenceAttested');
+    const evidence_attested=explicitAttestation?Boolean(explicitAttestation.checked):!['approve','reject'].includes(decision)||window.confirm('Confirm that you reviewed enough application evidence for this decision.');
+    if(['approve','reject'].includes(decision)&&!evidence_attested)throw new Error('Confirm that you reviewed enough evidence before this decision.');
+    if(decision==='approve'&&!a.adult_eligibility?.company_test_exempt&&!adult_eligibility_reviewed)throw new Error('Complete the adult eligibility review before approval.');
+    buttons.forEach(button=>{button.disabled=true});form.setAttribute('aria-busy','true');message.textContent='Saving the governed decision…';
+    const committed=await gapi(`/api/governance/admin/applications/${a.id}/review`,{method:'POST',body:JSON.stringify({decision,reason:document.getElementById('reviewReason')?.value||'',approved_category_ids,adult_eligibility_reviewed,evidence_attested})});
+    if(committed?.committed!==true)throw new Error('The committed review result was not returned.');
+    gtoast(`Application ${decision==='approve'?'approved':decision==='reject'?'rejected':'updated'}.`);
+    govOverview=await gapi('/api/governance/admin/overview');await refreshGov(true);renderAdmin('queue');
+  }catch(err){message.textContent=err.message;message.className='govMessage error';buttons.forEach(button=>{button.disabled=false});form.removeAttribute('aria-busy')}
+}
 async function openCommerceReadiness(accountId,role,businessId,label=''){
   try{
     const qs=role==='merchant'?('?business_id='+encodeURIComponent(businessId)):'';
@@ -229,7 +288,16 @@ async function openCommerceReadiness(accountId,role,businessId,label=''){
 }
 async function changeAuth(id,status){const reason=prompt(status==='suspended'?'Reason for suspension:':'Reason / note:')||'';if(status==='suspended'&&!reason.trim())return;try{await gapi(`/api/governance/admin/authorizations/${id}/status`,{method:'POST',body:JSON.stringify({status,reason})});gtoast(status==='active'?'Authorization reactivated.':'Authorization suspended.');govOverview=await gapi('/api/governance/admin/overview');await refreshGov(true);renderAdmin('access')}catch(e){gtoast(e.message)}}
 
-async function handleInviteUrl(raw){try{const inv=await gapi(`/api/governance/invite/${encodeURIComponent(raw)}`);openGov(head(`${GOV_META[inv.role]?.icon||'👤'} ${GOV_META[inv.role]?.label||inv.role} invitation`,inv.territory_name)+`<section class="govHero"><small>Private invitation</small><h3>You have been invited.</h3><p>${gh(inv.note||`This invitation allows you to apply for the ${GOV_META[inv.role]?.label||inv.role} role in this operating territory.`)}</p></section><button id="acceptUrlInvite" class="govBtn" style="width:100%">Accept invitation & start application</button>`);document.getElementById('acceptUrlInvite').onclick=async()=>{try{await gapi(`/api/governance/invite/${encodeURIComponent(raw)}/accept`,{method:'POST',body:'{}'});history.replaceState({},'',location.pathname);await refreshGov(true);document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason:'invite_link_accepted',role:inv.role}}));openApplication(inv.role)}catch(e){gtoast(e.message)}}}catch(e){history.replaceState({},'',location.pathname);gtoast(e.message)}}
+async function handleInviteUrl(raw){
+  try{
+    const inv=await gapi(`/api/governance/invite/${encodeURIComponent(raw)}`);
+    openGov(head(`${GOV_META[inv.role]?.icon||'👤'} ${GOV_META[inv.role]?.label||inv.role} invitation`,inv.territory_name)+`<section class="govHero"><small>Private invitation</small><h3>You have been invited.</h3><p>${gh(inv.note||`This invitation allows you to apply for the ${GOV_META[inv.role]?.label||inv.role} role in this operating territory.`)}</p></section><button id="acceptUrlInvite" class="govBtn" style="width:100%">Accept invitation & start application</button>`);
+    document.getElementById('acceptUrlInvite').onclick=async()=>{
+      try{const application=await gapi(`/api/governance/invite/${encodeURIComponent(raw)}/accept`,{method:'POST',body:'{}'});history.replaceState({},'',location.pathname);await reconcileGovApplication(application,'invite_link_accepted');openApplication(inv.role)}
+      catch(e){gtoast(e.message)}
+    };
+  }catch(e){history.replaceState({},'',location.pathname);gtoast(e.message)}
+}
 
 function chooseProfileTerritory(role){
   const meta=GOV_META[role];if(!meta)return;
@@ -239,15 +307,25 @@ function chooseProfileTerritory(role){
     if(!personalAreaCanOnboard())return openGov(head(meta.label+' onboarding','Your barangay is not open for onboarding yet.')+assignedAreaCard());
     const territoryId=Number(geo.exact_territory.id);
     openGov(head(meta.icon+' '+meta.label+' onboarding','Your profile will use your assigned barangay automatically.')+'<section class="govHero"><small>PROFILE ACTIVATION</small><h3>Start only the profile you need.</h3><p>This profile remains inactive until onboarding evidence is reviewed and approved.</p></section>'+assignedAreaCard()+'<form id="startProfileOnboarding" class="govForm"><div class="govNotice">Requirements depend on the role, activity and vehicle. Approval does not replace licences, insurance or permits required by law.</div><button class="govBtn dark">Continue in '+gh(geo.name)+'</button><div id="govMsg" class="govMessage"></div></form>');
-    document.getElementById('startProfileOnboarding').onsubmit=async e=>{e.preventDefault();try{await gapi('/api/governance/profiles/'+encodeURIComponent(role)+'/start',{method:'POST',body:JSON.stringify({territory_id:territoryId})});await refreshGov(true);document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason:'profile_onboarding_started',role}}));await openRoleFlow(role)}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
+    document.getElementById('startProfileOnboarding').onsubmit=async e=>{e.preventDefault();try{const application=await gapi('/api/governance/profiles/'+encodeURIComponent(role)+'/start',{method:'POST',body:JSON.stringify({territory_id:territoryId})});await reconcileGovApplication(application,'profile_onboarding_started');await openRoleFlow(role)}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
     return;
   }
   if(!govTerritories.length)return openGov(head(meta.label+' onboarding','Choose where this test profile will operate.')+'<div class="govEmpty">No operating territory is accepting applications yet.</div>');
   openGov(head(meta.icon+' '+meta.label+' onboarding','Company-managed test fallback.')+'<section class="govHero"><small>TEST PROFILE ACTIVATION</small><h3>Choose the test territory.</h3><p>Personal accounts never see this selector; they use their assigned barangay.</p></section><form id="startProfileOnboarding" class="govForm"><label>Operating territory<select id="profileTerritory">'+territoryOptions()+'</select></label><div class="govNotice">Test compatibility only.</div><button class="govBtn dark">Continue onboarding</button><div id="govMsg" class="govMessage"></div></form>');
-  document.getElementById('startProfileOnboarding').onsubmit=async e=>{e.preventDefault();try{await gapi('/api/governance/profiles/'+encodeURIComponent(role)+'/start',{method:'POST',body:JSON.stringify({territory_id:Number(document.getElementById('profileTerritory').value)})});await refreshGov(true);await openRoleFlow(role)}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
+  document.getElementById('startProfileOnboarding').onsubmit=async e=>{e.preventDefault();try{const application=await gapi('/api/governance/profiles/'+encodeURIComponent(role)+'/start',{method:'POST',body:JSON.stringify({territory_id:Number(document.getElementById('profileTerritory').value)})});await reconcileGovApplication(application,'profile_onboarding_started');await openRoleFlow(role)}catch(err){document.getElementById('govMsg').textContent=err.message;document.getElementById('govMsg').className='govMessage error'}};
 }
 function enhanceRoleOnboarding(role,a){if(role!=='courier')return;const form=document.getElementById('govApplicationForm');if(!form||form.querySelector('#courierVehicleType'))return;const data=a.application_data||{},note=document.getElementById('appNote')?.closest('label'),fields=document.createElement('div');fields.className='govCourierRequirements';fields.innerHTML=`<div class="govSectionTitle"><h3>Delivery activity</h3><span>Philippines onboarding evidence</span></div><label>Delivery vehicle<select id="courierVehicleType"><option value="bicycle">Bicycle</option><option value="motorcycle">Motorcycle</option><option value="car">Car</option><option value="van">Van</option></select></label><div id="courierEvidenceGuide" class="govNotice"></div>`;note?.insertAdjacentElement('beforebegin',fields);document.getElementById('courierVehicleType').value=data.vehicle_type||'bicycle';const sync=()=>{const motor=document.getElementById('courierVehicleType').value!=='bicycle';document.getElementById('courierEvidenceGuide').innerHTML=motor?'<strong>Upload for review:</strong> identity evidence, valid driver licence, vehicle registration (OR/CR) and applicable motor-vehicle insurance. Passenger transport is a separate future authorization and is not enabled here.':'<strong>Upload for review:</strong> identity evidence. Admin may request further safety or local operating evidence.'};document.getElementById('courierVehicleType').onchange=sync;sync();const select=document.getElementById('govDocType');if(select)select.innerHTML='<option value="identity_support">Identity evidence</option><option value="driver_license">Driver licence</option><option value="vehicle_registration">Vehicle registration (OR/CR)</option><option value="vehicle_insurance">Motor-vehicle insurance</option><option value="other">Other supporting document</option>';form.onsubmit=e=>saveCourierApplication(e,a)}
-async function saveCourierApplication(e,a){e.preventDefault();const data={...(a.application_data||{}),activity_type:'parcel_delivery',vehicle_type:document.getElementById('courierVehicleType').value,passenger_transport_requested:false};try{await gapi(`/api/governance/applications/${a.id}`,{method:'PUT',body:JSON.stringify({applicant_note:document.getElementById('appNote').value,responsibility_acknowledged:document.getElementById('appAck').checked,application_data:data})});await refreshGov(true);document.dispatchEvent(new CustomEvent('abl:guided-onboarding-refresh',{detail:{reason:'application_saved',role:'courier'}}));gtoast('Delivery onboarding saved.');await openApplication('courier');enhanceRoleOnboarding('courier',latestApp('courier'))}catch(err){const x=document.getElementById('govAppMsg');x.textContent=err.message;x.className='govMessage error'}}
+async function saveCourierApplication(e,a){
+  e.preventDefault();
+  const form=e.currentTarget,button=form.querySelector('button[type="submit"]'),out=document.getElementById('govAppMsg');
+  const data={...(a.application_data||{}),activity_type:'parcel_delivery',vehicle_type:document.getElementById('courierVehicleType').value,passenger_transport_requested:false};
+  button.disabled=true;form.setAttribute('aria-busy','true');out.textContent='Saving Delivery onboarding…';out.className='govMessage';
+  let committed;
+  try{committed=await gapi(`/api/governance/applications/${a.id}`,{method:'PUT',body:JSON.stringify({applicant_note:document.getElementById('appNote').value,responsibility_acknowledged:document.getElementById('appAck').checked,application_data:data})})}
+  catch(err){out.textContent=err.message;out.className='govMessage error';button.disabled=false;form.removeAttribute('aria-busy');return}
+  upsertGovApplication(committed);gtoast('Delivery onboarding saved.');await openApplication('courier');enhanceRoleOnboarding('courier',latestApp('courier'));
+  reconcileGovApplication(committed,'application_saved').then(async()=>{await openApplication('courier');enhanceRoleOnboarding('courier',latestApp('courier'))}).catch(error=>console.warn('Delivery application reconciliation:',error.message));
+}
 function bindGovLifecycle(){document.addEventListener('click',interceptRole,true);document.addEventListener('abl:start-profile-onboarding',e=>{const role=e.detail?.role;if(GOV_ROLES.includes(role)){document.getElementById('drawerClose')?.click();refreshGov().then(()=>openRoleFlow(role)).catch(err=>gtoast(err.message))}});document.addEventListener('abl:drawer-rendered',()=>{refreshGov().then(()=>decorateDrawer()).catch(()=>{})});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&gtok())refreshGov().catch(()=>{})})}
 async function bootGov(){ensureGovModal();bindGovLifecycle();if(!gtok())return;try{await refreshGov();decorateDrawer();const params=new URLSearchParams(location.search),raw=params.get('invite'),applicationId=Number(params.get('profile_application'));if(raw)await handleInviteUrl(raw);else if(Number.isSafeInteger(applicationId)&&applicationId>0)await openApplicationById(applicationId)}catch(e){console.warn('Governance UI unavailable',e);gtoast(e.message||'Could not open this profile application.')}}
 window.BusinessLifeProfileGovernance=Object.freeze({openApplicationById});

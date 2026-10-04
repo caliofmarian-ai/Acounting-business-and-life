@@ -79,7 +79,7 @@ async function ensureCourierGovernance({pool,base,courier,courierEmail,adminToke
     const reviewed=await requestJson(base,'/api/governance/admin/applications/'+Number(application.id)+'/review',{
       method:'POST',
       token:adminToken,
-      body:{decision:'approve',reason:'Controlled internal QA Courier acceptance fixture'}
+      body:{decision:'approve',reason:'Controlled internal QA Courier acceptance fixture',evidence_attested:true}
     });
     expectStatus(reviewed,200,'Courier Admin profile approval');
   }

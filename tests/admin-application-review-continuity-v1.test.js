@@ -26,8 +26,9 @@ test('application review URL survives refresh until Admin intentionally leaves t
 });
 
 test('Keep under review preserves the exact application page without requiring a final-decision confirmation',()=>{
-  assert.match(admin,/if\(decision==='under_review'\)\{state\.active='members';state\.memberHubTab='requests';shell\(\);await openAdminApplication\(a\.id\)\}/);
-  assert.match(admin,/else\{setAdminApplicationRoute\(null\)/);
+  assert.match(admin,/setAdminApplicationRoute\(a\.id\)/);
+  assert.match(admin,/Under review — committed/);
+  assert.match(admin,/form\.reason\.value=''/);
   assert.match(admin,/\['approve','reject'\]\.includes\(decision\)&&!form\.confirmed\.checked/);
   assert.match(admin,/approve or reject access decision/);
 });
