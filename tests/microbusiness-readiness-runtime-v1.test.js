@@ -6,6 +6,8 @@ import {
   microbusinessReadinessEnforcementEnabled,
   microbusinessReadinessEnforcementMode,
   microbusinessReadinessReviewRequirements,
+  microbusinessReadinessReviewStatus,
+  microbusinessCommerceReviewPolicy,
   microbusinessReadinessState,
   microbusinessCommerceDecision,
   nextMicrobusinessReadinessAction,
@@ -157,6 +159,50 @@ test('readiness-only cannot transact when enforcement is on but governed eligibi
   assert.equal(microbusinessCommerceDecision({...readiness,commerce_state:'eligible_full'},{enforcementEnabled:true}).allowed,true);
 });
 
+test('commerce review policy keeps 0/6 evidence fail-closed even with an authorized profile',()=>{
+  const state={
+    id:1,account_id:1,profile_role:'merchant',business_id:10,
+    activity_track:'food',operating_context:'commercial_space',
+    readiness_stage:'applying',commerce_state:'readiness_only'
+  };
+  const review=microbusinessReadinessReviewStatus(state,[]);
+  assert.equal(review.total,6);
+  assert.equal(review.resolved,0);
+  assert.equal(review.complete,false);
+  assert.equal(review.missing.length,6);
+  const policy=microbusinessCommerceReviewPolicy(state,[],{profileAuthorized:true});
+  assert.equal(policy.profile_authorized,true);
+  assert.equal(policy.can_grant_commerce,false);
+  assert.equal(policy.allowed_states.readiness_only,true);
+  assert.equal(policy.allowed_states.eligible_limited,false);
+  assert.equal(policy.allowed_states.eligible_full,false);
+});
+
+test('commerce review policy requires reference, source authority and sourced not-applicable reason',()=>{
+  const state={
+    id:1,account_id:1,profile_role:'merchant',business_id:10,
+    activity_track:'non_food',operating_context:'commercial_space',
+    readiness_stage:'applying',commerce_state:'readiness_only'
+  };
+  const requirements=microbusinessReadinessReviewRequirements(state);
+  const incomplete=requirements.map(item=>({
+    code:item.code,outcome:'verified',reference:'',source_authority:'',note:''
+  }));
+  let policy=microbusinessCommerceReviewPolicy(state,incomplete,{profileAuthorized:true});
+  assert.equal(policy.can_grant_commerce,false);
+  assert.ok(policy.review_status.missing.every(item=>item.missing_fields.includes('reference')));
+  assert.ok(policy.review_status.missing.every(item=>item.missing_fields.includes('source_authority')));
+
+  const complete=evidenceFor('merchant','non_food','commercial_space');
+  policy=microbusinessCommerceReviewPolicy(state,complete,{profileAuthorized:true});
+  assert.equal(policy.can_grant_commerce,true);
+  assert.equal(policy.review_status.resolved,requirements.length);
+
+  const unauthorized=microbusinessCommerceReviewPolicy(state,complete,{profileAuthorized:false});
+  assert.equal(unauthorized.can_grant_commerce,false);
+  assert.ok(unauthorized.blockers.some(item=>item.code==='profile_authorization_required'));
+});
+
 test('next action stays small and progressive',()=>{
   assert.equal(nextMicrobusinessReadinessAction({profile_role:'merchant'}),'choose_activity_track');
   assert.equal(nextMicrobusinessReadinessAction({profile_role:'merchant',activity_track:'food'}),'add_operating_context');
@@ -226,6 +272,26 @@ test('governed review is the only core path that grants commerce eligibility',as
     profileRole:'merchant',businessId:10,enforcementEnabled:true
   });
   assert.equal(decision.allowed,true);
+});
+
+test('governed grant rejects incomplete evidence before any eligibility update',async()=>{
+  const db=new ReadinessDb();
+  await updateMicrobusinessReadiness(db,1,{
+    profile_role:'merchant',business_id:10,activity_track:'food',
+    operating_context:'commercial_space',readiness_stage:'applying'
+  });
+  await assert.rejects(
+    setMicrobusinessCommerceState(db,{
+      accountId:1,profileRole:'merchant',businessId:10,actorAccountId:99,
+      commerceState:'eligible_full',reason:'Should remain blocked',evidenceChecklist:[]
+    }),
+    error=>error.status===409
+      &&error.code==='READINESS_EVIDENCE_INCOMPLETE'
+      &&error.review_status?.total===6
+      &&error.review_status?.resolved===0
+  );
+  const row=db.rows.find(item=>Number(item.business_id)===10);
+  assert.equal(row.commerce_state,'readiness_only');
 });
 
 test('commerce requirement fails closed when enforcement is on and state is missing',async()=>{
