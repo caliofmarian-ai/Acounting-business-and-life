@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
   CONTROLLED_ROLE_FIXTURE_CONTRACT,
+  controlledBusinessTerritoryAction,
   controlledCourierEvidencePdf,
   controlledRoleFixtureConfig,
   controlledRoleFixtureGateRequired,
@@ -65,6 +66,21 @@ test('credentials are deterministic only for the three controlled role aliases',
   assert.ok(supplier.length>=40);
   assert.throws(()=>deriveControlledRolePassword(secret,'dropi.deliveries+testmerchant@gmail.com'),/restricted/i);
   assert.throws(()=>deriveControlledRolePassword(secret,'person@example.com'),/restricted/i);
+});
+
+test('legacy Preview businesses are preserved while Production rejects territory drift',()=>{
+  assert.equal(controlledBusinessTerritoryAction({
+    environment:'preview',currentTerritoryId:9,fixtureTerritoryId:12
+  }),'preserve_preview');
+  assert.equal(controlledBusinessTerritoryAction({
+    environment:'production',currentTerritoryId:null,fixtureTerritoryId:12
+  }),'assign');
+  assert.equal(controlledBusinessTerritoryAction({
+    environment:'production',currentTerritoryId:12,fixtureTerritoryId:12
+  }),'keep');
+  assert.equal(controlledBusinessTerritoryAction({
+    environment:'production',currentTerritoryId:9,fixtureTerritoryId:12
+  }),'reject');
 });
 
 test('fixture contract is isolated, private and non-settling by construction',()=>{

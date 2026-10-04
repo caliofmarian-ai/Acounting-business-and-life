@@ -114,6 +114,16 @@ export function deriveControlledRolePassword(secret,email){
     .digest('base64url');
 }
 
+export function controlledBusinessTerritoryAction({environment,currentTerritoryId,fixtureTerritoryId}){
+  const target=Number(fixtureTerritoryId);
+  if(!Number.isInteger(target))throw new Error('Controlled fixture business territory must be an integer.');
+  if(currentTerritoryId==null)return'assign';
+  const current=Number(currentTerritoryId);
+  if(!Number.isInteger(current))throw new Error('Controlled fixture found an invalid business territory.');
+  if(current===target)return'keep';
+  return environment==='preview'?'preserve_preview':'reject';
+}
+
 async function passwordCredential(secret,email){
   const password=deriveControlledRolePassword(secret,email);
   const salt=crypto.randomBytes(16).toString('hex');
@@ -359,7 +369,7 @@ async function ensureGovernedProfile(client,{account,territoryId,ownerId,revisio
   return applicationId;
 }
 
-async function ensureSupplierDomain(client,{account,territoryId,geography}){
+async function ensureSupplierDomain(client,{account,territoryId,geography,environment}){
   await client.query(`
     INSERT INTO supplier_profiles(
       account_id,supplier_name,description,delivery_available,service_area,
@@ -380,10 +390,15 @@ async function ensureSupplierDomain(client,{account,territoryId,geography}){
   let businessId;
   if(binding.rowCount){
     businessId=Number(binding.rows[0].id);
-    if(binding.rows[0].territory_id!=null&&Number(binding.rows[0].territory_id)!==territoryId){
+    const territoryAction=controlledBusinessTerritoryAction({
+      environment,currentTerritoryId:binding.rows[0].territory_id,fixtureTerritoryId:territoryId
+    });
+    if(territoryAction==='reject'){
       throw new Error('Controlled Supplier business is bound to a different territory.');
     }
-    await client.query(`UPDATE businesses SET territory_id=$1,updated_at=NOW() WHERE id=$2`,[territoryId,businessId]);
+    if(territoryAction==='assign'){
+      await client.query(`UPDATE businesses SET territory_id=$1,updated_at=NOW() WHERE id=$2`,[territoryId,businessId]);
+    }
   }else{
     const business=await client.query(`
       INSERT INTO businesses(name,country_code,currency_code,territory_id)
@@ -464,7 +479,7 @@ async function ensureServiceProviderDomain(client,{account,geography}){
   await client.query(`UPDATE service_provider_services SET active=FALSE WHERE account_id=$1`,[account.accountId]);
 }
 
-async function ensureMerchantBusiness(client,merchant,territoryId){
+async function ensureMerchantBusiness(client,merchant,territoryId,environment){
   let q=await client.query(`
     SELECT b.id,b.territory_id FROM profile_business_bindings pb
     JOIN businesses b ON b.id=pb.business_id
@@ -485,10 +500,15 @@ async function ensureMerchantBusiness(client,merchant,territoryId){
     `,[merchant.id,q.rows[0].id]);
   }
   const businessId=Number(q.rows[0].id);
-  if(q.rows[0].territory_id!=null&&Number(q.rows[0].territory_id)!==territoryId){
+  const territoryAction=controlledBusinessTerritoryAction({
+    environment,currentTerritoryId:q.rows[0].territory_id,fixtureTerritoryId:territoryId
+  });
+  if(territoryAction==='reject'){
     throw new Error('Controlled Merchant anchor business is bound to a different territory.');
   }
-  await client.query(`UPDATE businesses SET territory_id=$1,updated_at=NOW() WHERE id=$2`,[territoryId,businessId]);
+  if(territoryAction==='assign'){
+    await client.query(`UPDATE businesses SET territory_id=$1,updated_at=NOW() WHERE id=$2`,[territoryId,businessId]);
+  }
   await client.query(`
     INSERT INTO account_business_preferences(account_id,role,business_id)
     VALUES($1,'merchant',$2)
@@ -528,10 +548,12 @@ async function provisionDatabaseState({pool,config,credentials,runId}){
     const supplier=accounts.find(account=>account.role==='supplier');
     const courier=accounts.find(account=>account.role==='courier');
     const serviceProvider=accounts.find(account=>account.role==='service_provider');
-    const supplierBusinessId=await ensureSupplierDomain(client,{account:supplier,territoryId,geography:geographyByAccount.get(supplier.accountId)});
+    const supplierBusinessId=await ensureSupplierDomain(client,{
+      account:supplier,territoryId,geography:geographyByAccount.get(supplier.accountId),environment:config.environment
+    });
     await ensureCourierDomain(client,{account:courier,geography:geographyByAccount.get(courier.accountId)});
     await ensureServiceProviderDomain(client,{account:serviceProvider,geography:geographyByAccount.get(serviceProvider.accountId)});
-    const merchantBusinessId=await ensureMerchantBusiness(client,merchant,territoryId);
+    const merchantBusinessId=await ensureMerchantBusiness(client,merchant,territoryId,config.environment);
     await client.query(`
       INSERT INTO controlled_role_lifecycle_fixtures(
         fixture_code,environment_name,revision,territory_id,customer_account_id,
