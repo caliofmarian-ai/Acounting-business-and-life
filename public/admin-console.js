@@ -1461,35 +1461,55 @@ function monetizationV2Card(model){
 function subscriptionBillingCard(data){
   const scopes=data?.scopes||{},policies=data?.policies||[],canDraft=hasAny(['fee_policy.manage_limited']);
   const scopeOrder=['marketplace','supplier','local_services'];
+  const blockerLabel=code=>({
+    plan_draft_missing:'Plan draft missing',
+    monthly_amount_missing:'Monthly amount missing',
+    explicit_policy_approval_required:'Explicit policy approval not recorded',
+    legal_terms_not_active_reviewed:'Reviewed active platform-fee terms missing',
+    live_provider_evidence_missing:'Live provider evidence missing'
+  })[code]||readableCode(code);
   const scopeRow=scope=>{
-    const x=scopes?.[scope]||{},states=x.states||{};
-    const latest=policies.find(p=>p.service_scope===scope)||null;
+    const x=scopes?.[scope]||{},states=x.states||{},latest=x.latest_plan||policies.find(p=>p.service_scope===scope)||null;
     const plan=latest
       ?((latest.monthly_amount==null?'Amount not set':financeMoney(latest.monthly_amount,latest.currency_code||'PHP'))+' · '+String(latest.status||'draft').toUpperCase()+' · v'+esc(latest.version))
       :'No plan draft';
-    return '<div class="subscriptionBillingRow"><div><strong>'+esc(x.label||data?.scope_labels?.[scope]||scope)+'</strong><small>'+esc(plan)+'</small></div>'
+    const blockers=Array.isArray(x.activation_blockers)?x.activation_blockers:[];
+    const rules=latest?.lifecycle_rules||data?.lifecycle_rules||{};
+    return '<div class="subscriptionBillingRow"><div><strong>'+esc(x.label||data?.scope_labels?.[scope]||scope)+'</strong><small>'+esc(plan)+'</small>'
+      +(latest?.policy_hash?'<small>Immutable plan hash · '+esc(String(latest.policy_hash).slice(0,16))+'…</small>':'')
+      +'<small>Activation · '+esc(x.activation_state||'HOLD')+(blockers.length?' · '+esc(blockers.map(blockerLabel).join(' · ')):'')+'</small>'
+      +'<small>Lifecycle · '+esc(readableCode(rules.cancellation||'cancel at period end'))+' · '+esc(readableCode(rules.payment_failure||'retry then hold'))+'</small></div>'
       +'<div class="subscriptionStateGrid">'
         +'<span><b>'+esc(x.promotional||0)+'</b> Promo</span>'
         +'<span><b>'+esc(x.hold_no_active_policy||0)+'</b> HOLD</span>'
         +'<span><b>'+esc(x.ready_to_invoice||0)+'</b> Ready</span>'
       +'</div></div>';
   };
+  const evidence=data?.activation_evidence||{},provider=evidence.provider||{},legal=evidence.legal||{},rules=data?.lifecycle_rules||{};
   const draftForm=canDraft
-    ?'<details class="commissionAssumptions"><summary>Create subscription plan draft</summary><form id="subscriptionPolicyDraftForm" class="adminForm"><div class="financeFormGrid">'
+    ?'<details class="commissionAssumptions"><summary>Create a new immutable plan draft</summary><form id="subscriptionPolicyDraftForm" class="adminForm"><div class="financeFormGrid">'
       +'<label>Profile type<select name="service_scope"><option value="marketplace">Merchant</option><option value="supplier">Supplier</option><option value="local_services">Artisan / Local Services</option></select></label>'
       +'<label>Policy code<input name="policy_code" placeholder="Optional · auto by profile"></label>'
       +'<label>Monthly amount (PHP)<input name="monthly_amount" type="number" min="0" step="0.01" value="99"></label>'
       +'<label>Description<input name="description" placeholder="Owner pricing scenario / rationale"></label>'
-      +'</div><div class="notice"><strong>Draft only.</strong><br>Creating this record does not activate billing and does not generate an invoice.</div><button class="primary" type="submit">Create plan draft</button><div id="subscriptionPolicyDraftResult"></div></form></details>'
+      +'</div><div class="notice"><strong>Draft only.</strong><br>Saving creates a new immutable version. It does not activate collection or create an invoice.</div><button class="primary" type="submit">Create plan draft</button><div id="subscriptionPolicyDraftResult"></div></form></details>'
     :'';
+  const simulation='<details class="commissionAssumptions"><summary>Test renewal, failure, cancellation and grandfathering</summary><form id="subscriptionLifecycleSimulationForm" class="adminForm"><div class="financeFormGrid">'
+    +'<label>Profile type<select name="service_scope"><option value="marketplace">Merchant</option><option value="supplier">Supplier</option><option value="local_services">Artisan / Local Services</option></select></label>'
+    +'<label>Scenario<select name="scenario"><option value="renewal_success">Renewal success</option><option value="payment_failure">Payment failure / retry</option><option value="cancellation">Cancellation</option><option value="grandfathering">Grandfathering</option></select></label>'
+    +'<label>Monthly amount (PHP)<input name="monthly_amount" type="number" min="0" step="0.01" value="99"></label>'
+    +'</div><div class="notice"><strong>Simulation only.</strong><br>No provider request and no real charge are performed.</div><button class="secondary" type="submit">Run lifecycle simulation</button><div id="subscriptionLifecycleSimulationResult"></div></form></details>';
   return '<section class="subscriptionBillingCard">'
-    +'<div class="commissionPlannerHead"><div><small>SUBSCRIPTION BILLING</small><h3>90-day promo → billing readiness</h3><p>Owner-approved price is ₱99/month after the 90-day promo. Billing stays blocked until promo has ended and an active versioned plan exists.</p></div><span class="badge">FAIL-CLOSED</span></div>'
+    +'<div class="commissionPlannerHead"><div><small>SUBSCRIPTION BILLING</small><h3>90-day promo → billing readiness</h3><p>Merchant, Supplier and Local Services have reviewable ₱99/month plan drafts. Billing remains fail-closed until the plan, legal, provider and profile-acceptance gates all exist.</p></div><span class="badge">FAIL-CLOSED</span></div>'
     +'<div class="subscriptionBillingRows">'+scopeOrder.map(scopeRow).join('')+'</div>'
+    +'<div class="financeTruth"><strong>Activation evidence</strong><span>Legal platform-fee terms: '+(legal.ready?'READY':'HOLD')+' · PayMongo live provider: '+(provider.ready?'READY':'HOLD')+' ('+esc(provider.status||'missing')+(provider.mode?' / '+esc(provider.mode):'')+').</span></div>'
+    +'<div class="financeTruth"><strong>Lifecycle policy</strong><span>Renewal: '+esc(readableCode(rules.renewal||''))+' · Failed payment: '+esc(readableCode(rules.payment_failure||''))+' · Grace '+esc(rules.grace_days??7)+' days · Retry days '+esc((rules.retry_schedule_days||[1,3,7]).join(', '))+' · Cancellation: '+esc(readableCode(rules.cancellation||''))+' · Grandfathering: '+esc(readableCode(rules.grandfathering||''))+'.</span></div>'
     +'<div class="financeTruth"><strong>Non-billable profiles</strong><span>Customer = FREE. Delivery = no monthly subscription; Delivery uses production fee only.</span></div>'
-    +'<div class="financeTruth"><strong>Current activation boundary</strong><span>'+esc(data?.guardrails?.invoice_generation||'NOT_PERFORMED')+' · live policy activation '+esc(data?.guardrails?.live_policy_activation||'NOT_AVAILABLE')+'.</span></div>'
-    +draftForm
+    +'<div class="financeTruth"><strong>Current activation boundary</strong><span>'+esc(data?.guardrails?.invoice_generation||'NOT_PERFORMED')+' · '+esc(data?.guardrails?.live_policy_activation||'BLOCKED')+' · automatic collection '+(data?.guardrails?.automatic_collection?'ON':'OFF')+'.</span></div>'
+    +draftForm+simulation
     +'</section>';
 }
+
 function renderDigitalIncentiveResult(x){
   const s=x?.selected||{},p=s?.provider_cost||{},cash=s?.cash_cost_model||{},i=s?.incentive||{};
   const comparison=x?.comparison||[];
@@ -1776,8 +1796,8 @@ async function financePanel(){
     +'</div></details>';
 }
 async function wireSubscriptionBilling(){
-  const form=document.getElementById('subscriptionPolicyDraftForm');if(!form)return;
-  form.onsubmit=async e=>{
+  const form=document.getElementById('subscriptionPolicyDraftForm');
+  if(form)form.onsubmit=async e=>{
     e.preventDefault();const fd=new FormData(form),out=document.getElementById('subscriptionPolicyDraftResult');
     const amount=fd.get('monthly_amount');
     const payload={
@@ -1787,14 +1807,28 @@ async function wireSubscriptionBilling(){
       description:fd.get('description')||'',
       reason:'Owner subscription pricing draft'
     };
-    out.innerHTML='<div class="notice">Creating draft…</div>';
+    out.innerHTML='<div class="notice">Creating immutable draft…</div>';
     try{
       const x=await api('/api/payments/admin/subscriptions/policies/drafts',{method:'POST',body:JSON.stringify(payload)});
-      out.innerHTML='<div class="notice">Draft '+esc(x.policy_code)+' v'+esc(x.version)+' created. Billing is still inactive.</div>';
+      out.innerHTML='<div class="notice">Draft '+esc(x.policy_code)+' v'+esc(x.version)+' created. Billing remains inactive.</div>';
       const panel=document.getElementById('adminPanel');if(panel){panel.innerHTML=await financePanel();await wireFinance()}
     }catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
   };
+  const simulation=document.getElementById('subscriptionLifecycleSimulationForm');
+  if(simulation)simulation.onsubmit=async e=>{
+    e.preventDefault();const fd=new FormData(simulation),out=document.getElementById('subscriptionLifecycleSimulationResult');
+    out.innerHTML='<div class="notice">Running no-charge lifecycle simulation…</div>';
+    try{
+      const x=await api('/api/payments/admin/subscriptions/simulate',{method:'POST',body:JSON.stringify({
+        service_scope:fd.get('service_scope'),
+        scenario:fd.get('scenario'),
+        monthly_amount:Number(fd.get('monthly_amount')||99)
+      })});
+      out.innerHTML='<div class="notice"><strong>'+esc(readableCode(x.state||'simulation'))+'</strong><br>'+esc(readableCode(x.next_action||''))+' · Provider call '+(x.provider_call?'YES':'NO')+' · Real charge '+(x.real_charge?'YES':'NO')+'.</div>';
+    }catch(err){out.innerHTML='<div class="error">'+esc(err.message)+'</div>'}
+  };
 }
+
 async function wireDigitalPaymentIncentive(){
   const form=document.getElementById('digitalPaymentIncentiveForm');if(!form)return;
   form.onsubmit=async e=>{
