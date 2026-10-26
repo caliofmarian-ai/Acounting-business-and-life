@@ -1423,6 +1423,14 @@ document.addEventListener('abl:business-workspace-changed',()=>{
   invalidateMerchantToday();
   if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday({force:true}).catch(()=>{});
 });
+document.addEventListener('abl:merchant-storefront-saved',event=>{
+  if(!isMerchantBaseActive())return;
+  const businessId=Number(event.detail?.businessId);
+  const activeId=currentMerchantBusinessId()||merchantTodayBusinessId||merchantTodayRequestBusinessId;
+  if(!Number.isInteger(businessId)||businessId<1||businessId!==activeId)return;
+  invalidateMerchantToday();
+  if(!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday().catch(()=>{});
+});
 document.addEventListener('abl:auth-expired',()=>invalidateMerchantToday());
 window.addEventListener('online',()=>{
   setOnline(true);
