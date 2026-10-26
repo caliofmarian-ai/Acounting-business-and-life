@@ -86,6 +86,9 @@ draft copy, filtering/navigation, hostile Markdown, retry, session expiry and la
 responses, shell entry deduplication and unavailable bookmarks. Its screenshots
 and revision-bound result are retained as controlled QA artifacts. This module
 fixture job does not replace full-gateway Preview acceptance.
+The Ubuntu 24.04 runner's preinstalled Chrome is used, with its actual version
+recorded in the result. Playwright tooling remains pinned. New revisions cancel
+only stale runs of this PR's dedicated browser workflow.
 
 The browser job also boots the canonical application against its disposable
 `abl_knowledge_ci` PostgreSQL database. `knowledge-runtime-acceptance.js` refuses

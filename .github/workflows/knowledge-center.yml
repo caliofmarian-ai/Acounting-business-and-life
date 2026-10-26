@@ -28,6 +28,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: knowledge-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   browser:
     runs-on: ubuntu-24.04
@@ -58,6 +62,7 @@ jobs:
       PAYMONGO_MODE: test
       PAYMONGO_LIVE_ENABLED: 'false'
       RAILWAY_SERVICE_NAME: accounting-knowledge-ci
+      KNOWLEDGE_BROWSER_CHANNEL: chrome
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,7 +76,7 @@ jobs:
       - name: Install isolated browser tooling
         run: |
           npm install --prefix "$RUNNER_TEMP/knowledge-browser" --no-package-lock --ignore-scripts playwright@1.58.2
-          node "$RUNNER_TEMP/knowledge-browser/node_modules/playwright/cli.js" install --with-deps chromium
+          google-chrome --version
       - name: Check controlled browser journeys at the PR head
         env:
           KNOWLEDGE_BROWSER_MODULE: ${{ runner.temp }}/knowledge-browser/node_modules/playwright/index.mjs

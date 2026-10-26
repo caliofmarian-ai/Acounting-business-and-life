@@ -111,7 +111,7 @@ async function browserRead(actor, doc) {
   pages.push(page);
 }
 try {
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, ...(process.env.KNOWLEDGE_BROWSER_CHANNEL ? { channel: process.env.KNOWLEDGE_BROWSER_CHANNEL } : {}) });
   const guest = await browser.newContext({ ignoreHTTPSErrors: true });
   const anon = await guest.request.get(origin + '/api/knowledge/catalog'); assert.equal(anon.status(), 401);
   assert.doesNotMatch(await anon.text(), /document_count|EXECUTIVE_CONFIDENTIAL/); await guest.close();
@@ -157,7 +157,7 @@ try {
   const peerCatalog = await request(peer, '/api/knowledge/catalog'); assert.equal(peerCatalog.access.admin_locked, false);
   assert.equal(peerCatalog.documents.some(d => d.id === executive.id), false); await document(peer, executive, 404); await peer.context.close();
   checks.push('Another MFA-verified Super Admin still cannot read Owner-only executive content');
-  const result = { status: 'PASS', revision: process.env.KNOWLEDGE_BROWSER_REVISION || null, checks,
+  const result = { status: 'PASS', revision: process.env.KNOWLEDGE_BROWSER_REVISION || null, browser_version: browser.version(), checks,
     scope: 'Full canonical gateway and PostgreSQL; disposable local CI actors, real password/cookie/CSRF/MFA flows. No physical-device or Production acceptance claim.' };
   if (evidence) writeFileSync(join(evidence, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));

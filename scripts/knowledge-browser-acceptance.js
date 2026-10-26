@@ -52,7 +52,7 @@ const fits = async (page, label) => {
   checks.push(label);
 };
 try {
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, ...(process.env.KNOWLEDGE_BROWSER_CHANNEL ? { channel: process.env.KNOWLEDGE_BROWSER_CHANNEL } : {}) });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
   await page.goto(base + '/knowledge'); await page.waitForSelector('.doc-card');
@@ -109,7 +109,7 @@ try {
   assert.equal(await page.locator('.doc-card').count(), 0);
   checks.push('Signed-out browser shows sign-in direction without private metadata');
   assert.deepEqual(errors, []);
-  const result = { revision: process.env.KNOWLEDGE_BROWSER_REVISION || null, status: 'PASS', checks, page_errors: errors,
+  const result = { revision: process.env.KNOWLEDGE_BROWSER_REVISION || null, browser_version: browser.version(), status: 'PASS', checks, page_errors: errors,
     scope: 'Synthetic module/browser fixtures; full-gateway Preview and Production acceptance remain required.' };
   if (evidence) writeFileSync(join(evidence, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
