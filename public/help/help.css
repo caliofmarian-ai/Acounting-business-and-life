@@ -238,9 +238,11 @@ summary{font-weight:700;cursor:pointer;padding:12px 0}
  .help-tools{padding:14px}
  .search-controls{grid-template-columns:1fr}
  .help-preferences{gap:10px}
- .help-preferences label{min-width:0;flex-basis:100%}
+ .help-preferences label{min-width:0;flex-basis:calc(50% - 5px)}
  .guided-help{padding:17px}
  .hero h1{font-size:32px}
  .help-footer{overflow-wrap:anywhere}
 }
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.profile-card{transition:none}}
+
+@media(max-width:320px){.help-preferences label{flex-basis:100%}}

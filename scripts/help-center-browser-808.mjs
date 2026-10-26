@@ -21,7 +21,7 @@ try{
  await go('/help');
  await hasText('h1','How can we help');checks.push('anonymous public home');
  await page.getByRole('searchbox',{name:'Search Help Center'}).fill('I cannot sign in');
- await page.locator('#searchResults a[href*="sign-in-recovery"]').waitFor();
+ await page.locator('#searchResults .search-hit[href*="sign-in-recovery"]').waitFor();
  await hasText('#searchResults','What is stopping sign-in?');checks.push('natural sign-in question and guided diagnosis');
  await page.getByRole('searchbox').press('Escape');assert.equal(await page.locator('#searchResults').isVisible(),false);
  await page.getByRole('searchbox').fill('reset password');await page.getByRole('searchbox').press('ArrowDown');assert.equal(await page.locator(':focus').getAttribute('href'),'/help/article/sign-in-recovery');checks.push('keyboard results and Escape');
