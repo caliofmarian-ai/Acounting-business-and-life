@@ -32,14 +32,16 @@ export async function runKnowledgeCenterAcceptance({ pool, base, secret, aliases
     privateResponse(response); return response.json;
   }
   async function login(role) {
-    const fixture = await pool.query('SELECT account_mode,test_role,email_verified_at FROM accounts WHERE LOWER(email)=$1', [aliases[role]]);
+    const fixture = await pool.query('SELECT id,account_mode,test_role,email_verified_at FROM accounts WHERE LOWER(email)=$1', [aliases[role]]);
     assert.equal(fixture.rows.length, 1, 'Knowledge QA requires a designated test identity');
     assert.equal(fixture.rows[0].account_mode, 'company_test');
     assert.equal(fixture.rows[0].test_role, role);
     assert.ok(fixture.rows[0].email_verified_at, 'Knowledge QA requires an already verified test identity');
     const session = await qaAccountSession({ pool, base, secret, email: aliases[role], role, label: 'Knowledge ' + role + ' QA' });
     sessions.push(session);
-    assert.notEqual(session.accountId, 1, 'Knowledge Preview must never use the Owner identity');
+    // Isolated QA reserves ID 1 for its company-test Customer. Classify the
+    // actual identity before installing credentials; numeric IDs are not roles.
+    assert.equal(session.accountId, Number(fixture.rows[0].id), 'Knowledge QA session must match the verified test identity');
     const me = await requestJson(base, '/api/me', { token: session.token });
     expectStatus(me, 200, 'Knowledge test account snapshot');
     assert.equal(me.json.account.account_mode, 'company_test');
@@ -101,7 +103,7 @@ export async function runKnowledgeCenterAcceptance({ pool, base, secret, aliases
       qa_revision: String(env.RAILWAY_GIT_COMMIT_SHA || '').slice(0, 12), profiles,
       anonymous_denied: true, cross_profile_denied: true, direct_id_traversal_denied: true,
       business_membership_enforced: true, canonical_content_and_audit_verified: true,
-      delegated_read: true, executive_denied_to_non_owner: true, super_admin_requires_mfa: true,
+      delegated_read: true, executive_denied_to_test_sessions: true, super_admin_requires_mfa: true,
       profile_membership_mfa_state_unchanged: true };
   } finally {
     const cleanup = await Promise.allSettled(sessions.map(async session => {

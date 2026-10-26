@@ -12,9 +12,9 @@ const roles = ['customer', 'merchant', 'supplier', 'courier', 'service_provider'
 const source = loadControlledDocuments();
 
 function fixture({ missingAudit = false, crossProfileLeak = false, metadataLeak = false,
-  actualDatabase = 'accounting_qa', unverified = false, logoutFailure = false } = {}) {
+  actualDatabase = 'accounting_qa', unverified = false, logoutFailure = false, personalAccount = false, customerId = 100 } = {}) {
   const counts = new Map(), loggedIn = [], loggedOut = [];
-  const roleId = role => 100 + roles.indexOf(role);
+  const roleId = role => role === 'customer' ? customerId : 100 + roles.indexOf(role);
   const businessRole = role => ['merchant', 'supplier'].includes(role);
   const allowed = (doc, role) => doc.access_class === 'MEMBER'
     || (doc.access_class === 'PROFILE_PRIVATE' && (!doc.applicable_profiles.length || doc.applicable_profiles.includes(role)))
@@ -25,7 +25,8 @@ function fixture({ missingAudit = false, crossProfileLeak = false, metadataLeak 
     'cache-control': 'private, no-store', vary: 'Cookie, Authorization' }) });
   const pool = { async query(sql, values) {
     if (sql.startsWith('SELECT current_database()')) return { rows: [{ name: actualDatabase }] };
-    if (sql.startsWith('SELECT account_mode')) return { rows: [{ account_mode: 'company_test',
+    if (sql.startsWith('SELECT id,account_mode')) return { rows: [{ id: roleId(values[0].split('@')[0]),
+      account_mode: personalAccount ? 'personal' : 'company_test',
       test_role: values[0].split('@')[0], email_verified_at: unverified ? null : '2026-01-01' }] };
     assert.match(sql, /SELECT COUNT\(\*\).*admin_audit_events/s);
     return { rows: [{ count: counts.get(values[0] + ':' + values[1]) || 0 }] };
@@ -102,7 +103,7 @@ test('Knowledge Preview acceptance avoids verification email and attempts all cl
   assert.deepEqual(failedLogout.loggedOut, roles);
 });
 
-test('Knowledge Preview acceptance refuses production, foreign targets, wrong databases and Owner fixtures before reading', async () => {
+test('Knowledge Preview acceptance refuses production, foreign targets, wrong databases and personal identities before reading', async () => {
   for (const override of [
     { env: { ...safe, RAILWAY_SERVICE_NAME: 'accounting-business-life', APP_ENV: 'production' } },
     { base: 'https://caliof.com' }, { base: 'http://example.test' }
@@ -113,8 +114,18 @@ test('Knowledge Preview acceptance refuses production, foreign targets, wrong da
   const wrongDatabase = fixture({ actualDatabase: 'accounting_live' });
   await assert.rejects(runKnowledgeCenterAcceptance(wrongDatabase.args), /database must match/);
   assert.deepEqual(wrongDatabase.loggedIn, []);
-  const owner = fixture();
-  owner.args.helpers.qaAccountSession = async () => ({ accountId: 1, token: 'fixture:customer' });
-  await assert.rejects(runKnowledgeCenterAcceptance(owner.args), /never use the Owner/);
-  assert.deepEqual(owner.loggedOut, ['customer']);
+  const owner = fixture({ personalAccount: true, customerId: 1 });
+  await assert.rejects(runKnowledgeCenterAcceptance(owner.args));
+  assert.deepEqual(owner.loggedIn, []);
+  const mismatch = fixture();
+  mismatch.args.helpers.qaAccountSession = async () => ({ accountId: 1, token: 'fixture:customer' });
+  await assert.rejects(runKnowledgeCenterAcceptance(mismatch.args), /match the verified test identity/);
+  assert.deepEqual(mismatch.loggedOut, ['customer']);
+});
+
+test('Knowledge Preview accepts its designated company-test Customer at numeric ID 1 while keeping executive reads denied', async () => {
+  const f = fixture({ customerId: 1 });
+  const result = await runKnowledgeCenterAcceptance(f.args);
+  assert.equal(result.status, 'PASS'); assert.equal(result.executive_denied_to_test_sessions, true);
+  assert.deepEqual(f.loggedOut, roles);
 });

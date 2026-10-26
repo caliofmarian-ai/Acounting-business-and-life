@@ -106,8 +106,11 @@ The existing isolated Preview harness also accepts `knowledge_center_v1`.
 identities plus the delegated and Super Admin test identities. It reads the
 deployed APIs, verifies canonical document bytes and newly persisted audit
 events, business membership, cross-profile/direct-ID/traversal denials and
-password-only Super Admin locking. It refuses the Owner identity or a database
-that differs from the configured isolated QA database. The harness restores
+password-only Super Admin locking. It confirms the company-test classification,
+assigned test role, verified email and canonical account ID before installing
+credentials. Personal identities and databases other than the configured QA
+database are refused. The designated QA Customer uses numeric ID 1; this is not
+Production Owner authentication or executive-positive evidence. The harness restores
 temporary automation credentials; this wave does not change profiles,
 memberships, Admin grants, MFA factors or business state. Owner/TOTP positive and
 immediate-revocation checks remain in the disposable CI gateway job.
