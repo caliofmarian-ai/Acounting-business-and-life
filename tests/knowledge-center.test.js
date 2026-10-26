@@ -133,7 +133,7 @@ async function fixture(t, { account = me(2, ['merchant'], [{ id: 10, active: tru
     if (sql.includes('FROM platform_admin_assignments a')) return { rows: state.assignments };
     if (sql.includes('SELECT 1 FROM super_admin_mfa_factors')) return { rowCount: state.factor ? 1 : 0, rows: [] };
     if (sql.includes('SELECT account_id FROM account_sessions')) return { rowCount: state.revoked ? 0 : 1, rows: [{ account_id: state.account.account.id }] };
-    if (sql.includes('SELECT mfa_verified_at,mfa_method')) return { rowCount: 1, rows: [{ mfa_verified_at: typeof state.mfa === 'string' ? state.mfa : state.mfa ? new Date() : null, mfa_method: 'totp' }] };
+    if (sql.includes('SELECT mfa_verified_at,mfa_method')) return { rowCount: 1, rows: [{ mfa_verified_at: typeof state.mfa === 'string' ? state.mfa : state.mfa ? new Date(at - 1000) : null, mfa_method: 'totp' }] };
     if (sql.includes('INSERT INTO admin_audit_events')) { if (state.auditFailure) throw new Error('private-db-connection'); state.audits.push(params); return { rowCount: 1 }; }
     throw new Error('Unexpected fixture query');
   } };

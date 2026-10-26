@@ -1,0 +1,60 @@
+name: Knowledge Center Browser
+
+on:
+  pull_request:
+    paths:
+      - 'documentation-*.js'
+      - 'server-knowledge.js'
+      - 'server-admin-operations.js'
+      - 'public/knowledge/**'
+      - 'public/knowledge-entry.js'
+      - 'tests/knowledge-center.test.js'
+      - 'scripts/knowledge-browser-acceptance.js'
+      - '.github/workflows/knowledge-center.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'documentation-*.js'
+      - 'server-knowledge.js'
+      - 'server-admin-operations.js'
+      - 'public/knowledge/**'
+      - 'public/knowledge-entry.js'
+      - 'tests/knowledge-center.test.js'
+      - 'scripts/knowledge-browser-acceptance.js'
+      - '.github/workflows/knowledge-center.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --global npm@10.8.2
+      - run: npm ci
+      - name: Install isolated browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/knowledge-browser" --no-package-lock --ignore-scripts playwright@1.58.2
+          node "$RUNNER_TEMP/knowledge-browser/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Check controlled browser journeys at the PR head
+        env:
+          KNOWLEDGE_BROWSER_MODULE: ${{ runner.temp }}/knowledge-browser/node_modules/playwright/index.mjs
+          KNOWLEDGE_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/knowledge-browser-evidence
+          KNOWLEDGE_BROWSER_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/knowledge-browser-acceptance.js
+      - name: Preserve controlled screenshots and result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-browser-evidence
+          path: ${{ runner.temp }}/knowledge-browser-evidence
+          if-no-files-found: ignore
+          retention-days: 7

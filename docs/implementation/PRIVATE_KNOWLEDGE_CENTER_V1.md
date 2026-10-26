@@ -80,6 +80,13 @@ safe links, anonymous HTTP requests, direct-ID/traversal denials, permission
 revocation, active-factor/session revocation, response headers and audit failure.
 The existing Admin Runtime workflow is triggered by the narrow gateway wiring.
 
+`Knowledge Center Browser` runs the exact PR head with pinned isolated browser
+tooling and synthetic account/audit adapters. It exercises mobile/desktop layout,
+draft copy, filtering/navigation, hostile Markdown, retry, session expiry and late
+responses, shell entry deduplication and unavailable bookmarks. Its screenshots
+and revision-bound result are retained as controlled QA artifacts. This module
+fixture job does not replace full-gateway Preview acceptance.
+
 Before merge, record exact-head CI/Admin Runtime and isolated Preview browser/API
 acceptance for the five profiles plus Owner and delegated Admin negatives. After
 merge, record the production SHA/deployment, `/knowledge` smoke, access denials
