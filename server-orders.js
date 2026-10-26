@@ -40,7 +40,7 @@ function manilaDateStamp() {
 
 export function isOrdersOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
-  if(pathname==='/orders.css'||pathname==='/orders-ui.js')return true;
+  if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js')return true;
   if(pathname==='/api/orders'||pathname.startsWith('/api/orders/'))return true;
   return false;
 }
@@ -346,6 +346,7 @@ async function recordPayment(client, order, {amount,account,method_code='cash',p
 
 app.get('/health',async(req,res)=>{const r=await ordersFetch('/health',{headers:req.headers});const payload=await r.json().catch(()=>({ok:false,db:false,auth:false,version:'0.5-orders'}));res.status(r.status).json(payload)});
 
+app.get('/orders-receivable-view.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-receivable-view.js'),'utf8')));
 app.get('/orders-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-ui.js'),'utf8')));
 app.get('/orders.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','orders.css'),'utf8')));
 async function proxyHtml(req,res){const r=await ordersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
