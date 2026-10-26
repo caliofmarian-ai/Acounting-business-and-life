@@ -101,6 +101,17 @@ secrets into logs or artifacts. An HTTPS loopback edge permits real Secure and
 HttpOnly browser cookies. This is automated acceptance, not the physical Android
 MFA operator acceptance tracked separately in #788.
 
+The existing isolated Preview harness also accepts `knowledge_center_v1`.
+`qa-knowledge-acceptance.js` uses the five designated company-test profile
+identities plus the delegated and Super Admin test identities. It reads the
+deployed APIs, verifies canonical document bytes and newly persisted audit
+events, business membership, cross-profile/direct-ID/traversal denials and
+password-only Super Admin locking. It refuses the Owner identity or a database
+that differs from the configured isolated QA database. The harness restores
+temporary automation credentials; this wave does not change profiles,
+memberships, Admin grants, MFA factors or business state. Owner/TOTP positive and
+immediate-revocation checks remain in the disposable CI gateway job.
+
 Before merge, record exact-head CI/Admin Runtime and isolated Preview browser/API
 acceptance for the five profiles plus Owner and delegated Admin negatives. After
 merge, record the production SHA/deployment, `/knowledge` smoke, access denials

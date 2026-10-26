@@ -5,6 +5,8 @@ on:
     paths:
       - 'documentation-*.js'
       - 'server-knowledge.js'
+      - 'qa-knowledge-acceptance.js'
+      - 'tests/qa-knowledge-acceptance.test.js'
       - 'server-admin-operations.js'
       - 'public/knowledge/**'
       - 'public/knowledge-entry.js'
@@ -17,6 +19,8 @@ on:
     paths:
       - 'documentation-*.js'
       - 'server-knowledge.js'
+      - 'qa-knowledge-acceptance.js'
+      - 'tests/qa-knowledge-acceptance.test.js'
       - 'server-admin-operations.js'
       - 'public/knowledge/**'
       - 'public/knowledge-entry.js'
