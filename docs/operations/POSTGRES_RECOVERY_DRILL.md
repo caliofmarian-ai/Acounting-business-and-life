@@ -1,6 +1,6 @@
 # PostgreSQL recovery verification
 
-Refs #795, #36 and #37. The active database/provider configuration remains unchanged.
+Refs #795, #804, #823, #36 and #37. The offline archive tool does not change provider configuration; live provider actions and their evidence are recorded separately below.
 
 This offline tool verifies a custom-format PostgreSQL archive in a fresh local cluster. It does not connect to an application database, initialize the application, run application migrations, publish records, call payment providers or deploy a release. Its source and destination databases are never selected from `DATABASE_URL` or other inherited libpq settings. The supplied archive is copied into private temporary storage; the original is unchanged.
 
@@ -11,6 +11,16 @@ A synthetic PASS proves the drill mechanism against the included schema subset a
 Provider backup scheduling and retention were not inspected by #795. Absence of a repository restore report does not mean provider backups do not exist. Do not close the parent recovery/launch gates using the synthetic test.
 
 Follow-up #804 records a dated provider inspection and a newly saved expiring manual snapshot in [provider evidence, 2026-10-26](RECOVERY_PROVIDER_EVIDENCE_2026-10-26.md). It also extends the dedicated CI to PostgreSQL 18, the observed provider major, while retaining PostgreSQL 16. These are separate results: a saved provider snapshot is not a tested snapshot restore, and synthetic compatibility is not an application recovery result.
+
+Follow-up #823 configured/read back daily snapshots at 19:00 UTC with seven-day retention. Its provider restore attempt also caused an unintended source cutover, which was reversed: see [the incident and containment record](RECOVERY_PROVIDER_DRILL_823_2026-10-26.md). The original branch/endpoint are restored and integrity checks pass, but the provider drill **did not pass isolation**. Scheduled execution, backup-failure alerting, an independently evidenced baseline and full application/object recovery remain separate gates.
+
+## Provider restore safety boundary
+
+Do not use `restore_snapshot` with `finalize: true` for a validation drill. The #823 invocation omitted `target_branch_id`, yet finalization replaced the source branch identity, moved the original compute and swapped the default flag. The initial returned branch object still showed non-default/initializing state, so that response alone was insufficient evidence of isolation.
+
+Further provider restore/finalize attempts are blocked until a documented non-finalizing new-destination operation is verified to preserve source identity, names, default/primary flags and every existing compute binding. Merely omitting `target_branch_id` is not an adequate guard. Finalization is a production cutover operation and requires its own explicit cutover scope; it is not a step in this offline tool or an automatic cleanup action.
+
+For future provider validation, capture source/default identities and endpoint bindings before any operation, require non-finalizing arguments, wait for operations to settle, and re-read both branch and compute mappings before connecting or setting expiry. If any original identity/binding changes, stop validation and contain the incident; never label it an isolated PASS. Do not expire/delete a branch that may contain application writes. Preserve both copies until read-only impact review is complete.
 
 ## Operator and prerequisites
 
