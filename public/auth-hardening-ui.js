@@ -197,6 +197,15 @@ function render(mode){
 async function login(e){e.preventDefault();msg('Signing in…');try{await api('/api/auth/login',{method:'POST',body:JSON.stringify({email:document.getElementById('modernEmail').value,password:document.getElementById('modernPassword').value})});location.reload()}catch(e){msg(e.message,'error')}}
 async function register(e){e.preventDefault();msg('Creating account…');try{await api('/api/auth/register',{method:'POST',body:JSON.stringify({display_name:document.getElementById('regName').value,email:document.getElementById('regEmail').value,password:document.getElementById('regPassword').value,phone:document.getElementById('regPhone').value,home_psgc_code:document.getElementById('regHomePsgcCode')?.value||'',adult_eligibility_attested:Boolean(document.getElementById('regAdultEligibility')?.checked),adult_eligibility_policy_version:ADULT_ELIGIBILITY_POLICY_VERSION,qa_remote_test:Boolean(document.getElementById('regQaRemoteTest')?.checked)})});const v=await api('/api/auth/email-verification/request',{method:'POST',body:'{}'}).catch(()=>null);if(v?.preview_verify_url){document.getElementById('modernAuthBody').innerHTML=`<div class="modernSuccess"><h2>Account created</h2><p>For this preview you can open the verification link directly.</p><a href="${esc(v.preview_verify_url)}">Verify email</a><button id="continueApp" class="modernPrimary">Continue to app</button></div>`;document.getElementById('continueApp').onclick=()=>location.reload()}else location.reload()}catch(e){msg(e.message,'error')}}
 function renderForgot({email='',returnToApp=false}={}){const body=document.getElementById('modernAuthBody');setTab('none');body.innerHTML=`<div class="modernBackRow"><button id="backLogin" class="modernBack">‹</button><div><h2>Reset password</h2><p>Enter the email used for your account.</p></div></div><form id="forgotForm" class="modernAuthForm"><label>Email<input id="forgotEmail" type="email" autocomplete="email" value="${esc(email)}" required></label><button class="modernPrimary">Send reset instructions</button></form>`;document.getElementById('backLogin').onclick=()=>returnToApp?location.reload():render('login');document.getElementById('forgotForm').onsubmit=async e=>{e.preventDefault();msg('Preparing reset…');try{const r=await api('/api/auth/forgot-password',{method:'POST',body:JSON.stringify({email:document.getElementById('forgotEmail').value})});if(r.preview_reset_url){body.innerHTML=`<div class="modernSuccess"><h2>Reset prepared</h2><p>${esc(r.message)}</p><a href="${esc(r.preview_reset_url)}">Open preview reset link</a></div>`}else{body.innerHTML=`<div class="modernSuccess"><h2>Check your email</h2><p>${esc(r.message)}</p></div>`}msg('')}catch(e){msg(e.message,'error')}}}
+function openSignIn(){
+  const root=document.getElementById('modernAuthRoot');if(!root)return false;
+  document.getElementById('shell')?.classList.add('hidden');
+  document.getElementById('login')?.classList.remove('hidden');
+  document.getElementById('authModalBackdrop')?.classList.add('hidden');
+  document.body.style.overflow='';
+  if(!root.querySelector('#modernLogin'))panel();
+  return true;
+}
 function openPasswordRecovery(email=''){
   document.getElementById('shell')?.classList.add('hidden');
   document.getElementById('login')?.classList.remove('hidden');
@@ -369,5 +378,5 @@ async function boot(){
   const flash=sessionStorage.getItem('abl_flash');if(flash){sessionStorage.removeItem('abl_flash');setTimeout(()=>{const t=document.getElementById('roleToast');if(t){t.textContent=flash;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3500)}},500)}
   watchDrawer();
 }
-window.BusinessLifeAuthHardening=Object.freeze({openPasswordRecovery,openSuperAdminMfa});
+window.BusinessLifeAuthHardening=Object.freeze({openSignIn,openPasswordRecovery,openSuperAdminMfa});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
