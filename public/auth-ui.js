@@ -256,6 +256,11 @@ function showExpiredSessionLogin(){
   currentProfile=null;
   document.getElementById('shell')?.classList.add('hidden');
   document.getElementById('login')?.classList.remove('hidden');
+  if(document.getElementById('modernAuthRoot')){
+    closeAuth();
+    window.BusinessLifeAuthHardening?.openSignIn?.();
+    return;
+  }
   ensureAuthChoices();
   ensureModal();
   openAuth('login');
