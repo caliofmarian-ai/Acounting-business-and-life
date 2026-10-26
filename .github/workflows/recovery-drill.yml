@@ -1,0 +1,37 @@
+name: Recovery Drill
+
+on:
+  pull_request:
+    paths:
+      - scripts/recovery/**
+      - tests/recovery-*.test.js
+      - .github/workflows/recovery-drill.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/recovery/**
+      - tests/recovery-*.test.js
+      - .github/workflows/recovery-drill.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install isolated drill toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y postgresql-16
+      - name: Real synthetic backup restore and failure acceptance
+        env:
+          ABL_RECOVERY_INTEGRATION: '1'
+          ABL_RECOVERY_PG_BIN: /usr/lib/postgresql/16/bin
+        run: node --test tests/recovery-*.test.js
