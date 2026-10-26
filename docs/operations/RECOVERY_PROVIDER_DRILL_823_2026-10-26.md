@@ -1,6 +1,6 @@
 # Provider restore drill and containment — 2026-10-26
 
-Refs #823 / #36 / #37. **Result: provider data/schema restoration observed; isolation acceptance FAILED; incident contained.** Do not claim a clean recovery or launch-readiness PASS from this drill.
+Refs #823 / #36 / #37. **Result: provider data/schema restoration observed; isolation acceptance FAILED; original routing/identity restored; impact review remains open.** Do not claim a clean recovery or launch-readiness PASS from this drill.
 
 ## Intended and actual operation
 
@@ -54,7 +54,9 @@ A scan of 213 timestamped tables on the preserved restored database found post-c
 
 For each of those seven tables, full-table stable-payload digests and row counts matched the original database after excluding `created_at` and `updated_at`. No recent timestamped order, payment, inventory or service records were found in that scan. No raw private rows, credentials, session tokens or stable-payload digests are published here.
 
-This is scoped evidence, **not proof that every possible write/deletion was absent**. Timestamp-free records, deletion history, transient transactions and concurrent writes need their own evidence. No independently captured pre-backup count manifest exists for this provider snapshot, so count completeness and full recovery remain HOLD. No branch merge or automatic data reconciliation was attempted.
+The timestamp scan used `public` tables with recognized timestamp-with/without-time-zone columns named `created_at`, `updated_at`, `received_at`, `consumed_at`, `last_seen_at`, `revoked_at` or `used_at`. A row qualified when any recognized column was at least `TIMESTAMPTZ '2026-10-26T20:39:51Z'`; the returned scan time was `2026-10-26T20:43:54Z`. Seven-table comparison used each complete row converted to JSONB, removed only `created_at`/`updated_at`, sorted the resulting textual values, and compared MD5 aggregates plus row counts. These scoped query results were retained in the incident evidence; raw rows/digests are not public evidence.
+
+This is scoped evidence, **not proof that every possible write/deletion was absent**. Timestamp-free records, deletion history, transient transactions and concurrent writes need their own evidence. No independently captured pre-backup count manifest exists for this provider snapshot, so count completeness and full recovery remain HOLD. No branch merge or automatic data reconciliation was attempted. Successful QA in the affected interval is not accepted until repeated against the original branch and confirmed deployment.
 
 ## Daily backup schedule configured and read back
 
@@ -68,10 +70,10 @@ On original `main` branch `br-cold-field-akeoczpf`, the provider now returns:
 }
 ```
 
-This schedules snapshots at **19:00 UTC / 03:00 Asia/Manila**, retaining each for **seven days**. The existing six-hour PITR/history window was not changed; no provider plan, Railway variable or application connection string was changed. A read-back configuration is not evidence that the next scheduled snapshot has already executed. The first scheduled run and failure alerting still need verification. The earlier manual snapshot retains its recorded expiry of 2026-10-27T19:47:14Z.
+This schedules snapshots at **19:00 UTC / 03:00 Asia/Manila on the following calendar day**, retaining each for **seven days**. The existing six-hour PITR/history window was not changed; no provider plan, Railway variable or application connection string was changed. A read-back configuration is not evidence that the next scheduled snapshot has already executed. The first scheduled run and failure alerting still need verification. The earlier manual snapshot retains its recorded expiry of 2026-10-27T19:47:14Z.
 
 ## Blocker and next controlled step
 
-Do not repeat a finalized provider restore as a validation action. Omission of an existing target did not prevent source replacement in the observed tool behavior. Before another attempt, require a verified non-finalizing operation that demonstrably leaves source identities, names, default flags and original compute bindings unchanged; the initial restore response is insufficient.
+Do not repeat a finalized provider restore as a validation action. Omission of an existing target did not prevent source replacement in the observed tool behavior. Before another attempt, require explicitly verified `finalize: false` and a documented new-destination operation that demonstrably leaves source identities, names, default flags and original compute bindings unchanged after operations settle; the initial restore response is insufficient. This record does not authorize another restore attempt.
 
 #823 stays open/blocked for that isolation gate and a complete incident-impact review. #36 also remains open for independent backup completeness, mapping, scheduled execution/alerting, object recovery, authenticated application acceptance and agreed RPO/RTO evidence. Documentation integration or passing application CI cannot close those operational gaps.
