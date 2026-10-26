@@ -1,0 +1,92 @@
+name: Help Center Acceptance
+on:
+  pull_request:
+    paths:
+      - 'public/help/**'
+      - 'server-help.js'
+      - 'scripts/help-center-browser-808.mjs'
+      - 'tests/help-self-service-v3.test.js'
+      - 'tests/fixtures/help-search-intents-v3.json'
+      - '.github/workflows/help-center-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-help:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_help_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_help_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_help_ci
+      TOKEN_SECRET: help-ci-only-not-for-production
+      APP_PIN: '0000'
+      TZ: UTC
+      NODE_ENV: test
+      PORT: '3000'
+      PAYMONGO_MODE: sandbox
+      PAYMONGO_LIVE_ENABLED: 'false'
+      RAILWAY_SERVICE_NAME: help-isolated-ci
+      RAILWAY_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      HELP_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      HELP_PLAYWRIGHT_MODULE: /tmp/help-browser/node_modules/playwright/index.mjs
+      HELP_EVIDENCE_DIR: /tmp/help-center-evidence
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Search, content and existing Help contracts
+        run: node --test tests/help-self-service-v3.test.js tests/help-center.test.js tests/account-settings-help-unification-v1.test.js
+      - name: Install pinned browser tooling outside application dependencies
+        run: |
+          npm install --prefix /tmp/help-browser --no-save playwright@1.56.1
+          /tmp/help-browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Start isolated full application gateway
+        run: |
+          npm start > /tmp/help-gateway.log 2>&1 &
+          echo $! > /tmp/help-gateway.pid
+      - name: Wait for gateway
+        run: |
+          for attempt in $(seq 1 180); do
+            if curl --fail --silent http://127.0.0.1:3000/health > /tmp/help-health.json; then
+              cat /tmp/help-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 120 /tmp/help-gateway.log
+          exit 1
+      - name: Anonymous mobile and desktop browser journeys
+        run: node scripts/help-center-browser-808.mjs
+      - name: Upload revision-bound evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: help-center-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/help-center-evidence/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Stop isolated gateway
+        if: always()
+        run: |
+          if [ -f /tmp/help-gateway.pid ]; then kill "$(cat /tmp/help-gateway.pid)" 2>/dev/null || true; fi

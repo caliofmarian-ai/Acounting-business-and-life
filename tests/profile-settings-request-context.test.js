@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync,existsSync,mkdtempSync,rmSync} from 'node:fs';
 import vm from 'node:vm';
+import {createServer} from 'node:http';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 const source=readFileSync(process.env.ABL_SETTINGS_SOURCE||new URL('../public/profile-settings-ui.js',import.meta.url),'utf8');
 const roles=['customer','merchant','supplier','courier','service_provider'];
@@ -306,4 +311,78 @@ test('Profile Settings to shared Banking and Back preserves the selected operati
   const bank=h.node('openAccountMoneyFromProfile').click();h.requests[1].resolve(snapshot());await bank;
   const back=h.node('settingsBack').click();h.requests[2].resolve(snapshot());await back;
   assert.equal(h.window.BusinessLifeProfileState.activeRole,'customer');assert.match(h.workspace.innerHTML,/Customer settings/);assert.equal(h.requests.length,3);
+});
+
+const chrome=[process.env.CHROME_PATH,'/usr/bin/google-chrome','/usr/bin/google-chrome-stable','/usr/bin/chromium','/usr/bin/chromium-browser'].find(path=>path&&existsSync(path));
+test('real Chrome preserves current forms, profile navigation and mobile geometry',{
+  skip:!chrome&&!process.env.GITHUB_ACTIONS?'Chrome is unavailable locally; this acceptance runs on the GitHub runner.':false,timeout:60000
+},async t=>{
+  assert.ok(chrome,'GitHub browser acceptance requires the runner-provided Chrome executable.');
+  const launch=promisify(execFile),directory=mkdtempSync(join(tmpdir(),'abl-settings-browser-'));
+  const setup=`
+    window.browserChecks=[];window.browserErrors=[];window.addEventListener('error',event=>browserErrors.push(event.message));
+    window.browserRequests=[];window.browserAuthed=true;
+    window.browserSnapshot=${snapshot.toString()};window.roles=${JSON.stringify(roles)};
+    window.BusinessLifeProfileState={surface:'profile',activeRole:'merchant',accountId:1,navigationEpoch:1,snapshot:browserSnapshot()};
+    window.ABLSession={authenticated:()=>browserAuthed};
+    window.BusinessLifeAccounting={getState:()=>({role:BusinessLifeProfileState.activeRole,activeBusinessId:1})};
+    window.BusinessLifeShell={getProfileState:()=>BusinessLifeProfileState,
+      openFeatureWorkspace(id){document.getElementById(id).classList.remove('hidden');document.dispatchEvent(new CustomEvent('abl:feature-workspace',{detail:{workspaceId:id}}));return true},
+      showActiveWorkspace(){},openAccountSettings(){}};
+    window.fetch=(path,options={})=>new Promise((resolve,reject)=>browserRequests.push({path,options,reject,resolve:data=>resolve({ok:true,status:200,json:async()=>data})}));
+  `;
+  const driver=`(async()=>{
+    const check=(condition,label)=>{if(!condition)throw new Error(label);browserChecks.push(label)};
+    const until=async condition=>{for(let n=0;n<100&&!condition();n++)await new Promise(resolve=>setTimeout(resolve,0));check(condition(),'async request settled')};
+    const api=BusinessLifeProfileSettings,workspace=document.getElementById('profileSettingsWorkspace');
+    const state=role=>{window.BusinessLifeProfileState={...BusinessLifeProfileState,activeRole:role,navigationEpoch:BusinessLifeProfileState.navigationEpoch+1};document.dispatchEvent(new CustomEvent('abl:profile-state',{detail:BusinessLifeProfileState}))};
+    const loaded=async role=>{const index=browserRequests.length,pending=role?api.open(role):api.openAccountMoney();browserRequests[index].resolve(browserSnapshot());if(role==='courier'){await until(()=>browserRequests.length===index+2);browserRequests[index+1].resolve({profile:{operating_area_name:'Synthetic work area'}})}await pending};
+    let index=browserRequests.length,old=api.openAccountMoney(),current=api.openAccountMoney();
+    browserRequests[index+1].resolve(browserSnapshot('Latest bank'));await current;
+    document.getElementById('accountLegalName').value='Keep current input';browserRequests[index].resolve(browserSnapshot('Old bank'));await old;
+    check(workspace.textContent.includes('Latest bank')&&!workspace.textContent.includes('Old bank'),'latest banking DOM wins');
+    check(document.getElementById('accountLegalName').value==='Keep current input','late read preserves typed form input');
+    const detached=document.getElementById('accountMoneyIdentityForm');await loaded();index=browserRequests.length;detached.dispatchEvent(new Event('submit',{cancelable:true}));
+    check(browserRequests.length===index,'detached form cannot submit');
+    old=api.openAccountMoney();document.getElementById('settingsBack').click();browserRequests[index].resolve(browserSnapshot('Closed bank'));await old;
+    check(workspace.classList.contains('hidden')&&workspace.textContent==='','loading Back discards late response');
+    index=browserRequests.length;current=api.openAccountMoney();browserRequests[index].reject(new Error('Synthetic current failure'));await current;
+    check(workspace.querySelector('[role="alert"]').textContent==='Synthetic current failure','current error is accessible');
+    check(document.getElementById('settingsRetry').getBoundingClientRect().height>=44,'Retry has a mobile touch target');
+    document.getElementById('settingsRetry').click();browserRequests[index+1].resolve(browserSnapshot('Retry bank'));await until(()=>workspace.textContent.includes('Retry bank'));
+    for(const role of roles){state(role);await loaded(role);check(workspace.querySelector('[data-profile-settings-view="identity"]')!==null,role+' home controls exist');
+      workspace.querySelector('[data-profile-settings-view="identity"]').click();check(workspace.textContent.includes('TEST-'+role),role+' identity is current');
+      check(document.documentElement.scrollWidth<=window.innerWidth+1,role+' mobile has no horizontal overflow');
+      document.getElementById('settingsBack').click();check(workspace.querySelector('[data-profile-settings-view="finance"]')!==null,role+' Back restores Home');}
+    state('courier');index=browserRequests.length;old=api.open('courier');browserRequests[index].resolve(browserSnapshot());await until(()=>browserRequests.length===index+2);
+    await loaded();document.getElementById('accountLegalName').value='Current banking edit';browserRequests[index+1].reject(new Error('Old Courier failed'));await old;
+    check(document.getElementById('accountLegalName').value==='Current banking edit','old Courier failure preserves current banking edit');
+    index=browserRequests.length;document.getElementById('accountMoneyIdentityForm').dispatchEvent(new Event('submit',{cancelable:true}));
+    check(browserRequests[index].options.method==='PUT','explicit save still submits its write');
+    state('customer');await loaded('customer');const before=browserRequests.length;browserRequests[index].resolve({saved:true});await new Promise(resolve=>setTimeout(resolve,0));
+    check(browserRequests.length===before&&!document.getElementById('roleToast').textContent,'old save does not reload or toast in a new profile');
+    window.browserAuthed=false;document.dispatchEvent(new CustomEvent('abl:auth-expired'));
+    check(workspace.textContent===''&&workspace.classList.contains('hidden'),'auth expiry clears private DOM');
+    check(browserErrors.length===0,'no browser JavaScript errors');
+  })().then(()=>finish(null),error=>finish(error.message));
+  function finish(error){const report=document.createElement('pre');report.id='settingsBrowserResult';report.textContent=JSON.stringify({error,checks:browserChecks,errors:browserErrors,width:innerWidth});document.body.append(report)}
+  `;
+  const css=readFileSync(new URL('../public/profile-settings.css',import.meta.url),'utf8');
+  const server=createServer((req,res)=>{
+    if(req.url==='/settings.js'){res.setHeader('Content-Type','text/javascript');return res.end(source)}
+    if(req.url==='/settings.css'){res.setHeader('Content-Type','text/css');return res.end(css)}
+    if(req.url==='/setup.js'){res.setHeader('Content-Type','text/javascript');return res.end(setup)}
+    if(req.url==='/driver.js'){res.setHeader('Content-Type','text/javascript');return res.end(driver)}
+    res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/settings.css"><style>*{box-sizing:border-box}body{margin:0;font:16px system-ui}.hidden{display:none!important}</style><main id="shell"><header class="topbar">Business &amp; Life · Synthetic browser fixture</header><section id="profileSettingsWorkspace" class="profileSettingsWorkspace hidden"></section><div id="roleToast"></div></main><script src="/setup.js"></script><script src="/settings.js"></script><script src="/driver.js"></script>');
+  });
+  try{
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    const version=await launch(chrome,['--version']);t.diagnostic(version.stdout.trim());
+    const result=await launch(chrome,['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-first-run','--no-default-browser-check','--user-data-dir='+directory,'--window-size=390,844','--virtual-time-budget=10000','--dump-dom','http://127.0.0.1:'+server.address().port],{timeout:45000,maxBuffer:1024*1024});
+    const match=result.stdout.match(/<pre id="settingsBrowserResult">([^<]+)<\/pre>/);
+    assert.ok(match,'Browser must complete the actual-source acceptance and report its result.');
+    const report=JSON.parse(match[1].replaceAll('&quot;','"').replaceAll('&amp;','&').replaceAll('&gt;','>').replaceAll('&lt;','<'));
+    assert.equal(report.error,null,JSON.stringify(report));assert.deepEqual(report.errors,[]);assert.ok(report.checks.length>=30);assert.ok(report.width<=390);
+    t.diagnostic(JSON.stringify({browser_checks:report.checks.length,width:report.width,errors:report.errors}));
+  }finally{await new Promise(resolve=>server.close(resolve));rmSync(directory,{recursive:true,force:true})}
 });

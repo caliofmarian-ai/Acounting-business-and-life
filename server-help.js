@@ -10,7 +10,10 @@ const helpDir=join(__dirname,'public','help');
 
 const helpPage=(_req,res)=>res.type('html').send(readFileSync(join(helpDir,'index.html'),'utf8'));
 
-app.get('/health',(_req,res)=>res.json({ok:true,service:'public-help-center',version:'0.9-docs'}));
+app.get('/health',(_req,res)=>{
+  const revision=String(process.env.RAILWAY_GIT_COMMIT_SHA||'');
+  res.json({ok:true,service:'public-help-center',version:'3.0-public-self-service',deployment:{revision:/^[a-f0-9]{40}$/i.test(revision)?revision.slice(0,12):null}});
+});
 app.get('/',(_req,res)=>res.redirect(302,'/help'));
 app.get('/help',helpPage);
 app.get('/help/',helpPage);
