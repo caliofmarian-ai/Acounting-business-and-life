@@ -40,6 +40,7 @@ try{
  await page.screenshot({path:path.join(output,'mobile-application-review.png'),fullPage:true});
  await go('/help/error/ERR-AUTH-999?lang=en-PH');await hasText('h1','Unknown help code');await page.getByRole('searchbox').fill('delete my account');await page.locator('#searchResults a[href*="delete-account"]').waitFor();checks.push('unknown-code fallback remains searchable');
  await go('/help?lang=en-PH');await page.getByRole('searchbox').fill('Where is my money?');await hasText('#searchResults','Which money do you mean?');checks.push('ambiguous money asks for clarification');
+ const closeVisible=await page.locator('#closeHelpResults').evaluate(element=>{const button=element.getBoundingClientRect(),panel=element.closest('#searchResults').getBoundingClientRect();return button.top>=Math.max(0,panel.top)&&button.bottom<=Math.min(innerHeight,panel.bottom)});assert(closeVisible,'close action must remain visible above long guided results');checks.push('mobile close action visible before guided answers');
  await page.screenshot({path:path.join(output,'mobile-money-question.png'),fullPage:true});
  await go('/help/article/guest-browsing?lang=en-PH');await hasText('.article-main','Ordering and private workspaces require an account');checks.push('guest protection boundary');
  await go('/help/article/support-and-tickets?lang=en-PH');await hasText('.article-main','not yet verified as available');checks.push('honest guest contact limitation');

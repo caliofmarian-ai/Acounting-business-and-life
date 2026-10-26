@@ -246,3 +246,5 @@ summary{font-weight:700;cursor:pointer;padding:12px 0}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.profile-card{transition:none}}
 
 @media(max-width:320px){.help-preferences label{flex-basis:100%}}
+
+.search-results-head{position:sticky;top:0;background:#fff;z-index:1;padding-bottom:6px}

@@ -190,7 +190,7 @@ function paintSearch(){
   state.query=input.value.slice(0,200);
   if(!state.query.trim()){box.hidden=true;box.innerHTML='';status.textContent='';return}
   const hits=searchArticles(state.query),guided=guidedForQuery(state.query);
-  box.innerHTML=`${guided?guidedMarkup(guided):''}<div class="search-results-head"><strong>${esc(text('result'))}</strong><button type="button" id="closeHelpResults">${esc(text('close'))}</button></div>${hits.length?`<ul class="help-hits">${hits.map(a=>{const v=localizedArticle(a);return`<li><a class="search-hit" lang="${v.readingLocale}" href="${articleUrl(a.slug)}"><strong>${esc(v.title)}</strong><span>${esc(v.summary)}</span></a></li>`}).join('')}</ul>`:`<p><strong>${esc(text('empty'))}</strong></p><p>${esc(text('emptyCopy'))}</p><a class="chip" href="${articleUrl('support-and-tickets')}">${esc(text('supportLink'))}</a>`}`;
+  box.innerHTML=`<div class="search-results-head"><strong>${esc(text('result'))}</strong><button type="button" id="closeHelpResults">${esc(text('close'))}</button></div>${guided?guidedMarkup(guided):''}${hits.length?`<ul class="help-hits">${hits.map(a=>{const v=localizedArticle(a);return`<li><a class="search-hit" lang="${v.readingLocale}" href="${articleUrl(a.slug)}"><strong>${esc(v.title)}</strong><span>${esc(v.summary)}</span></a></li>`}).join('')}</ul>`:`<p><strong>${esc(text('empty'))}</strong></p><p>${esc(text('emptyCopy'))}</p><a class="chip" href="${articleUrl('support-and-tickets')}">${esc(text('supportLink'))}</a>`}`;
   box.hidden=false;
   status.textContent=hits.length?hits.length+' '+text('count'):text('empty');
   document.getElementById('closeHelpResults').onclick=()=>{box.hidden=true;input.focus()};
