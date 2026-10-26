@@ -19,8 +19,13 @@ if (process.env.NODE_ENV !== 'test' || process.env.APP_ENV !== 'test'
   throw new Error('Knowledge gateway acceptance requires its disposable local CI environment.');
 }
 const pool = new pg.Pool();
-const check = await pool.query('SELECT current_database() name,inet_server_addr() host');
-assert.equal(check.rows[0].name, 'abl_knowledge_ci'); assert.equal(check.rows[0].host, '127.0.0.1');
+const client = await pool.connect();
+try {
+  // The peer is loopback even when PostgreSQL reports its private Docker IP.
+  assert.equal(client.connection.stream.remoteAddress, '127.0.0.1');
+  const check = await client.query('SELECT current_database() name');
+  assert.equal(check.rows[0].name, 'abl_knowledge_ci');
+} finally { client.release(); }
 const { chromium } = await import(process.env.KNOWLEDGE_BROWSER_MODULE || 'playwright');
 const evidence = process.env.KNOWLEDGE_BROWSER_EVIDENCE_DIR;
 if (evidence) mkdirSync(evidence, { recursive: true });
