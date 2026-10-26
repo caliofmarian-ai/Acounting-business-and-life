@@ -13,28 +13,29 @@
   <header class="help-header">
     <a class="help-brand" href="/help" aria-label="Business & Life Help Center home">
       <span class="brand-mark" aria-hidden="true"></span>
-      <span><strong>Business & Life</strong><small>Help Center</small></span>
+      <span><strong>Business & Life</strong><small data-help-copy="home">Help Center</small></span>
     </a>
     <nav class="help-nav" aria-label="Help navigation">
-      <a href="/help#profiles">Profiles</a>
-      <a href="/help#popular">Popular guides</a>
-      <a href="/help#troubleshooting">Troubleshooting</a>
-      <a class="open-app" href="/">Open app</a>
+      <a href="/help#profiles" data-help-href="/help#profiles" data-help-copy="profiles">Profile guides</a>
+      <a href="/help#popular" data-help-href="/help#popular" data-help-copy="popular">Common tasks</a>
+      <a href="/help#troubleshooting" data-help-href="/help#troubleshooting" data-help-copy="troubleshooting">Solve a problem</a>
+      <a class="open-app" href="/" data-help-copy="openApp">Open app</a>
     </nav>
-    <button id="mobileNavButton" class="mobile-nav-button" type="button" aria-label="Open help navigation" aria-expanded="false">Menu</button>
+    <button id="mobileNavButton" class="mobile-nav-button" type="button" aria-label="Open help navigation" aria-expanded="false" data-help-copy="menu">Menu</button>
   </header>
 
-  <main id="helpMain" tabindex="-1"></main>
+  <main id="helpMain" tabindex="-1"><p class="section" role="status">Loading public guides…</p></main>
+  <noscript><p class="section">Help Center search and guides require JavaScript. Enable JavaScript, then reload this page. <a href="/">Return to the app</a>.</p></noscript>
 
   <footer class="help-footer">
     <div>
       <strong>Business & Life — Philippines</strong>
-      <p>Official product guidance. Public documentation describes behavior available in the current application release.</p>
+      <p data-help-copy="guideNote">Public product guidance. Private account and business details stay inside the app.</p>
     </div>
     <div class="footer-links">
-      <a href="/help/article/report-problem">Report a problem</a>
-      <a href="/help/article/product-overview">Product overview</a>
-      <a href="/">Back to app</a>
+      <a href="/help/article/support-and-tickets" data-help-href="/help/article/support-and-tickets" data-help-copy="supportLink">Contact and support options</a>
+      <a href="/help/article/product-overview" data-help-href="/help/article/product-overview" data-help-copy="map">How Business & Life fits together</a>
+      <a href="/" data-help-copy="openApp">Open app</a>
     </div>
   </footer>
 
