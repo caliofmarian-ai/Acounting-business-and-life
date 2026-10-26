@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {ordersReceivableTotal} from './public/orders-receivable-view.js';
 
 const close=(a,b)=>Math.abs(Number(a)-Number(b))<0.0001;
 const requireEvidence=(condition,message)=>{if(!condition)throw new Error('Merchant counter QA: '+message)};
@@ -54,6 +55,16 @@ export async function runMerchantCounterOrdersV1Acceptance({pool,base,secret,ali
         cash_enabled:true,online_enabled:false,public_location_enabled:false,public_reputation_enabled:false}
     });
     requireEvidence(store.publication_status==='draft','test storefront must remain unpublished.');
+    const displayAsset=await fetch(base+'/orders-receivable-view.js',{headers:{Accept:'application/javascript'}});
+    const displaySource=await displayAsset.text();
+    requireEvidence(displayAsset.status===200&&/(?:java|ecma)script/i.test(displayAsset.headers.get('content-type')||'')&&
+      displaySource.includes('export')&&displaySource.includes('ordersReceivableTotal'),
+      'the shared receivable display asset is not served as JavaScript.');
+    const initialOrders=await call('/api/orders/merchant/list?business_id='+businessId);
+    requireEvidence(Array.isArray(initialOrders)&&initialOrders.length===0&&close(ordersReceivableTotal(initialOrders),0),
+      'fresh Merchant workspace did not start with zero receivable.');
+    const initialLedger=await pool.query('SELECT COUNT(*)::int count FROM transactions WHERE business_id=$1',[businessId]);
+    requireEvidence(Number(initialLedger.rows[0]?.count)===0,'fresh Merchant workspace already has money ledger records.');
 
     const stock=async(label,domain,role,cost)=>{
       const row=await call('/api/inventory',{method:'POST',body:{item:`QA COUNTER ${marker} ${label}`,unit:'unit',quantity:10,
@@ -96,6 +107,9 @@ export async function runMerchantCounterOrdersV1Acceptance({pool,base,secret,ali
     requireEvidence(orderId>0&&order.order_status==='accepted','counter order must be accepted without recording a payment.');
     requireEvidence(close(order.total,30)&&close(order.paid_amount,0)&&close(order.outstanding_amount,30),
       'counter total or unpaid-money semantics changed.');
+    const acceptedOrders=await call('/api/orders/merchant/list?business_id='+businessId);
+    requireEvidence(acceptedOrders.some(row=>Number(row.id)===orderId&&row.order_status==='accepted')&&
+      close(ordersReceivableTotal(acceptedOrders),30),'accepted counter order is missing from the displayed receivable.');
     const foodLine=(order.items||[]).find(row=>row.source_kind==='marketplace_product'&&Number(row.source_id)===Number(food.id));
     requireEvidence(foodLine&&close(foodLine.unit_price_snapshot,7)&&close(foodLine.unit_cost_snapshot,2)&&close(foodLine.line_total,14),
       'canonical price/cost snapshots are missing or incorrect.');
@@ -124,6 +138,11 @@ export async function runMerchantCounterOrdersV1Acceptance({pool,base,secret,ali
     for(const id of stockIds)requireEvidence(close(repeated.get(id),consumed.get(id)),'repeat preparation consumed stock twice.');
     const cancelled=await call(`/api/orders/merchant/${orderId}/cancel`,{method:'POST',body:{reason:'Controlled QA cancellation — no real sale'}});
     requireEvidence(cancelled.order_status==='cancelled','counter cancellation did not complete.');
+    const cancelledOrders=await call('/api/orders/merchant/list?business_id='+businessId);
+    const cancelledSnapshot=cancelledOrders.find(row=>Number(row.id)===orderId);
+    requireEvidence(cancelledSnapshot?.order_status==='cancelled'&&close(cancelledSnapshot.outstanding_amount,30)&&
+      close(ordersReceivableTotal(cancelledOrders),0),
+      'cancelled order changed its historical balance or remains in the displayed receivable.');
     const restored=await inventoryEvidence(stockIds);
     requireEvidence(stockIds.every(id=>close(restored.get(id),10)),'counter cancellation failed to restore all stock.');
     await call(`/api/orders/merchant/${orderId}/cancel`,{method:'POST',body:{reason:'Idempotency negative'}},409,'repeat cancellation denial');
@@ -140,6 +159,9 @@ export async function runMerchantCounterOrdersV1Acceptance({pool,base,secret,ali
     requireEvidence(failedOrderEvidence.rowCount===1,'rejected counter requests persisted orders.');
     const money=await pool.query(`SELECT COUNT(*)::int count FROM order_payments WHERE order_id=$1`,[orderId]);
     requireEvidence(Number(money.rows[0]?.count)===0,'counter QA recorded money without a payment action.');
+    const finalLedger=await pool.query('SELECT COUNT(*)::int count FROM transactions WHERE business_id=$1',[businessId]);
+    requireEvidence(Number(finalLedger.rows[0]?.count)===Number(initialLedger.rows[0]?.count),
+      'counter creation/cancellation changed the money ledger without a payment action.');
     const privateStore=await call('/api/merchant/storefront?business_id='+businessId);
     requireEvidence(privateStore.publication_status==='draft'&&(privateStore.products||[])
       .filter(row=>createdProducts.includes(Number(row.id))).every(row=>row.published===false),'test made private products public.');
@@ -149,7 +171,9 @@ export async function runMerchantCounterOrdersV1Acceptance({pool,base,secret,ali
       private_food_and_retail_picker:true,canonical_and_legacy_snapshots:true,business_isolation:true,
       canonical_id_not_guessed:true,immutable_price_snapshot:true,reserved_without_consumption:true,
       exact_stock_consumption:true,repeat_start_no_double_consumption:true,cancellation_restores_stock:true,
-      archive_and_short_stock_denied:true,rejected_orders_rolled_back:true,no_payment_recorded:true,public_storefront_unchanged:true};
+      archive_and_short_stock_denied:true,rejected_orders_rolled_back:true,no_payment_recorded:true,public_storefront_unchanged:true,
+      shared_receivable_asset_served:true,accepted_receivable:30,cancelled_snapshot_outstanding:30,
+      cancelled_display_receivable:0,money_ledger_unchanged:true};
   }finally{
     // Retain cancelled orders and private fixture rows as reproducible evidence.
     // Failed waves also release their own reservations and restore stock via the API.
