@@ -196,7 +196,7 @@ Audit every current guide; the following are the first demonstrated gaps. Code a
 | P0 | Guest browsing, what is public, conversion at protected actions | `docs/architecture/GUEST_EXPLORATION_AND_ONBOARDING.md`, public Marketplace projection and Guest UI |
 | P0 | Sign-in failure, password reset, expired session and service outage; public account-access contact | `public/auth-ui.js`, `public/session-security.js`, current account security UI and public contact configuration |
 | P0 | Profile application by role: Merchant/Local Services self-start; Supplier/Delivery invitation gates for normal launch users | `public/profile-governance-ui.js` (`GOV_META`, `roleControl`), `server-profile-governance.js` (`/profiles/:role/start`) |
-| P0 | Under-review evidence upload, Admin notes, corrections and resubmission | `applicationEvidenceCard()` / application rendering in `public/profile-governance-ui.js` |
+| P0 | Under-review evidence upload, Admin notes, corrections and resubmission | `govEvidenceUploadHtml()` / application rendering in `public/profile-governance-ui.js` |
 | P0 | Profile authorization vs commerce readiness vs public Storefront publication | `public/profile-governance-ui.js`, Storefront UI and current readiness gates |
 | P0 | Money facts: recorded balances, payment status, payable quote, payout readiness and fees | `public/profile-settings-ui.js`, `profile-finance-core.js`, payment/finance authority; #571 is not documented as released while open |
 | P1 | Merchant Today, Food/Non-food/Mixed, canonical Catalog and Counter orders | Current Merchant scripts and #353/#794; apply #800 wording only after release evidence |
