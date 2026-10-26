@@ -1,4 +1,5 @@
 let supMe=null,supWorkspace=null,supInventory=[],supSupplierSection='Today';
+let supplierWorkspaceGeneration=0,supplierWorkspaceOwned=false,supplierWorkspaceProfileKey=null,supplierWorkspaceBusinessId=null;
 const ptok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const ph=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const pphp=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -10,7 +11,7 @@ function ptoast(msg){const t=document.getElementById('roleToast');if(t){t.textCo
 function ensureSup(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('supWorkspace')){supWorkspace=document.createElement('section');supWorkspace.id='supWorkspace';supWorkspace.className='supWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',supWorkspace)}else supWorkspace=document.getElementById('supWorkspace');if(!document.getElementById('supModalBg')){const b=document.createElement('div');b.id='supModalBg';b.className='supModalBg hidden';b.innerHTML='<section id="supModal" class="supModal"></section>';document.body.appendChild(b);b.onclick=e=>{if(e.target===b)closeSupModal()}}return true}
 function hideSupBase(){closeSupModal();document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));for(const id of ['roleHub','ordersWorkspace','marketWorkspace','servicesWorkspace'])document.getElementById(id)?.classList.add('hidden');document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('basketBar')?.classList.add('hidden')}
 function supHeader(title,sub){return `<div class="supHeader"><button class="supBack" type="button">‹</button><div><h1>${ph(title)}</h1><p>${ph(sub)}</p></div></div>`}
-function closeSupWorkspace(){closeSupModal();supWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closeSupWorkspace(){closeSupModal();invalidateSupplierWorkspace();supWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
 function bindSupBack(fn=closeSupWorkspace){supWorkspace.querySelector('.supBack').onclick=fn}
 function closeSupModal(){document.getElementById('supModalBg')?.classList.add('hidden');document.body.style.overflow=''}
 function openSupModal(html){document.getElementById('supModal').innerHTML=html;document.getElementById('supModalBg').classList.remove('hidden');document.body.style.overflow='hidden'}
@@ -662,25 +663,56 @@ function supplierOrdersPanel(pos,section){
       :['Fulfilment','Track ready-for-pickup, supplier delivery and Merchant receipt states.','No purchase orders are currently in fulfilment.'];
   return `<section class="supCard"><h2>${copy[0]}</h2><p>${copy[1]}</p><div class="supList">${rows.length?rows.map(poCardSupplier).join(''):`<div class="supEmpty">${copy[2]}</div>`}</div></section>`;
 }
+function supplierProfileContext(state=window.BusinessLifeProfileState){
+  return JSON.stringify([state?.accountId??state?.snapshot?.account?.id??null,state?.surface,state?.activeRole,state?.navigationEpoch]);
+}
+function supplierProfileIsActive(){
+  const state=window.BusinessLifeProfileState;
+  return Boolean(ptok()&&state?.surface==='profile'&&state.activeRole==='supplier');
+}
+function currentSupplierBusinessId(){
+  const state=window.BusinessLifeAccounting?.getState?.();
+  return state?.role==='supplier'&&Number(state.activeBusinessId)>0?Number(state.activeBusinessId):null;
+}
+function invalidateSupplierWorkspace(){supplierWorkspaceGeneration+=1;supplierWorkspaceOwned=false}
+function beginSupplierWorkspaceRequest(){
+  if(!supplierProfileIsActive()||!supWorkspace||supWorkspace.classList.contains('hidden'))return null;
+  supplierWorkspaceOwned=true;
+  supplierWorkspaceProfileKey=supplierProfileContext();
+  supplierWorkspaceBusinessId=currentSupplierBusinessId();
+  return {generation:++supplierWorkspaceGeneration,profileKey:supplierWorkspaceProfileKey,businessId:supplierWorkspaceBusinessId,workspace:supWorkspace};
+}
+function supplierWorkspaceRequestIsCurrent(request){
+  const businessId=currentSupplierBusinessId();
+  return Boolean(request&&request.generation===supplierWorkspaceGeneration&&supplierWorkspaceOwned
+    &&supplierProfileIsActive()&&request.profileKey===supplierProfileContext()
+    &&request.workspace===supWorkspace&&document.getElementById('supWorkspace')===supWorkspace
+    &&!supWorkspace.classList.contains('hidden')
+    // Accounting hydrates the initial selected business asynchronously without a switch event.
+    &&(!request.businessId||!businessId||request.businessId===businessId));
+}
 function supplierWorkspaceLoading(section){
   const meta=SUPPLIER_SECTION_META[section]||SUPPLIER_SECTION_META.Today;
   supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supCard supState" role="status" aria-live="polite"><span class="supSpinner" aria-hidden="true"></span><div><h2>Loading ${ph(meta[0])}</h2><p>Getting the latest Supplier information…</p></div></section>`;
   bindSupBack();
 }
-function supplierWorkspaceError(section,error){
+function supplierWorkspaceError(section,error,request){
   const meta=SUPPLIER_SECTION_META[section]||SUPPLIER_SECTION_META.Today;
   const message=error?.message||'The Supplier workspace could not be loaded.';
   supWorkspace.innerHTML=supHeader(meta[0],meta[1])+`<section class="supCard supState supStateError" role="alert"><div><h2>We couldn’t load ${ph(meta[0])}</h2><p>${ph(message)}</p><div class="supInlineActions"><button type="button" class="supBtn" id="supWorkspaceRetry">Try again</button><button type="button" class="supBtn secondary" id="supWorkspaceBack">Back</button></div></div></section>`;
   bindSupBack();
-  document.getElementById('supWorkspaceRetry')?.addEventListener('click',()=>renderSupplierWorkspace(section));
+  document.getElementById('supWorkspaceRetry')?.addEventListener('click',()=>{if(supplierWorkspaceRequestIsCurrent(request))return renderSupplierWorkspace(section)});
   document.getElementById('supWorkspaceBack')?.addEventListener('click',closeSupWorkspace);
 }
 async function openSupplierWorkspace(section='Today'){
+  if(!supplierProfileIsActive())return;
   supSupplierSection=SUPPLIER_SECTION_META[section]?section:'Today';
   ensureSup();hideSupBase();supWorkspace.classList.remove('hidden');
   await renderSupplierWorkspace(supSupplierSection);
 }
 async function renderSupplierWorkspace(section=supSupplierSection){
+  const request=beginSupplierWorkspaceRequest();
+  if(!request)return;
   const normalized=SUPPLIER_SECTION_META[section]?section:'Today';
   supSupplierSection=normalized;
   supplierWorkspaceLoading(normalized);
@@ -719,6 +751,8 @@ async function renderSupplierWorkspace(section=supSupplierSection){
       pos=await papi('/api/procurement/orders');
     }
 
+    if(!supplierWorkspaceRequestIsCurrent(request))return;
+    supplierWorkspaceBusinessId=currentSupplierBusinessId()??request.businessId;
     const meta=SUPPLIER_SECTION_META[normalized];
     let body='';
     if(normalized==='Today')body=supplierTodayPanel(todayState);
@@ -731,7 +765,7 @@ async function renderSupplierWorkspace(section=supSupplierSection){
     bindSupBack();bindSupplierWorkspace();
     document.dispatchEvent(new CustomEvent('abl:clear-context-help'));
   }catch(err){
-    supplierWorkspaceError(normalized,err);
+    if(supplierWorkspaceRequestIsCurrent(request))supplierWorkspaceError(normalized,err,request);
   }
 }
 
@@ -905,9 +939,22 @@ async function issueSupplierRecall(){
 async function supplierRespondPo(id){const p=await papi(`/api/procurement/orders/${id}`);openSupModal(`<h2>Respond to ${ph(p.po_number)}</h2><form id="supRespondPo" class="supForm"><div class="supProductPicker">${p.items.map(i=>`<div class="supPick"><div><strong>${ph(i.name_snapshot)}</strong><small>Ordered ${Number(i.ordered_packs)} ${ph(i.unit_name_snapshot)}</small></div><div><input data-confirm-item="${i.id}" type="number" min="0" max="${i.ordered_packs}" step="0.01" value="${i.confirmed_packs??i.ordered_packs}"><input data-price-item="${i.id}" type="number" min="0" step="0.01" value="${i.confirmed_price_per_pack??i.price_per_pack_snapshot}"></div></div>`).join('')}</div><div class="supTwo"><label>Ready date/time<input id="supReady" type="datetime-local" value="${ph(pmanilaInput(p.supplier_ready_at))}"></label><label>Delivery ETA<input id="supDeliveryEta" type="datetime-local" value="${ph(pmanilaInput(p.supplier_delivery_eta))}"></label></div><label>Supplier note<textarea id="supPoNote" rows="2">${ph(p.supplier_note||'')}</textarea></label><div id="supPoMsg" class="fileNote"></div><div class="supTwo"><button type="button" class="supBtn secondary" id="supPoReject">Reject</button><button>Accept / confirm</button></div></form>`);document.getElementById('supPoReject').onclick=async()=>{try{await papi(`/api/supplier/orders/${id}/respond`,{method:'POST',body:JSON.stringify({reject:true,supplier_note:document.getElementById('supPoNote').value})});closeSupModal();await renderSupplierWorkspace('Procurement')}catch(e){document.getElementById('supPoMsg').textContent=e.message}};document.getElementById('supRespondPo').onsubmit=async e=>{e.preventDefault();const items=p.items.map(i=>({item_id:i.id,confirmed_packs:Number(e.currentTarget.querySelector(`[data-confirm-item="${i.id}"]`).value),confirmed_price_per_pack:Number(e.currentTarget.querySelector(`[data-price-item="${i.id}"]`).value)}));try{await papi(`/api/supplier/orders/${id}/respond`,{method:'POST',body:JSON.stringify({items,supplier_ready_at:pmanilaIso(document.getElementById('supReady').value),supplier_delivery_eta:pmanilaIso(document.getElementById('supDeliveryEta').value),supplier_note:document.getElementById('supPoNote').value})});closeSupModal();ptoast('Purchase order confirmed.');await renderSupplierWorkspace('ETA')}catch(err){document.getElementById('supPoMsg').textContent=err.message}}}
 async function setSupplierStatus(id,status){try{await papi(`/api/supplier/orders/${id}/status`,{method:'POST',body:JSON.stringify({status})});ptoast(`PO marked ${pnice(status)}.`);await renderSupplierWorkspace(['ready_for_pickup','out_for_delivery','delivered'].includes(status)?'Fulfilment':'ETA')}catch(e){ptoast(e.message)}}
 
-function applySupplierState(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState;if(state?.snapshot)supMe=state.snapshot}
-async function decorateSupplier(detail){if(!ensureSup()||!ptok())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applySupplierState(state);if(!supMe)return;const role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(hub&&role==='supplier')hub.querySelectorAll('[data-hub-feature]').forEach(b=>{if(SUPPLIER_SECTION_META[b.dataset.hubFeature])b.onclick=()=>openSupplierWorkspace(b.dataset.hubFeature)})}
-function observeSupplier(){document.addEventListener('abl:profile-state',e=>decorateSupplier(e.detail).catch(()=>{}),{passive:true})}
+function applySupplierState(detail){const state=detail||window.BusinessLifeProfileState;const key=supplierProfileContext(state);if(key!==supplierWorkspaceProfileKey)invalidateSupplierWorkspace();supplierWorkspaceProfileKey=key;supMe=state?.snapshot||null}
+async function decorateSupplier(detail){applySupplierState(detail);if(!ensureSup()||!ptok()||!supMe)return;const state=detail||window.BusinessLifeProfileState;const role=state?.surface==='profile'?state.activeRole:null,hub=document.getElementById('roleHub');if(hub&&role==='supplier')hub.querySelectorAll('[data-hub-feature]').forEach(b=>{if(SUPPLIER_SECTION_META[b.dataset.hubFeature])b.onclick=()=>openSupplierWorkspace(b.dataset.hubFeature)})}
+function observeSupplier(){
+  document.addEventListener('abl:profile-state',e=>decorateSupplier(e.detail).catch(()=>{}),{passive:true});
+  document.addEventListener('abl:feature-workspace',()=>invalidateSupplierWorkspace(),{passive:true});
+  document.addEventListener('abl:auth-expired',()=>{invalidateSupplierWorkspace();supMe=null},{passive:true});
+  document.addEventListener('abl:business-workspace-changed',event=>{
+    const detail=event.detail,businessId=currentSupplierBusinessId();
+    if(detail?.role!=='supplier'||!supplierProfileIsActive()||!Number(detail.activeBusinessId)
+      ||Number(detail.activeBusinessId)===supplierWorkspaceBusinessId
+      ||(businessId&&Number(detail.activeBusinessId)!==businessId))return;
+    const visible=supplierWorkspaceOwned&&supWorkspace&&!supWorkspace.classList.contains('hidden');
+    invalidateSupplierWorkspace();
+    if(visible){const request=beginSupplierWorkspaceRequest();if(request)supplierWorkspaceError(supSupplierSection,new Error('The selected Supplier business changed. Try again to load its current information.'),request)}
+  },{passive:true});
+}
 async function boot(){ensureSup();observeSupplier();await decorateSupplier(window.BusinessLifeProfileState)}
 window.BusinessLifeSuppliers=Object.freeze({openMerchantProcurement,openSupplierWorkspace});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
