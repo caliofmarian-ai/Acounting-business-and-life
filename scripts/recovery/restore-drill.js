@@ -80,6 +80,7 @@ export function validateManifest(value) {
   if (!value || Array.isArray(value) || value.format !== 'abl-recovery-manifest-v1') fail('INVALID_MANIFEST');
   if (typeof value.archive_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.archive_sha256)) fail('INVALID_MANIFEST');
   if (typeof value.backup_created_at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(value.backup_created_at) || !Number.isFinite(Date.parse(value.backup_created_at)) || Date.parse(value.backup_created_at) > Date.now() + 300000) fail('INVALID_MANIFEST');
+  if (new Date(value.backup_created_at).toISOString().slice(0, 19) !== value.backup_created_at.slice(0, 19)) fail('INVALID_MANIFEST');
   const counts = value.expected_counts;
   if (!counts || Array.isArray(counts) || Object.keys(counts).length !== Object.keys(REQUIRED_COLUMNS).length) fail('INVALID_MANIFEST');
   for (const name of Object.keys(REQUIRED_COLUMNS)) {

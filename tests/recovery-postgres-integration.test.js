@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFile} from 'node:child_process';
+import {execFile, spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {appendFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -128,6 +128,35 @@ test('real PostgreSQL restore, data-loss detection, isolation and cleanup', {ski
       const {stat} = await import('node:fs/promises');
       assert.equal((await stat(path)).mode & 0o777, 0o600);
       await assert.rejects(exec(process.execPath, [script, '--synthetic', '--pg-bin', bin, '--report', path], {timeout: 60000}), error => JSON.parse(error.stdout).failure_code === 'REPORT_WRITE_FAILED');
+    });
+    await t.test('SIGTERM during a running cluster stops the server and removes its private files', {timeout: 45000}, async () => {
+      const script = fileURLToPath(new URL('../scripts/recovery/restore-drill.js', import.meta.url));
+      const child = spawn(process.execPath, [script, '--synthetic', '--pg-bin', bin], {stdio: ['ignore', 'pipe', 'pipe']});
+      let output = '', errors = '';
+      child.stdout.on('data', chunk => { output += chunk; });
+      child.stderr.on('data', chunk => { errors += chunk; });
+      const done = new Promise((yes, no) => { child.once('error', no); child.once('close', (code, signal) => yes({code, signal})); });
+      let activeDirectory;
+      try {
+        for (let attempt = 0; attempt < 2000 && child.exitCode === null; attempt++) {
+          for (const directory of (await tempDrills()).filter(p => !before.includes(p))) {
+            try { await readFile(join('/tmp', directory, 'data', 'postmaster.pid')); activeDirectory = directory; break; }
+            catch { /* initialization has not yet started a server */ }
+          }
+          if (activeDirectory) break;
+          await new Promise(yes => setTimeout(yes, 10));
+        }
+        assert.ok(activeDirectory, 'interrupt must happen after PostgreSQL has started');
+        child.kill('SIGTERM');
+        const exit = await done;
+        assert.equal(exit.code, 1, output + errors);
+        const report = JSON.parse(output);
+        assert.equal(report.failure_code, 'INTERRUPTED');
+        assert.equal(report.cleanup, 'PASS');
+        assert.ok(!(await tempDrills()).includes(activeDirectory));
+      } finally {
+        if (child.exitCode === null) { child.kill('SIGTERM'); await done; }
+      }
     });
     assert.deepEqual(await tempDrills(), before, 'all tool-owned clusters must be stopped and removed');
   } finally {

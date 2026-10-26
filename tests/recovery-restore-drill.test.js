@@ -31,7 +31,7 @@ test('all libpq destinations, startup/loader hooks and cloud/application secrets
 
 test('count manifests require a complete independent decimal-string baseline and a valid checksum/date', () => {
   assert.equal(validateManifest(validManifest()).expected_counts.orders, '2');
-  const cases = [null, [], {}, {...validManifest(), archive_sha256: 'postgres://secret'}, {...validManifest(), backup_created_at: 'invalid'}, {...validManifest(), backup_created_at: '9999-01-01T00:00:00Z'}];
+  const cases = [null, [], {}, {...validManifest(), archive_sha256: 'postgres://secret'}, {...validManifest(), backup_created_at: 'invalid'}, {...validManifest(), backup_created_at: '2026-02-31T12:00:00Z'}, {...validManifest(), backup_created_at: '2025-02-29T12:00:00Z'}, {...validManifest(), backup_created_at: '9999-01-01T00:00:00Z'}];
   for (const change of [{orders: 2}, {orders: '-1'}, {orders: '1; DROP TABLE orders'}, {orders: '9'.repeat(20)}, {extra: '1'}]) cases.push({...validManifest(), expected_counts: {...FIXTURE_COUNTS, ...change}});
   const missing = validManifest(); delete missing.expected_counts.orders; cases.push(missing);
   for (const value of cases) assert.throws(() => validateManifest(value), /INVALID_MANIFEST/);
