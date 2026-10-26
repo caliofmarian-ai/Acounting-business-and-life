@@ -365,7 +365,7 @@ test('real Chrome preserves current forms, profile navigation and mobile geometr
     check(workspace.textContent===''&&workspace.classList.contains('hidden'),'auth expiry clears private DOM');
     check(browserErrors.length===0,'no browser JavaScript errors');
   })().then(()=>finish(null),error=>finish(error.message));
-  function finish(error){const report=document.createElement('pre');report.id='settingsBrowserResult';report.textContent=JSON.stringify({error,checks:browserChecks,errors:browserErrors,width:innerWidth});document.body.append(report)}
+  function finish(error){parent.postMessage({type:'settings-browser-result',report:{error,checks:browserChecks,errors:browserErrors,width:innerWidth}},location.origin)}
   `;
   const css=readFileSync(new URL('../public/profile-settings.css',import.meta.url),'utf8');
   const server=createServer((req,res)=>{
@@ -373,16 +373,21 @@ test('real Chrome preserves current forms, profile navigation and mobile geometr
     if(req.url==='/settings.css'){res.setHeader('Content-Type','text/css');return res.end(css)}
     if(req.url==='/setup.js'){res.setHeader('Content-Type','text/javascript');return res.end(setup)}
     if(req.url==='/driver.js'){res.setHeader('Content-Type','text/javascript');return res.end(driver)}
+    // New Chrome versions clamp their outer CLI window to a desktop minimum.
+    // A real 390px browsing context still exercises the actual media queries.
+    if(req.url!=='/frame'){
+      res.setHeader('Content-Type','text/html');return res.end('<!doctype html><meta charset="utf-8"><iframe title="Settings test fixture" src="/frame" style="border:0;width:390px;height:844px"></iframe><script>addEventListener("message",event=>{if(event.origin!==location.origin||event.data?.type!=="settings-browser-result")return;const report=document.createElement("pre");report.id="settingsBrowserResult";report.textContent=JSON.stringify(event.data.report);document.body.append(report)})</script>');
+    }
     res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/settings.css"><style>*{box-sizing:border-box}body{margin:0;font:16px system-ui}.hidden{display:none!important}</style><main id="shell"><header class="topbar">Business &amp; Life · Synthetic browser fixture</header><section id="profileSettingsWorkspace" class="profileSettingsWorkspace hidden"></section><div id="roleToast"></div></main><script src="/setup.js"></script><script src="/settings.js"></script><script src="/driver.js"></script>');
   });
   try{
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     const version=await launch(chrome,['--version']);t.diagnostic(version.stdout.trim());
-    const result=await launch(chrome,['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-first-run','--no-default-browser-check','--user-data-dir='+directory,'--window-size=390,844','--virtual-time-budget=10000','--dump-dom','http://127.0.0.1:'+server.address().port],{timeout:45000,maxBuffer:1024*1024});
+    const result=await launch(chrome,['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--no-first-run','--no-default-browser-check','--user-data-dir='+directory,'--window-size=600,1000','--virtual-time-budget=10000','--dump-dom','http://127.0.0.1:'+server.address().port],{timeout:45000,maxBuffer:1024*1024});
     const match=result.stdout.match(/<pre id="settingsBrowserResult">([^<]+)<\/pre>/);
     assert.ok(match,'Browser must complete the actual-source acceptance and report its result.');
     const report=JSON.parse(match[1].replaceAll('&quot;','"').replaceAll('&amp;','&').replaceAll('&gt;','>').replaceAll('&lt;','<'));
-    assert.equal(report.error,null,JSON.stringify(report));assert.deepEqual(report.errors,[]);assert.ok(report.checks.length>=30);assert.ok(report.width<=390);
+    assert.equal(report.error,null,JSON.stringify(report));assert.deepEqual(report.errors,[]);assert.ok(report.checks.length>=30);assert.equal(report.width,390);
     t.diagnostic(JSON.stringify({browser_checks:report.checks.length,width:report.width,errors:report.errors}));
   }finally{await new Promise(resolve=>server.close(resolve));rmSync(directory,{recursive:true,force:true})}
 });
