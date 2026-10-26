@@ -1,4 +1,5 @@
 let settingsData=null,settingsWorkspace=null,settingsMode='profile',profileSettingsView='home',accountMoneyReturn='account',selectedSettingsRole='',selectedSettingsBusinessId=null,editingFinancialAccountId=null;
+let settingsOpenContext=null,settingsViewRevision=0,settingsReadGeneration=0,settingsSearchGeneration=0;
 const stoken=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const sh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const snice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
@@ -20,12 +21,69 @@ const PROFILE_SETTINGS_COPY={
   courier:{title:'Delivery settings',intro:'Vehicle, availability, territory and earnings preferences for this Delivery profile.',identity:'Delivery identity and eligibility'},
   service_provider:{title:'Local Services settings',intro:'Public presentation, service area and work preferences for this Local Services profile.',identity:'Public service identity'}
 };
-async function sapi(path,options={}){const headers={'Content-Type':'application/json',...(options.headers||{})};const r=await fetch(path,{cache:'no-store',...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
+function settingsAuthority(){
+  const state=window.BusinessLifeShell?.getProfileState?.()||window.BusinessLifeProfileState||{};
+  const accounting=window.BusinessLifeAccounting?.getState?.();
+  const businessRole=state.surface==='profile'&&BUSINESS_ROLES.has(state.activeRole)?state.activeRole:null;
+  return {
+    accountId:Number(state.accountId||state.snapshot?.account?.id)||null,
+    session:String(document.cookie||'').split(';').map(part=>part.trim()).find(part=>part.startsWith('__Host-abl_csrf='))||'',
+    surface:state.surface||'',role:state.activeRole||'',navigationEpoch:state.navigationEpoch??null,
+    profileId:state.snapshot?.profiles?.find(profile=>profile.role===state.activeRole)?.profile_id||null,
+    profileEnabled:state.snapshot?.profiles?.find(profile=>profile.role===state.activeRole)?.enabled??null,
+    businessId:businessRole&&accounting?.role===businessRole?(Number(accounting.activeBusinessId)||null):null
+  };
+}
+function settingsAuthorityMatches(expected){
+  const current=settingsAuthority();
+  if(!expected||!stoken()||!current.accountId)return false;
+  for(const key of ['accountId','session','surface','role','navigationEpoch','profileId','profileEnabled'])if(expected[key]!==current[key])return false;
+  if(expected.businessId&&current.businessId&&expected.businessId!==current.businessId)return false;
+  // Accounting can hydrate after Settings opens; a first known business is not a switch.
+  if(!expected.businessId&&current.businessId)expected.businessId=current.businessId;
+  return true;
+}
+function captureSettingsRequest(){
+  return {open:settingsOpenContext,view:settingsViewRevision,mode:settingsMode,role:selectedSettingsRole,businessId:selectedSettingsBusinessId,editId:editingFinancialAccountId};
+}
+function settingsRequestIsCurrent(context){
+  return Boolean(context?.open&&context.open===settingsOpenContext&&context.view===settingsViewRevision
+    &&context.mode===settingsMode&&context.role===selectedSettingsRole&&context.businessId===selectedSettingsBusinessId&&context.editId===editingFinancialAccountId
+    &&settingsWorkspace&&!settingsWorkspace.classList.contains('hidden')&&settingsAuthorityMatches(context.open.authority));
+}
+function staleSettingsResponse(){const error=new Error('Settings context changed.');error.name='SettingsContextChanged';return error}
+function settingsStaleError(error){return error?.name==='SettingsContextChanged'}
+function settingsBound(action){
+  const context=captureSettingsRequest();
+  return function(...args){if(!settingsRequestIsCurrent(context)){args[0]?.preventDefault?.();return}return action.apply(this,args)};
+}
+function invalidateSettings(){
+  settingsOpenContext=null;settingsViewRevision+=1;settingsReadGeneration+=1;settingsSearchGeneration+=1;
+  settingsData=null;editingFinancialAccountId=null;
+}
+function discardSettings(){invalidateSettings();settingsWorkspace?.classList.add('hidden');if(settingsWorkspace)settingsWorkspace.innerHTML=''}
+function beginSettingsContext(){
+  invalidateSettings();
+  settingsOpenContext={authority:settingsAuthority()};
+}
+async function sapi(path,options={}){
+  const context=captureSettingsRequest();
+  if(!settingsRequestIsCurrent(context))throw staleSettingsResponse();
+  if(!['GET','HEAD'].includes(String(options.method||'GET').toUpperCase()))settingsReadGeneration+=1;
+  try{
+    const headers={'Content-Type':'application/json',...(options.headers||{})};
+    const response=await fetch(path,{cache:'no-store',...options,headers});
+    const body=await response.json().catch(()=>({}));
+    if(!settingsRequestIsCurrent(context))throw staleSettingsResponse();
+    if(!response.ok)throw new Error(body.error||'Request failed ('+response.status+')');
+    return body;
+  }catch(error){if(!settingsRequestIsCurrent(context))throw staleSettingsResponse();throw error}
+}
 function stoast(msg){const t=document.getElementById('roleToast');if(t){t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000)}}
 function ensureSettingsWorkspace(){const shell=document.getElementById('shell');if(!shell)return false;if(!document.getElementById('profileSettingsWorkspace')){settingsWorkspace=document.createElement('section');settingsWorkspace.id='profileSettingsWorkspace';settingsWorkspace.className='profileSettingsWorkspace hidden';shell.querySelector('.topbar')?.insertAdjacentElement('afterend',settingsWorkspace)}else settingsWorkspace=document.getElementById('profileSettingsWorkspace');return true}
 function injectSettingsEntry(){const panel=document.getElementById('profileDrawerPanel');if(!panel||panel.querySelector('#profileSettingsButton'))return;const accountForm=panel.querySelector('#accountIdentityForm');const before=accountForm?.closest('.drawerSection')||null;const section=document.createElement('section');section.className='drawerSection';section.innerHTML='<h3>Settings</h3><button id="profileSettingsButton" class="settingsAvatarEntry" type="button"><span>⚙️</span><span><strong>Settings</strong><small>Payments, banking and profile preferences</small></span></button>';if(before)panel.insertBefore(section,before);else panel.appendChild(section);section.querySelector('#profileSettingsButton').onclick=openProfileSettings}
 function hideSettingsBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');for(const id of ['roleHub','accountSettingsWorkspace','ordersWorkspace','marketWorkspace','servicesWorkspace','supWorkspace','deliveryWorkspace','profileMoneyWorkspace'])document.getElementById(id)?.classList.add('hidden');for(const id of ['basketBar','orderModalBackdrop','checkoutBackdrop','serviceModalBackdrop','supModalBg','deliveryModalBg'])document.getElementById(id)?.classList.add('hidden')}
-function closeProfileSettings(){settingsWorkspace?.classList.add('hidden');profileSettingsView='home';window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closeProfileSettings(){discardSettings();profileSettingsView='home';window.BusinessLifeShell?.showActiveWorkspace?.()}
 function selectedProfile(){return (settingsData?.profiles||[]).find(p=>p.role===selectedSettingsRole)||null}
 function profileSettingsHeader(title,subtitle){return '<div class="settingsHeader"><button class="settingsBack" type="button" id="settingsBack" aria-label="Back">‹</button><div><h1>'+sh(title)+'</h1><p>'+sh(subtitle)+'</p></div></div>'}
 function profileSettingsHome(){
@@ -69,24 +127,26 @@ function courierOperatingAreaSettings(){
     +'</form></section>';
 }
 async function searchCourierOperatingArea(){
+  const generation=++settingsSearchGeneration;
   const input=document.getElementById('courierOperatingAreaSearch'),results=document.getElementById('courierOperatingAreaResults'),status=document.getElementById('courierOperatingAreaStatus');
   const query=String(input?.value||'').trim();
-  if(query.length<2){if(status)status.textContent='Type at least 2 characters.';return}
+  if(query.length<2){if(results)results.innerHTML='';if(status)status.textContent='Type at least 2 characters.';return}
   if(results)results.innerHTML='<div class="settingsEmpty">Searching…</div>';
   try{
     const data=await sapi('/api/auth/geography/search?q='+encodeURIComponent(query));
+    if(generation!==settingsSearchGeneration)return;
     const items=Array.isArray(data?.items)?data.items:[];
     if(results)results.innerHTML=items.length?items.map(item=>'<button type="button" data-courier-operating-area="'+sh(item.psgc_code)+'" data-area-name="'+sh(item.name)+'" data-area-path="'+sh(item.path_text||'')+'"><strong>'+sh(item.name)+'</strong><small>'+sh(item.path_text||'')+'</small></button>').join(''):'<div class="settingsEmpty">No matching official barangay found.</div>';
     bindCourierOperatingAreaResults();
-  }catch(err){if(results)results.innerHTML='<div class="settingsEmpty">'+sh(err.message)+'</div>'}
+  }catch(err){if(settingsStaleError(err)||generation!==settingsSearchGeneration)return;if(results)results.innerHTML='<div class="settingsEmpty">'+sh(err.message)+'</div>'}
 }
 function bindCourierOperatingAreaResults(){
-  settingsWorkspace?.querySelectorAll('[data-courier-operating-area]').forEach(button=>button.onclick=()=>{
+  settingsWorkspace?.querySelectorAll('[data-courier-operating-area]').forEach(button=>button.onclick=settingsBound(()=>{
     const hidden=document.getElementById('courierOperatingPsgcCode'),status=document.getElementById('courierOperatingAreaStatus');
     if(hidden)hidden.value=button.dataset.courierOperatingArea||'';
     if(status)status.textContent='Selected: '+(button.dataset.areaName||'')+(button.dataset.areaPath?' · '+button.dataset.areaPath:'');
     settingsWorkspace?.querySelectorAll('[data-courier-operating-area]').forEach(x=>x.classList.toggle('selected',x===button));
-  });
+  }));
 }
 async function saveCourierOperatingArea(e){
   e.preventDefault();
@@ -98,7 +158,7 @@ async function saveCourierOperatingArea(e){
     stoast('Delivery operating area saved.');
     if(status)status.textContent=result?.operating_area?.operating_area_name?'Saved: '+result.operating_area.operating_area_name:'Operating area saved.';
     await refreshSettings();
-  }catch(err){if(status)status.textContent=err.message}
+  }catch(err){if(settingsStaleError(err))return;if(status)status.textContent=err.message}
 }
 function profileStatusSettings(){
   const profile=selectedProfile();
@@ -130,10 +190,10 @@ function savedPaymentMethodCard(m){
   return '<article class="financialAccountCard"><div class="financialAccountTop"><div><strong>'+sh(label)+'</strong><div>'+sh(m.provider_code||'Provider token')+(m.expiry_month&&m.expiry_year?' · expires '+String(m.expiry_month).padStart(2,'0')+'/'+m.expiry_year:'')+'</div></div><span class="'+(m.verification_status==='verified'?'verified':'pending')+'">'+sh(snice(m.verification_status))+'</span></div><div class="financialAccountMeta"><span>'+sh(snice(m.method_kind))+'</span><span>'+(m.is_default?'Default payment method':'')+'</span><span>Tokenized · raw card data not stored</span></div></article>';
 }
 function accountMoneySettingsCard(){return simpleMoneyBankingCard()}
-async function saveAccountMoneyIdentity(e){e.preventDefault();const out=document.getElementById('accountMoneyIdentityStatus');out.textContent='Saving…';try{await sapi('/api/settings/account-money/identity',{method:'PUT',body:JSON.stringify({identity_kind:document.getElementById('accountIdentityKind').value,legal_name:document.getElementById('accountLegalName').value})});stoast('Financial identity saved.');await refreshSettings()}catch(err){out.textContent=err.message}}
-async function saveAccountDestination(e){e.preventDefault();const out=document.getElementById('accountDestinationStatus');out.textContent='Saving…';try{await sapi('/api/settings/account-money/destinations',{method:'POST',body:JSON.stringify({destination_kind:document.getElementById('accountDestinationKind').value,display_name:document.getElementById('accountDestinationLabel').value,institution_name:document.getElementById('accountDestinationInstitution').value,account_name:document.getElementById('accountDestinationAccountName').value,reference_last4:document.getElementById('accountDestinationLast4').value,currency_code:'PHP',can_receive:true,can_payout:true})});stoast('Destination added. A 24-hour security hold applies before it can become the default payout.');await refreshSettings()}catch(err){out.textContent=err.message}}
-async function disableAccountDestination(id){try{await sapi('/api/settings/account-money/destinations/'+id,{method:'PATCH',body:JSON.stringify({status:'inactive'})});stoast('Destination disabled.');await refreshSettings()}catch(err){stoast(err.message)}}
-async function setDefaultAccountPayout(id){try{await sapi('/api/settings/account-money/destinations/'+id+'/default-payout',{method:'POST',body:'{}'});stoast('Default payout destination updated.');await refreshSettings()}catch(err){stoast(err.message)}}
+async function saveAccountMoneyIdentity(e){e.preventDefault();const out=document.getElementById('accountMoneyIdentityStatus');out.textContent='Saving…';try{await sapi('/api/settings/account-money/identity',{method:'PUT',body:JSON.stringify({identity_kind:document.getElementById('accountIdentityKind').value,legal_name:document.getElementById('accountLegalName').value})});stoast('Financial identity saved.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;out.textContent=err.message}}
+async function saveAccountDestination(e){e.preventDefault();const out=document.getElementById('accountDestinationStatus');out.textContent='Saving…';try{await sapi('/api/settings/account-money/destinations',{method:'POST',body:JSON.stringify({destination_kind:document.getElementById('accountDestinationKind').value,display_name:document.getElementById('accountDestinationLabel').value,institution_name:document.getElementById('accountDestinationInstitution').value,account_name:document.getElementById('accountDestinationAccountName').value,reference_last4:document.getElementById('accountDestinationLast4').value,currency_code:'PHP',can_receive:true,can_payout:true})});stoast('Destination added. A 24-hour security hold applies before it can become the default payout.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;out.textContent=err.message}}
+async function disableAccountDestination(id){try{await sapi('/api/settings/account-money/destinations/'+id,{method:'PATCH',body:JSON.stringify({status:'inactive'})});stoast('Destination disabled.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;stoast(err.message)}}
+async function setDefaultAccountPayout(id){try{await sapi('/api/settings/account-money/destinations/'+id+'/default-payout',{method:'POST',body:'{}'});stoast('Default payout destination updated.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;stoast(err.message)}}
 
 function businessSelector(){if(!BUSINESS_ROLES.has(selectedSettingsRole))return'';const businesses=settingsData?.businesses||[];if(!businesses.length)return'<div class="settingsNotice">This profile does not yet have an approved economic/business workspace. Financial settings remain on HOLD until one exists.</div>';return '<label>Business workspace<select id="settingsBusinessSelect">'+businesses.map(b=>'<option value="'+b.id+'" '+(Number(b.id)===Number(selectedSettingsBusinessId)?'selected':'')+'>'+sh(b.name)+'</option>').join('')+'</select></label>'}
 function accountCard(a){const verifyClass=a.verification_status==='verified'?'verified':a.verification_status==='pending'?'pending':'';return '<article class="financialAccountCard"><div class="financialAccountTop"><div><strong>'+sh(a.display_name||snice(a.account_kind))+'</strong><div>'+sh(a.institution_name||a.provider_code||snice(a.account_kind))+(a.reference_last4?' •••• '+sh(a.reference_last4):'')+'</div></div><span>'+sh(a.currency_code)+'</span></div><div class="financialAccountMeta"><span>'+sh(snice(a.account_kind))+'</span><span class="'+verifyClass+'">'+sh(snice(a.verification_status))+'</span>'+(a.can_pay?'<span>Pay</span>':'')+(a.can_receive?'<span>Receive</span>':'')+(a.can_payout?'<span>Payout</span>':'')+(a.provider_destination_configured?'<span>Provider ref linked</span>':'')+'</div><div class="financialAccountActions"><button class="settingsSecondary" type="button" data-fin-edit="'+a.id+'">Edit</button>'+(a.status==='active'?'<button class="settingsDanger" type="button" data-fin-disable="'+a.id+'">Deactivate</button>':'<button class="settingsSecondary" type="button" data-fin-enable="'+a.id+'">Reactivate</button>')+'</div></article>'}
@@ -168,7 +228,7 @@ async function saveProfileFundTransfer(e){
   try{
     await sapi('/api/settings/profile-fund-transfers',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({source_profile_role:src.profile_role,source_business_id:src.business_id,destination_profile_role:dst.profile_role,destination_business_id:dst.business_id,amount,currency_code:src.currency_code||'PHP',note:document.getElementById('profileFundNote').value})});
     stoast('Funds transferred between your profiles.');await refreshSettings();
-  }catch(err){status.textContent=err.message}
+  }catch(err){if(settingsStaleError(err))return;status.textContent=err.message}
 }
 
 function moneyMovementForm(){const movements=settingsData?.money_movements||[];return '<form id="moneyMovementForm" class="settingsForm"><h3>Real transfer / withdrawal request</h3><p>This creates a provider-neutral request only. It stays on HOLD until a verified adapter confirms real execution.</p><div class="settingsGrid2"><label>Type<select id="movementType"><option value="transfer">Transfer</option><option value="withdrawal">Withdrawal</option><option value="payout">Payout</option></select></label><label>Amount<input id="movementAmount" type="number" min="0.01" step="0.01" required></label></div><div class="settingsGrid2"><label>Source account<select id="movementSource">'+activeFinancialOptions('source')+'</select></label><label>Destination account<select id="movementDestination">'+activeFinancialOptions('receive')+'</select></label></div><label>Note<input id="movementNote" maxlength="500" placeholder="Reason / transfer purpose"></label><button class="settingsPrimary">Create HOLD request</button><div id="movementStatus" class="settingsStatus"></div>'+(movements.length?'<div class="movementHistory">'+movements.slice(0,12).map(m=>'<div class="movementRow"><div><strong>'+sh(snice(m.movement_type))+' · '+smoney(m.amount)+'</strong><small>'+sh(m.source_account_name||'Source')+' → '+sh(m.destination_account_name||'Destination')+'</small></div><span class="'+(m.status==='succeeded'?'verified':m.status==='pending_provider'?'pending':'')+'">'+sh(snice(m.status))+'</span></div>').join('')+'</div>':'<div class="settingsEmpty">No real money-movement requests yet.</div>')+'</form>'}
@@ -226,16 +286,17 @@ function renderProfileFinanceSettings(profileTransfer=profileFundTransferForm(),
     +'<section class="settingsCard profileSettingsDestinations"><h2>Profile tools</h2><p>Tools in this section belong to the selected profile, not to your personal account.</p><div class="profileSettingsLinks"><button id="profilePromotionCenter" type="button">Promotion Center</button><button id="profileFinancialDocuments" type="button">Statements &amp; Documents</button></div></section>'
     +advancedProfileMoneyTools(accounts,budgets,provider,profileTransfer);
   bindSettings();
-  document.getElementById('openAccountMoneyFromProfile')?.addEventListener('click',()=>openAccountMoneySettings('profile'));
-  document.getElementById('profilePromotionCenter')?.addEventListener('click',()=>{location.href='/referral/promotion-center.html?profile='+encodeURIComponent(selectedSettingsRole)});
-  document.getElementById('profileFinancialDocuments')?.addEventListener('click',()=>window.BusinessLifeFinancialDocuments?.open?.());
+  document.getElementById('openAccountMoneyFromProfile')?.addEventListener('click',settingsBound(()=>openAccountMoneySettings('profile')));
+  document.getElementById('profilePromotionCenter')?.addEventListener('click',settingsBound(()=>{location.href='/referral/promotion-center.html?profile='+encodeURIComponent(selectedSettingsRole)}));
+  document.getElementById('profileFinancialDocuments')?.addEventListener('click',settingsBound(()=>window.BusinessLifeFinancialDocuments?.open?.()));
 }
 function renderSettings(){
   if(!settingsData||!ensureSettingsWorkspace())return;
+  settingsViewRevision+=1;settingsSearchGeneration+=1;
   const enabled=(settingsData.profiles||[]).filter(p=>p.enabled&&ROLE_LABELS[p.role]);
   if(!selectedSettingsRole||!enabled.some(p=>p.role===selectedSettingsRole))selectedSettingsRole=enabled.some(p=>p.role===settingsData.active_role)?settingsData.active_role:(enabled[0]?.role||'');
   if(!selectedSettingsRole){settingsWorkspace.innerHTML=profileSettingsHeader('Profile settings','Activate a profile before opening its settings.')+'<div class="settingsEmpty">No active profile is available.</div>';bindSettings();return}
-  if(BUSINESS_ROLES.has(selectedSettingsRole)&&!selectedSettingsBusinessId)selectedSettingsBusinessId=settingsData.businesses?.[0]?.id||null;
+  if(BUSINESS_ROLES.has(selectedSettingsRole)&&!selectedSettingsBusinessId)selectedSettingsBusinessId=settingsOpenContext?.authority.businessId||settingsData.businesses?.[0]?.id||null;
   if(!BUSINESS_ROLES.has(selectedSettingsRole))selectedSettingsBusinessId=null;
   const profileTransfer=profileSettingsView==='finance'?profileFundTransferForm():null;
   const withdrawalPolicy='Withdraw will use the default payout destination configured above in Avatar → Money & Banking. Business & Life will not reduce the external/provider balance or mark a withdrawal succeeded until the provider confirms.';
@@ -243,34 +304,117 @@ function renderSettings(){
   settingsWorkspace.innerHTML=profileSettingsView==='identity'?profileIdentitySettings():profileSettingsView==='operatingArea'&&selectedSettingsRole==='courier'?courierOperatingAreaSettings():profileSettingsView==='status'?profileStatusSettings():profileSettingsHome();
   bindSettings();
   if(profileSettingsView==='home')settingsWorkspace.querySelector('[data-profile-settings-view="finance"]')?.insertAdjacentHTML('afterend','<button type="button" id="openAccountMoneyFromProfile"><span>🏦</span><span><strong>Account Money &amp; Banking</strong><small>Shared external payment methods and payout destinations for your account.</small></span><b>›</b></button>');
-  settingsWorkspace.querySelectorAll('[data-profile-settings-view]').forEach(button=>button.onclick=()=>{profileSettingsView=button.dataset.profileSettingsView;renderSettings();window.scrollTo({top:0,behavior:'auto'})});
-  document.getElementById('openAccountMoneyFromProfile')?.addEventListener('click',()=>openAccountMoneySettings('profile'));
-  document.getElementById('profilePromotionCenter')?.addEventListener('click',()=>{location.href='/referral/promotion-center.html?profile='+encodeURIComponent(selectedSettingsRole)});
-  document.getElementById('profileFinancialDocuments')?.addEventListener('click',()=>window.BusinessLifeFinancialDocuments?.open?.());
-  document.getElementById('profileGuidedTutorial')?.addEventListener('click',()=>document.dispatchEvent(new CustomEvent('abl:guided-onboarding-open-profile',{detail:{role:selectedSettingsRole}})));
-  document.getElementById('manageProfileLifecycle')?.addEventListener('click',()=>{settingsWorkspace.classList.add('hidden');profileSettingsView='home';window.BusinessLifeShell?.openAccountSettings?.('profiles')});
+  settingsWorkspace.querySelectorAll('[data-profile-settings-view]').forEach(button=>button.onclick=settingsBound(()=>{profileSettingsView=button.dataset.profileSettingsView;renderSettings();window.scrollTo({top:0,behavior:'auto'})}));
+  document.getElementById('openAccountMoneyFromProfile')?.addEventListener('click',settingsBound(()=>openAccountMoneySettings('profile')));
+  document.getElementById('profilePromotionCenter')?.addEventListener('click',settingsBound(()=>{location.href='/referral/promotion-center.html?profile='+encodeURIComponent(selectedSettingsRole)}));
+  document.getElementById('profileFinancialDocuments')?.addEventListener('click',settingsBound(()=>window.BusinessLifeFinancialDocuments?.open?.()));
+  document.getElementById('profileGuidedTutorial')?.addEventListener('click',settingsBound(()=>document.dispatchEvent(new CustomEvent('abl:guided-onboarding-open-profile',{detail:{role:selectedSettingsRole}}))));
+  document.getElementById('manageProfileLifecycle')?.addEventListener('click',settingsBound(()=>{discardSettings();profileSettingsView='home';window.BusinessLifeShell?.openAccountSettings?.('profiles')}));
 }
 function profileSettingsBack(){if(profileSettingsView!=='home'){profileSettingsView='home';renderSettings();window.scrollTo({top:0,behavior:'auto'});return}closeProfileSettings()}
-function bindSettings(){document.getElementById('courierOperatingAreaSearchButton')?.addEventListener('click',searchCourierOperatingArea);const courierAreaForm=document.getElementById('courierOperatingAreaForm');if(courierAreaForm)courierAreaForm.onsubmit=saveCourierOperatingArea;bindCourierOperatingAreaResults();document.getElementById('openPayoutSecurity')?.addEventListener('click',()=>{settingsWorkspace?.classList.add('hidden');settingsMode='profile';window.BusinessLifeShell?.openAccountSettings?.('security')});const ami=document.getElementById('accountMoneyIdentityForm');if(ami)ami.onsubmit=saveAccountMoneyIdentity;const adf=document.getElementById('accountDestinationForm');if(adf)adf.onsubmit=saveAccountDestination;settingsWorkspace.querySelectorAll('[data-account-destination-disable]').forEach(b=>b.onclick=()=>disableAccountDestination(Number(b.dataset.accountDestinationDisable)));settingsWorkspace.querySelectorAll('[data-account-payout-default]').forEach(b=>b.onclick=()=>setDefaultAccountPayout(Number(b.dataset.accountPayoutDefault)));document.getElementById('settingsBack').onclick=settingsMode==='account'?closeAccountMoneySettings:profileSettingsBack;const business=document.getElementById('settingsBusinessSelect');if(business)business.onchange=()=>{selectedSettingsBusinessId=Number(business.value);editingFinancialAccountId=null;renderSettings()};settingsWorkspace.querySelectorAll('[data-fin-edit]').forEach(b=>b.onclick=()=>{editingFinancialAccountId=Number(b.dataset.finEdit);renderSettings();settingsWorkspace.querySelector('#financialAccountForm')?.scrollIntoView({behavior:'smooth',block:'start'})});settingsWorkspace.querySelectorAll('[data-fin-disable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finDisable),'inactive'));settingsWorkspace.querySelectorAll('[data-fin-enable]').forEach(b=>b.onclick=()=>setFinancialAccountStatus(Number(b.dataset.finEnable),'active'));document.getElementById('cancelFinEdit')?.addEventListener('click',()=>{editingFinancialAccountId=null;renderSettings()});const legacyFa=document.getElementById('financialAccountForm');if(legacyFa)legacyFa.onsubmit=saveFinancialAccount;const legacyMp=document.getElementById('moneyPreferencesForm');if(legacyMp)legacyMp.onsubmit=saveMoneyPreferences;const budgetCreate=document.getElementById('budgetCreateForm');if(budgetCreate)budgetCreate.onsubmit=saveBudgetEnvelope;const budgetAdjust=document.getElementById('budgetAdjustForm');if(budgetAdjust)budgetAdjust.onsubmit=saveBudgetAllocation;const pft=document.getElementById('profileFundTransferForm');if(pft){pft.onsubmit=saveProfileFundTransfer;document.getElementById('profileFundFrom').onchange=syncProfileFundTransfer;document.getElementById('profileFundTo').onchange=syncProfileFundTransfer;syncProfileFundTransfer()}const legacyMovement=document.getElementById('moneyMovementForm');if(legacyMovement){legacyMovement.onsubmit=saveMoneyMovement;document.getElementById('movementType').onchange=syncMovementDestinationOptions;syncMovementDestinationOptions()}}
-function renderAccountMoneySettings(){if(!settingsData||!ensureSettingsWorkspace())return;settingsWorkspace.innerHTML='<div class="settingsHeader"><button class="settingsBack" type="button" id="settingsBack">‹</button><div><h1>Money &amp; Banking</h1><p>Shared external payment identity and payout destinations for your personal account.</p></div></div>'+accountMoneySettingsCard();bindSettings()}
-async function refreshSettings(){
-  settingsData=await sapi('/api/settings/finance');
-  if(settingsMode==='profile'&&selectedSettingsRole==='courier'){
-    settingsData.courier_delivery=await sapi('/api/courier/delivery-profile');
-  }
-  if(settingsMode==='account')renderAccountMoneySettings();else renderSettings();
+function bindSettings(){
+  const on=(id,event,action)=>document.getElementById(id)?.addEventListener(event,settingsBound(action));
+  const submit=(id,action)=>{const form=document.getElementById(id);if(form)form.onsubmit=settingsBound(action)};
+  on('courierOperatingAreaSearchButton','click',searchCourierOperatingArea);
+  submit('courierOperatingAreaForm',saveCourierOperatingArea);bindCourierOperatingAreaResults();
+  on('openPayoutSecurity','click',()=>{discardSettings();settingsMode='profile';window.BusinessLifeShell?.openAccountSettings?.('security')});
+  submit('accountMoneyIdentityForm',saveAccountMoneyIdentity);submit('accountDestinationForm',saveAccountDestination);
+  settingsWorkspace.querySelectorAll('[data-account-destination-disable]').forEach(button=>button.onclick=settingsBound(()=>disableAccountDestination(Number(button.dataset.accountDestinationDisable))));
+  settingsWorkspace.querySelectorAll('[data-account-payout-default]').forEach(button=>button.onclick=settingsBound(()=>setDefaultAccountPayout(Number(button.dataset.accountPayoutDefault))));
+  document.getElementById('settingsBack').onclick=settingsBound(settingsMode==='account'?closeAccountMoneySettings:profileSettingsBack);
+  const business=document.getElementById('settingsBusinessSelect');
+  if(business)business.onchange=settingsBound(()=>{selectedSettingsBusinessId=Number(business.value);editingFinancialAccountId=null;renderSettings()});
+  settingsWorkspace.querySelectorAll('[data-fin-edit]').forEach(button=>button.onclick=settingsBound(()=>{editingFinancialAccountId=Number(button.dataset.finEdit);renderSettings();settingsWorkspace.querySelector('#financialAccountForm')?.scrollIntoView({behavior:'smooth',block:'start'})}));
+  settingsWorkspace.querySelectorAll('[data-fin-disable]').forEach(button=>button.onclick=settingsBound(()=>setFinancialAccountStatus(Number(button.dataset.finDisable),'inactive')));
+  settingsWorkspace.querySelectorAll('[data-fin-enable]').forEach(button=>button.onclick=settingsBound(()=>setFinancialAccountStatus(Number(button.dataset.finEnable),'active')));
+  on('cancelFinEdit','click',()=>{editingFinancialAccountId=null;renderSettings()});
+  submit('financialAccountForm',saveFinancialAccount);submit('moneyPreferencesForm',saveMoneyPreferences);
+  submit('budgetCreateForm',saveBudgetEnvelope);submit('budgetAdjustForm',saveBudgetAllocation);
+  const transfer=document.getElementById('profileFundTransferForm');
+  if(transfer){transfer.onsubmit=settingsBound(saveProfileFundTransfer);document.getElementById('profileFundFrom').onchange=settingsBound(syncProfileFundTransfer);document.getElementById('profileFundTo').onchange=settingsBound(syncProfileFundTransfer);syncProfileFundTransfer()}
+  const legacyMovement=document.getElementById('moneyMovementForm');
+  if(legacyMovement){legacyMovement.onsubmit=settingsBound(saveMoneyMovement);document.getElementById('movementType').onchange=settingsBound(syncMovementDestinationOptions);syncMovementDestinationOptions()}
 }
-async function openProfileSettings(role=''){if(!stoken())return stoast('Sign in first.');const state=window.BusinessLifeShell?.getProfileState?.();const requested=role&&ROLE_LABELS[role]?role:state?.activeRole;if(state?.surface!=='profile'||!requested||requested!==state.activeRole)return stoast('Open the profile first, then use its Settings card.');settingsMode='profile';profileSettingsView='home';selectedSettingsRole=requested;selectedSettingsBusinessId=null;editingFinancialAccountId=null;document.getElementById('drawerClose')?.click();ensureSettingsWorkspace();if(!window.BusinessLifeShell?.openFeatureWorkspace?.('profileSettingsWorkspace')){hideSettingsBase();settingsWorkspace.classList.remove('hidden')}settingsWorkspace.innerHTML='<div class="settingsEmpty">Loading settings…</div>';try{await refreshSettings()}catch(e){settingsWorkspace.innerHTML='<div class="settingsEmpty">'+sh(e.message)+'</div>'}}
-async function openAccountMoneySettings(returnTo='account'){if(!stoken())return stoast('Sign in first.');settingsMode='account';accountMoneyReturn=returnTo==='profile'?'profile':'account';document.getElementById('drawerClose')?.click();ensureSettingsWorkspace();hideSettingsBase();settingsWorkspace.classList.remove('hidden');settingsWorkspace.innerHTML='<div class="settingsEmpty">Loading Money &amp; Banking…</div>';try{await refreshSettings()}catch(e){settingsWorkspace.innerHTML='<div class="settingsEmpty">'+sh(e.message)+'</div>'}}
-function closeAccountMoneySettings(){settingsWorkspace?.classList.add('hidden');settingsMode='profile';if(accountMoneyReturn==='profile')openProfileSettings(selectedSettingsRole);else window.BusinessLifeShell?.openAccountSettings?.()}
-async function setFinancialAccountStatus(id,status){try{await sapi('/api/settings/financial-accounts/'+id,{method:'PATCH',body:JSON.stringify({status})});stoast(status==='active'?'Financial destination reactivated.':'Financial destination deactivated.');editingFinancialAccountId=null;await refreshSettings()}catch(e){stoast(e.message)}}
-async function saveFinancialAccount(e){e.preventDefault();const status=document.getElementById('financialAccountStatus');status.textContent='Saving…';const payload={profile_role:selectedSettingsRole,business_id:BUSINESS_ROLES.has(selectedSettingsRole)?Number(selectedSettingsBusinessId):null,account_kind:document.getElementById('finKind').value,display_name:document.getElementById('finDisplay').value,institution_name:document.getElementById('finInstitution').value,account_name:document.getElementById('finAccountName').value,reference_last4:document.getElementById('finLast4').value,provider_code:document.getElementById('finProvider').value,can_pay:document.getElementById('finPay').checked,can_receive:document.getElementById('finReceive').checked,can_payout:document.getElementById('finPayout').checked};const providerRef=document.getElementById('finProviderRef').value.trim();if(providerRef)payload.provider_destination_ref=providerRef;try{if(editingFinancialAccountId)await sapi('/api/settings/financial-accounts/'+editingFinancialAccountId,{method:'PATCH',body:JSON.stringify(payload)});else await sapi('/api/settings/financial-accounts',{method:'POST',body:JSON.stringify(payload)});editingFinancialAccountId=null;stoast('Financial settings saved.');await refreshSettings()}catch(err){status.textContent=err.message}}
-async function saveMoneyPreferences(e){e.preventDefault();const status=document.getElementById('moneyPreferenceStatus');status.textContent='Saving…';const methods=[...settingsWorkspace.querySelectorAll('[data-money-method]:checked')].map(x=>x.dataset.moneyMethod);const payload={business_id:BUSINESS_ROLES.has(selectedSettingsRole)?Number(selectedSettingsBusinessId):null,default_receive_account_id:document.getElementById('prefReceive').value||null,default_spend_account_id:document.getElementById('prefSpend').value||null,default_payout_account_id:document.getElementById('prefPayout').value||null,accepted_methods:methods,payout_schedule_preference:document.getElementById('prefSchedule').value};try{await sapi('/api/settings/money-preferences/'+encodeURIComponent(selectedSettingsRole),{method:'PUT',body:JSON.stringify(payload)});stoast('Money preferences saved.');await refreshSettings()}catch(err){status.textContent=err.message}}
-async function saveBudgetEnvelope(e){e.preventDefault();const status=document.getElementById('budgetCreateStatus');status.textContent='Saving…';const payload={profile_role:selectedSettingsRole,business_id:BUSINESS_ROLES.has(selectedSettingsRole)?Number(selectedSettingsBusinessId):null,label:document.getElementById('budgetLabel').value,purpose:document.getElementById('budgetPurpose').value,linked_financial_account_id:document.getElementById('budgetLinkedAccount').value||null,currency_code:'PHP'};try{await sapi('/api/settings/budgets',{method:'POST',body:JSON.stringify(payload)});stoast('Budget envelope created.');await refreshSettings()}catch(err){status.textContent=err.message}}
-async function saveBudgetAllocation(e){e.preventDefault();const status=document.getElementById('budgetAdjustStatus'),id=document.getElementById('budgetAdjustEnvelope').value;if(!id)return status.textContent='Create a budget first.';status.textContent='Saving…';const direction=document.getElementById('budgetAdjustDirection').value,key='budget-'+Date.now()+'-'+Math.random().toString(16).slice(2);const payload={direction,entry_type:direction==='credit'?'allocation':'release',amount:Number(document.getElementById('budgetAdjustAmount').value),note:document.getElementById('budgetAdjustNote').value};try{await sapi('/api/settings/budgets/'+id+'/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});stoast('Budget allocation updated.');await refreshSettings()}catch(err){status.textContent=err.message}}
-async function saveBudgetTransfer(e){e.preventDefault();const status=document.getElementById('budgetTransferStatus'),from=document.getElementById('budgetTransferFrom').value,to=document.getElementById('budgetTransferTo').value;status.textContent='Saving…';const key='budget-transfer-'+Date.now()+'-'+Math.random().toString(16).slice(2);try{const r=await sapi('/api/settings/budget-transfers',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({source_envelope_id:from,destination_envelope_id:to,amount:Number(document.getElementById('budgetTransferAmount').value),note:document.getElementById('budgetTransferNote').value})});stoast(r.provider_money_moved===false?'Budget reallocated. No provider money moved.':'Budget updated.');await refreshSettings()}catch(err){status.textContent=err.message}}
+function renderAccountMoneySettings(){if(!settingsData||!ensureSettingsWorkspace())return;settingsViewRevision+=1;settingsSearchGeneration+=1;settingsWorkspace.innerHTML='<div class="settingsHeader"><button class="settingsBack" type="button" id="settingsBack">‹</button><div><h1>Money &amp; Banking</h1><p>Shared external payment identity and payout destinations for your personal account.</p></div></div>'+accountMoneySettingsCard();bindSettings()}
+function renderSettingsLoading(){
+  settingsViewRevision+=1;settingsSearchGeneration+=1;
+  settingsWorkspace.innerHTML=profileSettingsHeader(settingsMode==='account'?'Money & Banking':settingsRoleTitle(),'Loading settings…')+'<div class="settingsEmpty" role="status">Loading settings…</div>';
+  document.getElementById('settingsBack').onclick=settingsBound(settingsMode==='account'?closeAccountMoneySettings:closeProfileSettings);
+}
+function renderSettingsLoadError(error){
+  settingsData=null;settingsViewRevision+=1;settingsSearchGeneration+=1;
+  settingsWorkspace.innerHTML=profileSettingsHeader(settingsMode==='account'?'Money & Banking':settingsRoleTitle(),'Settings could not be loaded.')
+    +'<div class="settingsEmpty" role="alert">'+sh(error.message)+'</div><button id="settingsRetry" class="settingsSecondary" type="button">Try again</button>';
+  document.getElementById('settingsBack').onclick=settingsBound(settingsMode==='account'?closeAccountMoneySettings:closeProfileSettings);
+  document.getElementById('settingsRetry').onclick=settingsBound(()=>{renderSettingsLoading();return refreshSettings()});
+}
+async function refreshSettings(){
+  const generation=++settingsReadGeneration,context=captureSettingsRequest();
+  const current=()=>generation===settingsReadGeneration&&settingsRequestIsCurrent(context);
+  try{
+    const data=await sapi('/api/settings/finance');
+    if(!current())return;
+    if(Number(data.account?.id)!==context.open.authority.accountId)throw new Error('Settings could not be verified. Try again.');
+    if(context.mode==='profile'&&!(data.profiles||[]).some(profile=>profile.role===context.role&&profile.enabled))throw new Error('This profile is no longer available. Open Account Settings to review it.');
+    if(context.mode==='profile'&&context.role==='courier'){
+      const courier=await sapi('/api/courier/delivery-profile');
+      if(!current())return;
+      data.courier_delivery=courier;
+    }
+    if(!current())return;
+    settingsData=data;
+    if(context.mode==='account')renderAccountMoneySettings();else renderSettings();
+  }catch(error){if(!current()||settingsStaleError(error))return;renderSettingsLoadError(error)}
+}
+async function openProfileSettings(role=''){
+  if(!stoken())return stoast('Sign in first.');
+  const state=window.BusinessLifeShell?.getProfileState?.();
+  const requested=role&&ROLE_LABELS[role]?role:state?.activeRole;
+  if(state?.surface!=='profile'||!requested||requested!==state.activeRole)return stoast('Open the profile first, then use its Settings card.');
+  if(!Number(state.accountId||state.snapshot?.account?.id))return stoast('Your account is still loading. Try again in a moment.');
+  if(!ensureSettingsWorkspace())return;
+  settingsMode='profile';profileSettingsView='home';selectedSettingsRole=requested;selectedSettingsBusinessId=BUSINESS_ROLES.has(requested)?settingsAuthority().businessId:null;editingFinancialAccountId=null;
+  document.getElementById('drawerClose')?.click();
+  if(!window.BusinessLifeShell?.openFeatureWorkspace?.('profileSettingsWorkspace')){hideSettingsBase();settingsWorkspace.classList.remove('hidden')}
+  beginSettingsContext();renderSettingsLoading();await refreshSettings();
+}
+async function openAccountMoneySettings(returnTo='account'){
+  if(!stoken())return stoast('Sign in first.');
+  const state=window.BusinessLifeShell?.getProfileState?.();
+  if(!Number(state?.accountId||state?.snapshot?.account?.id))return stoast('Your account is still loading. Try again in a moment.');
+  if(!ensureSettingsWorkspace())return;
+  settingsMode='account';accountMoneyReturn=returnTo==='profile'?'profile':'account';
+  selectedSettingsRole=ROLE_LABELS[state?.activeRole]?state.activeRole:'';selectedSettingsBusinessId=null;
+  document.getElementById('drawerClose')?.click();hideSettingsBase();settingsWorkspace.classList.remove('hidden');
+  beginSettingsContext();renderSettingsLoading();await refreshSettings();
+}
+function closeAccountMoneySettings(){const returnTo=accountMoneyReturn,role=selectedSettingsRole;discardSettings();settingsMode='profile';if(returnTo==='profile')return openProfileSettings(role);return window.BusinessLifeShell?.openAccountSettings?.()}
+async function setFinancialAccountStatus(id,status){try{await sapi('/api/settings/financial-accounts/'+id,{method:'PATCH',body:JSON.stringify({status})});stoast(status==='active'?'Financial destination reactivated.':'Financial destination deactivated.');editingFinancialAccountId=null;await refreshSettings()}catch(e){if(settingsStaleError(e))return;stoast(e.message)}}
+async function saveFinancialAccount(e){e.preventDefault();const status=document.getElementById('financialAccountStatus');status.textContent='Saving…';const payload={profile_role:selectedSettingsRole,business_id:BUSINESS_ROLES.has(selectedSettingsRole)?Number(selectedSettingsBusinessId):null,account_kind:document.getElementById('finKind').value,display_name:document.getElementById('finDisplay').value,institution_name:document.getElementById('finInstitution').value,account_name:document.getElementById('finAccountName').value,reference_last4:document.getElementById('finLast4').value,provider_code:document.getElementById('finProvider').value,can_pay:document.getElementById('finPay').checked,can_receive:document.getElementById('finReceive').checked,can_payout:document.getElementById('finPayout').checked};const providerRef=document.getElementById('finProviderRef').value.trim();if(providerRef)payload.provider_destination_ref=providerRef;try{if(editingFinancialAccountId)await sapi('/api/settings/financial-accounts/'+editingFinancialAccountId,{method:'PATCH',body:JSON.stringify(payload)});else await sapi('/api/settings/financial-accounts',{method:'POST',body:JSON.stringify(payload)});editingFinancialAccountId=null;stoast('Financial settings saved.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;status.textContent=err.message}}
+async function saveMoneyPreferences(e){e.preventDefault();const status=document.getElementById('moneyPreferenceStatus');status.textContent='Saving…';const methods=[...settingsWorkspace.querySelectorAll('[data-money-method]:checked')].map(x=>x.dataset.moneyMethod);const payload={business_id:BUSINESS_ROLES.has(selectedSettingsRole)?Number(selectedSettingsBusinessId):null,default_receive_account_id:document.getElementById('prefReceive').value||null,default_spend_account_id:document.getElementById('prefSpend').value||null,default_payout_account_id:document.getElementById('prefPayout').value||null,accepted_methods:methods,payout_schedule_preference:document.getElementById('prefSchedule').value};try{await sapi('/api/settings/money-preferences/'+encodeURIComponent(selectedSettingsRole),{method:'PUT',body:JSON.stringify(payload)});stoast('Money preferences saved.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;status.textContent=err.message}}
+async function saveBudgetEnvelope(e){e.preventDefault();const status=document.getElementById('budgetCreateStatus');status.textContent='Saving…';const payload={profile_role:selectedSettingsRole,business_id:BUSINESS_ROLES.has(selectedSettingsRole)?Number(selectedSettingsBusinessId):null,label:document.getElementById('budgetLabel').value,purpose:document.getElementById('budgetPurpose').value,linked_financial_account_id:document.getElementById('budgetLinkedAccount').value||null,currency_code:'PHP'};try{await sapi('/api/settings/budgets',{method:'POST',body:JSON.stringify(payload)});stoast('Budget envelope created.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;status.textContent=err.message}}
+async function saveBudgetAllocation(e){e.preventDefault();const status=document.getElementById('budgetAdjustStatus'),id=document.getElementById('budgetAdjustEnvelope').value;if(!id)return status.textContent='Create a budget first.';status.textContent='Saving…';const direction=document.getElementById('budgetAdjustDirection').value,key='budget-'+Date.now()+'-'+Math.random().toString(16).slice(2);const payload={direction,entry_type:direction==='credit'?'allocation':'release',amount:Number(document.getElementById('budgetAdjustAmount').value),note:document.getElementById('budgetAdjustNote').value};try{await sapi('/api/settings/budgets/'+id+'/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});stoast('Budget allocation updated.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;status.textContent=err.message}}
+async function saveBudgetTransfer(e){e.preventDefault();const status=document.getElementById('budgetTransferStatus'),from=document.getElementById('budgetTransferFrom').value,to=document.getElementById('budgetTransferTo').value;status.textContent='Saving…';const key='budget-transfer-'+Date.now()+'-'+Math.random().toString(16).slice(2);try{const r=await sapi('/api/settings/budget-transfers',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({source_envelope_id:from,destination_envelope_id:to,amount:Number(document.getElementById('budgetTransferAmount').value),note:document.getElementById('budgetTransferNote').value})});stoast(r.provider_money_moved===false?'Budget reallocated. No provider money moved.':'Budget updated.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;status.textContent=err.message}}
 function syncMovementDestinationOptions(){const type=document.getElementById('movementType')?.value||'transfer',dest=document.getElementById('movementDestination');if(dest)dest.innerHTML=activeFinancialOptions(type==='transfer'?'receive':'payout')}
-async function saveMoneyMovement(e){e.preventDefault();const status=document.getElementById('movementStatus');status.textContent='Creating HOLD request…';const key='money-move-'+Date.now()+'-'+Math.random().toString(16).slice(2);const payload={movement_type:document.getElementById('movementType').value,source_financial_account_id:document.getElementById('movementSource').value,destination_financial_account_id:document.getElementById('movementDestination').value,amount:Number(document.getElementById('movementAmount').value),currency_code:'PHP',note:document.getElementById('movementNote').value};try{const r=await sapi('/api/settings/money-movements',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});stoast(r.execution_status==='HOLD'?'Request saved on HOLD — no money moved.':'Movement request saved.');await refreshSettings()}catch(err){status.textContent=err.message}}
-function bootSettings(){ensureSettingsWorkspace();document.addEventListener('abl:profile-state',e=>{if(e.detail?.activeRole&&!selectedSettingsRole)selectedSettingsRole=e.detail.activeRole},{passive:true})}
+async function saveMoneyMovement(e){e.preventDefault();const status=document.getElementById('movementStatus');status.textContent='Creating HOLD request…';const key='money-move-'+Date.now()+'-'+Math.random().toString(16).slice(2);const payload={movement_type:document.getElementById('movementType').value,source_financial_account_id:document.getElementById('movementSource').value,destination_financial_account_id:document.getElementById('movementDestination').value,amount:Number(document.getElementById('movementAmount').value),currency_code:'PHP',note:document.getElementById('movementNote').value};try{const r=await sapi('/api/settings/money-movements',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});stoast(r.execution_status==='HOLD'?'Request saved on HOLD — no money moved.':'Movement request saved.');await refreshSettings()}catch(err){if(settingsStaleError(err))return;status.textContent=err.message}}
+function bootSettings(){
+  ensureSettingsWorkspace();
+  document.addEventListener('abl:profile-state',event=>{
+    if(settingsOpenContext&&!settingsAuthorityMatches(settingsOpenContext.authority))discardSettings();
+    if(event.detail?.activeRole&&!selectedSettingsRole)selectedSettingsRole=event.detail.activeRole;
+  },{passive:true});
+  document.addEventListener('abl:auth-expired',discardSettings,{passive:true});
+  document.addEventListener('abl:feature-workspace',event=>{if(event.detail?.workspaceId!=='profileSettingsWorkspace')discardSettings()},{passive:true});
+  document.addEventListener('abl:account-settings-rendered',discardSettings,{passive:true});
+  document.addEventListener('abl:business-workspace-changed',event=>{
+    if(!settingsOpenContext||event.detail?.role!==settingsOpenContext.authority.role||!BUSINESS_ROLES.has(event.detail?.role))return;
+    const businessId=Number(event.detail?.activeBusinessId)||null,previous=settingsOpenContext.authority.businessId;
+    if(!previous&&businessId){settingsOpenContext.authority.businessId=businessId;return}
+    if(previous===businessId)return;
+    if(!settingsWorkspace||settingsWorkspace.classList.contains('hidden'))return discardSettings();
+    beginSettingsContext();selectedSettingsBusinessId=settingsMode==='profile'?businessId:null;
+    renderSettingsLoadError(new Error('Business workspace changed. Reload settings for the current business.'));
+  },{passive:true});
+}
 window.BusinessLifeProfileSettings=Object.freeze({open:openProfileSettings,openAccountMoney:openAccountMoneySettings});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bootSettings,{once:true});else bootSettings();
