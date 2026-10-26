@@ -115,9 +115,25 @@ async function browserRead(actor, doc) {
   if (evidence) await page.screenshot({ path: join(evidence, actor.label + '.png') });
   pages.push(page);
 }
+async function browserEntry(actor) {
+  const page = await actor.context.newPage();
+  await page.goto(origin + '/');
+  const entry = page.locator('#accountHomeKnowledge');
+  await entry.waitFor({ state: 'visible' });
+  assert.equal(await entry.count(), 1);
+  await entry.click();
+  await page.waitForURL(origin + '/knowledge');
+  await page.waitForSelector('.doc-card');
+  await page.close();
+}
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.KNOWLEDGE_BROWSER_CHANNEL ? { channel: process.env.KNOWLEDGE_BROWSER_CHANNEL } : {}) });
   const guest = await browser.newContext({ ignoreHTTPSErrors: true });
+  const root = await guest.request.get(origin + '/');
+  assert.equal(root.status(), 200);
+  const entryScripts = [...(await root.text()).matchAll(/<script[^>]+src=["']([^"']+)["']/g)]
+    .filter(match => new URL(match[1], origin).pathname === '/knowledge-entry.js');
+  assert.equal(entryScripts.length, 1, 'Canonical gateway root must load one Knowledge entry module');
   const anon = await guest.request.get(origin + '/api/knowledge/catalog'); assert.equal(anon.status(), 401);
   assert.doesNotMatch(await anon.text(), /document_count|EXECUTIVE_CONFIDENTIAL/); await guest.close();
   checks.push('Anonymous private catalog denied through the full HTTPS gateway');
@@ -127,6 +143,10 @@ try {
     assert.ok(catalog.documents.some(d => d.id === own.id));
     assert.equal(catalog.documents.some(d => d.access_class === 'EXECUTIVE_CONFIDENTIAL'), false);
     assert.equal(catalog.access.business_guidance, ['merchant', 'supplier'].includes(role));
+    if (role === 'customer') {
+      await browserEntry(a);
+      checks.push('Canonical gateway root and signed-in Account Home entry open the portal');
+    }
     const content = await document(a, own); assert.equal(typeof content.markdown, 'string');
     assert.equal(content.relative_path, undefined); await document(a, executive, 404);
     await browserRead(a, own);

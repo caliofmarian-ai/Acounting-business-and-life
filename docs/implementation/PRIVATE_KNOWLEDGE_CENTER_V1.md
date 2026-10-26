@@ -4,6 +4,10 @@ Issue: #85. Implementation is not a production acceptance claim.
 
 The read-only `/knowledge` portal reads controlled Markdown from the canonical
 repository. Its signed-in entry appears in Account Home and the account drawer.
+The embedded application's root is composed by `notificationsFetch`; that path
+and the standalone Admin gateway both load the entry module. Full-gateway browser
+acceptance opens the portal from the actual signed-in Account Home and verifies
+that the canonical root loads exactly one copy.
 Public Help remains at `/help`. This portal contains reusable guidance and blank
 templates, not uploaded credentials, business records or private user evidence.
 
