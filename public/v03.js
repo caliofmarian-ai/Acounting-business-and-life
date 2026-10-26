@@ -281,7 +281,7 @@ async function api(path,options={}){
 async function cachedJson(path,key){try{const data=await api(path);localStorage.setItem(cacheKey(key),JSON.stringify(data));return data}catch(e){if(e.status===401)throw e;const cached=localStorage.getItem(cacheKey(key));if(cached)return JSON.parse(cached);throw e}}
 let baseActiveRole=window.BusinessLifeProfileState?.activeRole||null;
 function isMerchantBaseActive(){return baseActiveRole==='merchant'}
-function logout(){token=false;baseActiveRole=null;window.ABLSession?.clearReadableSession();$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
+function logout(){token=false;baseActiveRole=null;invalidateMerchantToday();window.ABLSession?.clearReadableSession();$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
 function showShell(){$('login').classList.add('hidden');$('shell').classList.remove('hidden')}
 function typeLabel(t){return({sale:'Sale',business_expense:'Business expense',money_received:'Money received',personal_withdrawal:'Personal withdrawal',adjustment:'Adjustment'})[t]||t}
 function accountLabel(a){return({cash:'Cash',gcash:'GCash',bank:'Bank',other:'Other'})[a]||a}
@@ -301,15 +301,28 @@ $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginEr
 let merchantTodayCache=null;
 let merchantTodayPromise=null;
 let merchantTodayBusinessId=null;
+let merchantTodayRequestBusinessId=null;
+let merchantTodayGeneration=0;
+let merchantTodayProfileKey=merchantTodayProfileContext();
 
+function merchantTodayProfileContext(){
+  const state=window.BusinessLifeProfileState;
+  // Returning to Today within the same profile must preserve its cache.
+  return [state?.accountId??state?.snapshot?.account?.id??'',baseActiveRole].join(':');
+}
 function currentMerchantBusinessId(){
   const id=Number(window.BusinessLifeAccounting?.getState?.()?.activeBusinessId);
   return Number.isInteger(id)&&id>0?id:null;
 }
 function invalidateMerchantToday(){
+  merchantTodayGeneration+=1;
   merchantTodayCache=null;
   merchantTodayPromise=null;
   merchantTodayBusinessId=null;
+  merchantTodayRequestBusinessId=null;
+  merchantTodayProfileKey=merchantTodayProfileContext();
+  merchantTodayLoading();
+  if($('todayBusinessName'))$('todayBusinessName').textContent='Your current business';
 }
 function todayChip(label,value,{muted=false}={}){
   const n=Number(value||0);
@@ -410,17 +423,26 @@ function merchantTodayError(error){
 }
 async function loadMerchantToday({force=false}={}){
   if(!isMerchantBaseActive()||!$('viewDashboard'))return null;
+  const profileKey=merchantTodayProfileContext();
+  if(merchantTodayProfileKey!==profileKey)invalidateMerchantToday();
   const activeId=currentMerchantBusinessId();
   if(!force&&merchantTodayCache&&(!activeId||Number(merchantTodayBusinessId)===activeId)){
     renderMerchantToday(merchantTodayCache);
     return merchantTodayCache;
   }
-  if(!force&&merchantTodayPromise)return merchantTodayPromise;
+  if(!force&&merchantTodayPromise&&merchantTodayRequestBusinessId===activeId)return merchantTodayPromise;
   merchantTodayLoading();
+  const generation=++merchantTodayGeneration;
+  merchantTodayRequestBusinessId=activeId;
+  const isCurrent=()=>generation===merchantTodayGeneration
+    &&isMerchantBaseActive()&&profileKey===merchantTodayProfileContext()
+    &&(!activeId||!currentMerchantBusinessId()||activeId===currentMerchantBusinessId());
   merchantTodayPromise=api('/api/merchant/today')
-    .then(data=>{renderMerchantToday(data);return data})
-    .catch(error=>{merchantTodayError(error);throw error})
-    .finally(()=>{merchantTodayPromise=null});
+    .then(data=>{if(!isCurrent())return null;renderMerchantToday(data);return data})
+    .catch(error=>{if(!isCurrent())return null;merchantTodayError(error);throw error})
+    .finally(()=>{
+      if(generation===merchantTodayGeneration){merchantTodayPromise=null;merchantTodayRequestBusinessId=null}
+    });
   return merchantTodayPromise;
 }
 window.BusinessLifeMerchantToday=Object.freeze({
@@ -1393,6 +1415,7 @@ async function openPendingInventoryNotification(){
 }
 document.addEventListener('abl:profile-state',event=>{
   baseActiveRole=event.detail?.activeRole||null;
+  if(merchantTodayProfileKey!==merchantTodayProfileContext())invalidateMerchantToday();
   if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
   if(isMerchantBaseActive())openPendingInventoryNotification().catch(()=>{});
 });
@@ -1400,6 +1423,7 @@ document.addEventListener('abl:business-workspace-changed',()=>{
   invalidateMerchantToday();
   if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday({force:true}).catch(()=>{});
 });
+document.addEventListener('abl:auth-expired',()=>invalidateMerchantToday());
 window.addEventListener('online',()=>{
   setOnline(true);
   if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden')){
