@@ -14,3 +14,7 @@
 .customerOrderTools small{font-size:11px;line-height:1.35;color:#687386;overflow-wrap:anywhere}
 .customerOrderTools b{font-size:20px;flex:0 0 auto}
 @media(max-width:420px){.customerOrderTools>button{min-height:56px;padding:9px 10px;border-radius:14px}}
+
+.counterModifierGroup{min-width:0;margin:8px 0 0;padding:8px;border:1px solid #dbe3ef;border-radius:8px}.counterModifierGroup legend{font-size:13px}.counterModifierGroup label{display:flex;align-items:center;gap:8px;min-height:44px;font-size:14px}.counterModifierGroup input[type="checkbox"]{width:20px;min-height:20px;flex:0 0 20px}.counterProduct select{max-width:100%;width:100%}
+
+.counterChoiceButton{min-height:44px;margin:8px 8px 0 0;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#0369a1;font-size:14px}.counterChoiceButton:disabled{opacity:.55}

@@ -87,6 +87,17 @@ responses, shell entry deduplication and unavailable bookmarks. Its screenshots
 and revision-bound result are retained as controlled QA artifacts. This module
 fixture job does not replace full-gateway Preview acceptance.
 
+The browser job also boots the canonical application against its disposable
+`abl_knowledge_ci` PostgreSQL database. `knowledge-runtime-acceptance.js` refuses
+any other service/database/environment or an external connection URL. Synthetic
+actors sign in through the actual password/cookie transport. All five profiles,
+delegated Admin ranks, membership/profile revocation, read auditing and Owner vs
+other-Super-Admin executive access are checked through the gateway. Real TOTP
+enrollment/confirmation uses only the local disposable factor and never writes
+secrets into logs or artifacts. An HTTPS loopback edge permits real Secure and
+HttpOnly browser cookies. This is automated acceptance, not the physical Android
+MFA operator acceptance tracked separately in #788.
+
 Before merge, record exact-head CI/Admin Runtime and isolated Preview browser/API
 acceptance for the five profiles plus Owner and delegated Admin negatives. After
 merge, record the production SHA/deployment, `/knowledge` smoke, access denials

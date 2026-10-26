@@ -8,9 +8,11 @@ const todayStart=source.indexOf('let merchantTodayCache=null;');
 const todayEnd=source.indexOf('async function openMerchantAction',todayStart);
 const lifecycleStart=source.indexOf("document.addEventListener('abl:profile-state',event=>{");
 const lifecycleEnd=source.indexOf("window.addEventListener('online'",lifecycleStart);
+const marketSource=readFileSync(new URL('../public/marketplace-ui.js',import.meta.url),'utf8');
+const storeSaveSource=marketSource.slice(marketSource.indexOf('function bindStoreForm(){'),marketSource.indexOf('\nfunction bindCatalog(){'));
 
 function todayHarness(){
-  const nodes=new Map(),listeners=new Map(),events=[],requests=[];
+  const nodes=new Map(),listeners=new Map(),events=[],requests=[],storeRequests=[];
   const accounting={role:'merchant',activeBusinessId:1};
   function node(id){
     if(!nodes.has(id)){
@@ -28,19 +30,28 @@ function todayHarness(){
     BusinessLifeAccounting:{getState:()=>accounting}
   };
   const document={
+    getElementById:node,
     addEventListener(name,listener){if(!listeners.has(name))listeners.set(name,[]);listeners.get(name).push(listener)},
     dispatchEvent(event){events.push(event);for(const listener of listeners.get(event.type)||[])listener(event)}
   };
   const context={window,document,console,Intl,Date,$:node,esc:String,num:String,money:String,
     CustomEvent:class{constructor(type,{detail}={}){this.type=type;this.detail=detail}},
     api:()=>new Promise((resolve,reject)=>requests.push({resolve,reject})),
+    mapi:()=>new Promise((resolve,reject)=>storeRequests.push({resolve,reject})),
+    mtoast:()=>{},renderMerchantStore:async()=>{},merchantStore:null,
     openPendingInventoryNotification:async()=>false
   };
   vm.createContext(context);
-  vm.runInContext("let baseActiveRole=window.BusinessLifeProfileState.activeRole;function isMerchantBaseActive(){return baseActiveRole==='merchant'}\n"+source.slice(todayStart,todayEnd)+source.slice(lifecycleStart,lifecycleEnd),context);
+  vm.runInContext("let baseActiveRole=window.BusinessLifeProfileState.activeRole;function isMerchantBaseActive(){return baseActiveRole==='merchant'}\n"+source.slice(todayStart,todayEnd)+source.slice(lifecycleStart,lifecycleEnd)+storeSaveSource,context);
   function dispatch(type,detail){document.dispatchEvent({type,detail})}
   return{
-    node,events,requests,accounting,
+    node,events,requests,storeRequests,accounting,
+    saveStore(domain,businessId=1){
+      node('storeBusinessId').value=String(businessId);node('storeDomain').value=domain;
+      vm.runInContext('bindStoreForm()',context);
+      return node('merchantStoreForm').onsubmit({preventDefault(){}});
+    },
+    storefrontSaved:businessId=>dispatch('abl:merchant-storefront-saved',{businessId}),
     load:options=>window.BusinessLifeMerchantToday.load(options),
     state:()=>window.BusinessLifeMerchantToday.getState(),
     switchBusiness(id){accounting.activeBusinessId=id;dispatch('abl:business-workspace-changed',{role:'merchant',activeBusinessId:id})},
@@ -60,6 +71,67 @@ test('late previous-business success cannot replace current Today or publish sta
   assert.equal(h.state().businessId,2);
   assert.equal(h.node('todayBusinessName').textContent,'Business 2');
   assert.deepEqual(h.events.filter(e=>e.type==='abl:merchant-today-data').map(e=>e.detail.business.id),[2]);
+});
+
+const domainPayload=(domain)=>({...payload(1),presentation:{merchant_domain:domain,food_modules_enabled:domain==='food'||domain==='mixed',non_food_modules_enabled:domain==='non_food'||domain==='mixed'}});
+
+test('successful Storefront domain save invalidates Today without fetching on the Storefront surface',async()=>{
+  const h=todayHarness(),initial=h.load();h.requests[0].resolve(domainPayload('food'));await initial;
+  h.node('viewDashboard').classList.add('hidden');
+  const save=h.saveStore('non_food');h.storeRequests[0].resolve({business_id:1,merchant_domain:'non_food'});await save;
+  assert.equal(h.state().data,null);assert.equal(h.requests.length,1);
+  assert.equal(h.events.filter(e=>e.type==='abl:merchant-storefront-saved').length,1);
+  h.node('viewDashboard').classList.remove('hidden');
+  const current=h.load();h.requests[1].resolve(domainPayload('non_food'));await current;
+  assert.equal(h.node('todayFoodActions').classList.contains('hidden'),true);
+  assert.match(h.node('todayCatalogCopy').textContent,/Non-food catalog checks/);
+});
+
+test('failed Storefront save preserves Today cache and emits no invalidation',async()=>{
+  const h=todayHarness(),initial=h.load();h.requests[0].resolve(domainPayload('food'));await initial;
+  const cached=h.state().data;h.node('viewDashboard').classList.add('hidden');
+  const save=h.saveStore('non_food');h.storeRequests[0].reject(new Error('Save rejected'));await save;
+  assert.equal(h.state().data,cached);assert.equal(h.node('storeMessage').textContent,'Save rejected');
+  assert.equal(h.events.some(e=>e.type==='abl:merchant-storefront-saved'),false);
+  await h.load();assert.equal(h.requests.length,1);
+});
+
+test('successful Storefront save rejects an in-flight pre-save Today domain and metadata',async()=>{
+  const h=todayHarness(),old=h.load();h.node('viewDashboard').classList.add('hidden');
+  const save=h.saveStore('non_food');h.storeRequests[0].resolve({business_id:1,merchant_domain:'non_food'});await save;
+  h.requests[0].resolve(domainPayload('food'));await old;
+  assert.equal(h.state().data,null);
+  assert.equal(h.events.filter(e=>e.type==='abl:merchant-today-data').length,0);
+  const current=h.load();h.requests[1].resolve(domainPayload('non_food'));await current;
+  assert.equal(h.node('todayFoodActions').classList.contains('hidden'),true);
+});
+
+test('foreign-business and unrelated-profile Storefront events do not disturb current Today authority',async()=>{
+  const h=todayHarness(),initial=h.load();h.requests[0].resolve(domainPayload('food'));await initial;
+  const cached=h.state().data;h.storefrontSaved(2);h.storefrontSaved(0);h.storefrontSaved(null);
+  assert.equal(h.state().data,cached);assert.equal(h.requests.length,1);
+  h.profile({activeRole:'customer'});h.node('todayBusinessName').textContent='Unrelated profile';
+  h.storefrontSaved(1);
+  assert.equal(h.node('todayBusinessName').textContent,'Unrelated profile');assert.equal(h.requests.length,1);
+});
+
+test('save event keeps its submitted business when another Storefront form replaces it while pending',async()=>{
+  const h=todayHarness(),initial=h.load();h.requests[0].resolve(domainPayload('food'));await initial;
+  h.node('viewDashboard').classList.add('hidden');const cached=h.state().data;
+  const save=h.saveStore('mixed',2);h.node('storeBusinessId').value='1';
+  h.storeRequests[0].resolve({business_id:2,merchant_domain:'mixed'});await save;
+  const saved=h.events.find(e=>e.type==='abl:merchant-storefront-saved');
+  assert.equal(saved?.detail.businessId,2);assert.equal(h.state().data,cached);assert.equal(h.requests.length,1);
+});
+
+test('successful save while Today is visible refreshes once and Mixed retains Food tools',async()=>{
+  const h=todayHarness(),initial=h.load();h.requests[0].resolve(domainPayload('non_food'));await initial;
+  const save=h.saveStore('mixed');h.storeRequests[0].resolve({business_id:1,merchant_domain:'mixed'});await save;
+  assert.equal(h.requests.length,2);
+  const duplicate=h.load();assert.equal(h.requests.length,2);
+  h.requests[1].resolve(domainPayload('mixed'));await duplicate;
+  assert.equal(h.node('todayFoodActions').classList.contains('hidden'),false);
+  await h.load();assert.equal(h.requests.length,2);
 });
 
 test('late previous-business error cannot hide current successful Today',async()=>{

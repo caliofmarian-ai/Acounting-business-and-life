@@ -10,6 +10,8 @@ A synthetic PASS proves the drill mechanism against the included schema subset a
 
 Provider backup scheduling and retention were not inspected by #795. Absence of a repository restore report does not mean provider backups do not exist. Do not close the parent recovery/launch gates using the synthetic test.
 
+Follow-up #804 records a dated provider inspection and a newly saved expiring manual snapshot in [provider evidence, 2026-10-26](RECOVERY_PROVIDER_EVIDENCE_2026-10-26.md). It also extends the dedicated CI to PostgreSQL 18, the observed provider major, while retaining PostgreSQL 16. These are separate results: a saved provider snapshot is not a tested snapshot restore, and synthetic compatibility is not an application recovery result.
+
 ## Operator and prerequisites
 
 The recovery operator needs access to the approved backup and its matching manifest, a clean disposable Linux/POSIX host with adequate disk space, Node 20+, and a single matching PostgreSQL toolchain containing `initdb`, `pg_ctl`, `psql`, `pg_dump` and `pg_restore`. Use maintained PostgreSQL binaries at least as new as the archive producer; cross-version/extension compatibility must be reviewed separately. Run as an unprivileged OS user. Root and Windows are rejected.
@@ -29,6 +31,8 @@ node scripts/recovery/restore-drill.js --synthetic --pg-bin /usr/lib/postgresql/
 The output directory must already exist. The report is created with mode 0600 and exclusive creation; an existing file/symlink is never overwritten. The synthetic mode creates its own source fixture, makes a real `pg_dump --format=custom` archive, restores it with `pg_restore`, and compares known counts. It uses no company-test account or application secret.
 
 Focused guard tests run with `node --test tests/recovery-*.test.js`. Real PostgreSQL integration is mandatory in the **Recovery Drill** GitHub workflow, which sets `ABL_RECOVERY_INTEGRATION=1` and `ABL_RECOVERY_PG_BIN`. The normal application test suite runs the guard tests and skips only the environment-dependent PostgreSQL integration group. Setting the integration flag without an installed/unprivileged toolchain fails the test; it cannot silently skip.
+
+The dedicated job runs both PostgreSQL 16 on pinned Ubuntu 24.04 and PostgreSQL 18 on pinned Ubuntu 26.04. Each matrix entry checks out the exact PR head (or the actual push SHA after merge), prints that SHA and its PostgreSQL tool version, and runs the same real integration acceptance. No production connection string, archive or secret is supplied to either entry.
 
 ## Supplied backup acceptance
 
