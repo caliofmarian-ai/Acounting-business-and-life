@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>Knowledge · Business &amp; Life</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/knowledge/knowledge.css">
+  <script src="/session-security.js"></script>
+  <script type="module" src="/knowledge/knowledge.js"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/">Business &amp; Life<span>Knowledge</span></a><a class="back-app" href="/">Back to app</a></header>
+  <main id="knowledge">
+    <section class="intro"><span class="eyebrow">YOUR WORK, EXPLAINED</span><h1>Know what to do next.</h1><p>Find the guides, procedures and training available to your account.</p></section>
+    <section id="access" class="access" aria-label="Your document access" hidden></section>
+    <div id="adminLocked" class="notice" hidden><strong>Admin documents are locked.</strong><p>Open Admin and complete your authenticator check, then return here and refresh.</p><a class="button" href="/admin">Open Admin</a><button id="refreshAccess" type="button">Refresh access</button></div>
+    <div class="workspace">
+      <aside id="library" class="library" aria-label="Document library">
+        <div class="search"><label for="search">Find a document</label><input id="search" type="search" placeholder="Search titles, topics or document IDs" maxlength="120" autocomplete="off"></div>
+        <label class="filter-label" for="category">Topic</label><select id="category"><option value="">All topics</option></select>
+        <p id="resultCount" class="result-count" role="status" aria-live="polite">Loading your documents…</p>
+        <div id="catalog" aria-busy="true"></div>
+        <div class="help-link">Need help using the app? <a href="/help">Open public Help</a></div>
+      </aside>
+      <section id="reader" class="reader" aria-label="Document reader" tabindex="-1">
+        <button id="backToList" class="back-list" type="button" hidden>‹ Back to documents</button>
+        <div id="document" aria-live="polite"><div class="reader-empty"><span aria-hidden="true">📖</span><h2>A guide for every role.</h2><p>Select a document to read it here.</p><small>Access follows your current profiles and permissions.</small></div></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
