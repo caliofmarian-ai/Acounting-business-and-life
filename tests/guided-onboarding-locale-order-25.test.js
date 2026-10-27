@@ -97,3 +97,86 @@ test('later explicit Filipino choice uses cached successful pack', async () => {
   assert.equal(h.state().copyLocale, 'fil-PH');
   assert.equal(h.state().lang, 'fil-PH');
 });
+
+// Fetch completion and JSON decoding are separate await boundaries. Hold the
+// body promise explicitly so these cases cannot pass by resolving both at once.
+function pendingJson(h, index) {
+  assert.ok(h.requests[index], 'expected a pending fetch');
+  const body = deferred(), started = deferred();
+  h.requests[index].resolve({ ok: true, json() {
+    started.resolve();
+    return body.promise;
+  } });
+  return { ...body, started: started.promise };
+}
+const drainMicrotasks = () => new Promise(resolve => setImmediate(resolve));
+
+test('late JSON body cannot overwrite a language chosen after headers arrived', { timeout: 1000 }, async () => {
+  const h = harness(), oldFil = h.loadCopy('fil-PH');
+  const body = pendingJson(h, 0); await body.started;
+  const newEn = h.loadCopy('en-PH');
+  h.complete(1, en); await newEn;
+  body.resolve(fil); await oldFil;
+  assert.deepEqual(h.state().copy, en);
+  assert.equal(h.state().copyLocale, 'en-PH');
+  assert.equal(h.state().lang, 'en-PH');
+});
+
+test('stale Filipino JSON rejection cannot launch an English fallback', { timeout: 1000 }, async () => {
+  const h = harness(), oldFil = h.loadCopy('fil-PH');
+  const body = pendingJson(h, 0); await body.started;
+  const newFil = h.loadCopy('fil-PH');
+  h.complete(1, fil); await newFil;
+  body.reject(new SyntaxError('synthetic stale JSON failure')); await drainMicrotasks();
+  assert.equal(h.requests.length, 2, 'stale failed Filipino body must not start fallback');
+  await oldFil;
+  assert.deepEqual(h.state().copy, fil);
+  assert.equal(h.state().lang, 'fil-PH');
+});
+
+test('older same-locale response cannot replace a newer cached pack', { timeout: 1000 }, async () => {
+  const h = harness(), oldFil = h.loadCopy('fil-PH'), newFil = h.loadCopy('fil-PH');
+  const newer = { ...fil, hello: 'Newer Filipino copy' };
+  h.complete(1, newer); await newFil;
+  h.complete(0, fil); await oldFil;
+  assert.deepEqual(h.state().cache.get('fil-PH'), newer);
+  const switchEn = h.loadCopy('en-PH'); h.complete(2, en); await switchEn;
+  await h.loadCopy('fil-PH');
+  assert.equal(h.requests.length, 3, 'switch back must use the retained newer cache');
+  assert.deepEqual(h.state().copy, newer);
+  assert.equal(h.state().copyLocale, 'fil-PH');
+});
+
+test('an English fallback already decoding JSON yields to a newer Filipino choice', { timeout: 1000 }, async () => {
+  const h = harness(), original = h.loadCopy('fil-PH');
+  h.complete(0, null, false); await drainMicrotasks();
+  assert.equal(h.requests[1].url, '/locales/guided-onboarding.en-PH.json');
+  const fallback = pendingJson(h, 1); await fallback.started;
+  const newer = h.loadCopy('fil-PH'); h.complete(2, fil); await newer;
+  fallback.resolve(en); await original;
+  assert.equal(h.requests.length, 3);
+  assert.deepEqual(h.state().copy, fil);
+  assert.equal(h.state().copyLocale, 'fil-PH');
+  assert.equal(h.state().lang, 'fil-PH');
+});
+
+test('current Filipino JSON decoding failure still uses English fallback', { timeout: 1000 }, async () => {
+  const h = harness(), pending = h.loadCopy('fil-PH');
+  const body = pendingJson(h, 0); await body.started;
+  body.reject(new SyntaxError('synthetic current JSON failure')); await drainMicrotasks();
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].url, '/locales/guided-onboarding.en-PH.json');
+  h.complete(1, en); await pending;
+  assert.deepEqual(h.state().copy, en);
+  assert.equal(h.state().lang, 'en-PH');
+});
+
+test('current English decoding failure ends safely without recursive fallback', { timeout: 1000 }, async () => {
+  const h = harness(), seed = h.loadCopy('fil-PH'); h.complete(0, fil); await seed;
+  const pending = h.loadCopy('en-PH'), body = pendingJson(h, 1); await body.started;
+  body.reject(new SyntaxError('synthetic English JSON failure')); await pending;
+  assert.equal(h.requests.length, 2);
+  assert.deepEqual(h.state().copy, {});
+  assert.equal(h.state().copyLocale, 'en-PH');
+  assert.equal(h.state().lang, 'en-PH');
+});
