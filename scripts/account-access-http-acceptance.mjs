@@ -142,6 +142,36 @@ try {
   await check('audit metadata never includes the submitted private content',async()=>{
     const result=await pool.query('SELECT before_json,after_json,reason FROM admin_audit_events');assert.doesNotMatch(JSON.stringify(result.rows),/fixture@example|Synthetic acceptance|Synthetic note/u);
   });
+  // These are bounded loopback fixture probes, not deployed ingress acceptance.
+  // Retry once only if the real PostgreSQL hour changed during a quota probe.
+  const window=async()=>String((await pool.query("SELECT date_trunc('hour',NOW())::text AS value")).rows[0].value);
+  await check('shared socket source quota cannot be bypassed by spoofed forwarding headers',async()=>{
+    for(let attempt=0;attempt<2;attempt++){
+      await clear();const started=await window();const statuses=[];let retryAfter=0;
+      for(let i=0;i<61;i++){
+        const address='203.0.113.'+(i+1);
+        const r=await submit(valid({contact_email:'source-fixture-'+i+'@example.test'}),{
+          'X-Forwarded-For':address+', 198.51.100.10','Forwarded':'for='+address+';proto=https',
+          'X-Real-IP':address,'CF-Connecting-IP':address});
+        statuses.push(r.status);retryAfter=Number(r.headers.get('retry-after')||0);await r.arrayBuffer();
+      }
+      if(started!==await window()&&attempt===0)continue;
+      assert.deepEqual(statuses,[...Array(60).fill(202),429]);assert.ok(retryAfter>0&&retryAfter<=3600);
+      assert.equal((await pool.query('SELECT COUNT(*)::int n FROM guest_account_access_requests')).rows[0].n,60);return;
+    }
+  });
+  await check('global quota still applies across distinct source and contact buckets',async()=>{
+    for(let attempt=0;attempt<2;attempt++){
+      await clear();const started=await window();const statuses=[];
+      for(let i=0;i<301;i++){
+        try{await submitAccountAccess(pool,valid({contact_email:'global-fixture-'+i+'@example.test'}),{secret,source:'distinct-fixture-'+i});statuses.push(202);}
+        catch(error){statuses.push(error.status);}
+      }
+      if(started!==await window()&&attempt===0)continue;
+      assert.deepEqual(statuses,[...Array(300).fill(202),429]);
+      assert.equal((await pool.query('SELECT COUNT(*)::int n FROM guest_account_access_requests')).rows[0].n,300);return;
+    }
+  });
 } finally {
   if(server)await new Promise(resolve=>server.close(resolve));
   await pool.end();
