@@ -45,6 +45,8 @@ try{
   await page.goto(origin);
   const recipes=page.locator('#merchantRecipesNav'),nav=page.getByRole('navigation',{name:'Merchant primary navigation'});
   assert.equal(await recipes.isVisible(),false,'no capability flash');
+  assert.equal(await nav.locator('button .merchantNavIcon').count(),6,'six native outline icons');
+  assert.equal(await nav.locator('button .merchantNavLabel').count(),6,'six persistent text labels');
   for(const domain of states){
    await page.getByRole('button',{name:'Fixture '+domain,exact:true}).click();
    const allowed=['food','mixed'].includes(domain);
@@ -52,9 +54,13 @@ try{
    const visible=await nav.locator('button:visible').allTextContents();
    if(allowed){
     assert.deepEqual(visible,['Today','Orders','Catalog','Products & recipes','Stock','Money']);
+    assert.equal(await nav.locator('button .merchantNavIcon').count(),6,'Finance hydration cannot erase icons');
+    assert.equal(await nav.locator('button:visible').first().evaluate(b=>getComputedStyle(b).borderTopWidth),'1px','inactive button has outlined border');
     await recipes.press('Enter');
     assert.equal(await page.locator('#viewMenu').isVisible(),true);
     assert.equal(await recipes.getAttribute('class'),'active');
+    assert.equal(await recipes.getAttribute('aria-current'),'page');
+    assert.equal(await nav.locator('button[aria-current="page"]').count(),1,'only one current destination');
     assert.equal(await page.locator('body').getAttribute('data-requested-view'),'Menu');
     assert.equal(await page.locator('#viewMenu h1').textContent(),'Products & recipes');
     const geometry=await nav.locator('button:visible').evaluateAll(buttons=>buttons.map(b=>{const r=b.getBoundingClientRect();return{height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,fit:b.scrollWidth<=b.clientWidth}}));
@@ -62,7 +68,7 @@ try{
     if(width<650){assert.equal(geometry[3].top,geometry[4].top);assert.ok(geometry[3].top>geometry[0].top,'three-column two-row mobile nav')}
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'no page overflow');
     if(evidence&&domain==='food')await page.screenshot({path:join(evidence,width+'-recipes.png')});
-    await nav.getByRole('button',{name:'Stock',exact:true}).click();assert.equal(await page.locator('#viewStock').isVisible(),true);
+    await nav.getByRole('button',{name:'Stock',exact:true}).click();assert.equal(await page.locator('#viewStock').isVisible(),true);assert.equal(await nav.getByRole('button',{name:'Stock',exact:true}).getAttribute('aria-current'),'page');
     await recipes.click();assert.equal(await page.locator('#viewMenu').isVisible(),true);
     await nav.getByRole('button',{name:'Money',exact:true}).click();assert.equal(await page.locator('#viewMoney').isVisible(),true);
     await nav.getByRole('button',{name:'Today',exact:true}).click();

@@ -10,7 +10,7 @@ const nav=html.match(/<nav class="bottomNav merchantPrimaryNav"[\s\S]*?<\/nav>/)
 test('recipe destination occurs once in primary nav immediately before Stock',()=>{
  assert.ok(nav);assert.equal((nav.match(/data-view="Menu"/g)||[]).length,1);
  assert.match(nav,/aria-label="Merchant primary navigation"/);
- assert.match(nav,/id="merchantRecipesNav"[^>]*class="roleFinanceHidden"[^>]*data-view="Menu"[^>]*aria-controls="viewMenu">Products &amp; recipes<\/button><button data-view="Stock">/);
+ assert.match(nav,/id="merchantRecipesNav"[^>]*class="roleFinanceHidden"[^>]*data-view="Menu"[^>]*aria-controls="viewMenu"[^>]*>[\s\S]*?<span class="merchantNavLabel">Products &amp; recipes<\/span><\/button><button data-view="Stock">/);
  assert.equal((html.match(/data-today-action="recipes"/g)||[]).length,0);
  assert.match(html,/data-today-action="quick-sale">Quick Sale/);
  for(const label of ['Today','Orders','Catalog','Inventory','Money'])assert.ok(nav.includes('>'+label+'<'));
@@ -66,5 +66,27 @@ test('unrelated storefront updates do not hide the current recipe entry',()=>{
 test('mobile recipe navigation wraps to three columns with safe bottom clearance',()=>{
  assert.match(css,/merchantPrimaryNav:has\(\[data-view="Menu"\]:not\(\.roleFinanceHidden\)\)\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)!important\}/);
  assert.match(css,/@media\(max-width:649px\)\{\s*\.merchantPrimaryNav:has\([^\n]+repeat\(3,minmax\(0,1fr\)\)/);
- assert.match(css,/min-height:48px;font-size:\.78rem/);assert.match(css,/padding-bottom:calc\(132px \+ env\(safe-area-inset-bottom,0px\)\)/);
+ assert.match(css,/min-height:56px;font-size:\.73rem/);assert.match(css,/padding-bottom:calc\(158px \+ env\(safe-area-inset-bottom,0px\)\)/);
+});
+
+test('Figma V2 makes each destination a visible icon button and current page identifiable',()=>{
+ assert.equal((nav.match(/<svg class="merchantNavIcon"/g)||[]).length,6);
+ assert.equal((nav.match(/<span class="merchantNavLabel">/g)||[]).length,6);
+ assert.match(nav,/data-view="Dashboard" class="active" aria-current="page"/);
+ assert.match(css,/\.merchantPrimaryNav button\.active\{background:#056b5e;border-color:#056b5e;color:#fff/);
+ assert.match(css,/\.merchantPrimaryNav button:focus-visible\{outline:3px solid #1d4ed8/);
+ assert.match(css,/@media\(prefers-reduced-motion:reduce\)/);
+});
+test('Finance hydration changes only labels, never replaces native nav icons',()=>{
+ const presentationSource=block(finance,'function applyFinancePresentation(','\nconst BUSINESS_FINANCE_COMPATIBILITY_COPY');
+ assert.match(presentationSource,/btn\.querySelector\?\.\('\.merchantNavLabel'\)/);
+ assert.match(presentationSource,/stockBtn\.querySelector\?\.\('\.merchantNavLabel'\)/);
+});
+test('canonical view and Orders or Catalog destination keep one accessible current-page marker',()=>{
+ const viewSource=block(ui,'function setView(name){','\nasync function openInventoryNotificationContext');
+ const actionSource=block(ui,'async function openMerchantAction(action){','\nasync function loadMerchantView');
+ for(const src of [viewSource,actionSource]){
+  assert.match(src,/setAttribute\?\.\('aria-current','page'\)/);
+  assert.match(src,/removeAttribute\?\.\('aria-current'\)/);
+ }
 });
