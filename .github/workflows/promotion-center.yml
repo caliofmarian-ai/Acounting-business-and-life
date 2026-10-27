@@ -67,7 +67,13 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/promotion-browser" --no-package-lock --ignore-scripts playwright@1.58.2 jsqr@1.4.0
           google-chrome --version
           echo '127.0.0.1 promotion.example.test' | sudo tee -a /etc/hosts > /dev/null
-          node --input-type=module -e "import{randomBytes}from'node:crypto';import{appendFileSync}from'node:fs';appendFileSync(process.env.GITHUB_ENV,'TOKEN_SECRET='+randomBytes(32).toString('hex')+'\nAPP_PIN='+randomBytes(24).toString('hex')+'\n');"
+          node --input-type=module <<'NODE'
+          import { randomBytes } from 'node:crypto';
+          import { appendFileSync } from 'node:fs';
+          const values = { TOKEN_SECRET: randomBytes(32).toString('hex'), APP_PIN: randomBytes(24).toString('hex') };
+          for (const value of Object.values(values)) console.log('::add-mask::' + value);
+          appendFileSync(process.env.GITHUB_ENV, Object.entries(values).map(([key, value]) => key + '=' + value + '\n').join(''));
+          NODE
       - name: Start the full gateway on disposable PostgreSQL
         run: |
           npm start > "$RUNNER_TEMP/promotion-gateway.log" 2>&1 &

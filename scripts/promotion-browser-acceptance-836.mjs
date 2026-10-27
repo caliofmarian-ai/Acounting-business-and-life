@@ -114,11 +114,17 @@ async function decodeQr(page, dataUrl, expectedSize, qrBox = null) {
     const area = box ? { x: box.x * scaleX, y: box.y * scaleY, width: box.width * scaleX, height: box.height * scaleY }
       : { x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight };
     const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(area.width); canvas.height = Math.ceil(area.height);
+    canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
     const drawing = canvas.getContext('2d');
     drawing.fillStyle = 'white'; drawing.fillRect(0, 0, canvas.width, canvas.height);
-    drawing.drawImage(image, area.x, area.y, area.width, area.height, 0, 0, canvas.width, canvas.height);
-    const pixels = drawing.getImageData(0, 0, canvas.width, canvas.height);
+    // Rasterize the complete downloaded image once at its native dimensions.
+    // Cropping fractional SVG bounds into a rounded-size canvas would resample
+    // the QR a second time and test altered pixels instead of the actual file.
+    drawing.drawImage(image, 0, 0);
+    const left = Math.floor(area.x), top = Math.floor(area.y);
+    const width = Math.ceil(area.x + area.width) - left, height = Math.ceil(area.y + area.height) - top;
+    if (left < 0 || top < 0 || left + width > canvas.width || top + height > canvas.height) throw new Error('QR sample is outside the downloaded image');
+    const pixels = drawing.getImageData(left, top, width, height);
     const code = globalThis.jsQR(pixels.data, pixels.width, pixels.height, { inversionAttempts: 'dontInvert' });
     return { width: image.naturalWidth, height: image.naturalHeight, payload: code?.data || null };
   }, { source: dataUrl, box: qrBox });
