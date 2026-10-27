@@ -17,11 +17,21 @@ function unique(v,max=12,len=40){
   return out;
 }
 function categoryFor(mode,raw){
-  if(mode==='supplier_catalog')return null;
+  // A missing suggestion can be completed by the human reviewer. A supplied,
+  // incompatible category must fail closed instead of looking like a valid draft.
+  if(raw===undefined||raw===null||raw==='')return null;
+  if(typeof raw!=='string'||!raw.trim()||raw.length>80)
+    throw new TypeError('Invalid AI catalog category.');
+  if(mode==='supplier_catalog')
+    throw new TypeError('Supplier catalog does not accept Merchant category codes.');
   const suggestion=clean(raw,80);
-  if(FOOD[mode])return suggestion===FOOD[mode]?suggestion:null;
+  if(FOOD[mode]){
+    if(suggestion!==FOOD[mode])throw new TypeError('AI category does not match intake mode.');
+    return suggestion;
+  }
   const category=catalogCategory(suggestion);
-  return category?.domain_hint==='non_food'?category.code:null;
+  if(category?.domain_hint!=='non_food')throw new TypeError('AI category does not match intake mode.');
+  return category.code;
 }
 function attributeHints(category,raw){
   if(!category||!plain(raw))return [];
