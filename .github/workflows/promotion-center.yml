@@ -52,9 +52,6 @@ jobs:
       RAILWAY_SERVICE_NAME: accounting-promotion-ci
       RAILWAY_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       PROMOTION_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      PROMOTION_PLAYWRIGHT_MODULE: ${{ runner.temp }}/promotion-browser/node_modules/playwright/index.mjs
-      PROMOTION_QR_SCRIPT: ${{ runner.temp }}/promotion-browser/node_modules/jsqr/dist/jsQR.js
-      PROMOTION_EVIDENCE_DIR: ${{ runner.temp }}/promotion-evidence
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,6 +79,10 @@ jobs:
           tail -n 100 "$RUNNER_TEMP/promotion-gateway.log"
           exit 1
       - name: Verify real authenticated roles, QR, downloaded files and print output
+        env:
+          PROMOTION_PLAYWRIGHT_MODULE: ${{ runner.temp }}/promotion-browser/node_modules/playwright/index.mjs
+          PROMOTION_QR_SCRIPT: ${{ runner.temp }}/promotion-browser/node_modules/jsqr/dist/jsQR.js
+          PROMOTION_EVIDENCE_DIR: ${{ runner.temp }}/promotion-evidence
         run: node scripts/promotion-browser-acceptance-836.mjs
       - name: Preserve revision-bound synthetic evidence
         if: always()
