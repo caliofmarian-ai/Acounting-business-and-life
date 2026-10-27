@@ -11,6 +11,7 @@ const accountingUrl=new URL('../public/business-accounting-ui.js',import.meta.ur
 const ui=readFileSync(uiUrl,'utf8');
 const server=readFileSync(serverUrl,'utf8');
 const css=readFileSync(cssUrl,'utf8');
+const counterCatalog=readFileSync(new URL('../merchant-counter-catalog-core.js',import.meta.url),'utf8');
 const accounting=readFileSync(accountingUrl,'utf8');
 
 for(const [label,url] of [['Orders UI',uiUrl],['Orders server',serverUrl]]){
@@ -41,7 +42,8 @@ test('Orders server snapshots only products from the requested business',()=>{
 
 test('counter-order product list is private to the selected Merchant business',()=>{
   assert.match(server,/\/api\/orders\/products'[\s\S]*requireMerchant\(req,businessId\)/);
-  assert.match(server,/WHERE p\.business_id=\$1 AND p\.active=TRUE/);
+  assert.match(counterCatalog,/WHERE p\.business_id=\$1 AND p\.active=TRUE/);
+  assert.match(server,/merchantCounterCatalog\(pool,\{businessId:business\.id\}\)/);
   assert.match(server,/A valid business_id is required/);
   assert.doesNotMatch(server,/Customer or Merchant profile required/);
   assert.doesNotMatch(server,/if\(businessId!==1\) return res\.json\(\[\]\)/);

@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "auditDate": "2026-10-26",
+  "timezone": "Europe/Dublin",
+  "repository": "caliofmarian-ai/Acounting-business-and-life",
+  "baselineCommit": "66895144e5c13702308a83327e41500b5699a41c",
+  "sourceFile": "public/help/help.js",
+  "sourceSha256": "bf7d00b23a233ba586b782ee3d1a0eeb3a057c3ac42a83dcb5a03c4d4a0f0ea7",
+  "catalogFile": "public/help/content.json",
+  "catalogSha256": "9c487ea315612205bc5d45d97c1c2d24f2b09f74bfebdb8e28009d9e926953a3",
+  "method": "Unmodified help.js executed in node:vm; fetch stub returns a pending Promise with no network request; state.data is populated from current content.json; each call uses actual searchArticles(query).",
+  "interpretation": "Deliberately selected diagnostic queries. Any-result counts are not relevance, real-user traffic or task-completion metrics. Review categories and relevantExistingSlugs are human audit annotations, not claims that existing content fully answers a question.",
+  "counts": {
+    "articles": 65,
+    "helpCodes": 16,
+    "queries": 20,
+    "withAnyResult": 4,
+    "withoutResult": 16
+  },
+  "queries": [
+    {
+      "query": "password",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "sign-in-recovery"
+      ],
+      "returnedSlugs": [
+        "sign-in-recovery",
+        "create-account"
+      ]
+    },
+    {
+      "query": "reset password",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "sign-in-recovery"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "I cannot sign in",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "sign-in-recovery"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "ERR-AUTH-001",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "sign-in-recovery"
+      ],
+      "returnedSlugs": [
+        "sign-in-recovery"
+      ]
+    },
+    {
+      "query": "how do I create an account",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "create-account"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "browse without account",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [],
+      "returnedSlugs": []
+    },
+    {
+      "query": "my application is under review",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [
+        "profile-approval-required"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "upload missing documents",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [
+        "profile-approval-required"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "food and non-food",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "browse-marketplace"
+      ],
+      "returnedSlugs": [
+        "browse-marketplace"
+      ]
+    },
+    {
+      "query": "packaging consumables",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [
+        "inventory-products-recipes"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "low stock alert",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [
+        "inventory-products-recipes"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "financial accounts",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [],
+      "returnedSlugs": []
+    },
+    {
+      "query": "notification sounds",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [],
+      "returnedSlugs": []
+    },
+    {
+      "query": "delete my account",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [],
+      "returnedSlugs": []
+    },
+    {
+      "query": "handoff code",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "courier-completion-code",
+        "delivery-tracking-handoff"
+      ],
+      "returnedSlugs": [
+        "courier-completion-code",
+        "delivery-tracking-handoff",
+        "courier-active-delivery"
+      ]
+    },
+    {
+      "query": "where is my money",
+      "reviewCategory": "clarification-required",
+      "relevantExistingSlugs": [],
+      "returnedSlugs": []
+    },
+    {
+      "query": "supplier ETA",
+      "reviewCategory": "content-gap",
+      "relevantExistingSlugs": [
+        "supplier-purchase-orders"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "mag reset ng password",
+      "reviewCategory": "translation-gap",
+      "relevantExistingSlugs": [
+        "sign-in-recovery"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "forgot pasword",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "sign-in-recovery"
+      ],
+      "returnedSlugs": []
+    },
+    {
+      "query": "delivery quote expired",
+      "reviewCategory": "existing-guide",
+      "relevantExistingSlugs": [
+        "delivery-quote-expired"
+      ],
+      "returnedSlugs": []
+    }
+  ]
+}

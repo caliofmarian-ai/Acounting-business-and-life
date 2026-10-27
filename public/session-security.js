@@ -4,6 +4,15 @@
   const LEGACY_STORAGE_KEY='abl_token';
   const originalFetch=window.fetch.bind(window);
   let migrationPending=false;
+  let expiredSessionCsrf=null;
+  let expiryRecovery=null;
+  // These credential bootstrap/recovery routes report their own form errors.
+  const publicAuthPaths=new Set([
+    '/api/auth/login','/api/auth/register','/api/auth/email/preflight',
+    '/api/auth/registration/verify','/api/auth/forgot-password','/api/auth/reset-password',
+    '/api/auth/owner-migrate','/api/auth/oauth/handoff','/api/auth/email-verification/verify',
+    '/api/auth/logout'
+  ]);
 
   function cookie(name){
     const prefix=name+'=';
@@ -19,6 +28,21 @@
     document.cookie=CSRF_COOKIE+'=; Path=/; Secure; SameSite=Lax; Max-Age=0';
   }
   function authenticated(){return Boolean(cookie(CSRF_COOKIE))||migrationPending}
+
+  function recoverExpiredSession(requestCsrf){
+    const currentCsrf=cookie(CSRF_COOKIE);
+    if(currentCsrf&&currentCsrf!==requestCsrf)return;
+    if(expiredSessionCsrf===requestCsrf)return expiryRecovery;
+    expiredSessionCsrf=requestCsrf;
+    expiryRecovery=(async()=>{
+      await originalFetch('/api/auth/logout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>{});
+      const latestCsrf=cookie(CSRF_COOKIE);
+      if(latestCsrf&&latestCsrf!==requestCsrf)return;
+      clearReadableSession();
+      document.dispatchEvent(new CustomEvent('abl:auth-expired'));
+    })();
+    return expiryRecovery;
+  }
 
   let legacyToken='';
   try{
@@ -51,11 +75,7 @@
     const csrf=cookie(CSRF_COOKIE);
     if(csrf&&!['GET','HEAD','OPTIONS'].includes(method))headers.set('X-CSRF-Token',csrf);
     const response=await originalFetch(input,{...init,headers,credentials:init.credentials||'same-origin'});
-    if(response.status===401){
-      await originalFetch('/api/auth/logout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'}).catch(()=>{});
-      clearReadableSession();
-      document.dispatchEvent(new CustomEvent('abl:auth-expired'));
-    }
+    if(response.status===401&&url.pathname.startsWith('/api/')&&!publicAuthPaths.has(url.pathname))await recoverExpiredSession(csrf);
     return response;
   }
 

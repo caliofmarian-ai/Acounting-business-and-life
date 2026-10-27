@@ -30,6 +30,7 @@ import {
   severeIncidentEscalationPolicy
 } from './trust-safety-escalation-core.js';
 import {buildOwnerControlTowerRuntime} from './owner-control-tower-runtime.js';
+import {registerKnowledgeRoutes} from './server-knowledge.js';
 
 const { Pool }=pg;
 const __dirname=dirname(fileURLToPath(import.meta.url));
@@ -1124,6 +1125,7 @@ async function forwardAdmin(req,res,permission,territoryId,targetType='',targetI
 }
 
 app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');const r=await upstream('/health');const ok=businessAccountingReady&&r.ok;res.status(ok?200:503).json({ok,db:true,upstream:ok,business_accounting:businessAccountingReady,profile_governance:businessAccountingReady,auth_hardening:r.ok,version:'0.10-admin-rbac-support'})}catch{res.status(503).json({ok:false,db:false,upstream:false,business_accounting:false,profile_governance:false,auth_hardening:false,version:'0.10-admin-rbac-support'})}});
+registerKnowledgeRoutes(app,{pool,identity});
 app.get('/admin-operations.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-operations.css'),'utf8')));
 app.get('/admin-operations-ui.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','admin-operations-ui.js'),'utf8')));
 app.get('/admin-console.css',(_q,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','admin-console.css'),'utf8')));
@@ -1133,7 +1135,7 @@ app.get('/owner-control-tower.css',(_q,res)=>res.type('text/css').send(readFileS
 app.get('/owner-control-tower.js',(_q,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','owner-control-tower.js'),'utf8')));
 app.get('/admin',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
 app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'public','admin-console.html'),'utf8')));
-async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
+async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/knowledge-entry.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
 app.get('/api/admin/me',async(req,res,next)=>{try{

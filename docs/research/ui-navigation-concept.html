@@ -1,0 +1,195 @@
+<div id="bl-navigation-concept">
+  <style>
+    #bl-navigation-concept{--bl-page:light-dark(#f4f7f6,#14231f);--bl-surface:light-dark(#ffffff,#1d302a);--bl-ink:light-dark(#172c25,#edf6f1);--bl-muted:light-dark(#536b61,#b6cbc1);--bl-line:light-dark(#d9e5df,#405b4f);--bl-accent:light-dark(#075f50,#a1e8ce);--bl-accent-ink:light-dark(#ffffff,#0f3024);--bl-soft:light-dark(#e8f4ee,#28463a);--bl-warning:light-dark(#795214,#efce8e);font:14px/1.5 system-ui,sans-serif;color:var(--bl-ink);color-scheme:light dark}
+    #bl-navigation-concept *{box-sizing:border-box}
+    #bl-navigation-concept [hidden]{display:none!important}
+    #bl-navigation-concept button,#bl-navigation-concept select,#bl-navigation-concept summary{font:inherit;color:inherit;min-height:44px;border-radius:9px;border:1px solid var(--bl-line);background:var(--bl-surface);padding:9px 12px}
+    #bl-navigation-concept button,#bl-navigation-concept select,#bl-navigation-concept summary{cursor:var(--cursor-interaction,default)}
+    #bl-navigation-concept button:focus-visible,#bl-navigation-concept select:focus-visible,#bl-navigation-concept summary:focus-visible{outline:3px solid var(--bl-accent);outline-offset:3px}
+    #bl-navigation-concept .bl-concept-label{margin:0 0 10px;color:var(--bl-muted);font-size:12px}
+    #bl-navigation-concept .bl-app{background:var(--bl-page);border:1px solid var(--bl-line);border-radius:14px;overflow:clip}
+    #bl-navigation-concept .bl-global{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px;background:var(--bl-surface);border-bottom:1px solid var(--bl-line)}
+    #bl-navigation-concept .bl-brand{font-size:16px;font-weight:700;letter-spacing:-.35px}
+    #bl-navigation-concept .bl-brand small{display:block;font-size:11px;font-weight:400;color:var(--bl-muted);letter-spacing:0}
+    #bl-navigation-concept .bl-utilities{display:flex;gap:6px;align-items:center}
+    #bl-navigation-concept .bl-utilities button{padding:9px 10px}
+    #bl-navigation-concept .bl-avatar{border-radius:50%;width:44px;padding:0!important;background:var(--bl-accent);color:var(--bl-accent-ink)}
+    #bl-navigation-concept .bl-context{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 20px;background:var(--bl-surface)}
+    #bl-navigation-concept .bl-identity{display:flex;align-items:center;gap:12px;min-width:0}
+    #bl-navigation-concept .bl-identity label{display:grid;gap:3px;font-size:11px;color:var(--bl-muted)}
+    #bl-navigation-concept .bl-identity select{min-width:105px;font-size:13px;color:var(--bl-ink)}
+    #bl-navigation-concept .bl-business-name{font-weight:600;overflow-wrap:anywhere}
+    #bl-navigation-concept .bl-context small{display:block;font-size:12px;color:var(--bl-muted);font-weight:400}
+    #bl-navigation-concept .bl-context-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}
+    #bl-navigation-concept .bl-tools[open]{width:100%}
+    #bl-navigation-concept .bl-tools{padding:0 20px 12px;background:var(--bl-surface)}
+    #bl-navigation-concept .bl-tools summary{width:max-content;list-style:revert;color:var(--bl-muted);font-size:13px}
+    #bl-navigation-concept .bl-tools-list{display:flex;gap:8px;flex-wrap:wrap;padding-top:10px}
+    #bl-navigation-concept .bl-primary{display:flex;gap:0;padding:0 20px;background:var(--bl-surface);border-bottom:1px solid var(--bl-line)}
+    #bl-navigation-concept .bl-primary button{border:0;border-radius:0;border-bottom:3px solid transparent;background:transparent;min-width:80px;padding:12px 16px;white-space:normal}
+    #bl-navigation-concept .bl-primary button[aria-current="page"]{color:var(--bl-accent);border-bottom-color:var(--bl-accent);font-weight:700;background:var(--bl-soft)}
+    #bl-navigation-concept .bl-primary .bl-money{margin-left:auto;border-left:1px solid var(--bl-line)}
+    #bl-navigation-concept .bl-content{padding:22px 24px 26px;max-width:1000px;margin:auto;min-width:0}
+    #bl-navigation-concept h1{font-size:25px;line-height:1.2;letter-spacing:-.6px;margin:0 0 6px;font-weight:650}
+    #bl-navigation-concept h2{font-size:16px;line-height:1.3;margin:0;font-weight:600}
+    #bl-navigation-concept p{margin:0}
+    #bl-navigation-concept .bl-subtitle{color:var(--bl-muted);margin:0 0 20px}
+    #bl-navigation-concept .bl-section{background:var(--bl-surface);border:1px solid var(--bl-line);border-radius:12px;margin:14px 0;overflow:hidden}
+    #bl-navigation-concept .bl-section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--bl-line)}
+    #bl-navigation-concept .bl-row{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:12px 16px;border-top:1px solid var(--bl-line)}
+    #bl-navigation-concept .bl-row:first-child{border-top:0}
+    #bl-navigation-concept .bl-row small{display:block;color:var(--bl-muted);font-size:12px}
+    #bl-navigation-concept .bl-row div{min-width:0;overflow-wrap:anywhere}
+    #bl-navigation-concept .bl-row button{flex-shrink:0}
+    #bl-navigation-concept .bl-main-action{background:var(--bl-accent);color:var(--bl-accent-ink);border-color:var(--bl-accent)}
+    #bl-navigation-concept .bl-status{display:flex;gap:10px;align-items:center;padding:14px 16px;background:var(--bl-soft);border-radius:10px;margin-bottom:16px}
+    #bl-navigation-concept .bl-status span{font-size:12px;color:var(--bl-muted)}
+    #bl-navigation-concept .bl-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0}
+    #bl-navigation-concept .bl-metrics div{padding:16px;border-right:1px solid var(--bl-line)}
+    #bl-navigation-concept .bl-metrics div:last-child{border:0}
+    #bl-navigation-concept .bl-metrics small{display:block;color:var(--bl-muted);font-size:12px}
+    #bl-navigation-concept .bl-metrics strong{font-size:20px;display:block;font-variant-numeric:tabular-nums}
+    #bl-navigation-concept .bl-heading-row{display:flex;gap:12px;align-items:start;justify-content:space-between}
+    #bl-navigation-concept .bl-heading-row>div{min-width:0}
+    #bl-navigation-concept .bl-caption{font-size:12px;color:var(--bl-muted);padding-top:4px}
+    #bl-navigation-concept .bl-extra-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    #bl-navigation-concept .bl-notice{font-size:12px;color:var(--bl-warning);margin-top:16px;min-height:20px}
+    #bl-navigation-concept .bl-context button[aria-current="page"]{border-color:var(--bl-accent);background:var(--bl-soft)}
+    @media(max-width:600px){
+      #bl-navigation-concept .bl-global{padding:10px 12px;gap:8px}
+      #bl-navigation-concept .bl-brand{font-size:14px}
+      #bl-navigation-concept .bl-brand small{font-size:11px}
+      #bl-navigation-concept .bl-utilities{gap:4px}
+      #bl-navigation-concept .bl-utilities button{padding:9px 8px;min-width:44px}
+      #bl-navigation-concept .bl-context{padding:12px;align-items:flex-start;flex-wrap:wrap;gap:10px}
+      #bl-navigation-concept .bl-identity{width:100%;gap:10px}
+      #bl-navigation-concept .bl-identity label{flex:0 0 auto}
+      #bl-navigation-concept .bl-business-name{font-size:14px}
+      #bl-navigation-concept .bl-context-actions{margin-left:auto}
+      #bl-navigation-concept .bl-tools{padding:0 12px 10px}
+      #bl-navigation-concept .bl-primary{padding:0 4px}
+      #bl-navigation-concept .bl-primary button{flex:1;min-width:0;font-size:13px;padding:12px 4px;overflow-wrap:anywhere}
+      #bl-navigation-concept .bl-primary .bl-money{margin-left:0}
+      #bl-navigation-concept .bl-content{padding:18px 12px 20px}
+      #bl-navigation-concept h1{font-size:23px}
+      #bl-navigation-concept .bl-section-head,#bl-navigation-concept .bl-row{padding:12px}
+      #bl-navigation-concept .bl-metrics div{padding:12px 8px}
+      #bl-navigation-concept .bl-metrics strong{font-size:18px}
+      #bl-navigation-concept .bl-heading-row{flex-wrap:wrap}
+    }
+    @media(max-width:350px){#bl-navigation-concept .bl-global{flex-wrap:wrap}#bl-navigation-concept .bl-utilities{margin-left:auto}#bl-navigation-concept .bl-primary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}#bl-navigation-concept .bl-row{flex-wrap:wrap}#bl-navigation-concept .bl-metrics{grid-template-columns:1fr}#bl-navigation-concept .bl-metrics div{border-right:0;border-bottom:1px solid var(--bl-line)}}
+  </style>
+  <p class="bl-concept-label">Propunere de navigație · date demonstrative · nu este aplicația live</p>
+  <div class="bl-app">
+    <header class="bl-global">
+      <div class="bl-brand">Business &amp; Life<small>Philippines Edition</small></div>
+      <div class="bl-utilities">
+        <button type="button" data-utility="Help">Help</button>
+        <button type="button" aria-label="Notifications" data-utility="Notifications"><i data-lucide="bell" aria-hidden="true"></i><span aria-hidden="true">●</span></button>
+        <button type="button" class="bl-avatar" aria-label="Account menu" data-utility="Account">M</button>
+      </div>
+    </header>
+    <div class="bl-context">
+      <div class="bl-identity">
+        <label>Profile<select id="bl-concept-role" aria-label="Preview profile"><option>Merchant</option><option>Customer</option><option>Supplier</option><option>Delivery</option><option>Local Services</option><option>Admin</option><option>Guest</option></select></label>
+        <div class="bl-business-name" id="bl-concept-identity">Demo Merchant<small>Food business · private workspace</small></div>
+      </div>
+      <div class="bl-context-actions"><button type="button" id="bl-concept-storefront">Storefront ↗</button></div>
+    </div>
+    <nav class="bl-primary" id="bl-concept-primary" aria-label="Merchant workspace navigation"></nav>
+    <details class="bl-tools" id="bl-concept-tools"><summary>Business tools</summary><div class="bl-tools-list" id="bl-concept-tool-list"></div></details>
+    <section class="bl-content" id="bl-concept-content" aria-live="polite"></section>
+  </div>
+  <script>
+    (()=>{
+      const root=document.getElementById('bl-navigation-concept');
+      const primary=root.querySelector('#bl-concept-primary');
+      const content=root.querySelector('#bl-concept-content');
+      const tools=root.querySelector('#bl-concept-tools');
+      const toolList=root.querySelector('#bl-concept-tool-list');
+      const storefront=root.querySelector('#bl-concept-storefront');
+      const identity=root.querySelector('#bl-concept-identity');
+      const rolePicker=root.querySelector('#bl-concept-role');
+      const models={
+        Merchant:{identity:'Demo Merchant',scope:'Food business · private workspace',nav:['Today','Orders','Catalog','Stock','Money'],tools:['Suppliers','Delivery','Business settings','Promotion','Profile tutorial'],public:'Storefront'},
+        Customer:{identity:'My personal profile',scope:'Shopping and service requests',nav:['Home','Shop','Services','Orders','Money'],tools:['Deliveries','Profile settings'],public:null},
+        Supplier:{identity:'Demo Supplier',scope:'B2B business · private workspace',nav:['Today','Orders','Catalog','Money'],tools:['Business settings','Relationships','Statements','Profile tutorial'],public:'Business profile'},
+        Delivery:{identity:'My delivery profile',scope:'Availability and accepted delivery work',nav:['Today','Deliveries','Money'],tools:['Availability','Active route','Eligibility','Delivery settings'],public:null},
+        'Local Services':{identity:'Demo service provider',scope:'Quotes, accepted jobs and income',nav:['Today','Quotes','Jobs','Services','Money'],tools:['Qualifications','Reviews','Profile settings'],public:'Public profile'},
+        Admin:{identity:'Demo administration',scope:'Only destinations allowed by the active assignment',nav:['Overview','Members','Support','Safety','Finance'],tools:['Delivery operations','Territories','Audit & metrics','Team & delegation','Admin settings'],public:null},
+        Guest:{identity:'Explore without an account',scope:'Published information only',nav:['Discover','How it works','Pricing','Privacy'],tools:['Public Help'],public:null}
+      };
+      let role='Merchant',page='Today';
+      const esc=value=>String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+      const action=(label,destination,main=false)=>'<button type="button" data-open="'+esc(destination)+'" class="'+(main?'bl-main-action':'')+'">'+esc(label)+'</button>';
+      const row=(label,detail,destination,labelAction='Open')=>'<div class="bl-row"><div><strong>'+esc(label)+'</strong><small>'+esc(detail)+'</small></div>'+action(labelAction,destination)+'</div>';
+      const section=(heading,body)=>'<section class="bl-section"><div class="bl-section-head"><h2>'+esc(heading)+'</h2></div>'+body+'</section>';
+      const money=()=>{
+        const labels=role==='Customer'?['Payments made','Refunds received','Personal entries']:role==='Delivery'?['Confirmed earnings','Pending settlement','Work expenses']:['Confirmed receipts','Awaiting payment','Expenses'];
+        return '<div class="bl-section bl-metrics">'+labels.map(label=>'<div><small>'+label+'</small><strong>'+(role==='Delivery'?'Not available':'₱0.00')+'</strong></div>').join('')+'</div>';
+      };
+      function renderPage(destination){
+        page=destination;
+        const m=models[role];
+        primary.querySelectorAll('button').forEach(button=>{if(button.dataset.open===page)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current')});
+        if(page===m.public)storefront.setAttribute('aria-current','page');else storefront.removeAttribute('aria-current');
+        if(m.tools.includes(page))tools.querySelector('summary').setAttribute('aria-current','page');else tools.querySelector('summary').removeAttribute('aria-current');
+        tools.open=false;
+        let subtitle=role==='Merchant'?'What needs your attention in this business.':m.scope;
+        let body='';
+        if(role==='Merchant'&&page==='Today'){
+          body='<div class="bl-status"><div><strong>No urgent order work</strong><br><span>Your business has no waiting customer orders.</span></div></div>'+section('Needs attention',row('Review your Catalog','Finish product details before publishing.','Catalog','Review'))+section('Today’s business',row('Orders','Waiting, preparing and ready for handoff.','Orders')+row('Stock','Food, retail products and operating supplies.','Stock'))+'<div class="bl-extra-links">'+action('Quick sale','Quick sale')+'</div>';
+        }else if(page==='Stock'){
+          subtitle='See your stock first. Record purchases when you need to.';
+          body=section('Inventory',row('No stock in this example','Purchases, reservations and available quantities appear here.','Record purchase','Record purchase'))+'<div class="bl-extra-links">'+action('Stock count','Stock count')+action('Restock list','Restock list')+action('Waste & expiry','Waste & expiry')+action('Locations','Locations')+'</div>';
+        }else if(page==='Orders'){
+          subtitle=role==='Supplier'?'Incoming purchase orders, preparation and fulfilment.':'Waiting, in progress and completed orders.';
+          const next=role==='Customer'?action('Shop local','Shop'):role==='Supplier'?action('View incoming orders','Incoming'):action('New counter order','New counter order');
+          body=section('Active orders','<div class="bl-row"><div><strong>No active orders in this example</strong><small>Orders and their current status appear here.</small></div>'+next+'</div>')+section('Order views','<div class="bl-extra-links" style="padding:12px">'+action(role==='Supplier'?'Incoming':'Waiting','Incoming')+action('Preparing','Preparing')+action(role==='Supplier'?'Fulfilment':'Ready','Fulfilment')+action('History','Order history')+'</div>');
+        }else if(page==='Catalog'){
+          subtitle='Products first. Add or edit a product when needed.';
+          body=section('Your products',row('No published products in this example','Food and retail views follow the business type.','Add product','Add product'))+'<div class="bl-extra-links">'+action('Products & recipes','Products & recipes')+action('Import products','Import products')+'</div>';
+        }else if(page==='Money'||page==='Finance'){
+          subtitle=role==='Customer'?'Your payments and refunds.':role==='Delivery'?'Confirmed earnings and work expenses.':'Business money, kept separate from personal accounts.';
+          body=money()+section('Financial work',row('Transactions','Review the records for this workspace.','Transactions')+row('Statements','Open statements and traceable documents.','Statements')+row('Payment preferences','Choose verified methods and payout destinations.','Payment preferences'))+'<div class="bl-extra-links">'+(role==='Merchant'?action('Cash control','Cash control'):'')+action('Advanced records','Advanced records')+'</div>';
+        }else if(page===m.public){
+          subtitle='How customers see this business. Products stay in Catalog.';
+          body='<div class="bl-status"><div><strong>Draft / private</strong><br><span>Public publication remains subject to the existing commerce checks.</span></div></div>'+section('Public presentation',row('Name, description and photos','Edit what customers will see.','Presentation')+row('Opening hours and fulfilment','Opening status, pickup and delivery preferences.','Opening hours'))+'<div class="bl-extra-links">'+action('Commerce readiness','Business settings')+action('Manage products','Catalog')+'</div>';
+        }else if(page==='Account'){
+          subtitle='Personal identity, profiles and shared preferences.';
+          body=section('Account',row('Account home','Choose an active profile.','Account home')+row('Account settings','Identity, security, language and notifications.','Account settings')+row('Money & Banking','Shared external methods; distinct from business transactions.','Money & Banking'));
+        }else if(page==='Help'){
+          subtitle='One predictable help entry in every workspace.';
+          body=section('Help & support',row('Public guides','Find instructions for the current task.','Public guides')+(role==='Guest'?'':row('Contact support','Open the existing signed-in Support flow.','Support')+row('Knowledge Center','Only documents permitted for the active account.','Knowledge Center')));
+        }else if(page==='Business settings'){
+          subtitle='Settings for this business; Account settings remain separate.';
+          body=section('Business settings',row('Identity & readiness','Review the existing business and commerce requirements.','Readiness')+row('Money preferences','Settings for this profile and economic workspace.','Payment preferences')+row('Public presentation','Open Storefront for customer-facing details.',m.public||'Public profile'));
+        }else{
+          body=section(page,'<div class="bl-row"><div><strong>'+esc(role==='Guest'?'Published information only':m.identity)+'</strong><small>'+esc(page==='Suppliers'?'Quotes, purchase orders, receiving and supplier payments.':page==='Delivery'?'Dispatch and handoff for customer orders.':'This destination keeps the same header, workspace navigation and context.')+'</small></div></div>');
+        }
+        content.innerHTML='<div class="bl-heading-row"><div><h1>'+esc(page)+'</h1><p class="bl-subtitle">'+esc(subtitle)+'</p></div></div>'+body+'<p class="bl-caption">'+esc(role)+' · '+esc(m.identity)+'</p><p class="bl-notice" role="status"></p>';
+      }
+      function renderRole(){
+        const m=models[role];
+        identity.innerHTML=esc(m.identity)+'<small>'+esc(m.scope)+'</small>';
+        primary.setAttribute('aria-label',role+' workspace navigation');
+        primary.innerHTML=m.nav.map(label=>'<button type="button" data-open="'+esc(label)+'" class="'+(['Money','Finance'].includes(label)?'bl-money':'')+'">'+esc(label)+'</button>').join('');
+        toolList.innerHTML=m.tools.map(label=>action(label,label)).join('');
+        tools.querySelector('summary').textContent=['Merchant','Supplier'].includes(role)?'Business tools':role==='Admin'?'Administration tools':'Profile tools';
+        tools.hidden=role==='Guest';
+        storefront.hidden=!m.public;storefront.textContent=m.public?m.public+' ↗':'';
+        root.querySelector('.bl-avatar').hidden=role==='Guest';
+        root.querySelector('[data-utility="Notifications"]').hidden=role==='Guest';
+        renderPage(m.nav[0]);
+      }
+      rolePicker.addEventListener('change',()=>{role=rolePicker.value;renderRole()});
+      storefront.addEventListener('click',()=>renderPage(models[role].public));
+      root.addEventListener('click',event=>{
+        const button=event.target.closest('button');if(!button)return;
+        if(button.dataset.open)renderPage(button.dataset.open);
+        if(button.dataset.utility)renderPage(button.dataset.utility);
+      });
+      renderRole();
+    })();
+  </script>
+</div>

@@ -1,0 +1,55 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const {chromium}=await import(process.env.HELP_PLAYWRIGHT_MODULE||'playwright');
+const base=String(process.env.HELP_BASE_URL||'http://127.0.0.1:3000').replace(/\/$/,'');
+const output=process.env.HELP_EVIDENCE_DIR||'/tmp/help-center-evidence';
+await fs.mkdir(output,{recursive:true});
+const browser=await chromium.launch({headless:true});
+const context=await browser.newContext({viewport:{width:360,height:800},deviceScaleFactor:1});
+const page=await context.newPage();
+const errors=[],requests=[],failedResponses=[],checks=[];
+page.on('pageerror',error=>errors.push(error.message));
+page.on('response',response=>{if(response.status()>=400)failedResponses.push({status:response.status(),url:response.url()})});
+page.on('request',request=>requests.push({method:request.method(),url:request.url()}));
+async function go(route){await page.goto(base+route);await page.locator('#helpSearch').waitFor();await page.locator('h1').waitFor()}
+async function hasText(selector,value){assert.ok((await page.locator(selector).innerText()).includes(value),`${selector} must include ${value}`)}
+async function fits(label){const result=await page.evaluate(()=>({viewport:innerWidth,width:document.documentElement.scrollWidth}));assert(result.width<=result.viewport+1,`${label}: ${JSON.stringify(result)}`);checks.push(label)}
+try{
+ const health=await(await fetch(base+'/health')).json();
+ if(process.env.HELP_EXPECTED_SHA)assert.equal(health.deployment?.revision,process.env.HELP_EXPECTED_SHA.slice(0,12));
+ await go('/help');
+ await hasText('h1','How can we help');checks.push('anonymous public home');
+ await page.getByRole('searchbox',{name:'Search Help Center'}).fill('I cannot sign in');
+ await page.locator('#searchResults .search-hit[href*="sign-in-recovery"]').waitFor();
+ await hasText('#searchResults','What is stopping sign-in?');checks.push('natural sign-in question and guided diagnosis');
+ await page.getByRole('searchbox').press('Escape');assert.equal(await page.locator('#searchResults').isVisible(),false);
+ await page.getByRole('searchbox').fill('reset password');await page.getByRole('searchbox').press('ArrowDown');assert.equal(await page.locator(':focus').getAttribute('href'),'/help/article/sign-in-recovery');checks.push('keyboard results and Escape');
+ await go('/help/profile/supplier');await hasText('h1','Supplier');checks.push('public profile reading with search');
+ await go('/help/article/sign-in-recovery');
+ await hasText('h1','Sign in or reset your password');await page.getByRole('searchbox').fill('packaging consumables');await page.locator('#searchResults a[href*="inventory-consumables"]').waitFor();checks.push('search remains available from article');
+ await page.getByRole('searchbox').press('Escape');
+ await page.locator('#helpLocale').selectOption('fil-PH');
+ await hasText('h1','Mag-sign in o mag-reset');assert.equal(await page.locator('.article-main').getAttribute('lang'),'fil-PH');checks.push('reviewed Filipino account-recovery guide');
+ await page.locator('#helpTopic').selectOption('merchant');
+ assert(new URL(page.url()).searchParams.get('topic')==='merchant');assert.equal(await page.locator('#helpLocale').inputValue(),'fil-PH');checks.push('help-only topic preference preserves language');
+ await go('/help/article/supplier-catalog?lang=fil-PH');
+ await hasText('.language-notice','Wala pang nasuring salin');assert.equal(await page.locator('.article-main').getAttribute('lang'),'en-PH');checks.push('explicit English fallback with correct article language');
+ await go('/help/article/profile-application-review?lang=en-PH');await hasText('.article-main','add supporting documents');checks.push('review evidence guidance');
+ await fits('360px article has no horizontal overflow');
+ await page.screenshot({path:path.join(output,'mobile-application-review.png'),fullPage:true});
+ await go('/help/error/ERR-AUTH-999?lang=en-PH');await hasText('h1','Unknown help code');await page.getByRole('searchbox').fill('delete my account');await page.locator('#searchResults a[href*="delete-account"]').waitFor();checks.push('unknown-code fallback remains searchable');
+ await go('/help?lang=en-PH');await page.getByRole('searchbox').fill('Where is my money?');await hasText('#searchResults','Which money do you mean?');checks.push('ambiguous money asks for clarification');
+ const closeVisible=await page.locator('#closeHelpResults').evaluate(element=>{const button=element.getBoundingClientRect(),panel=element.closest('#searchResults').getBoundingClientRect();return button.top>=Math.max(0,panel.top)&&button.bottom<=Math.min(innerHeight,panel.bottom)});assert(closeVisible,'close action must remain visible above long guided results');checks.push('mobile close action visible before guided answers');
+ await page.screenshot({path:path.join(output,'mobile-money-question.png'),fullPage:true});
+ await go('/help/article/guest-browsing?lang=en-PH');await hasText('.article-main','Ordering and private workspaces require an account');checks.push('guest protection boundary');
+ await go('/help/article/support-and-tickets?lang=en-PH');await hasText('.article-main','not yet verified as available');checks.push('honest guest contact limitation');
+ await page.setViewportSize({width:720,height:1100});await page.evaluate(()=>{document.documentElement.style.zoom='2'});await fits('2x CSS zoom reflow simulation');await page.evaluate(()=>{document.documentElement.style.zoom=''});
+ await page.setViewportSize({width:1280,height:900});await go('/help?lang=en-PH');await fits('desktop home has no horizontal overflow');await page.screenshot({path:path.join(output,'desktop-help-home.png'),fullPage:true});
+ assert.equal(errors.length,0,JSON.stringify(errors));
+ assert.equal(failedResponses.length,0,JSON.stringify(failedResponses));
+ assert.equal(requests.filter(r=>r.method!=='GET'||new URL(r.url).pathname.startsWith('/api/')).length,0,'public help must not call private APIs or mutate state');
+ assert(requests.every(r=>new URL(r.url).origin===new URL(base).origin),'local assets only');checks.push('no private API, external asset or mutation request');
+ const result={pass:true,expectedHead:process.env.HELP_EXPECTED_SHA||null,health,checks,browser:'pinned Chromium via Playwright',limits:'Mobile viewport and 2x CSS zoom simulation; not physical Android acceptance.'};
+ await fs.writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));
+}finally{await browser.close()}
