@@ -1,0 +1,72 @@
+// Internal-only, inert model suggestion envelope. No network, database or publication.
+import {catalogCategory,catalogCategoryAttributes} from './catalog-v3-core.js';
+export const AI_CATALOG_DRAFT_SCHEMA='ai-catalog-review-v1-2026-10-27';
+export const AI_CATALOG_MODES=Object.freeze(['merchant_prepared_food','merchant_fresh_food','merchant_packaged_food','merchant_non_food','supplier_catalog']);
+const FOOD=Object.freeze({merchant_prepared_food:'prepared_food',merchant_fresh_food:'fresh_food',merchant_packaged_food:'packaged_food_drink'});
+const WITHHELD=Object.freeze(['price','selling_price','stock','stock_quantity','inventory_id','product_id','business_id','account_id','payout_destination','expiry','expiry_date','certification','legal_claims','warranty','allergens','ingredient_quantities','recipe_cost','serving_quantity','published','visibility','publication_status']);
+const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&(Object.getPrototypeOf(v)===Object.prototype||Object.getPrototypeOf(v)===null);
+const clean=(v,n)=>typeof v==='string'?v.replace(/[<>\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,n):'';
+function unique(v,max=12,len=40){
+  if(!Array.isArray(v))return [];
+  const out=[],seen=new Set();
+  for(const raw of v.slice(0,60)){
+    const value=clean(raw,len),key=value.toLocaleLowerCase('en');
+    if(!value||seen.has(key))continue;
+    seen.add(key);out.push(value);if(out.length===max)break;
+  }
+  return out;
+}
+function categoryFor(mode,raw){
+  if(mode==='supplier_catalog')return null;
+  const suggestion=clean(raw,80);
+  if(FOOD[mode])return suggestion===FOOD[mode]?suggestion:null;
+  const category=catalogCategory(suggestion);
+  return category?.domain_hint==='non_food'?category.code:null;
+}
+function attributeHints(category,raw){
+  if(!category||!plain(raw))return [];
+  const allowed=new Set(catalogCategoryAttributes(category).map(x=>x.attribute_code));
+  const out=[];
+  for(const key of Object.keys(raw).slice(0,40)){
+    if(!allowed.has(key)||key==='warranty_months')continue;
+    const value=clean(raw[key],120);
+    if(value)out.push({code:key,value,authority:'UNVERIFIED_MODEL_SUGGESTION'});
+    if(out.length===20)break;
+  }
+  return out;
+}
+/** Never treat this object as a canonical write payload. Actual saving and
+ * publishing require existing authenticated business scope, manual confirmation
+ * and the Universal Catalog/Recipe/Supplier editors and validation. */
+export function normalizeAiCatalogDraft({mode,modelOutput}={}){
+  if(!AI_CATALOG_MODES.includes(mode))throw new TypeError('Choose a supported AI catalog intake mode.');
+  if(!plain(modelOutput))throw new TypeError('AI suggestions must be a JSON object.');
+  let size;
+  try{size=Buffer.byteLength(JSON.stringify(modelOutput),'utf8');}
+  catch{throw new TypeError('Invalid AI catalog JSON.');}
+  if(size>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+  const category=categoryFor(mode,modelOutput.catalog_category_code);
+  const hints={
+    name:clean(modelOutput.name||modelOutput.title,120),
+    description:clean(modelOutput.description,600),
+    catalog_category_code:category,
+    supplier_category_text:mode==='supplier_catalog'?clean(modelOutput.category,80):'',
+    tags:unique(modelOutput.tags),
+    brand:clean(modelOutput.brand,120),
+    pack_name:mode==='supplier_catalog'?clean(modelOutput.pack_name,100):'',
+    base_unit:mode==='supplier_catalog'?clean(modelOutput.base_unit,24):'',
+    sku:clean(modelOutput.sku,80),
+    barcode:clean(modelOutput.barcode,80),
+    variant_attributes:attributeHints(category,modelOutput.variant_attributes)
+  };
+  const ingredient_names=mode==='merchant_prepared_food'
+    ?unique((Array.isArray(modelOutput.ingredients)?modelOutput.ingredients:[]).map(x=>typeof x==='string'?x:(plain(x)?x.name:'')),30,100)
+    :[];
+  const required_review=['identity_description','category_attributes','price_and_stock_in_canonical_editor'];
+  if(mode==='merchant_prepared_food')required_review.push('ingredient_quantities_in_canonical_recipe_editor');
+  if(mode==='merchant_packaged_food')required_review.push('packaging_expiry_allergens_labels');
+  if(mode==='supplier_catalog')required_review.push('pack_conversions_business_links');
+  return {schema:AI_CATALOG_DRAFT_SCHEMA,mode,state:'REVIEW_REQUIRED',draft_only:true,
+    publishable:false,canonical_write_payload:false,model_authority:'UNVERIFIED',
+    hints,ingredient_names,withheld_fields:[...WITHHELD],required_review};
+}
