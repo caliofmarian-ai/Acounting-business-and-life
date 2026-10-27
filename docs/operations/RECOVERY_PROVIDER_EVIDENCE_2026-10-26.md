@@ -2,6 +2,8 @@
 
 Refs #804 / #36 / #37. This is a dated operational observation, not a continuously current backup status.
 
+Later update: #823 enabled daily 19:00 UTC snapshots with seven-day retention and recorded an unintended restore cutover followed by containment. See [the later drill/incident record](RECOVERY_PROVIDER_DRILL_823_2026-10-26.md). The empty-schedule and unchanged-settings statements below describe the earlier #804 observation/action only.
+
 ## Verified observations
 
 Read-only Neon metadata for the existing **Accounting Business and Life** project showed:
