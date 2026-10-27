@@ -28,7 +28,7 @@ class MemoryPool {
   async execute(sql, params) {
     this.queries.push({ sql, params });
     if (this.fail && sql.includes(this.fail)) throw new Error('private-sql-error person@example.test recovery-secret');
-    if (/CREATE TABLE/u.test(sql) || ['BEGIN','COMMIT','ROLLBACK'].includes(sql) || /^DELETE FROM guest_account_access_limits/u.test(sql)) return { rows: [], rowCount: 0 };
+    if (/CREATE TABLE/u.test(sql) || ['BEGIN','COMMIT','ROLLBACK'].includes(sql) || /^DELETE FROM guest_account_access_limits/u.test(sql) || /^SET LOCAL /u.test(sql)) return { rows: [], rowCount: 0 };
     if (/INSERT INTO guest_account_access_limits/u.test(sql)) {
       const count = Math.min((this.limits.get(params[0]) || 0) + 1, params[1] + 1);
       this.limits.set(params[0], count);
@@ -68,7 +68,7 @@ for (const [label, input] of [
   ['null', null], ['array', []], ['email object', valid({ contact_email: {} })],
   ['email newline', valid({ contact_email: 'a@example.test\r\nb@example.test' })], ['email missing domain', valid({ contact_email: 'a@localhost' })],
   ['email too long', valid({ contact_email: 'x'.repeat(250)+'@example.test' })], ['name multiline', valid({ name: 'a\nb' })], ['name too long', valid({ name: 'x'.repeat(81) })],
-  ['invalid reason', valid({ reason: 'approve_merchant' })], ['short message', valid({ message: 'short' })], ['long message', valid({ message: 'x'.repeat(2001) })],
+  ['invalid reason', valid({ reason: 'approve_merchant' })], ['short message', valid({ message: 'short' })], ['short Unicode message', valid({ message: '😀'.repeat(10) })], ['long message', valid({ message: 'x'.repeat(2001) })],
   ['message object', valid({ message: {} })], ['control character', valid({ message: 'x'.repeat(20)+'\u0000' })],
   ['attachment', { ...valid(), attachment: 'data:image/png;base64,private' }],
   ['account association', { ...valid(), account_id: 1 }], ['territory association', { ...valid(), territory_id: 1 }],

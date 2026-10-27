@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en-PH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Account-access help · Business &amp; Life</title>
+  <link rel="stylesheet" href="/account-access-assets/style.css">
+  <script src="/account-access-assets/public.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to form</a>
+  <header><a class="brand" href="/help">Business &amp; Life <small>Philippines · Help Center</small></a><a href="/" data-copy="app">Open app</a></header>
+  <main id="main">
+    <div class="heading"><p class="eyebrow" data-copy="eyebrow">ACCOUNT ACCESS</p><label for="language" data-copy="language">Language</label><select id="language"><option value="en-PH">English</option><option value="fil-PH">Filipino</option></select></div>
+    <h1 data-copy="title">Cannot sign in?</h1>
+    <p class="lead" data-copy="intro">Ask for help without signing in. This form is only for problems accessing your Business &amp; Life account.</p>
+    <aside class="notice"><strong data-copy="before">Try recovery first</strong><p data-copy="recovery">Use Forgot password or the email-verification option on the sign-in screen. Check Spam and Junk folders too.</p><a href="/" data-copy="signin">Go to sign in</a></aside>
+    <form id="access-form" action="/api/public/account-access" method="post" autocomplete="off">
+      <label for="contact-email" data-copy="email">An email address you can currently access</label>
+      <input id="contact-email" name="contact_email" type="email" maxlength="254" required inputmode="email" autocomplete="off" aria-describedby="contact-hint">
+      <p id="contact-hint" class="hint" data-copy="emailHint">This contact address is unverified. Providing it does not prove account ownership.</p>
+      <label for="display-name" data-copy="name">Name (optional)</label><input id="display-name" name="name" maxlength="80" autocomplete="off">
+      <label for="reason" data-copy="reason">What is preventing access?</label>
+      <select id="reason" name="reason" required>
+        <option value="" data-copy="choose">Choose a reason</option><option value="sign_in" data-copy="sign_in">Sign-in problem</option><option value="password_reset" data-copy="password_reset">Password reset did not work</option><option value="email_verification" data-copy="email_verification">Email verification problem</option><option value="lost_email" data-copy="lost_email">Cannot access my previous email</option><option value="other_access" data-copy="other_access">Another account-access problem</option>
+      </select>
+      <label for="message" data-copy="message">Describe what happened</label><textarea id="message" name="message" minlength="20" maxlength="2000" rows="6" required aria-describedby="message-hint"></textarea>
+      <p id="message-hint" class="hint" data-copy="messageHint">20–2,000 characters. Include the error message and steps tried, but never passwords, one-time codes, identity documents or payment-card details. No attachments.</p>
+      <div class="trap" aria-hidden="true"><label for="website">Leave this field empty</label><input id="website" name="website" tabindex="-1" autocomplete="off"></div>
+      <p class="privacy" data-copy="privacy">Your contact details and message are stored privately for authorized support staff. Sending this request does not unlock, approve or recover an account. A response time is not guaranteed.</p>
+      <button id="send" type="submit" disabled data-copy="send">Send access request</button>
+    </form>
+    <p id="feedback" role="status" aria-live="polite" tabindex="-1"></p>
+    <noscript><p class="notice">JavaScript is required to send this form securely. No request has been sent. Enable JavaScript or use the recovery options on the sign-in screen.</p></noscript>
+    <footer><a href="/help" data-copy="back">Back to Help Center</a><a href="/admin/account-access" data-copy="staff">Authorized staff queue</a></footer>
+  </main>
+</body>
+</html>

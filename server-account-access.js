@@ -56,17 +56,21 @@ export function accountAccessError(error, _req, res, _next) {
  *  are ignored, never used to associate or recover an account. */
 export function registerPublicAccountAccessRoutes(app, { pool, json, secret = () => process.env.TOKEN_SECRET || '' }) {
   const parse = json({ limit: '12kb', strict: true, inflate: false, type: 'application/json' });
+  let activeSubmissions = 0;
   app.get('/help/account-access', accountAccessHeaders, (_req, res) => res.sendFile('index.html', { root: assets }));
   for (const name of ['public.js', 'staff.js', 'style.css']) {
     app.get(`/account-access-assets/${name}`, accountAccessHeaders, (_req, res) => res.sendFile(name, { root: assets }));
   }
   app.post(publicPath, accountAccessHeaders, accountAccessPublicOrigin, parse, async (req, res, next) => {
+    if (activeSubmissions >= 3) return res.status(503).json({ error: 'Support intake is busy. Please try again shortly.', code: 'ACCOUNT_ACCESS_UNAVAILABLE' });
+    activeSubmissions++;
     try {
       // Do not trust visitor-supplied forwarding headers. Without an explicitly
       // verified proxy policy, a shared ingress conservatively shares this bucket.
       const result = await submitAccountAccess(pool, req.body, { secret: secret(), source: req.socket?.remoteAddress || 'unknown' });
       res.status(202).json(result);
     } catch (error) { next(error); }
+    finally { activeSubmissions--; }
   }, accountAccessError);
   app.all(publicPath, accountAccessHeaders, (_req, res) => {
     res.setHeader('Allow', 'POST');

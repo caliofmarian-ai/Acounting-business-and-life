@@ -19,11 +19,15 @@ import {authHardeningFetch} from './server-auth-hardening.js';
 import {ensureQaPhTestContext} from './qa-ph-test-context.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {sessionSecurityMiddleware} from './session-cookie-core.js';
+import {ensureAccountAccessSchema} from './account-access-core.js';
+import {registerPublicAccountAccessRoutes,registerStaffAccountAccessRoutes} from './server-account-access.js';
 
 const {Pool}=pg;
 const app=express();
 const port=Number(process.env.PORT||3000);
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined});
+// Bound guest intake resources separately from the payment gateway pool.
+const accountAccessPool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL?{rejectUnauthorized:false}:undefined,max:4,connectionTimeoutMillis:5000,idleTimeoutMillis:10000});
 const body=express.json({limit:'30mb',verify:(req,_res,buf)=>{req.rawBody=Buffer.from(buf)}});
 let paymentCoreReady=false;let shuttingDown=false;
 let controlledRoleFixtureReady=!controlledRoleFixtureGateRequired();
@@ -54,10 +58,15 @@ app.use((_req,res,next)=>{
   next();
 });
 
+// Guest intake deliberately has no session authority and remains available
+// when an expired cookie has outlived its CSRF token.
+registerPublicAccountAccessRoutes(app,{pool:accountAccessPool,json:express.json});
+
 // The public runtime terminates browser session transport here. Downstream
 // services continue to receive the existing internal bearer contract without
 // exposing the signed session token to browser JavaScript.
 app.use(sessionSecurityMiddleware);
+registerStaffAccountAccessRoutes(app,{pool:accountAccessPool,json:express.json,identity,requireAdminPermission});
 
 async function identity(req){const r=await authHardeningFetch('/api/me',{headers:{Authorization:authHeader(req)}});const b=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(new Error(b.error||'Unauthorized'),{status:r.status});return b}
 
@@ -226,6 +235,7 @@ app.use((err,_req,res,_next)=>{console.error(err);if(res.headersSent)return;if(e
 
 async function initDb(){
   await ensurePayMongoSchema(pool);
+  await ensureAccountAccessSchema(accountAccessPool);
   const state=await ensurePayMongoWebhook(pool);
   if(state.ready)console.log('PayMongo webhook ready: '+state.status+' via '+state.source);
   else console.log('PayMongo webhook not ready: '+state.status+(state.error?' ('+state.error+')':''));
@@ -235,6 +245,7 @@ async function initDb(){
 async function shutdown(sig){
   if(shuttingDown)return;shuttingDown=true;console.log('Received '+sig);
   await stopEmbeddedPaymentCore().catch(()=>{});
+  await accountAccessPool.end().catch(()=>{});
   await pool.end().catch(()=>{});
   process.exit(0);
 }

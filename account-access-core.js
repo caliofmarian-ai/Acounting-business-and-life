@@ -35,7 +35,7 @@ export function validateAccountAccessInput(input) {
   const reason = text(input.reason, 32, true);
   if (!ACCOUNT_ACCESS_REASONS.includes(reason)) throw invalid();
   const message = text(input.message, 2000, true);
-  if (message.length < 20) throw invalid();
+  if ([...message].length < 20) throw invalid();
   return { contactEmail, name, reason, message };
 }
 
@@ -74,6 +74,8 @@ async function transaction(pool, work) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query("SET LOCAL statement_timeout='5s'");
+    await client.query("SET LOCAL lock_timeout='2s'");
     const result = await work(client);
     await client.query('COMMIT');
     return result;
