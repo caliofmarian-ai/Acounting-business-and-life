@@ -13,6 +13,7 @@ export function createInventoryCountUi({
   api,
   getInventory,
   getLocations,
+  getReadGuard=()=>()=>true,
   refreshInventory,
   escapeHtml,
   formatNumber,
@@ -208,15 +209,22 @@ export function createInventoryCountUi({
     }
   }
 
-  async function load(){
+  let readGeneration=0;
+  async function load({isCurrent=getReadGuard()}={}){
+    const generation=++readGeneration,current=()=>generation===readGeneration&&isCurrent();
     if(!byId('guidedCountCard'))return null;
     try{
       const active=await api('/api/inventory/count-sessions/active');
+      if(!current())return null;
       render(active);
       return active;
     }catch(error){
+      if(!current())return null;
+      session=null;
+      for(const id of ['countSessionStartPane','countSessionActivePane','countSessionReviewPane'])byId(id)?.classList.add('hidden');
+      if(byId('countSessionStatusBadge'))byId('countSessionStatusBadge').textContent='UNAVAILABLE';
       message(error.message||'Inventory count session could not be loaded.','negative');
-      return null;
+      return{readError:true};
     }
   }
 
@@ -332,5 +340,5 @@ export function createInventoryCountUi({
     syncScopeOptions();
   }
 
-  return{wire,load,render,getSession:()=>session,syncScopeOptions,selectItem};
+  return{wire,load,render,reset(){readGeneration+=1;session=null;},getSession:()=>session,syncScopeOptions,selectItem};
 }
