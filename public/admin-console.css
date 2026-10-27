@@ -639,3 +639,10 @@
   .memberCommerceRow{display:grid;gap:9px}
   .memberCommerceRow button{width:100%;min-height:42px}
 }
+
+/* Mobile Admin sections: a sticky, permission-scoped chooser remains visible even when tabs scroll. */
+.adminNavChooser{display:flex;align-items:center;gap:7px;flex:0 0 auto;position:sticky;left:0;z-index:2;padding-right:10px;background:#0b1423;box-shadow:7px 0 9px -7px #0008}
+.adminNavChooser label{font-size:11px;font-weight:900;line-height:1.2;color:var(--muted);white-space:nowrap}
+.adminNavChooser select{min-width:92px;max-width:140px;min-height:44px;border:1px solid var(--line);border-radius:12px;padding:8px 8px;background:#182d43;color:#fff;font:inherit;font-size:13px;font-weight:800}
+@media(max-width:759px){.adminNav button{min-height:44px}.adminNavChooser select{max-width:min(39vw,140px)}}
+@media(min-width:760px){.adminNavChooser{display:none}}

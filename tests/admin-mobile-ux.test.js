@@ -35,3 +35,17 @@ test('delegation defaults to least privilege Specialist when available',()=>{
   assert.match(ui,/r\.code===defaultRank\?'selected':''/);
   assert.match(ui,/document\.getElementById\('delegateRole'\)\?\.value\|\|'specialist'/);
 });
+
+test('Mobile Admin section chooser lists only authorized modules and mirrors active tab',()=>{
+  assert.match(ui,/const visible=modules\.filter\(m=>hasAny\(m\.any\)\)/);
+  assert.match(ui,/visible\.map\(m=>'<option value="/);
+  assert.match(ui,/class="adminNavChooser"/);
+  assert.match(ui,/id="adminModuleSelect" aria-label="Go to Admin section"/);
+  assert.match(ui,/addEventListener\('change',event=>activateModule\(event\.currentTarget\.value\)\)/);
+  assert.match(ui,/const module=modules\.find\(m=>m\.id===id&&hasAny\(m\.any\)\);if\(!module\)return/);
+  assert.match(ui,/if\(picker\)picker\.value=id/);
+  assert.match(ui,/button\.setAttribute\('aria-current',selected\?'page':'false'\)/);
+  assert.match(css,/\.adminNavChooser\{[^}]*position:sticky;left:0/);
+  assert.match(css,/\.adminNavChooser select\{[^}]*min-height:44px/);
+  assert.match(css,/@media\(min-width:760px\)\{\.adminNavChooser\{display:none\}\}/);
+});
