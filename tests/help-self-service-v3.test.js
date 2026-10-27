@@ -62,8 +62,10 @@ test('public content has traceable source review and valid links, translations a
   for(const translation of Object.values(article.translations||{})){assert.equal(translation.sourceVersion,article.version);assert(translation.title&&translation.summary&&translation.shortAnswer&&translation.steps.length)}
  }
  for(const guided of catalog.troubleshooters)for(const option of guided.options)assert(slugs.has(option.article));
- assert.equal(catalog.publicAccountAccessContact.available,false);
- assert.match(catalog.publicAccountAccessContact.reason,/inbound Support/);
+ assert.equal(catalog.publicAccountAccessContact.available,true);
+ assert.equal(catalog.publicAccountAccessContact.path,'/help/account-access');
+ assert.equal(catalog.publicAccountAccessContact.scope,'account-access-only');
+ assert.match(catalog.publicAccountAccessContact.reason,/not an inbound Support email mailbox/);
 });
 test('topic/language change only public reading preferences; rendered text and URLs stay safe',()=>{
  const {call,requests,context}=client();
@@ -75,4 +77,23 @@ test('topic/language change only public reading preferences; rendered text and U
  assert.equal(call('route().type'),'not-found');
  assert.equal(requests.length,1);assert.equal(requests[0][0],'/help/content.json');assert.equal(requests[0][1].credentials,'omit');
  assert.doesNotMatch(source,/\/api\/|BusinessLifeProfileState|ABLSession|\.cookie\b/);
+});
+
+test('English and Filipino guest account-access paths are visible without private ticket authority or fictitious inbox',()=>{
+ const {call}=client();
+ const html=fs.readFileSync(new URL('public/help/index.html',root),'utf8');
+ const router=fs.readFileSync(new URL('server-account-access.js',root),'utf8');
+ assert.match(html,/data-help-href="\/help\/account-access"/);
+ assert.match(router,/app\.get\('\/help\/account-access'/);
+ assert.match(call('home()'),/href="\/help\/account-access"/);
+ for(const slug of ['support-and-tickets','sign-in-recovery']){
+  assert.match(call(`articlePage('${slug}')`),/href="\/help\/account-access"/);
+ }
+ assert.match(call("articlePage('support-and-tickets')"),/not a monitored inbound email mailbox/);
+ call("state.locale='fil-PH'");
+ assert.match(call('home()'),/href="\/help\/account-access\?lang=fil-PH"/);
+ assert.match(call("articlePage('sign-in-recovery')"),/href="\/help\/account-access\?lang=fil-PH"/);
+ assert.match(call("articlePage('support-and-tickets')"),/Humingi ng tulong sa account nang hindi nag-si-sign in/);
+ assert.doesNotMatch(call("articlePage('support-and-tickets')"),/wala pang napatunayang pampublikong account-access inbox/);
+ assert.doesNotMatch(source,/\/api\/support\/tickets/);
 });
