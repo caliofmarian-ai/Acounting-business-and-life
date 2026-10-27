@@ -6,7 +6,8 @@ export function createInventoryLocationUi({
   refreshInventory,
   escapeHtml,
   formatNumber,
-  onLocationsChanged
+  onLocationsChanged,
+  getReadGuard=()=>()=>true
 }){
   const esc=escapeHtml;
   const num=formatNumber;
@@ -14,6 +15,7 @@ export function createInventoryLocationUi({
   let balances=[];
   let transfers=[];
   let wired=false;
+  let readGeneration=0;
 
   function setText(id,text,tone=''){
     const node=byId(id);
@@ -129,7 +131,8 @@ export function createInventoryLocationUi({
     return node;
   }
 
-  async function load(){
+  async function load({isCurrent=getReadGuard()}={}){
+    const generation=++readGeneration,current=()=>generation===readGeneration&&isCurrent();
     if(!byId('inventoryLocationsCard'))return{locations:[],balances:[],transfers:[]};
     try{
       const result=await Promise.all([
@@ -137,6 +140,7 @@ export function createInventoryLocationUi({
         api('/api/inventory/location-balances'),
         api('/api/inventory/transfers')
       ]);
+      if(!current())return null;
       locations=Array.isArray(result[0])?result[0]:[];
       balances=Array.isArray(result[1])?result[1]:[];
       transfers=Array.isArray(result[2])?result[2]:[];
@@ -146,8 +150,12 @@ export function createInventoryLocationUi({
       onLocationsChanged?.(locations);
       return{locations,balances,transfers};
     }catch(error){
+      if(!current())return null;
+      locations=[];balances=[];transfers=[];
+      for(const id of ['inventoryLocationBalanceList','inventoryTransferList'])byId(id)?.replaceChildren();
+      for(const id of ['inventoryTransferItem','inventoryTransferSource','inventoryTransferDestination'])byId(id)?.replaceChildren(new Option('Reload locations first',''));
       setText('inventoryTransferMessage',error.message||'Storage locations could not be loaded.','negative');
-      return{locations,balances,transfers};
+      return{readError:true};
     }
   }
 
@@ -235,6 +243,7 @@ export function createInventoryLocationUi({
   return{
     wire,
     load,
+    reset(){readGeneration+=1;locations=[];balances=[];transfers=[];},
     getLocations:()=>locations.slice(),
     getBalances:()=>balances.slice()
   };
