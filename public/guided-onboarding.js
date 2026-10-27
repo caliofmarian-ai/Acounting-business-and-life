@@ -45,6 +45,7 @@ const SUPPORTED_LOCALES=new Set(['en-PH','fil-PH']);
 const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
 let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH',selectedProfileJourneyRole='',languagePickerReturnMode='';
 const copyCache=new Map();
+let copyLoadEpoch=0;
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -61,18 +62,31 @@ const suggestedLocale=()=>{
 };
 async function loadCopy(locale=activeLocale()){
   const normalized=normalizeLocale(locale);
-  if(copyCache.has(normalized)){copy=copyCache.get(normalized);copyLocale=normalized;document.documentElement.lang=normalized;return copy}
+  // A previous fetch must never override a newer language choice or fallback.
+  // Increment even for a cache hit: a pending older fetch may still complete.
+  const requestEpoch=++copyLoadEpoch;
+  const activate=pack=>{
+    if(requestEpoch===copyLoadEpoch){
+      copy=pack;copyLocale=normalized;document.documentElement.lang=normalized;
+    }
+    return pack;
+  };
+  if(copyCache.has(normalized))return activate(copyCache.get(normalized));
   try{
     const response=await fetch('/locales/guided-onboarding.'+normalized+'.json',{cache:'no-store'});
     if(!response.ok)throw new Error('Locale pack unavailable');
     const pack=await response.json();
-    copyCache.set(normalized,pack);copy=pack;copyLocale=normalized;document.documentElement.lang=normalized;return pack;
+    // A stale completion cannot evict a newer cached revision of the same pack.
+    if(requestEpoch===copyLoadEpoch||!copyCache.has(normalized))copyCache.set(normalized,pack);
+    return activate(pack);
   }catch(error){
+    // A stale network failure must not trigger an English fallback for a
+    // different language selection made while this request was pending.
+    if(requestEpoch!==copyLoadEpoch)return null;
     if(normalized!=='en-PH')return loadCopy('en-PH');
-    copy={};copyLocale='en-PH';document.documentElement.lang='en-PH';return copy;
+    return activate({});
   }
 }
-
 
 async function api(path,options={}){
   const headers={'Content-Type':'application/json',...(options.headers||{})};
