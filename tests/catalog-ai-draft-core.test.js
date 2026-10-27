@@ -4,7 +4,7 @@ import {AI_CATALOG_MODES,normalizeAiCatalogDraft as norm} from '../catalog-ai-dr
 const draft=(mode='merchant_non_food',modelOutput={name:'Lamp',catalog_category_code:'furniture_home'})=>norm({mode,modelOutput});
 test('all five modes are inert and unpublishable',()=>{
   assert.equal(AI_CATALOG_MODES.length,5);
-  for(const mode of AI_CATALOG_MODES){const d=draft(mode);assert.equal(d.draft_only,true);
+  for(const mode of AI_CATALOG_MODES){const d=draft(mode,{name:'Review item'});assert.equal(d.draft_only,true);
     assert.equal(d.publishable,false);assert.equal(d.canonical_write_payload,false);assert.equal(d.model_authority,'UNVERIFIED');}
 });
 test('unknown modes, types, cycles and giant JSON fail closed',()=>{
