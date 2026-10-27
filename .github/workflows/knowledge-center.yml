@@ -1,0 +1,121 @@
+name: Knowledge Center Browser
+
+on:
+  pull_request:
+    paths:
+      - 'documentation-*.js'
+      - 'server-knowledge.js'
+      - 'qa-knowledge-acceptance.js'
+      - 'tests/qa-knowledge-acceptance.test.js'
+      - 'server-admin-operations.js'
+      - 'server-notifications.js'
+      - 'public/knowledge/**'
+      - 'public/knowledge-entry.js'
+      - 'tests/knowledge-center.test.js'
+      - 'scripts/knowledge-browser-acceptance.js'
+      - 'scripts/knowledge-runtime-acceptance.js'
+      - '.github/workflows/knowledge-center.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'documentation-*.js'
+      - 'server-knowledge.js'
+      - 'qa-knowledge-acceptance.js'
+      - 'tests/qa-knowledge-acceptance.test.js'
+      - 'server-admin-operations.js'
+      - 'server-notifications.js'
+      - 'public/knowledge/**'
+      - 'public/knowledge-entry.js'
+      - 'tests/knowledge-center.test.js'
+      - 'scripts/knowledge-browser-acceptance.js'
+      - 'scripts/knowledge-runtime-acceptance.js'
+      - '.github/workflows/knowledge-center.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: knowledge-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_knowledge_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_knowledge_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_knowledge_ci
+      TOKEN_SECRET: ci-knowledge-session-key-not-for-production
+      SUPER_ADMIN_MFA_ENCRYPTION_KEY: ci-knowledge-factor-key-not-for-production
+      APP_PIN: '0000'
+      NODE_ENV: test
+      APP_ENV: test
+      PORT: '3000'
+      PAYMONGO_MODE: test
+      PAYMONGO_LIVE_ENABLED: 'false'
+      RAILWAY_SERVICE_NAME: accounting-knowledge-ci
+      KNOWLEDGE_BROWSER_CHANNEL: chrome
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --global npm@10.8.2
+      - run: npm ci
+      - name: Install isolated browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/knowledge-browser" --no-package-lock --ignore-scripts playwright@1.58.2
+          google-chrome --version
+      - name: Check controlled browser journeys at the PR head
+        env:
+          KNOWLEDGE_BROWSER_MODULE: ${{ runner.temp }}/knowledge-browser/node_modules/playwright/index.mjs
+          KNOWLEDGE_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/knowledge-browser-evidence
+          KNOWLEDGE_BROWSER_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/knowledge-browser-acceptance.js
+      - name: Start full gateway on isolated PostgreSQL
+        run: |
+          npm start > "$RUNNER_TEMP/knowledge-gateway.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/knowledge-gateway.pid"
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:3000/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/knowledge-gateway.log"
+          exit 1
+      - name: Verify real sessions, profile permissions and Owner MFA through the full gateway
+        env:
+          KNOWLEDGE_BROWSER_MODULE: ${{ runner.temp }}/knowledge-browser/node_modules/playwright/index.mjs
+          KNOWLEDGE_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/knowledge-browser-evidence/gateway
+          KNOWLEDGE_BROWSER_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/knowledge-runtime-acceptance.js
+      - name: Preserve controlled screenshots and result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-browser-evidence
+          path: ${{ runner.temp }}/knowledge-browser-evidence
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop isolated gateway
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/knowledge-gateway.pid"; then
+            kill "$(cat "$RUNNER_TEMP/knowledge-gateway.pid")" || true
+          fi
