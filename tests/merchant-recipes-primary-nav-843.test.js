@@ -1,35 +1,4 @@
-from pathlib import Path
-import subprocess
-expected={'public/index.html':'45ba5ed965fd8bb76d3377c9ba81100060269661','public/business-accounting-ui.js':'5f671da740a5f86884ab839a2159e559ce05a797','public/v03.css':'1d5d49781fb769b22b75e9dcae8e836aaec96e28','public/v03.js':'ede2e5b618f5b347a21827d9e0951539080085f9'}
-for p,sha in expected.items():
- actual=subprocess.check_output(['git','hash-object',p],text=True).strip()
- assert actual==sha,(p,actual,sha)
-def replace(path,old,new):
- p=Path(path);text=p.read_text()
- assert text.count(old)==1,(path,'replacement must match exactly once',old[:100],text.count(old))
- p.write_text(text.replace(old,new))
-replace('public/index.html','<button type="button" class="secondary" data-today-action="recipes">Products & recipes</button>','')
-replace('public/index.html','<nav class="bottomNav merchantPrimaryNav">','<nav class="bottomNav merchantPrimaryNav" aria-label="Merchant primary navigation">')
-replace('public/index.html','<button data-view="Stock">Inventory</button>','<button id="merchantRecipesNav" type="button" class="roleFinanceHidden" data-view="Menu" aria-controls="viewMenu">Products &amp; recipes</button><button data-view="Stock">Inventory</button>')
-replace('public/business-accounting-ui.js',"if(name==='Menu'&&foodAllowed)btn.textContent='Food menu'","if(name==='Menu'&&foodAllowed)btn.textContent='Products & recipes'")
-replace('public/v03.js',"  if(merchantTodayProfileKey!==merchantTodayProfileContext())invalidateMerchantToday();\n  if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});","  if(merchantTodayProfileKey!==merchantTodayProfileContext()){\n    $('merchantRecipesNav')?.classList.add('roleFinanceHidden');\n    invalidateMerchantToday();\n  }\n  if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});")
-replace('public/v03.js',"document.addEventListener('abl:business-workspace-changed',()=>{\n  invalidateMerchantToday();\n  if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday({force:true}).catch(()=>{});\n});","document.addEventListener('abl:business-workspace-changed',()=>{\n  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');\n  invalidateMerchantToday();\n  if(isMerchantBaseActive())loadMerchantToday({force:true}).catch(()=>{});\n});")
-replace('public/v03.js',"  if(!Number.isInteger(businessId)||businessId<1||businessId!==activeId)return;\n  invalidateMerchantToday();\n  if(!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday().catch(()=>{});","  if(!Number.isInteger(businessId)||businessId<1||businessId!==activeId)return;\n  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');\n  invalidateMerchantToday();\n  loadMerchantToday().catch(()=>{});")
-replace('public/v03.js',"document.addEventListener('abl:auth-expired',()=>invalidateMerchantToday());","document.addEventListener('abl:auth-expired',()=>{\n  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');\n  invalidateMerchantToday();\n});")
-with Path('public/v03.css').open('a') as f:
- f.write('''
-/* #843: one canonical recipe destination beside Stock, not a Today action.
-   Keep all six labels visible instead of shrinking or horizontally hiding them. */
-.merchantPrimaryNav [data-view="Menu"].roleFinanceHidden{display:none!important}
-.merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)){grid-template-columns:repeat(6,minmax(0,1fr))!important}
-.merchantPrimaryNav [data-view="Menu"]{overflow-wrap:anywhere}
-@media(max-width:649px){
-  .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)){grid-template-columns:repeat(3,minmax(0,1fr))!important}
-  .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)) button{min-height:48px;font-size:.78rem;padding:6px;line-height:1.25}
-  body:has(.merchantPrimaryNav:not(.hidden) [data-view="Menu"]:not(.roleFinanceHidden)) #app{padding-bottom:calc(132px + env(safe-area-inset-bottom,0px))}
-}
-''')
-Path('tests/merchant-recipes-primary-nav-843.test.js').write_text(r'''import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
@@ -99,5 +68,3 @@ test('mobile recipe navigation wraps to three columns with safe bottom clearance
  assert.match(css,/@media\(max-width:649px\)\{\s*\.merchantPrimaryNav:has\([^\n]+repeat\(3,minmax\(0,1fr\)\)/);
  assert.match(css,/min-height:48px;font-size:\.78rem/);assert.match(css,/padding-bottom:calc\(132px \+ env\(safe-area-inset-bottom,0px\)\)/);
 });
-''')
-print('Applied bounded #843 changes to four source files plus dedicated tests.')

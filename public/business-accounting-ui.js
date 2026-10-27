@@ -69,7 +69,7 @@ function applyFinancePresentation(overview){
   const role=overview?.role||accountingState.role,domain=overview?.presentation?.merchant_domain||'unknown';
   document.body.dataset.businessFinanceRole=role||'';document.body.dataset.merchantDomain=domain;
   const foodAllowed=role==='merchant'&&Boolean(overview?.presentation?.legacy_recipe_ui_allowed);
-  for(const name of ['Sell','Menu']){const btn=document.querySelector('.bottomNav [data-view="'+name+'"]');if(btn){btn.classList.toggle('roleFinanceHidden',!foodAllowed);if(name==='Menu'&&foodAllowed)btn.textContent='Food menu'}const view=document.getElementById('view'+name);if(view)view.classList.toggle('roleFinanceHidden',!foodAllowed)}
+  for(const name of ['Sell','Menu']){const btn=document.querySelector('.bottomNav [data-view="'+name+'"]');if(btn){btn.classList.toggle('roleFinanceHidden',!foodAllowed);if(name==='Menu'&&foodAllowed)btn.textContent='Products & recipes'}const view=document.getElementById('view'+name);if(view)view.classList.toggle('roleFinanceHidden',!foodAllowed)}
   const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn)stockBtn.textContent=role==='supplier'?'Inventory':domain==='non_food'?'Inventory':'Stock';
   const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Inventory';
   const stockFormTitle=document.querySelector('#viewStock form h2');if(stockFormTitle)stockFormTitle.textContent='Add or update inventory item';

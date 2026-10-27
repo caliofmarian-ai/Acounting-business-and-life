@@ -399,3 +399,14 @@
   #inventoryUnavailableCard .grid2{grid-template-columns:1fr}
   .inventoryDomainFilters{margin-inline:-2px;padding-bottom:6px}
 }
+
+/* #843: one canonical recipe destination beside Stock, not a Today action.
+   Keep all six labels visible instead of shrinking or horizontally hiding them. */
+.merchantPrimaryNav [data-view="Menu"].roleFinanceHidden{display:none!important}
+.merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)){grid-template-columns:repeat(6,minmax(0,1fr))!important}
+.merchantPrimaryNav [data-view="Menu"]{overflow-wrap:anywhere}
+@media(max-width:649px){
+  .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)){grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)) button{min-height:48px;font-size:.78rem;padding:6px;line-height:1.25}
+  body:has(.merchantPrimaryNav:not(.hidden) [data-view="Menu"]:not(.roleFinanceHidden)) #app{padding-bottom:calc(132px + env(safe-area-inset-bottom,0px))}
+}

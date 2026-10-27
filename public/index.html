@@ -117,7 +117,7 @@
 
           <section id="todayFoodActions" class="todayFoodActions hidden">
             <div><strong>Food tools</strong><span>Only shown when this Merchant business supports food.</span></div>
-            <div><button type="button" class="secondary" data-today-action="quick-sale">Quick Sale</button><button type="button" class="secondary" data-today-action="recipes">Products & recipes</button></div>
+            <div><button type="button" class="secondary" data-today-action="quick-sale">Quick Sale</button></div>
           </section>
 
           <p id="todayUpdatedAt" class="todayUpdated muted"></p>
@@ -666,7 +666,7 @@
 
       <section id="viewHistory" class="view hidden"><div class="sectionHead"><div><h1>History</h1><p class="muted">Corrections are logged; linked remittance/menu sales are protected from separate edits.</p></div><a id="exportLink" class="linkBtn" href="#">Export CSV</a></div><div class="card"><div id="historyList" class="list"></div></div><button data-view-link="Dashboard" class="secondary">Back home</button></section>
 
-      <nav class="bottomNav merchantPrimaryNav"><button data-view="Dashboard" class="active">Today</button><button type="button" data-merchant-action="orders">Orders</button><button type="button" data-merchant-action="catalog">Catalog</button><button data-view="Stock">Inventory</button><button data-view="Money">Money</button></nav>
+      <nav class="bottomNav merchantPrimaryNav" aria-label="Merchant primary navigation"><button data-view="Dashboard" class="active">Today</button><button type="button" data-merchant-action="orders">Orders</button><button type="button" data-merchant-action="catalog">Catalog</button><button id="merchantRecipesNav" type="button" class="roleFinanceHidden" data-view="Menu" aria-controls="viewMenu">Products &amp; recipes</button><button data-view="Stock">Inventory</button><button data-view="Money">Money</button></nav>
     </section>
   </main>
 

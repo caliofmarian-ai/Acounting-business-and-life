@@ -1588,23 +1588,31 @@ async function openPendingInventoryNotification(){
 }
 document.addEventListener('abl:profile-state',event=>{
   baseActiveRole=event.detail?.activeRole||null;
-  if(merchantTodayProfileKey!==merchantTodayProfileContext())invalidateMerchantToday();
+  if(merchantTodayProfileKey!==merchantTodayProfileContext()){
+    $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
+    invalidateMerchantToday();
+  }
   if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
   if(isMerchantBaseActive())openPendingInventoryNotification().catch(()=>{});
 });
 document.addEventListener('abl:business-workspace-changed',()=>{
+  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
   invalidateMerchantToday();
-  if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday({force:true}).catch(()=>{});
+  if(isMerchantBaseActive())loadMerchantToday({force:true}).catch(()=>{});
 });
 document.addEventListener('abl:merchant-storefront-saved',event=>{
   if(!isMerchantBaseActive())return;
   const businessId=Number(event.detail?.businessId);
   const activeId=currentMerchantBusinessId()||merchantTodayBusinessId||merchantTodayRequestBusinessId;
   if(!Number.isInteger(businessId)||businessId<1||businessId!==activeId)return;
+  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
   invalidateMerchantToday();
-  if(!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday().catch(()=>{});
+  loadMerchantToday().catch(()=>{});
 });
-document.addEventListener('abl:auth-expired',()=>invalidateMerchantToday());
+document.addEventListener('abl:auth-expired',()=>{
+  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
+  invalidateMerchantToday();
+});
 window.addEventListener('online',()=>{
   setOnline(true);
   if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden')){
