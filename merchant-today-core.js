@@ -64,6 +64,7 @@ export function merchantTodayViewModel({
       merchant_domain:presentation.merchant_domain||'unknown',
       storefront_status:presentation.storefront_status||'not_configured',
       food_modules_enabled:foodCapable,
+      legacy_recipe_ui_allowed:Boolean(presentation.legacy_recipe_ui_allowed),
       non_food_modules_enabled:Boolean(presentation.non_food_modules_enabled||presentation.merchant_domain==='non_food'||presentation.merchant_domain==='mixed')
     },
     orders,
