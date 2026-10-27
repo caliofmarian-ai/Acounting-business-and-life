@@ -263,15 +263,18 @@ export function generateMarketingKitSvg(options = {}) {
   const href = xmlEscape(safe.referralUrl), qrHref = xmlEscape(safe.qrDataUrl);
   const title = locale === 'fil-PH' ? 'Imbitasyon sa Business & Life' : 'Business & Life invitation';
   const description = blocks.filter(block => ['headline', 'body', 'referrer', 'code'].includes(block.role)).map(block => block.content).join(' ');
+  // Approved scenes have subjects near both edges. Keep the complete composition
+  // in every format, including the narrow accent panels, without moving the QR.
   const art = brandAsset
-    ? `<image data-image-role="brand" href="${xmlEscape(brandAsset.dataUrl)}" xlink:href="${xmlEscape(brandAsset.dataUrl)}" x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#brand-art-clip)" aria-label="${xmlEscape(brandAsset.alt)}"/>`
-    : `<rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${radius}" fill="#d9eeea"/><path d="M ${hero.x} ${hero.y + hero.height} L ${hero.x + hero.width * .72} ${hero.y} L ${hero.x + hero.width} ${hero.y} L ${hero.x + hero.width} ${hero.y + hero.height} Z" fill="#b5dcd7" clip-path="url(#brand-art-clip)"/>`;
+    ? `<image data-image-role="brand" href="${xmlEscape(brandAsset.dataUrl)}" xlink:href="${xmlEscape(brandAsset.dataUrl)}" x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" preserveAspectRatio="xMidYMid meet" clip-path="url(#brand-art-clip)" aria-label="${xmlEscape(brandAsset.alt)}"/>`
+    : `<path d="M ${hero.x} ${hero.y + hero.height} L ${hero.x + hero.width * .72} ${hero.y} L ${hero.x + hero.width} ${hero.y} L ${hero.x + hero.width} ${hero.y + hero.height} Z" fill="#b5dcd7" clip-path="url(#brand-art-clip)"/>`;
   const textMarkup = blocks.map(block => block.role === 'url' ? `<a href="${href}" xlink:href="${href}" target="_blank" rel="noopener noreferrer">${renderBlock(block)}</a>` : renderBlock(block)).join('\n');
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:lang="${locale}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="creative-title creative-description" data-template="${selected.id}">
 <title id="creative-title">${xmlEscape(title)}</title><desc id="creative-description">${xmlEscape(description)}</desc>
 <defs><clipPath id="brand-art-clip"><rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${radius}"/></clipPath></defs>
 <rect width="${width}" height="${height}" fill="#f7fbf9"/>
 <rect x="0" y="0" width="${width}" height="${Math.max(6, Math.round(height * .006))}" fill="#147b7e"/>
+<rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${radius}" fill="#d9eeea"/>
 ${art}
 <rect x="${rounded(qr.x - 7)}" y="${rounded(qr.y - 7)}" width="${rounded(qr.width + 14)}" height="${rounded(qr.height + 14)}" rx="${radius}" fill="#ffffff" stroke="#c7d9d6"/>
 <a href="${href}" xlink:href="${href}" target="_blank" rel="noopener noreferrer"><image data-image-role="qr" href="${qrHref}" xlink:href="${qrHref}" x="${qr.x}" y="${qr.y}" width="${qr.width}" height="${qr.height}" preserveAspectRatio="xMidYMid meet" image-rendering="pixelated" aria-label="${xmlEscape(title)} QR"/></a>

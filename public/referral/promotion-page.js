@@ -3,7 +3,7 @@ import { createReferralController, normalizePromotionLocale, readPresentation, w
 import { promotionText } from './promotion-copy.js';
 import { createMarketingKitExport, decodePromotionImage, downloadPromotionFile, promotionPrintDocument } from './promotion-export.js';
 import { captureReferralEvent } from './referral-analytics.js';
-import { PROMOTION_BRAND_ASSET } from './promotion-brand.js';
+import { PROMOTION_BRAND_ASSETS, DEFAULT_PROMOTION_ARTWORK_ID, getPromotionBrandAsset } from './promotion-brand.js';
 
 const PRESENTATION_OPTIONS = Object.freeze({
   templates: RUNTIME_MARKETING_TEMPLATES.map(item => item.id),
@@ -36,8 +36,8 @@ export async function copyPromotionLink({ url, clipboard, input, isCurrent = () 
   }
 }
 
-export async function loadApprovedBrandAsset(runtime, locale, asset = PROMOTION_BRAND_ASSET, { timeoutMs = 12000 } = {}) {
-  if (!asset) return null;
+export async function loadApprovedBrandAsset(runtime, locale, asset = getPromotionBrandAsset(DEFAULT_PROMOTION_ARTWORK_ID), { timeoutMs = 12000 } = {}) {
+  if (!asset) throw new Error('Choose an approved artwork');
   const url = new URL(asset.src, runtime.location.origin);
   if (url.origin !== runtime.location.origin || !url.pathname.startsWith('/referral/assets/')) throw new Error('Unapproved artwork location');
   const abort = new AbortController();
@@ -74,17 +74,17 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
   const sendEvent = overrides.captureEvent || captureReferralEvent;
   const generateSvg = overrides.generateSvg || generateMarketingKitSvg;
   const downloadFile = overrides.downloadFile || ((file) => downloadPromotionFile(file, runtime));
-  const brandConfig = overrides.brandAsset ?? PROMOTION_BRAND_ASSET;
-  const loadBrand = overrides.loadBrandAsset || ((locale) => loadApprovedBrandAsset(runtime, locale, brandConfig));
+  const loadBrand = overrides.loadBrandAsset || ((asset, locale) => loadApprovedBrandAsset(runtime, locale, asset));
   let storage;
   try { storage = runtime.localStorage; } catch {}
   let explicit = sanitizePresentation(Object.fromEntries(new URLSearchParams(runtime.location.search)), PRESENTATION_OPTIONS);
-  let choices = { profile: '', locale: normalizePromotionLocale(explicit.locale), template: PRESENTATION_OPTIONS.templates[0], variant: 'personal_share_v1', format: 'png', ...explicit };
+  let choices = { profile: '', locale: normalizePromotionLocale(explicit.locale), template: PRESENTATION_OPTIONS.templates[0], variant: 'personal_share_v1', format: 'png', artwork: DEFAULT_PROMOTION_ARTWORK_ID, ...explicit };
   let account = null;
   let accountId = null;
   let accountSession = '';
   let profiles = [];
   let renderSequence = 0;
+  let artworkSequence = 0;
   let previewUrl = '';
   let prepared = null;
   let rendered = null;
@@ -92,20 +92,76 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
   let feedbackKey = '';
   let qrReady = false;
   let linkReady = false;
-  let brandPromise = null;
+  const brandPromises = new Map();
+  const artworkControls = new Map();
+  let artworkStatusKey = 'artworkWaiting';
   let stopped = false;
   let controller;
   const t = (key, values) => promotionText(choices.locale, key, values);
   const sessionKey = () => String(session?.csrfToken?.() || '');
 
-  function approvedBrand(locale) {
-    if (!brandConfig) return Promise.resolve(null);
-    if (!brandPromise) {
-      const pending = Promise.resolve().then(() => loadBrand(locale));
-      brandPromise = pending;
-      pending.catch(() => { if (brandPromise === pending) brandPromise = null; });
+  async function approvedBrand(id, locale) {
+    const asset = getPromotionBrandAsset(id);
+    if (!asset) throw new Error('Choose an approved artwork');
+    if (!brandPromises.has(id)) {
+      const pending = Promise.resolve().then(() => loadBrand(asset, locale));
+      brandPromises.set(id, pending);
+      pending.catch(() => { if (brandPromises.get(id) === pending) brandPromises.delete(id); });
     }
-    return brandPromise.catch(() => null);
+    const loadedAsset = await brandPromises.get(id);
+    if (!loadedAsset?.dataUrl) throw new Error('Artwork could not load');
+    // Bytes are reusable; description language belongs to the current selection.
+    return { dataUrl: loadedAsset.dataUrl, alt: asset.alt[locale] || asset.alt['en-PH'] };
+  }
+  function setArtworkStatus(key) {
+    artworkStatusKey = key;
+    element('artworkStatus').removeAttribute('data-i18n');
+    element('artworkStatus').textContent = t(key);
+    element('artworkStatus').classList.toggle('error', key === 'artworkUnavailable');
+    element('artworkOptions').setAttribute('aria-busy', String(key === 'artworkLoading'));
+    element('artworkRetry').hidden = key !== 'artworkUnavailable';
+  }
+  function buildArtworkOptions() {
+    for (const asset of PROMOTION_BRAND_ASSETS) {
+      const card = document.createElement('label');
+      card.className = 'artworkCard';
+      const input = document.createElement('input');
+      input.type = 'radio'; input.name = 'artwork'; input.value = asset.id;
+      input.id = 'artwork-' + asset.id;
+      input.setAttribute('aria-labelledby', 'artworkName-' + asset.id);
+      card.setAttribute('for', input.id);
+      const thumbnail = document.createElement('img');
+      thumbnail.src = asset.thumbnail; thumbnail.width = 360; thumbnail.height = 240;
+      const name = document.createElement('strong');
+      name.className = 'artworkName'; name.id = 'artworkName-' + asset.id;
+      const marker = document.createElement('span'); marker.className = 'artworkSelected';
+      marker.setAttribute('aria-hidden', 'true');
+      card.append(input, thumbnail, name, marker);
+      element('artworkOptions').append(card);
+      artworkControls.set(asset.id, { card, input, thumbnail, name, marker });
+      input.addEventListener('change', () => {
+        if (!input.checked || choices.artwork === asset.id) return;
+        choices.artwork = asset.id;
+        explicit.artwork = asset.id;
+        localize(); syncNavigation();
+        const loaded = controller.getCurrent();
+        if (loaded) { if (kit) void renderDesign(loaded); else void renderCenterArtwork(loaded); }
+      });
+    }
+  }
+  function localizeArtworkOptions() {
+    for (const asset of PROMOTION_BRAND_ASSETS) {
+      const control = artworkControls.get(asset.id);
+      if (!control) continue;
+      const selected = choices.artwork === asset.id;
+      control.input.checked = selected;
+      control.card.classList.toggle('selected', selected);
+      control.name.textContent = asset.name[choices.locale] || asset.name['en-PH'];
+      control.thumbnail.alt = asset.alt[choices.locale] || asset.alt['en-PH'];
+      control.marker.textContent = '✓ ' + t('artworkSelected');
+      control.marker.hidden = !selected;
+    }
+    setArtworkStatus(artworkStatusKey);
   }
 
   function setStatus(key = '') {
@@ -144,6 +200,8 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
   }
   function clearLoaded() {
     renderSequence += 1;
+    artworkSequence += 1;
+    setArtworkStatus('artworkWaiting');
     prepared = null;
     rendered = null;
     linkReady = false;
@@ -154,6 +212,9 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
       previewMessage('previewLoading');
       element('previewCaption').textContent = '';
     } else {
+      element('brandArtwork').hidden = true;
+      element('brandArtwork').removeAttribute('src');
+      element('brandArtwork').removeAttribute('data-artwork');
       setLinkActions(false);
       element('referralCode').textContent = '—';
       element('referralUrl').value = '';
@@ -186,6 +247,7 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
     setOptions(element('role'), profiles.map(profile => ({ value: profile, label: t(profile) })), choices.profile);
     element('status').textContent = statusKey ? t(statusKey) : '';
     element('feedbackText').textContent = feedbackKey ? t(feedbackKey) : '';
+    localizeArtworkOptions();
     if (kit) {
       setOptions(element('template'), RUNTIME_MARKETING_TEMPLATES.map(item => ({ value: item.id, label: item.labels?.[choices.locale] || item.label })), choices.template);
       const variants = (RUNTIME_MARKETING_COPY[choices.locale] || RUNTIME_MARKETING_COPY['en-PH']).variants;
@@ -238,28 +300,31 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
     setExportActions(false);
     previewMessage('previewLoading');
     setStatus('exportPreparing');
+    setArtworkStatus('artworkLoading');
     if (previewUrl) { runtime.URL.revokeObjectURL(previewUrl); previewUrl = ''; }
     let nextUrl = '';
     try {
       if (!loaded.identity.qrDataUrl) throw Object.assign(new Error('QR required'), { code: 'qrRequired' });
       await decodeImage(loaded.identity.qrDataUrl);
       if (!currentDesign(sequence, loaded)) return;
-      const brandAsset = await approvedBrand(selection.locale);
+      let brandAsset;
+      try { brandAsset = await approvedBrand(selection.artwork, selection.locale); }
+      catch (error) { throw Object.assign(new Error('The selected artwork could not load'), { code: 'artworkUnavailable', cause: error }); }
       if (!currentDesign(sequence, loaded)) return;
-      if (brandConfig && !brandAsset) showFeedback('artworkUnavailable', true);
-      else if (feedbackKey === 'artworkUnavailable') showFeedback('');
+      setArtworkStatus('artworkReady');
       const fields = {
         referrerName: String(loaded.account.display_name || '').trim() || t('fallbackName'),
         referralCode: loaded.identity.code,
         referralUrl: loaded.identity.referralUrl,
         qrDataUrl: loaded.identity.qrDataUrl
       };
-      const svg = generateSvg({ templateId: selection.template, fields, locale: selection.locale, variantId: selection.variant, ...(brandAsset ? { brandAsset: { ...brandAsset, alt: brandConfig?.alt?.[selection.locale] || brandAsset.alt } } : {}) });
+      const svg = generateSvg({ templateId: selection.template, fields, locale: selection.locale, variantId: selection.variant, brandAsset });
       nextUrl = runtime.URL.createObjectURL(new runtime.Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
       const image = await decodeImage(nextUrl);
       if (!currentDesign(sequence, loaded)) { runtime.URL.revokeObjectURL(nextUrl); return; }
       image.alt = t('previewLabel');
       image.setAttribute('draggable', 'false');
+      image.setAttribute('data-artwork', selection.artwork);
       element('preview').replaceChildren(image);
       previewUrl = nextUrl;
       nextUrl = '';
@@ -271,16 +336,40 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
       setExportActions(false, true);
       const file = await makeExport({ svg, templateId: selection.template, referralCode: loaded.identity.code, locale: selection.locale, format: selection.format });
       if (!currentDesign(sequence, loaded)) return;
-      prepared = { ...file, loaded, sequence };
+      prepared = { ...file, loaded, sequence, artwork: selection.artwork };
       setExportActions(true);
       setStatus('');
     } catch (error) {
       if (nextUrl) runtime.URL.revokeObjectURL(nextUrl);
       if (!currentDesign(sequence, loaded)) return;
       prepared = null;
-      if (!rendered) previewMessage(error?.code === 'qrRequired' ? 'qrRequired' : 'previewError', true);
+      const failure = error?.code === 'artworkUnavailable' ? 'artworkDesignUnavailable' : error?.code === 'qrRequired' ? 'qrRequired' : 'previewError';
+      if (error?.code === 'artworkUnavailable') setArtworkStatus('artworkUnavailable');
+      else if (artworkStatusKey === 'artworkLoading') setArtworkStatus('artworkWaiting');
+      if (!rendered) previewMessage(failure, true);
       setExportActions(false, Boolean(rendered));
-      setStatus(rendered ? 'exportError' : error?.code === 'qrRequired' ? 'qrRequired' : 'previewError');
+      setStatus(rendered ? 'exportError' : failure);
+    }
+  }
+  async function renderCenterArtwork(loaded) {
+    const sequence = ++artworkSequence;
+    const selection = { artwork: choices.artwork, locale: choices.locale };
+    const current = () => !stopped && sequence === artworkSequence && controller.getCurrent() === loaded
+      && choices.artwork === selection.artwork && choices.locale === selection.locale;
+    element('brandArtwork').hidden = true;
+    element('brandArtwork').removeAttribute('src');
+    element('brandArtwork').removeAttribute('data-artwork');
+    setArtworkStatus('artworkLoading');
+    try {
+      const asset = await approvedBrand(selection.artwork, selection.locale);
+      if (!current()) return;
+      element('brandArtwork').src = asset.dataUrl;
+      element('brandArtwork').alt = asset.alt;
+      element('brandArtwork').setAttribute('data-artwork', selection.artwork);
+      element('brandArtwork').hidden = false;
+      setArtworkStatus('artworkReady');
+    } catch {
+      if (current()) setArtworkStatus('artworkUnavailable');
     }
   }
   async function renderIdentity(loaded, isCurrent) {
@@ -293,6 +382,7 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
     syncChannels(loaded);
     setStatus('');
     track(loaded, 'referral_link_created');
+    const artwork = renderCenterArtwork(loaded);
     const sequence = renderSequence;
     try {
       if (!loaded.identity.qrDataUrl) throw new Error('QR unavailable');
@@ -308,17 +398,7 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
       element('qrFallback').textContent = t('qrUnavailable');
       element('progressQr').textContent = t('unavailable');
     }
-    if (brandConfig) {
-      const brandAsset = await approvedBrand(choices.locale);
-      if (isCurrent() && sequence === renderSequence) {
-        if (brandAsset) {
-          element('brandArtwork').src = brandAsset.dataUrl;
-          element('brandArtwork').alt = brandConfig.alt?.[choices.locale] || brandAsset.alt;
-          element('brandArtwork').hidden = false;
-          if (feedbackKey === 'artworkUnavailable') showFeedback('');
-        } else showFeedback('artworkUnavailable', true);
-      }
-    }
+    await artwork;
   }
 
   controller = createReferralController({
@@ -386,9 +466,15 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
   element('locale').addEventListener('change', () => {
     updateChoices();
     const loaded = controller.getCurrent();
-    if (loaded) { if (kit) void renderDesign(loaded); else syncChannels(loaded); }
+    if (loaded) { if (kit) void renderDesign(loaded); else { syncChannels(loaded); void renderCenterArtwork(loaded); } }
   });
   for (const id of ['retry', 'signinRetry']) element(id).addEventListener('click', () => { void controller.load(choices.profile); });
+  element('artworkRetry').addEventListener('click', () => {
+    const loaded = controller.getCurrent();
+    if (!loaded) { void controller.load(choices.profile); return; }
+    brandPromises.delete(choices.artwork);
+    if (kit) void renderDesign(loaded); else void renderCenterArtwork(loaded);
+  });
 
   if (kit) {
     for (const id of ['template', 'variant', 'format']) element(id).addEventListener('change', () => {
@@ -473,6 +559,7 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
   runtime.addEventListener('pagehide', pagehide);
   runtime.addEventListener('pageshow', pageshow);
   runtime.addEventListener('focus', focus);
+  buildArtworkOptions();
   localize();
   void controller.load();
   return Object.freeze({

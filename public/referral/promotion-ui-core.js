@@ -1,3 +1,5 @@
+import { DEFAULT_PROMOTION_ARTWORK_ID, PROMOTION_ARTWORK_IDS } from './promotion-brand.js';
+
 export const PUBLIC_REFERRAL_ROLES = Object.freeze(['customer', 'merchant', 'supplier', 'courier', 'service_provider']);
 export const PROMOTION_LOCALES = Object.freeze(['en-PH', 'fil-PH']);
 export const PROMOTION_FORMATS = Object.freeze(['png', 'jpg', 'svg']);
@@ -21,6 +23,7 @@ export function sanitizePresentation(input = {}, { templates = [], variants = []
   if (templates.includes(input.template)) out.template = input.template;
   if (variants.includes(input.variant)) out.variant = input.variant;
   if (PROMOTION_FORMATS.includes(input.format)) out.format = input.format;
+  if (PROMOTION_ARTWORK_IDS.includes(input.artwork)) out.artwork = input.artwork;
   return out;
 }
 
@@ -49,6 +52,7 @@ export function resolvePresentation({ query = {}, saved = {}, snapshot, template
     template: requested.template || previous.template || templates[0] || '',
     variant: requested.variant || previous.variant || (variants.includes('personal_share_v1') ? 'personal_share_v1' : variants[0] || ''),
     format: requested.format || previous.format || 'png',
+    artwork: requested.artwork || previous.artwork || DEFAULT_PROMOTION_ARTWORK_ID,
     unavailableRequestedProfile: Boolean(requested.profile && !profiles.includes(requested.profile))
   };
 }

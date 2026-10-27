@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { promotionChannelLinks, copyPromotionLink } from '../public/referral/promotion-page.js';
 import { promotionText } from '../public/referral/promotion-copy.js';
-import { fixture, Element, read, referral, tick } from './promotion-page-fixture.js';
+import { fixture, Element, read, referral, tick, artworkData } from './promotion-page-fixture.js';
+import { PROMOTION_BRAND_ASSETS, getPromotionBrandAsset } from '../public/referral/promotion-brand.js';
+import { generateMarketingKitSvg } from '../public/referral/marketing-kit-runtime.js';
+
+function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 
 test('center shows only enabled roles, uses account language and renders a verified link/QR', async t => {
   const f = fixture({ locale: 'fil-PH' }); t.after(() => f.ui.destroy()); await tick();
@@ -156,23 +160,27 @@ test('missing clipboard API still selects the real referral link for manual reco
   assert.deepEqual(input.selection, [0, url.length]);
 });
 
-test('failed optional artwork is explained without blocking export and Retry attempts it again', async t => {
+test('failed selected artwork blocks export and its Retry attempts the same image again', async t => {
   let attempts = 0;
-  const brandAsset = { src: '/referral/assets/test.webp', alt: { 'en-PH': 'Business community', 'fil-PH': 'Komunidad ng negosyo' } };
-  const f = fixture({ page: 'kit', brandAsset, loadBrandAsset: async () => {
+  const f = fixture({ page: 'kit', query: '?artwork=community', loadBrandAsset: async asset => {
     attempts += 1;
     if (attempts === 1) throw new Error('Artwork timed out');
-    return { dataUrl: 'data:image/png;base64,AAAA', alt: 'Business community' };
+    return { dataUrl: artworkData(asset.id) };
   } });
   t.after(() => f.ui.destroy()); await tick();
   assert.equal(attempts, 1);
-  assert.equal(f.el('export').disabled, false);
-  assert.equal(f.el('feedbackText').textContent, promotionText('en-PH', 'artworkUnavailable'));
-  assert.equal(f.el('retry').hidden, false);
-  await f.el('retry').fire('click'); await tick();
+  assert.equal(f.el('export').disabled, true);
+  assert.equal(f.el('share').disabled, true);
+  assert.equal(f.el('print').disabled, true);
+  assert.equal(f.el('preview').children[0].tagName, 'DIV');
+  assert.equal(f.el('artworkStatus').textContent, promotionText('en-PH', 'artworkUnavailable'));
+  assert.equal(f.el('artworkRetry').hidden, false);
+  await f.el('artworkRetry').fire('click'); await tick();
   assert.equal(attempts, 2);
   assert.equal(f.el('export').disabled, false);
-  assert.equal(f.el('feedback').hidden, true);
+  assert.equal(f.el('artworkRetry').hidden, true);
+  assert.equal(f.ui.getPrepared().artwork, 'community');
+  assert.deepEqual(f.artworkLoads.map(item => item.asset.id), ['community', 'community']);
 });
 
 test('backgrounded native-share completion is never attributed to an unverified returning context', async t => {
@@ -186,4 +194,171 @@ test('backgrounded native-share completion is never attributed to an unverified 
   finishShare(); await action;
   assert.notEqual(f.el('status').textContent, promotionText('en-PH', 'shareDone'));
   assert.equal(f.captured.filter(event => event.event === 'referral_shared').length, 0);
+});
+
+test('both pages present all three approved thumbnails as native labeled radio choices', async t => {
+  for (const page of ['center', 'kit']) {
+    const f = fixture({ page }); t.after(() => f.ui.destroy()); await tick();
+    assert.equal(f.el('artworkOptions').children.length, 3);
+    for (const asset of PROMOTION_BRAND_ASSETS) {
+      const input = f.el('artwork-' + asset.id);
+      assert.equal(input.type, 'radio');
+      assert.equal(input.name, 'artwork');
+      assert.equal(input.value, asset.id);
+      assert.equal(input.getAttribute('aria-labelledby'), 'artworkName-' + asset.id);
+      assert.equal(f.el('artworkName-' + asset.id).textContent, asset.name['en-PH']);
+      const card = f.el('artworkOptions').children.find(node => node.children[0] === input);
+      assert.equal(card.getAttribute('for'), input.id);
+      assert.equal(card.children[1].src, asset.thumbnail);
+      assert.equal(card.children[1].alt, asset.alt['en-PH']);
+      assert.equal(card.children[3].hidden, asset.id !== 'local-business');
+    }
+    assert.equal(f.el('artwork-local-business').checked, true);
+    assert.equal(f.el('artworkStatus').textContent, promotionText('en-PH', 'artworkReady'));
+  }
+});
+
+test('radio selection and language changes preserve the focused native control', async t => {
+  const f = fixture(); t.after(() => f.ui.destroy()); await tick();
+  const focused = f.el('artwork-community'); focused.focus();
+  await f.selectArtwork('community'); await tick();
+  f.el('locale').value = 'fil-PH'; await f.el('locale').fire('change'); await tick();
+  assert.equal(f.el('artwork-community'), focused);
+  assert.equal(focused.focused, true);
+  assert.equal(focused.checked, true);
+  assert.equal(f.el('artwork-local-business').checked, false);
+  assert.equal(f.el('artworkName-community').textContent, 'Komunidad');
+  assert.equal(f.el('brandArtwork').alt, getPromotionBrandAsset('community').alt['fil-PH']);
+  assert.equal(f.artworkLoads.filter(item => item.asset.id === 'community').length, 1, 'cached pixels must not cache the old locale description');
+});
+
+test('each center artwork updates the hero and keeps only its approved ID in links and preferences', async t => {
+  const f = fixture(); t.after(() => f.ui.destroy()); await tick();
+  for (const asset of PROMOTION_BRAND_ASSETS) {
+    await f.selectArtwork(asset.id); await tick();
+    assert.equal(f.el('brandArtwork').src, artworkData(asset.id));
+    assert.equal(f.el('brandArtwork').getAttribute('data-artwork'), asset.id);
+    assert.equal(f.el('brandArtwork').hidden, false);
+    assert.equal(new URL(f.el('marketingKit').href, 'https://caliof.com').searchParams.get('artwork'), asset.id);
+    assert.equal(f.runtime.location.searchParams.get('artwork'), asset.id);
+    assert.equal(JSON.parse(f.values.get('abl_referral_presentation_v1:21')).artwork, asset.id);
+    assert.doesNotMatch(f.values.get('abl_referral_presentation_v1:21'), /data:image|assets\/|https:/);
+  }
+});
+
+test('each Marketing Kit choice renders the matching artwork and a newly guarded export', async t => {
+  const rendered = [];
+  const f = fixture({ page: 'kit', generateSvg: options => { rendered.push(options); return generateMarketingKitSvg(options); } });
+  t.after(() => f.ui.destroy()); await tick();
+  for (const asset of PROMOTION_BRAND_ASSETS) {
+    await f.selectArtwork(asset.id); await tick();
+    assert.equal(rendered.at(-1).brandAsset.dataUrl, artworkData(asset.id));
+    assert.equal(f.el('preview').children[0].getAttribute('data-artwork'), asset.id);
+    assert.equal(f.ui.getPrepared().artwork, asset.id);
+    assert.equal(f.el('export').disabled, false);
+  }
+  f.el('locale').value = 'fil-PH'; await f.el('locale').fire('change'); await tick();
+  assert.equal(rendered.at(-1).brandAsset.alt, getPromotionBrandAsset('miniature').alt['fil-PH']);
+  assert.equal(f.artworkLoads.filter(item => item.asset.id === 'miniature').length, 1);
+});
+
+test('artwork persists across page round-trip and reload without crossing account preference keys', async t => {
+  const center = fixture(); t.after(() => center.ui.destroy()); await tick();
+  await center.selectArtwork('community'); await tick();
+  const kitQuery = new URL(center.el('marketingKit').href, 'https://caliof.com').search;
+  const kit = fixture({ page: 'kit', query: kitQuery, preferences: center.values }); t.after(() => kit.ui.destroy()); await tick();
+  assert.equal(kit.ui.getChoices().artwork, 'community');
+  assert.equal(new URL(kit.el('back').href, 'https://caliof.com').searchParams.get('artwork'), 'community');
+  const reload = fixture({ preferences: center.values }); t.after(() => reload.ui.destroy()); await tick();
+  assert.equal(reload.ui.getChoices().artwork, 'community');
+  const other = fixture({ preferences: center.values, accountId: 22 }); t.after(() => other.ui.destroy()); await tick();
+  assert.equal(other.ui.getChoices().artwork, 'local-business');
+  await other.selectArtwork('miniature'); await tick();
+  assert.equal(JSON.parse(center.values.get('abl_referral_presentation_v1:21')).artwork, 'community');
+  assert.equal(JSON.parse(center.values.get('abl_referral_presentation_v1:22')).artwork, 'miniature');
+});
+
+test('an older center artwork response cannot overwrite a newer chosen hero', async t => {
+  const loads = [];
+  const f = fixture({ loadBrandAsset: asset => { const pending = deferred(); loads.push({ asset, ...pending }); return pending.promise; } });
+  t.after(() => f.ui.destroy()); await tick();
+  await f.selectArtwork('community'); await tick();
+  assert.equal(f.el('brandArtwork').src, undefined);
+  assert.equal(f.el('artworkOptions').getAttribute('aria-busy'), 'true');
+  loads[1].resolve({ dataUrl: artworkData('community') }); await tick();
+  loads[0].resolve({ dataUrl: artworkData('local-business') }); await tick();
+  assert.equal(f.el('brandArtwork').getAttribute('data-artwork'), 'community');
+  assert.equal(f.el('brandArtwork').src, artworkData('community'));
+});
+
+test('late success and failure from an old kit artwork cannot replace the current preview', async t => {
+  for (const lateFailure of [false, true]) {
+    const loads = [];
+    const f = fixture({ page: 'kit', loadBrandAsset: asset => { const pending = deferred(); loads.push({ asset, ...pending }); return pending.promise; } });
+    t.after(() => f.ui.destroy()); await tick();
+    await f.selectArtwork('miniature'); await tick();
+    assert.equal(f.el('export').disabled, true);
+    assert.equal(f.el('preview').children[0].tagName, 'DIV');
+    loads[1].resolve({ dataUrl: artworkData('miniature') }); await tick();
+    if (lateFailure) loads[0].reject(new Error('Old artwork failed'));
+    else loads[0].resolve({ dataUrl: artworkData('local-business') });
+    await tick();
+    assert.equal(f.ui.getPrepared().artwork, 'miniature');
+    assert.equal(f.el('artworkRetry').hidden, true);
+    assert.equal(f.el('export').disabled, false);
+  }
+});
+
+test('failure of a new selected artwork clears an old ready design and does not export the old artwork', async t => {
+  const f = fixture({ page: 'kit', loadBrandAsset: async asset => {
+    if (asset.id === 'community') throw new Error('Missing selected artwork');
+    return { dataUrl: artworkData(asset.id) };
+  } });
+  t.after(() => f.ui.destroy()); await tick();
+  assert.equal(f.el('export').disabled, false);
+  await f.selectArtwork('community'); await tick();
+  assert.equal(f.ui.getPrepared(), null);
+  assert.equal(f.el('preview').children[0].tagName, 'DIV');
+  assert.equal(f.el('export').disabled, true);
+  assert.equal(f.el('print').disabled, true);
+  assert.equal(f.el('artworkRetry').hidden, false);
+});
+
+test('artwork completed after sign-out cannot restore a hero or a prepared design', async t => {
+  for (const page of ['center', 'kit']) {
+    const pending = deferred();
+    const f = fixture({ page, loadBrandAsset: () => pending.promise }); t.after(() => f.ui.destroy()); await tick();
+    f.signOut(); await f.document.fire('abl:auth-expired');
+    pending.resolve({ dataUrl: artworkData('local-business') }); await tick();
+    assert.equal(f.el('signin').hidden, false);
+    assert.equal(f.el('artworkStatus').textContent, promotionText('en-PH', 'artworkWaiting'));
+    if (page === 'center') assert.equal(f.el('brandArtwork').src, undefined);
+    else { assert.equal(f.ui.getPrepared(), null); assert.equal(f.el('export').disabled, true); }
+  }
+});
+
+test('pending artwork and old presentation choices do not overwrite a newly verified account', async t => {
+  const loads = [];
+  const f = fixture({ query: '?artwork=community', loadBrandAsset: asset => { const pending = deferred(); loads.push({ asset, ...pending }); return pending.promise; } });
+  t.after(() => f.ui.destroy()); await tick();
+  f.changeAccount(22); const fresh = f.ui.controller.load(); await tick();
+  assert.equal(f.ui.getChoices().artwork, 'local-business');
+  loads[1].resolve({ dataUrl: artworkData('local-business') }); await fresh;
+  loads[0].resolve({ dataUrl: artworkData('community') }); await tick();
+  assert.equal(f.el('brandArtwork').src, artworkData('local-business'));
+  assert.equal(f.ui.controller.getCurrent().account.id, 22);
+  assert.equal(JSON.parse(f.values.get('abl_referral_presentation_v1:22')).artwork, 'local-business');
+});
+
+test('changing artwork during export preparation ignores the older completed file', async t => {
+  const exports = [];
+  const f = fixture({ page: 'kit', createExport: options => { const pending = deferred(); exports.push({ options, ...pending }); return pending.promise; } });
+  t.after(() => f.ui.destroy()); await tick();
+  await f.selectArtwork('community'); await tick();
+  exports[0].resolve({ blob: new Blob(['old']), filename: 'old.png', mimeType: 'image/png' }); await tick();
+  assert.equal(f.ui.getPrepared(), null);
+  assert.equal(f.el('export').disabled, true);
+  exports[1].resolve({ blob: new Blob(['new']), filename: 'new.png', mimeType: 'image/png' }); await tick();
+  assert.equal(f.ui.getPrepared().filename, 'new.png');
+  assert.equal(f.ui.getPrepared().artwork, 'community');
 });

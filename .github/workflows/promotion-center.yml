@@ -84,7 +84,7 @@ jobs:
           done
           tail -n 100 "$RUNNER_TEMP/promotion-gateway.log"
           exit 1
-      - name: Verify real authenticated roles, QR, downloaded files and print output
+      - name: Verify real accounts, artwork choices, downloads and asset failure recovery
         env:
           PROMOTION_PLAYWRIGHT_MODULE: ${{ runner.temp }}/promotion-browser/node_modules/playwright/index.mjs
           PROMOTION_QR_SCRIPT: ${{ runner.temp }}/promotion-browser/node_modules/jsqr/dist/jsQR.js

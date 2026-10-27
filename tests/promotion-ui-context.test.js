@@ -39,26 +39,39 @@ test('presentation resolves only enabled public profiles and follows the account
   assert.equal(selection.locale, 'fil-PH');
   assert.equal(selection.format, 'png');
   assert.equal(selection.variant, 'personal_share_v1');
+  assert.equal(selection.artwork, 'local-business');
 });
 
 test('saved presentation data is allowlisted and isolated by account, with no identity data', () => {
   const values = new Map();
   const storage = { setItem: (k, v) => values.set(k, v), getItem: k => values.get(k) };
-  writePresentation(storage, 21, { profile: 'merchant', locale: 'fil-PH', template: 'story', variant: 'clarity_v1', format: 'jpg', referralUrl: 'private', referralCode: 'private', name: 'private', csrf: 'secret' }, options);
-  assert.deepEqual(readPresentation(storage, 21, options), { profile: 'merchant', locale: 'fil-PH', template: 'story', variant: 'clarity_v1', format: 'jpg' });
+  writePresentation(storage, 21, { profile: 'merchant', locale: 'fil-PH', template: 'story', variant: 'clarity_v1', format: 'jpg', artwork: 'community', referralUrl: 'private', referralCode: 'private', name: 'private', csrf: 'secret', imageUrl: 'private' }, options);
+  assert.deepEqual(readPresentation(storage, 21, options), { profile: 'merchant', locale: 'fil-PH', template: 'story', variant: 'clarity_v1', format: 'jpg', artwork: 'community' });
   assert.deepEqual(readPresentation(storage, 22, options), {});
   assert.doesNotMatch([...values.values()][0], /private|secret|referral|csrf|name/);
   assert.deepEqual(readPresentation({ getItem: () => '{broken' }, 21, options), {});
 });
 
 test('choice links preserve all supported options and reject arbitrary destinations and values', () => {
-  const link = presentationPageUrl('/referral/marketing-kit.html', { profile: 'merchant', locale: 'fil-PH', template: 'story', variant: 'clarity_v1', format: 'png', return: 'https://other.test' }, options);
+  const link = presentationPageUrl('/referral/marketing-kit.html', { profile: 'merchant', locale: 'fil-PH', template: 'story', variant: 'clarity_v1', format: 'png', artwork: 'miniature', return: 'https://other.test' }, options);
   const query = new URL(link, 'https://caliof.com').searchParams;
   assert.equal(query.get('template'), 'story');
   assert.equal(query.get('variant'), 'clarity_v1');
   assert.equal(query.get('locale'), 'fil-PH');
+  assert.equal(query.get('artwork'), 'miniature');
   assert.equal(query.has('return'), false);
   assert.throws(() => presentationPageUrl('https://other.test/', {}, options));
+});
+
+test('artwork choices are restricted to approved IDs with query then account preference precedence', () => {
+  for (const id of ['local-business', 'community', 'miniature']) {
+    assert.equal(resolvePresentation({ snapshot: snapshot(), query: { artwork: id }, saved: { artwork: 'community' }, ...options }).artwork, id);
+  }
+  for (const invalid of ['https://external.test/image.png', '/referral/assets/custom.webp', 'missing', '<svg>']) {
+    assert.equal(resolvePresentation({ snapshot: snapshot(), query: { artwork: invalid }, saved: { artwork: 'miniature' }, ...options }).artwork, 'miniature');
+    assert.equal(resolvePresentation({ snapshot: snapshot(), query: { artwork: invalid }, saved: { artwork: invalid }, ...options }).artwork, 'local-business');
+    assert.equal(new URL(presentationPageUrl('/referral/marketing-kit.html', { artwork: invalid }, options), 'https://caliof.com').searchParams.has('artwork'), false);
+  }
 });
 
 test('referral identity must match both authenticated account and selected profile', () => {

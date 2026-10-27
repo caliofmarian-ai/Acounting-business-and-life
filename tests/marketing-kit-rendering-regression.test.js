@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { SaxesParser } from 'saxes';
 import { buildLocalReferralQr } from '../growth/referral-qr.js';
 import {
@@ -62,6 +63,18 @@ function checkGeometry(nodes) {
   }
   if (images.length === 2) assert.equal(intersection(rect(images[0]), rect(images[1])), false, 'brand image never covers QR');
 }
+function jpegDimensions(bytes) {
+  assert.equal(bytes.readUInt16BE(0), 0xffd8, 'approved artwork is a JPEG');
+  for (let offset = 2; offset + 9 < bytes.length;) {
+    assert.equal(bytes[offset], 0xff, 'valid JPEG segment');
+    const marker = bytes[offset + 1], length = bytes.readUInt16BE(offset + 2);
+    if (marker === 0xc0 || marker === 0xc2) return { width: bytes.readUInt16BE(offset + 7), height: bytes.readUInt16BE(offset + 5) };
+    assert.notEqual(marker, 0xda, 'frame dimensions must precede compressed image data');
+    assert.ok(length >= 2, 'valid JPEG segment length');
+    offset += 2 + length;
+  }
+  assert.fail('approved artwork must contain a baseline or progressive JPEG frame');
+}
 
 test('strict XML parsing catches the original standalone SVG ampersand defect', () => {
   assert.throws(() => parseSvg('<svg xmlns="http://www.w3.org/2000/svg" aria-label="Business & Life"></svg>'), /entity|character|name|unexpected end/i);
@@ -119,6 +132,45 @@ test('brand assets are optional, embedded raster only, and require an accessible
   }
   assert.throws(() => generateMarketingKitSvg({ ...options, brandAsset: { dataUrl: qr.dataUrl, alt: '' } }), /description/);
 });
+
+for (const id of ['local-business', 'community', 'miniature']) {
+  test(`approved ${id} artwork: full composition fits every format without changing text or QR`, () => {
+    const bytes = readFileSync(new URL(`../public/referral/assets/brand-${id}.jpg`, import.meta.url));
+    // Check the actual image dimensions, so substituting a thumbnail cannot pass.
+    const source = jpegDimensions(bytes);
+    assert.deepEqual(source, { width: 1536, height: 1024 });
+    const asset = { dataUrl: 'data:image/jpeg;base64,' + bytes.toString('base64'), alt: `Approved ${id} scene` };
+    const textSignature = nodes => nodes.filter(node => node.name === 'text').map(node => ({ attrs: node.attrs, lines: node.children.map(line => ({ attrs: line.attrs, text: content(line) })) }));
+    for (const template of RUNTIME_MARKETING_TEMPLATES) {
+      for (const locale of Object.keys(RUNTIME_MARKETING_COPY)) {
+        const options = { templateId: template.id, fields, locale, variantId: 'money_visibility_v1' };
+        const plain = parseSvg(generateMarketingKitSvg(options));
+        const nodes = parseSvg(generateMarketingKitSvg({ ...options, brandAsset: asset }));
+        checkGeometry(nodes);
+        const image = nodes.find(node => node.attrs['data-image-role'] === 'brand');
+        assert.equal(image.attrs.href, asset.dataUrl, 'the complete selected asset is embedded');
+        assert.equal(image.attrs['xlink:href'], asset.dataUrl, 'both image reference forms use the same approved bytes');
+        assert.equal(image.attrs['aria-label'], asset.alt);
+        assert.equal(image.attrs.preserveAspectRatio, 'xMidYMid meet', 'approved edge subjects must not be cropped to fill the panel');
+        const box = rect(image), scale = Math.min(box.width / source.width, box.height / source.height);
+        const displayed = { x: box.x + (box.width - source.width * scale) / 2, y: box.y + (box.height - source.height * scale) / 2, width: source.width * scale, height: source.height * scale };
+        checkBounds(displayed, template.width, template.height, 'complete approved composition');
+        assert.ok(displayed.x >= box.x - .01 && displayed.y >= box.y - .01 && displayed.x + displayed.width <= box.x + box.width + .01 && displayed.y + displayed.height <= box.y + box.height + .01, 'all sides of the composition stay in the reserved panel');
+        const clipId = image.attrs['clip-path'].slice(5, -1);
+        const clip = nodes.find(node => node.name === 'clipPath' && node.attrs.id === clipId);
+        assert.ok(clip, 'artwork clipping is scoped to its own panel');
+        assert.deepEqual(rect(clip.children[0]), box);
+        const plainQr = plain.find(node => node.attrs['data-image-role'] === 'qr');
+        const artworkQr = nodes.find(node => node.attrs['data-image-role'] === 'qr');
+        assert.deepEqual(artworkQr.attrs, plainQr.attrs, 'choosing artwork cannot shrink, move or replace the QR');
+        assert.deepEqual(textSignature(nodes), textSignature(plain), 'choosing artwork cannot crowd or change the promotional copy');
+        const qrPanel = nodes.find(node => node.name === 'rect' && node.attrs.fill === '#ffffff');
+        assert.ok(qrPanel, 'QR retains its white panel');
+        assert.equal(intersection(box, rect(qrPanel)), false, 'artwork remains outside the QR and its white border');
+      }
+    }
+  });
+}
 
 test('scan-first templates have distinct artwork and larger clear QR targets', () => {
   const render = templateId => parseSvg(generateMarketingKitSvg({ templateId, fields }));

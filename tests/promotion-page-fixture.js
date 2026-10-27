@@ -27,7 +27,7 @@ export class Element {
   remove() {}
   click() { this.clicked = true; }
 }
-export function fixture({ page = 'center', query = '', locale = 'en-PH', fetchImpl, createExport, generateSvg, clipboard, share, brandAsset, loadBrandAsset } = {}) {
+export function fixture({ page = 'center', query = '', locale = 'en-PH', fetchImpl, createExport, generateSvg, clipboard, share, loadBrandAsset, preferences, accountId = 21 } = {}) {
   const html = read('public/referral/' + (page === 'kit' ? 'marketing-kit.html' : 'promotion-center.html'));
   const document = new Element('document');
   const elements = new Map(), translatable = [];
@@ -46,10 +46,14 @@ export function fixture({ page = 'center', query = '', locale = 'en-PH', fetchIm
   }
   document.body = new Element('body'); document.body.dataset.promotionPage = page;
   document.documentElement = new Element('html'); document.visibilityState = 'visible';
-  document.createElement = tag => new Element(tag);
+  document.createElement = tag => {
+    const node = new Element(tag);
+    Object.defineProperty(node, 'id', { get() { return node.getAttribute('id') || ''; }, set(value) { node.setAttribute('id', value); elements.set(value, node); } });
+    return node;
+  };
   document.getElementById = id => elements.get(id) || null;
   document.querySelectorAll = selector => selector === '[data-i18n]' ? translatable : [];
-  const values = new Map(), captured = [], downloads = [], requests = [], revoked = [];
+  const values = preferences || new Map(), captured = [], downloads = [], requests = [], revoked = [], artworkLoads = [];
   const runtime = new Element('window');
   let authenticated = true, csrf = 'current-session', objectId = 0;
   const location = new URL('https://caliof.com/referral/' + (page === 'kit' ? 'marketing-kit.html' : 'promotion-center.html') + query);
@@ -65,9 +69,9 @@ export function fixture({ page = 'center', query = '', locale = 'en-PH', fetchIm
       requests.push({ path, init });
       if (fetchImpl) return fetchImpl(path, init);
       const data = String(path).startsWith('/api/me') ? {
-        account: { id: 21, display_name: 'Sample Account', active_role: 'merchant', preferred_locale: locale },
+        account: { id: accountId, display_name: 'Sample Account', active_role: 'merchant', preferred_locale: locale },
         profiles: [{ role: 'merchant', enabled: true }, { role: 'customer', enabled: true }, { role: 'supplier', enabled: false }]
-      } : referral(new URL(path, 'https://caliof.com').searchParams.get('profile'));
+      } : { ...referral(new URL(path, 'https://caliof.com').searchParams.get('profile')), account_id: accountId };
       return { ok: true, status: 200, json: async () => data };
     }
   });
@@ -77,10 +81,19 @@ export function fixture({ page = 'center', query = '', locale = 'en-PH', fetchIm
     captureEvent: async value => { captured.push(value); return true; },
     downloadFile: value => downloads.push(value),
     ...(generateSvg ? { generateSvg } : {}),
-    ...(brandAsset ? { brandAsset, loadBrandAsset } : {})
+    loadBrandAsset: async (asset, selectedLocale) => {
+      artworkLoads.push({ asset, locale: selectedLocale });
+      return loadBrandAsset ? loadBrandAsset(asset, selectedLocale) : { dataUrl: artworkData(asset.id), alt: asset.alt[selectedLocale] };
+    }
   });
-  return { ui, runtime, document, el: id => elements.get(id), values, captured, requests, downloads, revoked, signOut() { authenticated = false; }, changeSession(value) { csrf = value; } };
+  return {
+    ui, runtime, document, el: id => elements.get(id), values, captured, requests, downloads, revoked, artworkLoads,
+    signOut() { authenticated = false; }, changeSession(value) { csrf = value; },
+    changeAccount(id) { accountId = id; csrf = 'session-for-' + id; authenticated = true; },
+    selectArtwork(id) { const input = elements.get('artwork-' + id); input.checked = true; return input.fire('change'); }
+  };
 }
+export function artworkData(id) { return 'data:image/jpeg;base64,' + Buffer.from(id).toString('base64'); }
 export function referral(profile) {
   const code = 'r1_abcdefghijklmnop';
   const referralUrl = 'https://caliof.com/referral/?ref=' + code + '&profile=' + profile + '&utm_campaign=' + profile + '_referral_v1';

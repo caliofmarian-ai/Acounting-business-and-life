@@ -154,7 +154,7 @@ The surface:
 - offers PNG by default, plus JPEG and SVG export, without uploading referral data to Canva, Figma or a third-party QR service;
 - shares a supported rendered file through the device share sheet, with an explicit download fallback;
 - labels browser printing honestly as **Print / Save as PDF**: PDF availability depends on the user's print destination;
-- preserves valid profile, format, language and message choices on reload/navigation, without storing the private referral payload;
+- preserves valid profile, format, language, message and artwork choices on reload/navigation in account-scoped browser preferences, without storing the private referral payload;
 - is linked from `Merchant -> Settings / Profile Settings -> Promotion Center -> Create Marketing Kit`.
 
 An export acknowledgement means the download was started; it is not proof that
@@ -175,11 +175,16 @@ initial language follows the verified account preference unless a valid saved
 tool choice was made. Page language metadata must match the interface language.
 
 Brand imagery:
-- generated artwork concepts are choices until the Owner selects the final direction;
+- the Owner approved all three generated directions on 2026-10-27 and requested that each user can choose;
+- a visual radio-card selector in both Promotion Center and Marketing Kit offers **Local business**, **Community** and **Miniature world**, localized in English/Filipino;
+- the stable artwork IDs are `local-business`, `community` and `miniature`; the default is `local-business`, and invalid IDs cannot supply an arbitrary image URL;
+- the selected ID is retained per account in the current browser and carried through center/kit navigation; it is not a server-synchronized account setting;
+- same-origin JPEG artwork and small uncropped WebP thumbnails are shipped with the application under `/referral/assets/`; the original composition is contained within its reserved panel. JPEG keeps embedded SVG artwork compatible with image engines that cannot decode WebP inside SVG;
 - user-facing headings, invitation URL and QR are rendered by the application,
   not generated inside the artwork;
 - selected artwork must be embedded in self-contained exports and remain clear
   of the QR quiet zone and essential text;
+- a selected image that is loading or failed must not produce a falsely successful blank/different export; retry or choose another image, and ignore late results for an older selection;
 - store/product promotion and platform referral invitations remain distinct.
 
 Automated print preflight:

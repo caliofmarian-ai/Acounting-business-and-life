@@ -93,8 +93,17 @@ public destination.
 The #836 recovery contract is to offer only the account's enabled sharing
 profiles, bind every loaded result to the current account/session/role, and clear
 the previous link and QR while loading or after failure. Interface copy supports
-English and Filipino. Saved tool choices may contain role, format, language and
-message selection; private referral payloads are not persisted as preferences.
+English and Filipino. Saved tool choices may contain role, format, language,
+message and artwork selection; private referral payloads are not persisted as
+preferences. The choices are scoped to the authenticated account in the current
+browser; they are not synchronized across devices.
+
+The Owner approved all three generated brand images on 2026-10-27. Both surfaces
+offer a visual, keyboard-accessible image selector: **Local business**,
+**Community** and **Miniature world**. The chosen image updates the center's
+hero and Marketing Kit design, survives reload/round-trip navigation and is
+embedded in exported files. Artwork is decorative; it does not change the
+referral identity, attribution, permissions or enabled profile.
 
 Share, Copy and Marketing Kit are the primary tasks. If clipboard access fails,
 the user must be able to select the actual public invitation link. The browser's

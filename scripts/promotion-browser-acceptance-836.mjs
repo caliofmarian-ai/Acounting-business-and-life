@@ -1,5 +1,6 @@
 // Real full-gateway/browser acceptance on a disposable loopback CI database.
-// No deployed credentials, request interception, authentication bypass or sends.
+// No deployed credentials, authentication/API interception, auth bypass or sends.
+// One cold-context artwork-only network fault checks honest failure and retry.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -10,6 +11,7 @@ import https from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
+import { PROMOTION_BRAND_ASSETS, DEFAULT_PROMOTION_ARTWORK_ID } from '../public/referral/promotion-brand.js';
 
 const env = process.env;
 const hostname = 'promotion.example.test';
@@ -53,11 +55,20 @@ const edge = https.createServer({ key: readFileSync(join(temporary, 'key.pem')),
 });
 await new Promise(resolve => edge.listen(0, '127.0.0.1', resolve));
 const origin = 'https://' + hostname + ':' + edge.address().port;
-const checks = [], errors = [], externalRequests = [];
+const checks = [], errors = [], externalRequests = [], imageEvidence = [];
 let browser;
 const centerPath = '/referral/promotion-center.html';
 const kitPath = '/referral/marketing-kit.html';
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
+const artworks = PROMOTION_BRAND_ASSETS.map(asset => {
+  const bytes = readFileSync(new URL('../public' + asset.src, import.meta.url));
+  return { ...asset, sha256: hash(bytes), dataUrl: 'data:image/jpeg;base64,' + bytes.toString('base64') };
+});
+const artworkById = id => artworks.find(asset => asset.id === id);
+function embeddedArtwork(source, id) {
+  assert.match(source || '', /^data:image\/jpeg;base64,/, 'Approved artwork is embedded in the output');
+  assert.equal(hash(Buffer.from(source.split(',')[1], 'base64')), artworkById(id).sha256, 'Embedded bytes match selected artwork ' + id);
+}
 async function context() {
   const result = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   result.on('page', page => page.on('pageerror', error => errors.push(error.message)));
@@ -80,14 +91,17 @@ async function actor(label, role, roles, browserContext = null) {
     await pool.query('INSERT INTO profiles(account_id,role,enabled,status,visibility) VALUES($1,$2,$3,$4,\'private\')', [id, profile, enabled, enabled ? 'active' : 'disabled']);
   }
   const ctx = browserContext || await context();
-  const login = await ctx.request.post(origin + '/api/auth/login', { data: { email, password } });
-  assert.equal(login.status(), 200, 'Normal password login for synthetic ' + label);
-  assert.equal((await login.json()).token, undefined, 'Browser login must not return a bearer token');
-  const cookies = await ctx.cookies(origin);
-  const session = cookies.find(item => item.name === '__Host-abl_session');
-  assert.ok(session?.secure && session?.httpOnly && session.sameSite === 'Lax');
-  assert.ok(cookies.some(item => item.name === '__Host-abl_csrf' && item.secure));
-  return { id, context: ctx };
+  async function signIn(targetContext = ctx) {
+    const login = await targetContext.request.post(origin + '/api/auth/login', { data: { email, password } });
+    assert.equal(login.status(), 200, 'Normal password login for synthetic ' + label);
+    assert.equal((await login.json()).token, undefined, 'Browser login must not return a bearer token');
+    const cookies = await targetContext.cookies(origin);
+    const session = cookies.find(item => item.name === '__Host-abl_session');
+    assert.ok(session?.secure && session?.httpOnly && session.sameSite === 'Lax');
+    assert.ok(cookies.some(item => item.name === '__Host-abl_csrf' && item.secure));
+  }
+  await signIn();
+  return { id, context: ctx, signIn };
 }
 async function api(ctx, path, status = 200, options = {}) {
   const csrf = (await ctx.cookies(origin)).find(item => item.name === '__Host-abl_csrf')?.value;
@@ -104,6 +118,63 @@ async function ready(page, kit = false) {
   await page.bringToFront();
   await page.locator(kit ? '#export:not([disabled])' : '#copy:not([disabled])').waitFor();
   if (kit) await page.locator('#preview img').waitFor();
+}
+async function chooseArtwork(page, id, kit = false) {
+  await page.bringToFront();
+  await page.locator('#artworkOptions input[name="artwork"][value="' + id + '"]').check();
+  await ready(page, kit);
+  await page.waitForFunction(({ selected, kitPage }) => {
+    const image = document.querySelector(kitPage ? '#preview img' : '#brandArtwork');
+    return image && !image.hidden && image.dataset.artwork === selected && image.complete && image.naturalWidth > 0;
+  }, { selected: id, kitPage: kit });
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), id);
+  assert.equal(new URL(page.url()).searchParams.get('artwork'), id);
+  assert.equal(await page.locator('#artworkRetry').isVisible(), false);
+  if (!kit) {
+    embeddedArtwork(await page.locator('#brandArtwork').getAttribute('src'), id);
+    assert.equal(await page.locator('#brandArtwork').getAttribute('alt'), artworkById(id).alt[await page.locator('#locale').inputValue()]);
+  }
+}
+async function previewSvg(page) {
+  const source = await page.locator('#preview img').getAttribute('src');
+  return page.evaluate(async url => (await fetch(url)).text(), source);
+}
+async function checkArtworkPixels(page, source, geometry, id, format, template) {
+  assert.ok(geometry.brand, 'Design contains selected artwork');
+  embeddedArtwork(geometry.brand.source, id);
+  assert.equal(geometry.brand.preserveAspectRatio, 'xMidYMid meet', 'Whole approved image remains visible');
+  const scores = await page.evaluate(async ({ source, box, references }) => {
+    const load = async url => { const image = new Image(); image.src = url; await image.decode(); return image; };
+    const output = await load(source);
+    const canvas = document.createElement('canvas'); canvas.width = output.naturalWidth; canvas.height = output.naturalHeight;
+    const drawing = canvas.getContext('2d'); drawing.drawImage(output, 0, 0);
+    const sample = (image, x, y, width, height) => {
+      const target = document.createElement('canvas'); target.width = 48; target.height = 48;
+      const context = target.getContext('2d'); context.drawImage(image, x, y, width, height, 0, 0, 48, 48);
+      return context.getImageData(0, 0, 48, 48).data;
+    };
+    const scaleX = output.naturalWidth / box.canvasWidth, scaleY = output.naturalHeight / box.canvasHeight;
+    const scale = Math.min(box.width / 1536, box.height / 1024);
+    const fitted = { x: box.x + (box.width - 1536 * scale) / 2, y: box.y + (box.height - 1024 * scale) / 2,
+      width: 1536 * scale, height: 1024 * scale };
+    // Compare central image pixels, excluding contain letterboxes and rounded clipping.
+    const actual = sample(canvas, (fitted.x + fitted.width * .2) * scaleX, (fitted.y + fitted.height * .2) * scaleY,
+      fitted.width * .6 * scaleX, fitted.height * .6 * scaleY);
+    const scores = [];
+    for (const reference of references) {
+      const image = await load(reference.dataUrl);
+      if (image.naturalWidth !== 1536 || image.naturalHeight !== 1024) throw new Error('Unexpected source artwork dimensions');
+      const expected = sample(image, 1536 * .2, 1024 * .2, 1536 * .6, 1024 * .6);
+      let difference = 0;
+      for (let i = 0; i < actual.length; i += 4) for (let channel = 0; channel < 3; channel++) difference += Math.abs(actual[i + channel] - expected[i + channel]);
+      scores.push({ id: reference.id, mean_absolute_error: Number((difference / (48 * 48 * 3)).toFixed(3)) });
+    }
+    return scores.sort((a, b) => a.mean_absolute_error - b.mean_absolute_error);
+  }, { source, box: { ...geometry.brand, source: undefined, canvasWidth: geometry.width, canvasHeight: geometry.height },
+    references: artworks.map(asset => ({ id: asset.id, dataUrl: asset.dataUrl })) });
+  assert.equal(scores[0].id, id, 'Rendered pixels match selected artwork: ' + JSON.stringify(scores));
+  assert.ok(scores[0].mean_absolute_error < 20, 'Selected artwork remains recognizable in downloaded pixels: ' + JSON.stringify(scores));
+  imageEvidence.push({ template, artwork: id, format, source_sha256: artworkById(id).sha256, scores });
 }
 async function decodeQr(page, dataUrl, expectedSize, qrBox = null) {
   await page.addScriptTag({ path: env.PROMOTION_QR_SCRIPT });
@@ -144,11 +215,16 @@ async function downloadedSvg(page, svg, width, height, filename) {
       return box.x < -1 || box.y < -1 || box.x + box.width > width + 1 || box.y + box.height > height + 1;
     }).map(node => node.getAttribute('data-text-role'));
     const qr = svg.querySelector('[data-image-role="qr"]');
+    const brand = svg.querySelector('[data-image-role="brand"]');
     return { width, height, clipped, qr: Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, Number(qr.getAttribute(key))])),
+      brand: brand ? { ...Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, Number(brand.getAttribute(key))])),
+        source: brand.getAttribute('href'), preserveAspectRatio: brand.getAttribute('preserveAspectRatio') } : null,
+      externalImages: [...svg.querySelectorAll('image')].filter(node => !/^data:image\/(?:png|jpeg|webp);base64,/.test(node.getAttribute('href') || '')).length,
       links: [...svg.querySelectorAll('a')].map(node => node.getAttribute('href')) };
   });
   assert.equal(metrics.width, width); assert.equal(metrics.height, height);
   assert.deepEqual(metrics.clipped, [], 'Actual browser SVG text geometry remains inside the design');
+  assert.equal(metrics.externalImages, 0, 'Downloaded SVG contains its images without external dependencies');
   assert.ok(metrics.qr.x >= 0 && metrics.qr.y >= 0 && metrics.qr.x + metrics.qr.width <= width && metrics.qr.y + metrics.qr.height <= height);
   await page.screenshot({ path: join(evidence, filename), fullPage: true });
   return { ...metrics, qr: { ...metrics.qr, canvasWidth: width, canvasHeight: height } };
@@ -158,12 +234,15 @@ try {
   const guest = await context();
   const health = await api(guest, '/health');
   assert.equal(health.deployment?.revision, revision.slice(0, 12), 'Gateway serves the exact tested revision');
-  for (const asset of [centerPath, kitPath, '/referral/promotion-page.js', '/referral/promotion-ui-core.js', '/referral/promotion-export.js', '/referral/marketing-kit-runtime.js', '/referral/promotion-copy.js', '/referral/promotion.css', '/referral/promotion-brand.js']) {
+  assert.deepEqual(artworks.map(asset => asset.id), ['local-business', 'community', 'miniature']);
+  assert.equal(DEFAULT_PROMOTION_ARTWORK_ID, 'local-business');
+  for (const asset of [centerPath, kitPath, '/referral/promotion-page.js', '/referral/promotion-ui-core.js', '/referral/promotion-export.js', '/referral/marketing-kit-runtime.js', '/referral/promotion-copy.js', '/referral/promotion.css', '/referral/promotion-brand.js',
+    ...artworks.flatMap(asset => [asset.src, asset.thumbnail])]) {
     const response = await guest.request.get(origin + asset);
     assert.equal(response.status(), 200);
     assert.equal(hash(await response.body()), hash(readFileSync(new URL('../public' + asset, import.meta.url))), 'Exact served asset: ' + asset);
   }
-  checks.push('Exact source revision and actual served Promotion Center/Marketing Kit modules');
+  checks.push('Exact source revision and served page/catalog/full-artwork/thumbnail byte parity');
   await api(guest, '/api/growth/referral?profile=merchant', 401);
   const page = await guest.newPage();
   await page.goto(origin + centerPath);
@@ -200,6 +279,25 @@ try {
   assert.equal((await api(guest, '/api/me')).account.active_role, 'merchant', 'Sharing role does not change active account profile');
   await page.locator('#role').selectOption('merchant'); await ready(page);
   await page.locator('#locale').selectOption('en-PH');
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), DEFAULT_PROMOTION_ARTWORK_ID);
+  assert.deepEqual(await page.locator('#artworkOptions input[name="artwork"]').evaluateAll(nodes => nodes.map(node => node.value)), artworks.map(asset => asset.id));
+  await page.waitForFunction(() => [...document.querySelectorAll('#artworkOptions img')].length === 3
+    && [...document.querySelectorAll('#artworkOptions img')].every(image => image.complete && image.naturalWidth === 360 && image.naturalHeight === 240));
+  assert.deepEqual(await page.locator('#artworkOptions img').evaluateAll(nodes => nodes.map(node => new URL(node.src).pathname)), artworks.map(asset => asset.thumbnail));
+  for (const asset of artworks) {
+    await chooseArtwork(page, asset.id);
+    assert.equal(await page.locator('#referralUrl').inputValue(), referral.referralUrl, 'Artwork choice preserves the account invitation');
+    await page.screenshot({ path: join(evidence, 'center-' + asset.id + '.png'), fullPage: true });
+  }
+  await page.locator('#artworkOptions input[value="local-business"]').focus();
+  await page.locator('#artworkOptions input[value="local-business"]').press('ArrowRight');
+  assert.ok(await page.locator('#artworkOptions input[value="community"]').isChecked());
+  await chooseArtwork(page, 'community');
+  await page.locator('#artworkOptions input[value="miniature"]').focus();
+  await page.locator('#artworkOptions input[value="miniature"]').press('Space');
+  assert.ok(await page.locator('#artworkOptions input[value="miniature"]').isChecked());
+  await chooseArtwork(page, 'miniature');
+  checks.push('All three visual artwork choices load the correct original image, with working native ArrowRight/Space radio controls');
   await fits(page, '390px Promotion Center has no horizontal overflow');
   await page.screenshot({ path: join(evidence, 'center-mobile.png'), fullPage: true });
   checks.push('Signed-out recovery, real secure-cookie login, account binding, enabled roles, role negatives and stable personal QR');
@@ -208,27 +306,32 @@ try {
   assert.equal(await page.locator('#role').inputValue(), 'merchant');
   await page.locator('#template').selectOption('A4_REFERRAL_POSTER_V1'); await ready(page, true);
   const artifact = await guest.newPage();
-  let a4Geometry;
-  for (const format of ['svg', 'png', 'jpg']) {
-    await page.bringToFront();
-    await page.locator('#format').selectOption(format); await ready(page, true);
-    const pending = page.waitForEvent('download'); await page.locator('#export').click();
-    const download = await pending;
-    assert.ok(download.suggestedFilename().endsWith('-en-ph-' + originalCode + '.' + format));
-    const file = join(evidence, 'a4-en.' + format); await download.saveAs(file);
-    assert.equal(await download.failure(), null);
-    const bytes = readFileSync(file);
-    if (format === 'svg') {
-      assert.ok(bytes.toString('utf8').startsWith('<svg'));
-      a4Geometry = await downloadedSvg(artifact, bytes.toString('utf8'), 794, 1123, 'a4-native.png');
-      assert.deepEqual(a4Geometry.links, [referral.referralUrl, referral.referralUrl]);
-    } else if (format === 'png') assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
-    else assert.equal(bytes.subarray(0, 3).toString('hex'), 'ffd8ff');
-    const mime = format === 'svg' ? 'image/svg+xml' : format === 'png' ? 'image/png' : 'image/jpeg';
-    const decoded = await decodeQr(artifact, 'data:' + mime + ';base64,' + bytes.toString('base64'), format === 'svg' ? { width: 794, height: 1123 } : { width: 2480, height: 3508 }, a4Geometry.qr);
-    assert.equal(decoded.payload, expectedQr, format + ' downloaded pixels preserve the exact QR referral URL and scan marker');
+  for (const asset of artworks) {
+    await chooseArtwork(page, asset.id, true);
+    let a4Geometry;
+    for (const format of ['svg', 'png', 'jpg']) {
+      await page.bringToFront();
+      await page.locator('#format').selectOption(format); await ready(page, true);
+      const pending = page.waitForEvent('download'); await page.locator('#export').click();
+      const download = await pending;
+      assert.ok(download.suggestedFilename().endsWith('-en-ph-' + originalCode + '.' + format));
+      const file = join(evidence, 'a4-' + asset.id + '-en.' + format); await download.saveAs(file);
+      assert.equal(await download.failure(), null);
+      const bytes = readFileSync(file);
+      if (format === 'svg') {
+        assert.ok(bytes.toString('utf8').startsWith('<svg'));
+        a4Geometry = await downloadedSvg(artifact, bytes.toString('utf8'), 794, 1123, 'a4-' + asset.id + '-native.png');
+        assert.deepEqual(a4Geometry.links, [referral.referralUrl, referral.referralUrl]);
+      } else if (format === 'png') assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+      else assert.equal(bytes.subarray(0, 3).toString('hex'), 'ffd8ff');
+      const mime = format === 'svg' ? 'image/svg+xml' : format === 'png' ? 'image/png' : 'image/jpeg';
+      const dataUrl = 'data:' + mime + ';base64,' + bytes.toString('base64');
+      const decoded = await decodeQr(artifact, dataUrl, format === 'svg' ? { width: 794, height: 1123 } : { width: 2480, height: 3508 }, a4Geometry.qr);
+      assert.equal(decoded.payload, expectedQr, format + ' downloaded pixels preserve the exact QR referral URL and scan marker');
+      await checkArtworkPixels(artifact, dataUrl, a4Geometry, asset.id, format, 'A4_REFERRAL_POSTER_V1');
+    }
   }
-  checks.push('Real SVG/PNG/JPEG downloads decode at native A4 dimensions, preserve complete links and scan to the actual personal invitation');
+  checks.push('Each approved image appears in real self-contained A4 SVG/PNG/JPEG downloads, with native dimensions, matching image pixels and exact personal QR');
   await ready(page, true);
   await fits(page, '390px A4 Marketing Kit has no horizontal overflow');
   await page.screenshot({ path: join(evidence, 'kit-mobile.png'), fullPage: true });
@@ -253,23 +356,68 @@ try {
   await page.locator('#template').selectOption('STORY_REFERRAL_V1'); await ready(page, true);
   await page.locator('#variant').selectOption('money_visibility_v1'); await ready(page, true);
   await page.locator('#format').selectOption('png'); await ready(page, true);
+  for (const asset of artworks) {
+    await chooseArtwork(page, asset.id, true);
+    const storySvg = await previewSvg(page);
+    const storyGeometry = await downloadedSvg(artifact, storySvg, 1080, 1920, 'story-' + asset.id + '-filipino-native.png');
+    assert.deepEqual(storyGeometry.links, [referral.referralUrl, referral.referralUrl]);
+    await ready(page, true);
+    const pending = page.waitForEvent('download'); await page.locator('#export').click();
+    const download = await pending, file = join(evidence, 'story-' + asset.id + '-filipino.png');
+    assert.ok(download.suggestedFilename().endsWith('-fil-ph-' + originalCode + '.png'));
+    await download.saveAs(file); assert.equal(await download.failure(), null);
+    const source = 'data:image/png;base64,' + readFileSync(file).toString('base64');
+    assert.equal((await decodeQr(artifact, source, { width: 1080, height: 1920 }, storyGeometry.qr)).payload, expectedQr);
+    await checkArtworkPixels(artifact, source, storyGeometry, asset.id, 'png', 'STORY_REFERRAL_V1');
+  }
+  await ready(page, true);
   await page.reload(); await ready(page, true);
   for (const [id, expected] of [['locale', 'fil-PH'], ['template', 'STORY_REFERRAL_V1'], ['variant', 'money_visibility_v1'], ['format', 'png'], ['role', 'merchant']]) assert.equal(await page.locator('#' + id).inputValue(), expected);
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), 'miniature');
   assert.equal(await page.locator('html').getAttribute('lang'), 'fil-PH');
-  const storySource = await page.locator('#preview img').getAttribute('src');
-  const storySvg = await page.evaluate(async source => (await fetch(source)).text(), storySource);
-  const storyGeometry = await downloadedSvg(artifact, storySvg, 1080, 1920, 'story-filipino-native.png');
-  assert.deepEqual(storyGeometry.links, [referral.referralUrl, referral.referralUrl]);
-  await ready(page, true);
   await page.locator('#back').click(); await ready(page);
   assert.equal(new URL(page.url()).searchParams.get('template'), 'STORY_REFERRAL_V1');
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), 'miniature');
+  await chooseArtwork(page, 'miniature');
   await page.locator('#marketingKit').click(); await ready(page, true);
   assert.equal(await page.locator('#variant').inputValue(), 'money_visibility_v1');
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), 'miniature');
   await fits(page, '390px Filipino Story has no horizontal overflow');
   await page.setViewportSize({ width: 1280, height: 900 }); await fits(page, 'Desktop Marketing Kit has no horizontal overflow');
   await page.screenshot({ path: join(evidence, 'kit-desktop-filipino.png'), fullPage: true });
-  checks.push('Filipino Story native text bounds, account-scoped language/design persistence, reload and round-trip navigation');
+  checks.push('All three Filipino Story images render and download with correct pixels/QR; selected artwork, language and design survive reload and center/kit navigation');
   await artifact.close();
+
+  // Fresh browser context has no successful artwork cache. Intercept only the
+  // selected image; authentication, account/referral APIs and recovery stay real.
+  const failureContext = await context();
+  await merchant.signIn(failureContext);
+  const failingAsset = origin + artworkById('community').src;
+  let failedImageRequests = 0;
+  const failImage = async route => { failedImageRequests += 1; await route.abort('failed'); };
+  await failureContext.route(failingAsset, failImage);
+  const failurePage = await failureContext.newPage();
+  await failurePage.goto(origin + centerPath + '?profile=merchant&locale=en-PH&artwork=community');
+  await ready(failurePage);
+  await failurePage.locator('#artworkRetry').waitFor({ state: 'visible' });
+  assert.equal(await failurePage.locator('#brandArtwork').isVisible(), false);
+  assert.equal(await failurePage.locator('#brandArtwork').getAttribute('src'), null);
+  assert.ok((await failurePage.locator('#artworkStatus').innerText()).trim().length > 0);
+  assert.equal(await failurePage.locator('#referralUrl').inputValue(), referral.referralUrl, 'Artwork failure leaves the verified invitation usable');
+  await failurePage.locator('#marketingKit').click();
+  await failurePage.locator('#artworkRetry').waitFor({ state: 'visible' });
+  for (const id of ['export', 'share', 'print']) assert.ok(await failurePage.locator('#' + id).isDisabled(), 'Failed selected artwork blocks ' + id);
+  assert.equal(await failurePage.locator('#preview img').count(), 0, 'Failure cannot leave an old design as the chosen preview');
+  assert.ok(failedImageRequests >= 2, 'Both cold page loaders actually encountered the simulated image failure');
+  await failurePage.screenshot({ path: join(evidence, 'artwork-unavailable.png'), fullPage: true });
+  await failureContext.unroute(failingAsset, failImage);
+  await failurePage.locator('#artworkRetry').click();
+  await chooseArtwork(failurePage, 'community', true);
+  const recoveredSvg = await previewSvg(failurePage);
+  const recoveredImage = await failurePage.evaluate(svg => new DOMParser().parseFromString(svg, 'image/svg+xml').querySelector('[data-image-role="brand"]')?.getAttribute('href'), recoveredSvg);
+  embeddedArtwork(recoveredImage, 'community');
+  await failureContext.close();
+  checks.push('Cold-context image-only failure is explicit: center keeps its verified link, kit clears preview/blocks exports, and real retry recovers the selected artwork');
 
   const landing = await guest.newPage();
   const landingEvent = landing.waitForResponse(response => new URL(response.url()).pathname === '/api/growth/referral-analytics/public'
@@ -288,6 +436,25 @@ try {
   await landing.close();
   checks.push('Signed-in public referral landing passes CSRF while telemetry delivery remains disabled');
 
+  // Normal logins in the same context retain localStorage, exposing accidental
+  // account-global artwork preferences rather than masking them with new storage.
+  await api(guest, '/api/auth/logout', 200, { method: 'POST', data: {} });
+  await customer.signIn(guest);
+  await page.goto(origin + centerPath); await ready(page);
+  assert.equal(Number((await api(guest, '/api/me')).account.id), customer.id);
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), DEFAULT_PROMOTION_ARTWORK_ID, 'Other account must not inherit Merchant artwork');
+  await chooseArtwork(page, 'community');
+  await page.reload(); await ready(page);
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), 'community');
+  await api(guest, '/api/auth/logout', 200, { method: 'POST', data: {} });
+  await merchant.signIn(guest);
+  await page.goto(origin + centerPath); await ready(page);
+  assert.equal(Number((await api(guest, '/api/me')).account.id), merchant.id);
+  assert.equal(await page.locator('#artworkOptions input:checked').inputValue(), 'miniature', 'Merchant keeps its own browser-local artwork preference');
+  await chooseArtwork(page, 'miniature');
+  assert.equal(await page.locator('#referralUrl').inputValue(), referral.referralUrl);
+  checks.push('Artwork preferences remain separate across two normal-login accounts sharing the same browser storage');
+
   const customerPage = await customer.context.newPage(); await customerPage.goto(origin + centerPath); await ready(customerPage);
   assert.deepEqual(await customerPage.locator('#role option').evaluateAll(nodes => nodes.map(node => node.value)), ['customer']);
   assert.notEqual(await customerPage.locator('#referralCode').innerText(), originalCode);
@@ -298,11 +465,11 @@ try {
   checks.push('Second account has its own referral and enabled role; logout removes private invitation and revokes API access');
   assert.deepEqual(errors, [], 'No browser application exceptions');
   assert.deepEqual(externalRequests, [], 'No outbound browser asset, provider or sharing request');
-  const result = { status: 'PASS', revision, served_revision: health.deployment.revision, browser_version: browser.version(), checks,
-    scope: 'Real canonical gateway/PostgreSQL and normal password/cookie/CSRF flows on disposable loopback CI. Download pixels and browser-generated PDF verified. Not Railway Preview, Production, physical Android or physical print acceptance.' };
+  const result = { status: 'PASS', revision, served_revision: health.deployment.revision, browser_version: browser.version(), checks, image_evidence: imageEvidence,
+    scope: 'Real canonical gateway/PostgreSQL and normal password/cookie/CSRF flows on disposable loopback CI. Three artwork choices, exact served/embedded bytes, raster image pixels, QR payloads, browser-local per-account preferences and browser PDF verified. Failure recovery uses image-only network fault injection; auth/APIs remain real. Not cross-device preference sync, Railway Preview, Production, physical Android or physical print acceptance.' };
   writeFileSync(join(evidence, 'result.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result, null, 2));
 } catch (error) {
-  writeFileSync(join(evidence, 'result.json'), JSON.stringify({ status: 'FAIL', revision, checks, error: error.message }, null, 2));
+  writeFileSync(join(evidence, 'result.json'), JSON.stringify({ status: 'FAIL', revision, checks, image_evidence: imageEvidence, error: error.message }, null, 2));
   throw error;
 } finally {
   await browser?.close(); edge.closeAllConnections(); await new Promise(resolve => edge.close(resolve));

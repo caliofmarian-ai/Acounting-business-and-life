@@ -14,7 +14,6 @@
     <p class="eyebrow" data-i18n="inviteShare">INVITE &amp; SHARE</p>
     <h1 id="pageTitle" data-i18n="promotionTitle">Promotion Center</h1>
     <p class="lead" data-i18n="promotionIntro">Invite people to Business &amp; Life with your personal link or QR code.</p>
-    <img id="brandArtwork" class="heroArtwork" hidden alt="">
     <section id="signin" class="signin" hidden aria-labelledby="signInTitle">
       <h2 id="signInTitle" data-i18n="signInTitle">Sign in to continue</h2>
       <p data-i18n="signInBody">Open Business &amp; Life and sign in to load your own invitation. Then return here.</p>
@@ -25,6 +24,14 @@
       <div class="field"><label for="role" data-i18n="profileLabel">Sharing profile</label><select id="role" disabled><option value="" data-i18n="loading">Loading…</option></select></div>
       <div class="field"><label for="locale" data-i18n="languageLabel">Language</label><select id="locale"><option value="en-PH">English (Philippines)</option><option value="fil-PH">Filipino / Tagalog</option></select></div>
     </div>
+    <fieldset class="artworkPicker" aria-describedby="artworkHelp artworkStatus">
+      <legend data-i18n="artworkLabel">Choose your artwork</legend>
+      <p id="artworkHelp" class="small" data-i18n="artworkHelp">This image appears in your Marketing Kit design. Share invitation sends your link.</p>
+      <div id="artworkOptions" class="artworkOptions"></div>
+      <p id="artworkStatus" class="small artworkStatus" role="status" aria-live="polite" data-i18n="artworkWaiting">Your artwork will load with your verified invitation.</p>
+      <button id="artworkRetry" class="button artworkRetry" type="button" hidden data-i18n="artworkRetry">Try artwork again</button>
+    </fieldset>
+    <img id="brandArtwork" class="heroArtwork" hidden alt="">
     <div class="identityGrid">
       <div>
         <div class="identity">
