@@ -27,7 +27,7 @@ test('embedded account identity success and errors all have private no-store hea
 
 test('real Express conditional identity requests return current 200, never stale 304',async t=>{
   const app=express();
-  const paths=['/api/me','/api/admin/me','/api/session/bootstrap'];
+  const paths=['/api/me','/api/admin/me','/api/session/bootstrap','/api/auth/session/identity'];
   for(const path of paths){
     app.get(path,markPrivateIdentity,(req,res)=>{
       if(req.headers.authorization!=='Bearer synthetic')return res.status(401).json({error:'Unauthorized'});
@@ -63,6 +63,9 @@ test('canonical routes keep authorization and enforce cache middleware before au
   const auth=read('server-auth.js');
   const admin=read('server-admin-operations.js');
   assert.ok(auth.includes("app.get('/api/me',markPrivateIdentity, auth,"));
+  // The direct Express identity route must match the embedded Fetch no-store policy.
+  assert.match(auth,/app\.get\('\/api\/auth\/session\/identity',markPrivateIdentity,auth,\(req,res\)=>\{\s*sendPrivateIdentityJson\(res,\{account_id:Number\(req\.accountId\)\}\);\s*\}\);/);
+  assert.doesNotMatch(auth,/app\.get\('\/api\/auth\/session\/identity',\s*auth,/);
   assert.ok(auth.includes('sendPrivateIdentityJson(res,await profileSnapshot(req.accountId))'));
   const start=auth.indexOf("if((pathname==='/api/me'||pathname==='/api/auth/session/identity')");
   const end=auth.indexOf('if(isAccountAuthOwnedPath',start);

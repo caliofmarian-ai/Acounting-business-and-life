@@ -845,9 +845,8 @@ app.post('/api/auth/password', body, auth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-app.get('/api/auth/session/identity', auth, (req,res)=>{
-  res.set('Cache-Control','private, no-store, max-age=0');
-  res.json({account_id:Number(req.accountId)});
+app.get('/api/auth/session/identity',markPrivateIdentity,auth,(req,res)=>{
+  sendPrivateIdentityJson(res,{account_id:Number(req.accountId)});
 });
 
 app.get('/api/me',markPrivateIdentity, auth, async (req, res, next) => { try { sendPrivateIdentityJson(res,await profileSnapshot(req.accountId)); } catch (err) { next(err); } });
