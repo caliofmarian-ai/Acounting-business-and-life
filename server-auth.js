@@ -460,6 +460,7 @@ function injectedIndex() {
 
 app.get('/', (_req, res) => res.type('html').send(injectedIndex()));
 app.get('/index.html', (_req, res) => res.type('html').send(injectedIndex()));
+app.get(['/referral', '/referral/'], (_req, res) => res.sendFile(join(publicDir, 'referral', 'index.html')));
 app.use(express.static(publicDir, { index: false }));
 
 app.get('/health',async(req,res)=>{

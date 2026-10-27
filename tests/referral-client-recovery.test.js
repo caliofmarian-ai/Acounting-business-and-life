@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
+import express from 'express';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const analyticsSource = read('public/referral/referral-analytics.js').replace(/^export /gm, '');
@@ -72,6 +75,39 @@ test('public referral landing loads shared session security before sending signe
     assert.equal(request.options.headers.has('Authorization'), false);
     assert.equal(request.options.credentials, 'same-origin');
     assert.equal(JSON.parse(request.options.body).referral_code, sampleEvent.referralCode);
+  }
+});
+
+test('canonical public referral paths serve the actual invitation through Express', async t => {
+  const source = read('server-auth.js');
+  const start = source.indexOf("app.get('/',");
+  const end = source.indexOf("app.get('/health',", start);
+  assert.ok(start >= 0 && end > start, 'actual public route registration block exists');
+  const app = express();
+  vm.runInNewContext(source.slice(start, end), {
+    app, express, join,
+    publicDir: fileURLToPath(new URL('../public/', import.meta.url)),
+    injectedIndex: () => { throw new Error('Invitation must not fall back to the account shell'); }
+  });
+  const server = await new Promise((resolve, reject) => {
+    const listening = app.listen(0, '127.0.0.1', error => error ? reject(error) : resolve(listening));
+  });
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  try {
+    for (const path of ['/referral', '/referral/', '/referral/index.html']) {
+      await t.test(path, async () => {
+        const response = await fetch(origin + path + '?ref=' + sampleEvent.referralCode + '&profile=merchant', { redirect: 'manual' });
+        assert.equal(response.status, 200, path + ' must directly serve the public invitation without credentials');
+        assert.match(response.headers.get('content-type'), /^text\/html\b/);
+        assert.equal(await response.text(), landing, 'canonical route serves the actual landing and session-security bootstrap');
+      });
+    }
+    const missing = await fetch(origin + '/referral/not-an-invitation-route', { redirect: 'manual' });
+    assert.equal(missing.status, 404, 'public entry must not turn arbitrary paths into invitation pages');
+    await missing.text();
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
   }
 });
 

@@ -82,9 +82,10 @@ test('image decode failure and abort reject instead of displaying a broken previ
 });
 
 test('print document preserves exact A4/A5 paper size, escaped labels and a working close script', () => {
-  for (const [templateId, size] of [['A4_REFERRAL_POSTER_V1', '210mm 297mm'], ['A5_REFERRAL_FLYER_V1', '148mm 210mm']]) {
+  for (const [templateId, size, visibleSize] of [['A4_REFERRAL_POSTER_V1', '210mm 297mm', '210 × 297 mm'], ['A5_REFERRAL_FLYER_V1', '148mm 210mm', '148 × 210 mm']]) {
     const html = promotionPrintDocument({ svg, templateId, locale: 'fil-PH', title: '<Print & share>', help: 'Use "Save as PDF"', action: 'Print', close: 'Close' });
     assert.ok(html.includes('@page{size:' + size + ';margin:0}'));
+    assert.ok(html.includes('<p class="paperSize">' + visibleSize + '</p>'), 'the print window shows its actual paper dimensions');
     assert.ok(html.includes('<title>&lt;Print &amp; share&gt;</title>'));
     assert.ok(html.includes('</script></body></html>'));
     assert.ok(html.includes('window.print()'));

@@ -273,9 +273,15 @@ try {
 
   const landing = await guest.newPage();
   const landingEvent = landing.waitForResponse(response => new URL(response.url()).pathname === '/api/growth/referral-analytics/public'
-    && response.request().postDataJSON()?.event === 'referral_landing_viewed');
-  await landing.goto(referral.referralUrl);
-  const accepted = await landingEvent;
+    && response.request().postDataJSON()?.event === 'referral_landing_viewed')
+    .then(response => ({ response }), error => ({ error }));
+  const landingResponse = await landing.goto(referral.referralUrl);
+  assert.equal(landingResponse?.status(), 200, 'Canonical invitation URL must serve its public landing');
+  await landing.locator('#referralCode').waitFor({ state: 'visible' });
+  assert.equal(await landing.locator('#referralCode').innerText(), originalCode, 'Public landing displays the actual invitation code');
+  const event = await landingEvent;
+  if (event.error) throw event.error;
+  const accepted = event.response;
   assert.equal(accepted.status(), 202, 'Signed-in public landing includes the real CSRF header');
   const acceptance = await accepted.json();
   assert.equal(acceptance.accepted, true); assert.equal(acceptance.delivered, false); assert.equal(acceptance.reason, 'disabled');
