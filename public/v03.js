@@ -266,22 +266,115 @@ function stockPurchasePreview(){
   out.innerHTML=`Stored as <strong>${num(x.qty,4)} ${esc(x.base)}</strong> • calculated cost <strong>${money(unitCost)} / ${esc(x.base)}</strong> • notify below <strong>${num(alert,4)} ${esc(levelUnit)}</strong> • target <strong>${num(target,4)} ${esc(levelUnit)}</strong>`;
 }
 const esc = (v='') => String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const cacheKey = (key) => `abl_cache_${key}`;
+// Sensitive read evidence is page-local; legacy unscoped browser storage is never trusted.
+let merchantReadGeneration=0;
+let merchantReadLastContext=null;
+const merchantReadCache=new Map(),merchantReadRequests=new Map();
+function clearLegacyMerchantCache(){
+  try{for(let n=localStorage.length-1;n>=0;n--){const key=localStorage.key(n);if(key?.startsWith('abl_cache_'))localStorage.removeItem(key)}}catch{}
+}
+function merchantReadContext(){
+  const state=window.BusinessLifeProfileState,accounting=window.BusinessLifeAccounting?.getState?.();
+  const accountId=Number(state?.accountId??state?.snapshot?.account?.id);
+  // Compare the readable marker only in memory; never serialize it or use it as a cache key.
+  const session=String(document.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('__Host-abl_csrf='))?.slice(16)||'';
+  if(!window.ABLSession?.authenticated()||!session||state?.surface!=='profile'||state.activeRole!=='merchant'||!Number.isSafeInteger(accountId)||accountId<1)return null;
+  const id=Number(accounting?.activeBusinessId);
+  const businessId=accounting?.role==='merchant'&&Number.isSafeInteger(id)&&id>0
+    &&accounting.businesses?.some(b=>Number(b.id)===id)?id:null;
+  return{accountId,businessId,session,profileEpoch:state.navigationEpoch,generation:merchantReadGeneration};
+}
+function sameMerchantReadIdentity(a,b){return Boolean(a&&b&&a.accountId===b.accountId&&a.session===b.session&&a.profileEpoch===b.profileEpoch)}
+function staleMerchantRead(){return Object.assign(new Error('The Merchant context changed. Open this section again.'),{staleMerchantRead:true})}
+function invalidateMerchantReads(){
+  merchantReadGeneration+=1;merchantReadCache.clear();merchantReadRequests.clear();
+  merchantReadLastContext=merchantReadContext();
+  inventoryLoadGeneration+=1;inventory=[];products=[];transactions=[];restockSuggestions=[];stockAdjustmentLots=[];
+  for(const id of ['recentList','historyList','productList','productSaleList','remittanceList','profit7List','profit30List','analysis7','analysis30'])$(id)?.replaceChildren();
+  for(const id of ['availableTotal','todaySales','todayProfit','bizExpenses','personalWithdrawals','moneyReceived','remittanceReceived','acctCash','acctGcash','acctBank','acctOther','dayStatusDate','openingCashShown','expectedCashShown','openResult','closeResult','profit7Totals','profit30Totals','analysis7Totals','analysis30Totals']){if($(id))$(id).textContent='Not loaded'}
+  for(const id of ['budgetPersonalDaily','budgetPersonalWeekly','budgetBusinessDaily','budgetMinimum']){if($(id))$(id).value=''}
+  inventoryLocationUi.reset();inventoryCountUi?.reset();inventoryScanUi.reset();
+  inventoryReadState('idle');
+}
+function reconcileMerchantReads(){
+  const next=merchantReadContext(),previous=merchantReadLastContext;
+  if(previous&&(!sameMerchantReadIdentity(previous,next)||(previous.businessId!==null&&previous.businessId!==next?.businessId)))invalidateMerchantReads();
+  merchantReadLastContext=merchantReadContext();
+}
+function captureMerchantRead(){reconcileMerchantReads();const context=merchantReadContext();if(!context)throw staleMerchantRead();return context}
+function merchantReadIsCurrent(context){
+  const current=merchantReadContext();
+  return sameMerchantReadIdentity(context,current)&&context.generation===merchantReadGeneration
+    &&(context.businessId===null||context.businessId===current.businessId);
+}
+function merchantReadGuard(){const context=merchantReadContext();return()=>merchantReadIsCurrent(context)}
+clearLegacyMerchantCache();
 
-function setOnline(ok){const el=$('onlineState');if(!el)return;el.textContent=ok?'Online':'Offline';el.classList.toggle('offline',!ok)}
-async function api(path,options={}){
+function setOnline(ok){
+  if(!ok){
+    const confirmed=inventoryConfirmedContext;
+    inventoryConfirmedContext=null;
+    if(confirmed&&merchantReadIsCurrent(confirmed)){
+      const cached=merchantReadCache.get('inventory');
+      const namespace=[confirmed.accountId,'merchant',confirmed.businessId,confirmed.generation].join(':');
+      inventoryReadState(cached?.namespace===namespace?'cached':'error',{savedAt:cached?.savedAt,error:new Error('Connect and retry before changing stock.')});
+    }
+  }
+  const el=$('onlineState');if(!el)return;el.textContent=ok?'Online':'Offline';el.classList.toggle('offline',!ok);
+}
+async function api(path,options={},{isCurrent=()=>true}={}){
+  const method=String(options.method||'GET').toUpperCase();
+  if(!['GET','HEAD'].includes(method)&&(path.startsWith('/api/inventory')||path==='/api/product-sales')
+    &&(!inventoryConfirmedContext||!merchantReadIsCurrent(inventoryConfirmedContext)))throw new Error('Reload Inventory online before changing stock.');
   const headers={'Content-Type':'application/json',...(options.headers||{})};
   try{
-    const r=await fetch(path,{...options,headers});
+    let r;
+    try{r=await fetch(path,{...options,headers})}catch(error){
+      if(error?.name==='TypeError')throw Object.assign(new Error('Connection unavailable. Check your connection and try again.'),{merchantTransportFailure:true});
+      throw error;
+    }
+    if(!isCurrent())throw staleMerchantRead();
     if(r.status===401){logout();const e=new Error('Please log in again.');e.status=401;throw e}
-    if(!r.ok){const body=await r.json().catch(()=>({error:'Request failed'}));const e=new Error(body.error||'Request failed');e.status=r.status;e.data=body;throw e}
-    setOnline(true);return r.headers.get('content-type')?.includes('application/json')?r.json():r.text();
-  }catch(e){if(!e.status)setOnline(false);throw e}
+    if(!r.ok){
+      const body=await r.json().catch(()=>({error:'Request failed'}));
+      if(!isCurrent())throw staleMerchantRead();
+      const e=new Error(body.error||'Request failed');e.status=r.status;e.data=body;throw e;
+    }
+    const data=await(r.headers.get('content-type')?.includes('application/json')?r.json():r.text());
+    if(!isCurrent())throw staleMerchantRead();
+    setOnline(true);return data;
+  }catch(e){if(!isCurrent())throw staleMerchantRead();if(e.merchantTransportFailure)setOnline(false);throw e}
 }
-async function cachedJson(path,key){try{const data=await api(path);localStorage.setItem(cacheKey(key),JSON.stringify(data));return data}catch(e){if(e.status===401)throw e;const cached=localStorage.getItem(cacheKey(key));if(cached)return JSON.parse(cached);throw e}}
+async function cachedJson(path,key,{offline=false,onCache=()=>{}}={}){
+  const context=captureMerchantRead(),request=(merchantReadRequests.get(key)||0)+1;
+  merchantReadRequests.set(key,request);
+  const current=()=>merchantReadIsCurrent(context)&&merchantReadRequests.get(key)===request;
+  const namespace=context.businessId===null?null:[context.accountId,'merchant',context.businessId,context.generation].join(':');
+  try{
+    const data=await api(path,{},{isCurrent:current});
+    if(!current())throw staleMerchantRead();
+    const hydratedBusiness=merchantReadContext()?.businessId;
+    if(context.businessId===null&&hydratedBusiness!==null){
+      const responseBusiness=Number(data?.business?.id??data?.business_id);
+      const matchingRows=Array.isArray(data)&&data.length>0&&data.every(row=>Number(row.business_id)===hydratedBusiness);
+      if(responseBusiness!==hydratedBusiness&&!matchingRows)return cachedJson(path,key,{offline,onCache});
+    }
+    if(key==='inventory'&&context.businessId!==null&&(!Array.isArray(data)||data.some(row=>Number(row.business_id)!==context.businessId)))throw Object.assign(new Error('Inventory does not match the current business. Try again.'),{status:409});
+    if(offline&&namespace)merchantReadCache.set(key,{namespace,data:JSON.parse(JSON.stringify(data)),savedAt:Date.now()});
+    return data;
+  }catch(error){
+    if(!current())throw staleMerchantRead();
+    // HTTP errors (including 401/403/409/5xx) and parse errors are never offline evidence.
+    const transportFailure=error?.merchantTransportFailure===true&&!error.status;
+    const cached=offline&&transportFailure&&namespace?merchantReadCache.get(key):null;
+    if(!cached||cached.namespace!==namespace){if(error.status)merchantReadCache.delete(key);throw error}
+    onCache(cached.savedAt);
+    return JSON.parse(JSON.stringify(cached.data));
+  }
+}
 let baseActiveRole=window.BusinessLifeProfileState?.activeRole||null;
 function isMerchantBaseActive(){return baseActiveRole==='merchant'}
-function logout(){token=false;baseActiveRole=null;invalidateMerchantToday();window.ABLSession?.clearReadableSession();$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
+function logout(){invalidateMerchantReads();token=false;baseActiveRole=null;invalidateMerchantToday();window.ABLSession?.clearReadableSession();$('shell').classList.add('hidden');$('login').classList.remove('hidden')}
 function showShell(){$('login').classList.add('hidden');$('shell').classList.remove('hidden')}
 function typeLabel(t){return({sale:'Sale',business_expense:'Business expense',money_received:'Money received',personal_withdrawal:'Personal withdrawal',adjustment:'Adjustment'})[t]||t}
 function accountLabel(a){return({cash:'Cash',gcash:'GCash',bank:'Bank',other:'Other'})[a]||a}
@@ -482,11 +575,11 @@ async function loadMerchantView(name){
 }
 
 async function loadSummary(){
-  const s=await cachedJson('/api/summary','summary');$('availableTotal').textContent=money(s.available_total);$('todaySales').textContent=money(s.today_sales);$('todayProfit').textContent=money(s.today_profit);$('bizExpenses').textContent=money(s.business_expenses);$('personalWithdrawals').textContent=money(s.personal_withdrawals);$('moneyReceived').textContent=money(s.money_received);$('remittanceReceived').textContent=`Remittances: ${money(s.remittance_received)}`;$('acctCash').textContent=money(s.accounts?.cash);$('acctGcash').textContent=money(s.accounts?.gcash);$('acctBank').textContent=money(s.accounts?.bank);$('acctOther').textContent=money(s.accounts?.other);$('lowStock').textContent=s.low_stock;
+  const isCurrent=merchantReadGuard(),s=await cachedJson('/api/summary','summary');if(!isCurrent())return;$('availableTotal').textContent=money(s.available_total);$('todaySales').textContent=money(s.today_sales);$('todayProfit').textContent=money(s.today_profit);$('bizExpenses').textContent=money(s.business_expenses);$('personalWithdrawals').textContent=money(s.personal_withdrawals);$('moneyReceived').textContent=money(s.money_received);$('remittanceReceived').textContent=`Remittances: ${money(s.remittance_received)}`;$('acctCash').textContent=money(s.accounts?.cash);$('acctGcash').textContent=money(s.accounts?.gcash);$('acctBank').textContent=money(s.accounts?.bank);$('acctOther').textContent=money(s.accounts?.other);$('lowStock').textContent=s.low_stock;
   $('menuRevenueToday').textContent=money(s.product_today_revenue);$('menuCogsToday').textContent=money(s.product_today_cogs);$('menuGrossToday').textContent=money(s.product_today_gross_profit);$('menuMarginToday').textContent=`${Number(s.product_today_margin_pct||0).toFixed(1)}% • ${num(s.product_today_portions)} portions`;
   const box=$('warningBox'),warnings=s.warnings||[];box.classList.toggle('hidden',!warnings.length);box.innerHTML=warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join('');
 }
-async function loadTransactions(){const tx=await cachedJson('/api/transactions','transactions');transactions=tx;$('recentList').replaceChildren(...(tx.length?tx.slice(0,8).map(t=>txRow(t,false)):[emptyRow('No transactions yet.')]));$('historyList').replaceChildren(...(tx.length?tx.map(t=>txRow(t,true)):[emptyRow('No transactions yet.')]))}
+async function loadTransactions(){const isCurrent=merchantReadGuard();const tx=await cachedJson('/api/transactions','transactions');if(!isCurrent())return;transactions=tx;$('recentList').replaceChildren(...(tx.length?tx.slice(0,8).map(t=>txRow(t,false)):[emptyRow('No transactions yet.')]));$('historyList').replaceChildren(...(tx.length?tx.map(t=>txRow(t,true)):[emptyRow('No transactions yet.')]))}
 function restockNeedLabel(x){
   const current=Number(x.usable_quantity??x.quantity??0),threshold=Number(x.reorder_level||0),target=Number(x.effective_target_level??x.target_level??threshold),unit=x.inventory_base_unit||x.unit||'unit';
   const gap=Math.max(0,threshold-current),targetGap=Math.max(0,target-current);
@@ -540,12 +633,14 @@ function renderRestockList(rows=[]){
   }
   list.replaceChildren(...(nodes.length?nodes:[emptyRow('Nothing is below its low-stock alert level.')]));
 }
-async function loadRestockSuggestions(){
+async function loadRestockSuggestions(isCurrent=inventoryReadGuard()){
   try{
-    const rows=await api('/api/procurement/reorder-suggestions');
+    const rows=await api('/api/procurement/reorder-suggestions',{},{isCurrent});
+    if(!isCurrent())return[];
     renderRestockList(rows);
     return rows;
   }catch(error){
+    if(!isCurrent())return[];
     const list=$('restockList'),summary=$('restockSummary');restockSuggestions=[];
     if(summary)summary.textContent='Restock list could not be loaded.';
     if(list)list.replaceChildren(emptyRow(error.message||'Supplier restock information is unavailable.'));
@@ -606,7 +701,8 @@ function updateRestockSettingsPreview(){
 }
 let inventoryCountUi=null;
 const inventoryLocationUi=createInventoryLocationUi({
-  api,
+  api:inventoryReadApi,
+  getReadGuard:inventoryReadGuard,
   getInventory:()=>inventory,
   refreshInventory:()=>loadStock(),
   escapeHtml:esc,
@@ -616,7 +712,8 @@ const inventoryLocationUi=createInventoryLocationUi({
 inventoryLocationUi.wire();
 
 inventoryCountUi=createInventoryCountUi({
-  api,
+  api:inventoryReadApi,
+  getReadGuard:inventoryReadGuard,
   getInventory:()=>inventory,
   getLocations:()=>inventoryLocationUi.getLocations(),
   refreshInventory:()=>loadStock(),
@@ -651,7 +748,8 @@ function useInventoryForReceiving(item){
 }
 
 const inventoryScanUi=createInventoryScanUi({
-  api,
+  api:inventoryReadApi,
+  getReadGuard:inventoryReadGuard,
   getInventory:()=>inventory,
   refreshInventory:()=>loadStock(),
   escapeHtml:esc,
@@ -745,17 +843,19 @@ function updateInventoryUnavailablePreview(){
   }
   out.innerHTML=`On hand <strong>${num(onHand,4)} ${esc(item.unit)}</strong> • Available <strong>${num(available,4)}</strong> • Reserved ${num(reserved,4)} • Unavailable ${num(unavailable,4)}${qty>0?` • after this hold: available <strong>${num(Math.max(0,available-qty),4)}</strong>`:''}`;
 }
-async function loadInventoryUnavailableAllocations(){
+async function loadInventoryUnavailableAllocations(readCurrent=inventoryReadGuard()){
   const list=$('inventoryUnavailableList');if(!list)return[];
   const select=$('inventoryUnavailableItem'),message=$('inventoryUnavailableMessage');
   const inventoryId=selectedPositiveInventoryId(select);
+  const isCurrent=()=>readCurrent()&&inventoryId===selectedPositiveInventoryId(select);
   if(inventoryId==null){
     list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
     if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
     return[];
   }
   try{
-    const rows=await api(`/api/inventory/${inventoryId}/unavailable`);
+    const rows=await api(`/api/inventory/${inventoryId}/unavailable`,{},{isCurrent});
+    if(!isCurrent())return[];
     if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
     const nodes=(Array.isArray(rows)?rows:[]).map(row=>{
       const d=document.createElement('div');d.className='listRow';
@@ -773,6 +873,7 @@ async function loadInventoryUnavailableAllocations(){
     list.replaceChildren(...(nodes.length?nodes:[emptyRow('No unavailable-stock holds for this item.')]));
     return rows;
   }catch(error){
+    if(!isCurrent())return[];
     list.replaceChildren(emptyRow(error.message||'Unavailable-stock history could not be loaded.'));
     return[];
   }
@@ -803,27 +904,85 @@ function wireInventoryUnavailableUi(){
     }catch(error){if(message)message.textContent=error.message}
   };
 }
+let inventoryLoadGeneration=0;
+let inventoryConfirmedContext=null;
+const inventoryHiddenSections=new WeakMap();
+function inventoryReadState(state,{savedAt=null,error=null}={}){
+  const view=$('viewStock');if(!view)return;
+  let status=$('inventoryReadStatus');
+  if(!status){
+    status=document.createElement('div');status.id='inventoryReadStatus';status.className='card stack';status.setAttribute('aria-live','polite');
+    view.querySelector('.sectionHead')?.insertAdjacentElement('afterend',status);
+  }
+  let content=$('inventoryReadContent');
+  if(!content){
+    content=document.createElement('fieldset');content.id='inventoryReadContent';
+    content.style.cssText='border:0;padding:0;margin:0;min-width:0;min-inline-size:0;width:100%';
+    for(const child of [...view.children])if(child!==status&&!child.classList.contains('sectionHead'))content.appendChild(child);
+    view.appendChild(content);
+  }
+  const ready=state==='ready',cached=state==='cached';
+  // A disabled fieldset preserves each widget's own disabled/capability decisions.
+  content.disabled=!ready;
+  inventoryConfirmedContext=ready?merchantReadContext():null;
+  status.setAttribute('role',state==='error'?'alert':'status');
+  status.replaceChildren();
+  const copy=document.createElement('p');
+  copy.textContent=ready?'Inventory confirmed just now.':cached
+    ?'Connection unavailable. Showing last confirmed Inventory from '+new Date(savedAt).toLocaleString('en-PH',{timeZone:'Asia/Manila'})+' (Philippine time). Stock changes are disabled.'
+    :state==='error'?'Inventory could not be loaded. '+(error?.message||'Try again.')
+    :state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
+  status.appendChild(copy);
+  if(state==='error'||state==='idle'||cached){const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent=state==='idle'?'Load Inventory':'Retry';retry.onclick=()=>loadStock();status.appendChild(retry)}
+  view.setAttribute('aria-busy',String(state==='loading'));
+  const stockCard=$('stockList')?.closest('.card');
+  for(const child of content.children){
+    if(!inventoryHiddenSections.has(child))inventoryHiddenSections.set(child,child.hidden||child.classList.contains('hidden'));
+    child.hidden=ready?inventoryHiddenSections.get(child):cached?child!==stockCard:true;
+    child.classList.toggle('hidden',child.hidden);
+  }
+  if(!ready&&!cached){if($('lowStock'))$('lowStock').textContent='—';if($('restockSummary'))$('restockSummary').textContent='Restock information has not loaded.'}
+}
+function inventoryReadApi(path,options={}){return api(path,options,['GET','HEAD'].includes(String(options.method||'GET').toUpperCase())?{isCurrent:inventoryReadGuard()}:{})}
+function inventoryReadGuard(){const current=merchantReadGuard(),generation=inventoryLoadGeneration;return()=>generation===inventoryLoadGeneration&&current()}
 async function loadStock(){
-  const results=await Promise.all([cachedJson('/api/inventory','inventory'),loadRestockSuggestions()]);
-  inventory=Array.isArray(results[0])?results[0]:[];
-  renderInventoryList();
-  if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.available_quantity??i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
-  fillIngredientSelect();
-  await fillIngredientAllergenEditor();
-  fillConsumableRuleInventory();
-  fillStockAdjustmentInventory();
-  fillStorageEditor();
-  fillRestockSettingsEditor();
-  fillInventoryUnavailableEditor();
-  inventoryScanUi.syncInventory();
-  await inventoryLocationUi.load();
-  inventoryCountUi.syncScopeOptions();
-  await Promise.all([loadConsumableRules(),loadStockAdjustments(),loadInventoryLots(),loadWasteAnalytics(wasteAnalyticsDays),inventoryCountUi.load()]);
-  if(selectedPositiveInventoryId($('inventoryUnavailableItem'))!=null)await loadInventoryUnavailableAllocations();
-  else{
-    const list=$('inventoryUnavailableList'),message=$('inventoryUnavailableMessage');
-    if(list)list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
-    if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
+  let context;
+  try{context=captureMerchantRead()}catch(error){inventoryReadState('error',{error});return}
+  const generation=++inventoryLoadGeneration;
+  const isCurrent=()=>generation===inventoryLoadGeneration&&merchantReadIsCurrent(context);
+  inventoryReadState('loading');
+  try{
+    let cachedAt=null;
+    const items=await cachedJson('/api/inventory','inventory',{offline:true,onCache:stamp=>{cachedAt=stamp}});
+    if(!isCurrent())return;
+    if(merchantReadContext()?.businessId===null)throw new Error('Your current business is still loading. Try again.');
+    inventory=Array.isArray(items)?items:[];
+    renderInventoryList();
+    if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.available_quantity??i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
+    if(cachedAt!==null){inventoryReadState('cached',{savedAt:cachedAt});return inventory}
+    fillIngredientSelect();
+    fillConsumableRuleInventory();fillStockAdjustmentInventory();fillStorageEditor();fillRestockSettingsEditor();fillInventoryUnavailableEditor();
+    inventoryScanUi.syncInventory();
+    const count=inventoryLocationUi.load().then(result=>{
+      if(!isCurrent())return;
+      if(result?.readError)return result;
+      inventoryCountUi.syncScopeOptions();
+      return inventoryCountUi.load();
+    });
+    const details=await Promise.all([fillIngredientAllergenEditor(isCurrent),count,loadRestockSuggestions(isCurrent),loadConsumableRules(isCurrent),loadStockAdjustments(isCurrent),loadInventoryLots(isCurrent),loadWasteAnalytics(wasteAnalyticsDays,isCurrent)]);
+    if(details.some(result=>result?.readError))throw new Error('Some Inventory details could not be verified. Try again.');
+    if(!isCurrent())return;
+    if(selectedPositiveInventoryId($('inventoryUnavailableItem'))!=null)await loadInventoryUnavailableAllocations(isCurrent);
+    else{
+      const list=$('inventoryUnavailableList'),message=$('inventoryUnavailableMessage');
+      if(list)list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
+      if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
+    }
+    if(isCurrent())inventoryReadState('ready');
+    return inventory;
+  }catch(error){
+    if(!isCurrent())return;
+    if(!error.staleMerchantRead){inventory=[];inventoryReadState('error',{error})}
   }
 }
 
@@ -834,10 +993,11 @@ function lotExpiryCopy(row){
   if(row.expires_at)return 'Expires '+new Date(row.expires_at).toLocaleDateString('en-PH',{timeZone:'Asia/Manila'});
   return 'No expiry date';
 }
-async function loadInventoryLots(){
+async function loadInventoryLots(isCurrent=inventoryReadGuard()){
   const list=$('lotList'),summary=$('lotSummary');if(!list||!summary)return[];
   try{
-    const rows=await api('/api/inventory/lots');
+    const rows=await api('/api/inventory/lots',{},{isCurrent});
+    if(!isCurrent())return[];
     const active=rows.filter(r=>Number(r.quantity_remaining_base)>0);
     const expired=active.filter(r=>r.expiry_status==='expired').length;
     const soon=active.filter(r=>r.expiry_status==='expiring_soon').length;
@@ -860,6 +1020,7 @@ async function loadInventoryLots(){
     list.replaceChildren(...(nodes.length?nodes:[emptyRow('No lot or expiry records yet.')]));
     return rows;
   }catch(error){
+    if(!isCurrent())return[];
     summary.textContent='Lot information could not be loaded.';
     list.replaceChildren(emptyRow(error.message||'Lot information is unavailable.'));
     return[];
@@ -915,11 +1076,12 @@ function stockAdjustmentKindLabel(kind){
 function stockAdjustmentLotCode(lot){
   return lot?.supplier_lot_code||lot?.internal_lot_code||('Lot '+lot?.id);
 }
-async function loadStockAdjustmentLots(){
+async function loadStockAdjustmentLots(readCurrent=inventoryReadGuard()){
   const select=$('stockAdjustmentLot'),help=$('stockAdjustmentLotHelp');
   if(!select)return[];
   const inventoryId=Number($('stockAdjustmentInventory')?.value);
   const kind=$('stockAdjustmentKind')?.value||'waste';
+  const isCurrent=()=>readCurrent()&&inventoryId===Number($('stockAdjustmentInventory')?.value)&&kind===($('stockAdjustmentKind')?.value||'waste');
   if(kind==='count_correction'){
     stockAdjustmentLots=[];
     select.replaceChildren(new Option('Whole-item reconciliation — no single lot',''));
@@ -935,7 +1097,8 @@ async function loadStockAdjustmentLots(){
     return[];
   }
   try{
-    const rows=await api(`/api/inventory/lots?inventory_id=${inventoryId}`);
+    const rows=await api(`/api/inventory/lots?inventory_id=${inventoryId}`,{},{isCurrent});
+    if(!isCurrent())return[];
     stockAdjustmentLots=(Array.isArray(rows)?rows:[]).filter(x=>Number(x.quantity_remaining_base)>0);
     const ordered=kind==='expired'
       ?[...stockAdjustmentLots].sort((a,b)=>{
@@ -958,6 +1121,7 @@ async function loadStockAdjustmentLots(){
       :'Choose the exact lot when known. Auto mode uses earliest-expiry tracked stock first.';
     return stockAdjustmentLots;
   }catch(error){
+    if(!isCurrent())return[];
     stockAdjustmentLots=[];
     select.replaceChildren(new Option('Lot information unavailable',''));
     select.disabled=true;
@@ -979,10 +1143,11 @@ function updateStockAdjustmentPreview(){
   const lotCopy=selectedLot?` • exact lot <strong>${esc(stockAdjustmentLotCode(selectedLot))}</strong>`:(kind==='count_correction'?' • whole-item reconciliation':' • automatic lot reconciliation');
   out.innerHTML=`Current <strong>${num(before,4)} ${esc(item.unit)}</strong> → after adjustment <strong>${num(after,4)} ${esc(item.unit)}</strong> • estimated stock-value change <strong class="${impact<0?'negative':impact>0?'positive':''}">${money(impact)}</strong>${lotCopy}`;
 }
-async function loadStockAdjustments(){
+async function loadStockAdjustments(isCurrent=inventoryReadGuard()){
   const list=$('stockAdjustmentList');if(!list)return[];
   try{
-    const rows=await api('/api/inventory/adjustments');
+    const rows=await api('/api/inventory/adjustments',{},{isCurrent});
+    if(!isCurrent())return[];
     const nodes=rows.map(r=>{
       const d=document.createElement('div');d.className='listRow';
       const delta=Number(r.quantity_delta);
@@ -997,6 +1162,7 @@ async function loadStockAdjustments(){
     list.replaceChildren(...(nodes.length?nodes:[emptyRow('No stock adjustments recorded yet.')]));
     return rows;
   }catch(error){
+    if(!isCurrent())return[];
     list.replaceChildren(emptyRow(error.message||'Stock adjustment history could not be loaded.'));
     return[];
   }
@@ -1042,13 +1208,15 @@ function renderWasteAnalytics(report={}){
   if($('wastePeriod7'))$('wastePeriod7').classList.toggle('active',Number(report.days||wasteAnalyticsDays)===7);
   if($('wastePeriod30'))$('wastePeriod30').classList.toggle('active',Number(report.days||wasteAnalyticsDays)===30);
 }
-async function loadWasteAnalytics(days=wasteAnalyticsDays){
+async function loadWasteAnalytics(days=wasteAnalyticsDays,isCurrent=inventoryReadGuard()){
   wasteAnalyticsDays=Number(days)===30?30:7;
   try{
-    const report=await api(`/api/inventory/waste-analytics?days=${wasteAnalyticsDays}`);
+    const report=await api(`/api/inventory/waste-analytics?days=${wasteAnalyticsDays}`,{},{isCurrent});
+    if(!isCurrent())return null;
     renderWasteAnalytics(report);
     return report;
   }catch(error){
+    if(!isCurrent())return null;
     const summary=$('wasteAnalyticsSummary');
     if(summary)summary.textContent=error.message||'Waste analytics could not be loaded.';
     return null;
@@ -1066,10 +1234,11 @@ function consumableRuleLabel(r){
   const basis=r.usage_basis==='per_item'?'per ordered item':'per order';
   return `${num(r.quantity_used,4)} ${esc(r.unit)} ${basis} • ${esc(scope)}`;
 }
-async function loadConsumableRules(){
+async function loadConsumableRules(isCurrent=inventoryReadGuard()){
   const list=$('consumableRuleList');if(!list)return[];
   try{
-    const rows=await api('/api/inventory/consumable-rules');
+    const rows=await api('/api/inventory/consumable-rules',{},{isCurrent});
+    if(!isCurrent())return[];
     const nodes=rows.map(r=>{
       const d=document.createElement('div');d.className='listRow';
       d.innerHTML=`<div class="rowMain"><strong>${esc(r.item)}</strong><small>${consumableRuleLabel(r)} • stock ${num(r.stock_quantity,4)} ${esc(r.unit)}</small></div><button type="button" class="miniBtn">Remove</button>`;
@@ -1081,14 +1250,15 @@ async function loadConsumableRules(){
     list.replaceChildren(...(nodes.length?nodes:[emptyRow('No automatic consumable rules yet.')]));
     return rows;
   }catch(error){
+    if(!isCurrent())return[];
     list.replaceChildren(emptyRow(error.message||'Consumable rules could not be loaded.'));
     return[];
   }
 }
-async function loadRemittances(){const rows=await cachedJson('/api/remittances','remittances');$('remittanceList').replaceChildren(...(rows.length?rows.map(remitRow):[emptyRow('No remittances recorded yet.')]))}
-async function loadDay(){const d=await cachedJson('/api/day-status','day_status');$('dayStatusDate').textContent=d.business_date;$('openingCashShown').textContent=money(d.opening_cash);$('expectedCashShown').textContent=money(d.expected_cash);$('openResult').textContent=d.has_opening?'Opening cash is recorded for today.':'Set opening cash before closing the day.';if(d.closing)$('closeResult').innerHTML=`Closed: actual ${money(d.closing.actual_cash)} • <strong class="${Number(d.closing.variance)<0?'negative':Number(d.closing.variance)>0?'positive':''}">difference ${money(d.closing.variance)}</strong>`}
-async function loadBudget(){const b=await cachedJson('/api/budget','budget');$('budgetPersonalDaily').value=Number(b.personal_daily_limit||0);$('budgetPersonalWeekly').value=Number(b.personal_weekly_limit||0);$('budgetBusinessDaily').value=Number(b.business_daily_limit||0);$('budgetMinimum').value=Number(b.min_available_warning||0)}
-async function loadAnalysis(days){const a=await cachedJson(`/api/analysis?days=${days}`,`analysis_${days}`);$(`analysis${days}Totals`).textContent=`Business ${money(a.totals.business)} • Personal ${money(a.totals.personal)} • Sales ${money(a.totals.sales)} • Support ${money(a.totals.received)}`;$(`analysis${days}`).replaceChildren(...analysisRows(a))}
+async function loadRemittances(){const isCurrent=merchantReadGuard();const rows=await cachedJson('/api/remittances','remittances');if(!isCurrent())return;$('remittanceList').replaceChildren(...(rows.length?rows.map(remitRow):[emptyRow('No remittances recorded yet.')]))}
+async function loadDay(){const isCurrent=merchantReadGuard();const d=await cachedJson('/api/day-status','day_status');if(!isCurrent())return;$('dayStatusDate').textContent=d.business_date;$('openingCashShown').textContent=money(d.opening_cash);$('expectedCashShown').textContent=money(d.expected_cash);$('openResult').textContent=d.has_opening?'Opening cash is recorded for today.':'Set opening cash before closing the day.';if(d.closing)$('closeResult').innerHTML=`Closed: actual ${money(d.closing.actual_cash)} • <strong class="${Number(d.closing.variance)<0?'negative':Number(d.closing.variance)>0?'positive':''}">difference ${money(d.closing.variance)}</strong>`}
+async function loadBudget(){const isCurrent=merchantReadGuard();const b=await cachedJson('/api/budget','budget');if(!isCurrent())return;$('budgetPersonalDaily').value=Number(b.personal_daily_limit||0);$('budgetPersonalWeekly').value=Number(b.personal_weekly_limit||0);$('budgetBusinessDaily').value=Number(b.business_daily_limit||0);$('budgetMinimum').value=Number(b.min_available_warning||0)}
+async function loadAnalysis(days){const isCurrent=merchantReadGuard(),a=await cachedJson(`/api/analysis?days=${days}`,`analysis_${days}`);if(!isCurrent())return;$(`analysis${days}Totals`).textContent=`Business ${money(a.totals.business)} • Personal ${money(a.totals.personal)} • Sales ${money(a.totals.sales)} • Support ${money(a.totals.received)}`;$(`analysis${days}`).replaceChildren(...analysisRows(a))}
 
 function productCard(p){
   const d=document.createElement('div');d.className='productCard';const recipe=p.recipe||[];const shortage=recipe.filter(r=>Number(r.stock_quantity)<Number(r.quantity));const batch=p.recipe_batch;const raw=p.recipe_batch_components||[];
@@ -1124,26 +1294,29 @@ function allergenNames(codes=[]){
   const byCode=new Map(allergenCatalog.map(x=>[x.code,x.label]));
   return (codes||[]).map(code=>byCode.get(code)||code);
 }
-async function fillIngredientAllergenEditor(){
+async function fillIngredientAllergenEditor(isCurrent=merchantReadGuard()){
   const select=$('ingredientAllergenInventory');if(!select)return;
   await ensureAllergenCatalog();
+  if(!isCurrent())return;
   const ingredients=inventory.filter(i=>(i.inventory_type||'ingredient')==='ingredient');
   const previous=select.value;
   select.innerHTML=ingredients.length?'<option value="">Choose an ingredient</option>'+ingredients.map(i=>`<option value="${i.id}">${esc(i.item)}</option>`).join(''):'<option value="">Add Ingredient stock first</option>';
   if(previous&&ingredients.some(i=>String(i.id)===String(previous)))select.value=previous;
   renderAllergenChecks('ingredientContainsGrid','ingredientContains',[]);
   renderAllergenChecks('ingredientMayContainGrid','ingredientMayContain',[]);
-  if(select.value)await loadIngredientAllergens();
+  if(select.value)await loadIngredientAllergens(isCurrent);
 }
-async function loadIngredientAllergens(){
+async function loadIngredientAllergens(readCurrent=inventoryReadGuard()){
   const id=Number($('ingredientAllergenInventory')?.value);
+  const isCurrent=()=>readCurrent()&&id===Number($('ingredientAllergenInventory')?.value);
   if(!Number.isInteger(id)){
     renderAllergenChecks('ingredientContainsGrid','ingredientContains',[]);
     renderAllergenChecks('ingredientMayContainGrid','ingredientMayContain',[]);
     if($('ingredientAllergenNote'))$('ingredientAllergenNote').value='';
     return;
   }
-  const data=await api(`/api/inventory/${id}/allergens`);
+  const data=await api(`/api/inventory/${id}/allergens`,{},{isCurrent});
+  if(!isCurrent())return;
   renderAllergenChecks('ingredientContainsGrid','ingredientContains',data.contains||[]);
   renderAllergenChecks('ingredientMayContainGrid','ingredientMayContain',data.may_contain||[]);
   $('ingredientAllergenNote').value=data.note||'';
@@ -1181,7 +1354,7 @@ async function loadProductAllergens(){
   renderProductAllergenSummary(summary);
 }
 
-async function loadProducts(){products=await cachedJson('/api/products','products');const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');$('productList').replaceChildren(...(prepared.length?prepared.map(productCard):[emptyRow('Create the first prepared product.') ]));fillProductSelects();fillProductAllergenSelect();syncRecipeDraftFromSelected();if($('allergenProduct')?.value)await loadProductAllergens()}
+async function loadProducts(){const isCurrent=merchantReadGuard(),rows=await cachedJson('/api/products','products');if(!isCurrent())return;products=rows;const prepared=products.filter(p=>(p.product_kind||'prepared_recipe')==='prepared_recipe');$('productList').replaceChildren(...(prepared.length?prepared.map(productCard):[emptyRow('Create the first prepared product.') ]));fillProductSelects();fillProductAllergenSelect();syncRecipeDraftFromSelected();if($('allergenProduct')?.value)await loadProductAllergens()}
 function updateSellPreview(){const p=products.find(x=>x.id===Number($('sellProduct').value));const q=Math.max(0,Number($('sellQty').value||1));if(!p){$('sellPreview').textContent='Create a menu product first.';return}const rev=p.selling_price*q,cost=p.estimated_unit_cost*q,gross=rev-cost;$('sellPreview').innerHTML=`Revenue <strong>${money(rev)}</strong> • ingredient cost <strong>${money(cost)}</strong> • estimated gross <strong class="${gross>=0?'positive':'negative'}">${money(gross)}</strong>`}
 function recipeState(){
   const yieldBase=toBase($('recipeYieldQty')?.value,$('recipeYieldUnit')?.value);
@@ -1217,12 +1390,12 @@ function selectRecipeProduct(id){setView('Menu');$('recipeProduct').value=String
 function editProduct(p){setView('Menu');$('productId').value=p.id;$('productKind').value=p.product_kind||'prepared_recipe';$('productName').value=p.name;$('productCategory').value=p.category;$('productPrice').value=Number(p.selling_price);$('productActive').checked=Boolean(p.active);$('productFormTitle').textContent='Edit prepared product';$('productSave').textContent='Save changes';$('productCancel').classList.remove('hidden');$('productForm').scrollIntoView({behavior:'smooth',block:'start'})}
 function resetProductForm(){$('productForm').reset();$('productId').value='';$('productKind').value='prepared_recipe';$('productCategory').value='Food';$('productActive').checked=true;$('productFormTitle').textContent='Create prepared product';$('productSave').textContent='Create prepared product';$('productCancel').classList.add('hidden');$('productMessage').textContent=''}
 async function toggleProduct(p){try{await api(`/api/products/${p.id}`,{method:'PATCH',body:JSON.stringify({active:!p.active})});await loadProducts()}catch(e){alert(e.message)}}
-async function loadProductSales(){const rows=await cachedJson('/api/product-sales','product_sales');const nodes=rows.slice(0,20).map(s=>{const d=document.createElement('div');d.className='listRow';const margin=Number(s.revenue)>0?Number(s.gross_profit)/Number(s.revenue)*100:0;d.innerHTML=`<div class="rowMain"><strong>${num(s.quantity)} × ${esc(s.product_name_snapshot)}</strong><small>${esc(accountLabel(s.account))} • cost ${money(s.estimated_cogs)} • margin ${margin.toFixed(1)}%</small></div><div class="rowRight"><span>${money(s.revenue)}</span><small class="positive">gross ${money(s.gross_profit)}</small></div>`;return d});$('productSaleList').replaceChildren(...(nodes.length?nodes:[emptyRow('No menu sales yet.')]))}
+async function loadProductSales(){const isCurrent=merchantReadGuard();const rows=await cachedJson('/api/product-sales','product_sales');if(!isCurrent())return;const nodes=rows.slice(0,20).map(s=>{const d=document.createElement('div');d.className='listRow';const margin=Number(s.revenue)>0?Number(s.gross_profit)/Number(s.revenue)*100:0;d.innerHTML=`<div class="rowMain"><strong>${num(s.quantity)} × ${esc(s.product_name_snapshot)}</strong><small>${esc(accountLabel(s.account))} • cost ${money(s.estimated_cogs)} • margin ${margin.toFixed(1)}%</small></div><div class="rowRight"><span>${money(s.revenue)}</span><small class="positive">gross ${money(s.gross_profit)}</small></div>`;return d});$('productSaleList').replaceChildren(...(nodes.length?nodes:[emptyRow('No menu sales yet.')]))}
 function profitRows(report){const nodes=[];for(const p of report.products||[]){const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(p.name)}</strong><small>Quick sale history · ${num(p.quantity)} portions • revenue ${money(p.revenue)} • ingredient cost ${money(p.cogs)}</small></div><div class="rowRight"><span class="${Number(p.gross_profit)>=0?'positive':'negative'}">${money(p.gross_profit)}</span><small>${Number(p.margin_pct).toFixed(1)}%</small></div>`;nodes.push(d)}
   const orders=report.completed_order_direct_cost?.orders||[];
   for(const o of orders.slice(0,8)){const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(o.order_number||('Order #'+o.order_id))} · ${esc(o.fulfilment_method||'order')}</strong><small>Ingredient ${money(o.ingredient_cost)} • packaging/direct consumables ${money(o.direct_consumable_cost)} • direct food cost ${money(o.direct_food_cost)}</small></div><div class="rowRight"><span class="${Number(o.direct_gross_profit)>=0?'positive':'negative'}">${money(o.direct_gross_profit)}</span><small>${Number(o.direct_margin_pct).toFixed(1)}%</small></div>`;nodes.push(d)}
   return nodes.length?nodes:[emptyRow('No quick sales or completed-order cost evidence in this period.')]}
-async function loadProfitability(days){const r=await cachedJson(`/api/product-profitability?days=${days}`,`profit_${days}`),o=r.completed_order_direct_cost?.totals||{};const quick=`${num(r.totals.portions)} quick-sale portion(s) • revenue ${money(r.totals.revenue)} • historical ingredient cost ${money(r.totals.cogs)}`;const order=`${num(o.orders||0)} completed order(s) • merchandise revenue ${money(o.revenue)} • ingredients ${money(o.ingredient_cost)} • packaging/direct consumables ${money(o.direct_consumable_cost)} • direct food cost ${money(o.direct_food_cost)} • direct gross ${money(o.direct_gross_profit)} • margin ${Number(o.direct_margin_pct||0).toFixed(1)}%`;$(`profit${days}Totals`).textContent=quick+' | '+order;$(`profit${days}List`).replaceChildren(...profitRows(r))}
+async function loadProfitability(days){const isCurrent=merchantReadGuard(),r=await cachedJson(`/api/product-profitability?days=${days}`,`profit_${days}`);if(!isCurrent())return;const o=r.completed_order_direct_cost?.totals||{};const quick=`${num(r.totals.portions)} quick-sale portion(s) • revenue ${money(r.totals.revenue)} • historical ingredient cost ${money(r.totals.cogs)}`;const order=`${num(o.orders||0)} completed order(s) • merchandise revenue ${money(o.revenue)} • ingredients ${money(o.ingredient_cost)} • packaging/direct consumables ${money(o.direct_consumable_cost)} • direct food cost ${money(o.direct_food_cost)} • direct gross ${money(o.direct_gross_profit)} • margin ${Number(o.direct_margin_pct||0).toFixed(1)}%`;$(`profit${days}Totals`).textContent=quick+' | '+order;$(`profit${days}List`).replaceChildren(...profitRows(r))}
 
 async function refreshCurrentMerchantView(){
   if(!isMerchantBaseActive())return;
@@ -1231,7 +1404,7 @@ async function refreshCurrentMerchantView(){
   try{
     if(name==='Dashboard'){invalidateMerchantToday();await loadMerchantToday({force:true});return}
     await loadMerchantView(name);
-  }catch(error){console.error(error)}
+  }catch(error){if(!error.staleMerchantRead)console.error(error)}
 }
 if($('refreshBtn'))$('refreshBtn').onclick=refreshCurrentMerchantView;
 if($('restockRefresh'))$('restockRefresh').onclick=()=>loadStock();
@@ -1319,7 +1492,7 @@ $('budgetForm').addEventListener('submit',async e=>{e.preventDefault();$('budget
 
 $('productForm').addEventListener('submit',async e=>{e.preventDefault();$('productMessage').textContent='Saving…';const id=$('productId').value;const body={name:$('productName').value,category:$('productCategory').value||'Food',selling_price:Number($('productPrice').value),active:$('productActive').checked,product_kind:'prepared_recipe'};try{if(id)await api(`/api/products/${id}`,{method:'PATCH',body:JSON.stringify(body)});else await api('/api/products',{method:'POST',body:JSON.stringify(body)});resetProductForm();await loadProducts();$('productMessage').textContent='Saved. Add or update the batch recipe below.'}catch(err){$('productMessage').textContent=err.message}});
 $('productCancel').onclick=resetProductForm;
-$('ingredientAllergenInventory')?.addEventListener('change',()=>loadIngredientAllergens().catch(error=>{$('ingredientAllergenMessage').textContent=error.message}));
+$('ingredientAllergenInventory')?.addEventListener('change',()=>loadIngredientAllergens().catch(error=>{if(!error.staleMerchantRead)$('ingredientAllergenMessage').textContent=error.message}));
 $('ingredientAllergenForm')?.addEventListener('submit',async e=>{
   e.preventDefault();const out=$('ingredientAllergenMessage');if(out)out.textContent='Saving…';
   try{
@@ -1374,7 +1547,7 @@ function setView(name){
   document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
   window.scrollTo({top:0,behavior:'smooth'});
   if(name==='Sell')updateSellPreview();
-  loadMerchantView(name).catch(error=>console.error(error));
+  loadMerchantView(name).catch(error=>{if(!error.staleMerchantRead)console.error(error)});
 }
 async function openInventoryNotificationContext({inventoryId=null,lotId=null}={}){
   if(!isMerchantBaseActive())throw new Error('Open the Merchant profile to view this Inventory alert.');
@@ -1439,11 +1612,15 @@ window.addEventListener('online',()=>{
   }
 });
 window.addEventListener('offline',()=>setOnline(false));
+document.addEventListener('abl:profile-state',reconcileMerchantReads);
+document.addEventListener('abl:business-workspace-changed',reconcileMerchantReads);
+document.addEventListener('abl:auth-expired',()=>{invalidateMerchantReads();clearLegacyMerchantCache()});
 setOnline(navigator.onLine);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 initStockPicker();
 wireInventoryDomainFilters();
 wireInventoryUnavailableUi();
+inventoryReadState('idle');
 (window.ABLSession?.ready||Promise.resolve()).then(()=>{
   token=Boolean(window.ABLSession?.authenticated());
   if(token){
