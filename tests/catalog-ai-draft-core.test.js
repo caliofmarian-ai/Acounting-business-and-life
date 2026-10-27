@@ -63,7 +63,7 @@ test('model input unchanged and repeated normalization deterministic',()=>{
 test('provided mismatched or invalid category fails closed; absent category remains reviewable',()=>{
   for(const mode of AI_CATALOG_MODES){
     assert.equal(draft(mode,{name:'Unknown'}).hints.catalog_category_code,null);
-    for(const invalid of [43,[],{},'invalid-category',' '.repeat(4),'x'.repeat(81)]){
+    for(const invalid of [null,'',43,[],{},'invalid-category',' '.repeat(4),'x'.repeat(81)]){
       assert.throws(()=>draft(mode,{catalog_category_code:invalid}),/categor|mode|Supplier/i);
     }
   }
