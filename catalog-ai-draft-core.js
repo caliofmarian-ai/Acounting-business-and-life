@@ -19,7 +19,7 @@ function unique(v,max=12,len=40){
 function categoryFor(mode,raw){
   // A missing suggestion can be completed by the human reviewer. A supplied,
   // incompatible category must fail closed instead of looking like a valid draft.
-  if(raw===undefined||raw===null||raw==='')return null;
+  if(raw===undefined)return null;
   if(typeof raw!=='string'||!raw.trim()||raw.length>80)
     throw new TypeError('Invalid AI catalog category.');
   if(mode==='supplier_catalog')
