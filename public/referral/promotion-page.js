@@ -7,7 +7,8 @@ import { PROMOTION_BRAND_ASSETS, DEFAULT_PROMOTION_ARTWORK_ID, getPromotionBrand
 
 const PRESENTATION_OPTIONS = Object.freeze({
   templates: RUNTIME_MARKETING_TEMPLATES.map(item => item.id),
-  variants: RUNTIME_MARKETING_COPY['en-PH'].variants.map(item => item.id)
+  variants: RUNTIME_MARKETING_COPY['en-PH'].variants.map(item => item.id),
+  defaultTemplate: RUNTIME_MARKETING_TEMPLATES.some(item => item.id === 'BRANDED_INVITATION_V1') ? 'BRANDED_INVITATION_V1' : RUNTIME_MARKETING_TEMPLATES[0].id
 });
 
 export function promotionChannelLinks(url, invitation) {
@@ -78,7 +79,7 @@ export function initPromotionPage(runtime = globalThis, overrides = {}) {
   let storage;
   try { storage = runtime.localStorage; } catch {}
   let explicit = sanitizePresentation(Object.fromEntries(new URLSearchParams(runtime.location.search)), PRESENTATION_OPTIONS);
-  let choices = { profile: '', locale: normalizePromotionLocale(explicit.locale), template: PRESENTATION_OPTIONS.templates[0], variant: 'personal_share_v1', format: 'png', artwork: DEFAULT_PROMOTION_ARTWORK_ID, ...explicit };
+  let choices = { profile: '', locale: normalizePromotionLocale(explicit.locale), template: PRESENTATION_OPTIONS.defaultTemplate, variant: 'personal_share_v1', format: 'png', artwork: DEFAULT_PROMOTION_ARTWORK_ID, ...explicit };
   let account = null;
   let accountId = null;
   let accountSession = '';

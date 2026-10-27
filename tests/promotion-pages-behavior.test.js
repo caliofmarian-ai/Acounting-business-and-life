@@ -70,6 +70,8 @@ test('late native-share completion does not report success for an expired contex
 test('kit prepares PNG by default and download message does not claim filesystem success', async t => {
   const f = fixture({ page: 'kit' }); t.after(() => f.ui.destroy()); await tick();
   assert.equal(f.el('format').value, 'png');
+  assert.equal(f.el('template').value, 'BRANDED_INVITATION_V1');
+  assert.equal(f.ui.getChoices().artwork, 'connected-profiles');
   assert.equal(f.ui.getPrepared().mimeType, 'image/png');
   assert.equal(f.el('export').disabled, false);
   assert.equal(f.el('print').disabled, false);
@@ -77,6 +79,28 @@ test('kit prepares PNG by default and download message does not claim filesystem
   assert.equal(f.downloads.length, 1);
   assert.equal(f.el('status').textContent, promotionText('en-PH', 'downloadStarted'));
   assert.equal(f.el('preview').children[0].tagName, 'IMG');
+});
+
+test('the kit preserves an existing supported format while retiring an old scene preference', async t => {
+  const preferences = new Map([['abl_referral_presentation_v1:21', JSON.stringify({ template: 'A4_REFERRAL_POSTER_V1', artwork: 'local-business', format: 'jpg' })]]);
+  const f = fixture({ page: 'kit', preferences }); t.after(() => f.ui.destroy()); await tick();
+  assert.equal(f.el('template').value, 'A4_REFERRAL_POSTER_V1');
+  assert.equal(f.el('format').value, 'jpg');
+  assert.equal(f.ui.getChoices().artwork, 'connected-profiles');
+  assert.deepEqual(f.artworkLoads.map(item => item.asset.id), ['connected-profiles']);
+  assert.equal(JSON.parse(preferences.get('abl_referral_presentation_v1:21')).artwork, 'connected-profiles');
+});
+
+test('artwork help explains the personal QR footer and fixed English image copy in both interface languages', async t => {
+  for (const page of ['center', 'kit']) {
+    const f = fixture({ page }); t.after(() => f.ui.destroy()); await tick();
+    assert.match(f.el('artworkHelp').textContent, /QR and link below the image/);
+    assert.match(f.el('artworkHelp').textContent, /Text inside the image stays in English/);
+    f.el('locale').value = 'fil-PH'; await f.el('locale').fire('change'); await tick();
+    assert.equal(f.el('artworkHelp').textContent, promotionText('fil-PH', page === 'kit' ? 'artworkKitHelp' : 'artworkHelp'));
+    assert.match(f.el('artworkHelp').textContent, /QR at link|QR at link sa ibaba/);
+    assert.match(f.el('artworkHelp').textContent, /English/);
+  }
 });
 
 test('kit keeps selected template and message through a language change and its back link', async t => {
@@ -162,7 +186,7 @@ test('missing clipboard API still selects the real referral link for manual reco
 
 test('failed selected artwork blocks export and its Retry attempts the same image again', async t => {
   let attempts = 0;
-  const f = fixture({ page: 'kit', query: '?artwork=community', loadBrandAsset: async asset => {
+  const f = fixture({ page: 'kit', query: '?artwork=app-platform', loadBrandAsset: async asset => {
     attempts += 1;
     if (attempts === 1) throw new Error('Artwork timed out');
     return { dataUrl: artworkData(asset.id) };
@@ -179,8 +203,8 @@ test('failed selected artwork blocks export and its Retry attempts the same imag
   assert.equal(attempts, 2);
   assert.equal(f.el('export').disabled, false);
   assert.equal(f.el('artworkRetry').hidden, true);
-  assert.equal(f.ui.getPrepared().artwork, 'community');
-  assert.deepEqual(f.artworkLoads.map(item => item.asset.id), ['community', 'community']);
+  assert.equal(f.ui.getPrepared().artwork, 'app-platform');
+  assert.deepEqual(f.artworkLoads.map(item => item.asset.id), ['app-platform', 'app-platform']);
 });
 
 test('backgrounded native-share completion is never attributed to an unverified returning context', async t => {
@@ -211,25 +235,25 @@ test('both pages present all three approved thumbnails as native labeled radio c
       assert.equal(card.getAttribute('for'), input.id);
       assert.equal(card.children[1].src, asset.thumbnail);
       assert.equal(card.children[1].alt, asset.alt['en-PH']);
-      assert.equal(card.children[3].hidden, asset.id !== 'local-business');
+      assert.equal(card.children[3].hidden, asset.id !== 'connected-profiles');
     }
-    assert.equal(f.el('artwork-local-business').checked, true);
+    assert.equal(f.el('artwork-connected-profiles').checked, true);
     assert.equal(f.el('artworkStatus').textContent, promotionText('en-PH', 'artworkReady'));
   }
 });
 
 test('radio selection and language changes preserve the focused native control', async t => {
   const f = fixture(); t.after(() => f.ui.destroy()); await tick();
-  const focused = f.el('artwork-community'); focused.focus();
-  await f.selectArtwork('community'); await tick();
+  const focused = f.el('artwork-app-platform'); focused.focus();
+  await f.selectArtwork('app-platform'); await tick();
   f.el('locale').value = 'fil-PH'; await f.el('locale').fire('change'); await tick();
-  assert.equal(f.el('artwork-community'), focused);
+  assert.equal(f.el('artwork-app-platform'), focused);
   assert.equal(focused.focused, true);
   assert.equal(focused.checked, true);
-  assert.equal(f.el('artwork-local-business').checked, false);
-  assert.equal(f.el('artworkName-community').textContent, 'Komunidad');
-  assert.equal(f.el('brandArtwork').alt, getPromotionBrandAsset('community').alt['fil-PH']);
-  assert.equal(f.artworkLoads.filter(item => item.asset.id === 'community').length, 1, 'cached pixels must not cache the old locale description');
+  assert.equal(f.el('artwork-connected-profiles').checked, false);
+  assert.equal(f.el('artworkName-app-platform').textContent, 'Plataporma ng app');
+  assert.equal(f.el('brandArtwork').alt, getPromotionBrandAsset('app-platform').alt['fil-PH']);
+  assert.equal(f.artworkLoads.filter(item => item.asset.id === 'app-platform').length, 1, 'cached pixels must not cache the old locale description');
 });
 
 test('each center artwork updates the hero and keeps only its approved ID in links and preferences', async t => {
@@ -258,37 +282,37 @@ test('each Marketing Kit choice renders the matching artwork and a newly guarded
     assert.equal(f.el('export').disabled, false);
   }
   f.el('locale').value = 'fil-PH'; await f.el('locale').fire('change'); await tick();
-  assert.equal(rendered.at(-1).brandAsset.alt, getPromotionBrandAsset('miniature').alt['fil-PH']);
-  assert.equal(f.artworkLoads.filter(item => item.asset.id === 'miniature').length, 1);
+  assert.equal(rendered.at(-1).brandAsset.alt, getPromotionBrandAsset('everyday-life').alt['fil-PH']);
+  assert.equal(f.artworkLoads.filter(item => item.asset.id === 'everyday-life').length, 1);
 });
 
 test('artwork persists across page round-trip and reload without crossing account preference keys', async t => {
   const center = fixture(); t.after(() => center.ui.destroy()); await tick();
-  await center.selectArtwork('community'); await tick();
+  await center.selectArtwork('app-platform'); await tick();
   const kitQuery = new URL(center.el('marketingKit').href, 'https://caliof.com').search;
   const kit = fixture({ page: 'kit', query: kitQuery, preferences: center.values }); t.after(() => kit.ui.destroy()); await tick();
-  assert.equal(kit.ui.getChoices().artwork, 'community');
-  assert.equal(new URL(kit.el('back').href, 'https://caliof.com').searchParams.get('artwork'), 'community');
+  assert.equal(kit.ui.getChoices().artwork, 'app-platform');
+  assert.equal(new URL(kit.el('back').href, 'https://caliof.com').searchParams.get('artwork'), 'app-platform');
   const reload = fixture({ preferences: center.values }); t.after(() => reload.ui.destroy()); await tick();
-  assert.equal(reload.ui.getChoices().artwork, 'community');
+  assert.equal(reload.ui.getChoices().artwork, 'app-platform');
   const other = fixture({ preferences: center.values, accountId: 22 }); t.after(() => other.ui.destroy()); await tick();
-  assert.equal(other.ui.getChoices().artwork, 'local-business');
-  await other.selectArtwork('miniature'); await tick();
-  assert.equal(JSON.parse(center.values.get('abl_referral_presentation_v1:21')).artwork, 'community');
-  assert.equal(JSON.parse(center.values.get('abl_referral_presentation_v1:22')).artwork, 'miniature');
+  assert.equal(other.ui.getChoices().artwork, 'connected-profiles');
+  await other.selectArtwork('everyday-life'); await tick();
+  assert.equal(JSON.parse(center.values.get('abl_referral_presentation_v1:21')).artwork, 'app-platform');
+  assert.equal(JSON.parse(center.values.get('abl_referral_presentation_v1:22')).artwork, 'everyday-life');
 });
 
 test('an older center artwork response cannot overwrite a newer chosen hero', async t => {
   const loads = [];
   const f = fixture({ loadBrandAsset: asset => { const pending = deferred(); loads.push({ asset, ...pending }); return pending.promise; } });
   t.after(() => f.ui.destroy()); await tick();
-  await f.selectArtwork('community'); await tick();
+  await f.selectArtwork('app-platform'); await tick();
   assert.equal(f.el('brandArtwork').src, undefined);
   assert.equal(f.el('artworkOptions').getAttribute('aria-busy'), 'true');
-  loads[1].resolve({ dataUrl: artworkData('community') }); await tick();
-  loads[0].resolve({ dataUrl: artworkData('local-business') }); await tick();
-  assert.equal(f.el('brandArtwork').getAttribute('data-artwork'), 'community');
-  assert.equal(f.el('brandArtwork').src, artworkData('community'));
+  loads[1].resolve({ dataUrl: artworkData('app-platform') }); await tick();
+  loads[0].resolve({ dataUrl: artworkData('connected-profiles') }); await tick();
+  assert.equal(f.el('brandArtwork').getAttribute('data-artwork'), 'app-platform');
+  assert.equal(f.el('brandArtwork').src, artworkData('app-platform'));
 });
 
 test('late success and failure from an old kit artwork cannot replace the current preview', async t => {
@@ -296,14 +320,14 @@ test('late success and failure from an old kit artwork cannot replace the curren
     const loads = [];
     const f = fixture({ page: 'kit', loadBrandAsset: asset => { const pending = deferred(); loads.push({ asset, ...pending }); return pending.promise; } });
     t.after(() => f.ui.destroy()); await tick();
-    await f.selectArtwork('miniature'); await tick();
+    await f.selectArtwork('everyday-life'); await tick();
     assert.equal(f.el('export').disabled, true);
     assert.equal(f.el('preview').children[0].tagName, 'DIV');
-    loads[1].resolve({ dataUrl: artworkData('miniature') }); await tick();
+    loads[1].resolve({ dataUrl: artworkData('everyday-life') }); await tick();
     if (lateFailure) loads[0].reject(new Error('Old artwork failed'));
-    else loads[0].resolve({ dataUrl: artworkData('local-business') });
+    else loads[0].resolve({ dataUrl: artworkData('connected-profiles') });
     await tick();
-    assert.equal(f.ui.getPrepared().artwork, 'miniature');
+    assert.equal(f.ui.getPrepared().artwork, 'everyday-life');
     assert.equal(f.el('artworkRetry').hidden, true);
     assert.equal(f.el('export').disabled, false);
   }
@@ -311,12 +335,12 @@ test('late success and failure from an old kit artwork cannot replace the curren
 
 test('failure of a new selected artwork clears an old ready design and does not export the old artwork', async t => {
   const f = fixture({ page: 'kit', loadBrandAsset: async asset => {
-    if (asset.id === 'community') throw new Error('Missing selected artwork');
+    if (asset.id === 'app-platform') throw new Error('Missing selected artwork');
     return { dataUrl: artworkData(asset.id) };
   } });
   t.after(() => f.ui.destroy()); await tick();
   assert.equal(f.el('export').disabled, false);
-  await f.selectArtwork('community'); await tick();
+  await f.selectArtwork('app-platform'); await tick();
   assert.equal(f.ui.getPrepared(), null);
   assert.equal(f.el('preview').children[0].tagName, 'DIV');
   assert.equal(f.el('export').disabled, true);
@@ -329,7 +353,7 @@ test('artwork completed after sign-out cannot restore a hero or a prepared desig
     const pending = deferred();
     const f = fixture({ page, loadBrandAsset: () => pending.promise }); t.after(() => f.ui.destroy()); await tick();
     f.signOut(); await f.document.fire('abl:auth-expired');
-    pending.resolve({ dataUrl: artworkData('local-business') }); await tick();
+    pending.resolve({ dataUrl: artworkData('connected-profiles') }); await tick();
     assert.equal(f.el('signin').hidden, false);
     assert.equal(f.el('artworkStatus').textContent, promotionText('en-PH', 'artworkWaiting'));
     if (page === 'center') assert.equal(f.el('brandArtwork').src, undefined);
@@ -339,26 +363,26 @@ test('artwork completed after sign-out cannot restore a hero or a prepared desig
 
 test('pending artwork and old presentation choices do not overwrite a newly verified account', async t => {
   const loads = [];
-  const f = fixture({ query: '?artwork=community', loadBrandAsset: asset => { const pending = deferred(); loads.push({ asset, ...pending }); return pending.promise; } });
+  const f = fixture({ query: '?artwork=app-platform', loadBrandAsset: asset => { const pending = deferred(); loads.push({ asset, ...pending }); return pending.promise; } });
   t.after(() => f.ui.destroy()); await tick();
   f.changeAccount(22); const fresh = f.ui.controller.load(); await tick();
-  assert.equal(f.ui.getChoices().artwork, 'local-business');
-  loads[1].resolve({ dataUrl: artworkData('local-business') }); await fresh;
-  loads[0].resolve({ dataUrl: artworkData('community') }); await tick();
-  assert.equal(f.el('brandArtwork').src, artworkData('local-business'));
+  assert.equal(f.ui.getChoices().artwork, 'connected-profiles');
+  loads[1].resolve({ dataUrl: artworkData('connected-profiles') }); await fresh;
+  loads[0].resolve({ dataUrl: artworkData('app-platform') }); await tick();
+  assert.equal(f.el('brandArtwork').src, artworkData('connected-profiles'));
   assert.equal(f.ui.controller.getCurrent().account.id, 22);
-  assert.equal(JSON.parse(f.values.get('abl_referral_presentation_v1:22')).artwork, 'local-business');
+  assert.equal(JSON.parse(f.values.get('abl_referral_presentation_v1:22')).artwork, 'connected-profiles');
 });
 
 test('changing artwork during export preparation ignores the older completed file', async t => {
   const exports = [];
   const f = fixture({ page: 'kit', createExport: options => { const pending = deferred(); exports.push({ options, ...pending }); return pending.promise; } });
   t.after(() => f.ui.destroy()); await tick();
-  await f.selectArtwork('community'); await tick();
+  await f.selectArtwork('app-platform'); await tick();
   exports[0].resolve({ blob: new Blob(['old']), filename: 'old.png', mimeType: 'image/png' }); await tick();
   assert.equal(f.ui.getPrepared(), null);
   assert.equal(f.el('export').disabled, true);
   exports[1].resolve({ blob: new Blob(['new']), filename: 'new.png', mimeType: 'image/png' }); await tick();
   assert.equal(f.ui.getPrepared().filename, 'new.png');
-  assert.equal(f.ui.getPrepared().artwork, 'community');
+  assert.equal(f.ui.getPrepared().artwork, 'app-platform');
 });

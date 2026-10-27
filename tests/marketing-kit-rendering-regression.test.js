@@ -133,7 +133,7 @@ test('brand assets are optional, embedded raster only, and require an accessible
   assert.throws(() => generateMarketingKitSvg({ ...options, brandAsset: { dataUrl: qr.dataUrl, alt: '' } }), /description/);
 });
 
-for (const id of ['local-business', 'community', 'miniature']) {
+for (const id of ['app-platform', 'connected-profiles', 'everyday-life']) {
   test(`approved ${id} artwork: full composition fits every format without changing text or QR`, () => {
     const bytes = readFileSync(new URL(`../public/referral/assets/brand-${id}.jpg`, import.meta.url));
     // Check the actual image dimensions, so substituting a thumbnail cannot pass.
@@ -164,13 +164,78 @@ for (const id of ['local-business', 'community', 'miniature']) {
         const artworkQr = nodes.find(node => node.attrs['data-image-role'] === 'qr');
         assert.deepEqual(artworkQr.attrs, plainQr.attrs, 'choosing artwork cannot shrink, move or replace the QR');
         assert.deepEqual(textSignature(nodes), textSignature(plain), 'choosing artwork cannot crowd or change the promotional copy');
-        const qrPanel = nodes.find(node => node.name === 'rect' && node.attrs.fill === '#ffffff');
+        const qrPanel = nodes.find(node => node.name === 'rect' && node.attrs['data-marketing-role'] === 'qr-panel');
         assert.ok(qrPanel, 'QR retains its white panel');
+        assert.equal(qrPanel.attrs.fill, '#ffffff');
         assert.equal(intersection(box, rect(qrPanel)), false, 'artwork remains outside the QR and its white border');
       }
     }
   });
 }
+
+function checkBrandedFooter(nodes) {
+  checkGeometry(nodes);
+  const artwork = nodes.find(node => node.attrs['data-image-role'] === 'brand');
+  assert.deepEqual(rect(artwork), { x: 0, y: 0, width: 1536, height: 1024 }, 'the complete source occupies its original 3:2 frame');
+  const clip = nodes.find(node => node.name === 'clipPath' && node.attrs.id === 'brand-art-clip');
+  assert.deepEqual(rect(clip.children[0]), rect(artwork));
+  assert.equal(Number(clip.children[0].attrs.rx), 0, 'approved artwork corners are not cut off');
+  const footer = nodes.find(node => node.attrs['data-marketing-role'] === 'personal-footer');
+  assert.deepEqual(rect(footer), { x: 0, y: 1024, width: 1536, height: 512 });
+  assert.equal(footer.attrs.fill, '#ffffff');
+  const qrNode = nodes.find(node => node.attrs['data-image-role'] === 'qr');
+  const qrBox = rect(qrNode);
+  assert.ok(qrBox.width >= 300 && qrBox.width === qrBox.height, 'personal QR remains a large square target');
+  const panel = rect(nodes.find(node => node.attrs['data-marketing-role'] === 'qr-panel'));
+  assert.ok(panel.x <= qrBox.x - 24 && panel.y <= qrBox.y - 24 && panel.x + panel.width >= qrBox.x + qrBox.width + 24 && panel.y + panel.height >= qrBox.y + qrBox.height + 24, 'QR has extra uninterrupted white space on every side');
+  assert.ok(panel.y >= 1024 && panel.y + panel.height <= 1536, 'QR white area is wholly below the artwork');
+  for (const line of nodes.filter(node => node.name === 'tspan')) {
+    const size = Number(line.parent.attrs['font-size']);
+    const bounds = { x: Number(line.attrs.x), y: Number(line.attrs.y) - size, width: Number(line.attrs.textLength), height: size * 1.28 };
+    assert.ok(bounds.y >= 1024 && bounds.y + bounds.height <= 1536, 'every line of personal and campaign copy stays in the footer');
+    assert.equal(intersection(bounds, panel), false, 'text stays outside the QR and its extra white area');
+  }
+  const following = nodes[0].children.slice(nodes[0].children.indexOf(artwork) + 1);
+  for (const node of following) {
+    if (node.name === 'rect' || node.name === 'image') assert.ok(Number(node.attrs.y) >= 1024, 'no foreground decoration covers the approved artwork');
+  }
+}
+
+test('branded invitation keeps all approved artwork above a separate personal QR footer', () => {
+  for (const id of ['app-platform', 'connected-profiles', 'everyday-life']) {
+    const bytes = readFileSync(new URL(`../public/referral/assets/brand-${id}.jpg`, import.meta.url));
+    const selectedArt = { dataUrl: 'data:image/jpeg;base64,' + bytes.toString('base64'), alt: `Approved ${id} campaign` };
+    for (const locale of Object.keys(RUNTIME_MARKETING_COPY)) {
+      const nodes = parseSvg(generateMarketingKitSvg({ templateId: 'BRANDED_INVITATION_V1', fields, locale, brandAsset: selectedArt }));
+      checkBrandedFooter(nodes);
+      assert.equal(nodes.find(node => node.attrs['data-image-role'] === 'brand').attrs.href, selectedArt.dataUrl);
+      assert.equal(nodes.find(node => node.attrs['data-image-role'] === 'qr').attrs.href, qr.dataUrl);
+      assert.equal(content(nodes.find(node => node.attrs['data-text-role'] === 'scan')), RUNTIME_MARKETING_COPY[locale].reusable.scanCta);
+    }
+  }
+});
+
+test('branded footer preserves maximum names and long complete referral URLs without using artwork space', async () => {
+  const referrerName = 'W'.repeat(120);
+  // The QR endpoint's 2048-character payload includes its three-character #qr suffix.
+  for (const length of [512, 1024, 2045]) {
+    const longUrl = referralUrl + '&extra=' + 'W'.repeat(length - referralUrl.length - 7);
+    const longQr = await buildLocalReferralQr(longUrl);
+    for (const [locale, pack] of Object.entries(RUNTIME_MARKETING_COPY)) {
+      for (const variant of pack.variants) {
+        const nodes = parseSvg(generateMarketingKitSvg({ templateId: 'BRANDED_INVITATION_V1', fields: { ...fields, referrerName, referralUrl: longUrl, qrDataUrl: longQr.dataUrl }, locale, variantId: variant.id, brandAsset }));
+        checkBrandedFooter(nodes);
+        const name = nodes.find(node => node.attrs['data-text-role'] === 'referrer');
+        assert.equal(Number(name.attrs['font-size']), 24, 'a long URL cannot shrink the account name');
+        assert.equal(withoutWhitespace(content(name)), withoutWhitespace(pack.reusable.recommendedBy.replace('{REFERRER_NAME}', referrerName)));
+        assert.equal(withoutWhitespace(content(nodes.find(node => node.attrs['data-text-role'] === 'url'))), longUrl);
+        assert.equal(withoutWhitespace(content(nodes.find(node => node.attrs['data-text-role'] === 'headline'))), withoutWhitespace(variant.headline), 'the selected campaign message remains present');
+        for (const link of nodes.filter(node => node.name === 'a')) assert.equal(link.attrs.href, longUrl, 'personal links retain their full attribution');
+        assert.equal(nodes.find(node => node.attrs['data-image-role'] === 'qr').attrs.href, longQr.dataUrl, 'the QR is the supplied real account-specific asset');
+      }
+    }
+  }
+});
 
 test('scan-first templates have distinct artwork and larger clear QR targets', () => {
   const render = templateId => parseSvg(generateMarketingKitSvg({ templateId, fields }));
@@ -185,6 +250,8 @@ test('print and digital export dimensions use physical page sizes and safe forma
   assert.deepEqual(getMarketingKitExportSize('A4_REFERRAL_POSTER_V1'), { width: 2480, height: 3508 });
   assert.deepEqual(getMarketingKitExportSize('A5_REFERRAL_FLYER_V1'), { width: 1748, height: 2480 });
   assert.deepEqual(getMarketingKitExportSize('SOCIAL_SQUARE_REFERRAL_V1'), { width: 1080, height: 1080 });
+  assert.deepEqual(getMarketingKitExportSize('BRANDED_INVITATION_V1'), { width: 1536, height: 1536 });
+  assert.equal(getMarketingKitTemplate('BRANDED_INVITATION_V1').labels['fil-PH'], 'Imbitasyong may tatak');
   assert.throws(() => getMarketingKitExportSize('A4_REFERRAL_POSTER_V1', { dpi: Infinity }), /resolution/);
   for (const format of ['svg', 'png', 'jpg', 'pdf']) assert.ok(marketingKitFileName('A4_REFERRAL_POSTER_V1', referralCode, 'fil-PH', format).endsWith(`-fil-ph-${referralCode}.${format}`));
   assert.throws(() => marketingKitFileName('A4_REFERRAL_POSTER_V1', referralCode, 'en-PH', 'html'), /unsupported/);

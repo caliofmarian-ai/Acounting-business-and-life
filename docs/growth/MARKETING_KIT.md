@@ -148,7 +148,7 @@ The surface:
 - loads the authenticated account referral identity from `GET /api/growth/referral?profile=<role>`;
 - rejects identity responses for a different account/session or a no-longer-selected role;
 - offers only the currently enabled source profiles;
-- exposes all ten canonical template IDs/dimensions;
+- exposes the ten existing canonical template IDs/dimensions plus the runtime-owned `BRANDED_INVITATION_V1` format;
 - binds `REFERRER_NAME`, `REFERRAL_CODE`, `REFERRAL_URL` and the locally generated PNG QR asset;
 - produces a valid, self-contained SVG with bounded, readable text and the complete invitation URL;
 - offers PNG by default, plus JPEG and SVG export, without uploading referral data to Canva, Figma or a third-party QR service;
@@ -175,13 +175,16 @@ initial language follows the verified account preference unless a valid saved
 tool choice was made. Page language metadata must match the interface language.
 
 Brand imagery:
-- the Owner approved all three generated directions on 2026-10-27 and requested that each user can choose;
-- a visual radio-card selector in both Promotion Center and Marketing Kit offers **Local business**, **Community** and **Miniature world**, localized in English/Filipino;
-- the stable artwork IDs are `local-business`, `community` and `miniature`; the default is `local-business`, and invalid IDs cannot supply an arbitrary image URL;
+- the Owner approved all three product-focused branded directions on 2026-10-27, replacing the earlier generic scene proposals, and requested that each user can choose;
+- a visual radio-card selector in both Promotion Center and Marketing Kit offers **App platform**, **Connected profiles** and **Everyday life**, with English/Filipino labels and descriptions;
+- the stable artwork IDs are `app-platform`, `connected-profiles` and `everyday-life`; the default is `connected-profiles`, and invalid or retired IDs cannot supply an arbitrary image URL;
 - the selected ID is retained per account in the current browser and carried through center/kit navigation; it is not a server-synchronized account setting;
 - same-origin JPEG artwork and small uncropped WebP thumbnails are shipped with the application under `/referral/assets/`; the original composition is contained within its reserved panel. JPEG keeps embedded SVG artwork compatible with image engines that cannot decode WebP inside SVG;
-- user-facing headings, invitation URL and QR are rendered by the application,
-  not generated inside the artwork;
+- the complete, unmodified 1536 × 1024 source PNGs are committed in `marketing-kit/source-artwork/`, outside the public static directory; source hashes and provenance are recorded there;
+- each image contains the approved company name, app icon, caliof.com and English promotional copy. The interface explicitly says these baked-in words stay in English when the dynamic invitation text switches language;
+- fresh selections use `BRANDED_INVITATION_V1`: the complete image occupies the top 1536 × 1024 pixels of a 1536 × 1536 canvas, with a separate white 512-pixel footer for the current account QR and invitation information. Previously supported explicit template preferences remain valid;
+- the personal invitation URL, QR, referrer and fallback code are rendered by the application in that footer. The QR uses the authenticated referral identity and the existing four-module quiet zone; it is never generated or shared as part of the common source artwork;
+- the new branded format is runtime-owned; no external Figma/Canva editable master is claimed for it. The ten existing editable masters remain separately tracked;
 - selected artwork must be embedded in self-contained exports and remain clear
   of the QR quiet zone and essential text;
 - a selected image that is loading or failed must not produce a falsely successful blank/different export; retry or choose another image, and ignore late results for an older selection;

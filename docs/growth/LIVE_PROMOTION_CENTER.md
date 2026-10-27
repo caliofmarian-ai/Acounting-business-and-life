@@ -98,12 +98,22 @@ message and artwork selection; private referral payloads are not persisted as
 preferences. The choices are scoped to the authenticated account in the current
 browser; they are not synchronized across devices.
 
-The Owner approved all three generated brand images on 2026-10-27. Both surfaces
-offer a visual, keyboard-accessible image selector: **Local business**,
-**Community** and **Miniature world**. The chosen image updates the center's
+The Owner approved all three product-focused branded images on 2026-10-27,
+superseding the earlier generic scene proposals. Both surfaces offer a visual,
+keyboard-accessible image selector: **App platform**, **Connected profiles**
+and **Everyday life**. The chosen image updates the center's
 hero and Marketing Kit design, survives reload/round-trip navigation and is
 embedded in exported files. Artwork is decorative; it does not change the
-referral identity, attribution, permissions or enabled profile.
+referral identity, attribution, permissions or enabled profile. The exact source
+PNGs are preserved in `marketing-kit/source-artwork/`; optimized delivery files
+are served from `public/referral/assets/`. The image's English branding stays in
+English, while the interface and personal invitation text support both locales.
+
+Fresh Marketing Kit selections use the branded invitation format, with the full
+approved image at the top and a separate white footer below for the account's
+real QR, full invitation URL and referrer information. The reusable source image
+never contains a shared or fabricated personal QR. Existing supported template
+choices remain available and are preserved when explicitly selected.
 
 Share, Copy and Marketing Kit are the primary tasks. If clipboard access fails,
 the user must be able to select the actual public invitation link. The browser's

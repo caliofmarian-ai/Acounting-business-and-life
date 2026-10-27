@@ -40,7 +40,7 @@ export function writePresentation(storage, accountId, input, allowed) {
   try { storage?.setItem(PREFERENCE_PREFIX + Number(accountId), JSON.stringify(sanitizePresentation(input, allowed))); } catch {}
 }
 
-export function resolvePresentation({ query = {}, saved = {}, snapshot, templates = [], variants = [] } = {}) {
+export function resolvePresentation({ query = {}, saved = {}, snapshot, templates = [], variants = [], defaultTemplate = '' } = {}) {
   const options = { templates, variants };
   const requested = sanitizePresentation(query, options);
   const previous = sanitizePresentation(saved, options);
@@ -49,7 +49,7 @@ export function resolvePresentation({ query = {}, saved = {}, snapshot, template
   return {
     profile,
     locale: requested.locale || previous.locale || normalizePromotionLocale(snapshot?.account?.preferred_locale),
-    template: requested.template || previous.template || templates[0] || '',
+    template: requested.template || previous.template || (templates.includes(defaultTemplate) ? defaultTemplate : templates[0]) || '',
     variant: requested.variant || previous.variant || (variants.includes('personal_share_v1') ? 'personal_share_v1' : variants[0] || ''),
     format: requested.format || previous.format || 'png',
     artwork: requested.artwork || previous.artwork || DEFAULT_PROMOTION_ARTWORK_ID,

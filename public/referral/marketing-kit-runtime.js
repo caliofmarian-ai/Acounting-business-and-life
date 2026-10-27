@@ -13,7 +13,8 @@ export const RUNTIME_MARKETING_TEMPLATES = Object.freeze([
   template('WINDOW_STICKER_V1', 'Window sticker', 'Sticker sa bintana', 1080, 1080, 'sticker'),
   template('LINKEDIN_REFERRAL_V1', 'LinkedIn landscape', 'Pahalang para sa LinkedIn', 1200, 627, 'landscape'),
   template('EMAIL_WEB_BANNER_V1', 'Email / web banner', 'Banner para sa email / web', 1200, 400, 'banner'),
-  template('QR_PHONE_CARD_V1', 'QR phone card', 'QR card sa telepono', 1080, 1920, 'phone')
+  template('QR_PHONE_CARD_V1', 'QR phone card', 'QR card sa telepono', 1080, 1920, 'phone'),
+  template('BRANDED_INVITATION_V1', 'Branded invitation', 'Imbitasyong may tatak', 1536, 1536, 'branded-invitation')
 ]);
 export const RUNTIME_MARKETING_COPY = Object.freeze({
   "en-PH": {
@@ -222,6 +223,13 @@ function layoutRegions(selected) {
   const rect = (x, y, width, height) => ({ x: rounded(x * w), y: rounded(y * h), width: rounded(width * w), height: rounded(height * h) });
   const qr = (x, y, width) => ({ x: rounded(x * w), y: rounded(y * h), width: rounded(width * w), height: rounded(width * w) });
   const common = { header: rect(.055, .035, .89, .065) };
+  if (layout === 'branded-invitation') return {
+    hero: { x: 0, y: 0, width: 1536, height: 1024 },
+    footer: { x: 0, y: 1024, width: 1536, height: 512 },
+    info: { x: 56, y: 1056, width: 1032, height: 448 },
+    qr: { x: 1160, y: 1080, width: 320, height: 320 },
+    scan: { x: 1160, y: 1440, width: 320, height: 64 }
+  };
   if (layout === 'phone') return { header: rect(.06, .035, .58, .05), hero: rect(.71, .025, .23, .085), title: rect(.06, .135, .88, .10), body: rect(.06, .245, .88, .06), info: rect(.08, .79, .84, .17), qr: qr(.16, .33, .68) };
   if (layout === 'sticker') return { ...common, title: rect(.06, .14, .88, .15), body: rect(.06, .31, .88, .09), info: rect(.59, .46, .35, .30), hero: rect(.59, .80, .35, .12), qr: qr(.065, .44, .46) };
   if (layout === 'social') return { ...common, hero: rect(.56, .14, .385, .42), title: rect(.06, .15, .44, .22), body: rect(.06, .40, .44, .16), info: rect(.06, .64, .54, .30), qr: qr(.665, .65, .27) };
@@ -232,11 +240,46 @@ function layoutRegions(selected) {
   return { ...common, hero: rect(.06, .13, .88, .25), title: rect(.06, .415, .88, .135), body: rect(.06, .575, .88, .085), info: rect(.06, .72, .54, .23), qr: qr(.67, .72, .25) };
 }
 
+function brandedInvitationBlocks(copy, sourceFields, regions) {
+  // Flow personal information only in the footer. Keep names comfortably sized;
+  // an unusually long URL can use smaller text before the optional body is omitted.
+  for (const includeBody of [true, false]) {
+    for (let size = 24; size >= (includeBody ? 14 : 10); size--) {
+      const specs = [
+        ['headline', copy.variant.headline, Math.max(26, Math.round(size * 1.5)), { weight: 800 }],
+        ...(includeBody ? [['body', copy.variant.body, Math.max(20, size), { fill: '#385761' }]] : []),
+        ['referrer', interpolate(copy.pack.reusable.recommendedBy, sourceFields), 24, { weight: 600 }],
+        ['code', interpolate(copy.pack.reusable.referralCodeLabel, sourceFields), 22, { mono: true, weight: 700, fill: '#086970' }],
+        ['url', sourceFields.REFERRAL_URL, size, { fill: '#385761' }]
+      ];
+      const measured = specs.map(([role, value, fontSize, options]) => {
+        const content = cleanText(value).replace(/\s+/gu, ' ');
+        const lines = wrapText(content, regions.info.width, fontSize, options.mono);
+        return { role, value, fontSize, options, height: lines.length * rounded(fontSize * 1.28) };
+      });
+      if (measured.reduce((sum, item) => sum + item.height, 0) + (measured.length - 1) * 10 > regions.info.height) continue;
+      let top = regions.info.y;
+      const blocks = measured.map(item => {
+        const block = fitText(item.role, item.value, { x: regions.info.x, y: top, width: regions.info.width, height: item.height }, item.fontSize, { ...item.options, minSize: item.fontSize });
+        top = rounded(top + item.height + 10);
+        return block;
+      });
+      blocks.push(fitText('scan', copy.pack.reusable.scanCta, regions.scan, 24, { weight: 700, fill: '#0f5960', minSize: 20 }));
+      return blocks;
+    }
+  }
+  throw new RangeError('This text is too long for the selected format. Choose a larger format.');
+}
+
 export function buildMarketingKitLayout({ templateId, fields, locale = 'en-PH', variantId = 'personal_share_v1', brandAsset } = {}) {
   const selected = getMarketingKitTemplate(templateId), safe = normalizeMarketingKitFields(fields);
   const copy = resolveMarketingKitCopy(locale, variantId), artwork = normalizeBrandAsset(brandAsset), regions = layoutRegions(selected);
   const min = Math.min(selected.width, selected.height), { info, qr } = regions;
   const sourceFields = { REFERRER_NAME: safe.referrerName, REFERRAL_CODE: safe.referralCode, REFERRAL_URL: safe.referralUrl };
+  if (selected.layout === 'branded-invitation') return {
+    template: selected, locale: copy.locale, variantId: copy.variant.id, fields: safe, brandAsset: artwork,
+    regions, blocks: brandedInvitationBlocks(copy, sourceFields, regions)
+  };
   const infoBox = (top, fraction) => ({ x: info.x, y: rounded(info.y + top * info.height), width: info.width, height: rounded(fraction * info.height) });
   const ctaSize = Math.max(12, Math.round(min * .021));
   const caption = { x: qr.x, y: rounded(qr.y + qr.height + Math.max(10, min * .014)), width: qr.width, height: rounded(Math.min(ctaSize * 2.8, selected.height - qr.y - qr.height - Math.max(15, min * .02))) };
@@ -260,6 +303,7 @@ export function generateMarketingKitSvg(options = {}) {
   const layout = buildMarketingKitLayout(options);
   const { template: selected, fields: safe, regions, blocks, brandAsset, locale } = layout;
   const { width, height } = selected, { hero, qr } = regions, radius = Math.round(Math.min(width, height) * .025);
+  const branded = selected.layout === 'branded-invitation', artworkRadius = branded ? 0 : radius, qrPadding = branded ? 24 : 7;
   const href = xmlEscape(safe.referralUrl), qrHref = xmlEscape(safe.qrDataUrl);
   const title = locale === 'fil-PH' ? 'Imbitasyon sa Business & Life' : 'Business & Life invitation';
   const description = blocks.filter(block => ['headline', 'body', 'referrer', 'code'].includes(block.role)).map(block => block.content).join(' ');
@@ -271,12 +315,13 @@ export function generateMarketingKitSvg(options = {}) {
   const textMarkup = blocks.map(block => block.role === 'url' ? `<a href="${href}" xlink:href="${href}" target="_blank" rel="noopener noreferrer">${renderBlock(block)}</a>` : renderBlock(block)).join('\n');
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:lang="${locale}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="creative-title creative-description" data-template="${selected.id}">
 <title id="creative-title">${xmlEscape(title)}</title><desc id="creative-description">${xmlEscape(description)}</desc>
-<defs><clipPath id="brand-art-clip"><rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${radius}"/></clipPath></defs>
+<defs><clipPath id="brand-art-clip"><rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${artworkRadius}"/></clipPath></defs>
 <rect width="${width}" height="${height}" fill="#f7fbf9"/>
-<rect x="0" y="0" width="${width}" height="${Math.max(6, Math.round(height * .006))}" fill="#147b7e"/>
-<rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${radius}" fill="#d9eeea"/>
+${branded ? '' : `<rect x="0" y="0" width="${width}" height="${Math.max(6, Math.round(height * .006))}" fill="#147b7e"/>`}
+<rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${artworkRadius}" fill="#d9eeea"/>
 ${art}
-<rect x="${rounded(qr.x - 7)}" y="${rounded(qr.y - 7)}" width="${rounded(qr.width + 14)}" height="${rounded(qr.height + 14)}" rx="${radius}" fill="#ffffff" stroke="#c7d9d6"/>
+${branded ? `<rect data-marketing-role="personal-footer" x="${regions.footer.x}" y="${regions.footer.y}" width="${regions.footer.width}" height="${regions.footer.height}" fill="#ffffff"/>` : ''}
+<rect data-marketing-role="qr-panel" x="${rounded(qr.x - qrPadding)}" y="${rounded(qr.y - qrPadding)}" width="${rounded(qr.width + qrPadding * 2)}" height="${rounded(qr.height + qrPadding * 2)}" rx="${radius}" fill="#ffffff" stroke="#c7d9d6"/>
 <a href="${href}" xlink:href="${href}" target="_blank" rel="noopener noreferrer"><image data-image-role="qr" href="${qrHref}" xlink:href="${qrHref}" x="${qr.x}" y="${qr.y}" width="${qr.width}" height="${qr.height}" preserveAspectRatio="xMidYMid meet" image-rendering="pixelated" aria-label="${xmlEscape(title)} QR"/></a>
 ${textMarkup}
 </svg>`;
