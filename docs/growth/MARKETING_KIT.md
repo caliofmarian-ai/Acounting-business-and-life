@@ -140,13 +140,27 @@ Business & Life now has a first-party runtime export surface at:
 
 `/referral/marketing-kit.html`
 
-It:
+The #836 repair contract for that surface is listed below. Exact-head Preview
+acceptance and Production verification are recorded in the issue; this document
+does not itself certify a deployment.
+
+The surface:
 - loads the authenticated account referral identity from `GET /api/growth/referral?profile=<role>`;
+- rejects identity responses for a different account/session or a no-longer-selected role;
+- offers only the currently enabled source profiles;
 - exposes all ten canonical template IDs/dimensions;
 - binds `REFERRER_NAME`, `REFERRAL_CODE`, `REFERRAL_URL` and the locally generated PNG QR asset;
-- produces a scalable SVG without uploading referral data to Canva, Figma or a third-party QR service;
-- supports user-initiated file sharing when the browser supports Web Share files, with local SVG export fallback;
-- is linked from Promotion Center while preserving the selected sharing profile.
+- produces a valid, self-contained SVG with bounded, readable text and the complete invitation URL;
+- offers PNG by default, plus JPEG and SVG export, without uploading referral data to Canva, Figma or a third-party QR service;
+- shares a supported rendered file through the device share sheet, with an explicit download fallback;
+- labels browser printing honestly as **Print / Save as PDF**: PDF availability depends on the user's print destination;
+- preserves valid profile, format, language and message choices on reload/navigation, without storing the private referral payload;
+- is linked from `Merchant -> Settings / Profile Settings -> Promotion Center -> Create Marketing Kit`.
+
+An export acknowledgement means the download was started; it is not proof that
+the operating system saved the file or that the user sent it to another person.
+On export, image or clipboard failure the interface must keep a usable recovery
+action and must not report success.
 
 The runtime SVG is a safe canonical production layout; it does not claim pixel-identical reproduction of the editable Figma/Canva master artwork.
 
@@ -155,6 +169,18 @@ Runtime creative localization:
 - `fil-PH` uses `marketing-kit/copy.fil-PH.json`;
 - both expose the same three canonical message variants and keep referral identity unchanged;
 - locale and message variant are selected per exported creative and included in runtime validation.
+
+The standalone interface is also localized in English/Filipino in #836. Its
+initial language follows the verified account preference unless a valid saved
+tool choice was made. Page language metadata must match the interface language.
+
+Brand imagery:
+- generated artwork concepts are choices until the Owner selects the final direction;
+- user-facing headings, invitation URL and QR are rendered by the application,
+  not generated inside the artwork;
+- selected artwork must be embedded in self-contained exports and remain clear
+  of the QR quiet zone and essential text;
+- store/product promotion and platform referral invitations remain distinct.
 
 Automated print preflight:
 - `tests/marketing-kit-print-preflight.test.js` verifies A4/A5 QR physical-size geometry against the canonical 25 mm minimum;

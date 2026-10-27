@@ -1,0 +1,99 @@
+name: Promotion Center Browser
+
+on:
+  pull_request:
+    paths:
+      - 'public/referral/**'
+      - 'growth/referral-*.js'
+      - 'server-auth.js'
+      - 'session-cookie-core.js'
+      - 'public/session-security.js'
+      - 'scripts/promotion-browser-acceptance-836.mjs'
+      - '.github/workflows/promotion-center.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promotion-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_promotion_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_promotion_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_promotion_ci
+      TZ: UTC
+      NODE_ENV: test
+      APP_ENV: test
+      PORT: '3000'
+      PAYMONGO_MODE: test
+      PAYMONGO_LIVE_ENABLED: 'false'
+      REFERRAL_ANALYTICS_ENABLED: 'false'
+      REFERRAL_ATTRIBUTION_UNCONVERTED_ENABLED: 'false'
+      REFERRAL_ATTRIBUTION_CONVERTED_ENABLED: 'false'
+      RAILWAY_SERVICE_NAME: accounting-promotion-ci
+      RAILWAY_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PROMOTION_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      PROMOTION_PLAYWRIGHT_MODULE: ${{ runner.temp }}/promotion-browser/node_modules/playwright/index.mjs
+      PROMOTION_QR_SCRIPT: ${{ runner.temp }}/promotion-browser/node_modules/jsqr/dist/jsQR.js
+      PROMOTION_EVIDENCE_DIR: ${{ runner.temp }}/promotion-evidence
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --global npm@10.8.2
+      - run: npm ci
+      - name: Prepare isolated browser and ephemeral session signing
+        run: |
+          npm install --prefix "$RUNNER_TEMP/promotion-browser" --no-package-lock --ignore-scripts playwright@1.58.2 jsqr@1.4.0
+          google-chrome --version
+          echo '127.0.0.1 promotion.example.test' | sudo tee -a /etc/hosts > /dev/null
+          node --input-type=module -e "import{randomBytes}from'node:crypto';import{appendFileSync}from'node:fs';appendFileSync(process.env.GITHUB_ENV,'TOKEN_SECRET='+randomBytes(32).toString('hex')+'\nAPP_PIN='+randomBytes(24).toString('hex')+'\n');"
+      - name: Start the full gateway on disposable PostgreSQL
+        run: |
+          npm start > "$RUNNER_TEMP/promotion-gateway.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/promotion-gateway.pid"
+          for attempt in $(seq 1 180); do
+            if curl --fail --silent http://127.0.0.1:3000/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          tail -n 100 "$RUNNER_TEMP/promotion-gateway.log"
+          exit 1
+      - name: Verify real authenticated roles, QR, downloaded files and print output
+        run: node scripts/promotion-browser-acceptance-836.mjs
+      - name: Preserve revision-bound synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promotion-center-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/promotion-evidence
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Stop isolated gateway
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/promotion-gateway.pid"; then
+            kill "$(cat "$RUNNER_TEMP/promotion-gateway.pid")" 2>/dev/null || true
+          fi

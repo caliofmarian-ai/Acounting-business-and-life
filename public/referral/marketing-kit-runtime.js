@@ -1,14 +1,19 @@
+const template = (id, label, filipinoLabel, width, height, layout, print) => Object.freeze({
+  id, label, labels: Object.freeze({ 'en-PH': label, 'fil-PH': filipinoLabel }), width, height, layout,
+  ...(print ? { print: Object.freeze(print) } : {})
+});
+
 export const RUNTIME_MARKETING_TEMPLATES = Object.freeze([
-  { id: 'A4_REFERRAL_POSTER_V1', label: 'A4 referral poster', width: 794, height: 1123 },
-  { id: 'SOCIAL_SQUARE_REFERRAL_V1', label: 'Social square', width: 1080, height: 1080 },
-  { id: 'STORY_REFERRAL_V1', label: 'Story / Status', width: 1080, height: 1920 },
-  { id: 'A5_REFERRAL_FLYER_V1', label: 'A5 referral flyer', width: 559, height: 794 },
-  { id: 'REFERRAL_CARD_V1', label: 'Referral card', width: 1050, height: 600 },
-  { id: 'COUNTER_CARD_V1', label: 'Counter card', width: 1200, height: 800 },
-  { id: 'WINDOW_STICKER_V1', label: 'Window sticker', width: 1080, height: 1080 },
-  { id: 'LINKEDIN_REFERRAL_V1', label: 'LinkedIn landscape', width: 1200, height: 627 },
-  { id: 'EMAIL_WEB_BANNER_V1', label: 'Email / web banner', width: 1200, height: 400 },
-  { id: 'QR_PHONE_CARD_V1', label: 'QR phone card', width: 1080, height: 1920 }
+  template('A4_REFERRAL_POSTER_V1', 'A4 referral poster', 'A4 na poster', 794, 1123, 'poster', { widthMm: 210, heightMm: 297 }),
+  template('SOCIAL_SQUARE_REFERRAL_V1', 'Social square', 'Parisukat para sa social media', 1080, 1080, 'social'),
+  template('STORY_REFERRAL_V1', 'Story / Status', 'Story / Status', 1080, 1920, 'story'),
+  template('A5_REFERRAL_FLYER_V1', 'A5 referral flyer', 'A5 na flyer', 559, 794, 'poster', { widthMm: 148, heightMm: 210 }),
+  template('REFERRAL_CARD_V1', 'Referral card', 'Referral card', 1050, 600, 'card'),
+  template('COUNTER_CARD_V1', 'Counter card', 'Card sa counter', 1200, 800, 'counter'),
+  template('WINDOW_STICKER_V1', 'Window sticker', 'Sticker sa bintana', 1080, 1080, 'sticker'),
+  template('LINKEDIN_REFERRAL_V1', 'LinkedIn landscape', 'Pahalang para sa LinkedIn', 1200, 627, 'landscape'),
+  template('EMAIL_WEB_BANNER_V1', 'Email / web banner', 'Banner para sa email / web', 1200, 400, 'banner'),
+  template('QR_PHONE_CARD_V1', 'QR phone card', 'QR card sa telepono', 1080, 1920, 'phone')
 ]);
 export const RUNTIME_MARKETING_COPY = Object.freeze({
   "en-PH": {
@@ -87,119 +92,189 @@ export const RUNTIME_MARKETING_COPY = Object.freeze({
 
 export const SUPPORTED_MARKETING_LOCALES = Object.freeze(['en-PH','fil-PH']);
 
-const TEMPLATE_BY_ID = new Map(RUNTIME_MARKETING_TEMPLATES.map(template => [template.id, template]));
+const TEMPLATE_BY_ID = new Map(RUNTIME_MARKETING_TEMPLATES.map(item => [item.id, item]));
 const QR_DATA_URL_RE = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/;
+const BRAND_DATA_URL_RE = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 const REFERRAL_CODE_RE = /^r1_[A-Za-z0-9_-]{16}$/;
+const FONT = 'Arial,Helvetica,sans-serif';
+const MONO_FONT = 'ui-monospace,SFMono-Regular,Menlo,monospace';
 
-function text(value, max) {
-  return String(value ?? '').trim().slice(0, max);
+function cleanText(value) {
+  // XML 1.0 forbids these controls, even when the surrounding markup is escaped.
+  return String(value ?? '').replace(/[\uD800-\uDFFF]/gu, '\uFFFD').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '').trim();
 }
-
 function xmlEscape(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
+  return cleanText(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 }
-
-function compactUrl(value, max = 62) {
-  const raw = text(value, 2048);
-  if (raw.length <= max) return raw;
-  const keep = Math.max(12, Math.floor((max - 1) / 2));
-  return raw.slice(0, keep) + '…' + raw.slice(-keep);
-}
-
 function interpolate(value, fields) {
   return String(value).replace(/\{([A-Z_]+)\}/g, (_, key) => String(fields[key] ?? ''));
 }
+function rounded(value) { return Math.round(value * 100) / 100; }
 
+export function getMarketingKitTemplate(templateId) {
+  const selected = TEMPLATE_BY_ID.get(String(templateId || ''));
+  if (!selected) throw new TypeError('unknown marketing template');
+  return selected;
+}
+export function getMarketingKitExportSize(templateId, { dpi = 300 } = {}) {
+  const selected = getMarketingKitTemplate(templateId);
+  if (!Number.isFinite(dpi) || dpi < 72 || dpi > 600) throw new RangeError('export resolution must be between 72 and 600 DPI');
+  return selected.print
+    ? Object.freeze({ width: Math.round(selected.print.widthMm * dpi / 25.4), height: Math.round(selected.print.heightMm * dpi / 25.4) })
+    : Object.freeze({ width: selected.width, height: selected.height });
+}
 export function resolveMarketingKitCopy(locale = 'en-PH', variantId = 'personal_share_v1') {
   const selectedLocale = SUPPORTED_MARKETING_LOCALES.includes(locale) ? locale : 'en-PH';
   const pack = RUNTIME_MARKETING_COPY[selectedLocale];
   const variant = pack.variants.find(item => item.id === variantId) || pack.variants.find(item => item.id === 'personal_share_v1') || pack.variants[0];
   return Object.freeze({ locale: selectedLocale, pack, variant });
 }
-
 export function deriveReferrerName(shareText) {
-  const value = text(shareText, 220);
+  const value = cleanText(shareText);
   const suffix = ' invited you to try Business & Life.';
   if (value.endsWith(suffix)) {
     const name = value.slice(0, -suffix.length).trim();
-    if (name && name.length <= 80 && !/^you$/i.test(name)) return name;
+    if (name && name.length <= 120 && !/^you$/i.test(name)) return name;
   }
   return 'Business & Life member';
 }
-
 export function normalizeMarketingKitFields(input = {}) {
-  const referrerName = text(input.referrerName, 80) || 'Business & Life member';
-  const referralCode = text(input.referralCode, 40);
-  const referralUrl = text(input.referralUrl, 2048);
-  const qrDataUrl = text(input.qrDataUrl, 500000);
-
+  const referrerName = cleanText(input.referrerName) || 'Business & Life member';
+  const referralCode = cleanText(input.referralCode);
+  const referralUrl = cleanText(input.referralUrl);
+  const qrDataUrl = cleanText(input.qrDataUrl);
+  if (referrerName.length > 120) throw new RangeError('referrer name must contain no more than 120 characters');
   if (!REFERRAL_CODE_RE.test(referralCode)) throw new TypeError('valid referral code is required');
+  if (referralUrl.length > 2048) throw new RangeError('referral URL is too long');
   let parsed;
   try { parsed = new URL(referralUrl); } catch { throw new TypeError('valid referral URL is required'); }
-  if (!['https:', 'http:'].includes(parsed.protocol) || parsed.pathname !== '/referral/' || parsed.searchParams.get('ref') !== referralCode) {
+  if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash || parsed.pathname !== '/referral/' || parsed.searchParams.get('ref') !== referralCode) {
     throw new TypeError('referral URL must match the canonical referral identity');
   }
-  if (!QR_DATA_URL_RE.test(qrDataUrl)) throw new TypeError('local PNG QR asset is required');
-
+  if (qrDataUrl.length > 500000 || !QR_DATA_URL_RE.test(qrDataUrl)) throw new TypeError('local PNG QR asset is required');
   return Object.freeze({ referrerName, referralCode, referralUrl: parsed.toString(), qrDataUrl });
 }
-
-export function marketingKitFileName(templateId, referralCode, locale = 'en-PH') {
-  const template = TEMPLATE_BY_ID.get(String(templateId || ''));
-  if (!template) throw new TypeError('unknown marketing template');
+function normalizeBrandAsset(input) {
+  if (input == null) return null;
+  const dataUrl = cleanText(input.dataUrl), alt = cleanText(input.alt);
+  if (dataUrl.length > 8000000 || !BRAND_DATA_URL_RE.test(dataUrl)) throw new TypeError('brand artwork must be an embedded PNG, JPEG or WebP image');
+  if (!alt || alt.length > 200) throw new TypeError('brand artwork needs a short image description');
+  return Object.freeze({ dataUrl, alt });
+}
+export function marketingKitFileName(templateId, referralCode, locale = 'en-PH', format = 'svg') {
+  const selected = getMarketingKitTemplate(templateId);
   if (!REFERRAL_CODE_RE.test(String(referralCode || ''))) throw new TypeError('valid referral code is required');
+  const extension = format === 'jpeg' ? 'jpg' : String(format).toLowerCase();
+  if (!['svg', 'png', 'jpg', 'pdf'].includes(extension)) throw new TypeError('unsupported marketing export format');
   const safeLocale = SUPPORTED_MARKETING_LOCALES.includes(locale) ? locale.toLowerCase() : 'en-ph';
-  return `business-life-${template.id.toLowerCase().replaceAll('_','-')}-${safeLocale}-${referralCode}.svg`;
+  return `business-life-${selected.id.toLowerCase().replaceAll('_', '-')}-${safeLocale}-${referralCode}.${extension}`;
 }
 
-export function generateMarketingKitSvg({ templateId, fields, locale = 'en-PH', variantId = 'personal_share_v1' } = {}) {
-  const template = TEMPLATE_BY_ID.get(String(templateId || ''));
-  if (!template) throw new TypeError('unknown marketing template');
-  const safe = normalizeMarketingKitFields(fields);
-  const copy = resolveMarketingKitCopy(locale, variantId);
-  const copyFields = { REFERRER_NAME: safe.referrerName, REFERRAL_CODE: safe.referralCode, REFERRAL_URL: safe.referralUrl };
+// The SVG explicitly sets each line's textLength. These conservative character
+// advances choose line breaks; the exported geometry remains bounded on devices
+// with a different fallback font, without depending on canvas or remote fonts.
+function textWidth(value, size, mono = false) {
+  let units = 0;
+  for (const char of value) {
+    if (mono) units += .62;
+    else if (/\s/u.test(char)) units += .3;
+    else if (/[ilI1.,:;'!|]/u.test(char)) units += .3;
+    else if (/[MWmw@%&]/u.test(char)) units += .88;
+    else if (/[A-Z0-9]/u.test(char)) units += .65;
+    else if (/[^\x00-\xFF]/u.test(char)) units += /[‘’“”–—]/u.test(char) ? .45 : .82;
+    else units += .55;
+  }
+  return units * size;
+}
+function wrapText(value, maxWidth, size, mono = false) {
+  const words = value.replace(/\s+/gu, ' ').split(' '), lines = [];
+  let line = '';
+  for (const word of words) {
+    const candidate = line ? line + ' ' + word : word;
+    if (textWidth(candidate, size, mono) <= maxWidth) { line = candidate; continue; }
+    if (textWidth(word, size, mono) <= maxWidth) {
+      if (line) lines.push(line);
+      line = word;
+      continue;
+    }
+    if (line) line += ' ';
+    for (const char of word) {
+      if (line && textWidth(line + char, size, mono) > maxWidth) { lines.push(line.trimEnd()); line = ''; }
+      line += char;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+function fitText(role, value, box, size, { mono = false, fill = '#122d35', weight = 500, minSize = 11 } = {}) {
+  const content = cleanText(value).replace(/\s+/gu, ' ');
+  for (let fontSize = Math.round(size); fontSize >= minSize; fontSize--) {
+    const lineHeight = rounded(fontSize * 1.28), lines = wrapText(content, box.width, fontSize, mono);
+    if (lines.length * lineHeight > box.height) continue;
+    return { role, content, ...box, fontSize, lineHeight, mono, fill, weight,
+      lines: lines.map((line, index) => ({ text: line, x: box.x, y: rounded(box.y + fontSize + index * lineHeight), width: rounded(textWidth(line, fontSize, mono)) })) };
+  }
+  throw new RangeError('This text is too long for the selected format. Choose a larger format.');
+}
+function layoutRegions(selected) {
+  const { width: w, height: h, layout } = selected;
+  const rect = (x, y, width, height) => ({ x: rounded(x * w), y: rounded(y * h), width: rounded(width * w), height: rounded(height * h) });
+  const qr = (x, y, width) => ({ x: rounded(x * w), y: rounded(y * h), width: rounded(width * w), height: rounded(width * w) });
+  const common = { header: rect(.055, .035, .89, .065) };
+  if (layout === 'phone') return { header: rect(.06, .035, .58, .05), hero: rect(.71, .025, .23, .085), title: rect(.06, .135, .88, .10), body: rect(.06, .245, .88, .06), info: rect(.08, .79, .84, .17), qr: qr(.16, .33, .68) };
+  if (layout === 'sticker') return { ...common, title: rect(.06, .14, .88, .15), body: rect(.06, .31, .88, .09), info: rect(.59, .46, .35, .30), hero: rect(.59, .80, .35, .12), qr: qr(.065, .44, .46) };
+  if (layout === 'social') return { ...common, hero: rect(.56, .14, .385, .42), title: rect(.06, .15, .44, .22), body: rect(.06, .40, .44, .16), info: rect(.06, .64, .54, .30), qr: qr(.665, .65, .27) };
+  if (layout === 'story') return { ...common, hero: rect(.06, .12, .88, .30), title: rect(.06, .455, .88, .135), body: rect(.06, .61, .88, .085), info: rect(.06, .755, .54, .20), qr: qr(.665, .77, .27) };
+  if (layout === 'counter') return { ...common, hero: rect(.05, .14, .35, .42), title: rect(.45, .145, .50, .205), body: rect(.45, .39, .50, .16), info: rect(.05, .65, .59, .29), qr: qr(.72, .60, .22) };
+  if (layout === 'banner') return { header: rect(.04, .035, .66, .09), hero: rect(.77, .035, .19, .14), title: rect(.04, .19, .65, .19), body: rect(.04, .43, .65, .13), info: rect(.04, .64, .64, .31), qr: qr(.78, .25, .18) };
+  if (layout === 'card' || layout === 'landscape') return { header: rect(.04, .045, .61, .09), hero: rect(.68, .055, .28, .30), title: rect(.04, .22, .59, .21), body: rect(.04, .465, .57, .13), info: rect(.04, .66, .57, .29), qr: qr(.72, .44, .22) };
+  return { ...common, hero: rect(.06, .13, .88, .25), title: rect(.06, .415, .88, .135), body: rect(.06, .575, .88, .085), info: rect(.06, .72, .54, .23), qr: qr(.67, .72, .25) };
+}
 
-  const { width, height } = template;
-  const min = Math.min(width, height);
-  const pad = Math.max(28, Math.round(min * 0.055));
-  const landscape = width / height > 1.25;
-  const qrSize = Math.round(min * (landscape ? 0.34 : 0.31));
-  const qrX = landscape ? width - pad - qrSize : Math.round((width - qrSize) / 2);
-  const qrY = landscape ? Math.round((height - qrSize) / 2) : height - pad - qrSize;
-  const contentWidth = landscape ? width - qrSize - pad * 3 : width - pad * 2;
-  const titleSize = Math.max(28, Math.round(min * (landscape ? 0.065 : 0.072)));
-  const bodySize = Math.max(16, Math.round(min * 0.032));
-  const codeSize = Math.max(18, Math.round(min * 0.04));
-  const left = pad;
-  const titleY = pad + titleSize;
-  const bodyY = titleY + Math.round(titleSize * 1.15);
-  const recommendedY = bodyY + Math.round(bodySize * 2.15);
-  const codeY = recommendedY + Math.round(bodySize * 1.55);
-  const urlY = codeY + Math.round(codeSize * 1.55);
-  const accentH = Math.max(8, Math.round(min * 0.018));
-  const title = copy.variant.headline;
-  const subtitle = copy.variant.body;
-  const recommendedBy = interpolate(copy.pack.reusable.recommendedBy, copyFields);
-  const referralCodeLabel = interpolate(copy.pack.reusable.referralCodeLabel, copyFields);
-  const scanCta = copy.pack.reusable.scanCta;
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Business & Life referral creative">
-  <rect width="${width}" height="${height}" rx="${Math.round(min * 0.035)}" fill="#f8fbff"/>
-  <rect x="0" y="0" width="${width}" height="${Math.max(84, Math.round(height * 0.115))}" fill="#0f172a"/>
-  <rect x="${pad}" y="${Math.max(62, Math.round(height * 0.115))}" width="${Math.max(90, Math.round(contentWidth * 0.32))}" height="${accentH}" rx="${Math.round(accentH/2)}" fill="#0284c7"/>
-  <text x="${pad}" y="${Math.max(45, Math.round(height * 0.065))}" font-family="Inter,Arial,sans-serif" font-size="${Math.max(17, Math.round(min * 0.032))}" font-weight="800" letter-spacing="2" fill="#ffffff">${xmlEscape(copy.pack.reusable.brandLine)}</text>
-  <text x="${left}" y="${titleY + Math.max(84, Math.round(height * 0.115))}" font-family="Inter,Arial,sans-serif" font-size="${titleSize}" font-weight="900" fill="#0f172a">${xmlEscape(title)}</text>
-  <text x="${left}" y="${bodyY + Math.max(84, Math.round(height * 0.115))}" font-family="Inter,Arial,sans-serif" font-size="${bodySize}" font-weight="500" fill="#475569">${xmlEscape(subtitle.slice(0, 118))}</text>
-  <text x="${left}" y="${recommendedY + Math.max(84, Math.round(height * 0.115))}" font-family="Inter,Arial,sans-serif" font-size="${Math.max(13, Math.round(bodySize * 0.8))}" font-weight="700" fill="#334155">${xmlEscape(recommendedBy)}</text>
-  <text x="${left}" y="${codeY + Math.max(84, Math.round(height * 0.115))}" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="${Math.max(15, Math.round(codeSize * 0.8))}" font-weight="800" fill="#0369a1">${xmlEscape(referralCodeLabel)}</text>
-  <text x="${left}" y="${urlY + Math.max(84, Math.round(height * 0.115))}" font-family="Inter,Arial,sans-serif" font-size="${Math.max(13, Math.round(bodySize * 0.78))}" fill="#64748b">${xmlEscape(compactUrl(safe.referralUrl))}</text>
-  <rect x="${qrX - Math.round(pad * 0.28)}" y="${qrY - Math.round(pad * 0.28)}" width="${qrSize + Math.round(pad * 0.56)}" height="${qrSize + Math.round(pad * 0.56)}" rx="${Math.round(min * 0.025)}" fill="#ffffff" stroke="#cbd5e1"/>
-  <image href="${xmlEscape(safe.qrDataUrl)}" xlink:href="${xmlEscape(safe.qrDataUrl)}" x="${qrX}" y="${qrY}" width="${qrSize}" height="${qrSize}" preserveAspectRatio="xMidYMid meet"/>
-  <text x="${landscape ? qrX + qrSize/2 : width/2}" y="${Math.min(height - Math.round(pad * 0.45), qrY + qrSize + Math.round(bodySize * 1.8))}" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="${Math.max(12, Math.round(bodySize * 0.72))}" font-weight="700" fill="#475569">${xmlEscape(scanCta)}</text>
+export function buildMarketingKitLayout({ templateId, fields, locale = 'en-PH', variantId = 'personal_share_v1', brandAsset } = {}) {
+  const selected = getMarketingKitTemplate(templateId), safe = normalizeMarketingKitFields(fields);
+  const copy = resolveMarketingKitCopy(locale, variantId), artwork = normalizeBrandAsset(brandAsset), regions = layoutRegions(selected);
+  const min = Math.min(selected.width, selected.height), { info, qr } = regions;
+  const sourceFields = { REFERRER_NAME: safe.referrerName, REFERRAL_CODE: safe.referralCode, REFERRAL_URL: safe.referralUrl };
+  const infoBox = (top, fraction) => ({ x: info.x, y: rounded(info.y + top * info.height), width: info.width, height: rounded(fraction * info.height) });
+  const ctaSize = Math.max(12, Math.round(min * .021));
+  const caption = { x: qr.x, y: rounded(qr.y + qr.height + Math.max(10, min * .014)), width: qr.width, height: rounded(Math.min(ctaSize * 2.8, selected.height - qr.y - qr.height - Math.max(15, min * .02))) };
+  const blocks = [
+    fitText('brand', copy.pack.reusable.brandLine, regions.header, Math.max(17, min * .026), { weight: 800, fill: '#0f5960' }),
+    fitText('headline', copy.variant.headline, regions.title, Math.max(27, min * .065), { weight: 800, minSize: 18 }),
+    fitText('body', copy.variant.body, regions.body, Math.max(16, min * .028), { fill: '#385761', minSize: 13 }),
+    fitText('referrer', interpolate(copy.pack.reusable.recommendedBy, sourceFields), infoBox(0, .40), Math.max(13, min * .022), { weight: 600 }),
+    fitText('code', interpolate(copy.pack.reusable.referralCodeLabel, sourceFields), infoBox(.425, .16), Math.max(14, min * .023), { mono: true, weight: 700, fill: '#086970' }),
+    fitText('url', safe.referralUrl, infoBox(.61, .39), Math.max(13, min * .019), { fill: '#385761', minSize: 10 }),
+    fitText('scan', copy.pack.reusable.scanCta, caption, ctaSize, { weight: 700, fill: '#0f5960', minSize: 10 })
+  ];
+  return { template: selected, locale: copy.locale, variantId: copy.variant.id, fields: safe, brandAsset: artwork, regions, blocks };
+}
+function renderBlock(block) {
+  const font = block.mono ? MONO_FONT : FONT;
+  const lines = block.lines.map(line => `<tspan x="${line.x}" y="${line.y}" textLength="${line.width}" lengthAdjust="spacingAndGlyphs">${xmlEscape(line.text)}</tspan>`).join('');
+  return `<text data-text-role="${block.role}" aria-label="${xmlEscape(block.content)}" font-family="${font}" font-size="${block.fontSize}" font-weight="${block.weight}" fill="${block.fill}">${lines}</text>`;
+}
+export function generateMarketingKitSvg(options = {}) {
+  const layout = buildMarketingKitLayout(options);
+  const { template: selected, fields: safe, regions, blocks, brandAsset, locale } = layout;
+  const { width, height } = selected, { hero, qr } = regions, radius = Math.round(Math.min(width, height) * .025);
+  const href = xmlEscape(safe.referralUrl), qrHref = xmlEscape(safe.qrDataUrl);
+  const title = locale === 'fil-PH' ? 'Imbitasyon sa Business & Life' : 'Business & Life invitation';
+  const description = blocks.filter(block => ['headline', 'body', 'referrer', 'code'].includes(block.role)).map(block => block.content).join(' ');
+  const art = brandAsset
+    ? `<image data-image-role="brand" href="${xmlEscape(brandAsset.dataUrl)}" xlink:href="${xmlEscape(brandAsset.dataUrl)}" x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#brand-art-clip)" aria-label="${xmlEscape(brandAsset.alt)}"/>`
+    : `<rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${radius}" fill="#d9eeea"/><path d="M ${hero.x} ${hero.y + hero.height} L ${hero.x + hero.width * .72} ${hero.y} L ${hero.x + hero.width} ${hero.y} L ${hero.x + hero.width} ${hero.y + hero.height} Z" fill="#b5dcd7" clip-path="url(#brand-art-clip)"/>`;
+  const textMarkup = blocks.map(block => block.role === 'url' ? `<a href="${href}" xlink:href="${href}" target="_blank" rel="noopener noreferrer">${renderBlock(block)}</a>` : renderBlock(block)).join('\n');
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:lang="${locale}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="creative-title creative-description" data-template="${selected.id}">
+<title id="creative-title">${xmlEscape(title)}</title><desc id="creative-description">${xmlEscape(description)}</desc>
+<defs><clipPath id="brand-art-clip"><rect x="${hero.x}" y="${hero.y}" width="${hero.width}" height="${hero.height}" rx="${radius}"/></clipPath></defs>
+<rect width="${width}" height="${height}" fill="#f7fbf9"/>
+<rect x="0" y="0" width="${width}" height="${Math.max(6, Math.round(height * .006))}" fill="#147b7e"/>
+${art}
+<rect x="${rounded(qr.x - 7)}" y="${rounded(qr.y - 7)}" width="${rounded(qr.width + 14)}" height="${rounded(qr.height + 14)}" rx="${radius}" fill="#ffffff" stroke="#c7d9d6"/>
+<a href="${href}" xlink:href="${href}" target="_blank" rel="noopener noreferrer"><image data-image-role="qr" href="${qrHref}" xlink:href="${qrHref}" x="${qr.x}" y="${qr.y}" width="${qr.width}" height="${qr.height}" preserveAspectRatio="xMidYMid meet" image-rendering="pixelated" aria-label="${xmlEscape(title)} QR"/></a>
+${textMarkup}
 </svg>`;
 }

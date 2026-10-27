@@ -929,7 +929,7 @@ app.get('/api/growth/referral', auth, async (req, res, next) => {
       inviterDisplayName: account.rows[0].display_name || ''
     });
     const qr = await buildLocalReferralQr(payload.referralUrl);
-    res.json({ ...payload, campaign: new URL(payload.referralUrl).searchParams.get('utm_campaign'), qr });
+    res.json({ ...payload, account_id: req.accountId, campaign: new URL(payload.referralUrl).searchParams.get('utm_campaign'), qr });
   } catch (err) {
     next(err);
   }
