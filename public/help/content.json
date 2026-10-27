@@ -1,10 +1,10 @@
 {
-  "version": "0.12-docs-financial-documents-v1",
+  "version": "3.0-public-self-service",
   "locale": "en-PH",
   "product": {
     "name": "Business & Life — Philippines",
     "description": "A mobile-first local economic ecosystem where one account can use separate Customer, Merchant, Supplier, Delivery and Local Services profiles.",
-    "currentBoundary": "Public documentation describes behavior merged to GitHub main. Open/unmerged Admin/Support and Referral/Growth work is intentionally excluded until merged."
+    "currentBoundary": "Public product guides describe reviewed application behavior. Features can require profile approval, an operating area, publication or a configured provider; actual options and records in the app remain authoritative."
   },
   "profiles": [
     {
@@ -20,9 +20,9 @@
         "Incidents"
       ],
       "startHere": [
-        "Open the Customer profile.",
-        "Choose what you need: Food, Non-food, Local Services, My Orders or Delivery.",
-        "Follow the relevant task guide and keep payment/fulfilment status separate."
+        "Finish account checks, then activate Customer from Manage profiles.",
+        "Use the available Marketplace, Orders, Delivery and Local Services options.",
+        "Review the final payment and fulfilment requirements before submitting an order or request."
       ],
       "journey": [
         "Discover a Merchant or Service Provider",
@@ -40,18 +40,19 @@
       "tagline": "Run a storefront and keep business money, stock and orders understandable.",
       "accent": "teal",
       "modules": [
-        "Storefront",
+        "Today",
+        "Catalog",
         "Orders",
-        "Accounting",
-        "Inventory",
-        "Products & recipes",
-        "Procurement",
-        "Delivery dispatch"
+        "Storefront",
+        "Inventory / Stock",
+        "Suppliers",
+        "Delivery",
+        "Money"
       ],
       "startHere": [
-        "Open Merchant.",
-        "Confirm the active business workspace before entering money or stock.",
-        "Use Storefront, Orders, Accounting, Procurement or Delivery according to the task."
+        "Open Merchant and confirm the business.",
+        "Start on Today, then choose Catalog, Orders or Storefront for the next task.",
+        "Complete the applicable profile, business-readiness and publication gates before public commerce."
       ],
       "journey": [
         "Configure business workspace and storefront",
@@ -71,17 +72,19 @@
       "tagline": "Supply local businesses through a catalog, purchase orders and a separate accounting workspace.",
       "accent": "amber",
       "modules": [
-        "Supplier profile",
+        "Today",
+        "Orders",
         "Catalog",
-        "Merchant relationships",
-        "Purchase orders",
+        "Relationships",
+        "ETA & Readiness",
         "Fulfilment",
-        "Accounting"
+        "Exceptions",
+        "Finance"
       ],
       "startHere": [
-        "Open Supplier.",
-        "Confirm the active Supplier business workspace.",
-        "Maintain your profile/catalog and respond only to connected Merchant purchase orders."
+        "Accept the controlled-launch Supplier invitation and complete the applicable review.",
+        "Open Supplier and confirm the business.",
+        "Use Today/Orders for work, ETA & Readiness for preparation, and Supplier Finance for its records."
       ],
       "journey": [
         "Complete Supplier profile",
@@ -201,7 +204,8 @@
             "Business & Life is not only an accounting app and it is not only a marketplace. It is a local economic operating system designed to connect the everyday activities that normally happen in separate places: selling products, buying locally, managing cash, controlling stock, ordering supplies, arranging delivery, offering skilled services and resolving operational problems.",
             "The product started from a small-business accounting and cash-control need. Its current merged architecture has expanded that foundation into a Philippines-focused ecosystem where the same person can participate in different economic roles without creating a separate identity for each one.",
             "The central idea is simple: one person keeps one account, but the application changes workspace according to what that person is doing. A person buying food uses Customer. A shop owner runs Merchant. A wholesaler or producer uses Supplier. An approved rider/driver uses Delivery. A carpenter, electrician or other skilled worker uses Local Services."
-          ]
+          ],
+          "bullets": []
         },
         {
           "title": "What problem the product is designed to solve",
@@ -236,7 +240,8 @@
             "The account is the identity layer. The active profile is the operational context. Business workspaces are the economic context. These are deliberately separate concepts.",
             "For example, having a Customer profile does not grant access to Merchant accounting. Having a Supplier profile does not allow a person to view another Merchant’s ledger. A Merchant or Supplier profile must be bound to an authorized business workspace before accounting data can be accessed.",
             "This separation is important because the product is designed for many people and many local businesses to use the same platform without their private financial records becoming one shared ledger."
-          ]
+          ],
+          "bullets": []
         },
         {
           "title": "How the local commerce loop works",
@@ -318,10 +323,11 @@
         {
           "title": "Trust, approvals and operating territories",
           "paragraphs": [
-            "Business & Life is designed to operate in controlled local territories rather than assuming every operational profile can immediately work everywhere. Customer is the default self-service profile. Merchant, Supplier and Delivery are governed profiles. Local Services uses an application/approval path for operational scope.",
+            "Business & Life is designed to operate in controlled local territories rather than assuming every operational profile can immediately work everywhere. Customer can be activated after the account checks. Merchant and Local Services have self-start onboarding where available; Supplier and Delivery require an invitation for normal controlled-launch users. Local Services uses an application/approval path for operational scope.",
             "Invitations, applications and authorizations are territory-scoped. An authorization can later be suspended or reactivated through the governance workflow.",
             "Administration is deliberately not presented as another public marketplace profile. Privileged platform administration belongs to a separate secured authority model."
-          ]
+          ],
+          "bullets": []
         },
         {
           "title": "Safety and private problem reporting",
@@ -341,7 +347,8 @@
           "paragraphs": [
             "The platform helps organize commerce, operations, accounting evidence and role workflows. It does not claim to replace government registration, required invoices/receipts, tax filing, permits, professional licensing, insurance, legal advice or professional accounting obligations.",
             "It also does not currently represent every future design issue as a live feature. Public documentation describes merged executable behavior. Open/unmerged features are intentionally excluded until they are actually part of the product."
-          ]
+          ],
+          "bullets": []
         },
         {
           "title": "Current Philippines Edition",
@@ -363,7 +370,8 @@
             "If the order is delivered, the Customer receives a current delivery quote. Once the order is paid and ready, the Merchant requests a Courier. An approved available Courier is assigned, shares location during the active trip and completes delivery using the Customer handoff code.",
             "The Merchant’s business workspace keeps the merchandise payment and any outstanding receivable visible. If stock is low, the Merchant can order supplies from an accepted Supplier relationship. When goods physically arrive, the Merchant records the received quantities and linked stock increases. When the Merchant actually pays the Supplier, the payment appears in Merchant accounting and the Supplier’s own business accounting records the corresponding receipt.",
             "The result is one connected history of commerce, fulfilment, stock and money instead of several unrelated conversations and notebooks."
-          ]
+          ],
+          "bullets": []
         }
       ],
       "related": [
@@ -375,7 +383,27 @@
         "supplier-overview",
         "courier-overview",
         "service-provider-overview"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "create-account",
@@ -385,19 +413,71 @@
         "customer"
       ],
       "status": "current",
-      "summary": "Create a Customer account using email and password.",
-      "shortAnswer": "Registration creates one account identity and begins with a private Customer profile.",
+      "summary": "Create one personal identity, verify your email and choose your first profile.",
+      "shortAnswer": "Account setup and profile activation are separate. Verify your email, complete your personal details and choose the profile you need; registration does not authorize a business.",
       "steps": [
-        "Open Create account.",
-        "Enter your name, email and password.",
-        "Add a phone number if you want to provide one at this stage.",
-        "Select Region, Province when applicable, City / Municipality and Barangay from the official Philippine geography list.",
-        "Submit the form and continue to the app."
+        "Open Create account and use an email address you can receive messages at.",
+        "Enter your real name and a strong password. Complete the requested contact, adult-eligibility and Philippine home-area fields.",
+        "Follow the confirmation shown on the screen. If it says no account exists yet, open the verification email to finish creating it.",
+        "Return to Sign in using the verified email.",
+        "Open Account Settings → Manage profiles. Complete any remaining personal-details, email, adult-eligibility or area checks, then choose a profile."
       ],
       "notes": [
-        "The normal public login is email + password.",
-        "The old owner PIN is not part of normal user sign-in."
-      ]
+        "The Philippines pilot requires adult eligibility. Do not provide invented identity or address details.",
+        "Customer activation is separate from the governed Merchant, Supplier, Delivery and Local Services onboarding flows.",
+        "A verification link does not silently replace a different account already signed in to the browser."
+      ],
+      "related": [
+        "guest-browsing",
+        "email-verification",
+        "profile-approval-required"
+      ],
+      "searchTerms": [
+        "how do I create an account",
+        "register",
+        "sign up",
+        "registration email",
+        "gumawa ng account"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Gumawa ng account at pumili ng unang profile",
+          "summary": "Ihiwalay ang account setup, email verification at profile activation.",
+          "shortAnswer": "Kumpletuhin ang pagpaparehistro at email verification. Pagkatapos, buksan ang Manage profiles para piliin ang profile na kailangan mo. Hindi nito awtomatikong inaaprubahan ang negosyo.",
+          "steps": [
+            "Piliin ang Create account at gumamit ng email na maaari mong buksan.",
+            "Ilagay ang tunay na pangalan, matibay na password at hinihinging impormasyon. Kumpletuhin ang adult-eligibility at Philippine home-area fields.",
+            "Sundin ang mensahe sa screen. Kung wala pang account, buksan ang verification email para tapusin ang paglikha nito.",
+            "Mag-sign in gamit ang napatunayang email.",
+            "Buksan ang Account Settings → Manage profiles at kumpletuhin ang mga natitirang kinakailangan."
+          ],
+          "notes": [
+            "Para sa mga adult ang Philippines pilot.",
+            "Magkahiwalay ang Customer activation at ang application/approval ng mga operational profile."
+          ]
+        }
+      }
     },
     {
       "slug": "sign-in-recovery",
@@ -408,18 +488,79 @@
       "helpCodes": [
         "ERR-AUTH-001"
       ],
-      "summary": "Sign in with email/password or prepare a password reset when you cannot access the account.",
-      "shortAnswer": "Use email + password. If you cannot sign in, use Forgot password rather than repeatedly guessing.",
+      "summary": "Recover a password, return after an expired session, or recognize a temporary service problem.",
+      "shortAnswer": "Use the email linked to your account. For a forgotten password, choose Forgot password? → Send reset instructions. An expired session requires signing in again; an unavailable service needs a different recovery path.",
       "steps": [
-        "Open Sign in.",
-        "Enter the email used for your account.",
-        "Enter your password.",
-        "If it does not work, select Forgot password and follow the reset flow."
+        "Open the app and choose Sign in. Check the account email and enter the password carefully.",
+        "For a forgotten password, choose Forgot password?, enter the account email and select Send reset instructions.",
+        "Check that email inbox and spam folder. Use the most recent reset message, then choose and confirm the new password.",
+        "After a successful reset, sign in again. Previous sessions are revoked.",
+        "If the screen says the session expired, sign in again. If it says the service is unavailable, follow the service-unavailable guide instead of repeatedly resetting the password."
       ],
       "notes": [
-        "Password-reset and email-verification foundations are implemented.",
-        "Google sign-in only works when provider credentials are configured."
-      ]
+        "Do not share passwords, verification links, reset links or one-time codes with another person.",
+        "A reset request uses a generic response for privacy; it is not proof that an account exists or that email delivery completed.",
+        "If no reset message arrives, check the email spelling and inbox folders, allow delivery time, then request a fresh message. An expired or already-used link needs a new request.",
+        "Account-access contact outside sign-in is not currently verified as available. The Support guide explains this limitation."
+      ],
+      "related": [
+        "email-verification",
+        "service-unavailable",
+        "support-and-tickets"
+      ],
+      "searchTerms": [
+        "reset password",
+        "forgot password",
+        "cannot sign in",
+        "I cannot sign in",
+        "login",
+        "forgot pasword",
+        "password reset",
+        "mag reset ng password",
+        "nakalimutan password",
+        "hindi makapag sign in"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Mag-sign in o mag-reset ng password",
+          "summary": "Alamin kung password, expired session o pansamantalang serbisyo ang problema.",
+          "shortAnswer": "Gamitin ang email ng iyong account. Kung nakalimutan ang password, piliin ang Forgot password? at Send reset instructions. Kung expired ang session, mag-sign in muli.",
+          "steps": [
+            "Buksan ang app → Sign in at suriin ang email at password.",
+            "Piliin ang Forgot password? kung kailangan. Ilagay ang account email at piliin ang Send reset instructions.",
+            "Tingnan ang inbox at spam. Gamitin ang pinakabagong reset link at kumpirmahin ang bagong password.",
+            "Pagkatapos ng reset, mag-sign in muli. Hindi na gagana ang mga dating session.",
+            "Kung unavailable ang serbisyo, basahin ang gabay para sa screen na hindi ma-load."
+          ],
+          "notes": [
+            "Huwag ibahagi ang password, reset link o one-time code.",
+            "Pangkalahatan ang tugon sa reset request para sa privacy; hindi nito pinatutunayang may account o naihatid na ang email.",
+            "Kailangan ng bagong request kung expired o nagamit na ang link.",
+            "Wala pang napatunayang pampublikong account-access inbox o guest ticket form. Basahin ang Support guide."
+          ]
+        }
+      }
     },
     {
       "slug": "switch-profiles",
@@ -428,16 +569,40 @@
       "profiles": [],
       "status": "current",
       "summary": "Use one identity with different workspaces instead of creating separate accounts.",
-      "shortAnswer": "Open Account & Profiles, then select an enabled profile. Switching profile does not sign you out.",
+      "shortAnswer": "Use the account profile switcher to enter an enabled profile. Help topics are only reading preferences and do not change your active app profile.",
       "steps": [
-        "Tap your avatar/account control.",
-        "Find Switch profile.",
-        "Choose an enabled profile.",
-        "The app opens the workspace for that role."
+        "Open your avatar / account menu.",
+        "Choose an enabled Customer, Merchant, Supplier, Delivery or Local Services profile.",
+        "Check the active business if the profile uses business workspaces.",
+        "If the profile is not enabled, open Account Settings → Manage profiles to view the next onboarding action."
       ],
       "notes": [
         "Administration is not shown as a normal public profile."
-      ]
+      ],
+      "related": [
+        "account-and-profile-settings",
+        "profile-approval-required"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "profile-approval-required",
@@ -453,17 +618,73 @@
       "helpCodes": [
         "ERR-GOV-001"
       ],
-      "summary": "Merchant, Supplier and Delivery access is governed; Local Services also has an application/approval flow.",
-      "shortAnswer": "Some profiles are intentionally not self-activated. You need the appropriate invitation/application and Admin authorization for the operating territory.",
+      "summary": "Understand the different start, invitation and approval rules for each profile.",
+      "shortAnswer": "Open Account Settings → Manage profiles. Merchant and Local Services can start onboarding when account and area checks allow it. Supplier and Delivery require an invitation for normal users in the controlled launch. Operational access still requires review and approval.",
       "steps": [
-        "Open Account & Profiles or the relevant invitation/application screen.",
-        "Complete the requested profile/application information.",
-        "Submit any required evidence.",
-        "Wait for the authorization decision before attempting operational actions."
+        "Open Account Settings → Manage profiles.",
+        "Complete any displayed email, personal-details, adult-eligibility or operating-area requirement.",
+        "For Merchant or Local Services, choose Start onboarding and complete the application. For Supplier or Delivery, accept the relevant invitation when available.",
+        "Submit the requested private evidence and application for review.",
+        "Follow the review status and Admin note. If approved, check any separate commerce-readiness and publication requirements before going public."
       ],
       "notes": [
-        "A platform approval does not replace licences, permits, insurance or other obligations that may apply to the activity."
-      ]
+        "Customer activation follows the account checks and does not grant Merchant, Supplier, Delivery or Local Services authority.",
+        "Platform authorization and commerce readiness are separate from government licences, permits and other obligations.",
+        "Support cannot bypass approval or activate a profile through a Help Center topic selection."
+      ],
+      "related": [
+        "profile-application-review",
+        "commerce-readiness",
+        "account-and-profile-settings"
+      ],
+      "searchTerms": [
+        "enable profile",
+        "merchant onboarding",
+        "supplier invitation",
+        "courier approval",
+        "activate customer",
+        "start profile",
+        "pag activate profile"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/profile-governance-ui.js",
+          "server-profile-governance.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Bakit hindi ma-activate ang profile?",
+          "summary": "Alamin kung account check, invitation o approval ang kailangan.",
+          "shortAnswer": "Buksan ang Account Settings → Manage profiles. Maaaring simulan ang Merchant at Local Services onboarding kung pasado sa account at area checks. Kailangan ng invitation para sa normal na Supplier at Delivery users sa controlled launch.",
+          "steps": [
+            "Buksan ang Manage profiles.",
+            "Kumpletuhin ang email, personal details, adult eligibility at area checks na ipinapakita.",
+            "Para sa Merchant o Local Services, piliin ang Start onboarding. Para sa Supplier o Delivery, tanggapin ang angkop na invitation.",
+            "Kumpletuhin ang application at isumite ang hinihinging pribadong ebidensiya.",
+            "Hintayin ang desisyon at suriin ang hiwalay na readiness at publication requirements."
+          ],
+          "notes": [
+            "Hindi kapalit ng opisyal na permit o lisensiya ang platform approval.",
+            "Ang pagpili ng topic sa Help Center ay hindi nag-aactivate ng profile."
+          ]
+        }
+      }
     },
     {
       "slug": "customer-overview",
@@ -479,7 +700,27 @@
         "Open Customer from the profile switcher.",
         "Choose Food, Non-food, Local Services, My Orders or Delivery.",
         "Follow the task-specific guide for checkout/tracking."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "browse-marketplace",
@@ -496,7 +737,27 @@
         "Choose Food or Non-food.",
         "Open a Merchant storefront.",
         "Review available products, fulfilment options and supported payment choices."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "place-order",
@@ -517,7 +778,32 @@
       ],
       "notes": [
         "Delivery checkout currently requires a valid delivery quote and online/digital payment."
-      ]
+      ],
+      "searchTerms": [
+        "place order",
+        "buy food",
+        "checkout",
+        "bumili pagkain"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "cash-pickup-presence",
@@ -541,7 +827,31 @@
       ],
       "notes": [
         "Returning-customer remote cash preparation eligibility is Merchant-specific, not global."
-      ]
+      ],
+      "searchTerms": [
+        "cash pickup",
+        "customer presence",
+        "check in pickup"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "track-order",
@@ -558,7 +868,27 @@
         "Choose the order.",
         "Review preparation/payment status.",
         "If the order uses delivery, open Delivery for the delivery-specific status."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "delivery-quote-expired",
@@ -582,7 +912,32 @@
       "notes": [
         "The quote snapshots the active pricing rule, route distance, estimated weight/volume and fee.",
         "A quote is time-limited so checkout does not silently reuse stale pricing."
-      ]
+      ],
+      "searchTerms": [
+        "delivery quote expired",
+        "expired quote",
+        "renew delivery quote",
+        "napaso delivery quote"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "delivery-tracking-handoff",
@@ -600,7 +955,27 @@
         "Open the active delivery.",
         "Watch status/location while active.",
         "Give the handoff code to the Courier only at the correct delivery handoff."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "merchant-overview",
@@ -613,10 +988,39 @@
       "summary": "Operate a storefront, customer orders, stock, accounting, procurement and delivery dispatch.",
       "shortAnswer": "The Merchant profile combines commerce operations with an isolated business accounting workspace.",
       "steps": [
-        "Open Merchant from the profile switcher.",
-        "Confirm the active business workspace.",
-        "Use the accounting, storefront, order, procurement or delivery area for the task you need."
-      ]
+        "Open Merchant and check the selected business.",
+        "Start with Today to see work needing attention.",
+        "Use Catalog for the products you sell, Storefront for public business information, and Orders for Customer and Counter orders.",
+        "Use Inventory/Stock, Suppliers, Delivery and Money for their respective tasks."
+      ],
+      "related": [
+        "merchant-storefront",
+        "merchant-counter-orders",
+        "inventory-products-recipes",
+        "recorded-money-and-payouts"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "business-workspace-unavailable",
@@ -640,7 +1044,29 @@
       ],
       "notes": [
         "A profile existing does not automatically grant access to another business’s ledger."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "merchant-accounting",
@@ -661,7 +1087,29 @@
       "notes": [
         "Cash, GCash, Bank and Other are separate money accounts.",
         "Financial corrections create audit events."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "record-transaction",
@@ -682,7 +1130,29 @@
       ],
       "notes": [
         "Entries linked to remittances, product sales, order payments or supplier records are protected from separate manual correction."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "open-close-day",
@@ -700,7 +1170,33 @@
         "Operate normally and record money movements.",
         "At day end count physical cash.",
         "Enter actual cash and review the calculated variance."
-      ]
+      ],
+      "searchTerms": [
+        "close day",
+        "opening cash",
+        "cash reconciliation"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "inventory-products-recipes",
@@ -710,14 +1206,47 @@
         "merchant"
       ],
       "status": "current",
-      "summary": "Maintain stock, selling products, recipes and gross-margin estimates.",
-      "shortAnswer": "Inventory stores ingredients/items. Products can have recipes that consume inventory and estimate ingredient cost/profit.",
+      "summary": "Separate food ingredients, retail stock and operating supplies; understand costs and stock consumption.",
+      "shortAnswer": "Inventory records stock and unit costs. Food recipes use ingredient quantities; retail products use the relevant stock; packaging and other operating supplies have their own classification and consumption rules.",
       "steps": [
-        "Create/update inventory items and unit costs.",
-        "Create products with selling prices.",
-        "Link recipe quantities to inventory ingredients.",
-        "Use product sale/profitability views to review revenue, estimated ingredient COGS and gross profit."
-      ]
+        "Open Merchant Inventory/Stock and confirm the business.",
+        "Create or select an inventory item. Choose the correct Food, Retail or Operations domain and stock role.",
+        "Record units, quantity, unit cost and applicable reorder/target levels. Keep purchase-pack conversions consistent.",
+        "For Food products, review recipe yield and ingredient quantities before relying on estimated cost or availability.",
+        "Use the appropriate recipe, batch or order consumable rule for direct materials; keep general cleaning and operating supplies separate.",
+        "Review restock suggestions, stock counts and recorded movements before posting corrections."
+      ],
+      "notes": [
+        "A draft recipe or an estimated margin does not prove a payment or a physical stock movement occurred.",
+        "Review a count variance before posting. Do not record the same consumption both manually and through an existing automatic stock movement."
+      ],
+      "related": [
+        "inventory-consumables",
+        "stock-alerts-and-restocking",
+        "merchant-counter-orders"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "merchant-storefront",
@@ -728,13 +1257,45 @@
       ],
       "status": "current",
       "summary": "Configure public store information and marketplace product publication.",
-      "shortAnswer": "A storefront can be Draft/private, Published or Paused. Only published storefronts/products appear to Customers.",
+      "shortAnswer": "Profile authorization, commerce readiness and Storefront publication are separate. A public shop needs the applicable approvals and a Published Storefront with eligible products.",
       "steps": [
-        "Open Merchant storefront.",
-        "Set store name, description and Food/Non-food/Mixed type.",
-        "Configure pickup/delivery/payment capabilities and preparation ETA.",
-        "Publish when the storefront information/catalog is ready."
-      ]
+        "Open Merchant → Storefront and confirm the business.",
+        "Set the public store information, address/map details and Food / Non-food / Mixed operating type.",
+        "Review the displayed Business readiness information and complete the applicable activity, operating-context and evidence requirements.",
+        "Check product publication and available pickup, delivery, payment and preparation options.",
+        "Publish only when the app allows it. Draft or Paused storefronts do not appear as a normal public shop."
+      ],
+      "notes": [
+        "An approved profile does not automatically make the Storefront public.",
+        "The public Storefront shares published business/product information; it does not publish private stock, accounting or supporting documents."
+      ],
+      "related": [
+        "commerce-readiness",
+        "profile-application-review",
+        "merchant-counter-orders"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "merchant-order-workflow",
@@ -753,7 +1314,29 @@
         "Start preparing → mark ready.",
         "Record money only when it is actually received.",
         "Complete pickup or delivery handoff as applicable."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "trusted-supplier-relationship",
@@ -774,7 +1357,27 @@
         "Supplier reviews the relationship invitation.",
         "Supplier accepts.",
         "Merchant can then browse that Supplier’s catalog and create purchase orders."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "supplier-overview",
@@ -792,7 +1395,27 @@
         "Maintain profile/catalog information.",
         "Review incoming purchase orders and fulfil them.",
         "Use Accounting for this Supplier business’s money and reporting."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "supplier-catalog",
@@ -809,7 +1432,31 @@
         "Add product name, pack name and price per pack.",
         "Set the base unit and units per pack.",
         "Keep availability/lead time accurate."
-      ]
+      ],
+      "searchTerms": [
+        "pack conversion",
+        "minimum packs",
+        "supplier catalog price"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "supplier-purchase-orders",
@@ -828,7 +1475,31 @@
         "Update preparation/fulfilment status.",
         "Merchant records actual receipt when goods arrive.",
         "Merchant records Supplier payment only when money really moves."
-      ]
+      ],
+      "searchTerms": [
+        "purchase order",
+        "respond to PO",
+        "supplier order"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "supplier-accounting",
@@ -848,7 +1519,27 @@
       ],
       "notes": [
         "Supplier fulfilled revenue/receivables are surfaced in the business-scoped economic summary."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "courier-overview",
@@ -866,7 +1557,27 @@
         "Wait for approval.",
         "Go available when approved.",
         "Accept/follow assigned work and complete verified handoff."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/delivery-ui.js",
+          "server-delivery.js",
+          "courier-eligibility-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "courier-approval-required",
@@ -886,7 +1597,31 @@
         "Check eligibility/document status.",
         "Resolve missing/rejected/expired evidence.",
         "After approval, switch Availability on."
-      ]
+      ],
+      "searchTerms": [
+        "go available",
+        "courier not eligible",
+        "delivery profile invitation"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/delivery-ui.js",
+          "server-delivery.js",
+          "courier-eligibility-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "courier-documents",
@@ -903,7 +1638,32 @@
         "Choose document type and vehicle class.",
         "Enter reference/issue/expiry data when applicable.",
         "Upload the evidence and submit."
-      ]
+      ],
+      "searchTerms": [
+        "delivery documents",
+        "vehicle evidence",
+        "courier licence",
+        "dokumento delivery"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/delivery-ui.js",
+          "server-delivery.js",
+          "courier-eligibility-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "courier-active-delivery",
@@ -921,7 +1681,27 @@
         "Follow pickup/in-transit status actions.",
         "Share location while the delivery is active.",
         "At handoff, enter the Customer code and confirm delivery."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/delivery-ui.js",
+          "server-delivery.js",
+          "courier-eligibility-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "service-provider-overview",
@@ -939,7 +1719,27 @@
         "Submit qualifications/evidence where relevant.",
         "Respond to service requests with quotes.",
         "Complete accepted jobs through the in-app workflow."
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "service-provider-approval",
@@ -960,7 +1760,31 @@
         "Upload supporting evidence.",
         "Submit for Admin review.",
         "Use only the scope that is approved."
-      ]
+      ],
+      "searchTerms": [
+        "local services approval",
+        "service provider credentials",
+        "start local services"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "service-profile-and-credentials",
@@ -978,7 +1802,33 @@
         "Add credentials/qualifications and evidence.",
         "Configure visibility/pricing/review preferences.",
         "Save your profile."
-      ]
+      ],
+      "beforeYouStart": [
+        "Open Local Services → Services and find the public profile or qualification section for the task."
+      ],
+      "related": [
+        "account-and-profile-settings"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "service-requests-quotes-jobs",
@@ -997,7 +1847,32 @@
         "Customer accepts the quote.",
         "Provider starts/completes the job.",
         "Customer confirms completion and may leave a verified review."
-      ]
+      ],
+      "searchTerms": [
+        "service quote",
+        "accept quote",
+        "request service",
+        "service job"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "report-problem",
@@ -1005,15 +1880,44 @@
       "section": "Safety & privacy",
       "profiles": [],
       "status": "current",
-      "summary": "Submit a private incident about an order, delivery, Merchant, Courier, service job/provider, Supplier, payment or another operational issue.",
-      "shortAnswer": "Use Incident reporting for private safety/fraud/operational evidence. It is separate from public ratings/reviews.",
+      "summary": "Choose between Help & Support, a private incident, and a privacy-rights request.",
+      "shortAnswer": "Use Help & Support for a technical question and private follow-up. Use the incident/report path for a safety, fraud or operational problem needing protected evidence. Use the privacy request category for data-rights questions.",
       "steps": [
-        "Open Report a problem.",
-        "Choose what the incident relates to.",
-        "Describe what happened clearly.",
-        "Add allowed evidence if useful.",
-        "Submit and use My reports for private follow-up."
-      ]
+        "For a technical or account question while signed in, open Account Settings → Help & Support.",
+        "Choose New issue, the appropriate category and an accurate description; review any attachments before sending.",
+        "For a private operational or safety incident, use Report a problem and identify the related order, delivery, Supplier or service job when applicable.",
+        "Follow the existing case under My tickets or My reports, according to the path you used."
+      ],
+      "notes": [
+        "These are private handling paths; a public review is a different action.",
+        "A submitted request does not guarantee immediate resolution, approval, refund or account deletion."
+      ],
+      "related": [
+        "support-and-tickets",
+        "incident-privacy",
+        "delete-account"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/admin-operations-ui.js",
+          "server-admin-operations.js",
+          "server-incidents.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "incident-evidence-limits",
@@ -1030,7 +1934,32 @@
         "Choose only relevant evidence.",
         "Keep each file within the individual limit.",
         "If the upload is rejected, remove oversized/unsupported files and try again."
-      ]
+      ],
+      "searchTerms": [
+        "incident upload limit",
+        "evidence file",
+        "upload pdf"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/admin-operations-ui.js",
+          "server-admin-operations.js",
+          "server-incidents.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "email-verification",
@@ -1039,17 +1968,17 @@
       "profiles": [],
       "status": "current",
       "summary": "Request and complete email verification for account security.",
-      "shortAnswer": "Use the account-protection area to request a verification message, then complete the one-time verification flow.",
+      "shortAnswer": "Open the email verification message and follow its link. For an existing signed-in account, request another message from Account Settings → Security & access.",
       "beforeYouStart": [
-        "You must be signed in to request verification from the account-protection screen.",
-        "Email delivery requires the configured email provider in the deployed environment."
+        "Use an email inbox you control.",
+        "If you are finishing registration, follow the verification message before trying to activate a profile."
       ],
       "steps": [
-        "Open Account protection.",
-        "Choose Send verification email.",
-        "Open the verification message sent to the account email.",
-        "Complete the verification action.",
-        "Return to the app and refresh account status."
+        "Check the account email and open the latest Business & Life verification message.",
+        "Follow the verification link. If registration is pending, this completes the account-creation step.",
+        "Read the result. If another account is signed in, the app keeps that account separate and offers the appropriate sign-in choice.",
+        "For an existing account, open Account Settings → Security & access to request a fresh verification message if needed.",
+        "Return to Manage profiles after verification and complete any other account checks."
       ],
       "whatHappensNext": "The account records verified email status. This does not change your active profile or business workspace.",
       "commonProblems": [
@@ -1057,9 +1986,57 @@
         "The verification token is no longer valid: request a new verification email."
       ],
       "related": [
+        "create-account",
         "sign-in-recovery",
-        "switch-profiles"
-      ]
+        "profile-approval-required"
+      ],
+      "notes": [
+        "Email verification alone does not grant an operational profile or commerce approval."
+      ],
+      "searchTerms": [
+        "verify email",
+        "verification link expired",
+        "verification email missing",
+        "patunayan email"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "I-verify ang iyong email",
+          "summary": "Tapusin ang verification bago simulan ang profile.",
+          "shortAnswer": "Buksan ang pinakabagong verification email. Para sa umiiral na account, maaaring humingi ng bagong mensahe sa Account Settings → Security & access.",
+          "steps": [
+            "Tingnan ang tamang email inbox at buksan ang pinakabagong Business & Life verification message.",
+            "Sundin ang link. Kung pending ang registration, matatapos nito ang paglikha ng account.",
+            "Basahin ang resulta. Hindi awtomatikong papalitan ang ibang account na kasalukuyang naka-sign in.",
+            "Kung kailangan, humingi ng bagong mensahe sa Security & access.",
+            "Bumalik sa Manage profiles at kumpletuhin ang iba pang kinakailangan."
+          ],
+          "notes": [
+            "Hindi katumbas ng profile o commerce approval ang email verification."
+          ]
+        }
+      }
     },
     {
       "slug": "marketplace-options-explained",
@@ -1091,7 +2068,27 @@
         "browse-marketplace",
         "place-order",
         "delivery-fee-and-quote"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "order-statuses-explained",
@@ -1121,7 +2118,27 @@
         "track-order",
         "merchant-order-workflow",
         "customer-credit-receivables"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "customer-credit-receivables",
@@ -1152,7 +2169,29 @@
         "merchant-order-workflow",
         "record-transaction",
         "order-statuses-explained"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "remote-cash-trust",
@@ -1183,7 +2222,29 @@
       "related": [
         "cash-pickup-presence",
         "merchant-order-workflow"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "delivery-fee-and-quote",
@@ -1219,7 +2280,32 @@
         "delivery-quote-expired",
         "place-order",
         "delivery-tracking-handoff"
-      ]
+      ],
+      "searchTerms": [
+        "delivery price",
+        "delivery cost",
+        "delivery fee",
+        "magkano delivery"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "merchant-money-accounts",
@@ -1250,7 +2336,29 @@
         "merchant-accounting",
         "record-transaction",
         "open-close-day"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "remittances",
@@ -1282,7 +2390,29 @@
       "related": [
         "merchant-money-accounts",
         "record-transaction"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "budget-warnings",
@@ -1313,7 +2443,29 @@
       "related": [
         "merchant-accounting",
         "record-transaction"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "financial-corrections-audit",
@@ -1344,7 +2496,33 @@
       "related": [
         "record-transaction",
         "export-transactions-csv"
-      ]
+      ],
+      "searchTerms": [
+        "correct transaction",
+        "audit trail",
+        "linked transaction"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "export-transactions-csv",
@@ -1373,7 +2551,32 @@
       "related": [
         "merchant-accounting",
         "financial-corrections-audit"
-      ]
+      ],
+      "searchTerms": [
+        "export csv",
+        "download transactions"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "cancel-order-stock-reversal",
@@ -1402,7 +2605,29 @@
       "related": [
         "merchant-order-workflow",
         "inventory-products-recipes"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "merchant-delivery-dispatch",
@@ -1437,7 +2662,29 @@
         "merchant-order-workflow",
         "courier-active-delivery",
         "delivery-tracking-handoff"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "supplier-relationship-invitations",
@@ -1469,7 +2716,27 @@
         "trusted-supplier-relationship",
         "supplier-catalog",
         "supplier-purchase-orders"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "purchase-order-snapshots",
@@ -1499,7 +2766,27 @@
       "related": [
         "supplier-purchase-orders",
         "partial-supplier-receiving"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "supplier-po-statuses",
@@ -1530,7 +2817,27 @@
         "supplier-purchase-orders",
         "partial-supplier-receiving",
         "supplier-payment-accounting"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "partial-supplier-receiving",
@@ -1562,7 +2869,31 @@
         "purchase-order-snapshots",
         "supplier-po-statuses",
         "supplier-payment-accounting"
-      ]
+      ],
+      "searchTerms": [
+        "partial receiving",
+        "received quantity",
+        "supplier delivery short"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "supplier-payment-accounting",
@@ -1594,7 +2925,31 @@
         "supplier-accounting",
         "record-transaction",
         "partial-supplier-receiving"
-      ]
+      ],
+      "searchTerms": [
+        "supplier payment",
+        "supplier receivable",
+        "paid supplier"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "courier-location-privacy",
@@ -1625,7 +2980,27 @@
         "courier-active-delivery",
         "delivery-tracking-handoff",
         "courier-completion-code"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/delivery-ui.js",
+          "server-delivery.js",
+          "courier-eligibility-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "courier-completion-code",
@@ -1656,7 +3031,31 @@
       "related": [
         "courier-active-delivery",
         "courier-location-privacy"
-      ]
+      ],
+      "searchTerms": [
+        "handoff code",
+        "completion code",
+        "delivery pin"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/delivery-ui.js",
+          "server-delivery.js",
+          "courier-eligibility-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "find-local-service-provider",
@@ -1685,7 +3084,27 @@
       "related": [
         "service-profile-visibility",
         "service-requests-quotes-jobs"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "service-profile-visibility",
@@ -1698,7 +3117,7 @@
       "summary": "Control public, relationship-only or private profile visibility and public reputation participation.",
       "shortAnswer": "Profile visibility and reputation opt-in are separate controls. Private CV/evidence is not automatically exposed as public content.",
       "beforeYouStart": [
-        "Open Local Services → Public profile."
+        "Open Local Services → Services and find the public profile or qualification section for the task."
       ],
       "steps": [
         "Choose Public, Relationships only or Private visibility.",
@@ -1714,8 +3133,29 @@
       "related": [
         "service-profile-and-credentials",
         "credentials-verification",
-        "portfolio-publication-privacy"
-      ]
+        "portfolio-publication-privacy",
+        "account-and-profile-settings"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "credentials-verification",
@@ -1745,7 +3185,27 @@
       "related": [
         "service-profile-visibility",
         "service-provider-approval"
-      ]
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "searchTerms": []
     },
     {
       "slug": "portfolio-publication-privacy",
@@ -1774,7 +3234,30 @@
       "related": [
         "service-profile-visibility",
         "service-profile-and-credentials"
-      ]
+      ],
+      "searchTerms": [
+        "portfolio consent",
+        "customer photo permission"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "service-job-statuses",
@@ -1806,7 +3289,31 @@
       "related": [
         "service-requests-quotes-jobs",
         "verified-service-review"
-      ]
+      ],
+      "searchTerms": [
+        "service completion",
+        "customer confirmation",
+        "job status"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "verified-service-review",
@@ -1838,7 +3345,31 @@
       "related": [
         "service-job-statuses",
         "service-profile-visibility"
-      ]
+      ],
+      "searchTerms": [
+        "leave review",
+        "rate provider",
+        "verified service review"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/services-ui.js",
+          "server-services.js",
+          "local-services-pricing-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "incident-privacy",
@@ -1865,7 +3396,31 @@
       "related": [
         "report-problem",
         "incident-evidence-limits"
-      ]
+      ],
+      "searchTerms": [
+        "private incident",
+        "who sees report"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/admin-operations-ui.js",
+          "server-admin-operations.js",
+          "server-incidents.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "glossary",
@@ -1895,7 +3450,31 @@
         "order-statuses-explained",
         "supplier-po-statuses",
         "service-job-statuses"
-      ]
+      ],
+      "searchTerms": [
+        "what does receivable mean",
+        "fulfilment meaning",
+        "glossary"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "pricing-fees-and-promotions",
@@ -1953,7 +3532,32 @@
             "Before a real payment is confirmed, transaction-specific provider evidence and the active pricing policy take precedence over an older benchmark."
           ]
         }
-      ]
+      ],
+      "searchTerms": [
+        "platform fee",
+        "monthly subscription",
+        "pricing promotion"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/profile-settings-ui.js",
+          "profile-finance-core.js",
+          "financial-document-core.js",
+          "monetization-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
     },
     {
       "slug": "financial-statements-and-documents",
@@ -2017,7 +3621,1160 @@
             "A processor fee does not silently become the Merchant's expense simply because it appears on the same payment. Participant expense treatment requires an explicit applicable policy."
           ]
         }
-      ]
+      ],
+      "searchTerms": [
+        "monthly statement",
+        "financial documents",
+        "consolidated statement"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/profile-settings-ui.js",
+          "profile-finance-core.js",
+          "financial-document-core.js",
+          "monetization-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
+    },
+    {
+      "slug": "guest-browsing",
+      "title": "Explore Business & Life without an account",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "See public Food and Non-food shops before deciding to join.",
+      "shortAnswer": "Choose Explore as Guest to browse published Food and Non-food storefronts and their public products. Ordering and private workspaces require an account and the applicable profile.",
+      "steps": [
+        "Open the app and choose Explore as Guest.",
+        "Browse the published shops and products available for the selected area.",
+        "Open a public shop to review the information the Merchant has published.",
+        "When you want to place an order or use a protected feature, choose Create account or Sign in and complete the required profile setup."
+      ],
+      "notes": [
+        "Guest browsing does not create an account, profile, order or payment.",
+        "Private stock quantities, financial records, supporting documents and incident evidence are not public shop information.",
+        "Do not assume every Local Services or Delivery feature is available to guests; use the options actually shown."
+      ],
+      "related": [
+        "create-account",
+        "customer-overview",
+        "support-and-tickets"
+      ],
+      "searchTerms": [
+        "browse without account",
+        "guest mode",
+        "explore as guest",
+        "no registration",
+        "without signing in",
+        "bisita walang account"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/guest-explore.js",
+          "server-marketplace.js",
+          "docs/architecture/GUEST_EXPLORATION_AND_ONBOARDING.md"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Gamitin ang Business & Life bilang guest",
+          "summary": "Tingnan ang pampublikong Food at Non-food shops bago sumali.",
+          "shortAnswer": "Piliin ang Explore as Guest para makita ang mga inilathalang shop at produkto. Kailangan ng account at angkop na profile para umorder o gumamit ng pribadong workspace.",
+          "steps": [
+            "Buksan ang app at piliin ang Explore as Guest.",
+            "Tingnan ang mga shop at produkto sa napiling lugar.",
+            "Basahin ang impormasyong inilathala ng Merchant.",
+            "Kung gusto mong umorder, piliin ang Create account o Sign in at kumpletuhin ang profile setup."
+          ],
+          "notes": [
+            "Walang account, profile, order o payment na nalilikha sa simpleng guest browsing.",
+            "Hindi pampubliko ang pribadong stock, pananalapi at mga dokumento."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "profile-application-review",
+      "title": "Follow a profile application under review",
+      "section": "Getting started",
+      "profiles": [
+        "merchant",
+        "supplier",
+        "courier",
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Read Admin notes, add supporting evidence and correct an application when editing reopens.",
+      "shortAnswer": "Submitted and Under review mean the profile is waiting for a decision. You can add supporting documents during review; application details remain locked until editing is available.",
+      "steps": [
+        "Open Account Settings → Manage profiles and continue the relevant application.",
+        "Read the current status, Admin note and Review history.",
+        "Use Add supporting documents when you need to upload an additional relevant document. Select the type, label and supported file.",
+        "If the application needs changes and editing is available, correct the details, save and submit for review again.",
+        "After approval, follow the separate readiness/publication guide for your role."
+      ],
+      "notes": [
+        "Adding evidence does not restart or cancel the existing review.",
+        "Do not submit the same application repeatedly to move the queue. No guaranteed review deadline is established by this guide.",
+        "Keep evidence private and upload only what the application or reviewer needs."
+      ],
+      "related": [
+        "profile-approval-required",
+        "commerce-readiness",
+        "support-and-tickets"
+      ],
+      "searchTerms": [
+        "my application is under review",
+        "upload missing documents",
+        "pending approval",
+        "rejected application",
+        "add evidence",
+        "hinihintay ang approval",
+        "dagdag dokumento"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/profile-governance-ui.js",
+          "server-profile-governance.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Sundan ang application na nasa review",
+          "summary": "Basahin ang Admin note at magdagdag ng dokumento.",
+          "shortAnswer": "Kapag Submitted o Under review, naghihintay ng desisyon ang application. Maaaring magdagdag ng supporting documents habang naka-lock ang mga detalye para sa review.",
+          "steps": [
+            "Buksan ang Account Settings → Manage profiles at ipagpatuloy ang application.",
+            "Basahin ang status, Admin note at Review history.",
+            "Gamitin ang Add supporting documents at piliin ang tamang type, label at file.",
+            "Kung kailangan ng pagbabago at maaari nang mag-edit, itama, i-save at isumite muli.",
+            "Pagkatapos ng approval, suriin ang readiness at publication para sa iyong profile."
+          ],
+          "notes": [
+            "Hindi nire-restart o kinakansela ng dagdag na ebidensiya ang review.",
+            "Walang garantisadong review deadline sa gabay na ito."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "commerce-readiness",
+      "title": "Approved profile but shop not ready or public",
+      "section": "Merchant",
+      "profiles": [
+        "merchant",
+        "service_provider"
+      ],
+      "status": "current",
+      "summary": "Understand profile approval, business readiness and public visibility as separate checks.",
+      "shortAnswer": "An approved profile allows its authorized operating role. Business/commerce readiness checks the applicable activity and evidence. Storefront or service publication determines public discovery.",
+      "steps": [
+        "Check the profile/application status first. If it is pending, continue the application-review guide.",
+        "For Merchant, open Storefront and review Business readiness. Check the activity track, operating context and requested evidence.",
+        "Complete the information you can provide, then follow the displayed review requirements. Read any Admin explanation.",
+        "After the applicable readiness decision, check Storefront publication and eligible product publication. For Local Services, check the approved service scope and public visibility.",
+        "If a completed requirement still appears blocked, contact Support with the displayed state and what you already tried."
+      ],
+      "notes": [
+        "Profile authorization, commerce readiness and publication do not replace official registrations, permits or professional obligations.",
+        "Do not change business identity or submit invented evidence to bypass a blocker."
+      ],
+      "related": [
+        "merchant-storefront",
+        "profile-application-review",
+        "service-profile-visibility"
+      ],
+      "searchTerms": [
+        "merchant approved still starting",
+        "business readiness starting",
+        "approved not published",
+        "store not visible",
+        "commerce readiness",
+        "shop closed",
+        "aprubado pero hindi bukas"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/profile-governance-ui.js",
+          "server-profile-governance.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Aprubado ang profile pero hindi pa pampubliko ang shop",
+          "summary": "Ihiwalay ang authorization, readiness at publication.",
+          "shortAnswer": "Magkahiwalay ang profile approval, commerce readiness at paglalathala ng Storefront o services. Suriin kung aling hakbang ang kulang.",
+          "steps": [
+            "Suriin muna ang application status. Kung pending, sundin ang review guide.",
+            "Para sa Merchant, buksan ang Storefront → Business readiness.",
+            "Kumpletuhin ang activity track, operating context at hinihinging ebidensiya; basahin ang Admin note.",
+            "Pagkatapos ng angkop na desisyon, suriin ang Storefront at product publication. Para sa Local Services, suriin ang approved scope at public visibility.",
+            "Kung may natitirang blocker, gamitin ang Help & Support at ipaliwanag ang status at nasubukan mo na."
+          ],
+          "notes": [
+            "Hindi kapalit ng government registration, permit o professional obligation ang platform decision."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "account-and-profile-settings",
+      "title": "Find Account Settings and Profile Settings",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "Find shared account tools and the settings belonging to the profile you are using.",
+      "shortAnswer": "Account Settings applies to your identity and shared account utilities. Profile Settings applies to the selected Customer, Merchant, Supplier, Delivery or Local Services profile.",
+      "steps": [
+        "Open your avatar / account menu for Account Settings.",
+        "Use Personal details, Security & access or Manage profiles for identity and access tasks.",
+        "Use Money & Banking, Notifications & language, Legal & privacy or Help & Support for shared account utilities.",
+        "For role-specific settings, enter that profile and open its Profile Settings card. Check the business context before changing business information."
+      ],
+      "notes": [],
+      "related": [
+        "financial-accounts",
+        "notification-preferences",
+        "language-and-guided-tours",
+        "delete-account"
+      ],
+      "searchTerms": [
+        "settings",
+        "where are profile settings",
+        "account preferences",
+        "merchant settings",
+        "supplier settings",
+        "mga setting"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Hanapin ang Account Settings at Profile Settings",
+          "summary": "Alamin kung alin ang pang-account at pang-profile.",
+          "shortAnswer": "Para sa shared identity at utilities ang Account Settings. Para sa napiling Customer, Merchant, Supplier, Delivery o Local Services ang Profile Settings.",
+          "steps": [
+            "Buksan ang avatar / account menu → Account Settings.",
+            "Gamitin ang Personal details, Security & access o Manage profiles para sa identity at access.",
+            "Gamitin ang Money & Banking, Notifications & language, Legal & privacy o Help & Support para sa shared utilities.",
+            "Pumasok sa angkop na profile para sa Profile Settings. Suriin ang business context bago baguhin ang impormasyon ng negosyo."
+          ],
+          "notes": []
+        }
+      }
+    },
+    {
+      "slug": "financial-accounts",
+      "title": "Set up financial accounts and payout destinations",
+      "section": "Money & pricing",
+      "profiles": [],
+      "status": "current",
+      "summary": "Find Money & Banking and understand what a recorded destination does.",
+      "shortAnswer": "Open your avatar → Money & Banking for shared financial identity and payment/payout destinations. A saved destination is not proof that the provider is connected or that a withdrawal is available.",
+      "steps": [
+        "Open your avatar and choose Money & Banking.",
+        "Check the owner, provider, currency, purpose and verification details of the relevant financial account.",
+        "Use the available settings to review the appropriate default destination for receiving, paying or payout.",
+        "Open the active profile Money/settings view to check provider withdrawal readiness before expecting funds to move."
+      ],
+      "notes": [
+        "Never post bank/card details in a public help question or shared screenshot.",
+        "A recorded balance, financial account and provider-confirmed payment are separate facts."
+      ],
+      "related": [
+        "recorded-money-and-payouts",
+        "account-and-profile-settings",
+        "financial-statements-and-documents"
+      ],
+      "searchTerms": [
+        "financial accounts",
+        "bank account",
+        "payout destination",
+        "money banking",
+        "gcash setup",
+        "payout bank",
+        "account sa bangko"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/profile-settings-ui.js",
+          "profile-finance-core.js",
+          "financial-document-core.js",
+          "monetization-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Ayusin ang financial accounts at payout destination",
+          "summary": "Hanapin ang Money & Banking at suriin ang gamit ng account.",
+          "shortAnswer": "Buksan ang avatar → Money & Banking. Ang naka-save na destination ay hindi patunay na nakakonekta ang provider o puwede nang mag-withdraw.",
+          "steps": [
+            "Buksan ang Money & Banking.",
+            "Suriin ang owner, provider, currency, purpose at verification.",
+            "Suriin ang angkop na default destination gamit ang mga opsyong available.",
+            "Tingnan ang provider withdrawal readiness sa Money/settings ng aktibong profile."
+          ],
+          "notes": [
+            "Huwag ilagay ang bank/card details sa pampublikong tanong o screenshot.",
+            "Magkahiwalay ang recorded balance at provider-confirmed na paglipat ng pera."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "recorded-money-and-payouts",
+      "title": "Understand recorded money, payments and payouts",
+      "section": "Money & pricing",
+      "profiles": [],
+      "status": "current",
+      "summary": "Choose the right evidence when an amount or payout seems missing.",
+      "shortAnswer": "Recorded sales/balances, Customer payment status and money received from a provider are different. Check the relevant profile/business and the source evidence before treating an amount as available cash.",
+      "steps": [
+        "Decide whether the question is about a Customer payment, a recorded business balance or a provider payout.",
+        "For an order or service job, open its payment evidence and check status separately from fulfilment/completion.",
+        "For business records, open Money/Finance for the correct profile and business. Trace the entry or statement back to its source.",
+        "For a withdrawal or payout, check provider readiness, the default destination and the provider-confirmed result. An unavailable withdrawal is not a completed transfer.",
+        "If the evidence does not explain the amount, use the Payment or Accounting Support category with the relevant private record."
+      ],
+      "notes": [
+        "Do not record a second manual payment to force a balance to match.",
+        "Help Center cannot confirm a private payment or perform a withdrawal. Actual records and provider evidence remain authoritative."
+      ],
+      "related": [
+        "order-statuses-explained",
+        "financial-accounts",
+        "financial-statements-and-documents",
+        "support-and-tickets"
+      ],
+      "searchTerms": [
+        "where is my money",
+        "missing payout",
+        "withdraw money",
+        "recorded balance",
+        "money not received",
+        "nasaan ang pera",
+        "hindi dumating ang bayad"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/profile-settings-ui.js",
+          "profile-finance-core.js",
+          "financial-document-core.js",
+          "monetization-core.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Unawain ang balanse, payment at payout",
+          "summary": "Alamin kung anong rekord ang tinitingnan mo.",
+          "shortAnswer": "Magkahiwalay ang naitalang benta/balanse, payment status at perang natanggap mula sa provider. Suriin ang profile, negosyo at source evidence.",
+          "steps": [
+            "Tukuyin kung Customer payment, recorded balance o provider payout ang tanong.",
+            "Para sa order o service job, suriin ang payment evidence nang hiwalay sa completion.",
+            "Para sa negosyo, buksan ang Money/Finance sa tamang profile at business.",
+            "Para sa payout, suriin ang readiness, default destination at provider-confirmed result.",
+            "Kung hindi malinaw ang ebidensiya, gamitin ang Payment o Accounting category sa Help & Support."
+          ],
+          "notes": [
+            "Huwag magtala ng dobleng manual payment para lamang itugma ang balanse.",
+            "Hindi makukumpirma ng Help Center ang pribadong bayad o makakapag-withdraw."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "notification-preferences",
+      "title": "Change notification language, sounds and alerts",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "Find the shared notification controls and device-dependent behavior.",
+      "shortAnswer": "Open Account Settings → Notifications & language. Review notification categories, language, sound set, vibration and push controls that are available on your device.",
+      "steps": [
+        "Open your avatar → Account Settings → Notifications & language.",
+        "Choose the supported communication language and review sound/voice preferences.",
+        "Review alert-category, vibration and push settings. Read any mandatory-category explanation.",
+        "Save changes and use the available preview/test control to check the result. Check browser/device notification permission if push is unavailable."
+      ],
+      "notes": [
+        "Browser audio, operating-system permissions and native Android channels are different controls.",
+        "A communication-language preference does not yet translate every app screen."
+      ],
+      "related": [
+        "language-and-guided-tours",
+        "account-and-profile-settings"
+      ],
+      "searchTerms": [
+        "notification sounds",
+        "alert sound",
+        "tagalog notifications",
+        "push permission",
+        "vibration",
+        "tunog notification",
+        "wika ng abiso"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Baguhin ang wika, tunog at alerts",
+          "summary": "Hanapin ang shared notification controls.",
+          "shortAnswer": "Buksan ang Account Settings → Notifications & language. Suriin ang language, sound set, vibration, push at categories na available sa device.",
+          "steps": [
+            "Buksan ang Notifications & language.",
+            "Piliin ang communication language at suriin ang sound/voice preferences.",
+            "Suriin ang categories, vibration, push at anumang mandatory-alert explanation.",
+            "I-save at gamitin ang available na preview/test. Suriin din ang browser/device permission."
+          ],
+          "notes": [
+            "Hindi pa nito isinasalin ang lahat ng screen ng app."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "language-and-guided-tours",
+      "title": "Choose a help language and replay guided onboarding",
+      "section": "Getting started",
+      "profiles": [],
+      "status": "current",
+      "summary": "Use English or Filipino help and find the account/profile tutorial.",
+      "shortAnswer": "The Help Center language control changes these public guides only. Account communication preferences and guided onboarding are separate app controls.",
+      "steps": [
+        "Choose English or Filipino / Tagalog in Help Center.",
+        "If an article has no reviewed Filipino translation for its current version, read the labelled English fallback.",
+        "For account communications, open Account Settings → Notifications & language.",
+        "To revisit the profile tutorial, open the relevant Profile Settings and use the guided tutorial option when available."
+      ],
+      "notes": [
+        "Selecting a help topic does not activate or switch an app profile.",
+        "Names such as Merchant, Money & Banking and Help & Support match the app labels even in translated guidance."
+      ],
+      "related": [
+        "account-and-profile-settings",
+        "notification-preferences"
+      ],
+      "searchTerms": [
+        "change language",
+        "Filipino",
+        "Tagalog",
+        "guided tutorial",
+        "onboarding tour",
+        "palitan ang wika",
+        "gabay sa paggamit"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
+    },
+    {
+      "slug": "delete-account",
+      "title": "Request account deletion and check blockers",
+      "section": "Safety & privacy",
+      "profiles": [],
+      "status": "current",
+      "summary": "Find account deletion and understand why some requests require review.",
+      "shortAnswer": "Open Account Settings → Delete account or Security & access. Follow the eligibility checks and confirm only after reviewing what the app says will happen.",
+      "steps": [
+        "Open Account Settings and select Delete account, or find the deletion controls in Security & access.",
+        "Read the current safety/obligation blockers. Resolve the applicable operational or financial obligations before retrying.",
+        "Review the confirmation carefully. Deleting the account is different from deactivating one profile.",
+        "For a privacy-rights request requiring review, open Help & Support and choose the relevant Privacy & data rights category."
+      ],
+      "notes": [
+        "Submitting a privacy request does not automatically guarantee erasure of every record. Applicable retention and obligations are reviewed.",
+        "Company-managed test identities may not offer the same self-deletion controls as a personal account."
+      ],
+      "related": [
+        "account-and-profile-settings",
+        "support-and-tickets",
+        "incident-privacy"
+      ],
+      "searchTerms": [
+        "delete my account",
+        "close account",
+        "remove profile",
+        "privacy erasure",
+        "burahin account",
+        "tanggalin account"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/admin-operations-ui.js",
+          "server-admin-operations.js",
+          "server-incidents.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
+    },
+    {
+      "slug": "support-and-tickets",
+      "title": "Choose Help & Support, My tickets or account recovery",
+      "section": "Safety & privacy",
+      "profiles": [],
+      "status": "current",
+      "summary": "Find the correct private support path and understand the current guest limitation.",
+      "shortAnswer": "When signed in, open Account Settings → Help & Support for New issue and My tickets. If you cannot sign in, start with password/email recovery; a public account-access inbox or guest ticket form is not yet verified as available.",
+      "steps": [
+        "When signed in, open Account Settings → Help & Support. You can read Help Center guides there before opening a ticket.",
+        "Choose New issue and the relevant category. Describe what happened, the screen/message and the steps already tried.",
+        "Review the message, language/translation and necessary attachments before sending. Never include passwords, one-time codes or reset links.",
+        "Use My tickets to read replies and continue the same private conversation. Use the incident/report path for a private operational or safety report.",
+        "If you are locked out, follow Sign in or reset your password and Verify your email address. This Help Center does not accept a guest ticket or promise an unverified contact inbox."
+      ],
+      "notes": [
+        "A published outbound sender address is not evidence of a monitored incoming support mailbox.",
+        "Privacy-rights requests use their dedicated category and review route; do not upload identity evidence unless an authorized reviewer explains what is necessary."
+      ],
+      "related": [
+        "sign-in-recovery",
+        "email-verification",
+        "report-problem",
+        "service-unavailable"
+      ],
+      "searchTerms": [
+        "contact support",
+        "help desk",
+        "my tickets",
+        "technical problem",
+        "support email",
+        "guest support",
+        "tulong sa account",
+        "humingi ng tulong"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/admin-operations-ui.js",
+          "server-admin-operations.js",
+          "server-incidents.js",
+          "public/shell.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Gamitin ang Help & Support at My tickets",
+          "summary": "Piliin ang tamang pribadong tulong at account recovery.",
+          "shortAnswer": "Kung naka-sign in, buksan ang Account Settings → Help & Support. Kung hindi makapasok, sundin muna ang password/email recovery; wala pang napatunayang pampublikong guest intake.",
+          "steps": [
+            "Buksan ang Help & Support habang naka-sign in.",
+            "Piliin ang New issue at tamang category. Ilarawan ang problema at nasubukan mo na.",
+            "Suriin ang mensahe, salin at mahahalagang attachment bago ipadala. Huwag isama ang password, reset link o one-time code.",
+            "Gamitin ang My tickets para sa sagot at follow-up. Hiwalay ang private incident path.",
+            "Kung locked out, sundin ang sign-in at email-verification guides. Hindi tumatanggap ng guest ticket ang Help Center na ito."
+          ],
+          "notes": [
+            "Ang outbound sender address ay hindi patunay ng monitored inbound mailbox.",
+            "Gamitin ang Privacy & data rights category para sa angkop na data-rights request."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "service-unavailable",
+      "title": "When a screen cannot load or the service is unavailable",
+      "section": "Troubleshooting",
+      "profiles": [],
+      "status": "current",
+      "summary": "Distinguish a temporary service failure from account or approval problems.",
+      "shortAnswer": "If a screen reports temporary unavailability or fails to load, check your connection and retry after a short interval. A service failure is not proof that your password is wrong or your profile was rejected.",
+      "steps": [
+        "Keep a note of any unsaved work before reloading the app.",
+        "Check your internet connection and try the same screen again once.",
+        "If only one feature fails, note the feature and displayed message; avoid repeatedly submitting an order, payment or stock update.",
+        "When you can sign in, use Help & Support → Technical problem and explain what failed and when."
+      ],
+      "notes": [
+        "This article is a recovery guide, not a live service-status feed.",
+        "For an expired session, sign in again. For an explicit permission or approval message, follow that relevant guide."
+      ],
+      "related": [
+        "sign-in-recovery",
+        "profile-approval-required",
+        "support-and-tickets"
+      ],
+      "searchTerms": [
+        "loading stuck",
+        "service unavailable",
+        "screen blank",
+        "network error",
+        "cannot load",
+        "ayaw mag load",
+        "hindi gumagana"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/shell.js",
+          "public/auth-hardening-ui.js",
+          "server-auth.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Kapag hindi ma-load ang screen o serbisyo",
+          "summary": "Ihiwalay ang service failure sa password o approval issue.",
+          "shortAnswer": "Suriin ang koneksiyon at subukan muli pagkalipas ng maikling sandali. Ang unavailable na serbisyo ay hindi patunay na mali ang password o rejected ang profile.",
+          "steps": [
+            "Ingatan muna ang anumang hindi pa naka-save.",
+            "Suriin ang internet at subukan ang screen nang isang beses.",
+            "Kung isang feature lang ang sira, itala ang feature at mensahe; huwag paulit-ulit magsumite ng order, payment o stock update.",
+            "Kapag naka-sign in, gamitin ang Help & Support → Technical problem."
+          ],
+          "notes": [
+            "Recovery guide ito, hindi live status feed."
+          ]
+        }
+      }
+    },
+    {
+      "slug": "inventory-consumables",
+      "title": "Add packaging and other operating supplies",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Record containers, kitchen consumables, cleaning and hygiene supplies in the right stock class.",
+      "shortAnswer": "Packaging and consumables belong in Operations inventory, separate from food ingredients and retail products. Direct consumables and general operating expenses can affect cost differently.",
+      "steps": [
+        "Open Inventory/Stock for the correct Merchant business and add or update an inventory item.",
+        "Choose Operations, then the appropriate stock role: Packaging, Operational consumable or Operational supply.",
+        "Enter the item, consistent stock unit, quantity, unit cost and applicable reorder/target levels.",
+        "For direct order/recipe consumption, configure only the relevant supported usage rule and quantity. Keep cleaning/sanitation and general supplies separate.",
+        "Review the resulting stock movements and costs. Do not deduct the same item again manually."
+      ],
+      "notes": [
+        "Food, Retail and Operations serve different purposes even in a Mixed business.",
+        "Record purchases/expenses and physical stock according to the actual event; creating an inventory item is not proof of payment."
+      ],
+      "related": [
+        "inventory-products-recipes",
+        "stock-alerts-and-restocking"
+      ],
+      "searchTerms": [
+        "packaging consumables",
+        "containers",
+        "takeaway bags",
+        "kitchen consumables",
+        "cleaning sanitation",
+        "hygiene stock",
+        "balot lalagyan",
+        "stock ng packaging"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      },
+      "translations": {
+        "fil-PH": {
+          "sourceVersion": "3.0.0",
+          "reviewedAt": "2026-10-26",
+          "title": "Magdagdag ng packaging at operating supplies",
+          "summary": "Ihiwalay ang lalagyan, consumables at pangkalahatang supplies.",
+          "shortAnswer": "Gamitin ang Operations inventory para sa packaging at operating supplies. Hiwalay ito sa food ingredients at retail products.",
+          "steps": [
+            "Buksan ang Inventory/Stock ng tamang Merchant business.",
+            "Piliin ang Operations at tamang Packaging, Operational consumable o Operational supply role.",
+            "Ilagay ang item, unit, quantity, unit cost at reorder/target levels.",
+            "Gamitin lamang ang angkop na supported recipe, batch o order usage rule. Ihiwalay ang general cleaning at supplies.",
+            "Suriin ang stock movement; huwag ibawas muli nang mano-mano ang parehong gamit."
+          ],
+          "notes": []
+        }
+      }
+    },
+    {
+      "slug": "stock-alerts-and-restocking",
+      "title": "Check low stock, restock suggestions and stock counts",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Understand reorder levels, usable stock and reviewed count adjustments.",
+      "shortAnswer": "A low-stock warning compares usable stock with the configured reorder level. Restock suggestions help plan replenishment; they do not order goods or prove that stock arrived.",
+      "steps": [
+        "Open Inventory/Stock and check the business, item units, usable quantity and reorder/target levels.",
+        "Review the low-stock or replenishment view for ingredients, retail goods and operating supplies.",
+        "If you buy from a Supplier, use the proper purchase order and receiving workflow for the actual quantity received.",
+        "Use a stock count when you need to reconcile physical quantities. Finish counting, review variances, then post only the intended adjustments.",
+        "Check storage areas/locations and recorded movements when an apparent shortage may be a location or unit mismatch."
+      ],
+      "notes": [
+        "A draft count or suggestion does not change posted stock.",
+        "Purchase orders, receipts and payments are separate events."
+      ],
+      "related": [
+        "inventory-consumables",
+        "inventory-products-recipes",
+        "partial-supplier-receiving"
+      ],
+      "searchTerms": [
+        "low stock alert",
+        "reorder level",
+        "restock list",
+        "replenishment",
+        "physical stock count",
+        "inventory location",
+        "kulang stock",
+        "bilang stock"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
+    },
+    {
+      "slug": "supplier-eta-and-exceptions",
+      "title": "Manage Supplier Orders, ETA and exceptions",
+      "section": "Supplier",
+      "profiles": [
+        "supplier"
+      ],
+      "status": "current",
+      "summary": "Find purchase orders, promised ready times and the Supplier Finance view.",
+      "shortAnswer": "Use Supplier Today for the next action, Orders for the order list, ETA & Readiness for accepted/preparing orders and the Supplier Finance workspace for its own records.",
+      "steps": [
+        "Open Supplier and check the Supplier business context.",
+        "Open Orders and choose the relevant purchase order. Review accepted quantities, prices and current state.",
+        "Use ETA & Readiness to update supported preparation/ready-time actions; use the available fulfilment and exception actions when plans change.",
+        "Keep the Merchant informed through the supported order/exception workflow rather than marking a missing physical delivery as received.",
+        "Use Supplier Finance for the business records and trace payments separately from readiness or delivery status."
+      ],
+      "notes": [
+        "Changing a promised time is not evidence that goods arrived or were paid.",
+        "If an order view cannot load, preserve the displayed error and use Help & Support rather than duplicating the order."
+      ],
+      "related": [
+        "supplier-purchase-orders",
+        "supplier-po-statuses",
+        "supplier-payment-accounting"
+      ],
+      "searchTerms": [
+        "supplier ETA",
+        "promised ready time",
+        "supplier exceptions",
+        "supplier finance",
+        "purchase order delay",
+        "oras ng supplier"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/suppliers-ui.js",
+          "server-suppliers.js",
+          "server-supplier-daily-v5.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
+    },
+    {
+      "slug": "merchant-counter-orders",
+      "title": "Sell in person using Counter orders and Catalog",
+      "section": "Merchant",
+      "profiles": [
+        "merchant"
+      ],
+      "status": "current",
+      "summary": "Use canonical Catalog products for a Counter order and keep payment/stock evidence separate.",
+      "shortAnswer": "Counter orders use the Merchant business Catalog. Check the product, variant, availability, quantity and payment evidence before completing an in-person sale.",
+      "steps": [
+        "Open Merchant → Orders and start the available Counter order / in-person sale action.",
+        "Select the active business Catalog product and any required variant.",
+        "Review quantity, availability and the displayed total. For Food, check recipe/stock-related restrictions.",
+        "Follow the order and payment controls for what actually happened. Confirm recorded cash or digital payment evidence separately from preparation/completion.",
+        "Review the resulting order, stock movement and Money evidence; avoid recording a duplicate manual sale."
+      ],
+      "notes": [
+        "Food, Non-food and Mixed businesses can expose different product controls.",
+        "An order draft or accepted payment method is not proof of a completed payment."
+      ],
+      "related": [
+        "merchant-order-workflow",
+        "inventory-products-recipes",
+        "order-statuses-explained"
+      ],
+      "searchTerms": [
+        "counter order",
+        "in person sale",
+        "walk in customer",
+        "sell direct product",
+        "catalog product",
+        "benta sa counter"
+      ],
+      "version": "3.0.0",
+      "publication": {
+        "classification": "PUBLIC",
+        "state": "EFFECTIVE",
+        "kind": "product-guidance"
+      },
+      "verification": {
+        "owner": "Product documentation",
+        "reviewer": "Help Center source review / issue 808",
+        "reviewedAt": "2026-10-26",
+        "reviewDue": "2026-11-25",
+        "sourceCommit": "bc34c9e783c76a068d05b5e737714739e15d3510",
+        "sourcePaths": [
+          "public/v03.js",
+          "public/marketplace-ui.js",
+          "server-business-accounting.js",
+          "server-marketplace.js",
+          "server-orders.js"
+        ],
+        "basis": "Executable application source; capability and provider availability remain conditional."
+      }
+    }
+  ],
+  "publicAccountAccessContact": {
+    "available": false,
+    "reason": "No monitored inbound account-access destination or guest ticket intake has been verified. See docs/notifications/EMAIL_DELIVERY_ARCHITECTURE_V1.md; inbound Support remains a separate gate."
+  },
+  "troubleshooters": [
+    {
+      "id": "sign-in",
+      "title": "What is stopping sign-in?",
+      "question": "Choose the situation you can see.",
+      "options": [
+        {
+          "label": "Password is forgotten or rejected",
+          "article": "sign-in-recovery"
+        },
+        {
+          "label": "Verification email or link is missing",
+          "article": "email-verification"
+        },
+        {
+          "label": "Screen cannot load / service unavailable",
+          "article": "service-unavailable"
+        },
+        {
+          "label": "I need account-access support",
+          "article": "support-and-tickets"
+        }
+      ],
+      "translations": {
+        "fil-PH": {
+          "title": "Ano ang pumipigil sa pag-sign in?",
+          "question": "Piliin ang sitwasyong nakikita mo.",
+          "options": [
+            {
+              "label": "Nakalimutan o hindi tinatanggap ang password",
+              "article": "sign-in-recovery"
+            },
+            {
+              "label": "Nawawala ang verification email o link",
+              "article": "email-verification"
+            },
+            {
+              "label": "Hindi ma-load ang screen / serbisyo",
+              "article": "service-unavailable"
+            },
+            {
+              "label": "Kailangan ng tulong sa pag-access sa account",
+              "article": "support-and-tickets"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "profile",
+      "title": "Why is my profile or shop not ready?",
+      "question": "Profile approval, commerce readiness and public visibility are separate.",
+      "options": [
+        {
+          "label": "I cannot start or enable the profile",
+          "article": "profile-approval-required"
+        },
+        {
+          "label": "Application is submitted, under review or needs changes",
+          "article": "profile-application-review"
+        },
+        {
+          "label": "Profile approved, but shop is starting or not public",
+          "article": "commerce-readiness"
+        }
+      ],
+      "translations": {
+        "fil-PH": {
+          "title": "Bakit hindi pa handa ang profile o shop?",
+          "question": "Magkahiwalay ang profile approval, commerce readiness at public visibility.",
+          "options": [
+            {
+              "label": "Hindi masimulan o ma-activate ang profile",
+              "article": "profile-approval-required"
+            },
+            {
+              "label": "Nasa review o kailangang itama ang application",
+              "article": "profile-application-review"
+            },
+            {
+              "label": "Aprubado ang profile pero hindi pa pampubliko ang shop",
+              "article": "commerce-readiness"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "money",
+      "title": "Which money do you mean?",
+      "question": "Choose the record you want to understand. Help Center cannot confirm a private payment.",
+      "options": [
+        {
+          "label": "A Customer order or service payment",
+          "article": "order-statuses-explained"
+        },
+        {
+          "label": "A recorded balance, sale or statement",
+          "article": "recorded-money-and-payouts"
+        },
+        {
+          "label": "A payout / withdrawal or bank destination",
+          "article": "financial-accounts"
+        }
+      ],
+      "translations": {
+        "fil-PH": {
+          "title": "Aling pera ang tinutukoy mo?",
+          "question": "Piliin ang rekord na gusto mong unawain. Hindi makukumpirma rito ang pribadong bayad.",
+          "options": [
+            {
+              "label": "Bayad sa order o service job",
+              "article": "order-statuses-explained"
+            },
+            {
+              "label": "Naitalang balanse, benta o statement",
+              "article": "recorded-money-and-payouts"
+            },
+            {
+              "label": "Payout / withdrawal o bank destination",
+              "article": "financial-accounts"
+            }
+          ]
+        }
+      }
     }
   ]
 }

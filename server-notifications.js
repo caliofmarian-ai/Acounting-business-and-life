@@ -78,7 +78,7 @@ export async function notificationsFetch(path,options={}){
     const r=await upstream(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n  <link rel="stylesheet" href="/notifications.css" />\n</head>')
-      .replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n</body>');
+      .replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/notifications-ui.js"></script>\n  <script type="module" src="/knowledge-entry.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
   return upstream(path,options);
