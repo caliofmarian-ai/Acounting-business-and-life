@@ -23,6 +23,7 @@ import {isQaRemoteTestEmail,qaRemoteTestAccountState} from './qa-remote-test-acc
 import {ensureHighRiskVelocitySchema,enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {ADULT_ELIGIBILITY_POLICY_VERSION,ensureAccountSafetyEligibilitySchema,accountAdultEligibilitySnapshot,recordAdultEligibilityAttestation,recordCompanyTestEligibilityExemption,requireAdultEligibility} from './account-safety-eligibility-core.js';
 import {clearBrowserSessionCookies,issueBrowserSessionCookies,sessionCredentialFromHeaders,sessionSecurityMiddleware} from './session-cookie-core.js';
+import {markPrivateIdentity,privateIdentityFetchJson,sendPrivateIdentityJson} from './private-identity-cache.js';
 import {createPrivateAddressGeocoder} from './private-address-geocoder.js';
 import {ensureMicrobusinessReadinessSchema,microbusinessReadinessSnapshot,updateMicrobusinessReadiness} from './microbusiness-readiness-core.js';
 import {courierEligibilityProfileView} from './courier-eligibility-core.js';
@@ -90,10 +91,10 @@ export async function accountAuthFetch(path,options={}){
   if((pathname==='/api/me'||pathname==='/api/auth/session/identity')&&method==='GET'){
     try{
       const context=await authenticatedAccountContext(options.headers||{},{method,path:pathname});
-      if(pathname==='/api/auth/session/identity')return responseJson(200,{account_id:Number(context.accountId)});
-      return responseJson(200,await profileSnapshot(context.accountId));
+      if(pathname==='/api/auth/session/identity')return privateIdentityFetchJson(200,{account_id:Number(context.accountId)});
+      return privateIdentityFetchJson(200,await profileSnapshot(context.accountId));
     }catch(e){
-      return responseJson(e?.status||500,{error:e?.status?e.message:'Unexpected server error',...(e?.code?{code:e.code}:{})});
+      return privateIdentityFetchJson(e?.status||500,{error:e?.status?e.message:'Unexpected server error',...(e?.code?{code:e.code}:{})});
     }
   }
   if(isAccountAuthOwnedPath(pathname,method)||pathname.startsWith('/api/')){
@@ -849,7 +850,7 @@ app.get('/api/auth/session/identity', auth, (req,res)=>{
   res.json({account_id:Number(req.accountId)});
 });
 
-app.get('/api/me', auth, async (req, res, next) => { try { res.json(await profileSnapshot(req.accountId)); } catch (err) { next(err); } });
+app.get('/api/me',markPrivateIdentity, auth, async (req, res, next) => { try { sendPrivateIdentityJson(res,await profileSnapshot(req.accountId)); } catch (err) { next(err); } });
 
 app.get('/api/me/address/search',auth,async(req,res,next)=>{try{
   const account=await pool.query('SELECT identity_country_code FROM accounts WHERE id=$1',[req.accountId]);

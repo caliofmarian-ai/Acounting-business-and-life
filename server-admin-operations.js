@@ -12,6 +12,7 @@ import {authHardeningFetch} from './server-auth-hardening.js';
 import {publicAdminCatalog,canDelegateRank,expandAdminFunctions,isFunctionAssignableToRole,rankLevel} from './admin-functions.js';
 import {ensureAdminFinanceSchema,adminFinanceSummary,listAdminBudgets,createAdminBudget,createAdminFinanceEntry,ADMIN_FINANCE_ENTRY_TYPES,ADMIN_FINANCE_CATEGORIES,ADMIN_BUDGET_CATEGORIES} from './admin-finance-core.js';
 import {buildSessionBootstrap} from './session-bootstrap-core.js';
+import {markPrivateIdentity,sendPrivateIdentityJson} from './private-identity-cache.js';
 import {accountIdsInPsgcScope} from './account-geography.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {decodeVerifiedDataUrl} from './file-signature-core.js';
@@ -1138,13 +1139,13 @@ app.get('/admin/',(_q,res)=>res.type('html').send(readFileSync(join(__dirname,'p
 async function root(req,res){const r=await upstream(req.path,{headers:{...req.headers}});let html=await r.text();html=html.replace('</head>','  <link rel="stylesheet" href="/help-linking.css" />\n</head>').replace('</body>','  <script src="/help-linking.js"></script>\n  <script type="module" src="/knowledge-entry.js"></script>\n</body>');res.status(r.status).type('html').send(html)}
 app.get('/',root);app.get('/index.html',root);
 
-app.get('/api/admin/me',async(req,res,next)=>{try{
+app.get('/api/admin/me',markPrivateIdentity,async(req,res,next)=>{try{
   const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
-  res.json(adminIdentityPayload(assignments,me.account));
+  sendPrivateIdentityJson(res,adminIdentityPayload(assignments,me.account));
 }catch(e){next(e)}});
-app.get('/api/session/bootstrap',async(req,res,next)=>{try{
+app.get('/api/session/bootstrap',markPrivateIdentity,async(req,res,next)=>{try{
   const me=await identity(req),assignments=await getAdminAssignments(pool,me.account.id);
-  res.json(buildSessionBootstrap(me,adminIdentityPayload(assignments,me.account)));
+  sendPrivateIdentityJson(res,buildSessionBootstrap(me,adminIdentityPayload(assignments,me.account)));
 }catch(e){next(e)}});
 app.get('/api/admin/catalog',async(req,res,next)=>{try{
   const me=await identity(req),ctx=await buildAdminScopeContext(me.account.id);
