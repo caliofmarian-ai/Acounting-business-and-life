@@ -30,7 +30,7 @@ test('prepared ingredients are names only; never quantity, unit or recipe write'
 test('each food behavior is restricted to its own canonical food category',()=>{
   for(const [mode,code] of [['merchant_prepared_food','prepared_food'],['merchant_fresh_food','fresh_food'],['merchant_packaged_food','packaged_food_drink']]){
     assert.equal(draft(mode,{catalog_category_code:code}).hints.catalog_category_code,code);
-    assert.equal(draft(mode,{catalog_category_code:'furniture_home'}).hints.catalog_category_code,null);
+    assert.throws(()=>draft(mode,{catalog_category_code:'furniture_home'}),/does not match/);
   }
 });
 test('nonfood category and attributes reuse canonical V3 definitions, no warranty',()=>{
@@ -39,10 +39,10 @@ test('nonfood category and attributes reuse canonical V3 definitions, no warrant
   assert.equal(d.hints.catalog_category_code,'furniture_home');
   assert.deepEqual(d.hints.variant_attributes,[{code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'},
     {code:'width_cm',value:'90',authority:'UNVERIFIED_MODEL_SUGGESTION'}]);
-  assert.equal(draft('merchant_non_food',{catalog_category_code:'prepared_food'}).hints.catalog_category_code,null);
+  assert.throws(()=>draft('merchant_non_food',{catalog_category_code:'prepared_food'}),/does not match/);
 });
 test('Supplier never borrows Merchant category, ingredients or business authority',()=>{
-  const d=draft('supplier_catalog',{category:'Components',catalog_category_code:'prepared_food',
+  const d=draft('supplier_catalog',{category:'Components',
     ingredients:['Fish'],pack_name:'24 units',base_unit:'unit',business_id:7});
   assert.equal(d.hints.catalog_category_code,null);assert.equal(d.hints.supplier_category_text,'Components');
   assert.deepEqual(d.ingredient_names,[]);assert.equal(d.hints.pack_name,'24 units');assert.equal(JSON.stringify(d).includes('business_id":7'),false);
@@ -58,4 +58,15 @@ test('model input unchanged and repeated normalization deterministic',()=>{
   const before=JSON.stringify(m),a=draft('merchant_prepared_food',m);
   assert.deepEqual(draft('merchant_prepared_food',m),a);
   assert.equal(JSON.stringify(m),before);assert.deepEqual(a.hints.tags,['fruit','fresh']);
+});
+
+test('provided mismatched or invalid category fails closed; absent category remains reviewable',()=>{
+  for(const mode of AI_CATALOG_MODES){
+    assert.equal(draft(mode,{name:'Unknown'}).hints.catalog_category_code,null);
+    for(const invalid of [43,[],{},'invalid-category',' '.repeat(4),'x'.repeat(81)]){
+      assert.throws(()=>draft(mode,{catalog_category_code:invalid}),/categor|mode|Supplier/i);
+    }
+  }
+  assert.throws(()=>draft('supplier_catalog',{catalog_category_code:'prepared_food'}),/Supplier catalog/);
+  assert.throws(()=>draft('merchant_prepared_food',{catalog_category_code:'fresh_food'}),/does not match/);
 });
