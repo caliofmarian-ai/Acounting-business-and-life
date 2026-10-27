@@ -62,15 +62,23 @@ async function inTransaction(pool, readOnly, work) {
   } finally { client?.release(); }
 }
 
+// CURRENT_TIMESTAMP is fixed at BEGIN in PostgreSQL. Approval validity must
+// instead use the current DB wall clock, including after an advisory-lock wait.
+// The eligibility cutoff below intentionally remains transaction-start based.
+async function recheckPolicyClock(client, policy) {
+  const clock = await client.query('SELECT clock_timestamp() AS now');
+  if (!clock.rows[0]?.now) fail('ACCOUNT_ACCESS_RETENTION_UNAVAILABLE');
+  validateAccountAccessRetentionPolicy(policy, clock.rows[0].now);
+}
+
 /** Explicit migration only; never run during dry-run or application startup. */
 export async function initializeAccountAccessRetention(pool, input, { env = process.env } = {}) {
   const { policy, digest } = validateAccountAccessRetentionPolicy(input);
   requireAccountAccessRetentionApply(digest, env);
   return inTransaction(pool, false, async client => {
-    const clock = await client.query('SELECT CURRENT_TIMESTAMP AS now');
-    if (!clock.rows[0]?.now) fail('ACCOUNT_ACCESS_RETENTION_UNAVAILABLE');
-    validateAccountAccessRetentionPolicy(policy, clock.rows[0].now);
+    await recheckPolicyClock(client, policy);
     await client.query('SELECT pg_advisory_xact_lock(815, 1)');
+    await recheckPolicyClock(client, policy);
     await client.query(`
       CREATE TABLE IF NOT EXISTS guest_account_access_retention_holds (
         request_id BIGINT PRIMARY KEY REFERENCES guest_account_access_requests(id) ON DELETE RESTRICT,
@@ -84,6 +92,7 @@ export async function initializeAccountAccessRetention(pool, input, { env = proc
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    await recheckPolicyClock(client, policy);
     return { initialized: true, policy_digest: digest };
   });
 }
@@ -105,19 +114,19 @@ export async function runAccountAccessRetention(pool, input, { mode = 'dry-run',
   const { policy, digest } = validateAccountAccessRetentionPolicy(input);
   if (mode === 'apply') requireAccountAccessRetentionApply(digest, env);
   return inTransaction(pool, mode === 'dry-run', async client => {
-    const clock = await client.query('SELECT CURRENT_TIMESTAMP AS now');
-    if (!clock.rows[0]?.now) fail('ACCOUNT_ACCESS_RETENTION_UNAVAILABLE');
-    validateAccountAccessRetentionPolicy(policy, clock.rows[0].now);
+    await recheckPolicyClock(client, policy);
     const days = ['new','reviewing','closed'].map(status => policy.retention_days[status]);
     if (mode === 'dry-run') {
       const result = await client.query(`SELECT COUNT(*)::int AS count FROM (SELECT r.id ${eligible}) candidates`, [...days, batchSize + 1]);
       const count = result.rows[0]?.count;
       if (!Number.isInteger(count) || count < 0 || count > batchSize + 1) fail('ACCOUNT_ACCESS_RETENTION_UNAVAILABLE');
+      await recheckPolicyClock(client, policy);
       return { mode, policy_digest: digest, eligible_up_to_batch: Math.min(count,batchSize), more_eligible: count > batchSize, batch_limit: batchSize };
     }
     // Serialize this worker with other retention workers, not the whole app.
     // Holds are never removed by this job, and no other support/account table is touched.
     await client.query('SELECT pg_advisory_xact_lock(815, 1)');
+    await recheckPolicyClock(client, policy);
     const result = await client.query(`WITH candidates AS (SELECT r.id ${eligible} FOR UPDATE OF r SKIP LOCKED),
       deleted AS (DELETE FROM guest_account_access_requests r USING candidates c WHERE r.id=c.id RETURNING r.id)
       SELECT COUNT(*)::int AS count FROM deleted`, [...days, batchSize]);
@@ -126,6 +135,7 @@ export async function runAccountAccessRetention(pool, input, { mode = 'dry-run',
     const runId = randomUUID();
     // Atomic evidence: an unavailable audit table rolls back deletion completely.
     await client.query('INSERT INTO guest_account_access_retention_runs(run_id,policy_digest,deleted_count) VALUES($1,$2,$3)', [runId,digest,count]);
+    await recheckPolicyClock(client, policy);
     return { mode, policy_digest: digest, run_id: runId, deleted: count, batch_limit: batchSize };
   });
 }

@@ -26,7 +26,7 @@ function database({ count = 1, failure, clock = new Date(), commitFailure = fals
       if ((failure && sql.includes(failure)) || (commitFailure && sql === 'COMMIT') || (rollbackFailure && sql === 'ROLLBACK')) {
         throw Error('private-value database-secret@example.invalid');
       }
-      if (sql === 'SELECT CURRENT_TIMESTAMP AS now') return { rows:[{ now:clock }] };
+      if (sql === 'SELECT clock_timestamp() AS now') return { rows:[{ now:clock }] };
       if (sql.includes('COUNT(*)::int')) return { rows:[{ count }] };
       return { rows:[] };
     }};
@@ -149,4 +149,92 @@ test('operator CLI is disabled by the checked-in draft before importing pg or op
     assert.deepEqual(JSON.parse(result.stderr),{ok:false,code:'ACCOUNT_ACCESS_RETENTION_POLICY_REQUIRED'});
     assert.doesNotMatch(result.stderr,/postgres|private|secret/);
   }
+});
+
+// Deterministic DB-clock/await simulation. This executes the real retention
+// module but is not a PostgreSQL concurrency test. CURRENT_TIMESTAMP deliberately
+// stays at transaction start; clock_timestamp() observes a later wall clock.
+function advancingDatabase(policy, advanceOn, { missingAfterAdvance = false } = {}) {
+  const started = new Date();
+  let wallClock = started, releases = 0;
+  const queries = [];
+  const pool = { connect: async () => ({
+    release() { releases++; },
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (advanceOn && sql.includes(advanceOn)) {
+        wallClock = missingAfterAdvance ? null : new Date(policy.expires_at);
+      }
+      if (sql === 'SELECT CURRENT_TIMESTAMP AS now') return { rows: [{ now: started }] };
+      if (sql === 'SELECT clock_timestamp() AS now') return { rows: [{ now: wallClock }] };
+      if (sql.includes('COUNT(*)::int')) return { rows: [{ count: 1 }] };
+      return { rows: [] };
+    }
+  }) };
+  return { pool, queries, releases: () => releases };
+}
+function assertRolledBack(db) {
+  assert.equal(db.queries.at(-1).sql, 'ROLLBACK');
+  assert.ok(!db.queries.some(q => q.sql === 'COMMIT'));
+  assert.equal(db.releases(), 1);
+}
+
+test('policy expiry during advisory-lock wait blocks apply before deletion', async () => {
+  const p = fixture(), db = advancingDatabase(p, 'pg_advisory_xact_lock');
+  await assert.rejects(run(db.pool, p, { mode: 'apply', env: applyEnv(p) }), policyError);
+  assert.ok(!db.queries.some(q => q.sql.includes('DELETE FROM')));
+  assert.ok(!db.queries.some(q => q.sql.startsWith('INSERT')));
+  assertRolledBack(db);
+});
+test('policy expiry during advisory-lock wait blocks initialization before DDL', async () => {
+  const p = fixture(), db = advancingDatabase(p, 'pg_advisory_xact_lock');
+  await assert.rejects(initialize(db.pool, p, { env: applyEnv(p) }), policyError);
+  assert.ok(!db.queries.some(q => q.sql.includes('CREATE TABLE')));
+  assertRolledBack(db);
+});
+test('policy expiry during delete work requests rollback rather than commit', async () => {
+  const p = fixture(), db = advancingDatabase(p, 'DELETE FROM');
+  await assert.rejects(run(db.pool, p, { mode: 'apply', env: applyEnv(p) }), policyError);
+  assert.ok(db.queries.some(q => q.sql.includes('DELETE FROM')));
+  assertRolledBack(db);
+});
+test('policy expiry during ledger work requests rollback rather than commit', async () => {
+  const p = fixture(), db = advancingDatabase(p, 'INSERT INTO guest_account_access_retention_runs');
+  await assert.rejects(run(db.pool, p, { mode: 'apply', env: applyEnv(p) }), policyError);
+  assert.ok(db.queries.some(q => q.sql.startsWith('INSERT')));
+  assertRolledBack(db);
+});
+test('policy expiry during DDL requests rollback rather than initialization success', async () => {
+  const p = fixture(), db = advancingDatabase(p, 'CREATE TABLE');
+  await assert.rejects(initialize(db.pool, p, { env: applyEnv(p) }), policyError);
+  assert.ok(db.queries.some(q => q.sql.includes('CREATE TABLE')));
+  assertRolledBack(db);
+});
+test('policy expiry during read-only dry-run does not report current eligibility', async () => {
+  const p = fixture(), db = advancingDatabase(p, 'COUNT(*)::int');
+  await assert.rejects(run(db.pool, p), policyError);
+  assert.equal(db.queries[0].sql, 'BEGIN READ ONLY');
+  assert.doesNotMatch(db.queries.map(q => q.sql).join('\n'), /CREATE|DELETE|INSERT|UPDATE|pg_advisory/);
+  assertRolledBack(db);
+});
+test('missing current DB clock after lock is unavailable, not permission to delete', async () => {
+  const p = fixture(), db = advancingDatabase(p, 'pg_advisory_xact_lock', { missingAfterAdvance: true });
+  await assert.rejects(run(db.pool, p, { mode: 'apply', env: applyEnv(p) }), hasCode('ACCOUNT_ACCESS_RETENTION_UNAVAILABLE'));
+  assert.ok(!db.queries.some(q => q.sql.includes('DELETE FROM')));
+  assertRolledBack(db);
+});
+test('valid apply rechecks wall clock after locking and after audit, before COMMIT', async () => {
+  const p = fixture(), db = advancingDatabase(p, null);
+  const result = await run(db.pool, p, { mode: 'apply', env: applyEnv(p) });
+  assert.equal(result.deleted, 1);
+  const sql = db.queries.map(q => q.sql);
+  const lock = sql.findIndex(q => q.includes('pg_advisory_xact_lock'));
+  const audit = sql.findIndex(q => q.startsWith('INSERT'));
+  assert.equal(sql.filter(q => q === 'SELECT clock_timestamp() AS now').length, 3);
+  assert.equal(sql[lock + 1], 'SELECT clock_timestamp() AS now');
+  assert.equal(sql[audit + 1], 'SELECT clock_timestamp() AS now');
+  assert.equal(sql.at(-1), 'COMMIT');
+  // Do not expand eligibility by moving its conservative transaction-start cutoff.
+  assert.match(sql.find(q => q.includes('DELETE FROM')), /r.updated_at < CURRENT_TIMESTAMP/);
+  assert.equal(db.releases(), 1);
 });

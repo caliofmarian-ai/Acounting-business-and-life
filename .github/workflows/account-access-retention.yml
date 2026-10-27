@@ -44,10 +44,11 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: node --test tests/account-access-retention.test.js
       - run: node scripts/account-access-retention-acceptance.mjs
+      - run: node scripts/account-access-retention-expiry-acceptance.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: account-access-retention-${{ github.event.pull_request.head.sha }}
-          path: artifacts/account-access-retention.json
+          path: artifacts/account-access-retention*.json
           retention-days: 7
           if-no-files-found: warn
