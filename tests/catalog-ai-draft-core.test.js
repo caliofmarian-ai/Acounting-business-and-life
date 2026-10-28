@@ -84,3 +84,43 @@ test('malformed category identifiers never become trusted taxonomy by sanitizati
   assert.equal(draft('merchant_prepared_food',{catalog_category_code:'prepared_food'}).hints.catalog_category_code,'prepared_food');
   assert.equal(draft('merchant_non_food',{catalog_category_code:'furniture_home'}).hints.catalog_category_code,'furniture_home');
 });
+
+test('prototype-inherited model suggestions never appear as actual JSON hints',()=>{
+  // Non-enumerable prototype pollution can arise elsewhere in a JS process.
+  // Restore it synchronously so no test or application state is changed.
+  const injected={
+    catalog_category_code:'furniture_home',
+    name:'INHERITED_PHANTOM_PRODUCT',
+    description:'INHERITED_PHANTOM_DESCRIPTION',
+    tags:['inherited-phantom-tag'],
+    category:'INHERITED_SUPPLIER_CATEGORY',
+    variant_attributes:{color:'INHERITED_PHANTOM_COLOR'},
+    ingredients:['INHERITED_PHANTOM_FOOD']
+  };
+  const original=new Map(Object.keys(injected).map(k=>[k,Object.getOwnPropertyDescriptor(Object.prototype,k)]));
+  try{
+    for(const [k,value] of Object.entries(injected))
+      Object.defineProperty(Object.prototype,k,{value,configurable:true,enumerable:false,writable:true});
+    const draftNoCategory=draft('merchant_non_food',{title:'Real title'});
+    assert.equal(draftNoCategory.hints.name,'Real title');
+    assert.equal(draftNoCategory.hints.catalog_category_code,null);
+    assert.equal(draftNoCategory.hints.description,'');
+    assert.deepEqual(draftNoCategory.hints.tags,[]);
+    assert.deepEqual(draftNoCategory.hints.variant_attributes,[]);
+    const supplier=draft('supplier_catalog',{name:'Genuine supplier item'});
+    assert.equal(supplier.hints.supplier_category_text,'');
+    const food=draft('merchant_prepared_food',{ingredients:[{}]});
+    assert.deepEqual(food.ingredient_names,[]);
+    const ownFields=draft('merchant_non_food',{
+      name:'Genuine lamp',catalog_category_code:'furniture_home',tags:['genuine']
+    });
+    assert.equal(ownFields.hints.name,'Genuine lamp');
+    assert.equal(ownFields.hints.catalog_category_code,'furniture_home');
+    assert.deepEqual(ownFields.hints.tags,['genuine']);
+  }finally{
+    for(const [k,descriptor] of original){
+      if(descriptor)Object.defineProperty(Object.prototype,k,descriptor);
+      else delete Object.prototype[k];
+    }
+  }
+});
