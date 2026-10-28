@@ -125,3 +125,18 @@ test('Orders and Catalog Back adapters target canonical close controls',()=>{
   assert.match(src,/layer\.node\.querySelector\(layer\.closeId\)/);
   assert.doesNotMatch(src,/\.saveModal\.click\(|\.placeOrder\.click\(/);
 });
+
+test('Orders and Catalog actual feature source still binds each Back close control to its cleanup handler',()=>{
+  const orders=readFileSync(new URL('../public/orders-ui.js',import.meta.url),'utf8');
+  const market=readFileSync(new URL('../public/marketplace-ui.js',import.meta.url),'utf8');
+  assert.match(orders,/function closeOrderModal\(\)/);
+  assert.match(orders,/querySelector\('\.cancelModal'\)\.onclick=closeOrderModal/);
+  assert.match(market,/function closeProductDetail\(\)/);
+  assert.match(market,/querySelector\('\.productDetailClose'\)\.onclick=closeProductDetail/);
+  assert.match(market,/function closeCheckout\(\)/);
+  assert.match(market,/querySelector\('\.closeCheckout'\)\.onclick=closeCheckout/);
+  assert.match(market,/function closeCatalogEditor\(\)/);
+  assert.match(market,/getElementById\('catalogEditorClose'\)\.onclick=closeCatalogEditor/);
+  assert.match(orders,/function openPaymentModal\(/);
+  assert.match(orders,/function openCancelModal\(/);
+});
