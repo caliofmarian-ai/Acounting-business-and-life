@@ -851,4 +851,4 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
 .appExitPrompt section>div{display:flex;gap:10px;flex-wrap:wrap}
 .appExitPrompt button{min-height:46px;flex:1;border-radius:12px;border:1px solid #bed5ce;background:#edf8f4;color:#0c6555;font-weight:700;padding:10px}
 .appExitPrompt button[data-app-exit="leave"]{background:#fff;color:#243046}
-@media(max-width:390px){.appNavigationBack{min-width:44px;padding:8px;font-size:13px}}
+@media(max-width:520px){.appNavigationBack{min-width:44px;width:44px;padding:8px;font-size:0}.appNavigationBack::before{content:'←';font-size:23px;line-height:1}}
