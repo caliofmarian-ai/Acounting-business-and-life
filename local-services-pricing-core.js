@@ -65,6 +65,16 @@ function integrityMoneyCents(value,label){
 function integritySignedMoney(value,label){
   try{return signedMoney(value,label)}catch{throw pricingIntegrity(`${label} is invalid in the Service Job pricing snapshot`)}
 }
+// PostgreSQL BIGINTs arrive as decimal strings. Never round IDs through an
+// unsafe JavaScript Number: distinct quote/job rows could compare equal.
+function canonicalSafeDbId(value){
+  if(typeof value!=='string'&&typeof value!=='number')return null;
+  if(typeof value==='number'&&!Number.isSafeInteger(value))return null;
+  const digits=String(value);
+  if(!/^[1-9][0-9]*$/.test(digits))return null;
+  const parsed=Number(digits);
+  return Number.isSafeInteger(parsed)&&parsed>0?parsed:null;
+}
 export function moneyCents(value,label='Amount'){
   return Math.round(money(value,label)*100);
 }
@@ -76,8 +86,8 @@ export function serviceJobPayableSnapshot(job={}){
   const hasPricingSnapshot=hasAcceptedId||hasAgreedTotal||Boolean(job.pricing_locked_at);
 
   if(hasPricingSnapshot){
-    const acceptedQuoteId=Number(job.accepted_quote_id);
-    if(!hasAcceptedId||!Number.isInteger(acceptedQuoteId)||acceptedQuoteId<=0||!hasAgreedTotal){
+    const acceptedQuoteId=canonicalSafeDbId(job.accepted_quote_id);
+    if(!hasAcceptedId||acceptedQuoteId===null||!hasAgreedTotal){
       throw pricingIntegrity('Service Job pricing snapshot is incomplete');
     }
     const agreedTotal=integrityMoney(job.agreed_total,'Agreed total');
@@ -112,7 +122,11 @@ export function serviceJobPayableSnapshot(job={}){
 export function resolveAcceptedServiceJobPayable(job={},acceptedQuote=null){
   const snapshot=serviceJobPayableSnapshot(job);
   if(snapshot.accepted_quote_id==null)return snapshot;
-  if(!acceptedQuote||Number(acceptedQuote.id)!==snapshot.accepted_quote_id||Number(acceptedQuote.job_id)!==Number(job.id)){
+  const jobId=canonicalSafeDbId(job.id);
+  const quoteJobId=canonicalSafeDbId(acceptedQuote?.job_id);
+  const quoteId=canonicalSafeDbId(acceptedQuote?.id);
+  if(!acceptedQuote||jobId===null||quoteJobId===null||quoteId===null||
+    quoteId!==snapshot.accepted_quote_id||quoteJobId!==jobId){
     throw pricingIntegrity('Service Job accepted quote snapshot is missing');
   }
   if(acceptedQuote.status!=='accepted')throw pricingIntegrity('Service Job accepted quote is no longer accepted');

@@ -179,3 +179,51 @@ test('accepted quote requires complete canonical matching currency evidence',()=
     );
   }
 });
+
+test('unsafe BIGINT IDs cannot be rounded into a different accepted quote or job',()=>{
+  const job={
+    id:'9007199254740992',status:'completed',currency_code:'PHP',
+    accepted_quote_id:'9007199254740992',agreed_total:'100.00',
+    final_price:'100.00',pricing_locked_at:'2026-10-28T00:00:00Z'
+  };
+  const otherQuote={
+    id:'9007199254740993',job_id:'9007199254740993',status:'accepted',
+    total_amount:'100.00',currency_code:'PHP',legacy_record:false
+  };
+  const rejectsIntegrity=error=>
+    error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409;
+  // These distinct PostgreSQL BIGINT strings previously collapsed into one JS Number.
+  assert.throws(()=>resolveAcceptedServiceJobPayable(job,otherQuote),rejectsIntegrity);
+  const safeJob={...job,id:44,accepted_quote_id:91};
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable(safeJob,{...otherQuote,id:91}),rejectsIntegrity
+  );
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable({...safeJob,accepted_quote_id:'9007199254740993'},
+      {...otherQuote,id:'9007199254740992',job_id:44}),rejectsIntegrity
+  );
+});
+
+test('canonical safe PostgreSQL quote/job IDs work while ambiguous ID encodings fail closed',()=>{
+  const job={
+    id:'44',status:'completed',currency_code:'PHP',accepted_quote_id:'91',
+    agreed_total:'100.00',final_price:'100.00'
+  };
+  const quote={
+    id:'91',job_id:'44',status:'accepted',total_amount:'100.00',
+    currency_code:'PHP',legacy_record:false
+  };
+  assert.equal(resolveAcceptedServiceJobPayable(job,quote).payable_value,100);
+  for(const invalid of ['091','91e0','91.0','+91',' 91 ','-91','9007199254740992',0]){
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable({...job,accepted_quote_id:invalid},quote),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH',
+      'accepted quote ID: '+String(invalid)
+    );
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable(job,{...quote,id:invalid}),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH',
+      'quote row ID: '+String(invalid)
+    );
+  }
+});
