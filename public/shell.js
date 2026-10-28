@@ -1932,6 +1932,10 @@ function publishProfileState(){
   const detail={surface:activeSurface,activeRole:activeSurface==='profile'?activeRole:null,transitionTargetRole:activeSurface==='transition'?profileTransitionTarget:null,navigationEpoch,accountId:Number(snapshot?.account?.id)||null,snapshot};
   window.BusinessLifeProfileState=Object.freeze(detail);
   document.dispatchEvent(new CustomEvent('abl:profile-state',{detail}));
+  // Profile activation may come from an async role-switch path, not showActiveWorkspace().
+  if(activeSurface==='profile'&&activeRole&&FEATURE_WORKSPACE_IDS.every(id=>document.getElementById(id)?.classList.contains('hidden')!==false)){
+    appBackController.record({kind:'profile-home',role:activeRole});
+  }
 }
 async function refreshProfile(force=false) {
   if (!token()) return null;
