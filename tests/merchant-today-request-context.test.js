@@ -75,14 +75,17 @@ test('late previous-business success cannot replace current Today or publish sta
 
 const domainPayload=(domain)=>({...payload(1),presentation:{merchant_domain:domain,food_modules_enabled:domain==='food'||domain==='mixed',non_food_modules_enabled:domain==='non_food'||domain==='mixed'}});
 
-test('successful Storefront domain save invalidates Today without fetching on the Storefront surface',async()=>{
+test('successful Storefront save refreshes recipe navigation without leaving Storefront',async()=>{
   const h=todayHarness(),initial=h.load();h.requests[0].resolve(domainPayload('food'));await initial;
   h.node('viewDashboard').classList.add('hidden');
   const save=h.saveStore('non_food');h.storeRequests[0].resolve({business_id:1,merchant_domain:'non_food'});await save;
-  assert.equal(h.state().data,null);assert.equal(h.requests.length,1);
+  assert.equal(h.state().data,null);assert.equal(h.requests.length,2);
+  assert.equal(h.node('merchantRecipesNav').classList.contains('roleFinanceHidden'),true);
+  assert.equal(h.node('viewDashboard').classList.contains('hidden'),true);
   assert.equal(h.events.filter(e=>e.type==='abl:merchant-storefront-saved').length,1);
-  h.node('viewDashboard').classList.remove('hidden');
-  const current=h.load();h.requests[1].resolve(domainPayload('non_food'));await current;
+  const current=h.load();assert.equal(h.requests.length,2,'reuse the current capability refresh');
+  h.requests[1].resolve(domainPayload('non_food'));await current;
+  assert.equal(h.node('viewDashboard').classList.contains('hidden'),true,'refresh must not navigate');
   assert.equal(h.node('todayFoodActions').classList.contains('hidden'),true);
   assert.match(h.node('todayCatalogCopy').textContent,/Non-food catalog checks/);
 });
