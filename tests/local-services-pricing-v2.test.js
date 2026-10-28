@@ -137,7 +137,11 @@ test('runtime schema and routes preserve immutable quote versions and exact acce
   assert.match(server,/resolveAcceptedServiceJobPayable/);
   assert.match(core,/SERVICE_CHANGE_ORDER_REQUIRED/);
   assert.match(documents,/payable_authority:pricing\.payable_authority/);
-  assert.match(monetization,/j\.agreed_total\+COALESCE\(j\.legacy_final_adjustment,0\)/);
+  // Historical monetization must consult the accepted quote, never a bare SQL
+  // COALESCE that could accept missing/mismatched snapshots as zero.
+  assert.match(monetization,/LEFT JOIN service_job_quotes q ON q.id=j.accepted_quote_id/);
+  assert.match(monetization,/resolveAcceptedServiceJobPayable\(job,acceptedQuote\)\.payable_value/);
+  assert.doesNotMatch(monetization,/j\.agreed_total\+COALESCE\(j\.legacy_final_adjustment,0\)/);
 });
 
 test('Provider and Customer UI show itemised pricing and explicit change-order approval',()=>{
