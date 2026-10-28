@@ -205,3 +205,23 @@ test('non-JSON hidden own fields and extra array properties cannot evade preflig
     assert.equal(normalized.publishable,false);
   }
 });
+
+test('shared JavaScript references are rejected before exponential preflight expansion',()=>{
+  const shared={name:'Reusable leaf'};
+  const sameLeaf={name:'Lamp',tags:[shared,shared]};
+  assert.throws(()=>draft('merchant_non_food',sameLeaf),/Invalid AI catalog JSON/);
+
+  let graph={value:'leaf'};
+  for(let depth=0;depth<50;depth++)graph={left:graph,right:graph};
+  assert.throws(()=>draft('merchant_non_food',{name:'Lamp',extra:graph}),/Invalid AI catalog JSON/);
+
+  // Duplicate JSON *values* are valid when they are distinct parsed objects.
+  const actualJson=JSON.parse('{"name":"Lamp","tags":["safe","safe"],"extra":{"left":{"value":"leaf"},"right":{"value":"leaf"}}}');
+  for(const mode of AI_CATALOG_MODES){
+    const result=draft(mode,actualJson);
+    assert.equal(result.hints.name,'Lamp');
+    assert.deepEqual(result.hints.tags,['safe']);
+    assert.equal(result.draft_only,true);
+    assert.equal(result.publishable,false);
+  }
+});

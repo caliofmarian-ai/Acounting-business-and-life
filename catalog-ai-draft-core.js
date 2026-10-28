@@ -12,15 +12,17 @@ const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;
 // Measure actual enumerable JSON; inherited or model-owned toJSON serializers
 // must never conceal oversized untrusted suggestions from the 32 KiB gate.
 function jsonDataByteLength(value){
-  const ancestors=new WeakSet();
+  // Model input is a JSON tree, never a JS graph with shared identities.
+  // Reject repeated objects before copying to avoid exponential expansion.
+  const visited=new WeakSet();
   function copyJsonData(raw,depth){
     if(depth>64)throw new TypeError('AI catalog JSON is too deeply nested.');
     if(raw===null||typeof raw==='string'||typeof raw==='boolean')return raw;
     if(typeof raw==='number'&&Number.isFinite(raw))return raw;
     const array=Array.isArray(raw);
     if(!array&&!plain(raw))throw new TypeError('AI catalog JSON contains a non-JSON value.');
-    if(ancestors.has(raw))throw new TypeError('AI catalog JSON contains a cycle.');
-    ancestors.add(raw);
+    if(visited.has(raw))throw new TypeError('AI catalog JSON cannot reuse an object reference.');
+    visited.add(raw);
     let out;
     if(array){
       if(raw.length>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
@@ -50,7 +52,7 @@ function jsonDataByteLength(value){
         out[key]=copyJsonData(field.value,depth+1);
       }
     }
-    ancestors.delete(raw);
+
     return out;
   }
   return Buffer.byteLength(JSON.stringify(copyJsonData(value,0)),'utf8');
