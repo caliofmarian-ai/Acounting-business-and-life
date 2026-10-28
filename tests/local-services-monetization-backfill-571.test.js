@@ -107,3 +107,18 @@ test('a malformed later job blocks preflight before any monetization write',asyn
   await assert.rejects(()=>monetizationInternals.historicalRows(pool),checkIntegrity);
   assert.ok(pool.reads.every(x=>/^\s*SELECT\b/.test(x)));
 });
+
+test('historical backfill refuses missing approved quote or job currency evidence',async()=>{
+  for(const q of [quote({currency_code:null}),quote({currency_code:''})]){
+    await assert.rejects(
+      ()=>monetizationInternals.historicalRows(syntheticReadOnlyPool([projection(job(),q)])),
+      checkIntegrity
+    );
+  }
+  for(const j of [job({currency_code:null}),job({currency_code:''})]){
+    await assert.rejects(
+      ()=>monetizationInternals.historicalRows(syntheticReadOnlyPool([projection(j)])),
+      checkIntegrity
+    );
+  }
+});

@@ -119,7 +119,7 @@ export function resolveAcceptedServiceJobPayable(job={},acceptedQuote=null){
   if(integrityMoneyCents(acceptedQuote.total_amount,'Accepted quote total')!==integrityMoneyCents(snapshot.agreed_total,'Agreed total')){
     throw pricingIntegrity('Service Job agreed total differs from the accepted quote');
   }
-  if(acceptedQuote.currency_code&&job.currency_code&&acceptedQuote.currency_code!==job.currency_code){
+  if(!/^[A-Z]{3}$/.test(acceptedQuote.currency_code)||acceptedQuote.currency_code!==job.currency_code){
     throw pricingIntegrity('Service Job currency differs from the accepted quote');
   }
   const legacyQuote=acceptedQuote.legacy_record===true;

@@ -155,3 +155,27 @@ test('Provider and Customer UI show itemised pricing and explicit change-order a
   assert.match(ui,/Server-calculated total/);
   assert.doesNotMatch(ui,/final_price:Number\(document/);
 });
+
+test('accepted quote requires complete canonical matching currency evidence',()=>{
+  const job={
+    id:44,status:'completed',currency_code:'PHP',accepted_quote_id:91,
+    agreed_total:'150.00',final_price:'150.00',pricing_locked_at:'2026-10-28T01:00:00Z'
+  };
+  const quote={
+    id:91,job_id:44,status:'accepted',total_amount:'150.00',
+    currency_code:'PHP',legacy_record:false
+  };
+  assert.equal(resolveAcceptedServiceJobPayable(job,quote).payable_value,150);
+  for(const invalid of [null,undefined,'','PHP ','php','EUR']){
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable(job,{...quote,currency_code:invalid}),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409,
+      'invalid accepted quote currency: '+String(invalid)
+    );
+    assert.throws(
+      ()=>resolveAcceptedServiceJobPayable({...job,currency_code:invalid},quote),
+      error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409,
+      'invalid Service Job currency: '+String(invalid)
+    );
+  }
+});
