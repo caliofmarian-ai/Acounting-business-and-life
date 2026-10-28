@@ -50,10 +50,11 @@ test('Courier Money keeps bigint account identity separate from text economic-pa
 });
 
 test('Local Services separates commercial value Customer payment receivable expenses and settlement',()=>{
-  assert.match(core,/accepted_quote_id IS NOT NULL OR agreed_total IS NOT NULL/);
-  assert.match(core,/agreed_total\+COALESCE\(legacy_final_adjustment,0\)/);
+  assert.match(core,/LEFT JOIN service_job_quotes q ON q.id=j.accepted_quote_id/);
+  assert.match(core,/resolveAcceptedServiceJobPayable\(row,acceptedQuote\)/);
+  assert.doesNotMatch(core,/agreed_total\+COALESCE\(legacy_final_adjustment,0\)/);
   assert.match(core,/payable_value/);
-  assert.match(core,/serviceProviderPaymentEvidence\(pool,accountId\)/);
+  assert.match(core,/serviceProviderPaymentEvidence\(rows\)/);
   assert.match(core,/pi\.source_type='service_job'/);
   assert.match(core,/pi\.status IN \('succeeded','partially_refunded','refunded'\)/);
   assert.match(core,/r\.status='succeeded'/);
