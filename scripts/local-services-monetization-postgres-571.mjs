@@ -80,7 +80,7 @@ test('Local Services historical backfill SELECT uses real isolated PostgreSQL 16
       assert.equal(rows.length, 1);
       assert.equal(rows[0].serviceScope, 'local_services');
       assert.equal(rows[0].gross_value, 1275.5);
-      assert.equal(rows[0].accepted_quote_ref_id, 91);
+      assert.equal(Number(rows[0].accepted_quote_ref_id), 91); // BIGINT is a string in node-postgres
     });
 
     await t.test('missing, moved, withdrawn, mismatched or wrong-currency quote fails closed', async () => {
