@@ -18,7 +18,10 @@ test('Local Services historical backfill SELECT uses real isolated PostgreSQL 16
       "SELECT current_database() db, inet_server_addr()::text addr, current_setting('server_version_num')::integer version"
     );
     assert.equal(context.rows[0].db, 'abl_admin_ci');
-    assert.equal(context.rows[0].addr, '127.0.0.1');
+    // GitHub Actions maps the 127.0.0.1 runner port to the container's RFC1918
+    // address (e.g. 172.18.0.2/32); the database connection itself must
+    // still originate through the runner's loopback PGHOST above.
+    assert.match(context.rows[0].addr, /^(?:127\.0\.0\.1|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)(?:\/32)?$/);
     assert.ok(context.rows[0].version >= 160000);
 
     await client.query('BEGIN');
