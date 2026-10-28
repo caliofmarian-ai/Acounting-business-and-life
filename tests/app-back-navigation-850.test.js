@@ -115,3 +115,13 @@ test('source hooks remain explicit and the canonical shell is still integrated',
   assert.match(shell,/appNavigationBack/);assert.match(shell,/bindMerchantBackNavigation/);
   assert.doesNotMatch(shell,/document\.addEventListener\('click',[^\n]+history\.pushState/);
 });
+
+// Feature modal adapters must use existing close controls, never a payment or cancellation submit action.
+test('Orders and Catalog Back adapters target canonical close controls',()=>{
+  const src=readFileSync(new URL('../public/app-back-surfaces.js',import.meta.url),'utf8');
+  for(const [layer,close] of [['orderModalBackdrop','.cancelModal'],['productDetailBackdrop','.productDetailClose'],['checkoutBackdrop','.closeCheckout'],['catalogEditorBackdrop','#catalogEditorClose']]){
+    assert.ok(src.includes("['"+layer+"','"+close+"']"),layer+' uses its feature-owned close');
+  }
+  assert.match(src,/layer\.node\.querySelector\(layer\.closeId\)/);
+  assert.doesNotMatch(src,/\.saveModal\.click\(|\.placeOrder\.click\(/);
+});

@@ -2,7 +2,12 @@
 // Other feature modals must opt in after their own close/draft contracts are reviewed.
 export function createBackSurfaces(win){
   const doc=win.document;
-  const registry=[['lazyMoreBackdrop','lazyMoreClose'],['profileDrawerBackdrop','drawerClose'],['editDialog','editCancel']];
+  const registry=[
+    ['lazyMoreBackdrop','#lazyMoreClose'],['profileDrawerBackdrop','#drawerClose'],['editDialog','#editCancel'],
+    // Existing feature-owned buttons perform their original cleanup. Never submit an order or payment on Back.
+    ['orderModalBackdrop','.cancelModal'],['productDetailBackdrop','.productDetailClose'],
+    ['checkoutBackdrop','.closeCheckout'],['catalogEditorBackdrop','#catalogEditorClose']
+  ];
   const dirty=new Set();
   let previousFocus=null,exitNode=null,restoreInert=[];
   const visible=node=>Boolean(node?.isConnected&&!node.closest('[hidden],.hidden,[aria-hidden="true"]')&&node.getClientRects().length);
@@ -39,7 +44,7 @@ export function createBackSurfaces(win){
       if(typeof layer.node.requestClose==='function')layer.node.requestClose();
       else if(layer.node.dispatchEvent(new win.Event('cancel',{cancelable:true})))layer.node.close();
     }else{
-      const close=doc.getElementById(layer.closeId);
+      const close=layer.node.querySelector(layer.closeId)||doc.querySelector(layer.closeId);
       if(close&&!close.disabled)close.click(); // Original cleanup/body-lock handlers stay authoritative.
     }
     return true;
@@ -48,9 +53,11 @@ export function createBackSurfaces(win){
     if(event.target?.id==='editDialog'&&!allowNavigation(event.target))event.preventDefault();
   },true);
   doc.addEventListener('click',event=>{
-    const close=event.target?.closest?.('#editCancel,#lazyMoreClose,#drawerClose');
+    const close=event.target?.closest?.(registry.map(([,selector])=>selector).join(','));
     if(!close)return;
-    const item=registry.find(([,id])=>id===close.id),node=doc.getElementById(item[0]);
+    const item=registry.find(([id,selector])=>doc.getElementById(id)?.contains(close)&&close.matches(selector));
+    if(!item)return;
+    const node=doc.getElementById(item[0]);
     if(node&&!allowNavigation(node)){event.preventDefault();event.stopImmediatePropagation();}
   },true);
   function endExit(){
