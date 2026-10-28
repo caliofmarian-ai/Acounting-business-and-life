@@ -140,3 +140,10 @@ test('Orders and Catalog actual feature source still binds each Back close contr
   assert.match(orders,/function openPaymentModal\(/);
   assert.match(orders,/function openCancelModal\(/);
 });
+
+test('Marketplace stacked overlay order keeps checkout above product details and catalog editor highest',()=>{
+  const css=readFileSync(new URL('../public/marketplace.css',import.meta.url),'utf8');
+  const layer=name=>Number(css.match(new RegExp('\\.'+name+'\\{[^}]*z-index:(\\d+)'))?.[1]);
+  const detail=layer('productDetailBackdrop'),checkout=layer('checkoutBackdrop'),editor=layer('catalogEditorBackdrop');
+  assert.ok(detail>0&&checkout>detail&&editor>checkout,{detail,checkout,editor});
+});
