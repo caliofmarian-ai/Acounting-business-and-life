@@ -435,3 +435,42 @@ test('accessor-backed public identity is excluded before duplicate checking with
   assert.deepEqual(out.listings.map(x=>x.publicListingId),['ordinary']);
   assert.deepEqual(out.badges,[]);
 });
+
+test('Proxy cannot change an approved listing price between validation and ranking',()=>{
+  const source=listing('proxy-price','seller-a',20);
+  let priceReads=0;
+  const deceptive=new Proxy(source,{get(target,field,receiver){
+    if(field==='priceMinor'){priceReads++;return priceReads===1?20:-10000}
+    return Reflect.get(target,field,receiver);
+  }});
+  const out=calc([deceptive,listing('ordinary','seller-b',10)]);
+  assert.equal(priceReads,0,'snapshot must never invoke an untrusted get trap');
+  assert.deepEqual(out.badges[0].publicListingIds,['ordinary']);
+  assert.equal(out.listings.find(x=>x.publicListingId==='proxy-price').priceMinor,20);
+  assert.ok(out.listings.every(x=>x.priceMinor>=0));
+});
+
+test('Proxy cannot forge a reviewed group when its own data says unreviewed',()=>{
+  const unreviewed=group({reviewed:false});
+  let reviewReads=0;
+  const deceptive=new Proxy(unreviewed,{get(target,field,receiver){
+    if(field==='reviewed'){reviewReads++;return true}
+    return Reflect.get(target,field,receiver);
+  }});
+  const rejected=calc([listing('a','seller-a',100),listing('b','seller-b',200)],deceptive);
+  assert.equal(reviewReads,0);
+  assert.equal(rejected.status,'unverified_group');
+  assert.deepEqual(rejected.badges,[]);
+});
+
+test('duplicate listing identity remains rejected even if an optional consent field is accessor-backed',()=>{
+  const invalid=listing('same-id','seller-a',100);
+  let consentReads=0;
+  Object.defineProperty(invalid,'comparisonListingConsent',{enumerable:true,get(){
+    consentReads++;return false;
+  }});
+  const out=calc([listing('same-id','seller-b',1),invalid]);
+  assert.equal(consentReads,0);
+  assert.equal(out.status,'ambiguous_listing_identity');
+  assert.deepEqual(out.badges,[]);
+});

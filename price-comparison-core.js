@@ -30,6 +30,25 @@ const isOwnData=(record,field)=>{
   return descriptor!==undefined&&Object.hasOwn(descriptor,'value');
 };
 const hasAllOwn=(record,fields)=>fields.every(field=>isOwnData(record,field));
+// Read each server-projected field exactly once. A Proxy can expose a safe
+// own-data descriptor while returning an unrelated value on a later `get`;
+// authorization, consent and prices must use the same immutable observation.
+function ownDataSnapshot(record,fields){
+  if(!isObject(record))return null;
+  const data=Object.create(null);
+  let valid=true;
+  for(const field of fields){
+    let descriptor;
+    try{descriptor=Object.getOwnPropertyDescriptor(record,field)}catch{return null}
+    if(descriptor){
+      if(Object.hasOwn(descriptor,'value'))data[field]=descriptor.value;
+      else valid=false;
+    }
+  }
+  // Keep plain identity data for duplicate detection even when an optional
+  // field is an accessor. Such a row cannot participate in comparisons.
+  return {data,valid};
+}
 const GROUP_PROOF_FIELDS=Object.freeze([
   'id','categoryCode','matchKey','matchKind','version','active','reviewed','unitFamily'
 ]);
@@ -37,6 +56,12 @@ const LISTING_PROOF_FIELDS=Object.freeze([
   'publicListingId','merchantBusinessId','published','available','currency',
   'priceMinor','quantityBaseUnits','unitFamily','categoryCode','comparisonGroupId',
   'approvedMatchKey','approvedMatchVersion','approvedMatchStatus'
+]);
+const GROUP_SNAPSHOT_FIELDS=Object.freeze([
+  ...GROUP_PROOF_FIELDS,'matchEvidenceKind','exactQuantityBaseUnits'
+]);
+const LISTING_SNAPSHOT_FIELDS=Object.freeze([
+  ...LISTING_PROOF_FIELDS,'comparisonStoreConsent','comparisonListingConsent'
 ]);
 
 function validateAsOf(asOf){
@@ -117,12 +142,16 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
   if(!Array.isArray(listings)||listings.length>500){
     throw new TypeError('listings must be an array of at most 500 server-loaded entries');
   }
+  const groupSnapshot=ownDataSnapshot(group,GROUP_SNAPSHOT_FIELDS);
+  group=groupSnapshot?.valid?groupSnapshot.data:null;
   if(!validGroup(group))return empty(group,asOf,'unverified_group');
   if(group.matchKind==='SAME_CATEGORY_ONLY')return empty(group,asOf,'category_only');
   const bestByMerchant=new Map();
   const seenPublicIds=new Set();
   let eligibleListingCount=0;
-  for(const listing of listings){
+  for(const rawListing of listings){
+    const listingSnapshot=ownDataSnapshot(rawListing,LISTING_SNAPSHOT_FIELDS);
+    const listing=listingSnapshot?.data??null;
     // Reject duplicate public identities *before* checking consent. Otherwise
     // a stale opt-in row could override a revoked opt-out row for the same ID,
     // or two differently priced joins could select an invented lowest price.
@@ -132,7 +161,7 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
       }
       seenPublicIds.add(listing.publicListingId);
     }
-    if(!eligible(listing,group))continue;
+    if(!listingSnapshot?.valid||!eligible(listing,group))continue;
     eligibleListingCount++;
     const candidate={
       publicListingId:listing.publicListingId,
