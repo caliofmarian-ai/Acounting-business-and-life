@@ -165,3 +165,43 @@ test('32 KiB boundary is measured from actual UTF-8 JSON data',()=>{
   assert.throws(()=>draft('merchant_non_food',{name:'A'.repeat(32769-overhead)}),/32 KiB/);
   assert.throws(()=>draft('merchant_non_food',{name:'😀'.repeat(9000)}),/32 KiB/);
 });
+
+
+test('non-JSON hidden own fields and extra array properties cannot evade preflight',()=>{
+  const oversizedHidden={};
+  Object.defineProperty(oversizedHidden,'name',{
+    enumerable:false,value:'X'.repeat(40000)
+  });
+  assert.throws(()=>draft('merchant_non_food',oversizedHidden),/Invalid AI catalog JSON/);
+
+  let accessorRan=false;
+  const hiddenGetter={};
+  Object.defineProperty(hiddenGetter,'name',{
+    enumerable:false,get(){accessorRan=true;return 'injected suggestion';}
+  });
+  assert.throws(()=>draft('merchant_non_food',hiddenGetter),/Invalid AI catalog JSON/);
+  assert.equal(accessorRan,false,'preflight must not execute a hidden getter');
+
+  const nested={name:'Lamp',variant_attributes:{color:'Blue'}};
+  Object.defineProperty(nested.variant_attributes,'hidden',{
+    enumerable:false,value:'X'.repeat(40000)
+  });
+  assert.throws(()=>draft('merchant_non_food',nested),/Invalid AI catalog JSON/);
+
+  const arrayExtra={name:'Lamp',tags:['safe']};
+  arrayExtra.tags.extra='not JSON array data';
+  assert.throws(()=>draft('merchant_non_food',arrayExtra),/Invalid AI catalog JSON/);
+
+  const symbolExtra={name:'Lamp'};
+  symbolExtra[Symbol('private')]='not a JSON field';
+  assert.throws(()=>draft('merchant_non_food',symbolExtra),/Invalid AI catalog JSON/);
+
+  // Real parsed JSON (the provider contract) remains valid across all five modes.
+  for(const mode of AI_CATALOG_MODES){
+    const value=JSON.parse('{"name":"Real item","tags":["valid"]}');
+    const normalized=draft(mode,value);
+    assert.equal(normalized.hints.name,'Real item');
+    assert.deepEqual(normalized.hints.tags,['valid']);
+    assert.equal(normalized.publishable,false);
+  }
+});

@@ -24,6 +24,10 @@ function jsonDataByteLength(value){
     let out;
     if(array){
       if(raw.length>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+      // JSON arrays contain only indexed values and their built-in length.
+      // Ignore neither hidden own values nor extra array fields at preflight.
+      if(Reflect.ownKeys(raw).length!==raw.length+1)
+        throw new TypeError('Invalid AI catalog array.');
       out=[];
       Object.setPrototypeOf(out,null);
       for(let i=0;i<raw.length;i++){
@@ -34,6 +38,11 @@ function jsonDataByteLength(value){
     }else{
       const keys=Object.keys(raw);
       if(keys.length>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+      // A JSON object has only own, enumerable string data keys. Non-enumerable
+      // values/getters or symbols would escape the size gate but could later
+      // be read as model hints; reject them before touching any hint field.
+      if(Reflect.ownKeys(raw).length!==keys.length)
+        throw new TypeError('Invalid AI catalog object.');
       out=Object.create(null);
       for(const key of keys){
         const field=Object.getOwnPropertyDescriptor(raw,key);
