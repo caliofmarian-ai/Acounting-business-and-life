@@ -64,9 +64,17 @@ function compareCost(a,b,kind){
   const right=BigInt(b.priceMinor)*BigInt(a.quantityBaseUnits);
   return left<right?-1:left>right?1:0;
 }
-function roundedUnitPriceMinor(row,factor){
+// Preserve the exact minor-unit fraction as well as the rounded presentation.
+// A positive sub-cent unit price may round to zero but is never actually free.
+function normalizedUnitPriceBreakdown(row,factor){
+  const numerator=BigInt(row.priceMinor)*factor;
   const denominator=BigInt(row.quantityBaseUnits);
-  return ((BigInt(row.priceMinor)*factor+denominator/2n)/denominator).toString();
+  return {
+    normalizedUnitPriceMinorRounded:((numerator+denominator/2n)/denominator).toString(),
+    normalizedUnitPriceMinorNumerator:numerator.toString(),
+    normalizedUnitPriceMinorDenominator:denominator.toString(),
+    normalizedUnitPriceBelowOneCent:numerator>0n&&numerator<denominator
+  };
 }
 function empty(group,asOf,status){
   // Server-curated group identifiers are internal even when a group is verified;
@@ -141,7 +149,7 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
       currency:'PHP',
       priceMinor:row.priceMinor,
       quantityBaseUnits:row.quantityBaseUnits,
-      normalizedUnitPriceMinorRounded:roundedUnitPriceMinor(row,unit.factor),
+      ...normalizedUnitPriceBreakdown(row,unit.factor),
       receivesLowestPriceBadge:winners.includes(row.publicListingId)
     })),
     badges:canAward?[{

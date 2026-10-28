@@ -285,3 +285,41 @@ test('category-only and rejected duplicate projections do not publish valid grou
     assert.deepEqual(result.badges,[]);
   }
 });
+
+test('rounded-zero positive prices have an exact ratio, distinct from a real free item',()=>{
+  const g=group({matchKind:'COMPARABLE_PRODUCT',matchEvidenceKind:'structured_attributes',
+    unitFamily:'count'});
+  const result=calc([
+    listing('three','merchant-a',1,{unitFamily:'count',quantityBaseUnits:3}),
+    listing('seven','merchant-b',2,{unitFamily:'count',quantityBaseUnits:7})
+  ],g);
+  assert.deepEqual(result.badges[0].publicListingIds,['seven']);
+  assert.deepEqual(result.listings.map(x=>x.normalizedUnitPriceMinorRounded),['0','0']);
+  assert.deepEqual(result.listings.map(x=>[
+    x.normalizedUnitPriceMinorNumerator,x.normalizedUnitPriceMinorDenominator
+  ]),[['2','7'],['1','3']]);
+  assert.deepEqual(result.listings.map(x=>x.normalizedUnitPriceBelowOneCent),[true,true]);
+  const free=calc([
+    listing('zero','merchant-a',0,{unitFamily:'count',quantityBaseUnits:5}),
+    listing('nonzero','merchant-b',1,{unitFamily:'count',quantityBaseUnits:3})
+  ],g);
+  assert.equal(free.listings[0].normalizedUnitPriceMinorNumerator,'0');
+  assert.equal(free.listings[0].normalizedUnitPriceBelowOneCent,false);
+  assert.equal(free.listings[1].normalizedUnitPriceMinorRounded,'0');
+  assert.equal(free.listings[1].normalizedUnitPriceBelowOneCent,true);
+});
+
+test('exact ratio correctly scales cents per kg without rounding away price differences',()=>{
+  const g=group({matchKind:'COMPARABLE_PRODUCT',matchEvidenceKind:'structured_attributes',
+    unitFamily:'mass',categoryCode:'fresh_food'});
+  const output=calc([
+    listing('three-kg','merchant-a',1,{unitFamily:'mass',quantityBaseUnits:3000,categoryCode:'fresh_food'}),
+    listing('seven-kg','merchant-b',2,{unitFamily:'mass',quantityBaseUnits:7000,categoryCode:'fresh_food'})
+  ],g);
+  assert.equal(output.unitPricePer,'kg');
+  assert.equal(output.listings[0].publicListingId,'seven-kg');
+  assert.equal(output.listings[0].normalizedUnitPriceMinorNumerator,'2000');
+  assert.equal(output.listings[0].normalizedUnitPriceMinorDenominator,'7000');
+  assert.equal(output.listings[0].normalizedUnitPriceBelowOneCent,true);
+  assert.deepEqual(output.badges[0].publicListingIds,['seven-kg']);
+});
