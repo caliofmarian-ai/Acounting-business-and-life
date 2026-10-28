@@ -250,3 +250,38 @@ test('rejected group metadata never reflects arbitrary object or internal group 
   assert.equal(rejected.kind,null);
   assert.doesNotMatch(JSON.stringify(rejected),/DO_NOT_EXPOSE|internal-identifier/);
 });
+
+
+test('even a valid reviewed group never publishes its internal group identifier',()=>{
+  const privateId='private-review-group-division-74';
+  const curated=group({id:privateId});
+  const input=[
+    listing('public-a','merchant-a',9900,{comparisonGroupId:privateId}),
+    listing('public-b','merchant-b',11000,{comparisonGroupId:privateId})
+  ];
+  const result=calc(input,curated);
+  assert.equal(result.status,'ready');
+  assert.equal(result.groupId,null);
+  assert.deepEqual(result.badges[0].publicListingIds,['public-a']);
+  assert.doesNotMatch(JSON.stringify(result),/private-review-group-division-74/);
+});
+
+test('category-only and rejected duplicate projections do not publish valid group IDs',()=>{
+  const privateId='private-review-group-division-83';
+  const curated=group({id:privateId});
+  const input=[
+    listing('same','merchant-a',9900,{comparisonGroupId:privateId}),
+    listing('same','merchant-b',11000,{comparisonGroupId:privateId})
+  ];
+  const rejected=calc(input,curated);
+  const categoryOnly=calc(input,group({
+    id:privateId,matchKind:'SAME_CATEGORY_ONLY',matchEvidenceKind:undefined
+  }));
+  assert.equal(rejected.status,'ambiguous_listing_identity');
+  assert.equal(categoryOnly.status,'category_only');
+  for(const result of [rejected,categoryOnly]){
+    assert.equal(result.groupId,null);
+    assert.doesNotMatch(JSON.stringify(result),/private-review-group-division-83/);
+    assert.deepEqual(result.badges,[]);
+  }
+});

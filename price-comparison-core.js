@@ -69,9 +69,10 @@ function roundedUnitPriceMinor(row,factor){
   return ((BigInt(row.priceMinor)*factor+denominator/2n)/denominator).toString();
 }
 function empty(group,asOf,status){
-  // Never reflect rejected/untrusted group metadata into a public projection.
+  // Server-curated group identifiers are internal even when a group is verified;
+  // never reflect them into any public projection (including error statuses).
   const knownGroup=status!=='unverified_group';
-  return {status,groupId:knownGroup&&key(group?.id)?group.id:null,
+  return {status,groupId:null,
     kind:knownGroup&&MATCH_KINDS.has(group?.matchKind)?group.matchKind:null,
     asOf,coverage:'opted_in_merchants_only',deliveryIncluded:false,
     eligibleMerchantCount:0,unitPricePer:null,listings:[],badges:[]};
@@ -127,7 +128,7 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
   const badgeCode=group.matchKind==='EXACT_PRODUCT'?'LOWEST_LISTED_PRICE':'LOWEST_UNIT_PRICE';
   return {
     status:rows.length?'ready':'no_opted_in_listings',
-    groupId:group.id,
+    groupId:null,
     kind:group.matchKind,
     asOf,
     coverage:'opted_in_merchants_only',
