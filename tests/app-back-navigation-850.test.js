@@ -38,6 +38,18 @@ test('Android Back visits the previous in-app screen before attempting to leave'
   assert.equal(h.exitCalls[0].stay(),true);
   assert.equal(h.nav.getState().exitPending,false);
 });
+test('Merchant Inventory and Money Back follows the actual tab sequence',async()=>{
+  const h=harness();
+  h.nav.begin({kind:'account-home'});
+  h.nav.record({kind:'profile-home',role:'merchant'});
+  h.nav.record({kind:'merchant-view',role:'merchant',view:'Stock'});
+  h.nav.record({kind:'merchant-view',role:'merchant',view:'Money'});
+  h.history.back();await tick();
+  assert.deepEqual(h.restored.at(-1),{kind:'merchant-view',role:'merchant',view:'Stock'});
+  h.history.back();await tick();
+  assert.deepEqual(h.restored.at(-1),{kind:'profile-home',role:'merchant'});
+  assert.equal(h.exitCalls.length,0);
+});
 test('repeated equivalent screen render does not bloat the browser stack',()=>{
   const h=harness();h.nav.begin({kind:'account-home'});
   const length=h.length();
@@ -79,5 +91,7 @@ test('source hooks are explicit, with no global link-click hijack or location re
   assert.match(shell,/appBackController\.record\(\{kind:'profile-home',role:activeRole\}\)/);
   assert.match(shell,/appBackController\.record\(\{kind:'account-settings',view\}\)/);
   assert.match(shell,/appNavigationBack/);
+  assert.match(shell,/bindMerchantBackNavigation/);
+  assert.match(shell,/kind:'merchant-view'/);
   assert.doesNotMatch(shell,/document\.addEventListener\('click',[^\n]+history\.pushState/);
 });
