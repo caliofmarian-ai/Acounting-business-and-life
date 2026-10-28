@@ -8,7 +8,7 @@ const css=readFileSync(new URL('../public/orders.css',import.meta.url),'utf8');
 // actual viewport/browser evidence must be recorded separately at Preview QA.
 test('Orders board defaults to one lane and two lanes from tablet width',()=>{
   assert.match(css,/\.ordersBoard\{display:grid;gap:12px\}/);
-  assert.match(css,/@media\(min-width:650px\)\{[^}]*\.ordersBoard\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css,/@media\(min-width:650px\)\{[\s\S]*?\.ordersBoard\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
 });
 test('four-lane Orders board requires enough real CSS width for readable cards',()=>{
   assert.doesNotMatch(css,/@media\(min-width:960px\)/);
