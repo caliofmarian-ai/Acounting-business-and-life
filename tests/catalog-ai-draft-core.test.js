@@ -225,3 +225,49 @@ test('shared JavaScript references are rejected before exponential preflight exp
     assert.equal(result.publishable,false);
   }
 });
+
+test('preflight snapshot prevents Proxy get trap from replacing an approved short hint',()=>{
+  let nameReads=0;
+  const model=new Proxy({name:'Short name',tags:['safe']},{
+    get(target,field,receiver){
+      if(field==='name'){nameReads++;return 'X'.repeat(40000);}
+      return Reflect.get(target,field,receiver);
+    }
+  });
+  const d=draft('merchant_non_food',model);
+  assert.equal(nameReads,0,'only own data descriptors from preflight may be read');
+  assert.equal(d.hints.name,'Short name');
+  assert.deepEqual(d.hints.tags,['safe']);
+  assert.equal(d.publishable,false);
+});
+
+test('preflight snapshot is authoritative for category, tags, ingredients and attribute hints',()=>{
+  let reads=0;
+  const model=new Proxy({
+    name:'Real food',catalog_category_code:'prepared_food',
+    tags:['legitimate'],ingredients:[{name:'Fish',quantity:9}]
+  },{
+    get(target,field,receiver){
+      if(['catalog_category_code','tags','ingredients'].includes(field)){
+        reads++;
+        if(field==='catalog_category_code')return 'fresh_food';
+        if(field==='tags')return ['forged'];
+        return [{name:'INJECTED',quantity:999}];
+      }
+      return Reflect.get(target,field,receiver);
+    }
+  });
+  const food=draft('merchant_prepared_food',model);
+  assert.equal(reads,0,'untrusted original is never reread after snapshot');
+  assert.equal(food.hints.catalog_category_code,'prepared_food');
+  assert.deepEqual(food.hints.tags,['legitimate']);
+  assert.deepEqual(food.ingredient_names,['Fish']);
+  const ordinary=draft('merchant_non_food',{
+    catalog_category_code:'furniture_home',
+    variant_attributes:{color:'Blue'},tags:['safe','safe']
+  });
+  assert.deepEqual(ordinary.hints.tags,['safe']);
+  assert.deepEqual(ordinary.hints.variant_attributes,[
+    {code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+});

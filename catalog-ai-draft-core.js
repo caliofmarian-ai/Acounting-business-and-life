@@ -11,7 +11,7 @@ const clean=(v,n)=>typeof v==='string'?v.replace(/[<>\u0000-\u001f\u007f]/g,' ')
 const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;
 // Measure actual enumerable JSON; inherited or model-owned toJSON serializers
 // must never conceal oversized untrusted suggestions from the 32 KiB gate.
-function jsonDataByteLength(value){
+function snapshotJsonData(value){
   // Model input is a JSON tree, never a JS graph with shared identities.
   // Reject repeated objects before copying to avoid exponential expansion.
   const visited=new WeakSet();
@@ -55,12 +55,16 @@ function jsonDataByteLength(value){
 
     return out;
   }
-  return Buffer.byteLength(JSON.stringify(copyJsonData(value,0)),'utf8');
+  // Validation and later hint extraction must observe the same JSON values.
+  // Retain this null-prototype snapshot instead of rereading the mutable input.
+  const data=copyJsonData(value,0);
+  return {bytes:Buffer.byteLength(JSON.stringify(data),'utf8'),data};
 }
 function unique(v,max=12,len=40){
   if(!Array.isArray(v))return [];
   const out=[],seen=new Set();
-  for(const raw of v.slice(0,60)){
+  // Preflight snapshots use null-prototype arrays to avoid inherited toJSON.
+  for(let i=0;i<Math.min(v.length,60);i++){const raw=v[i];
     const value=clean(raw,len),key=value.toLocaleLowerCase('en');
     if(!value||seen.has(key))continue;
     seen.add(key);out.push(value);if(out.length===max)break;
@@ -106,30 +110,38 @@ function attributeHints(category,raw){
 export function normalizeAiCatalogDraft({mode,modelOutput}={}){
   if(!AI_CATALOG_MODES.includes(mode))throw new TypeError('Choose a supported AI catalog intake mode.');
   if(!plain(modelOutput))throw new TypeError('AI suggestions must be a JSON object.');
-  let size;
-  try{size=jsonDataByteLength(modelOutput);}
+  let snapshot;
+  try{snapshot=snapshotJsonData(modelOutput);}
   catch(error){
     if(error instanceof RangeError&&error.message==='AI suggestion exceeds the 32 KiB limit.')throw error;
     throw new TypeError('Invalid AI catalog JSON.');
   }
-  if(size>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
-  const category=categoryFor(mode,own(modelOutput,'catalog_category_code'));
+  if(snapshot.bytes>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+  const data=snapshot.data;
+  const category=categoryFor(mode,own(data,'catalog_category_code'));
   const hints={
-    name:clean(own(modelOutput,'name')||own(modelOutput,'title'),120),
-    description:clean(own(modelOutput,'description'),600),
+    name:clean(own(data,'name')||own(data,'title'),120),
+    description:clean(own(data,'description'),600),
     catalog_category_code:category,
-    supplier_category_text:mode==='supplier_catalog'?clean(own(modelOutput,'category'),80):'',
-    tags:unique(own(modelOutput,'tags')),
-    brand:clean(own(modelOutput,'brand'),120),
-    pack_name:mode==='supplier_catalog'?clean(own(modelOutput,'pack_name'),100):'',
-    base_unit:mode==='supplier_catalog'?clean(own(modelOutput,'base_unit'),24):'',
-    sku:clean(own(modelOutput,'sku'),80),
-    barcode:clean(own(modelOutput,'barcode'),80),
-    variant_attributes:attributeHints(category,own(modelOutput,'variant_attributes'))
+    supplier_category_text:mode==='supplier_catalog'?clean(own(data,'category'),80):'',
+    tags:unique(own(data,'tags')),
+    brand:clean(own(data,'brand'),120),
+    pack_name:mode==='supplier_catalog'?clean(own(data,'pack_name'),100):'',
+    base_unit:mode==='supplier_catalog'?clean(own(data,'base_unit'),24):'',
+    sku:clean(own(data,'sku'),80),
+    barcode:clean(own(data,'barcode'),80),
+    variant_attributes:attributeHints(category,own(data,'variant_attributes'))
   };
-  const ingredient_names=mode==='merchant_prepared_food'
-    ?unique((Array.isArray(own(modelOutput,'ingredients'))?own(modelOutput,'ingredients'):[]).map(x=>typeof x==='string'?x:(plain(x)?own(x,'name'):'')),30,100)
-    :[];
+  const rawIngredients=own(data,'ingredients');
+  const ingredient_names=[];
+  if(mode==='merchant_prepared_food'&&Array.isArray(rawIngredients)){
+    const names=[];
+    for(let i=0;i<Math.min(rawIngredients.length,60);i++){
+      const item=rawIngredients[i];
+      names.push(typeof item==='string'?item:(plain(item)?own(item,'name'):''));
+    }
+    ingredient_names.push(...unique(names,30,100));
+  }
   const required_review=['identity_description','category_attributes','price_and_stock_in_canonical_editor'];
   if(mode==='merchant_prepared_food')required_review.push('ingredient_quantities_in_canonical_recipe_editor');
   if(mode==='merchant_packaged_food')required_review.push('packaging_expiry_allergens_labels');
