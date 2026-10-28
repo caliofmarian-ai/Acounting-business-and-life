@@ -375,3 +375,63 @@ test('explicit own listing opt-in still overrides an absent storefront default',
   assert.equal(out.eligibleMerchantCount,2);
   assert.deepEqual(out.badges[0].publicListingIds,['opted-in']);
 });
+
+test('accessor-backed prices cannot change after validation and manufacture a negative lowest badge',()=>{
+  const changing=listing('changing','seller-a',10);
+  let reads=0;
+  Object.defineProperty(changing,'priceMinor',{enumerable:true,get(){
+    reads++;
+    return reads===1?10:-10000;
+  }});
+  const out=calc([changing,listing('ordinary','seller-b',20)]);
+  assert.equal(reads,0);
+  assert.equal(out.eligibleMerchantCount,1);
+  assert.deepEqual(out.listings.map(x=>x.publicListingId),['ordinary']);
+  assert.deepEqual(out.badges,[]);
+});
+
+test('accessor-backed listing/store consent is rejected without evaluating getters',()=>{
+  const listingConsent=listing('listing-accessor','seller-a',1);
+  const storeConsent=listing('store-accessor','seller-c',1);
+  let listingReads=0;
+  let storeReads=0;
+  Object.defineProperty(listingConsent,'comparisonListingConsent',{enumerable:true,get(){
+    listingReads++;
+    return true;
+  }});
+  delete storeConsent.comparisonListingConsent;
+  Object.defineProperty(storeConsent,'comparisonStoreConsent',{enumerable:true,get(){
+    storeReads++;
+    return true;
+  }});
+  const out=calc([listingConsent,storeConsent,listing('ordinary','seller-b',20)]);
+  assert.equal(listingReads,0);
+  assert.equal(storeReads,0);
+  assert.deepEqual(out.listings.map(x=>x.publicListingId),['ordinary']);
+  assert.deepEqual(out.badges,[]);
+});
+
+test('accessor-backed group review and evidence are never invoked',()=>{
+  for(const field of ['reviewed','matchEvidenceKind','exactQuantityBaseUnits','matchKind']){
+    const curated=group();
+    let reads=0;
+    Object.defineProperty(curated,field,{enumerable:true,get(){reads++;return group()[field];}});
+    const out=calc([listing('a','a',1),listing('b','b',2)],curated);
+    assert.equal(reads,0,field);
+    assert.equal(out.status,'unverified_group',field);
+    assert.equal(out.kind,null,field);
+    assert.deepEqual(out.badges,[],field);
+  }
+});
+
+test('accessor-backed public identity is excluded before duplicate checking without invoking getter',()=>{
+  const row=listing('flapping','seller-a',1);
+  let reads=0;
+  Object.defineProperty(row,'publicListingId',{enumerable:true,get(){reads++;return 'ordinary';}});
+  const out=calc([row,listing('ordinary','seller-b',20)]);
+  assert.equal(reads,0);
+  assert.equal(out.status,'ready');
+  assert.equal(out.eligibleMerchantCount,1);
+  assert.deepEqual(out.listings.map(x=>x.publicListingId),['ordinary']);
+  assert.deepEqual(out.badges,[]);
+});
