@@ -33,7 +33,7 @@ function validGroup(group){
   if(!isObject(group)||!key(group.id)||!key(group.categoryCode)||
     !key(group.matchKey)||!positive(group.version)||group.active!==true||
     group.reviewed!==true||!MATCH_KINDS.has(group.matchKind)||
-    !UNIT_FAMILIES[group.unitFamily])return false;
+    !Object.hasOwn(UNIT_FAMILIES,group.unitFamily))return false;
   if(group.matchKind==='SAME_CATEGORY_ONLY')return true;
   if(!EVIDENCE_KINDS[group.matchKind].has(group.matchEvidenceKind))return false;
   if(group.matchKind==='EXACT_PRODUCT'&&!positive(group.exactQuantityBaseUnits))return false;
@@ -88,9 +88,17 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
   if(!validGroup(group))return empty(group,asOf,'unverified_group');
   if(group.matchKind==='SAME_CATEGORY_ONLY')return empty(group,asOf,'category_only');
   const bestByMerchant=new Map();
+  const ownerByPublicId=new Map();
   let eligibleListingCount=0;
   for(const listing of listings){
     if(!eligible(listing,group))continue;
+    // A supposedly public listing identity must never identify two different sellers.
+    // Refuse to award badges if a corrupted server projection has ID collisions.
+    const priorOwner=ownerByPublicId.get(listing.publicListingId);
+    if(priorOwner&&priorOwner!==listing.merchantBusinessId){
+      return empty(group,asOf,'ambiguous_listing_identity');
+    }
+    ownerByPublicId.set(listing.publicListingId,listing.merchantBusinessId);
     eligibleListingCount++;
     const candidate={
       publicListingId:listing.publicListingId,

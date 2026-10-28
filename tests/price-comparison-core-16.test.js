@@ -196,6 +196,18 @@ test('timestamp is canonical, invalid and oversized inputs are bounded',()=>{
   assert.throws(()=>buildInternalPriceComparison({group:group(),listings:new Array(501).fill(null),asOf:AS_OF}),/at most 500/);
   assert.throws(()=>buildInternalPriceComparison({group:group(),listings:null,asOf:AS_OF}),/array/);
 });
+test('prototype-name unit family cannot bypass the curated family allowlist',()=>{
+  const out=calc([listing('a','a',100),listing('b','b',200)],group({unitFamily:'constructor'}));
+  assert.equal(out.status,'unverified_group');
+  assert.deepEqual(out.badges,[]);
+});
+test('one public listing ID mapped to two Merchants invalidates the comparison snapshot',()=>{
+  const out=calc([listing('same-id','merchant-a',100),listing('same-id','merchant-b',200)]);
+  assert.equal(out.status,'ambiguous_listing_identity');
+  assert.equal(out.eligibleMerchantCount,0);
+  assert.deepEqual(out.listings,[]);
+  assert.deepEqual(out.badges,[]);
+});
 test('calculator has no provider calls, publication mutations, quality-score or external benchmarks',()=>{
   const out=calc([listing('a','a',100),listing('b','b',200)]);
   assert.equal(Object.hasOwn(out,'externalBenchmark'),false);
