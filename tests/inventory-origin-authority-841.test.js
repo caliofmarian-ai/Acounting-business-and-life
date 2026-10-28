@@ -32,17 +32,49 @@ function harness({role='merchant',enabled=true,assigned=bindings,delay=false}={}
   const accountingContext=vm.runInNewContext(source+'\naccountingContext',scope);
   return{accountingContext,resume,switchTo:id=>{preference=id},state:()=>({preference,updates,provisions,budgets})};
 }
-test('Inventory mutation source business required; GET and other routes unaffected',()=>{
+test('Inventory mutations require business origin; read-only GET routes stay compatible',()=>{
   for(const path of ['/api/inventory/purchase','/api/inventory/locations','/api/inventory/count-sessions/1','/api/inventory/1/identifiers']){
     for(const method of ['POST','PUT','PATCH','DELETE']){
       assert.equal(inventoryMutationOrigin(request(method,path,'11')),11);
       for(const invalid of [NO_ORIGIN,null,'','0','-1','01','1.2','abc','9007199254740993',['11','22']])
         assert.throws(()=>inventoryMutationOrigin(request(method,path,invalid)),e=>e.status===409&&e.code==='INVENTORY_ORIGIN_REQUIRED');
     }
-    assert.equal(inventoryMutationOrigin(request('GET',path,NO_ORIGIN)),null);
+    if(path==='/api/inventory/locations'){
+      assert.throws(()=>inventoryMutationOrigin(request('GET',path,NO_ORIGIN)),e=>e.status===409);
+      assert.equal(inventoryMutationOrigin(request('GET',path,'11')),11);
+    }else assert.equal(inventoryMutationOrigin(request('GET',path,NO_ORIGIN)),null);
   }
   assert.equal(inventoryMutationOrigin(request('POST','/api/product-sales',NO_ORIGIN)),null);
 });
+test('reconciling GET locations and location-balances require verified origin, not a mutable preference',async()=>{
+  for(const path of ['/api/inventory/locations','/api/inventory/location-balances']){
+    assert.equal(inventoryMutationOrigin(request('GET',path,'11')),11);
+    assert.equal(inventoryMutationOrigin(request('GET',path+'/', '11')),11);
+    for(const bad of [NO_ORIGIN,'',null,'0','abc','22,11']){
+      assert.throws(()=>inventoryMutationOrigin(request('GET',path,bad)),e=>e.status===409&&e.code==='INVENTORY_ORIGIN_REQUIRED');
+    }
+    const h=harness({delay:true});
+    const begun=h.accountingContext(request('GET',path,'11'));
+    h.switchTo(22);h.resume();
+    const ctx=await begun;
+    assert.equal(ctx.business.id,11,path);
+    assert.deepEqual(h.state(),{preference:22,updates:0,provisions:0,budgets:[11]});
+  }
+  for(const path of ['/api/inventory','/api/inventory/lots','/api/inventory/transfers','/api/inventory/count-sessions/active','/api/inventory/lookup']){
+    assert.equal(inventoryMutationOrigin(request('GET',path,NO_ORIGIN)),null,path);
+  }
+});
+
+test('route guard covers both reconciliation-writing GET handlers without trusting arbitrary business IDs',async()=>{
+  const routes=readFileSync(new URL('../inventory-locations.js',import.meta.url),'utf8');
+  assert.match(routes,/app\.get\('\/api\/inventory\/locations',[\s\S]*?await reconcileBusinessInventoryLocations/);
+  assert.match(routes,/app\.get\('\/api\/inventory\/location-balances',[\s\S]*?inventoryLocationBalanceRows\(pool/);
+  assert.match(routes,/export async function inventoryLocationBalanceRows[\s\S]*?await reconcileBusinessInventoryLocations/);
+  const h=harness();
+  await assert.rejects(h.accountingContext(request('GET','/api/inventory/locations','33')),e=>e.status===403&&e.code==='INVENTORY_ORIGIN_FORBIDDEN');
+  assert.deepEqual(h.state(),{preference:11,updates:0,provisions:0,budgets:[]});
+});
+
 test('delayed A purchase never targets B after preference switches, or resets B preference',async()=>{
   const h=harness({delay:true});
   const old=h.accountingContext(request('POST','/api/inventory/purchase','11'));

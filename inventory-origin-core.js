@@ -1,7 +1,13 @@
 // Explicit Inventory business authority. Always revalidate against the authenticated bindings.
 const WRITE_METHODS=new Set(['POST','PUT','PATCH','DELETE']);
+// These GET paths reconcile and write physical stock/location/lot balances.
+// They must bind to the same originating Merchant business as explicit mutations.
+const RECONCILING_GET_PATHS=new Set(['/api/inventory/locations','/api/inventory/location-balances']);
 export function inventoryMutationOrigin(req){
-  if(!WRITE_METHODS.has(String(req?.method||'').toUpperCase())||!/^\/api\/inventory(?:\/|$)/.test(String(req?.path||'')))return null;
+  const method=String(req?.method||'').toUpperCase();
+  const path=String(req?.path||'');
+  if(!/^\/api\/inventory(?:\/|$)/.test(path))return null;
+  if(!WRITE_METHODS.has(method)&&!(method==='GET'&&RECONCILING_GET_PATHS.has(path.replace(/\/$/,''))))return null;
   const raw=req?.headers?.['x-abl-inventory-origin-business'];
   if(typeof raw!=='string'||!/^\d+$/.test(raw)||raw[0]==='0'||!Number.isSafeInteger(Number(raw))||Number(raw)<1)
     throw Object.assign(new Error('Inventory business context is missing or invalid. Reload Inventory and try again.'),{status:409,code:'INVENTORY_ORIGIN_REQUIRED'});
