@@ -259,6 +259,8 @@ jobs:
           END
           $trust_safety_runtime$;
           SQL
+      - name: Verify Local Services backfill SQL against real isolated PostgreSQL
+        run: node --test scripts/local-services-monetization-postgres-571.mjs
       - name: Verify Financial Document Engine runtime
         run: |
           set -euo pipefail
