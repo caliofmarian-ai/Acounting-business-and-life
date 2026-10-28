@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import {serviceJobPayableSnapshot} from './local-services-pricing-core.js';
+import {resolveAcceptedServiceJobPayable} from './local-services-pricing-core.js';
 
 export const FINANCIAL_DOCUMENT_TYPES=Object.freeze([
   'sale_invoice_candidate','service_invoice_candidate','subscription_invoice','payment_receipt',
@@ -450,12 +450,23 @@ async function syncProviderCommercialSources(pool,{accountId,profileRole}){
   let count=0;
   if(role==='service_provider'){
     const jobs=await pool.query(`
-      SELECT * FROM service_jobs
-      WHERE provider_account_id=$1 AND status='completed' AND customer_confirmed_at IS NOT NULL
-      ORDER BY customer_confirmed_at,id
+      SELECT j.*,q.id accepted_quote_ref_id,q.job_id accepted_quote_job_id,
+             q.status accepted_quote_status,q.total_amount accepted_quote_total,
+             q.currency_code accepted_quote_currency,q.legacy_record accepted_quote_legacy
+      FROM service_jobs j
+      LEFT JOIN service_job_quotes q ON q.id=j.accepted_quote_id
+      WHERE j.provider_account_id=$1 AND j.status='completed' AND j.customer_confirmed_at IS NOT NULL
+      ORDER BY j.customer_confirmed_at,j.id
     `,[Number(accountId)]);
     for(const j of jobs.rows){
-      const pricing=serviceJobPayableSnapshot(j),value=money(pricing.payable_value);
+      // A job-only price snapshot cannot prove that the referenced quote
+      // still exists, belongs to this job, is accepted and has the same total/currency.
+      const acceptedQuote=j.accepted_quote_ref_id==null?null:{
+        id:j.accepted_quote_ref_id,job_id:j.accepted_quote_job_id,
+        status:j.accepted_quote_status,total_amount:j.accepted_quote_total,
+        currency_code:j.accepted_quote_currency,legacy_record:j.accepted_quote_legacy
+      };
+      const pricing=resolveAcceptedServiceJobPayable(j,acceptedQuote),value=money(pricing.payable_value);
       await upsertDocument(pool,{
         documentKey:`service_job_completed:${j.id}`,ownerScope:'account',accountId:Number(accountId),
         profileRole:'service_provider',documentType:'service_invoice_candidate',sourceType:'service_job',sourceId:String(j.id),
