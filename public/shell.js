@@ -1,4 +1,5 @@
 import {phGeographyCascadeMarkup,bindPhGeographyCascade} from './ph-geography-cascade.js';
+import {createAppBackController} from './app-back-navigation.js';
 const ROLE_META = {
   merchant: { label: 'Merchant', icon: '🏪', desc: 'Accounting, products and business', manageDesc: 'Sell products or food, manage orders, stock, pricing and business finances.', hero: 'Run your business with every peso visible.' },
   customer: { label: 'Customer', icon: '🛍️', desc: 'Discover, order and track', manageDesc: 'Shop from local businesses, place orders, choose delivery and track purchases.', hero: 'Discover local. Order with confidence.' },
@@ -55,6 +56,61 @@ if(PERF_TRACE_ENABLED){
 
 const token = () => Boolean(window.ABLSession?.authenticated());
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+const appBackController=createAppBackController({
+  history:window.history,
+  subscribePop:listener=>window.addEventListener('popstate',listener),
+  getContext:()=>({authenticated:token(),accountId:snapshot?.account?.id||null,activeRole:snapshot?.account?.active_role||null}),
+  restore:restoreAppBackRoute,
+  onChange:state=>{
+    const button=document.getElementById('appNavigationBack');
+    if(button)button.hidden=!state.canGoBack;
+  },
+  onExit:openAppExitPrompt
+});
+function restoreAppBackRoute(route){
+  if(!token()||!snapshot?.account)return false;
+  if(route.kind==='account-home'){openAccountHome();return true}
+  if(route.kind==='account-settings')return openAccountSettings(route.view||'home').then(()=>true);
+  if(route.role!==snapshot.account.active_role)return false;
+  if(route.kind==='profile-home'){showActiveWorkspace();return true}
+  if(route.kind==='feature-workspace'){
+    showActiveWorkspace();
+    return openFeatureWorkspace(route.workspaceId);
+  }
+  return false;
+}
+function ensureAppBackChrome(){
+  const actions=document.querySelector('.topActions');
+  if(!actions)return;
+  if(!document.getElementById('appNavigationBack')){
+    const button=document.createElement('button');
+    button.id='appNavigationBack';button.className='appNavigationBack';
+    button.type='button';button.textContent='← Back';button.setAttribute('aria-label','Go back to previous screen');
+    button.hidden=true;button.onclick=()=>appBackController.back();
+    actions.prepend(button);
+  }
+}
+function openAppExitPrompt({stay,leave}){
+  let overlay=document.getElementById('appExitPrompt');
+  if(!overlay){
+    overlay=document.createElement('div');overlay.id='appExitPrompt';overlay.className='appExitPrompt';
+    overlay.innerHTML='<section role="alertdialog" aria-modal="true" aria-labelledby="appExitTitle" aria-describedby="appExitDescription"><h2 id="appExitTitle">Leave Business & Life?</h2><p id="appExitDescription">You are on the first screen. Do you want to leave the app?</p><div><button type="button" data-app-exit="stay">Stay here</button><button type="button" data-app-exit="leave">Leave app</button></div></section>';
+    document.body.appendChild(overlay);
+  }
+  const filipino=String(document.documentElement.lang||'').toLowerCase().startsWith('fil');
+  overlay.querySelector('#appExitTitle').textContent=filipino?'Umalis sa Business & Life?':'Leave Business & Life?';
+  overlay.querySelector('#appExitDescription').textContent=filipino?'Nasa unang screen ka na. Gusto mo bang lumabas?':'You are on the first screen. Do you want to leave the app?';
+  const stayButton=overlay.querySelector('[data-app-exit="stay"]');
+  const leaveButton=overlay.querySelector('[data-app-exit="leave"]');
+  stayButton.textContent=filipino?'Manatili':'Stay here';
+  leaveButton.textContent=filipino?'Lumabas':'Leave app';
+  stayButton.onclick=()=>{overlay.remove();stay()};
+  leaveButton.onclick=()=>{overlay.remove();leave()};
+  overlay.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();stayButton.click()}};
+  stayButton.focus();
+}
+
 
 async function profileApi(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -549,6 +605,7 @@ function renderAccountSettings(view=accountSettingsView){
   const account=snapshot.account,test=isCompanyTestAccount(account),workspace=document.getElementById('accountSettingsWorkspace');if(!workspace)return;
   workspace.classList.remove('hidden');
   accountSettingsView=view;
+  appBackController.record({kind:'account-settings',view});
   if(view==='home'){
     workspace.innerHTML=accountSettingsHeader(test?'Company test account':'Your account',test?'A controlled test identity managed by Business & Life, separate from any real person.':'Settings shared by your personal account, separate from every work profile.')+accountAdultEligibilityBanner(test)+accountGeographyBanner(test)+`${test?`<section class="companyTestNotice"><span aria-hidden="true">🧪</span><div><strong>Company-managed ${escapeHtml(testAccountRoleLabel(account))} test account</strong><p>No personal phone or home address is required. Company contact details are used only when configured; otherwise a test scenario supplies the necessary operational address.</p></div></section>`:''}<div class="accountSettingsGrid">
       <button type="button" data-account-settings-view="personal"><span>${test?'🧪':'👤'}</span><strong>${test?'Test account details':'Personal details'}</strong><small>${test?'Photo, test name and protected company email alias':'Photo, name, email, phone and official home area'}</small><b>›</b></button>
@@ -989,6 +1046,7 @@ function openFeatureWorkspace(workspaceId){
   hideFeatureWorkspaces(workspaceId);
   workspace.classList.remove('hidden');
   document.dispatchEvent(new CustomEvent('abl:feature-workspace',{detail:{workspaceId,activeRole}}));
+  appBackController.record({kind:'feature-workspace',workspaceId,role:activeRole});
   window.scrollTo({top:0,behavior:'auto'});
   return true;
 }
@@ -999,6 +1057,7 @@ function showActiveWorkspace() {
   activeSurface = 'profile';
   applyActiveRole();
   publishProfileState();
+  appBackController.record({kind:'profile-home',role:activeRole});
   window.scrollTo({top:0,behavior:'auto'});
 }
 window.BusinessLifeShell=Object.freeze({
@@ -1823,6 +1882,7 @@ function renderAccountHome(){
   hideFeatureWorkspaces();
   closeDrawer();
   hideMerchantWorkspace();
+  appBackController.record({kind:'account-home'});
   const account=snapshot.account,hub=document.getElementById('roleHub');
   if(!hub)return;
   document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
@@ -1919,6 +1979,10 @@ async function boot() {
   await (window.ABLSession?.ready||Promise.resolve());
   perfMark('shell_boot_start');
   if (!ensureShellChrome()) return setTimeout(boot, 80);
+  ensureAppBackChrome();
+  document.addEventListener('abl:profile-state',()=>appBackController.syncContext());
+  document.addEventListener('abl:auth-expired',()=>appBackController.syncContext());
+  document.addEventListener('abl:business-workspace-changed',()=>appBackController.invalidate());
   perfMark('shell_chrome_ready');
   hideMerchantWorkspace();
   const shell = document.getElementById('shell');
