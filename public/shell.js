@@ -75,6 +75,13 @@ function restoreAppBackRoute(route){
   if(route.kind==='account-settings')return openAccountSettings(route.view||'home').then(()=>true);
   if(route.role!==snapshot.account.active_role)return false;
   if(route.kind==='profile-home'){showActiveWorkspace();return true}
+  if(route.kind==='merchant-view'&&route.role==='merchant'){
+    const button=document.querySelector('.bottomNav [data-view="'+route.view+'"]');
+    if(!button||!['Dashboard','Stock','Money','Sell','Menu','History','Add'].includes(route.view))return false;
+    showActiveWorkspace();
+    button.click();
+    return true;
+  }
   if(route.kind==='feature-workspace'){
     showActiveWorkspace();
     return openFeatureWorkspace(route.workspaceId);
@@ -91,6 +98,30 @@ function ensureAppBackChrome(){
     button.hidden=true;button.onclick=()=>appBackController.back();
     actions.prepend(button);
   }
+}
+function bindMerchantBackNavigation(){
+  // Explicit known Merchant view controls; no global click interception or synthetic router.
+  const allowed=new Set(['Dashboard','Stock','Money','Sell','Menu','History','Add']);
+  const recordView=name=>{
+    if(!allowed.has(name)||activeSurface!=='profile'||activeRole!=='merchant')return;
+    const view=document.getElementById('view'+name);
+    if(!view||view.classList.contains('hidden'))return;
+    const route=appBackController.getState().activeRoute;
+    // Merchant Today is already represented by the profile-home entry on initial entry.
+    if(name==='Dashboard'&&route?.kind==='profile-home'&&route?.role==='merchant')return;
+    appBackController.record({kind:'merchant-view',role:'merchant',view:name});
+  };
+  const attach=(selector,resolve)=>{
+    document.querySelectorAll(selector).forEach(button=>{
+      if(button.dataset.appBackWired==='1')return;
+      button.dataset.appBackWired='1';
+      button.addEventListener('click',()=>queueMicrotask(()=>recordView(resolve(button))));
+    });
+  };
+  attach('.bottomNav [data-view]',button=>button.dataset.view);
+  attach('[data-view-link]',button=>button.dataset.viewLink);
+  const actions={inventory:'Stock',money:'Money','quick-sale':'Sell',recipes:'Menu'};
+  attach('[data-today-action]',button=>actions[button.dataset.todayAction]||'');
 }
 function openAppExitPrompt({stay,leave}){
   let overlay=document.getElementById('appExitPrompt');
@@ -1985,6 +2016,7 @@ async function boot() {
   perfMark('shell_boot_start');
   if (!ensureShellChrome()) return setTimeout(boot, 80);
   ensureAppBackChrome();
+  bindMerchantBackNavigation();
   document.addEventListener('abl:profile-state',()=>appBackController.syncContext());
   document.addEventListener('abl:auth-expired',()=>appBackController.syncContext());
   document.addEventListener('abl:business-workspace-changed',()=>appBackController.invalidate());
