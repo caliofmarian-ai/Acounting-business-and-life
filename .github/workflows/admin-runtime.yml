@@ -261,6 +261,8 @@ jobs:
           SQL
       - name: Verify Local Services backfill SQL against real isolated PostgreSQL
         run: node --test scripts/local-services-monetization-postgres-571.mjs
+      - name: Verify Service Provider Money SQL against real isolated PostgreSQL
+        run: node --test scripts/local-services-money-postgres-571.mjs
       - name: Verify Financial Document Engine runtime
         run: |
           set -euo pipefail
