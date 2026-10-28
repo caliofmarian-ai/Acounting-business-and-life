@@ -323,3 +323,55 @@ test('exact ratio correctly scales cents per kg without rounding away price diff
   assert.equal(output.listings[0].normalizedUnitPriceBelowOneCent,true);
   assert.deepEqual(output.badges[0].publicListingIds,['seven-kg']);
 });
+
+test('review authority must be explicit own fields, never inherited from a group prototype',()=>{
+  for(const field of ['id','categoryCode','matchKey','matchKind','version','active','reviewed',
+    'unitFamily','matchEvidenceKind','exactQuantityBaseUnits']){
+    const curated=group();
+    const trustedValue=curated[field];
+    delete curated[field];
+    Object.setPrototypeOf(curated,{[field]:trustedValue});
+    const out=calc([listing('a','a',1),listing('b','b',2)],curated);
+    assert.equal(out.status,'unverified_group',field);
+    assert.deepEqual(out.badges,[],field);
+  }
+});
+
+test('inherited publication and match proofs cannot authorize a public price badge',()=>{
+  const required=['publicListingId','merchantBusinessId','published','available','currency',
+    'priceMinor','quantityBaseUnits','unitFamily','categoryCode','comparisonGroupId',
+    'approvedMatchKey','approvedMatchVersion','approvedMatchStatus'];
+  for(const field of required){
+    const forged=listing('forged','a',1);
+    const inheritedValue=forged[field];
+    delete forged[field];
+    Object.setPrototypeOf(forged,{[field]:inheritedValue});
+    const out=calc([forged,listing('legitimate','b',100)]);
+    assert.equal(out.eligibleMerchantCount,1,field);
+    assert.deepEqual(out.badges,[],field);
+    assert.deepEqual(out.listings.map(x=>x.publicListingId),['legitimate'],field);
+  }
+});
+
+test('prototype-inherited consent cannot turn an unconsented listing ON',()=>{
+  const fromStore=listing('inherited-store','a',1);
+  delete fromStore.comparisonStoreConsent;
+  Object.setPrototypeOf(fromStore,{comparisonStoreConsent:true});
+  const fromListing=listing('inherited-listing','c',1,{
+    comparisonStoreConsent:false,comparisonListingConsent:true
+  });
+  delete fromListing.comparisonListingConsent;
+  Object.setPrototypeOf(fromListing,{comparisonListingConsent:true});
+  const out=calc([fromStore,fromListing,listing('legitimate','b',100)]);
+  assert.equal(out.eligibleMerchantCount,1);
+  assert.deepEqual(out.listings.map(x=>x.publicListingId),['legitimate']);
+  assert.deepEqual(out.badges,[]);
+});
+
+test('explicit own listing opt-in still overrides an absent storefront default',()=>{
+  const optedIn=listing('opted-in','a',1,{comparisonListingConsent:true});
+  delete optedIn.comparisonStoreConsent;
+  const out=calc([optedIn,listing('other','b',2)]);
+  assert.equal(out.eligibleMerchantCount,2);
+  assert.deepEqual(out.badges[0].publicListingIds,['opted-in']);
+});

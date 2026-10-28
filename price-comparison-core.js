@@ -21,6 +21,17 @@ const positive=value=>Number.isSafeInteger(value)&&value>0;
 const nonnegative=value=>Number.isSafeInteger(value)&&value>=0;
 const isObject=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const lexical=(a,b)=>a<b?-1:a>b?1:0;
+// Approval, publication, business binding and consent must originate from
+// explicit server snapshot fields, never from an inherited/prototype default.
+const hasAllOwn=(record,fields)=>fields.every(field=>Object.hasOwn(record,field));
+const GROUP_PROOF_FIELDS=Object.freeze([
+  'id','categoryCode','matchKey','matchKind','version','active','reviewed','unitFamily'
+]);
+const LISTING_PROOF_FIELDS=Object.freeze([
+  'publicListingId','merchantBusinessId','published','available','currency',
+  'priceMinor','quantityBaseUnits','unitFamily','categoryCode','comparisonGroupId',
+  'approvedMatchKey','approvedMatchVersion','approvedMatchStatus'
+]);
 
 function validateAsOf(asOf){
   if(typeof asOf!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(asOf)||
@@ -30,25 +41,26 @@ function validateAsOf(asOf){
 }
 
 function validGroup(group){
-  if(!isObject(group)||!key(group.id)||!key(group.categoryCode)||
+  if(!isObject(group)||!hasAllOwn(group,GROUP_PROOF_FIELDS)||!key(group.id)||!key(group.categoryCode)||
     !key(group.matchKey)||!positive(group.version)||group.active!==true||
     group.reviewed!==true||!MATCH_KINDS.has(group.matchKind)||
     !Object.hasOwn(UNIT_FAMILIES,group.unitFamily))return false;
   if(group.matchKind==='SAME_CATEGORY_ONLY')return true;
-  if(!EVIDENCE_KINDS[group.matchKind].has(group.matchEvidenceKind))return false;
-  if(group.matchKind==='EXACT_PRODUCT'&&!positive(group.exactQuantityBaseUnits))return false;
+  if(!Object.hasOwn(group,'matchEvidenceKind')||!EVIDENCE_KINDS[group.matchKind].has(group.matchEvidenceKind))return false;
+  if(group.matchKind==='EXACT_PRODUCT'&&(!Object.hasOwn(group,'exactQuantityBaseUnits')||!positive(group.exactQuantityBaseUnits)))return false;
   return true;
 }
 
 function explicitlyParticipates(row){
-  if(row.comparisonListingConsent===true)return true;
-  if(row.comparisonListingConsent===false)return false;
-  if(row.comparisonListingConsent!==null&&row.comparisonListingConsent!==undefined)return false;
-  return row.comparisonStoreConsent===true;
+  const override=Object.hasOwn(row,'comparisonListingConsent')?row.comparisonListingConsent:undefined;
+  if(override===true)return true;
+  if(override===false)return false;
+  if(override!==null&&override!==undefined)return false;
+  return Object.hasOwn(row,'comparisonStoreConsent')&&row.comparisonStoreConsent===true;
 }
 
 function eligible(row,group){
-  return isObject(row)&&key(row.publicListingId)&&key(row.merchantBusinessId)&&
+  return isObject(row)&&hasAllOwn(row,LISTING_PROOF_FIELDS)&&key(row.publicListingId)&&key(row.merchantBusinessId)&&
     row.published===true&&row.available===true&&explicitlyParticipates(row)&&
     row.currency==='PHP'&&nonnegative(row.priceMinor)&&positive(row.quantityBaseUnits)&&
     row.unitFamily===group.unitFamily&&row.categoryCode===group.categoryCode&&
@@ -106,7 +118,7 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
     // Reject duplicate public identities *before* checking consent. Otherwise
     // a stale opt-in row could override a revoked opt-out row for the same ID,
     // or two differently priced joins could select an invented lowest price.
-    if(isObject(listing)&&key(listing.publicListingId)){
+    if(isObject(listing)&&Object.hasOwn(listing,'publicListingId')&&key(listing.publicListingId)){
       if(seenPublicIds.has(listing.publicListingId)){
         return empty(group,asOf,'ambiguous_listing_identity');
       }
