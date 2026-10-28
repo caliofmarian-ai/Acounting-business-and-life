@@ -52,7 +52,7 @@ test('Service Provider Money values and receivables depend on accepted quote or 
   });
   const pool=fakePool([approved(),legacy(),openV2,openLegacy]);
   const snapshot=await serviceProviderMoneySnapshot(pool,66);
-  assert.deepEqual(pool.calls[0].params,[66]);
+  assert.deepEqual(pool.calls[0].params,[66,true]);
   assert.equal(pool.calls.length,2,'one coherent quote/payment read + settlement allocations');
   assert.match(pool.calls[0].sql,/LEFT JOIN service_job_quotes q ON q.id=j.accepted_quote_id/);
   assert.match(pool.calls[0].sql,/j.provider_account_id=\$1/);
@@ -119,4 +119,13 @@ test('A bad later row prevents a partial financial snapshot',async()=>{
   })]);
   await assert.rejects(serviceProviderMoneySnapshot(pool,66),
     error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH');
+});
+
+test('fast Service Provider home does not include last-40 historical-only jobs in its read model',async()=>{
+  const pool=fakePool([approved()]);
+  const snapshot=await serviceProviderMoneyHomeSnapshot(pool,66);
+  assert.deepEqual(pool.calls[0].params,[66,false]);
+  assert.match(pool.calls[0].sql,/WHERE provider_account_id=\$1 AND \$2::boolean/);
+  assert.equal(snapshot.summary.confirmed_job_value,1000);
+  assert.equal(snapshot.recent_jobs,undefined);
 });

@@ -213,13 +213,13 @@ function serviceProviderPaymentEvidence(rows){
   };
 }
 
-async function verifiedServiceProviderMoneyRows(pool,accountId){
+async function verifiedServiceProviderMoneyRows(pool,accountId,{includeRecent=false}={}){
   // One PostgreSQL statement reads quote and payment evidence from the same
   // database snapshot. No payable amount comes from unchecked SQL arithmetic.
   const {rows}=await pool.query(`
     WITH recent_ids AS (
       SELECT id FROM service_jobs
-      WHERE provider_account_id=$1
+      WHERE provider_account_id=$1 AND $2::boolean
       ORDER BY created_at DESC,id DESC LIMIT 40
     ),
     jobs AS (
@@ -275,7 +275,7 @@ async function verifiedServiceProviderMoneyRows(pool,accountId){
     LEFT JOIN pending p ON p.job_id=j.id
     LEFT JOIN refunded f ON f.job_id=j.id
     ORDER BY j.created_at DESC,j.id DESC
-  `,[Number(accountId)]);
+  `,[Number(accountId),includeRecent]);
   // Validate ALL selected rows before returning a partial summary or detail.
   return rows.map(row=>{
     const acceptedQuote=row.accepted_quote_ref_id==null?null:{
@@ -343,7 +343,7 @@ export async function serviceProviderMoneyHomeSnapshot(pool,accountId){
 }
 
 export async function serviceProviderMoneySnapshot(pool,accountId){
-  const rows=await verifiedServiceProviderMoneyRows(pool,accountId);
+  const rows=await verifiedServiceProviderMoneyRows(pool,accountId,{includeRecent:true});
   const home=await serviceProviderMoneyHomeSummary(pool,accountId,rows);
   return{...home,recent_jobs:rows.filter(row=>row.recent).map(row=>row.job)};
 }
