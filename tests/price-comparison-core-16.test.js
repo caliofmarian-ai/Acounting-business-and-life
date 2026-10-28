@@ -215,3 +215,38 @@ test('calculator has no provider calls, publication mutations, quality-score or 
   assert.equal(Object.hasOwn(out,'settlement'),false);
   assert.equal(Object.hasOwn(out,'publicationAction'),false);
 });
+
+test('duplicate same-seller public listing identity cannot invent a cheap price',()=>{
+  const out=calc([listing('same','merchant-a',12000),listing('same','merchant-a',1),
+    listing('other','merchant-b',10000)]);
+  assert.equal(out.status,'ambiguous_listing_identity');
+  assert.deepEqual(out.badges,[]);
+  assert.deepEqual(out.listings,[]);
+});
+
+test('stale opt-in and revoked opt-out copies of one listing fail closed',()=>{
+  const out=calc([
+    listing('reused','merchant-a',100,{comparisonListingConsent:true}),
+    listing('reused','merchant-a',100,{comparisonListingConsent:false}),
+    listing('other','merchant-b',1000)
+  ]);
+  assert.equal(out.status,'ambiguous_listing_identity');
+  assert.equal(out.eligibleMerchantCount,0);
+  assert.deepEqual(out.badges,[]);
+});
+
+test('duplicate identical server projection is rejected instead of counted twice',()=>{
+  const row=listing('duplicated','merchant-a',15000);
+  const out=calc([row,{...row},listing('other','merchant-b',16000)]);
+  assert.equal(out.status,'ambiguous_listing_identity');
+  assert.deepEqual(out.badges,[]);
+});
+
+test('rejected group metadata never reflects arbitrary object or internal group ID',()=>{
+  const rejected=calc([listing('a','a',100),listing('b','b',200)],
+    group({active:false,id:'internal-identifier',matchKind:{private:'DO_NOT_EXPOSE'}}));
+  assert.equal(rejected.status,'unverified_group');
+  assert.equal(rejected.groupId,null);
+  assert.equal(rejected.kind,null);
+  assert.doesNotMatch(JSON.stringify(rejected),/DO_NOT_EXPOSE|internal-identifier/);
+});

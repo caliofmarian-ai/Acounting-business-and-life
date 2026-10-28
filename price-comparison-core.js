@@ -69,7 +69,10 @@ function roundedUnitPriceMinor(row,factor){
   return ((BigInt(row.priceMinor)*factor+denominator/2n)/denominator).toString();
 }
 function empty(group,asOf,status){
-  return {status,groupId:key(group?.id)?group.id:null,kind:group?.matchKind??null,
+  // Never reflect rejected/untrusted group metadata into a public projection.
+  const knownGroup=status!=='unverified_group';
+  return {status,groupId:knownGroup&&key(group?.id)?group.id:null,
+    kind:knownGroup&&MATCH_KINDS.has(group?.matchKind)?group.matchKind:null,
     asOf,coverage:'opted_in_merchants_only',deliveryIncluded:false,
     eligibleMerchantCount:0,unitPricePer:null,listings:[],badges:[]};
 }
@@ -88,17 +91,19 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
   if(!validGroup(group))return empty(group,asOf,'unverified_group');
   if(group.matchKind==='SAME_CATEGORY_ONLY')return empty(group,asOf,'category_only');
   const bestByMerchant=new Map();
-  const ownerByPublicId=new Map();
+  const seenPublicIds=new Set();
   let eligibleListingCount=0;
   for(const listing of listings){
-    if(!eligible(listing,group))continue;
-    // A supposedly public listing identity must never identify two different sellers.
-    // Refuse to award badges if a corrupted server projection has ID collisions.
-    const priorOwner=ownerByPublicId.get(listing.publicListingId);
-    if(priorOwner&&priorOwner!==listing.merchantBusinessId){
-      return empty(group,asOf,'ambiguous_listing_identity');
+    // Reject duplicate public identities *before* checking consent. Otherwise
+    // a stale opt-in row could override a revoked opt-out row for the same ID,
+    // or two differently priced joins could select an invented lowest price.
+    if(isObject(listing)&&key(listing.publicListingId)){
+      if(seenPublicIds.has(listing.publicListingId)){
+        return empty(group,asOf,'ambiguous_listing_identity');
+      }
+      seenPublicIds.add(listing.publicListingId);
     }
-    ownerByPublicId.set(listing.publicListingId,listing.merchantBusinessId);
+    if(!eligible(listing,group))continue;
     eligibleListingCount++;
     const candidate={
       publicListingId:listing.publicListingId,

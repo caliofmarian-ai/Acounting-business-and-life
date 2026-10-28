@@ -13,7 +13,7 @@ Matching is **not fuzzy text search**. Only reviewed server-curated match groups
 - `COMPARABLE_PRODUCT`: reviewed category/variety/grade/unit equivalence; uses rational normalized PHP minor-unit prices (per kg/L/piece), and only `LOWEST_UNIT_PRICE`.
 - `SAME_CATEGORY_ONLY`: discovery/category browsing only; **zero** comparison rows/badges. Similar-sounding prepared-food names cannot create an exact match.
 
-A badge requires at least **two distinct opted-in eligible Merchant businesses**, and cites the exact observation timestamp, participating merchant count and the fact that delivery cost is excluded. Tied lowest-price listings are all recognized. Unpublished, unavailable, opt-out, non-PHP, malformed, stale/unapproved match members are excluded. Multiple listings from one business cannot manufacture multiple competitors.
+A badge requires at least **two distinct opted-in eligible Merchant businesses**, and cites the exact observation timestamp, participating merchant count and the fact that delivery cost is excluded. Tied lowest-price listings are all recognized. Unpublished, unavailable, opt-out, non-PHP, malformed, stale/unapproved match members are excluded. Multiple listings from one business cannot manufacture multiple competitors. Any duplicate public listing ID in a projection (even identical rows, different-price rows from the same business, or conflicting consent/publication rows) invalidates that snapshot instead of choosing a potentially stale or privacy-violating record. Rejected group metadata is not reflected in the output.
 
 ## API-free primitive and trust boundary
 
