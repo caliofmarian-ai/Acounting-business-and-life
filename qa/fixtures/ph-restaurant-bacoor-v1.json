@@ -1,0 +1,1067 @@
+{
+  "schemaVersion": "ph-restaurant-qa-v1",
+  "fixtureKey": "qa-ph-restaurant-bacoor",
+  "generatedFor": "Business & Life Philippines Edition / non-commercial company test",
+  "business": {
+    "name": "QA PH Restaurant — Bacoor",
+    "countryCode": "PH",
+    "currency": "PHP",
+    "locale": "en-PH",
+    "role": "merchant",
+    "merchantDomain": "food",
+    "cityPsgcCode": "0402103000",
+    "barangayPsgcCode": "0402103028",
+    "testOnly": true,
+    "existingBusinessPolicy": "Do not modify QA Fish Kitchen or historical QA Counter Orders A/B",
+    "storefront": {
+      "publicationStatus": "draft",
+      "pickupEnabled": false,
+      "deliveryEnabled": false,
+      "cashEnabled": false,
+      "onlineEnabled": false,
+      "publicLocationEnabled": false,
+      "publicReputationEnabled": false,
+      "priceComparisonEnabled": false
+    }
+  },
+  "costing": {
+    "unit": "PHP per inventory base unit (g, ml or unit)",
+    "basis": "synthetic QA inputs only",
+    "batchServings": 4,
+    "portionUnit": "unit",
+    "assumptions": "Food ingredient cost only. No labour, gas, rent, spoilage, delivery, provider fees or taxes. Not current market quotations or an accounting posting.",
+    "costDate": "2026-10-28"
+  },
+  "inventory": [
+    {
+      "code": "chicken",
+      "name": "Chicken meat",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.24,
+      "onHandBase": 14000,
+      "reorderAtBase": 3000
+    },
+    {
+      "code": "pork",
+      "name": "Pork shoulder",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.25,
+      "onHandBase": 9000,
+      "reorderAtBase": 2200
+    },
+    {
+      "code": "beef",
+      "name": "Beef chuck",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.45,
+      "onHandBase": 4500,
+      "reorderAtBase": 1000
+    },
+    {
+      "code": "pork-liver",
+      "name": "Pork liver",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.2,
+      "onHandBase": 1500,
+      "reorderAtBase": 400
+    },
+    {
+      "code": "rice",
+      "name": "Uncooked rice",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.055,
+      "onHandBase": 9500,
+      "reorderAtBase": 1600
+    },
+    {
+      "code": "mung-beans",
+      "name": "Dried mung beans",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.13,
+      "onHandBase": 2500,
+      "reorderAtBase": 500
+    },
+    {
+      "code": "rice-noodles",
+      "name": "Rice vermicelli noodles",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.16,
+      "onHandBase": 3500,
+      "reorderAtBase": 700
+    },
+    {
+      "code": "eggplant",
+      "name": "Eggplant",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.085,
+      "onHandBase": 3300,
+      "reorderAtBase": 700
+    },
+    {
+      "code": "potato",
+      "name": "Potatoes",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.09,
+      "onHandBase": 4500,
+      "reorderAtBase": 900
+    },
+    {
+      "code": "carrot",
+      "name": "Carrots",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.085,
+      "onHandBase": 5000,
+      "reorderAtBase": 1000
+    },
+    {
+      "code": "tomato",
+      "name": "Tomatoes",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.1,
+      "onHandBase": 4000,
+      "reorderAtBase": 800
+    },
+    {
+      "code": "onion",
+      "name": "Onions",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.12,
+      "onHandBase": 5000,
+      "reorderAtBase": 1000
+    },
+    {
+      "code": "garlic",
+      "name": "Garlic",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.22,
+      "onHandBase": 1800,
+      "reorderAtBase": 350
+    },
+    {
+      "code": "ginger",
+      "name": "Ginger",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.18,
+      "onHandBase": 1500,
+      "reorderAtBase": 300
+    },
+    {
+      "code": "kangkong",
+      "name": "Water spinach (kangkong)",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.14,
+      "onHandBase": 1800,
+      "reorderAtBase": 400
+    },
+    {
+      "code": "string-beans",
+      "name": "String beans (sitaw)",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.17,
+      "onHandBase": 2000,
+      "reorderAtBase": 400
+    },
+    {
+      "code": "cabbage",
+      "name": "Cabbage",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.065,
+      "onHandBase": 2300,
+      "reorderAtBase": 500
+    },
+    {
+      "code": "bell-pepper",
+      "name": "Bell peppers",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.26,
+      "onHandBase": 1700,
+      "reorderAtBase": 350
+    },
+    {
+      "code": "chili",
+      "name": "Chillies",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.65,
+      "onHandBase": 1000,
+      "reorderAtBase": 180
+    },
+    {
+      "code": "green-papaya",
+      "name": "Green papaya",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.06,
+      "onHandBase": 1800,
+      "reorderAtBase": 400
+    },
+    {
+      "code": "malunggay",
+      "name": "Moringa leaves (malunggay)",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.2,
+      "onHandBase": 1200,
+      "reorderAtBase": 250
+    },
+    {
+      "code": "radish",
+      "name": "White radish",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.07,
+      "onHandBase": 1800,
+      "reorderAtBase": 350
+    },
+    {
+      "code": "tamarind",
+      "name": "Tamarind paste",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.27,
+      "onHandBase": 1000,
+      "reorderAtBase": 200
+    },
+    {
+      "code": "soy-sauce",
+      "name": "Soy sauce",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0.1,
+      "onHandBase": 2500,
+      "reorderAtBase": 400
+    },
+    {
+      "code": "vinegar",
+      "name": "Cane vinegar",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0.06,
+      "onHandBase": 2500,
+      "reorderAtBase": 500
+    },
+    {
+      "code": "fish-sauce",
+      "name": "Fish sauce (patis)",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0.13,
+      "onHandBase": 1500,
+      "reorderAtBase": 300
+    },
+    {
+      "code": "coconut-milk",
+      "name": "Coconut milk",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0.11,
+      "onHandBase": 2500,
+      "reorderAtBase": 500
+    },
+    {
+      "code": "tomato-sauce",
+      "name": "Tomato sauce",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0.09,
+      "onHandBase": 2500,
+      "reorderAtBase": 500
+    },
+    {
+      "code": "cooking-oil",
+      "name": "Cooking oil",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0.13,
+      "onHandBase": 3000,
+      "reorderAtBase": 500
+    },
+    {
+      "code": "calamansi",
+      "name": "Calamansi juice",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0.32,
+      "onHandBase": 1200,
+      "reorderAtBase": 200
+    },
+    {
+      "code": "water",
+      "name": "Water",
+      "baseUnit": "ml",
+      "measurementFamily": "volume",
+      "unitCostPHP": 0,
+      "onHandBase": 20000,
+      "reorderAtBase": 4000
+    },
+    {
+      "code": "salt",
+      "name": "Salt",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.03,
+      "onHandBase": 1200,
+      "reorderAtBase": 200
+    },
+    {
+      "code": "black-pepper",
+      "name": "Black pepper",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 1.8,
+      "onHandBase": 400,
+      "reorderAtBase": 60
+    },
+    {
+      "code": "bay-leaves",
+      "name": "Bay leaves",
+      "baseUnit": "unit",
+      "measurementFamily": "count",
+      "unitCostPHP": 2.5,
+      "onHandBase": 40,
+      "reorderAtBase": 10
+    },
+    {
+      "code": "lemongrass",
+      "name": "Lemongrass stalks",
+      "baseUnit": "unit",
+      "measurementFamily": "count",
+      "unitCostPHP": 9,
+      "onHandBase": 30,
+      "reorderAtBase": 6
+    },
+    {
+      "code": "eggs",
+      "name": "Eggs",
+      "baseUnit": "unit",
+      "measurementFamily": "count",
+      "unitCostPHP": 9,
+      "onHandBase": 24,
+      "reorderAtBase": 6
+    },
+    {
+      "code": "brown-sugar",
+      "name": "Brown sugar",
+      "baseUnit": "g",
+      "measurementFamily": "mass",
+      "unitCostPHP": 0.07,
+      "onHandBase": 2000,
+      "reorderAtBase": 350
+    }
+  ],
+  "recipes": [
+    {
+      "code": "chicken-adobo",
+      "name": "Chicken Adobo",
+      "category": "Main dishes",
+      "description": "Chicken simmered with soy sauce, cane vinegar and garlic, served with rice.",
+      "sellingPricePHP": 145,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "chicken",
+          "quantity": 900,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "soy-sauce",
+          "quantity": 100,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "vinegar",
+          "quantity": 80,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 40,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 100,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "black-pepper",
+          "quantity": 5,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "bay-leaves",
+          "quantity": 2,
+          "unit": "unit"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 25,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "water",
+          "quantity": 250,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Cook rice separately.",
+        "Simmer the chicken with soy sauce, vinegar, garlic, onion, bay leaves and pepper until safely cooked.",
+        "Reduce the sauce and divide the chicken and rice into four portions."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 284.25,
+        "perPortionPHP": 71.06,
+        "grossContributionPerPortionPHP": 73.94
+      }
+    },
+    {
+      "code": "pork-sinigang",
+      "name": "Pork Sinigang",
+      "category": "Soups and stews",
+      "description": "Tamarind-soured pork soup with vegetables, served with rice.",
+      "sellingPricePHP": 175,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "pork",
+          "quantity": 800,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "tomato",
+          "quantity": 150,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 100,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "kangkong",
+          "quantity": 180,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "radish",
+          "quantity": 300,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "string-beans",
+          "quantity": 160,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "tamarind",
+          "quantity": 100,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "fish-sauce",
+          "quantity": 40,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "water",
+          "quantity": 1000,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Simmer the pork with onion and tomato until tender.",
+        "Add radish, string beans, tamarind and fish sauce; finish with water spinach.",
+        "Cook rice separately and serve the soup as four portions."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 348,
+        "perPortionPHP": 87,
+        "grossContributionPerPortionPHP": 88
+      }
+    },
+    {
+      "code": "beef-caldereta",
+      "name": "Beef Caldereta",
+      "category": "Main dishes",
+      "description": "Tender beef in tomato stew with potatoes, carrots and peppers, served with rice.",
+      "sellingPricePHP": 245,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "beef",
+          "quantity": 850,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "potato",
+          "quantity": 350,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "carrot",
+          "quantity": 220,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "tomato-sauce",
+          "quantity": 300,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "bell-pepper",
+          "quantity": 160,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 35,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 150,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 40,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "water",
+          "quantity": 400,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Brown beef with garlic and onion.",
+        "Simmer with tomato sauce and water; add potatoes, carrots and peppers until tender.",
+        "Cook rice separately and divide the stew into four portions."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 547.6,
+        "perPortionPHP": 136.9,
+        "grossContributionPerPortionPHP": 108.1
+      }
+    },
+    {
+      "code": "chicken-tinola",
+      "name": "Chicken Tinola",
+      "category": "Soups and stews",
+      "description": "Ginger chicken broth with green papaya and malunggay, served with rice.",
+      "sellingPricePHP": 155,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "chicken",
+          "quantity": 900,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "green-papaya",
+          "quantity": 450,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "malunggay",
+          "quantity": 120,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "ginger",
+          "quantity": 85,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 120,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 25,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "fish-sauce",
+          "quantity": 50,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "water",
+          "quantity": 1200,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Sauté ginger, onion and garlic, then add chicken.",
+        "Simmer chicken in water with fish sauce; add green papaya and cook until tender.",
+        "Add malunggay near the end; portion soup with separately cooked rice."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 324.1,
+        "perPortionPHP": 81.03,
+        "grossContributionPerPortionPHP": 73.97
+      }
+    },
+    {
+      "code": "pancit-bihon",
+      "name": "Pancit Bihon",
+      "category": "Noodles",
+      "description": "Rice vermicelli noodles with chicken and stir-fried vegetables.",
+      "sellingPricePHP": 145,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "rice-noodles",
+          "quantity": 450,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "chicken",
+          "quantity": 400,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "carrot",
+          "quantity": 220,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "cabbage",
+          "quantity": 350,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "string-beans",
+          "quantity": 180,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "soy-sauce",
+          "quantity": 70,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 25,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 130,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 50,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "water",
+          "quantity": 550,
+          "unit": "ml"
+        }
+      ],
+      "preparationSteps": [
+        "Cook chicken thoroughly with garlic and onion.",
+        "Add vegetables, soy sauce and water; cook until nearly tender.",
+        "Fold in rice noodles, cook through and divide into four portions."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 274.65,
+        "perPortionPHP": 68.66,
+        "grossContributionPerPortionPHP": 76.34
+      }
+    },
+    {
+      "code": "pork-menudo",
+      "name": "Pork Menudo",
+      "category": "Main dishes",
+      "description": "Pork and liver in tomato stew with vegetables, served with rice.",
+      "sellingPricePHP": 185,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "pork",
+          "quantity": 800,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "pork-liver",
+          "quantity": 200,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "potato",
+          "quantity": 400,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "carrot",
+          "quantity": 250,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "tomato-sauce",
+          "quantity": 250,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 130,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 30,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "bell-pepper",
+          "quantity": 130,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 35,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "water",
+          "quantity": 500,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Sauté onion and garlic; brown pork and thoroughly cook the liver.",
+        "Add tomato sauce, water, potatoes and carrots, then simmer until tender.",
+        "Finish with bell peppers and serve four portions with cooked rice."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 395.7,
+        "perPortionPHP": 98.93,
+        "grossContributionPerPortionPHP": 86.07
+      }
+    },
+    {
+      "code": "ginisang-monggo",
+      "name": "Ginisang Monggo",
+      "category": "Main dishes",
+      "description": "Mung bean stew with pork, tomato and malunggay, served with rice.",
+      "sellingPricePHP": 115,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "mung-beans",
+          "quantity": 400,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "pork",
+          "quantity": 250,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "malunggay",
+          "quantity": 150,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "tomato",
+          "quantity": 120,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 120,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 30,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "fish-sauce",
+          "quantity": 35,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "water",
+          "quantity": 1200,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 20,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Simmer mung beans until softened.",
+        "Cook pork thoroughly with onion, garlic and tomato; combine with the beans.",
+        "Season with fish sauce, add malunggay and portion four bowls with rice."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 200.05,
+        "perPortionPHP": 50.01,
+        "grossContributionPerPortionPHP": 64.99
+      }
+    },
+    {
+      "code": "bicol-express",
+      "name": "Bicol Express",
+      "category": "Main dishes",
+      "description": "Pork in coconut milk and chilli sauce, served with rice.",
+      "sellingPricePHP": 185,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "pork",
+          "quantity": 900,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "coconut-milk",
+          "quantity": 500,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "chili",
+          "quantity": 60,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 160,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 45,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "ginger",
+          "quantity": 50,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "fish-sauce",
+          "quantity": 50,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 40,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Cook pork thoroughly with garlic, ginger and onion.",
+        "Add coconut milk, chilli and fish sauce; simmer until tender and the sauce reduces.",
+        "Serve with rice in four portions; label the dish as spicy."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 384.2,
+        "perPortionPHP": 96.05,
+        "grossContributionPerPortionPHP": 88.95
+      }
+    },
+    {
+      "code": "tortang-talong",
+      "name": "Tortang Talong",
+      "category": "Egg dishes",
+      "description": "Grilled eggplant omelette served with rice.",
+      "sellingPricePHP": 100,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "eggplant",
+          "quantity": 850,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "eggs",
+          "quantity": 8,
+          "unit": "unit"
+        },
+        {
+          "ingredientCode": "onion",
+          "quantity": 100,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 20,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 80,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "salt",
+          "quantity": 8,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "black-pepper",
+          "quantity": 2,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Grill eggplants, peel and flatten the flesh.",
+        "Mix with beaten eggs, onion, garlic, salt and pepper; fry thoroughly in oil.",
+        "Divide into four portions and serve with cooked rice."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 190.29,
+        "perPortionPHP": 47.57,
+        "grossContributionPerPortionPHP": 52.43
+      }
+    },
+    {
+      "code": "chicken-inasal",
+      "name": "Chicken Inasal",
+      "category": "Grilled dishes",
+      "description": "Calamansi- and lemongrass-marinated grilled chicken with rice.",
+      "sellingPricePHP": 185,
+      "yieldServings": 4,
+      "ingredients": [
+        {
+          "ingredientCode": "chicken",
+          "quantity": 1000,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "calamansi",
+          "quantity": 100,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "garlic",
+          "quantity": 45,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "ginger",
+          "quantity": 60,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "lemongrass",
+          "quantity": 2,
+          "unit": "unit"
+        },
+        {
+          "ingredientCode": "soy-sauce",
+          "quantity": 60,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "vinegar",
+          "quantity": 90,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "cooking-oil",
+          "quantity": 40,
+          "unit": "ml"
+        },
+        {
+          "ingredientCode": "brown-sugar",
+          "quantity": 35,
+          "unit": "g"
+        },
+        {
+          "ingredientCode": "rice",
+          "quantity": 280,
+          "unit": "g"
+        }
+      ],
+      "preparationSteps": [
+        "Marinate chicken with calamansi, lemongrass, garlic, ginger, soy sauce, vinegar and sugar.",
+        "Grill until chicken reaches a safe internal temperature; do not reuse raw marinade.",
+        "Serve four portions with cooked rice."
+      ],
+      "allergenReviewRequired": true,
+      "simulatedCost": {
+        "batchPHP": 345.15,
+        "perPortionPHP": 86.29,
+        "grossContributionPerPortionPHP": 98.71
+      }
+    }
+  ]
+}
