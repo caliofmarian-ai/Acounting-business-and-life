@@ -48,7 +48,7 @@ const profile=mkdtempSync(join(tmpdir(),'back-850-'));let child,ws;const errors=
 try{
   child=spawn(chrome,['--headless=new','--no-sandbox','--disable-dev-shm-usage','--no-first-run','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
   const endpoint=await new Promise((resolve,reject)=>{
-    let log='';const timer=setTimeout(()=>reject(new Error('Chrome start timed out')),15000);
+    let log='';const timer=setTimeout(()=>reject(new Error('Chrome start timed out after 45 seconds')),45000);
     child.stderr.on('data',d=>{log+=d;const m=log.match(/DevTools listening on (ws:\/\/[^\s]+)/);if(m){clearTimeout(timer);resolve(m[1]);}});
     child.once('exit',code=>{clearTimeout(timer);reject(new Error('Chrome exited '+code));});
   });
