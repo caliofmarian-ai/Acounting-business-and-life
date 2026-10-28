@@ -839,3 +839,16 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
 @keyframes profileTransitionShimmer{to{background-position-x:-220%}}
 @media(prefers-reduced-motion:reduce){.profileTransitionIcon,.profileTransitionTile strong,.profileTransitionTile small{animation:none}}
 @media(max-width:420px){.profileTransitionHub{min-height:calc(100dvh - 70px)}.profileTransitionHero{min-height:166px}.profileTransitionTile{min-height:118px}}
+
+/* Browser/PWA Back navigation: use a real, labelled tap target on nested screens. */
+.appNavigationBack{min-height:44px;min-width:64px;padding:8px 10px;border:1px solid #bdd7d0;border-radius:12px;color:#075f50;background:#edf8f4;font-size:14px;font-weight:700;white-space:nowrap}
+.appNavigationBack[hidden]{display:none!important}
+.appNavigationBack:focus-visible,.appExitPrompt button:focus-visible{outline:3px solid #0a7c66;outline-offset:2px}
+.appExitPrompt{position:fixed;inset:0;z-index:11000;background:rgba(12,21,34,.68);display:grid;place-items:center;padding:20px}
+.appExitPrompt section{background:#fff;border-radius:18px;padding:22px;max-width:370px;width:100%;box-shadow:0 15px 36px rgba(0,0,0,.2)}
+.appExitPrompt h2{font-size:20px;margin:0 0 8px}
+.appExitPrompt p{font-size:15px;line-height:1.5;margin:0 0 18px}
+.appExitPrompt section>div{display:flex;gap:10px;flex-wrap:wrap}
+.appExitPrompt button{min-height:46px;flex:1;border-radius:12px;border:1px solid #bed5ce;background:#edf8f4;color:#0c6555;font-weight:700;padding:10px}
+.appExitPrompt button[data-app-exit="leave"]{background:#fff;color:#243046}
+@media(max-width:390px){.appNavigationBack{min-width:44px;padding:8px;font-size:13px}}
