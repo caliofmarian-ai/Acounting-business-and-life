@@ -65,6 +65,7 @@ const appBackController=createAppBackController({
   onChange:state=>{
     const button=document.getElementById('appNavigationBack');
     if(button)button.hidden=!state.canGoBack;
+    if(!state.exitPending)document.getElementById('appExitPrompt')?.remove();
   },
   onExit:openAppExitPrompt
 });
