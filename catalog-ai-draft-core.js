@@ -24,7 +24,11 @@ function categoryFor(mode,raw){
     throw new TypeError('Invalid AI catalog category.');
   if(mode==='supplier_catalog')
     throw new TypeError('Supplier catalog does not accept Merchant category codes.');
+  // Category codes are identifiers, not display strings. Never sanitize a
+  // malformed model hint into a trusted taxonomy key (for example <fresh_food>).
   const suggestion=clean(raw,80);
+  if(suggestion!==raw||!/^[a-z][a-z0-9_]*$/.test(raw))
+    throw new TypeError('Invalid AI catalog category.');
   if(FOOD[mode]){
     if(suggestion!==FOOD[mode])throw new TypeError('AI category does not match intake mode.');
     return suggestion;

@@ -70,3 +70,17 @@ test('provided mismatched or invalid category fails closed; absent category rema
   assert.throws(()=>draft('supplier_catalog',{catalog_category_code:'prepared_food'}),/Supplier catalog/);
   assert.throws(()=>draft('merchant_prepared_food',{catalog_category_code:'fresh_food'}),/does not match/);
 });
+
+test('malformed category identifiers never become trusted taxonomy by sanitization',()=>{
+  for(const [mode,raw] of [
+    ['merchant_prepared_food','<prepared_food>'],
+    ['merchant_prepared_food','prepared_food'+String.fromCharCode(10)],
+    ['merchant_fresh_food',' fresh_food'],
+    ['merchant_packaged_food','packaged_food_drink>'],
+    ['merchant_non_food','<furniture_home>'],
+    ['merchant_non_food','furniture_home'+String.fromCharCode(9)],
+    ['merchant_non_food',' furniture_home'],
+  ])assert.throws(()=>draft(mode,{catalog_category_code:raw}),/Invalid AI catalog category/);
+  assert.equal(draft('merchant_prepared_food',{catalog_category_code:'prepared_food'}).hints.catalog_category_code,'prepared_food');
+  assert.equal(draft('merchant_non_food',{catalog_category_code:'furniture_home'}).hints.catalog_category_code,'furniture_home');
+});
