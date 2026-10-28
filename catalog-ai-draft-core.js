@@ -9,6 +9,43 @@ const clean=(v,n)=>typeof v==='string'?v.replace(/[<>\u0000-\u001f\u007f]/g,' ')
 // Model JSON can inherit polluted Object.prototype properties. Only fields
 // actually present on the supplied JSON object may become unverified hints.
 const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;
+// Measure actual enumerable JSON; inherited or model-owned toJSON serializers
+// must never conceal oversized untrusted suggestions from the 32 KiB gate.
+function jsonDataByteLength(value){
+  const ancestors=new WeakSet();
+  function copyJsonData(raw,depth){
+    if(depth>64)throw new TypeError('AI catalog JSON is too deeply nested.');
+    if(raw===null||typeof raw==='string'||typeof raw==='boolean')return raw;
+    if(typeof raw==='number'&&Number.isFinite(raw))return raw;
+    const array=Array.isArray(raw);
+    if(!array&&!plain(raw))throw new TypeError('AI catalog JSON contains a non-JSON value.');
+    if(ancestors.has(raw))throw new TypeError('AI catalog JSON contains a cycle.');
+    ancestors.add(raw);
+    let out;
+    if(array){
+      if(raw.length>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+      out=[];
+      Object.setPrototypeOf(out,null);
+      for(let i=0;i<raw.length;i++){
+        const field=Object.getOwnPropertyDescriptor(raw,String(i));
+        if(!field||!Object.hasOwn(field,'value'))throw new TypeError('Invalid AI catalog array.');
+        out[i]=copyJsonData(field.value,depth+1);
+      }
+    }else{
+      const keys=Object.keys(raw);
+      if(keys.length>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+      out=Object.create(null);
+      for(const key of keys){
+        const field=Object.getOwnPropertyDescriptor(raw,key);
+        if(!field||!Object.hasOwn(field,'value'))throw new TypeError('Invalid AI catalog field.');
+        out[key]=copyJsonData(field.value,depth+1);
+      }
+    }
+    ancestors.delete(raw);
+    return out;
+  }
+  return Buffer.byteLength(JSON.stringify(copyJsonData(value,0)),'utf8');
+}
 function unique(v,max=12,len=40){
   if(!Array.isArray(v))return [];
   const out=[],seen=new Set();
@@ -59,8 +96,11 @@ export function normalizeAiCatalogDraft({mode,modelOutput}={}){
   if(!AI_CATALOG_MODES.includes(mode))throw new TypeError('Choose a supported AI catalog intake mode.');
   if(!plain(modelOutput))throw new TypeError('AI suggestions must be a JSON object.');
   let size;
-  try{size=Buffer.byteLength(JSON.stringify(modelOutput),'utf8');}
-  catch{throw new TypeError('Invalid AI catalog JSON.');}
+  try{size=jsonDataByteLength(modelOutput);}
+  catch(error){
+    if(error instanceof RangeError&&error.message==='AI suggestion exceeds the 32 KiB limit.')throw error;
+    throw new TypeError('Invalid AI catalog JSON.');
+  }
   if(size>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
   const category=categoryFor(mode,own(modelOutput,'catalog_category_code'));
   const hints={

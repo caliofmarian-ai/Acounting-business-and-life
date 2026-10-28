@@ -124,3 +124,44 @@ test('prototype-inherited model suggestions never appear as actual JSON hints',(
     }
   }
 });
+
+test('inherited toJSON at root or nested levels never hides oversized JSON',()=>{
+  const original=Object.getOwnPropertyDescriptor(Object.prototype,'toJSON');
+  try{
+    Object.defineProperty(Object.prototype,'toJSON',{
+      configurable:true,writable:true,value(){return {name:'tiny'};}
+    });
+    assert.throws(()=>draft('merchant_non_food',{
+      name:'X'.repeat(40000),catalog_category_code:'furniture_home'
+    }),/32 KiB/);
+    assert.throws(()=>draft('merchant_non_food',{
+      name:'Normal',variant_attributes:{color:'X'.repeat(40000)}
+    }),/32 KiB/);
+    const valid=draft('merchant_non_food',{
+      name:'Genuine',catalog_category_code:'furniture_home',tags:['safe']
+    });
+    assert.equal(valid.hints.name,'Genuine');
+    assert.equal(valid.hints.catalog_category_code,'furniture_home');
+    assert.deepEqual(valid.hints.tags,['safe']);
+  }finally{
+    if(original)Object.defineProperty(Object.prototype,'toJSON',original);
+    else delete Object.prototype.toJSON;
+  }
+});
+test('own serializers, accessors and non-JSON nested values fail closed',()=>{
+  assert.throws(()=>draft('merchant_non_food',{
+    name:'X'.repeat(40000),toJSON(){return {name:'tiny'};}
+  }),/Invalid AI catalog JSON/);
+  const accessor={catalog_category_code:'furniture_home'};
+  Object.defineProperty(accessor,'name',{enumerable:true,get(){return 'hidden';}});
+  assert.throws(()=>draft('merchant_non_food',accessor),/Invalid AI catalog JSON/);
+  assert.throws(()=>draft('merchant_non_food',{
+    name:'Item',variant_attributes:{color:()=> 'secret'}
+  }),/Invalid AI catalog JSON/);
+});
+test('32 KiB boundary is measured from actual UTF-8 JSON data',()=>{
+  const overhead=Buffer.byteLength(JSON.stringify({name:''}),'utf8');
+  assert.doesNotThrow(()=>draft('merchant_non_food',{name:'A'.repeat(32768-overhead)}));
+  assert.throws(()=>draft('merchant_non_food',{name:'A'.repeat(32769-overhead)}),/32 KiB/);
+  assert.throws(()=>draft('merchant_non_food',{name:'😀'.repeat(9000)}),/32 KiB/);
+});
