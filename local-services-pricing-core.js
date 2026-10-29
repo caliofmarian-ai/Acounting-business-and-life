@@ -29,9 +29,17 @@ function enumValue(value,allowed,{label,fallback}){
   if(!allowed.includes(normalized))throw new ServicePricingValidationError(`${label} is unsupported`);
   return normalized;
 }
+// Reject non-scalar JSON types before Number() can turn booleans or arrays
+// into billable currency or quantities. Valid number/string forms are retained.
+function numericScalar(value,label){
+  if(typeof value!=='number'&&typeof value!=='string'){
+    throw new ServicePricingValidationError(`${label} must be a numeric value`);
+  }
+  return Number(value);
+}
 function optionalNumber(value,label,{min=0,max=MONEY_LIMIT}={}){
   if(value==null||(typeof value==='string'&&!value.trim()))return null;
-  const number=Number(value);
+  const number=numericScalar(value,label);
   if(!Number.isFinite(number)||number<min||number>max)throw new ServicePricingValidationError(`${label} is invalid`);
   return number;
 }
@@ -42,7 +50,7 @@ function money(value,label,{required=true}={}){
   return Math.round((number+Number.EPSILON)*100)/100;
 }
 function quantity(value,label='Quantity'){
-  const number=Number(value);
+  const number=numericScalar(value,label);
   if(!Number.isFinite(number)||number<=0||number>QUANTITY_LIMIT)throw new ServicePricingValidationError(`${label} must be greater than zero`);
   const normalized=Math.round((number+Number.EPSILON)*1000)/1000;
   // A tiny positive input must not become a zero-quantity quoted line.
@@ -50,7 +58,7 @@ function quantity(value,label='Quantity'){
   return normalized;
 }
 function signedMoney(value,label){
-  const number=Number(value);
+  const number=numericScalar(value,label);
   if(!Number.isFinite(number)||Math.abs(number)>MONEY_LIMIT)throw new ServicePricingValidationError(`${label} is invalid`);
   return Math.round((number+Number.EPSILON)*100)/100;
 }

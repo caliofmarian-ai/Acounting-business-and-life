@@ -84,6 +84,40 @@ test('quote input cannot normalize a positive sub-thousandth quantity into a zer
   assert.equal(smallest.total_amount,10);
 });
 
+test('pricing and payable authority reject non-scalar JSON values instead of coercing them into PHP amounts',()=>{
+  const originalLine={item_kind:'labor',description:'Install fixture',quantity:1,unit_code:'item',unit_price:'25.50'};
+  const quoteFor=line=>normalizeServiceQuote({line_items:[line]},{now:new Date('2026-10-29T00:00:00Z')});
+  for(const invalid of [true,false,[],['2'],{valueOf(){return 2}}]){
+    for(const field of ['quantity','unit_price']){
+      assert.throws(
+        ()=>quoteFor({...originalLine,[field]:invalid}),
+        error=>error instanceof ServicePricingValidationError&&error.status===400,
+        `${field} must reject non-scalar ${String(invalid)}`
+      );
+    }
+    assert.throws(
+      ()=>normalizeServicePriceOffer({price_from:invalid}),
+      error=>error instanceof ServicePricingValidationError&&error.status===400,
+      'Offer price must reject non-scalar JSON values'
+    );
+  }
+  const legitimate=quoteFor({...originalLine,quantity:'2.5'});
+  assert.equal(legitimate.line_items[0].quantity,2.5);
+  assert.equal(legitimate.line_items[0].unit_price,25.5);
+  assert.equal(legitimate.total_amount,63.75);
+  assert.equal(normalizeServicePriceOffer({price_from:'0',price_to:25}).price_from,0);
+  const legacyJob={
+    id:45,status:'completed',currency_code:'PHP',accepted_quote_id:92,agreed_total:'1000.00',
+    final_price:'1001.00',legacy_final_adjustment:true
+  };
+  const accepted={id:92,job_id:45,status:'accepted',total_amount:'1000.00',currency_code:'PHP',legacy_record:true};
+  assert.throws(
+    ()=>resolveAcceptedServiceJobPayable(legacyJob,accepted),
+    error=>error.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH'&&error.status===409,
+    'Legacy adjustment boolean must not be misinterpreted as PHP 1'
+  );
+});
+
 test('completion is pinned to the latest Customer-accepted total',()=>{
   assert.equal(acceptedCompletionPrice({acceptedTotal:'1275.50'}),1275.5);
   assert.equal(acceptedCompletionPrice({acceptedTotal:1275.5,requestedFinalPrice:'1275.50'}),1275.5);
