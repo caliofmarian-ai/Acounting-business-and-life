@@ -42,3 +42,12 @@ The precise comparison uses `BigInt` cross-multiplication, avoiding float/rounde
 - No Klarna dependency in the Philippines, no external private-data search, no new Railway resources or paid providers.
 
 **This PR references #16; it does not close the parent design feature.**
+
+
+## Merchant consent editing slice — 29 October 2026
+
+The existing Marketplace database already has `merchant_storefronts.price_comparison_enabled` (BOOLEAN, default OFF) and `marketplace_products.price_comparison_override` (nullable BOOLEAN). This slice **uses those same columns**, not a duplicate consent table or a new provider. Authenticated Merchant Storefront has an existing checkbox; the private Catalog create form and editor now expose three explicit listing choices: inherit storefront, opt IN, or opt OUT. An explicit listing ON overrides an OFF storefront and an explicit listing OFF overrides an ON storefront, as authorized by the Owner's V0.10 rule. The public listings and normal orders remain independent of comparison consent.
+
+Server input parsing no longer uses JavaScript truthiness to interpret `'false'` as opt-in. Explicit JSON booleans and canonical literal strings `'true'`/`'false'` are supported; other formats fail with HTTP 400. A missing Storefront field preserves the current stored choice with an atomic PostgreSQL conflict-update clause, rather than revoking it during an unrelated edit. The product PATCH preserves the prior tri-state choice if omitted, and explicit null restores inheritance. Cross-business authorization remains on the existing Merchant routes; no new public route or match approval is introduced.
+
+**Not activated:** these choices do not make any unreviewed product comparable. Missing pieces are an append-only decision/audit history with approved retention policy, reviewed match-group persistence, authoritative read projections and Marketplace presentation, verified-order quality evidence, coordinated Preview/Production acceptance. This source update alone MUST NOT be represented as a live comparison feature. No DB migration, backfill, scheduler, payment, provider or paid Railway service is added.

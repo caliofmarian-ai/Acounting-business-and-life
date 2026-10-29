@@ -23,6 +23,7 @@ import {ensureFoodMenuSchema,readFoodMenus,readModifierGroups,modifierProjection
 import {ensureRetailMerchandisingSchema,retailCatalogPage,listCatalogCollections,createCatalogCollection,updateCatalogCollection,replaceCollectionProducts,applyRetailBulkAction,scanRetailCatalogBarcode,publicRetailCollections} from './retail-merchandising-core.js';
 import {ADAPTIVE_STOREFRONT_VERSION,publicCatalogAttributeMap,publicRetailAvailabilityMap,publicProductProjection,retailFacetSummary,storefrontPresentationMode} from './adaptive-storefront-core.js';
 import {catalogMigrationContractReady,catalogCompatibilityProjection} from './catalog-migration-contract-core.js';
+import {normalizeStoreComparisonConsent,normalizeListingComparisonConsent} from './price-comparison-consent-core.js';
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -924,6 +925,7 @@ app.delete('/api/merchant/storefront/media/:id',async(req,res,next)=>{try{
 app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
   const{me,business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
   const current=await storefront(business.id,true);
+  const storeComparisonConsent=normalizeStoreComparisonConsent(req.body||{},current?.price_comparison_enabled);
   const domain=['food','non_food','mixed'].includes(req.body?.merchant_domain)?req.body.merchant_domain:'food';
   const status=['draft','published','paused'].includes(req.body?.publication_status)?req.body.publication_status:'draft';
   if(status==='published')await requireMicrobusinessCommerceEligibility(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id,action:'publish the Merchant storefront'});
@@ -964,7 +966,7 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
       pickup_lat=EXCLUDED.pickup_lat,pickup_lng=EXCLUDED.pickup_lng,opening_status=EXCLUDED.opening_status,
       preparation_eta_minutes=EXCLUDED.preparation_eta_minutes,pickup_enabled=EXCLUDED.pickup_enabled,
       delivery_enabled=EXCLUDED.delivery_enabled,cash_enabled=EXCLUDED.cash_enabled,online_enabled=EXCLUDED.online_enabled,
-      public_reputation_enabled=EXCLUDED.public_reputation_enabled,price_comparison_enabled=EXCLUDED.price_comparison_enabled,
+      public_reputation_enabled=EXCLUDED.public_reputation_enabled,price_comparison_enabled=CASE WHEN $23::boolean THEN EXCLUDED.price_comparison_enabled ELSE merchant_storefronts.price_comparison_enabled END,
       logo_data_url=EXCLUDED.logo_data_url,updated_at=NOW()
     RETURNING *
   `,[
@@ -973,7 +975,7 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
     clean(req.body?.finding_instructions,500),clean(req.body?.opening_hours_text,500),lat,lng,open,
     Math.max(1,Math.min(240,Number(req.body?.preparation_eta_minutes)||15)),req.body?.pickup_enabled!==false,
     Boolean(req.body?.delivery_enabled),req.body?.cash_enabled!==false,Boolean(req.body?.online_enabled),
-    Boolean(req.body?.public_reputation_enabled),Boolean(req.body?.price_comparison_enabled),logo
+    Boolean(req.body?.public_reputation_enabled),storeComparisonConsent.value,logo,storeComparisonConsent.provided
   ]);
   res.json(attachStorefrontMedia(rows[0],await storefrontMedia(business.id)));
 }catch(e){next(e)}})
@@ -1006,6 +1008,7 @@ app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
     const identity=normalizeCatalogIdentity(req.body||{},{domain});
     const packageInfo=normalizeCatalogPackage(req.body||{});
     const attributes=normalizeCatalogAttributes(identity.catalog_category_code,req.body?.catalog_attributes||{});
+    const comparisonConsent=normalizeListingComparisonConsent(req.body||{});
     const variantMode=kind==='non_food_resale'&&Boolean(req.body?.variant_mode);
     let inventoryId=req.body?.inventory_id?Number(req.body.inventory_id):null;
     const direct=kind!=='prepared_food';
@@ -1043,7 +1046,7 @@ app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
       business.id,inventoryId,clean(req.body.name,120),clean(req.body?.description,800),clean(req.body?.category,100)||'General',
       domain,kind,unitCode,quantityPerUnit,price,direct&&!variantMode,
       variantMode?false:Boolean(req.body?.published),
-      req.body?.price_comparison_override==null?null:Boolean(req.body.price_comparison_override),variantMode,
+      comparisonConsent.value,variantMode,
       identity.catalog_category_code,identity.brand,identity.model,identity.condition_code,identity.manufacturer_part_number,identity.catalog_schema_version,
       packageInfo.package_length_cm,packageInfo.package_width_cm,packageInfo.package_height_cm,packageInfo.package_weight_kg
     ]);
@@ -1071,6 +1074,7 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
     const own=await client.query('SELECT * FROM marketplace_products WHERE id=$1 FOR UPDATE',[id]);
     if(!own.rowCount)throw Object.assign(new Error('Product not found'),{status:404});
     const old=own.rows[0],{business}=await requireMerchant(req,old.business_id);
+    const comparisonConsent=normalizeListingComparisonConsent(req.body||{},old.price_comparison_override);
     const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind??old.product_kind,40))
       ?clean(req.body?.product_kind??old.product_kind,40):old.product_kind;
     const domain=kind==='non_food_resale'?'non_food':'food';
@@ -1137,7 +1141,7 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
       variantMode?false:(direct?true:(req.body?.stock_tracked??old.stock_tracked)),
       direct?null:(req.body?.stock_quantity===undefined?old.stock_quantity:req.body.stock_quantity),
       req.body?.active??old.active,targetPublished,
-      req.body?.price_comparison_override===undefined?old.price_comparison_override:req.body.price_comparison_override,variantMode,
+      comparisonConsent.value,variantMode,
       identity.catalog_category_code,identity.brand,identity.model,identity.condition_code,identity.manufacturer_part_number,identity.catalog_schema_version,
       packageInfo.package_length_cm,packageInfo.package_width_cm,packageInfo.package_height_cm,packageInfo.package_weight_kg,id
     ]);

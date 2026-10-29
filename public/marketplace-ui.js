@@ -907,6 +907,10 @@ function bindMerchantReadiness(store){
     }catch(error){if(message)message.textContent=error.message;if(button)button.disabled=false}
   };
 }
+function comparisonChoiceFromSelect(id){
+  const choice=document.getElementById(id)?.value;
+  return choice==='on'?true:choice==='off'?false:null;
+}
 function storeForm(s){return `<section class="merchantStoreCard"><h2>Public storefront</h2><p>Accounting, supplier relationships and internal margins are never published here.</p><div data-bl-pricing="merchant"></div><form id="merchantStoreForm" class="merchantStoreForm"><input id="storeBusinessId" type="hidden" value="${s.business_id}"><label>Store name<input id="storeName" value="${mh(s.store_name)}" required></label><label>Description<textarea id="storeDescription" rows="3">${mh(s.description||'')}</textarea></label><div class="merchantStoreForm two"><label>Store type<select id="storeDomain"><option value="food" ${s.merchant_domain==='food'?'selected':''}>Food</option><option value="non_food" ${s.merchant_domain==='non_food'?'selected':''}>Non-food</option><option value="mixed" ${s.merchant_domain==='mixed'?'selected':''}>Mixed</option></select></label><label>Publication<select id="storeStatus"><option value="draft" ${s.publication_status==='draft'?'selected':''}>Draft / private</option><option value="published" ${s.publication_status==='published'?'selected':''} ${s.readiness?.enforcement_enabled&&!['eligible_limited','eligible_full'].includes(s.readiness?.commerce_state)?'disabled':''}>Published</option><option value="paused" ${s.publication_status==='paused'?'selected':''}>Paused</option></select></label></div><label>Pickup address<input id="storeAddress" value="${mh(s.pickup_address||'')}" placeholder="Public pickup location"></label><div class="merchantStoreForm two"><label>Opening status<select id="storeOpening"><option value="open" ${s.opening_status==='open'?'selected':''}>Open</option><option value="busy" ${s.opening_status==='busy'?'selected':''}>Busy</option><option value="closed" ${s.opening_status==='closed'?'selected':''}>Closed</option></select></label><label>Preparation ETA (minutes)<input id="storeEta" type="number" min="1" max="240" value="${Number(s.preparation_eta_minutes)||15}"></label></div><div class="toggleGrid"><label class="toggleBox"><input id="storePickup" type="checkbox" ${s.pickup_enabled?'checked':''}> Pickup</label><label class="toggleBox"><input id="storeDelivery" type="checkbox" ${s.delivery_enabled?'checked':''}> Delivery</label><label class="toggleBox"><input id="storeCash" type="checkbox" ${s.cash_enabled?'checked':''}> Cash</label><label class="toggleBox"><input id="storeOnline" type="checkbox" ${s.online_enabled?'checked':''}> Online/digital</label></div><div class="privacyToggle"><strong>Public Merchant rating</strong><p>When enabled, verified completed orders can contribute to your public rating and Top Merchants. You can turn it off and leave the Marketplace.</p><label class="toggleBox"><input id="storeReputation" type="checkbox" ${s.public_reputation_enabled?'checked':''}> Participate in public Merchant reputation</label></div><div class="privacyToggle"><strong>Price comparison — explicit opt-in</strong><p>Default is OFF. If OFF, your products remain visible and purchasable but are excluded from Lowest listed price / Lowest unit price and price-based rankings.</p><label class="toggleBox"><input id="storeCompare" type="checkbox" ${s.price_comparison_enabled?'checked':''}> Allow my eligible products in price comparison</label></div><div class="storeFormActions"><button class="saveStore">Save storefront</button></div><div id="storeMessage" class="avatarHint"></div></form></section>`}
 function retailCollectionOptions(collections=[],selected=''){
   return '<option value="">All collections</option>'+collections.filter(x=>x.active!==false).map(collection=>`<option value="${Number(collection.id)}" ${String(selected)===String(collection.id)?'selected':''}>${mh(collection.name)} (${Number(collection.item_count||0)})</option>`).join('');
@@ -1298,7 +1302,8 @@ function catalogCreateSection(inventory=[],schema=merchantCatalogSchema){
       '</div>'+
       '<label>Product category<select id="merchantCatalogCategoryCode" required>'+catalogCategoryOptions(schema,defaultDomain,defaultCategory)+'</select><span class="storeFieldHelp">This controls relevant specifications and filters. It is different from a promotional collection.</span></label>'+
       '<label>Customer section / shelf<input id="merchantCatalogCategory" maxlength="100" value="General" placeholder="Example: Men / Shirts"></label>'+
-      '<label>Description<textarea id="merchantCatalogDescription" rows="2" maxlength="800" placeholder="What customers should know about this product"></textarea></label>'+
+      '<label>Description<textarea id="merchantCatalogDescription" rows="2" maxlength="800" placeholder="What customers should know about this product"></textarea></label>'+ 
+      '<label>Price comparison participation<select id="merchantCatalogCreateCompare"><option value="inherit" selected>Follow storefront opt-in (default OFF)</option><option value="on">Include this listing, even if storefront OFF</option><option value="off">Exclude this listing</option></select><span class="storeFieldHelp">This is separate from publication. Only approved matches may qualify for future comparison badges.</span></label>'+
       '<section id="merchantCatalogAdaptiveAttributes" class="catalogAdaptiveAttributes">'+catalogAdaptiveAttributesMarkup(schema,defaultCategory,{},'merchantCatalogCreateAttr')+'</section>'+
       '<div id="merchantCatalogAdvancedHost">'+catalogIdentityAdvancedMarkup('merchantCatalog',{},defaultKind)+'</div>'+
       '<div id="merchantCatalogStockHint" class="catalogBoundaryNote">Choose an Inventory item. Its cost remains private; this form sets only the public selling product.</div>'+
@@ -1385,7 +1390,8 @@ function bindCatalogCreate(inventory=[],schema=merchantCatalogSchema){
         package_width_cm:document.getElementById('merchantCatalogPackageWidth')?.value||null,
         package_height_cm:document.getElementById('merchantCatalogPackageHeight')?.value||null,
         package_weight_kg:document.getElementById('merchantCatalogPackageWeight')?.value||null,
-        published:false
+        published:false,
+        price_comparison_override:comparisonChoiceFromSelect('merchantCatalogCreateCompare')
       };
       await mapi('/api/merchant/storefront/products',{method:'POST',body:JSON.stringify(payload)});
       mtoast('Catalog product created as Private.');
@@ -1459,7 +1465,8 @@ function catalogEditorMarkup(data){
       '<label>Description<textarea id="catalogEditDescription" rows="3" maxlength="800">'+mh(p.description||'')+'</textarea></label>'+
       '<div id="catalogCategoryChangeHost"></div>'+
       '<section id="catalogEditorAdaptiveAttributes" class="catalogAdaptiveAttributes">'+catalogAdaptiveAttributesMarkup(schema,categoryCode,attrs,'catalogEditAttr')+'</section>'+
-      '<div id="catalogEditorAdvancedHost">'+catalogIdentityAdvancedMarkup('catalogEdit',p,p.product_kind)+'</div>'+
+      '<div id="catalogEditorAdvancedHost">'+catalogIdentityAdvancedMarkup('catalogEdit',p,p.product_kind)+'</div>'+ 
+      '<label>Price comparison participation<select id="catalogEditCompare"><option value="inherit" '+(p.price_comparison_override==null?'selected':'')+'>Follow storefront opt-in (default OFF)</option><option value="on" '+(p.price_comparison_override===true?'selected':'')+'>Include this listing, even if storefront OFF</option><option value="off" '+(p.price_comparison_override===false?'selected':'')+'>Exclude this listing</option></select><span class="storeFieldHelp">Changing this does not publish the product or approve a comparison match. Withdraw anytime.</span></label>'+
       '<div class="catalogEditorSource"><strong>Stock source</strong><span>'+(
         p.variant_mode?'Retail variants are linked to Inventory separately.'
         :p.inventory_id?'Direct Inventory-linked product.'
@@ -1519,7 +1526,8 @@ async function openCatalogEditor(productId){
           catalog_category_code:category.value,
           category:document.getElementById('catalogEditCategory').value,
           description:document.getElementById('catalogEditDescription').value,
-          catalog_attributes:collectCatalogAttributes(attrHost,{includeEmpty:true})
+          catalog_attributes:collectCatalogAttributes(attrHost,{includeEmpty:true}),
+          price_comparison_override:comparisonChoiceFromSelect('catalogEditCompare')
         };
         const brand=document.getElementById('catalogEditBrand'),model=document.getElementById('catalogEditModel'),condition=document.getElementById('catalogEditCondition'),mpn=document.getElementById('catalogEditMpn');
         if(brand)payload.brand=brand.value;if(model)payload.model=model.value;if(condition)payload.condition_code=condition.value;if(mpn)payload.manufacturer_part_number=mpn.value;
