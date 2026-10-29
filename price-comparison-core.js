@@ -139,7 +139,20 @@ function empty(group,asOf,status){
  */
 export function buildInternalPriceComparison({group,listings,asOf}={}){
   validateAsOf(asOf);
-  if(!Array.isArray(listings)||listings.length>500){
+  // Array iteration can be overridden to inject unlimited rows unrelated to the
+  // bounded server-projected index slots (including invented low-price sellers).
+  // Capture native array length from its own data descriptor, never via a
+  // user-provided iterator or a Proxy 'get' trap.
+  if(!Array.isArray(listings)){
+    throw new TypeError('listings must be an array of at most 500 server-loaded entries');
+  }
+  let lengthSlot;
+  try{lengthSlot=Object.getOwnPropertyDescriptor(listings,'length')}catch{
+    throw new TypeError('listings length must be an own data slot');
+  }
+  const listingCount=lengthSlot?.value;
+  if(!Object.hasOwn(lengthSlot??{},'value')||
+    !Number.isSafeInteger(listingCount)||listingCount<0||listingCount>500){
     throw new TypeError('listings must be an array of at most 500 server-loaded entries');
   }
   const groupSnapshot=ownDataSnapshot(group,GROUP_SNAPSHOT_FIELDS);
@@ -149,7 +162,15 @@ export function buildInternalPriceComparison({group,listings,asOf}={}){
   const bestByMerchant=new Map();
   const seenPublicIds=new Set();
   let eligibleListingCount=0;
-  for(const rawListing of listings){
+  for(let index=0;index<listingCount;index++){
+    let entry;
+    try{entry=Object.getOwnPropertyDescriptor(listings,String(index))}catch{
+      throw new TypeError('listings entries must be own data slots');
+    }
+    if(entry&&!Object.hasOwn(entry,'value')){
+      throw new TypeError('listings entries must be own data slots');
+    }
+    const rawListing=entry?.value;
     const listingSnapshot=ownDataSnapshot(rawListing,LISTING_SNAPSHOT_FIELDS);
     const listing=listingSnapshot?.data??null;
     // Reject duplicate public identities *before* checking consent. Otherwise

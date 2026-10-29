@@ -474,3 +474,33 @@ test('duplicate listing identity remains rejected even if an optional consent fi
   assert.equal(out.status,'ambiguous_listing_identity');
   assert.deepEqual(out.badges,[]);
 });
+
+test('custom array iterator cannot inject a cheaper unindexed Merchant listing or bypass row count',()=>{
+  const rows=[listing('real','merchant-a',30000)];
+  rows[Symbol.iterator]=function*(){
+    yield rows[0];
+    yield listing('injected','merchant-b',1);
+  };
+  const result=calc(rows);
+  assert.equal(rows.length,1);
+  assert.equal(result.eligibleMerchantCount,1);
+  assert.deepEqual(result.listings.map(row=>row.publicListingId),['real']);
+  assert.deepEqual(result.badges,[]);
+});
+
+test('array iterator and index getters are never evaluated during comparison',()=>{
+  let calls=0;
+  const rows=[listing('real','merchant-a',30000)];
+  Object.defineProperty(rows,Symbol.iterator,{get(){
+    calls++;
+    throw Error('iterator getter must not execute');
+  }});
+  assert.deepEqual(calc(rows).listings.map(row=>row.publicListingId),['real']);
+  assert.equal(calls,0);
+  Object.defineProperty(rows,'0',{configurable:true,get(){
+    calls++;
+    return listing('forged','merchant-b',1);
+  }});
+  assert.throws(()=>calc(rows),/own data slots/);
+  assert.equal(calls,0);
+});
