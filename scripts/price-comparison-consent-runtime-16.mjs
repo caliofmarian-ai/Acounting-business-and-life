@@ -12,6 +12,7 @@ if(process.env.ABL_CONSENT_CI!=='1'||process.env.NODE_ENV!=='test'||
 }
 const pool=new pg.Pool();
 let sessionId=null,productId=null,foreignBusinessId=null;
+let originalEmailVerifiedAt=null,emailVerifiedTouched=false;
 let assertions=0;
 const same=(actual,expected,message)=>{assert.equal(actual,expected,message);assertions++};
 const request=async(path,{method='GET',body,token}={})=>{
@@ -40,6 +41,13 @@ try{
   const merchant=await pool.query(
     "SELECT 1 FROM profile_business_bindings WHERE account_id=1 AND role='merchant' AND business_id=1 AND status='active'");
   same(merchant.rowCount,1,'preexisting isolated Merchant fixture must be bound');
+  // The CI bootstrap owner has no verified email. Authenticate a disposable
+  // *synthetic* fixture without weakening any app verification guard.
+  const syntheticAccount=await pool.query('SELECT email_verified_at FROM accounts WHERE id=1');
+  same(syntheticAccount.rowCount,1,'isolated seeded account must exist');
+  originalEmailVerifiedAt=syntheticAccount.rows[0].email_verified_at;
+  await pool.query('UPDATE accounts SET email_verified_at=NOW() WHERE id=1');
+  emailVerifiedTouched=true;
 
   sessionId='ci-price-consent-'+crypto.randomBytes(12).toString('hex');
   await pool.query(
@@ -111,5 +119,6 @@ try{
   try{if(productId)await pool.query('DELETE FROM marketplace_products WHERE id=$1 AND business_id=1',[productId]);}catch{}
   try{if(foreignBusinessId)await pool.query('DELETE FROM businesses WHERE id=$1',[foreignBusinessId]);}catch{}
   try{if(sessionId)await pool.query('DELETE FROM account_sessions WHERE session_id=$1',[sessionId]);}catch{}
+  try{if(emailVerifiedTouched)await pool.query('UPDATE accounts SET email_verified_at=$1 WHERE id=1',[originalEmailVerifiedAt]);}catch{}
   await pool.end();
 }
