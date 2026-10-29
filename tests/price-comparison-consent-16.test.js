@@ -125,3 +125,27 @@ test('stale private form saves omit unchanged consent and cannot reverse a remot
   assert.deepEqual(listing(JSON.parse(JSON.stringify({price_comparison_override:changed(null,false)})),null),
     {provided:true,value:false});
 });
+
+test('Catalog comparison choice requires an explicit recognized selector value',()=>{
+  const ui=source('public/marketplace-ui.js');
+  // Execute the browser helper from source; do not duplicate the parser.
+  const start=ui.indexOf('function comparisonChoiceFromSelect(id){');
+  const end=ui.indexOf('}',start);
+  assert.ok(start>=0&&end>start,'Merchant UI must declare its comparison choice parser');
+  const declaration=ui.slice(start,end+1);
+  const choose=value=>Function('document','"use strict";'+declaration+';return comparisonChoiceFromSelect;')({
+    getElementById:()=>value===undefined?null:{value}
+  })('catalogEditCompare');
+  for(const [value,expected] of [['inherit',null],['on',true],['off',false]]){
+    assert.equal(choose(value),expected);
+  }
+  // Old helper silently mapped every unknown value to null/inherit; if a
+  // listing was explicitly OFF while storefront was ON, this re-included it.
+  for(const invalid of [undefined,'','unknown','true','false','INHERIT']){
+    assert.throws(()=>choose(invalid),{name:'TypeError',message:/valid price comparison participation/});
+  }
+  assert.deepEqual(listing({price_comparison_override:choose('off')},true),
+    {provided:true,value:false});
+  assert.deepEqual(listing({price_comparison_override:choose('inherit')},false),
+    {provided:true,value:null});
+});

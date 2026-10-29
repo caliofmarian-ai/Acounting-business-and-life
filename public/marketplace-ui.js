@@ -909,7 +909,12 @@ function bindMerchantReadiness(store){
 }
 function comparisonChoiceFromSelect(id){
   const choice=document.getElementById(id)?.value;
-  return choice==='on'?true:choice==='off'?false:null;
+  if(choice==='inherit')return null;
+  if(choice==='on')return true;
+  if(choice==='off')return false;
+  // An invalid or missing control must not silently change an explicit OFF
+  // override to inherited storefront consent (which could already be ON).
+  throw new TypeError('Choose a valid price comparison participation option.');
 }
 // Only a changed Merchant choice is a fresh instruction to update consent.
 // Unrelated saves from stale tabs must omit the field so the database preserves
