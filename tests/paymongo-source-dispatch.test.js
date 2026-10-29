@@ -41,7 +41,8 @@ test('Service Job checkout descriptor uses Customer-owned payable job and generi
     call++;
     if(call===1)return{rowCount:1,rows:[{
       id:92,public_id:'pi_service_92',source_type:'service_job',source_id:44,payer_account_id:9,
-      currency_code:'PHP',amount:'1250.00',status:'requires_provider'
+      currency_code:'PHP',amount:'1250.00',status:'requires_provider',
+      expires_at:new Date(Date.now()+30*60_000).toISOString()
     }]};
     if(call===2){
       assert.match(sql,/FROM service_jobs j JOIN accounts p/);
@@ -184,4 +185,26 @@ test('checkout payload carries generic source metadata while retaining legacy Or
   assert.match(adapter,/bl_source_id:String\(i\.source_id\)/);
   assert.match(adapter,/bl_order_id:String\(i\.source_id\)/);
   assert.match(adapter,/bl_business_id:String\(o\.business_id\)/);
+});
+
+test('Service Job expired, missing or invalid intent expiry fails closed before checkout source queries',async()=>{
+  for(const [status,expiresAt] of [
+    ['requires_provider','2020-01-01T00:00:00Z'],
+    ['requires_action',null],
+    ['processing','invalid-expiration']
+  ]){
+    let calls=0;
+    const pool={query:async()=>{
+      calls++;
+      return{rowCount:1,rows:[{
+        id:92,public_id:'pi_expired_92',source_type:'service_job',source_id:44,
+        payer_account_id:9,currency_code:'PHP',amount:'1250.00',status,expires_at:expiresAt
+      }]};
+    }};
+    await assert.rejects(
+      resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_expired_92',accountId:9}),
+      err=>err?.status===409&&err?.code==='SERVICE_JOB_PAYMENT_INTENT_EXPIRED'
+    );
+    assert.equal(calls,1,'expired service intent must be rejected before job/quote queries');
+  }
 });
