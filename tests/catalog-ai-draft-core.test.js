@@ -360,3 +360,31 @@ test('invalid typed attribute suggestions fail closed without coercing unrelated
   assert.throws(()=>draft('merchant_non_food',{catalog_category_code:'furniture_home',
     variant_attributes:{width_cm:NaN}}),/Invalid AI catalog JSON/);
 });
+
+test('V3 select attributes retain only canonical enum suggestions',()=>{
+  const good=draft('merchant_non_food',{
+    catalog_category_code:'clothing_fashion',
+    variant_attributes:{target_audience:' Women ',color:'Blue'}
+  });
+  assert.deepEqual(good.hints.variant_attributes,[
+    {code:'target_audience',value:'women',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  for(const bad of ['fictional','kids<script>','Unisex'+String.fromCharCode(0x202e),
+    'men or women',true,5,[],{}]){
+    const got=draft('merchant_non_food',{
+      catalog_category_code:'clothing_fashion',
+      variant_attributes:{target_audience:bad,color:'Blue'}
+    });
+    assert.deepEqual(got.hints.variant_attributes,[
+      {code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+    ],'invalid select suggestion: '+JSON.stringify(bad));
+  }
+  const other=draft('merchant_non_food',{
+    catalog_category_code:'furniture_home',variant_attributes:{target_audience:'women'}
+  });
+  assert.deepEqual(other.hints.variant_attributes,[]);
+  assert.equal(good.draft_only,true);
+  assert.equal(good.publishable,false);
+  assert.equal(good.canonical_write_payload,false);
+});

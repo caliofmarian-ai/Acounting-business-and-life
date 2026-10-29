@@ -127,11 +127,11 @@ function attributeHints(category,raw){
   // numbers and booleans instead of preformatted strings. They remain
   // display-only hints, never normalized Catalog write values or approvals.
   const allowed=new Map(catalogCategoryAttributes(category)
-    .map(x=>[x.attribute_code,x.definition?.value_type]));
+    .map(x=>[x.attribute_code,x.definition]));
   const out=[];
   for(const key of Object.keys(raw).slice(0,40)){
     if(!allowed.has(key)||key==='warranty_months')continue;
-    const type=allowed.get(key),hint=raw[key];
+    const definition=allowed.get(key),type=definition?.value_type,hint=raw[key];
     let candidate=hint;
     if(typeof hint==='number'){
       if(type!=='number'||!Number.isFinite(hint)||hint<0)continue;
@@ -139,6 +139,15 @@ function attributeHints(category,raw){
     }else if(typeof hint==='boolean'){
       if(type!=='boolean')continue;
       candidate=String(hint);
+    }else if(type==='select'){
+      // Select hints must match V3 canonical choices, not just an allowed key.
+      // Never sanitize malformed model codes (e.g. <kids>) into trusted values.
+      if(typeof hint!=='string')continue;
+      const trimmed=hint.trim();
+      if(!trimmed||trimmed.length>120||clean(trimmed,120)!==trimmed)continue;
+      const choice=trimmed.toLocaleLowerCase('en');
+      if(!definition.allowed_values?.includes(choice))continue;
+      candidate=choice;
     }
     const value=clean(candidate,120);
     if(value)out.push({code:key,value,authority:'UNVERIFIED_MODEL_SUGGESTION'});
