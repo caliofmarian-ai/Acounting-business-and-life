@@ -271,3 +271,38 @@ test('preflight snapshot is authoritative for category, tags, ingredients and at
     {code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'}
   ]);
 });
+
+test('oversized AI trees fail during traversal without serializing an unbounded object',()=>{
+  const original=JSON.stringify;
+  let primitiveCalls=0;
+  try{
+    JSON.stringify=function(value,...args){
+      if(value!==null&&typeof value==='object')
+        throw new Error('Cannot stringify the entire unbounded model object');
+      primitiveCalls++;
+      return original.call(this,value,...args);
+    };
+    assert.throws(()=>draft('supplier_catalog',{name:'X'.repeat(2_000_000)}),/32 KiB/);
+    assert.equal(draft('supplier_catalog',{name:'Safe item'}).hints.name,'Safe item');
+    assert.throws(()=>draft('supplier_catalog',{
+      tags:Array.from({length:500},()=> 'A'.repeat(100))
+    }),/32 KiB/);
+    assert.ok(primitiveCalls>0&&primitiveCalls<500,
+      'aggregate byte cap stops before all values are serialized');
+  }finally{
+    JSON.stringify=original;
+  }
+});
+
+test('streamed JSON byte count includes string escaping, Unicode and container punctuation',()=>{
+  const slash=String.fromCharCode(92);
+  const inside=slash.repeat(16378);
+  const outside=slash.repeat(16379);
+  assert.equal(Buffer.byteLength(JSON.stringify({name:inside}),'utf8'),32767);
+  assert.equal(Buffer.byteLength(JSON.stringify({name:outside}),'utf8'),32769);
+  assert.doesNotThrow(()=>draft('supplier_catalog',{name:inside}));
+  assert.throws(()=>draft('supplier_catalog',{name:outside}),/32 KiB/);
+  const emoji=String.fromCodePoint(0x1f600).repeat(8190);
+  assert.equal(Buffer.byteLength(JSON.stringify({name:emoji}),'utf8'),32771);
+  assert.throws(()=>draft('supplier_catalog',{name:emoji}),/32 KiB/);
+});

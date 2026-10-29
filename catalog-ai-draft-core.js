@@ -12,53 +12,73 @@ const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;
 // Measure actual enumerable JSON; inherited or model-owned toJSON serializers
 // must never conceal oversized untrusted suggestions from the 32 KiB gate.
 function snapshotJsonData(value){
-  // Model input is a JSON tree, never a JS graph with shared identities.
-  // Reject repeated objects before copying to avoid exponential expansion.
+  // Count serialized JSON bytes during traversal. Serializing the whole copied
+  // tree at the end can allocate far more than the stated 32 KiB input limit.
   const visited=new WeakSet();
+  const MAX_BYTES=32768;
+  let bytes=0;
+  const charge=fragment=>{
+    bytes+=Buffer.byteLength(fragment,'utf8');
+    if(bytes>MAX_BYTES)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+  };
+  const chargePrimitive=value=>{
+    // JSON UTF-8 needs at least one byte per UTF-16 code unit. Fail fast
+    // before escaping a giant string into a giant temporary allocation.
+    if(typeof value==='string'&&value.length>MAX_BYTES)
+      throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
+    charge(JSON.stringify(value));
+  };
   function copyJsonData(raw,depth){
     if(depth>64)throw new TypeError('AI catalog JSON is too deeply nested.');
-    if(raw===null||typeof raw==='string'||typeof raw==='boolean')return raw;
-    if(typeof raw==='number'&&Number.isFinite(raw))return raw;
+    if(raw===null||typeof raw==='string'||typeof raw==='boolean'){
+      chargePrimitive(raw);
+      return raw;
+    }
+    if(typeof raw==='number'&&Number.isFinite(raw)){
+      chargePrimitive(raw);
+      return raw;
+    }
     const array=Array.isArray(raw);
     if(!array&&!plain(raw))throw new TypeError('AI catalog JSON contains a non-JSON value.');
     if(visited.has(raw))throw new TypeError('AI catalog JSON cannot reuse an object reference.');
     visited.add(raw);
     let out;
     if(array){
-      if(raw.length>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
-      // JSON arrays contain only indexed values and their built-in length.
-      // Ignore neither hidden own values nor extra array fields at preflight.
+      if(raw.length>MAX_BYTES)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
       if(Reflect.ownKeys(raw).length!==raw.length+1)
         throw new TypeError('Invalid AI catalog array.');
       out=[];
       Object.setPrototypeOf(out,null);
+      charge('[');
       for(let i=0;i<raw.length;i++){
         const field=Object.getOwnPropertyDescriptor(raw,String(i));
         if(!field||!Object.hasOwn(field,'value'))throw new TypeError('Invalid AI catalog array.');
+        if(i>0)charge(',');
         out[i]=copyJsonData(field.value,depth+1);
       }
+      charge(']');
     }else{
       const keys=Object.keys(raw);
-      if(keys.length>32768)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
-      // A JSON object has only own, enumerable string data keys. Non-enumerable
-      // values/getters or symbols would escape the size gate but could later
-      // be read as model hints; reject them before touching any hint field.
+      if(keys.length>MAX_BYTES)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
       if(Reflect.ownKeys(raw).length!==keys.length)
         throw new TypeError('Invalid AI catalog object.');
       out=Object.create(null);
-      for(const key of keys){
+      charge('{');
+      for(let i=0;i<keys.length;i++){
+        const key=keys[i];
         const field=Object.getOwnPropertyDescriptor(raw,key);
         if(!field||!Object.hasOwn(field,'value'))throw new TypeError('Invalid AI catalog field.');
+        if(i>0)charge(',');
+        chargePrimitive(key);
+        charge(':');
         out[key]=copyJsonData(field.value,depth+1);
       }
+      charge('}');
     }
-
     return out;
   }
-  // Validation and later hint extraction must observe the same JSON values.
-  // Retain this null-prototype snapshot instead of rereading the mutable input.
   const data=copyJsonData(value,0);
-  return {bytes:Buffer.byteLength(JSON.stringify(data),'utf8'),data};
+  return {bytes,data};
 }
 function unique(v,max=12,len=40){
   if(!Array.isArray(v))return [];
