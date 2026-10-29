@@ -64,7 +64,7 @@ try{
     'card=lanes[0].querySelector(".orderCard"),main=card.querySelector(".orderCardMain"),'+
     'label=main.querySelector("strong"),button=card.querySelector("button");'+
     'return {viewport:innerWidth,lanesPerRow:lanes.filter(e=>Math.abs(r(e).top-r(lanes[0]).top)<2).length,'+
-    'laneWidth:Math.round(r(lanes[0]).width),labelWidth:Math.round(r(main).width),'+
+    'laneWidth:Math.round(r(lanes[0]).width),lanePosition:getComputedStyle(lanes[0]).position,labelWidth:Math.round(r(main).width),'+
     'labelHeight:Math.round(r(label).height),buttonHeight:Math.round(r(button).height),'+
     'pageWidth:document.documentElement.scrollWidth,'+
     'pointerCoarse:matchMedia("(pointer:coarse)").matches,'+
@@ -77,7 +77,8 @@ try{
     ...[320,360,390,412].map(width=>({name:String(width),width,height:900,mobile:true,touch:false,expectedLanes:1})),
     {name:'980',width:980,height:900,mobile:false,touch:false,expectedLanes:2},
     {name:'980-touch-portrait',width:980,height:1800,mobile:true,touch:true,expectedLanes:1},
-    {name:'1280',width:1280,height:900,mobile:false,touch:false,expectedLanes:4}
+    {name:'1280',width:1280,height:900,mobile:false,touch:false,expectedLanes:4},
+    {name:'1280-touch-portrait',width:1280,height:2200,mobile:true,touch:true,expectedLanes:1}
   ];
   for(const scenario of scenarios){
     const {name,width,height,mobile,touch,expectedLanes}=scenario;
@@ -97,6 +98,8 @@ try{
     assert.ok(m,'fixture failed to load '+width);
     assert.equal(m.viewport,width,'unexpected CSS viewport '+width);
     assert.equal(m.lanesPerRow,expectedLanes,name+' lane count');
+    if(name==='1280-touch-portrait')assert.equal(m.lanePosition,'static','touch portrait lanes must not stick/overlap');
+    if(name==='1280')assert.equal(m.lanePosition,'sticky','ordinary wide desktop lanes remain sticky');
     if(touch){
       assert.equal(m.pointerCoarse,true,name+' must exercise actual CSS coarse-pointer override');
       assert.equal(m.portrait,true,name+' must exercise portrait override');

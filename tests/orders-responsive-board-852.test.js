@@ -28,3 +28,10 @@ test('money can wrap, controls remain finger-sized and overflow is constrained',
 test('portrait touch devices keep one lane even with forced desktop-width CSS viewport',()=>{
   assert.match(css,/@media\(min-width:650px\) and \(max-width:1199px\) and \(pointer:coarse\) and \(orientation:portrait\)\{\.ordersBoard\{grid-template-columns:minmax\(0,1fr\)\}\}/);
 });
+
+test('wide forced desktop CSS viewport on portrait touch stacks non-sticky lanes',()=>{
+  const desktop=css.indexOf('@media(min-width:1200px){');
+  const override=css.indexOf('@media(min-width:1200px) and (pointer:coarse) and (orientation:portrait){');
+  assert.ok(desktop>=0&&override>desktop,'touch portrait override must follow wide desktop rule');
+  assert.match(css.slice(override),/^@media\(min-width:1200px\) and \(pointer:coarse\) and \(orientation:portrait\)\{\.ordersBoard\{grid-template-columns:minmax\(0,1fr\)\}\.orderLane\{position:static\}\}/);
+});
