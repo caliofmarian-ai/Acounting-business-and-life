@@ -93,12 +93,12 @@ test('private Merchant catalog create and edit expose explicit three-way choices
 test('stale private form saves omit unchanged consent and cannot reverse a remote withdrawal',()=>{
   const ui=source('public/marketplace-ui.js');
   // Execute the real browser helper in an isolated Node scope, not a replica.
-  const declaration=ui.match(/function comparisonConsentChanged\\([^)]*\\)\\{[^}]*\\}/)?.[0];
+  const declaration=ui.match(/function comparisonConsentChanged\([^)]*\)\{[^}]*\}/)?.[0];
   assert.ok(declaration,'Merchant UI must declare change-only consent serialization');
   const changed=Function('"use strict";'+declaration+';return comparisonConsentChanged;')();
   assert.match(ui,/id="storeCompare" type="checkbox" data-initial-consent=/);
-  assert.match(ui,/price_comparison_enabled:comparisonConsentChanged\\(document\\.getElementById\\('storeCompare'\\)\\.dataset\\.initialConsent===/);
-  assert.match(ui,/price_comparison_override:comparisonConsentChanged\\(p\\.price_comparison_override\\?\\?null,/);
+  assert.match(ui,/price_comparison_enabled:comparisonConsentChanged\(document\.getElementById\('storeCompare'\)\.dataset\.initialConsent===/);
+  assert.match(ui,/price_comparison_override:comparisonConsentChanged\(p\.price_comparison_override\?\?null,/);
 
   // An older tab saw true; another tab has since revoked consent in PostgreSQL.
   // Saving unrelated fields must not send the obsolete true as a new opt-in.
