@@ -306,3 +306,27 @@ test('streamed JSON byte count includes string escaping, Unicode and container p
   assert.equal(Buffer.byteLength(JSON.stringify({name:emoji}),'utf8'),32771);
   assert.throws(()=>draft('supplier_catalog',{name:emoji}),/32 KiB/);
 });
+
+test('Unicode bidi formatting controls cannot reorder unverified product display hints',()=>{
+  const food=draft('merchant_prepared_food',{
+    name:'Chicken\u202eAdobo',
+    description:'Stew\u2066 with rice',
+    tags:['spicy\u200fhot'],
+    ingredients:[{name:'Fish\u202c Sauce'}]
+  });
+  assert.equal(food.hints.name,'Chicken Adobo');
+  assert.equal(food.hints.description,'Stew with rice');
+  assert.deepEqual(food.hints.tags,['spicy hot']);
+  assert.deepEqual(food.ingredient_names,['Fish Sauce']);
+  const nonFood=draft('merchant_non_food',{
+    catalog_category_code:'furniture_home',
+    variant_attributes:{color:'Red\u2069Blue'}
+  });
+  assert.deepEqual(nonFood.hints.variant_attributes,[
+    {code:'color',value:'Red Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  const hints=JSON.stringify({food:food.hints,ingredients:food.ingredient_names,nonFood:nonFood.hints});
+  assert.doesNotMatch(hints,/[\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/);
+  const ordinary=draft('supplier_catalog',{name:'Kape ☕ – ₱100'});
+  assert.equal(ordinary.hints.name,'Kape ☕ – ₱100');
+});
