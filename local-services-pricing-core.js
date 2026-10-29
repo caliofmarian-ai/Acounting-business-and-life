@@ -35,7 +35,16 @@ function numericScalar(value,label){
   if(typeof value!=='number'&&typeof value!=='string'){
     throw new ServicePricingValidationError(`${label} must be a numeric value`);
   }
-  return Number(value);
+  if(typeof value==='string'){
+    const decimal=value.trim();
+    // Number() also accepts hexadecimal, binary, octal and exponential text.
+    // Financial form and database values use ordinary decimal notation only.
+    if(!/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(decimal)){
+      throw new ServicePricingValidationError(`${label} must be a decimal number`);
+    }
+    return Number(decimal);
+  }
+  return value;
 }
 function optionalNumber(value,label,{min=0,max=MONEY_LIMIT}={}){
   if(value==null||(typeof value==='string'&&!value.trim()))return null;

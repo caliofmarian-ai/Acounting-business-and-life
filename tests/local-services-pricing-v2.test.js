@@ -276,3 +276,23 @@ test('canonical safe PostgreSQL quote/job IDs work while ambiguous ID encodings 
     );
   }
 });
+
+test('pricing values reject JavaScript radix/exponent text and preserve ordinary decimals',()=>{
+  const line={item_kind:'labor',description:'Controlled work',quantity:'1',unit_code:'job',unit_price:'25'};
+  for(const bad of ['0x10','0X10','0b10','0o10','2e1','1e-1','Infinity','1_000']){
+    assert.throws(()=>moneyCents(bad,'Money'),e=>e instanceof ServicePricingValidationError&&e.code==='SERVICE_PRICING_INVALID',bad);
+    assert.throws(()=>normalizeServicePriceOffer({price_from:bad}),e=>e instanceof ServicePricingValidationError&&e.code==='SERVICE_PRICING_INVALID',bad);
+    for(const field of ['quantity','unit_price']){
+      assert.throws(()=>normalizeServiceQuote({line_items:[{...line,[field]:bad}]}),e=>
+        e instanceof ServicePricingValidationError&&e.code==='SERVICE_PRICING_INVALID',field+':'+bad);
+    }
+    assert.throws(()=>serviceJobPayableSnapshot({
+      accepted_quote_id:'11',agreed_total:'25',legacy_final_adjustment:bad
+    }),e=>e.status===409&&e.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH',bad);
+  }
+  const valid=normalizeServiceQuote({line_items:[{...line,quantity:' 2.500 ',unit_price:' 12.34 '}]});
+  assert.equal(valid.line_items[0].quantity,2.5);
+  assert.equal(valid.total_amount,30.85);
+  assert.equal(moneyCents(' +1.25 '),125);
+  assert.equal(normalizeServicePriceOffer({price_from:' .50 ',price_to:'100.00'}).price_from,0.5);
+});
