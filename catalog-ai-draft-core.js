@@ -139,6 +139,20 @@ function attributeHints(category,raw){
     }else if(typeof hint==='boolean'){
       if(type!=='boolean')continue;
       candidate=String(hint);
+    }else if(type==='number'||type==='boolean'){
+      // Canonical V3 accepts finite, nonnegative numbers and only literal
+      // true/false. Unverified hints must not display invalid typed values.
+      if(typeof hint!=='string')continue;
+      const trimmed=hint.trim();
+      if(!trimmed||trimmed.length>120||clean(trimmed,120)!==trimmed)continue;
+      if(type==='number'){
+        const parsed=Number(trimmed);
+        if(!Number.isFinite(parsed)||parsed<0)continue;
+        candidate=String(parsed);
+      }else{
+        if(trimmed!=='true'&&trimmed!=='false')continue;
+        candidate=trimmed;
+      }
     }else if(type==='select'){
       // Select hints must match V3 canonical choices, not just an allowed key.
       // Never sanitize malformed model codes (e.g. <kids>) into trusted values.

@@ -388,3 +388,35 @@ test('V3 select attributes retain only canonical enum suggestions',()=>{
   assert.equal(good.publishable,false);
   assert.equal(good.canonical_write_payload,false);
 });
+
+test('V3 typed numeric and Boolean string hints reject unfit model values',()=>{
+  const got=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:'huge',length_cm:'-5',height_cm:'Infinity',
+      weight_kg:'1 kg',assembly_required:'maybe',material:'Plywood',color:'Oak'}});
+  assert.deepEqual(got.hints.variant_attributes,[
+    {code:'material',value:'Plywood',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'color',value:'Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  assert.equal(got.draft_only,true);
+  assert.equal(got.publishable,false);
+});
+test('V3 typed numeric and Boolean strings are normalized only when canonical-compatible',()=>{
+  const got=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:'0.50',height_cm:' 90 ',weight_kg:12.25,
+      assembly_required:'false',material:'Plywood'}});
+  assert.deepEqual(got.hints.variant_attributes,[
+    {code:'width_cm',value:'0.5',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'height_cm',value:'90',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'weight_kg',value:'12.25',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'assembly_required',value:'false',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'material',value:'Plywood',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  const other=draft('merchant_non_food',{catalog_category_code:'jewellery_accessories',
+    variant_attributes:{customizable:'true',weight_kg:'-0.5',material:'Silver'}});
+  assert.deepEqual(other.hints.variant_attributes,[
+    {code:'customizable',value:'true',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'material',value:'Silver',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  assert.equal(got.model_authority,'UNVERIFIED');
+  assert.equal(got.canonical_write_payload,false);
+});
