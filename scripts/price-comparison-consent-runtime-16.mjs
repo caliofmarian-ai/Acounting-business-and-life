@@ -11,7 +11,7 @@ if(process.env.ABL_CONSENT_CI!=='1'||process.env.NODE_ENV!=='test'||
   throw new Error('Merchant consent runtime requires the disposable Admin CI PostgreSQL environment.');
 }
 const pool=new pg.Pool();
-let sessionId=null,productId=null,foreignBusinessId=null;
+let sessionId=null,productId=null,foreignBusinessId=null,foreignProductId=null;
 let originalEmailVerifiedAt=null,emailVerifiedTouched=false;
 let assertions=0;
 const same=(actual,expected,message)=>{assert.equal(actual,expected,message);assertions++};
@@ -103,10 +103,32 @@ try{
   row=await pool.query('SELECT published,price_comparison_override FROM marketplace_products WHERE id=$1',[productId]);
   same(row.rows[0].price_comparison_override,null,'invalid listing input cannot re-enable consent');
   same(row.rows[0].published,false,'listing remains private throughout tests');
+  await expect('/api/merchant/storefront/products/'+productId,{
+    method:'PATCH',body:{price_comparison_override:true}},401);
+  row=await pool.query('SELECT price_comparison_override FROM marketplace_products WHERE id=$1',[productId]);
+  same(row.rows[0].price_comparison_override,null,'unauthenticated PATCH cannot alter listing consent');
 
   foreignBusinessId=Number((await pool.query(
     "INSERT INTO businesses(name,country_code,currency_code) VALUES($1,'PH','PHP') RETURNING id",
     ['CI Unbound Comparison '+marker])).rows[0].id);
+  // The foreign listing is intentionally private. Its consent and publication
+  // must remain untouched even when another authenticated Merchant knows its ID.
+  foreignProductId=Number((await pool.query(
+    "INSERT INTO marketplace_products(business_id,name,product_domain,product_kind,selling_price,published,price_comparison_override) VALUES($1,$2,'food','prepared_food',19.75,FALSE,FALSE) RETURNING id",
+    [foreignBusinessId,marker+'-foreign'])).rows[0].id);
+  same(Number.isSafeInteger(foreignProductId)&&foreignProductId>0,true,'synthetic foreign listing exists');
+  await expect('/api/merchant/storefront/products/'+foreignProductId,{
+    method:'PATCH',token,body:{price_comparison_override:true}},403);
+  await expect('/api/merchant/storefront/products/'+foreignProductId,{
+    method:'PATCH',body:{price_comparison_override:true}},401);
+  await expect('/api/merchant/storefront/products',{
+    method:'POST',token,body:{business_id:foreignBusinessId,name:marker+'-forged',
+      product_kind:'prepared_food',selling_price:11,price_comparison_override:true}},403);
+  row=await pool.query('SELECT price_comparison_override,published FROM marketplace_products WHERE id=$1',[foreignProductId]);
+  same(row.rows[0].price_comparison_override,false,'foreign listing consent unchanged');
+  same(row.rows[0].published,false,'foreign listing remains private');
+  row=await pool.query('SELECT COUNT(*)::int AS count FROM marketplace_products WHERE business_id=$1',[foreignBusinessId]);
+  same(row.rows[0].count,1,'forged product create cannot add a foreign listing');
   await expect('/api/merchant/storefront?business_id='+foreignBusinessId+'&include_products=false',
     {token},403);
   await expect('/api/merchant/storefront',{method:'PUT',token,body:{
@@ -117,6 +139,7 @@ try{
   console.log('Price Comparison #16: authenticated HTTP + actual isolated PostgreSQL PASS; assertions='+assertions);
 }finally{
   try{if(productId)await pool.query('DELETE FROM marketplace_products WHERE id=$1 AND business_id=1',[productId]);}catch{}
+  try{if(foreignProductId)await pool.query('DELETE FROM marketplace_products WHERE id=$1',[foreignProductId]);}catch{}
   try{if(foreignBusinessId)await pool.query('DELETE FROM businesses WHERE id=$1',[foreignBusinessId]);}catch{}
   try{if(sessionId)await pool.query('DELETE FROM account_sessions WHERE session_id=$1',[sessionId]);}catch{}
   try{if(emailVerifiedTouched)await pool.query('UPDATE accounts SET email_verified_at=$1 WHERE id=1',[originalEmailVerifiedAt]);}catch{}
