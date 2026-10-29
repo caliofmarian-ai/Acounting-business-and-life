@@ -62,16 +62,25 @@ function snapshotJsonData(value){
       if(keys.length>MAX_BYTES)throw new RangeError('AI suggestion exceeds the 32 KiB limit.');
       if(Reflect.ownKeys(raw).length!==keys.length)
         throw new TypeError('Invalid AI catalog object.');
+      // Validate every own descriptor before traversing values. A malformed
+      // own serializer after an enormous early string must stay a JSON-shape
+      // error (and must never be invoked), not be obscured by the byte cap.
+      const fields=keys.map(key=>{
+        const field=Object.getOwnPropertyDescriptor(raw,key);
+        if(!field||!Object.hasOwn(field,'value')||
+          field.value===undefined||typeof field.value==='function'||
+          typeof field.value==='symbol'||typeof field.value==='bigint')
+          throw new TypeError('Invalid AI catalog field.');
+        return field.value;
+      });
       out=Object.create(null);
       charge('{');
       for(let i=0;i<keys.length;i++){
         const key=keys[i];
-        const field=Object.getOwnPropertyDescriptor(raw,key);
-        if(!field||!Object.hasOwn(field,'value'))throw new TypeError('Invalid AI catalog field.');
         if(i>0)charge(',');
         chargePrimitive(key);
         charge(':');
-        out[key]=copyJsonData(field.value,depth+1);
+        out[key]=copyJsonData(fields[i],depth+1);
       }
       charge('}');
     }
