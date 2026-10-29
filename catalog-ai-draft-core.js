@@ -123,11 +123,24 @@ function categoryFor(mode,raw){
 }
 function attributeHints(category,raw){
   if(!category||!plain(raw))return [];
-  const allowed=new Set(catalogCategoryAttributes(category).map(x=>x.attribute_code));
+  // Preserve V3's attribute type: untrusted model JSON often uses real
+  // numbers and booleans instead of preformatted strings. They remain
+  // display-only hints, never normalized Catalog write values or approvals.
+  const allowed=new Map(catalogCategoryAttributes(category)
+    .map(x=>[x.attribute_code,x.definition?.value_type]));
   const out=[];
   for(const key of Object.keys(raw).slice(0,40)){
     if(!allowed.has(key)||key==='warranty_months')continue;
-    const value=clean(raw[key],120);
+    const type=allowed.get(key),hint=raw[key];
+    let candidate=hint;
+    if(typeof hint==='number'){
+      if(type!=='number'||!Number.isFinite(hint)||hint<0)continue;
+      candidate=String(hint);
+    }else if(typeof hint==='boolean'){
+      if(type!=='boolean')continue;
+      candidate=String(hint);
+    }
+    const value=clean(candidate,120);
     if(value)out.push({code:key,value,authority:'UNVERIFIED_MODEL_SUGGESTION'});
     if(out.length===20)break;
   }

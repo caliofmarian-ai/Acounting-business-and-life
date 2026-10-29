@@ -330,3 +330,33 @@ test('Unicode bidi formatting controls cannot reorder unverified product display
   const ordinary=draft('supplier_catalog',{name:'Kape ☕ – ₱100'});
   assert.equal(ordinary.hints.name,'Kape ☕ – ₱100');
 });
+
+
+test('typed V3 numeric and boolean suggestions remain unverified display hints',()=>{
+  const modelOutput={catalog_category_code:'furniture_home',variant_attributes:{
+    color:'Blue',width_cm:90.5,assembly_required:true,weight_kg:12.25,
+    warranty_months:36,material:42}};
+  const d=draft('merchant_non_food',modelOutput);
+  assert.deepEqual(d.hints.variant_attributes,[
+    {code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'width_cm',value:'90.5',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'assembly_required',value:'true',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'weight_kg',value:'12.25',authority:'UNVERIFIED_MODEL_SUGGESTION'}]);
+  assert.equal(d.model_authority,'UNVERIFIED');
+  assert.equal(d.canonical_write_payload,false);
+  assert.equal(d.publishable,false);
+  assert.equal(modelOutput.variant_attributes.width_cm,90.5);
+  assert.equal(modelOutput.variant_attributes.assembly_required,true);
+});
+test('invalid typed attribute suggestions fail closed without coercing unrelated types',()=>{
+  const d=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:-5,weight_kg:false,assembly_required:1,
+      color:true,material:'Plywood',height_cm:0}});
+  assert.deepEqual(d.hints.variant_attributes,[
+    {code:'material',value:'Plywood',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'height_cm',value:'0',authority:'UNVERIFIED_MODEL_SUGGESTION'}]);
+  assert.throws(()=>draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:Infinity}}),/Invalid AI catalog JSON/);
+  assert.throws(()=>draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:NaN}}),/Invalid AI catalog JSON/);
+});
