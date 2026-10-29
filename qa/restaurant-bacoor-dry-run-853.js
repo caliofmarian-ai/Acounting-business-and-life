@@ -3,7 +3,10 @@
  * This file NEVER connects to a server/database and NEVER issues HTTP requests.
  * Future seeding requires a separate, reviewed, business-scoped executor.
  */
+import {computeRecipeBatch} from '../merchant-catalog-core.js';
+
 const UNITS=new Set(['g','ml','unit']);
+const cents=n=>Math.round((Number(n)+Number.EPSILON)*100)/100;
 const CODE=/^[a-z][a-z0-9-]*$/;
 const isCount=n=>Number.isSafeInteger(n)&&n>=0;
 const isMoney=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0;
@@ -35,6 +38,12 @@ export function buildRestaurantBacoorDryRunPlan(fixture){
   requireQa(Array.isArray(fixture.recipes)&&fixture.recipes.length===10,'10 dishes required');
   const ingredientKeys=new Map(),ingredientNames=new Map(),productKeys=new Map(),productNames=new Map();
   const stock=new Map(),demand=new Map();
+  // Temporary arithmetic IDs only: NEVER use these as database identities.
+  const costingInventory=fixture.inventory.map((row,index)=>({
+    id:index+1,item:row.name,unit:row.baseUnit,base_unit:row.baseUnit,
+    measurement_family:row.measurementFamily,unit_cost:row.unitCostPHP
+  }));
+  const costingIds=new Map(fixture.inventory.map((row,index)=>[row.code,index+1]));
   const inventory=fixture.inventory.map(row=>{
     requireQa(row&&CODE.test(row.code),'invalid ingredient key');
     unique(ingredientKeys,row.code,'ingredient key');
@@ -77,12 +86,32 @@ export function buildRestaurantBacoorDryRunPlan(fixture){
       unique(recipeIngredientKeys,part.ingredientCode,'recipe ingredient');
       const row=stock.get(part.ingredientCode);
       requireQa(part.unit===row.baseUnit&&typeof part.quantity==='number'&&
-        Number.isFinite(part.quantity)&&part.quantity>0,
+        Number.isFinite(part.quantity)&&part.quantity>0&&
+        (part.unit!=='unit'||Number.isSafeInteger(part.quantity)),
         'invalid recipe quantity/unit: '+recipe.code);
       demand.set(part.ingredientCode,(demand.get(part.ingredientCode)||0)+part.quantity);
       return {inventoryLogicalKey:'ingredient/'+part.ingredientCode,
         inventory_id:null,quantity:part.quantity,unit:part.unit};
     });
+    // The published QA cost table must never drift from actual canonical recipe maths.
+    // This computation is pure; costing IDs above are local, not seedable database IDs.
+    const calculated=computeRecipeBatch({
+      yield_quantity:recipe.yieldServings,yield_unit:'unit',
+      selling_quantity:1,selling_unit:'unit',inventory:costingInventory,
+      components:recipe.ingredients.map(part=>({
+        inventory_id:costingIds.get(part.ingredientCode),
+        quantity:part.quantity,unit:part.unit
+      }))
+    });
+    requireQa(recipe.simulatedCost&&
+      ['batchPHP','perPortionPHP','grossContributionPerPortionPHP']
+        .every(key=>isMoney(recipe.simulatedCost[key])),
+      'missing synthetic cost evidence: '+recipe.code);
+    requireQa(cents(calculated.batch_cost)===recipe.simulatedCost.batchPHP&&
+      cents(calculated.cost_per_sale_unit)===recipe.simulatedCost.perPortionPHP&&
+      cents(recipe.sellingPricePHP-cents(calculated.cost_per_sale_unit))===
+        recipe.simulatedCost.grossContributionPerPortionPHP,
+      'synthetic cost drift: '+recipe.code);
     recipeProducts.push({logicalKey:'recipe-product/'+recipe.code,routeContract:'recipeProduct',
       existingIdentity:{business:'EXACT_AUTHORIZED_QA_BUSINESS',name:recipe.name},
       bodyTemplate:{name:recipe.name,category:recipe.category,

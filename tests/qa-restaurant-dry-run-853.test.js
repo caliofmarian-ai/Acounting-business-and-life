@@ -83,3 +83,27 @@ test('fails closed on duplicate ingredient/dish keys, unknown components or stoc
     assert.throws(()=>buildRestaurantBacoorDryRunPlan(x),/dry-run refused/);
   }
 });
+
+test('read-only plan rejects synthetic cost, ingredient price or selling-price drift',()=>{
+  const mutations=[
+    x=>{x.inventory[0].unitCostPHP+=0.01;},
+    x=>{x.recipes[0].ingredients[0].quantity+=1;},
+    x=>{x.recipes[0].simulatedCost.batchPHP+=0.01;},
+    x=>{x.recipes[0].simulatedCost.perPortionPHP+=0.01;},
+    x=>{x.recipes[0].simulatedCost.grossContributionPerPortionPHP+=0.01;},
+    x=>{x.recipes[0].sellingPricePHP+=1;},
+    x=>{x.recipes[0].simulatedCost=null;}
+  ];
+  for(const mutate of mutations){
+    const x=copy();mutate(x);
+    assert.throws(()=>buildRestaurantBacoorDryRunPlan(x),/dry-run refused/);
+  }
+});
+
+test('count-unit ingredients must be positive whole pieces, never fractional',()=>{
+  const x=copy();
+  const countPart=x.recipes[0].ingredients.find(p=>p.unit==='unit');
+  assert.ok(countPart,'fixture must include a count-unit ingredient');
+  countPart.quantity=0.5;
+  assert.throws(()=>buildRestaurantBacoorDryRunPlan(x),/dry-run refused: invalid recipe quantity\/unit/);
+});
