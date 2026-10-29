@@ -30,6 +30,7 @@ on:
       - 'profile-finance-core.js'
       - 'account-money-core.js'
       - 'server-marketplace.js'
+      - 'scripts/price-comparison-consent-runtime-16.mjs'
       - 'orders-read-core.js'
       - 'server-auth.js'
       - 'account-safety-eligibility-core.js'
@@ -98,6 +99,7 @@ on:
       - 'server-suppliers.js'
       - 'server-services.js'
       - 'server-marketplace.js'
+      - 'scripts/price-comparison-consent-runtime-16.mjs'
       - 'orders-read-core.js'
       - 'server-auth.js'
       - 'account-safety-eligibility-core.js'
@@ -402,6 +404,10 @@ jobs:
             -X PATCH -H 'Content-Type: application/json' -H 'Authorization: Bearer invalid-session' \
             --data '{"role":"customer"}' http://127.0.0.1:3000/api/me/active-role)
           test "$status" = "401"
+      - name: Verify Merchant comparison consent (isolated HTTP + PostgreSQL)
+        env:
+          ABL_CONSENT_CI: '1'
+        run: node scripts/price-comparison-consent-runtime-16.mjs
       - name: Stop application
         if: always()
         run: |
