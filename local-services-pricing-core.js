@@ -44,7 +44,10 @@ function money(value,label,{required=true}={}){
 function quantity(value,label='Quantity'){
   const number=Number(value);
   if(!Number.isFinite(number)||number<=0||number>QUANTITY_LIMIT)throw new ServicePricingValidationError(`${label} must be greater than zero`);
-  return Math.round((number+Number.EPSILON)*1000)/1000;
+  const normalized=Math.round((number+Number.EPSILON)*1000)/1000;
+  // A tiny positive input must not become a zero-quantity quoted line.
+  if(normalized<=0)throw new ServicePricingValidationError(`${label} must be greater than zero after rounding`);
+  return normalized;
 }
 function signedMoney(value,label){
   const number=Number(value);

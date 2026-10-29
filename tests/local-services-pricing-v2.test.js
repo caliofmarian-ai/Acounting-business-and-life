@@ -69,6 +69,21 @@ test('invalid money, units, quantities and expired quote validity fail closed',(
   assert.equal(quoteIsExpired({valid_until:'2026-09-26T23:59:59Z'},new Date('2026-09-27T00:00:00Z')),true);
 });
 
+test('quote input cannot normalize a positive sub-thousandth quantity into a zero-quantity line',()=>{
+  const quoteFor=quantity=>normalizeServiceQuote({
+    line_items:[{item_kind:'labor',description:'Precision unit test',quantity,unit_code:'unit',unit_price:10000}]
+  },{now:new Date('2026-10-28T00:00:00.000Z')});
+  for(const tiny of ['0.0000001',0.0001,0.0004]){
+    assert.throws(()=>quoteFor(tiny),error=>
+      error instanceof ServicePricingValidationError&&/greater than zero after rounding/.test(error.message),
+    `rounding of ${tiny} must not yield a zero-quantity quote item`);
+  }
+  const smallest=quoteFor('0.001');
+  assert.equal(smallest.line_items[0].quantity,0.001);
+  assert.equal(smallest.line_items[0].subtotal,10);
+  assert.equal(smallest.total_amount,10);
+});
+
 test('completion is pinned to the latest Customer-accepted total',()=>{
   assert.equal(acceptedCompletionPrice({acceptedTotal:'1275.50'}),1275.5);
   assert.equal(acceptedCompletionPrice({acceptedTotal:1275.5,requestedFinalPrice:'1275.50'}),1275.5);
