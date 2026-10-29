@@ -86,6 +86,41 @@ test('private Merchant catalog create and edit expose explicit three-way choices
   assert.match(ui,/option value="on"/);
   assert.match(ui,/option value="off"/);
   assert.match(ui,/price_comparison_override:comparisonChoiceFromSelect\('merchantCatalogCreateCompare'\)/);
-  assert.match(ui,/price_comparison_override:comparisonChoiceFromSelect\('catalogEditCompare'\)/);
+  assert.match(ui,/price_comparison_override:comparisonConsentChanged\(p\.price_comparison_override\?\?null,comparisonChoiceFromSelect\('catalogEditCompare'\)\)/);
   assert.match(ui,/id="storeCompare"/);
+});
+
+test('stale private form saves omit unchanged consent and cannot reverse a remote withdrawal',()=>{
+  const ui=source('public/marketplace-ui.js');
+  // Execute the real browser helper in an isolated Node scope, not a replica.
+  const declaration=ui.match(/function comparisonConsentChanged\\([^)]*\\)\\{[^}]*\\}/)?.[0];
+  assert.ok(declaration,'Merchant UI must declare change-only consent serialization');
+  const changed=Function('"use strict";'+declaration+';return comparisonConsentChanged;')();
+  assert.match(ui,/id="storeCompare" type="checkbox" data-initial-consent=/);
+  assert.match(ui,/price_comparison_enabled:comparisonConsentChanged\\(document\\.getElementById\\('storeCompare'\\)\\.dataset\\.initialConsent===/);
+  assert.match(ui,/price_comparison_override:comparisonConsentChanged\\(p\\.price_comparison_override\\?\\?null,/);
+
+  // An older tab saw true; another tab has since revoked consent in PostgreSQL.
+  // Saving unrelated fields must not send the obsolete true as a new opt-in.
+  const staleStoreJson=JSON.stringify({store_name:'Unrelated edit',
+    price_comparison_enabled:changed(true,true)});
+  const staleStorePayload=JSON.parse(staleStoreJson);
+  assert.equal(Object.hasOwn(staleStorePayload,'price_comparison_enabled'),false);
+  assert.deepEqual(store(staleStorePayload,false),{provided:false,value:false});
+
+  const staleListingJson=JSON.stringify({name:'Unrelated product edit',
+    price_comparison_override:changed(true,true)});
+  const staleListingPayload=JSON.parse(staleListingJson);
+  assert.equal(Object.hasOwn(staleListingPayload,'price_comparison_override'),false);
+  assert.deepEqual(listing(staleListingPayload,false),{provided:false,value:false});
+
+  // Real user changes are still explicit; inherit remains a deliberate null.
+  assert.deepEqual(store(JSON.parse(JSON.stringify({price_comparison_enabled:changed(false,true)})),false),
+    {provided:true,value:true});
+  assert.deepEqual(store(JSON.parse(JSON.stringify({price_comparison_enabled:changed(true,false)})),true),
+    {provided:true,value:false});
+  assert.deepEqual(listing(JSON.parse(JSON.stringify({price_comparison_override:changed(true,null)})),true),
+    {provided:true,value:null});
+  assert.deepEqual(listing(JSON.parse(JSON.stringify({price_comparison_override:changed(null,false)})),null),
+    {provided:true,value:false});
 });
