@@ -66,12 +66,26 @@ try{
     'return {viewport:innerWidth,lanesPerRow:lanes.filter(e=>Math.abs(r(e).top-r(lanes[0]).top)<2).length,'+
     'laneWidth:Math.round(r(lanes[0]).width),labelWidth:Math.round(r(main).width),'+
     'labelHeight:Math.round(r(label).height),buttonHeight:Math.round(r(button).height),'+
-    'pageWidth:document.documentElement.scrollWidth,css:document.styleSheets[0].href};})()';
-  for(const width of [320,360,390,412,980,1280]){
+    'pageWidth:document.documentElement.scrollWidth,'+
+    'pointerCoarse:matchMedia("(pointer:coarse)").matches,'+
+    'portrait:matchMedia("(orientation:portrait)").matches,'+
+    'css:document.styleSheets[0].href};})()';
+  // The touch/portrait 980px case models an Android browser with Desktop site ON:
+  // virtual CSS viewport is wide, while the physical device is portrait/coarse.
+  // Synthetic emulation is not a real physical-device acceptance result.
+  const scenarios=[
+    ...[320,360,390,412].map(width=>({name:String(width),width,height:900,mobile:true,touch:false,expectedLanes:1})),
+    {name:'980',width:980,height:900,mobile:false,touch:false,expectedLanes:2},
+    {name:'980-touch-portrait',width:980,height:1800,mobile:true,touch:true,expectedLanes:1},
+    {name:'1280',width:1280,height:900,mobile:false,touch:false,expectedLanes:4}
+  ];
+  for(const scenario of scenarios){
+    const {name,width,height,mobile,touch,expectedLanes}=scenario;
     const {targetId}=await send('Target.createTarget',{url:'about:blank'});
     const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
     await send('Page.enable',{},sessionId);await send('Runtime.enable',{},sessionId);
-    await send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:width<600},sessionId);
+    await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:touch?3:1,mobile},sessionId);
+    await send('Emulation.setTouchEmulationEnabled',{enabled:touch,maxTouchPoints:touch?5:1},sessionId);
     await send('Page.navigate',{url:origin+'/fixture'},sessionId);
     let m=null;
     for(let i=0;i<100;i++){
@@ -82,15 +96,19 @@ try{
     }
     assert.ok(m,'fixture failed to load '+width);
     assert.equal(m.viewport,width,'unexpected CSS viewport '+width);
-    assert.equal(m.lanesPerRow,width<650?1:width<1200?2:4,width+'px lane count');
+    assert.equal(m.lanesPerRow,expectedLanes,name+' lane count');
+    if(touch){
+      assert.equal(m.pointerCoarse,true,name+' must exercise actual CSS coarse-pointer override');
+      assert.equal(m.portrait,true,name+' must exercise portrait override');
+    }
     assert.ok(m.labelWidth>=160,width+'px order label narrow: '+m.labelWidth);
     assert.ok(m.labelHeight<=60,width+'px vertical letter wrap');
     assert.ok(m.buttonHeight>=44,width+'px button touch target');
     assert.ok(m.pageWidth<=width,width+'px horizontal page overflow');
     assert.ok(m.css?.endsWith('/orders.css'),'must use real CSS');
     const screenshot=await send('Page.captureScreenshot',{format:'png'},sessionId);
-    writeFileSync(join(out,'orders-'+width+'.png'),Buffer.from(screenshot.data,'base64'));
-    results.push({width,...m});
+    writeFileSync(join(out,'orders-'+name+'.png'),Buffer.from(screenshot.data,'base64'));
+    results.push({name,width,height,mobile,touch,...m});
     await send('Target.closeTarget',{targetId});
   }
   assert.equal(errors.length,0,'browser exceptions');

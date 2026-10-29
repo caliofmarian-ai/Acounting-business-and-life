@@ -24,3 +24,7 @@ test('money can wrap, controls remain finger-sized and overflow is constrained',
   assert.match(css,/\.orderActions button\{[^}]*min-height:44px/);
   assert.match(css,/\.ordersWorkspace\{[^}]*overflow-x:hidden/);
 });
+
+test('portrait touch devices keep one lane even with forced desktop-width CSS viewport',()=>{
+  assert.match(css,/@media\(min-width:650px\) and \(max-width:1199px\) and \(pointer:coarse\) and \(orientation:portrait\)\{\.ordersBoard\{grid-template-columns:minmax\(0,1fr\)\}\}/);
+});
