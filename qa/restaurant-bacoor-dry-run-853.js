@@ -4,6 +4,7 @@
  * Future seeding requires a separate, reviewed, business-scoped executor.
  */
 import {computeRecipeBatch} from '../merchant-catalog-core.js';
+import {createHash} from 'node:crypto';
 
 const UNITS=new Set(['g','ml','unit']);
 const cents=n=>Math.round((Number(n)+Number.EPSILON)*100)/100;
@@ -129,8 +130,12 @@ export function buildRestaurantBacoorDryRunPlan(fixture){
   for(const [code,amount] of demand){
     requireQa(amount<=stock.get(code).onHandBase,'full-batch shortage: '+code);
   }
+  // Content identity for a future *separately approved* QA seeder to pin; this
+  // digest is neither an authorization token nor proof of database provenance.
+  const manifestSha256=createHash('sha256').update(JSON.stringify(fixture),'utf8').digest('hex');
   return {
     mode:'DRY_RUN_ONLY',executable:false,sourceOnly:true,fixtureKey:fixture.fixtureKey,
+    manifestSha256,
     target:{businessId:null,accountId:null,merchantRole:'merchant',name:b.name,
       cityPsgcCode:b.cityPsgcCode,barangayPsgcCode:b.barangayPsgcCode,
       locale:b.locale,currency:b.currency,publicationStatus:'draft'},

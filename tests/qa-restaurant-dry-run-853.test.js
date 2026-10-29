@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {buildRestaurantBacoorDryRunPlan} from '../qa/restaurant-bacoor-dry-run-853.js';
 
 const fixture=JSON.parse(readFileSync(new URL('../qa/fixtures/ph-restaurant-bacoor-v1.json',import.meta.url),'utf8'));
@@ -8,6 +9,10 @@ const copy=()=>structuredClone(fixture);
 test('dry-run plan contains 37 scoped ingredient and 10+10 private product and recipe mappings without an executable ID',()=>{
   const plan=buildRestaurantBacoorDryRunPlan(copy());
   assert.equal(plan.mode,'DRY_RUN_ONLY');
+  assert.match(plan.manifestSha256,/^[a-f0-9]{64}$/);
+  assert.equal(plan.manifestSha256,createHash('sha256').update(JSON.stringify(fixture)).digest('hex'));
+  const modified=copy();modified.inventory[0].name='Chicken meat (new unapproved baseline)';
+  assert.notEqual(buildRestaurantBacoorDryRunPlan(modified).manifestSha256,plan.manifestSha256);
   assert.equal(plan.executable,false);
   assert.equal(plan.target.businessId,null);
   assert.equal(plan.target.accountId,null);

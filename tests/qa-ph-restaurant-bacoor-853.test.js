@@ -1,9 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {computeRecipeBatch,measurementUnit} from '../merchant-catalog-core.js';
 
-const fixture=JSON.parse(readFileSync(new URL('../qa/fixtures/ph-restaurant-bacoor-v1.json',import.meta.url),'utf8'));
+const fixtureBytes=readFileSync(new URL('../qa/fixtures/ph-restaurant-bacoor-v1.json',import.meta.url));
+const fixture=JSON.parse(fixtureBytes.toString('utf8'));
+
+test('the V1 company-test restaurant fixture has the reviewed, pinned Git blob identity',()=>{
+  // Git blob SHA-1 is a repository content identifier, not a legal/security
+  // approval. Any baseline change requires deliberate review and a new pin.
+  const gitBlob=createHash('sha1').update(`blob ${fixtureBytes.length}\0`).update(fixtureBytes).digest('hex');
+  assert.equal(gitBlob,'e9d508f9500ab79eb181288b87067e89f82b2acb');
+});
 const stockByCode=new Map(fixture.inventory.map((entry,index)=>[
   entry.code,{...entry,id:index+1,item:entry.name,unit:entry.baseUnit,base_unit:entry.baseUnit,
     measurement_family:entry.measurementFamily,unit_cost:entry.unitCostPHP}
