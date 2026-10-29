@@ -103,6 +103,9 @@ test('Local Services historical backfill SELECT uses real isolated PostgreSQL 16
         {...baseJob, agreed_total: null},
         {...baseJob, accepted_quote_id: null},
         {...baseJob, accepted_quote_id: null, agreed_total: null},
+        {...baseJob, final_price: null},
+        {...baseJob, accepted_quote_id: null, agreed_total: null, pricing_locked_at: null,
+          legacy_final_adjustment: '25.00', final_price: '300.00'},
         {...baseJob, final_price: '1276.00'},
         {...baseJob, legacy_final_adjustment: '25.00', final_price: '1300.50'}
       ]) {
@@ -117,6 +120,8 @@ test('Local Services historical backfill SELECT uses real isolated PostgreSQL 16
         {...baseQuote, legacy_record: true}
       );
       assert.equal((await history())[0].gross_value, 1300.5);
+      await seed({...baseJob, final_price: null}, {...baseQuote, legacy_record: true});
+      assert.equal((await history())[0].gross_value, 1275.5);
       await seed({
         ...baseJob, accepted_quote_id: null, agreed_total: null,
         pricing_locked_at: null, legacy_final_adjustment: null,

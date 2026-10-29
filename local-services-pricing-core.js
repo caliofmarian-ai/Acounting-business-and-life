@@ -103,7 +103,10 @@ export function centsMoney(cents){return Number((Number(cents||0)/100).toFixed(2
 export function serviceJobPayableSnapshot(job={}){
   const hasAcceptedId=job.accepted_quote_id!==undefined&&job.accepted_quote_id!==null&&job.accepted_quote_id!=='';
   const hasAgreedTotal=job.agreed_total!==undefined&&job.agreed_total!==null&&job.agreed_total!=='';
-  const hasPricingSnapshot=hasAcceptedId||hasAgreedTotal||Boolean(job.pricing_locked_at);
+  // A historical adjustment is evidence of an accepted quote, not an
+  // independent legacy price source. Never silently ignore orphan evidence.
+  const hasLegacyAdjustment=job.legacy_final_adjustment!==undefined&&job.legacy_final_adjustment!==null&&job.legacy_final_adjustment!=='';
+  const hasPricingSnapshot=hasAcceptedId||hasAgreedTotal||Boolean(job.pricing_locked_at)||hasLegacyAdjustment;
 
   if(hasPricingSnapshot){
     const acceptedQuoteId=canonicalSafeDbId(job.accepted_quote_id);
@@ -157,6 +160,13 @@ export function resolveAcceptedServiceJobPayable(job={},acceptedQuote=null){
     throw pricingIntegrity('Service Job currency differs from the accepted quote');
   }
   const legacyQuote=acceptedQuote.legacy_record===true;
+  // A completed new Pricing V2 job must have the completion amount recorded.
+  // Older migrated jobs may legitimately lack final_price: their explicitly
+  // tagged legacy accepted quote remains the payable authority.
+  if(job.status==='completed'&&!legacyQuote&&
+    (job.final_price===undefined||job.final_price===null||job.final_price==='')){
+    throw pricingIntegrity('Completed V2 Service Job is missing its final price snapshot');
+  }
   if(snapshot.legacy_final_adjustment!=null&&!legacyQuote){
     throw pricingIntegrity('Only a migrated legacy quote may carry a legacy final adjustment');
   }

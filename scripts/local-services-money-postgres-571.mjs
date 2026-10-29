@@ -86,6 +86,9 @@ test('Service Provider Money SQL and quote evidence on isolated PostgreSQL 16', 
         [baseJob,{...baseQuote,currency_code:'USD'}],
         [{...baseJob,agreed_total:null},baseQuote],
         [{...baseJob,final_price:'1300.00'},baseQuote],
+        [{...baseJob,final_price:null},baseQuote],
+        [{...baseJob,accepted_quote_id:null,agreed_total:null,pricing_locked_at:null,
+          legacy_final_adjustment:'25.00',final_price:'300.00'},null],
         [{...baseJob,legacy_final_adjustment:'10.00',final_price:'1285.50'},baseQuote]
       ];
       for(const [job,quote] of cases){
@@ -102,6 +105,8 @@ test('Service Provider Money SQL and quote evidence on isolated PostgreSQL 16', 
       await seed({...baseJob,legacy_final_adjustment:'25.00',final_price:'1300.50'},
         {...baseQuote,legacy_record:true});
       assert.equal((await serviceProviderMoneyHomeSnapshot(readOnly,7)).summary.confirmed_job_value,1300.5);
+      await seed({...baseJob,final_price:null},{...baseQuote,legacy_record:true});
+      assert.equal((await serviceProviderMoneyHomeSnapshot(readOnly,7)).summary.confirmed_job_value,1275.5);
     });
 
     await t.test('another Provider invalid quote is not exposed by scoped queries',async()=>{

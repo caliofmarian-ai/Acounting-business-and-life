@@ -296,3 +296,38 @@ test('pricing values reject JavaScript radix/exponent text and preserve ordinary
   assert.equal(moneyCents(' +1.25 '),125);
   assert.equal(normalizeServicePriceOffer({price_from:' .50 ',price_to:'100.00'}).price_from,0.5);
 });
+
+test('completed new Pricing V2 requires final-price evidence; orphan legacy adjustments fail closed',()=>{
+  const job={
+    id:44,status:'completed',currency_code:'PHP',accepted_quote_id:91,
+    agreed_total:'250.00',pricing_locked_at:'2026-10-29T08:00:00Z',final_price:'250.00'
+  };
+  const quote={
+    id:91,job_id:44,status:'accepted',total_amount:'250.00',
+    currency_code:'PHP',legacy_record:false
+  };
+  const invalid=e=>e?.status===409&&e?.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH';
+  for(const missing of [undefined,null,'']){
+    assert.throws(()=>resolveAcceptedServiceJobPayable({...job,final_price:missing},quote),invalid,
+      'missing completed V2 final price must not create a payable amount');
+  }
+  for(const orphan of ['25.00',0,'0.00']){
+    assert.throws(()=>serviceJobPayableSnapshot({
+      id:44,status:'completed',accepted_quote_id:null,agreed_total:null,pricing_locked_at:null,
+      legacy_final_adjustment:orphan,final_price:'300.00',quote_amount:'275.00'
+    }),invalid,'an unbound legacy adjustment must not be ignored');
+  }
+  // Accepted work is not completed; its final price is not yet present.
+  assert.equal(resolveAcceptedServiceJobPayable({
+    ...job,status:'accepted',final_price:null
+  },quote).payable_value,250);
+  // Migrated completed jobs can predate a separate final_price recording.
+  assert.equal(resolveAcceptedServiceJobPayable({
+    ...job,final_price:null
+  },{...quote,legacy_record:true}).payable_value,250);
+  // Ordinary genuine pre-V2 records without any pricing/adjustment evidence stay compatible.
+  assert.equal(serviceJobPayableSnapshot({
+    status:'completed',final_price:'300.00',quote_amount:'275.00',
+    accepted_quote_id:null,agreed_total:null,pricing_locked_at:null,legacy_final_adjustment:null
+  }).payable_value,300);
+});
