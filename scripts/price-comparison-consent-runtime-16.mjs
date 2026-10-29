@@ -70,6 +70,44 @@ try{
   same(stored.price_comparison_enabled,false,'string false must revoke, not opt in');
   row=await pool.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=1');
   same(row.rows[0].price_comparison_enabled,false,'revocation committed to PostgreSQL');
+
+  // Emulate an old Storefront save already in flight while the Merchant revokes
+  // comparison consent. Both HTTP requests read the old TRUE row before their
+  // UPSERTs can acquire the lock; the later unrelated save must not opt back in.
+  stored=await storeWrite(token,{price_comparison_enabled:true});
+  same(stored.price_comparison_enabled,true,'concurrent revocation starts from opt-in');
+  const lock=await pool.connect();
+  let revocationPending,staleSavePending;
+  const waitForBlockedUpserts=async minimum=>{
+    const deadline=Date.now()+10000;
+    while(Date.now()<deadline){
+      const waiting=await pool.query(`
+        SELECT COUNT(*)::int AS blocked FROM pg_stat_activity
+        WHERE datname=current_database() AND pid<>pg_backend_pid()
+          AND state='active' AND wait_event_type='Lock'
+          AND query LIKE '%INSERT INTO merchant_storefronts%'
+      `);
+      if(Number(waiting.rows[0].blocked)>=minimum)return;
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    throw new Error('Expected '+minimum+' HTTP storefront UPSERTs waiting on the real row lock.');
+  };
+  try{
+    await lock.query('BEGIN');
+    await lock.query('SELECT business_id FROM merchant_storefronts WHERE business_id=1 FOR UPDATE');
+    revocationPending=storeWrite(token,{price_comparison_enabled:false});
+    await waitForBlockedUpserts(1);
+    staleSavePending=storeWrite(token,{description:'Stale save begun before consent revocation commits'});
+    await waitForBlockedUpserts(2);
+  }finally{
+    await lock.query('ROLLBACK').catch(()=>{});
+    lock.release();
+  }
+  const [revokeResult,staleSaveResult]=await Promise.all([revocationPending,staleSavePending]);
+  same(revokeResult.price_comparison_enabled,false,'first queued HTTP request revokes consent');
+  same(staleSaveResult.price_comparison_enabled,false,'later stale form update must preserve revocation');
+  row=await pool.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=1');
+  same(row.rows[0].price_comparison_enabled,false,'real PostgreSQL consent stays OFF after concurrent stale save');
   await expect('/api/merchant/storefront',{
     method:'PUT',token,body:{business_id:1,store_name:'CI Price Consent Store',
       merchant_domain:'mixed',publication_status:'draft',price_comparison_enabled:'off'}},400);
