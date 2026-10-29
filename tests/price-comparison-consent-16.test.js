@@ -97,7 +97,8 @@ test('stale private form saves omit unchanged consent and cannot reverse a remot
   assert.ok(declaration,'Merchant UI must declare change-only consent serialization');
   const changed=Function('"use strict";'+declaration+';return comparisonConsentChanged;')();
   assert.match(ui,/id="storeCompare" type="checkbox" data-initial-consent=/);
-  assert.match(ui,/price_comparison_enabled:comparisonConsentChanged\(document\.getElementById\('storeCompare'\)\.dataset\.initialConsent===/);
+  assert.ok(ui.includes("const initial=compare?.dataset?.initialConsent"));
+  assert.ok(ui.includes('price_comparison_enabled:comparisonUpdate?Boolean(compare.checked):undefined'));
   assert.match(ui,/price_comparison_override:comparisonConsentChanged\(p\.price_comparison_override\?\?null,/);
 
   // An older tab saw true; another tab has since revoked consent in PostgreSQL.
