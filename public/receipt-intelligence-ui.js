@@ -15,7 +15,7 @@
   }
   function message(value,bad=false){const node=$('#riMessage');if(node){node.textContent=value||'';node.classList.toggle('error',bad)}}
   function injectCss(){
-    if($('#riStyles'))return;
+    if(document.getElementById('riStyles'))return;
     const sheet=document.createElement('style');sheet.id='riStyles';
     sheet.textContent='.riEntry{display:block;margin:10px 0 15px;min-height:44px;padding:11px 15px;background:#e5f6f2;color:#085c51;border:1px solid #198a78;border-radius:12px;font:700 14px system-ui;cursor:pointer}'+
       '.riOverlay{position:fixed;inset:0;background:rgba(12,26,38,.76);z-index:9650;display:flex;justify-content:center;align-items:center}'+
@@ -229,6 +229,7 @@
       return;
     }
     if(previous)return;
+    injectCss();
     const button=document.createElement('button');
     button.id='receiptCountEvidenceButton';
     button.type='button';
@@ -305,6 +306,7 @@
 
   document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(countEvidenceOverlay)closeCountEvidence();else if(overlay)close()}});
   document.addEventListener('abl:profile-state',()=>{close();closeCountEvidence();queueMicrotask(()=>{mount();mountCountEvidence()})});
+  document.addEventListener('abl:business-workspace-changed',()=>{close();closeCountEvidence();queueMicrotask(()=>{mount();mountCountEvidence()})});
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{mount();mountCountEvidence()},{once:true});else{mount();mountCountEvidence()}
   if(document.body)new MutationObserver(()=>{mount();mountCountEvidence()}).observe(document.body,{attributes:true,attributeFilter:['data-business-finance-role']});
   window.BusinessLifeReceiptIntelligence={open};
