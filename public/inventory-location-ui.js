@@ -135,15 +135,17 @@ export function createInventoryLocationUi({
     const generation=++readGeneration,current=()=>generation===readGeneration&&isCurrent();
     if(!byId('inventoryLocationsCard'))return{locations:[],balances:[],transfers:[]};
     try{
-      const result=await Promise.all([
-        api('/api/inventory/locations'),
-        api('/api/inventory/location-balances'),
+      const [storage,transferRows]=await Promise.all([
+        api('/api/inventory/location-summary'),
         api('/api/inventory/transfers')
       ]);
       if(!current())return null;
-      locations=Array.isArray(result[0])?result[0]:[];
-      balances=Array.isArray(result[1])?result[1]:[];
-      transfers=Array.isArray(result[2])?result[2]:[];
+      if(!storage||!Array.isArray(storage.locations)||!Array.isArray(storage.balances)){
+        throw new Error('Storage summary could not be loaded. Retry to refresh.');
+      }
+      locations=storage.locations;
+      balances=storage.balances;
+      transfers=Array.isArray(transferRows)?transferRows:[];
       renderBalances();
       fillTransferItems();
       renderTransfers();
