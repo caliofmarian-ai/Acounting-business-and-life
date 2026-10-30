@@ -127,3 +127,57 @@ test('Inventory cost/stock drift, missing scoped IDs and malformed DB decimals a
   rejected(x=>{x.recipeProducts[0].recipe[0].quantity='NaN';});
   rejected(x=>{x.recipeProducts[0].recipe_batch_components[0].base_quantity='1e6';});
 });
+
+import {auditRestaurantBacoorCompleteSnapshots as auditAll}
+  from '../qa/restaurant-bacoor-composite-audit-853.js';
+
+function completeSnapshot(){
+  const data=snapshot();
+  data.catalogProducts=plan.privateCatalog.map((entry,i)=>({
+    id:String(3001+i),business_id:B,...entry.bodyTemplate,
+    active:true,inventory_id:null,stock_tracked:false,stock_quantity:null
+  }));
+  return data;
+}
+test('cross-store diagnostic accepts only complete private 37+10+10 and 10 linked batches',()=>{
+  const data=completeSnapshot(),original=structuredClone(data);
+  const got=auditAll(fixture,data);
+  assert.equal(got.status,'EXACT_PRIVATE_CROSS_STORE_SNAPSHOTS_ONLY');
+  assert.equal(got.executable,false);
+  assert.deepEqual([got.inventory,got.recipeProducts,got.catalogProducts,
+    got.recipeBatches,got.componentLinks],[37,10,10,10,97]);
+  assert.match(got.gate,/NO WRITES/);
+  assert.doesNotMatch(JSON.stringify(got),/"business_id"|"inventory_id"|"product_id"|"accountId"/);
+  assert.deepEqual(data,original);
+  assert.deepEqual(auditAll(fixture,{...data,
+    inventoryRows:[...data.inventoryRows].reverse(),
+    recipeProducts:[...data.recipeProducts].reverse(),
+    catalogProducts:[...data.catalogProducts].reverse()}),got);
+});
+test('all three stores empty means unapproved, not permission to provision',()=>{
+  const data=completeSnapshot();
+  data.inventoryRows=[];data.recipeProducts=[];data.catalogProducts=[];
+  const got=auditAll(fixture,data);
+  assert.equal(got.status,'ALL_STORES_EMPTY_UNAPPROVED');
+  assert.equal(got.executable,false);
+  assert.match(got.gate,/NO WRITES/);
+});
+test('partial or drifted stores cannot masquerade as an empty QA restaurant',()=>{
+  const cases=[
+    x=>{x.inventoryRows=[];},
+    x=>{x.recipeProducts=[];x.catalogProducts=[];},
+    x=>{x.recipeProducts=[];},
+    x=>{x.catalogProducts=[];},
+    x=>{x.catalogProducts.pop();},
+    x=>{x.inventoryRows[0].quantity='0';},
+    x=>{x.catalogProducts[0].published=true;},
+    x=>{x.catalogProducts[0].business_id='99';},
+    x=>{x.recipeProducts[0].recipe_batch_components[0].batch_quantity='999';},
+    x=>{delete x.targetBusinessId;},
+    x=>{delete x.catalogProducts;}
+  ];
+  for(const change of cases){
+    const data=completeSnapshot();change(data);
+    assert.throws(()=>auditAll(fixture,data),/QA (cross-store|inventory|product|recipe batch) audit refused/);
+  }
+});
