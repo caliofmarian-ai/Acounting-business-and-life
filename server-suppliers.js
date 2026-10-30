@@ -16,6 +16,7 @@ import {
   ensureSupplierSourcingV4Schema,registerSupplierSourcingV4Routes,supplierReorderSuggestions
 } from './server-supplier-sourcing-v4.js';
 import {ensureSupplierDailyV5Schema,registerSupplierDailyV5Routes} from './server-supplier-daily-v5.js';
+import {ensureMerchantPurchaseDocumentSchema,registerMerchantPurchaseDocumentRoutes} from './merchant-purchase-documents.js';
 import {ensureReceiptIntelligenceSchema,registerReceiptIntelligenceRoutes} from './receipt-intelligence-routes.js';
 import {ensureSupplierExceptionsV5Schema,registerSupplierExceptionsV5Routes} from './server-supplier-exceptions-v5.js';
 import {servicesFetch,startEmbeddedServices,stopEmbeddedServices} from './server-services.js';
@@ -41,7 +42,7 @@ function authHeader(req){return req.headers.authorization||''}
 async function upstream(path,options={}){return servicesFetch(path,options)}
 export function isSupplierOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
-  if(pathname==='/suppliers.css'||pathname==='/suppliers-ui.js'||pathname==='/receipt-intelligence-ui.js')return true;
+  if(pathname==='/suppliers.css'||pathname==='/suppliers-ui.js'||pathname==='/purchase-documents-ui.js'||pathname==='/receipt-intelligence-ui.js')return true;
   if(pathname.startsWith('/api/supplier/'))return true;
   if(pathname.startsWith('/api/procurement/'))return true;
   return false;
@@ -74,7 +75,7 @@ export async function suppliersFetch(path,options={}){
     const r=await upstream(path,options);
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/suppliers.css" />\n</head>')
-      .replace('</body>','  <script type="module" src="/suppliers-ui.js"></script>\n  <script type="module" src="/receipt-intelligence-ui.js"></script>\n</body>');
+      .replace('</body>','  <script type="module" src="/suppliers-ui.js"></script>\n  <script type="module" src="/purchase-documents-ui.js"></script>\n  <script type="module" src="/receipt-intelligence-ui.js"></script>\n</body>');
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
   return upstream(path,options);
@@ -227,7 +228,7 @@ async function initDb(){await ensureMonetizationSchema(pool);await pool.query(`
   );
   CREATE UNIQUE INDEX IF NOT EXISTS supplier_payment_tx_unique ON transactions(source,source_id) WHERE source='supplier_payment';
   CREATE UNIQUE INDEX IF NOT EXISTS supplier_receipt_tx_unique ON transactions(source,source_id) WHERE source='supplier_receipt';
-`);await ensureCatalogMediaSchema(pool);await ensureSupplierDomainV2Schema(pool);await ensureSupplierCommercialV3Schema(pool);await ensureSupplierSourcingV4Schema(pool);await ensureSupplierDailyV5Schema(pool);await ensureSupplierExceptionsV5Schema(pool);await ensureReceiptIntelligenceSchema(pool);const tenancy=await pool.query(`SELECT to_regclass('public.profile_business_bindings') profile_business_bindings`);if(tenancy.rows[0]?.profile_business_bindings)await pool.query(`WITH one_supplier_business AS (SELECT account_id,MIN(business_id) business_id FROM profile_business_bindings WHERE role='supplier' AND status='active' GROUP BY account_id HAVING COUNT(*)=1) UPDATE supplier_relationships r SET supplier_business_id=o.business_id FROM one_supplier_business o WHERE r.supplier_business_id IS NULL AND r.supplier_account_id=o.account_id`)}
+`);await ensureCatalogMediaSchema(pool);await ensureSupplierDomainV2Schema(pool);await ensureSupplierCommercialV3Schema(pool);await ensureSupplierSourcingV4Schema(pool);await ensureSupplierDailyV5Schema(pool);await ensureSupplierExceptionsV5Schema(pool);await ensureMerchantPurchaseDocumentSchema(pool);await ensureReceiptIntelligenceSchema(pool);const tenancy=await pool.query(`SELECT to_regclass('public.profile_business_bindings') profile_business_bindings`);if(tenancy.rows[0]?.profile_business_bindings)await pool.query(`WITH one_supplier_business AS (SELECT account_id,MIN(business_id) business_id FROM profile_business_bindings WHERE role='supplier' AND status='active' GROUP BY account_id HAVING COUNT(*)=1) UPDATE supplier_relationships r SET supplier_business_id=o.business_id FROM one_supplier_business o WHERE r.supplier_business_id IS NULL AND r.supplier_account_id=o.account_id`)}
 
 async function relationship(businessId,supplierId){const r=await pool.query(`SELECT r.*,a.display_name,s.supplier_name,s.description,s.delivery_available,s.service_area,s.normal_lead_days,s.minimum_order_value,sb.name supplier_business_name,
     CASE WHEN r.state='accepted' AND sol.location_mode='separate' AND sol.visibility='relationships' THEN sol.location_type ELSE NULL END operating_location_type,
@@ -359,6 +360,7 @@ async function poDetail(id){const q=await pool.query(`SELECT p.*,b.name business
 app.get('/health',async(_q,r)=>{try{await pool.query('SELECT 1');const c=await upstream('/health');r.status(c.ok?200:503).json({ok:c.ok,db:true,services:c.ok,version:'0.5-supplier-procurement'})}catch{r.status(503).json({ok:false,db:false,services:false,version:'0.5-supplier-procurement'})}})
 app.get('/suppliers.css',(_q,r)=>r.type('text/css').send(readFileSync(join(__dirname,'public','suppliers.css'),'utf8')))
 app.get('/suppliers-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','suppliers-ui.js'),'utf8')))
+app.get('/purchase-documents-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','purchase-documents-ui.js'),'utf8')))
 app.get('/receipt-intelligence-ui.js',(_q,r)=>r.type('application/javascript').send(readFileSync(join(__dirname,'public','receipt-intelligence-ui.js'),'utf8')))
 async function root(req,res){const r=await suppliersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',root);app.get('/index.html',root)
@@ -500,6 +502,7 @@ app.get('/api/procurement/respond/:token',async(req,res,next)=>{try{const po=awa
 
 registerSupplierDomainV2Routes({app,pool,body,identity});
 registerSupplierCommercialV3Routes({app,pool,body,identity});
+registerMerchantPurchaseDocumentRoutes({app,pool,body:(req,res,next)=>req.body!==undefined?next():express.json({limit:'9mb'})(req,res,next),identity});
 registerReceiptIntelligenceRoutes({app,pool,body,identity});
 registerSupplierSourcingV4Routes({app,pool,body,identity});
 registerSupplierDailyV5Routes({app,pool,body,identity});
