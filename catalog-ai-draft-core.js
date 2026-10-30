@@ -15,7 +15,7 @@ const emojiJoiner=(index,text)=>{
   const right=index+1<text.length?String.fromCodePoint(text.codePointAt(index+1)):'';
   return /[\p{Extended_Pictographic}\p{Emoji_Modifier}]/u.test(left)&&/\p{Extended_Pictographic}/u.test(right);
 };
-const clean=(v,n)=>typeof v==='string'?v.replace(/\u200d/g,(joiner,index,text)=>emojiJoiner(index,text)?joiner:' ').replace(/[<>\u0000-\u001f\u007f\u00ad\u034f\u061c\u180e\u200b-\u200c\u200e-\u200f\u202a-\u202e\u2060-\u206f]/g,' ').replace(/\s+/g,' ').trim().slice(0,n):'';
+const clean=(v,n)=>typeof v==='string'?v.replace(/\u200d/g,(joiner,index,text)=>emojiJoiner(index,text)?joiner:' ').replace(/[<>\u0000-\u001f\u007f\u00ad\u034f\u061c\u115f-\u1160\u180e\u200b-\u200c\u2800\u3164\uffa0\u200e-\u200f\u202a-\u202e\u2060-\u206f]/g,' ').replace(/\s+/g,' ').trim().slice(0,n):'';
 // Model JSON can inherit polluted Object.prototype properties. Only fields
 // actually present on the supplied JSON object may become unverified hints.
 const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;

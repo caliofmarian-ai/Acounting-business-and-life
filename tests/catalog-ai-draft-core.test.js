@@ -513,3 +513,31 @@ test('non-emoji zero-width joiners cannot hide AI display words or typed categor
   assert.equal(d.publishable,false);
   assert.equal(d.canonical_write_payload,false);
 });
+
+test('Hangul fillers and Braille blank do not disguise unverified display-hint word boundaries',()=>{
+  // These visually blank characters are not JavaScript whitespace; leaving
+  // them unchanged can make different names look identical to a reviewer.
+  for(const hidden of ['\u115f','\u1160','\u2800','\u3164','\uffa0']){
+    const d=draft('merchant_non_food',{
+      catalog_category_code:'furniture_home',
+      name:'Bacoor'+hidden+'Outlet',
+      description:'Natural'+hidden+'wood',
+      tags:['home'+hidden+'office'],
+      variant_attributes:{color:'Light'+hidden+'Oak',width_cm:'1'+hidden+'2'}
+    });
+    assert.equal(d.hints.name,'Bacoor Outlet');
+    assert.equal(d.hints.description,'Natural wood');
+    assert.deepEqual(d.hints.tags,['home office']);
+    assert.deepEqual(d.hints.variant_attributes,[
+      {code:'color',value:'Light Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+    ]);
+    assert.equal(d.state,'REVIEW_REQUIRED');
+    assert.equal(d.publishable,false);
+    assert.equal(d.canonical_write_payload,false);
+  }
+  const emoji=draft('merchant_prepared_food',{name:'Chef 👩🏽‍💻',
+    ingredients:['Fish']});
+  assert.equal(emoji.hints.name,'Chef 👩🏽‍💻');
+  assert.deepEqual(emoji.ingredient_names,['Fish']);
+  assert.equal(emoji.draft_only,true);
+});
