@@ -58,3 +58,20 @@ jobs:
             *) echo "FAIL: anonymous POST HTTP $post_code"; exit 1 ;;
           esac
           echo "PASS: public Preview smoke + no unauthorized receipt access"
+
+  browser:
+    name: Android Chromium UI using live Preview JS and synthetic API fixtures
+    needs: smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated Playwright runtime (QA only)
+        run: npm install --no-save playwright@1.56.1
+      - name: Install Chromium runtime
+        run: npx playwright install --with-deps chromium
+      - name: Exercise actual Preview-served receipt UI on Android viewport
+        run: node scripts/receipt-preview-browser-smoke.mjs
