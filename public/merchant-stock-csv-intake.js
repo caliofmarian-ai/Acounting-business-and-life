@@ -308,18 +308,21 @@ if(hasDocument){
         state.resultLog.push(note);
         message('results',saved+' paid item(s) saved; checking historical purchase date.\n'+state.resultLog.join('\n'),'ok');
         renderRows();
-        // Existing accounting backend records NOW. Apply its audited correction endpoint to the
-        // same linked expense so the real PH purchase date, not import date, appears in Money.
-        await assertMerchantContext();
-        const dated=await api('/api/transactions/'+result.transaction.id,{
-          method:'PATCH',
-          body:JSON.stringify({
-            occurred_at:originalDate+'T12:00:00+08:00',
-            reason:'Merchant verified original PH purchase/payment date during CSV stock intake'
-          })
-        });
-        if(Number(dated?.id)!==Number(result.transaction.id))
-          throw new Error('Linked expense date correction could not be verified.');
+        // The canonical accounting route posts NOW. If that is the actual PH business date,
+        // retain the real posting timestamp. Only backdate older days (at local noon,
+        // an explicitly approximate time) through the existing audited correction API.
+        if(originalDate!==localDatePH()){
+          await assertMerchantContext();
+          const dated=await api('/api/transactions/'+result.transaction.id,{
+            method:'PATCH',
+            body:JSON.stringify({
+              occurred_at:originalDate+'T12:00:00+08:00',
+              reason:'Merchant confirmed historical PH purchase date; time-of-day is unknown'
+            })
+          });
+          if(Number(dated?.id)!==Number(result.transaction.id))
+            throw new Error('Linked expense date correction could not be verified.');
+        }
         row.result='saved';
         message('results',saved+' purchase(s) and linked expenses dated '+originalDate+'.\n'+state.resultLog.join('\n'),'ok');
         renderRows();
