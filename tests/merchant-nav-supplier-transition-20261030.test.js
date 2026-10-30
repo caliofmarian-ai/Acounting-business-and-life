@@ -110,6 +110,28 @@ test('switching profiles clears the stale business attribution before Merchant T
   assert.doesNotMatch(bar.innerHTML,/Supplier private business/);
   assert.match(bar.className,/businessWorkspaceBarPending/);
 
+  // An account switch may enter Merchant directly, without an intermediate
+  // Account Home event. Old workspace metadata must remain private.
+  let reused=0;
+  context.applyWorkspaceState=()=>{reused++};
+  context.window.BusinessLifeMerchantToday.getState=()=>({
+    workspace:{role:'merchant',active_business_id:77,businesses:[{id:77}]}
+  });
+  context.accountingState={role:'merchant',activeBusinessId:77,businesses:[{id:77}]};
+  vm.runInContext('accountingWorkspaceAccountId=45',context);
+  await context.bootAccountingWorkspace({
+    surface:'profile',activeRole:'merchant',accountId:45,
+    snapshot:{profiles:[{role:'merchant',enabled:true}]}
+  });
+  assert.equal(reused,1,'unchanged account can reuse its confirmed workspace');
+  await context.bootAccountingWorkspace({
+    surface:'profile',activeRole:'merchant',accountId:46,
+    snapshot:{profiles:[{role:'merchant',enabled:true}]}
+  });
+  assert.equal(reused,1,'new account must not receive the prior account cache');
+  assert.equal(context.accountingState.activeBusinessId,null);
+  assert.match(bar.innerHTML,/Preparing workspace/);
+
   await context.bootAccountingWorkspace({
     surface:'profile',activeRole:'customer',
     snapshot:{profiles:[{role:'customer',enabled:true}]}
