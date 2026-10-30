@@ -109,7 +109,10 @@ export async function ensureInventoryLocationSchema(pool){
 
   const businesses=await pool.query(`SELECT DISTINCT business_id FROM inventory WHERE business_id IS NOT NULL`);
   for(const row of businesses.rows){
-    await reconcileBusinessInventoryLocations(pool,{businessId:Number(row.business_id)});
+    // Startup must not repeat the expensive per-item/per-lot locked path for
+    // businesses whose canonical stock and allocation tables already agree.
+    // Drift and missing default locations still call the unchanged full repair.
+    await reconcileBusinessInventoryLocationsForRead(pool,{businessId:Number(row.business_id)});
   }
 }
 
