@@ -590,7 +590,7 @@ async function loadMerchantToday({force=false}={}){
   return merchantTodayPromise;
 }
 window.BusinessLifeMerchantToday=Object.freeze({
-  getState:()=>({data:merchantTodayCache,workspace:merchantTodayCache?.workspace||null,businessId:merchantTodayBusinessId}),
+  getState:()=>({data:merchantTodayCache,workspace:merchantTodayCache?.workspace||null,businessId:merchantTodayBusinessId,profileKey:merchantTodayProfileKey}),
   load:options=>loadMerchantToday(options)
 });
 async function openMerchantAction(action){
