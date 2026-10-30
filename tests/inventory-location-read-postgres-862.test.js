@@ -92,5 +92,31 @@ test('862: isolated real PostgreSQL clean reads, coalescing, lock repair and iso
         blocker.release();
       }
     });
+    await t.test('real supply-lot drift repair remains tenant-scoped and a settled repeat read is bounded',async()=>{
+      // The generic clean-path scenarios intentionally start without supply_lots.
+      // This final subtest covers the actual PostgreSQL lot and lot-balance joins.
+      await pool.query("CREATE TABLE supply_lots (id BIGINT PRIMARY KEY,business_id BIGINT NOT NULL,inventory_id BIGINT NOT NULL,quantity_remaining_base NUMERIC(16,6) NOT NULL)");
+      await pool.query("CREATE TABLE inventory_lot_location_balances (business_id BIGINT NOT NULL,inventory_id BIGINT NOT NULL,lot_id BIGINT NOT NULL,location_id BIGINT NOT NULL,quantity NUMERIC(16,6) NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ DEFAULT NOW(),PRIMARY KEY(lot_id,location_id))");
+      await pool.query("INSERT INTO supply_lots(id,business_id,inventory_id,quantity_remaining_base) VALUES (1001,1,1,2),(2001,2,2001,2)");
+      await pool.query("INSERT INTO inventory_lot_location_balances(business_id,inventory_id,lot_id,location_id,quantity) VALUES (1,1,1001,100,2),(2,2001,2001,200,1)");
+
+      const repairSql=[];
+      const counted={async query(sql,args=[]){repairSql.push({sql,args});return pool.query(sql,args)}};
+      await reconcileBusinessInventoryLocationsForRead(counted,{businessId:2});
+      assert.equal(repairSql.filter(x=>x.sql.startsWith('SELECT id FROM inventory WHERE business_id=$1 ORDER BY id')).length,1,'lot drift must use canonical locked reconciler');
+      const b=await pool.query('SELECT quantity FROM inventory_lot_location_balances WHERE lot_id=2001');
+      const a=await pool.query('SELECT quantity FROM inventory_lot_location_balances WHERE lot_id=1001');
+      assert.equal(Number(b.rows[0].quantity),2,'same-business lot drift was repaired');
+      assert.equal(Number(a.rows[0].quantity),2,'business A lot remained unchanged');
+
+      const cleanSql=[];
+      const settled={async query(sql,args=[]){cleanSql.push({sql,args});return pool.query(sql,args)}};
+      await reconcileBusinessInventoryLocationsForRead(settled,{businessId:2});
+      assert.equal(cleanSql.length,4,'clean lot inventory should need four read-only SQL queries');
+      assert.ok(cleanSql.every(({sql})=>/^\\s*SELECT\\b/i.test(sql)&&!sql.includes('FOR UPDATE')),'clean preflight must not request row locks');
+      assert.ok(cleanSql.filter(x=>x.args?.length).every(x=>x.args[0]===2),'preflight binds the originating business');
+      t.diagnostic('real PostgreSQL supply lots: B drift repaired, A unchanged, clean repeat 4 SELECTs');
+    });
+
   }finally{await pool.end()}
 });
