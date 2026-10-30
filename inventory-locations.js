@@ -321,6 +321,118 @@ export async function reconcileBusinessInventoryLocationsForRead(pool,{businessI
   }
 }
 
+
+// The two Merchant Storage GETs share ONE read-only PostgreSQL snapshot.
+// No completed data is cached: each subsequent GET checks current state afresh.
+// If drift exists, the unchanged locked repair runs and a fresh snapshot is read.
+const inventorySnapshotFlights=new WeakMap();
+const snapshotStockCte=[
+  "WITH base_items AS MATERIALIZED (",
+  "SELECT i.id,i.quantity,i.storage_location_label,i.storage_area_type,COALESCE(b.allocated,0) AS allocated",
+  "FROM inventory i LEFT JOIN",
+  "(SELECT inventory_id,SUM(quantity) AS allocated FROM inventory_location_balances WHERE business_id=$1 GROUP BY inventory_id) b ON b.inventory_id=i.id",
+  "WHERE i.business_id=$1 ORDER BY i.id)"
+].join(' ');
+const snapshotLotCte=[
+  ", lot_state AS MATERIALIZED (",
+  "SELECT l.id,l.quantity_remaining_base,COALESCE(a.allocated,0) AS allocated",
+  "FROM supply_lots l LEFT JOIN",
+  "(SELECT lot_id,SUM(quantity) AS allocated FROM inventory_lot_location_balances WHERE business_id=$1 GROUP BY lot_id) a ON a.lot_id=l.id",
+  "WHERE l.business_id=$1 AND l.inventory_id IS NOT NULL)"
+].join(' ');
+const snapshotSelectPrefix=[
+  "SELECT",
+  "COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.id) FROM base_items i),'[]'::jsonb) AS items,",
+  "COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.name,s.id) FROM inventory_storage_locations s WHERE s.business_id=$1),'[]'::jsonb) AS all_locations,",
+  "COALESCE((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.name,s.id) FROM inventory_storage_locations s WHERE s.business_id=$1 AND s.active=TRUE),'[]'::jsonb) AS active_locations,"
+].join(' ');
+const snapshotSelectSuffix=[
+  ", COALESCE((SELECT jsonb_agg(to_jsonb(z) ORDER BY z.item,z.location_name,z.location_id) FROM (",
+  "SELECT b.business_id,b.inventory_id,b.location_id,b.quantity,",
+  "i.item,i.unit,i.inventory_type,i.inventory_domain,i.stock_role,",
+  "l.name location_name,l.storage_condition,l.storage_area_type,l.location_label,l.storage_segregated",
+  "FROM inventory_location_balances b",
+  "JOIN inventory i ON i.id=b.inventory_id AND i.business_id=b.business_id",
+  "JOIN inventory_storage_locations l ON l.id=b.location_id AND l.business_id=b.business_id",
+  "WHERE b.business_id=$1",
+  ") z),'[]'::jsonb) AS balances"
+].join(' ');
+function inventorySnapshotQuery(includeLots){
+  const lots=includeLots
+    ?"COALESCE((SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id) FROM lot_state l),'[]'::jsonb) AS lots"
+    :"'[]'::jsonb AS lots";
+  return snapshotStockCte+(includeLots?snapshotLotCte:'')+' '+snapshotSelectPrefix+' '+lots+snapshotSelectSuffix;
+}
+function typedSnapshotArray(value,label){
+  if(Array.isArray(value))return value;
+  if(typeof value==='string'){
+    try{const parsed=JSON.parse(value);if(Array.isArray(parsed))return parsed}catch{}
+  }
+  throw Object.assign(new Error('Inventory location snapshot '+label+' is unavailable.'),{status:503});
+}
+async function readBusinessLocationSnapshot(pool,businessId){
+  let data;
+  try{
+    data=await pool.query(inventorySnapshotQuery(true),[businessId]);
+  }catch(error){
+    // Older clean installs may not yet have supply_lots at Inventory schema bootstrap.
+    // Missing any OTHER table or column is a real error and must not be hidden.
+    if(error?.code!=='42P01'||!/supply_lots/i.test(String(error.message||'')))throw error;
+    data=await pool.query(inventorySnapshotQuery(false),[businessId]);
+  }
+  const row=data.rows?.[0];
+  if(!row)throw Object.assign(new Error('Inventory location snapshot returned no data.'),{status:503});
+  const items=typedSnapshotArray(row.items,'items');
+  const allLocations=typedSnapshotArray(row.all_locations,'all_locations');
+  const locations=typedSnapshotArray(row.active_locations,'active_locations');
+  const lots=typedSnapshotArray(row.lots,'lots');
+  const balances=typedSnapshotArray(row.balances,'balances');
+  const names=new Set(allLocations.map(x=>String(x.name??'').toLowerCase()));
+  const itemDrift=items.some(item=>{
+    const stock=Number(item.quantity),allocated=Number(item.allocated);
+    return !Number.isFinite(stock)||!Number.isFinite(allocated)||
+      Math.abs(Math.max(0,stock)-Math.max(0,allocated))>EPS||
+      !names.has(locationNameFromInventory(item).toLowerCase());
+  });
+  const lotDrift=lots.some(lot=>{
+    const stock=Number(lot.quantity_remaining_base),allocated=Number(lot.allocated);
+    return !Number.isFinite(stock)||!Number.isFinite(allocated)||
+      Math.abs(Math.max(0,stock)-Math.max(0,allocated))>EPS;
+  });
+  return{
+    needsRepair:itemDrift||lotDrift,
+    locations,
+    balances:balances.map(row=>({...row,quantity:Number(row.quantity)}))
+  };
+}
+export async function inventoryLocationReadSnapshot(pool,{businessId,actorAccountId=null}={}){
+  const id=Number(businessId);
+  if(!Number.isSafeInteger(id)||id<=0)
+    throw Object.assign(new Error('Invalid Merchant business for Inventory locations.'),{status:400});
+  let flights=inventorySnapshotFlights.get(pool);
+  if(!flights){flights=new Map();inventorySnapshotFlights.set(pool,flights)}
+  const key=String(id);
+  if(flights.has(key))return flights.get(key);
+  const task=(async()=>{
+    let snapshot=await readBusinessLocationSnapshot(pool,id);
+    if(snapshot.needsRepair){
+      await reconcileBusinessInventoryLocations(pool,{businessId:id,actorAccountId});
+      snapshot=await readBusinessLocationSnapshot(pool,id);
+      if(snapshot.needsRepair)throw Object.assign(
+        new Error('Inventory location quantities need another review after repair.'),{status:409}
+      );
+    }
+    return{locations:snapshot.locations,balances:snapshot.balances};
+  })();
+  flights.set(key,task);
+  try{return await task}finally{
+    if(flights.get(key)===task){
+      flights.delete(key);
+      if(!flights.size)inventorySnapshotFlights.delete(pool);
+    }
+  }
+}
+
 export async function inventoryLocationBalanceRows(client,{businessId,inventoryId=null}={}){
   await reconcileBusinessInventoryLocationsForRead(client,{businessId});
   const params=[businessId];let filter='';
@@ -418,13 +530,8 @@ export function registerInventoryLocationRoutes(app,{pool,jsonBody,accountingCon
   app.get('/api/inventory/locations',async(req,res,next)=>{
     try{
       const ctx=await merchantContext(req);
-      await reconcileBusinessInventoryLocationsForRead(pool,{businessId:ctx.business.id,actorAccountId:ctx.me.account.id});
-      const {rows}=await pool.query(`
-        SELECT * FROM inventory_storage_locations
-         WHERE business_id=$1 AND active=TRUE
-         ORDER BY name,id
-      `,[ctx.business.id]);
-      res.json(rows);
+      const snapshot=await inventoryLocationReadSnapshot(pool,{businessId:ctx.business.id,actorAccountId:ctx.me.account.id});
+      res.json(snapshot.locations);
     }catch(error){next(error)}
   });
 
@@ -457,7 +564,8 @@ export function registerInventoryLocationRoutes(app,{pool,jsonBody,accountingCon
       const ctx=await merchantContext(req);
       const inventoryId=req.query?.inventory_id==null||req.query.inventory_id===''?null:Number(req.query.inventory_id);
       if(inventoryId!=null&&!Number.isInteger(inventoryId))return res.status(400).json({error:'Invalid Inventory item.'});
-      res.json(await inventoryLocationBalanceRows(pool,{businessId:ctx.business.id,inventoryId}));
+      const snapshot=await inventoryLocationReadSnapshot(pool,{businessId:ctx.business.id,actorAccountId:ctx.me.account.id});
+      res.json(inventoryId==null?snapshot.balances:snapshot.balances.filter(row=>Number(row.inventory_id)===inventoryId));
     }catch(error){next(error)}
   });
 
