@@ -169,9 +169,101 @@
       if(instance===overlay&&bid===businessId)message('Review securely saved. Stock unchanged; use approved receiving to add products.');
     }catch(e){if(instance===overlay){message(e.message,true);submit.disabled=false}}
   }
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&overlay)close()});
-  document.addEventListener('abl:profile-state',()=>{close();queueMicrotask(mount)});
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount,{once:true});else mount();
-  if(document.body)new MutationObserver(mount).observe(document.body,{attributes:true,attributeFilter:['data-business-finance-role']});
+
+  // Read-only purchase evidence belongs to the existing blind-count Review phase.
+  // This companion deliberately does not edit the Inventory counting module.
+  let countEvidenceOverlay=null,evidenceReadGeneration=0;
+  function closeCountEvidence(){
+    evidenceReadGeneration+=1;
+    countEvidenceOverlay?.remove();
+    countEvidenceOverlay=null;
+  }
+  function mountCountEvidence(){
+    const pane=document.getElementById('countSessionReviewPane');
+    const previous=document.getElementById('receiptCountEvidenceButton');
+    if(document.body?.dataset?.businessFinanceRole!=='merchant'||!pane){
+      previous?.remove();
+      closeCountEvidence();
+      return;
+    }
+    if(previous)return;
+    const button=document.createElement('button');
+    button.id='receiptCountEvidenceButton';
+    button.type='button';
+    button.className='riBtn secondary';
+    button.textContent='Check scanned receipts for stock differences';
+    button.setAttribute('aria-label','Open read-only purchase receipts for the completed inventory count');
+    button.addEventListener('click',()=>openCountEvidence());
+    const summary=document.getElementById('countSessionReviewSummary');
+    if(summary?.parentElement===pane)summary.insertAdjacentElement('afterend',button);
+    else pane.prepend(button);
+    new MutationObserver(()=>{
+      if(pane.classList.contains('hidden')||document.body?.dataset?.businessFinanceRole!=='merchant')closeCountEvidence();
+    }).observe(pane,{attributes:true,attributeFilter:['class']});
+  }
+  async function openCountEvidence(){
+    const pane=document.getElementById('countSessionReviewPane');
+    if(countEvidenceOverlay||!pane||pane.classList.contains('hidden'))return;
+    injectCss();
+    const layer=document.createElement('section');
+    layer.className='riOverlay';
+    layer.style.zIndex='9710';
+    layer.setAttribute('role','dialog');
+    layer.setAttribute('aria-modal','true');
+    layer.setAttribute('aria-labelledby','riEvidenceTitle');
+    layer.innerHTML='<div class="riPanel"><header class="riHead"><div><h2 id="riEvidenceTitle">Receipt evidence for stock count</h2>'+
+      '<small>Investigation only · Inventory remains unchanged</small></div>'+
+      '<button id="riEvidenceClose" type="button" class="riClose" aria-label="Close receipt evidence">×</button></header>'+
+      '<main class="riBody"><p class="riNote">Purchase documents may help explain a difference. They do not prove the current quantity on the shelf and they do not approve or post stock corrections.</p>'+
+      '<div id="riEvidenceStatus" role="status">Checking the completed count…</div>'+
+      '<div id="riEvidenceRows"></div></main></div>';
+    countEvidenceOverlay=layer;
+    layer.querySelector('#riEvidenceClose').addEventListener('click',closeCountEvidence);
+    document.body.append(layer);
+    const current=++evidenceReadGeneration;
+    const setStatus=(text,bad=false)=>{
+      if(current!==evidenceReadGeneration||countEvidenceOverlay!==layer)return;
+      const status=layer.querySelector('#riEvidenceStatus');
+      status.textContent=text;status.classList.toggle('error',bad);
+    };
+    try{
+      const workspace=await api('/api/accounting/workspaces');
+      if(current!==evidenceReadGeneration||countEvidenceOverlay!==layer)return;
+      const bid=Number(workspace.active_business_id);
+      if(workspace.role!=='merchant'||!Number.isSafeInteger(bid)||bid<1)throw Error('Open a Merchant business to review receipt evidence.');
+      const session=await api('/api/inventory/count-sessions/active');
+      if(current!==evidenceReadGeneration||countEvidenceOverlay!==layer)return;
+      if(!session||session.status!=='review'||Number(session.business_id)!==bid)throw Error('Complete your blind physical count and enter Review first.');
+      const evidence=await api(ROOT+'/count-sessions/'+Number(session.id)+'/variance-evidence?business_id='+encodeURIComponent(bid));
+      if(current!==evidenceReadGeneration||countEvidenceOverlay!==layer)return;
+      if(document.getElementById('countSessionReviewPane')?.classList.contains('hidden'))throw Error('Counting resumed. Receipt evidence is unavailable during blind counting.');
+      if(evidence.session_status!=='review'||Number(evidence.count_session_id)!==Number(session.id))throw Error('Count review changed. Reopen this panel.');
+      const rows=Array.isArray(evidence.findings)?evidence.findings:[];
+      const printed=rows.map(row=>{
+        const receipt=row.receipt;
+        const purchase=row.last_purchase;
+        const original=receipt&&Number.isSafeInteger(Number(receipt.id))&&Number(receipt.id)>0
+          ?'<a href="'+BASE+'/purchase-documents/'+Number(receipt.id)+'/file?business_id='+encodeURIComponent(bid)+
+            '" target="_blank" rel="noopener noreferrer">Open saved receipt original</a>'
+          :'<small>No scanned receipt linked to the latest purchase</small>';
+        return '<article class="riCard"><h3>'+esc(row.name||'Inventory product')+'</h3>'+
+          '<p><strong>Count difference: '+(Number(row.variance)>0?'+':'')+esc(Number(row.variance))+' '+esc(row.unit||'')+'</strong></p>'+
+          '<p class="riNote">Expected: '+esc(Number(row.expected))+' · Counted: '+esc(Number(row.counted))+'</p>'+
+          (purchase?'<p>Last recorded purchase: '+esc(Number(purchase.quantity))+' '+esc(purchase.unit||'')+
+            ' · '+esc(peso(purchase.total_cost))+' · '+esc(String(purchase.date||'').slice(0,10))+'</p>':
+            '<p>No linked Inventory purchase history found.</p>')+
+          (receipt?'<p>Saved supplier: '+esc(receipt.supplier||'Not specified')+
+            ' · Document: '+esc(receipt.number||'No number')+'</p>':'')+
+          '<p>'+original+'</p><small>Check purchase receiving, sales/recipe use, spoilage and location transfers before approving any adjustment.</small></article>';
+      });
+      layer.querySelector('#riEvidenceRows').innerHTML=printed.length?printed.join(''):'<p class="riNote">No counted stock differences currently need purchase-document investigation.</p>';
+      setStatus(printed.length+' difference'+(printed.length===1?'':'s')+' with available purchase context.');
+    }catch(error){setStatus(error.message||'Receipt evidence unavailable.',true)}
+  }
+
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(countEvidenceOverlay)closeCountEvidence();else if(overlay)close()}});
+  document.addEventListener('abl:profile-state',()=>{close();closeCountEvidence();queueMicrotask(()=>{mount();mountCountEvidence()})});
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{mount();mountCountEvidence()},{once:true});else{mount();mountCountEvidence()}
+  if(document.body)new MutationObserver(()=>{mount();mountCountEvidence()}).observe(document.body,{attributes:true,attributeFilter:['data-business-finance-role']});
   window.BusinessLifeReceiptIntelligence={open};
 })();
