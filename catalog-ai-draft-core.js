@@ -5,7 +5,17 @@ export const AI_CATALOG_MODES=Object.freeze(['merchant_prepared_food','merchant_
 const FOOD=Object.freeze({merchant_prepared_food:'prepared_food',merchant_fresh_food:'fresh_food',merchant_packaged_food:'packaged_food_drink'});
 const WITHHELD=Object.freeze(['price','selling_price','stock','stock_quantity','inventory_id','product_id','business_id','account_id','payout_destination','expiry','expiry_date','certification','legal_claims','warranty','allergens','ingredient_quantities','recipe_cost','serving_quantity','published','visibility','publication_status']);
 const plain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v)&&(Object.getPrototypeOf(v)===Object.prototype||Object.getPrototypeOf(v)===null);
-const clean=(v,n)=>typeof v==='string'?v.replace(/[<>\u0000-\u001f\u007f\u00ad\u034f\u061c\u180e\u200b-\u200c\u200e-\u200f\u202a-\u202e\u2060-\u206f]/g,' ').replace(/\s+/g,' ').trim().slice(0,n):'';
+// Preserve U+200D only for an actual emoji sequence. In ordinary text the
+// same invisible joiner obscures word boundaries in untrusted model hints.
+const emojiJoiner=(index,text)=>{
+  let prev=index-1;
+  if(prev>=0&&(text.charCodeAt(prev)===0xfe0e||text.charCodeAt(prev)===0xfe0f))prev--;
+  if(prev>=0&&text.charCodeAt(prev)>=0xdc00&&text.charCodeAt(prev)<=0xdfff&&prev>0)prev--;
+  const left=prev>=0?String.fromCodePoint(text.codePointAt(prev)):'';
+  const right=index+1<text.length?String.fromCodePoint(text.codePointAt(index+1)):'';
+  return /[\p{Extended_Pictographic}\p{Emoji_Modifier}]/u.test(left)&&/\p{Extended_Pictographic}/u.test(right);
+};
+const clean=(v,n)=>typeof v==='string'?v.replace(/\u200d/g,(joiner,index,text)=>emojiJoiner(index,text)?joiner:' ').replace(/[<>\u0000-\u001f\u007f\u00ad\u034f\u061c\u180e\u200b-\u200c\u200e-\u200f\u202a-\u202e\u2060-\u206f]/g,' ').replace(/\s+/g,' ').trim().slice(0,n):'';
 // Model JSON can inherit polluted Object.prototype properties. Only fields
 // actually present on the supplied JSON object may become unverified hints.
 const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;

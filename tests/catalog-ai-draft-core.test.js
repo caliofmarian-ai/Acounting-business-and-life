@@ -480,3 +480,36 @@ test('additional invisible model formatting controls are displayed as boundaries
     catalog_category_code:'furniture_home',name:'Chef 👩‍🍳'
   }).hints.name,'Chef 👩‍🍳');
 });
+
+
+test('non-emoji zero-width joiners cannot hide AI display words or typed category hints',()=>{
+  const d=draft('merchant_non_food',{
+    catalog_category_code:'furniture_home',
+    name:'Bacoor\u200dOutlet',
+    description:'Natural\u200dWood',
+    tags:['home\u200doffice'],
+    variant_attributes:{
+      color:'Light\u200dOak',
+      width_cm:'1\u200d2'
+    }
+  });
+  assert.equal(d.hints.name,'Bacoor Outlet');
+  assert.equal(d.hints.description,'Natural Wood');
+  assert.deepEqual(d.hints.tags,['home office']);
+  assert.deepEqual(d.hints.variant_attributes,[
+    {code:'color',value:'Light Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  assert.deepEqual(draft('merchant_prepared_food',{
+    ingredients:['Fish\u200dSauce']
+  }).ingredient_names,['Fish Sauce']);
+  assert.deepEqual(draft('merchant_non_food',{
+    catalog_category_code:'clothing_fashion',
+    variant_attributes:{target_audience:'wo\u200dmen'}
+  }).hints.variant_attributes,[]);
+  for(const emoji of ['👩‍🍳','👩🏽‍💻','👩‍❤️‍👩']){
+    assert.equal(draft('merchant_non_food',{name:'Chef '+emoji}).hints.name,'Chef '+emoji);
+  }
+  assert.equal(d.draft_only,true);
+  assert.equal(d.publishable,false);
+  assert.equal(d.canonical_write_payload,false);
+});
