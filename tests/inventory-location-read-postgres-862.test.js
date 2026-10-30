@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import {reconcileBusinessInventoryLocationsForRead} from '../inventory-locations.js';
+import {reconcileBusinessInventoryLocationsForRead,inventoryLocationReadSnapshot} from '../inventory-locations.js';
 
 const {Pool}=pg;
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -12,7 +12,7 @@ test('862: isolated real PostgreSQL clean reads, coalescing, lock repair and iso
   const pool=new Pool({connectionString:process.env.INVENTORY_862_PG_URL,
     application_name:'inventory_862_isolated_QA',max:8});
   try{
-    await pool.query("CREATE TABLE inventory (id BIGINT PRIMARY KEY,business_id BIGINT NOT NULL,quantity NUMERIC(16,6) NOT NULL,storage_area_type TEXT DEFAULT 'pantry',storage_location_label TEXT DEFAULT '',storage_condition TEXT DEFAULT 'dry',storage_segregated BOOLEAN DEFAULT FALSE)");
+    await pool.query("CREATE TABLE inventory (id BIGINT PRIMARY KEY,business_id BIGINT NOT NULL,quantity NUMERIC(16,6) NOT NULL,storage_area_type TEXT DEFAULT 'pantry',storage_location_label TEXT DEFAULT '',storage_condition TEXT DEFAULT 'dry',storage_segregated BOOLEAN DEFAULT FALSE,item TEXT NOT NULL DEFAULT 'Synthetic Inventory',unit TEXT NOT NULL DEFAULT 'unit',inventory_type TEXT NOT NULL DEFAULT 'ingredient',inventory_domain TEXT NOT NULL DEFAULT 'food',stock_role TEXT NOT NULL DEFAULT 'ingredient')");
     await pool.query("CREATE TABLE inventory_storage_locations (id BIGINT PRIMARY KEY,business_id BIGINT NOT NULL,name TEXT NOT NULL,storage_condition TEXT DEFAULT 'dry',storage_area_type TEXT DEFAULT 'pantry',location_label TEXT DEFAULT '',storage_segregated BOOLEAN DEFAULT FALSE,created_by_account_id BIGINT,active BOOLEAN DEFAULT TRUE)");
     await pool.query("CREATE TABLE inventory_location_balances (business_id BIGINT NOT NULL,inventory_id BIGINT NOT NULL,location_id BIGINT NOT NULL,quantity NUMERIC(16,6) NOT NULL DEFAULT 0,updated_at TIMESTAMPTZ DEFAULT NOW(),PRIMARY KEY(inventory_id,location_id))");
     await pool.query("INSERT INTO inventory_storage_locations(id,business_id,name) VALUES (100,1,'Pantry'),(200,2,'Pantry')");
@@ -138,6 +138,27 @@ test('862: isolated real PostgreSQL clean reads, coalescing, lock repair and iso
       await pool.query('UPDATE inventory_location_balances SET quantity=9 WHERE business_id=2 AND inventory_id=2001');
     });
 
+
+    await t.test('one-query snapshot works before optional supply_lots exist, with A/B isolation',async()=>{
+      const recorded=[];
+      const counted={async query(sql,args=[]){
+        recorded.push({sql,args});return pool.query(sql,args);
+      }};
+      const a=await inventoryLocationReadSnapshot(counted,{businessId:1});
+      assert.equal(a.locations.length,1);
+      assert.equal(a.locations[0].business_id,1);
+      assert.equal(a.balances.length,1000);
+      assert.equal(a.balances.every(row=>Number(row.business_id)===1),true);
+      assert.equal(recorded.length,2,'before supply_lots schema initialization, one failed query and one clean fallback');
+      assert.ok(recorded.every(row=>row.sql.startsWith('WITH base_items AS MATERIALIZED (')));
+      const b=await inventoryLocationReadSnapshot(counted,{businessId:2});
+      assert.equal(b.locations[0].business_id,2);
+      assert.equal(b.balances.length,1);
+      assert.equal(b.balances[0].quantity,9);
+      assert.equal(b.balances[0].inventory_id,2001);
+      assert.equal(b.balances.every(row=>Number(row.business_id)===2),true);
+    });
+
     await t.test('real supply-lot drift repair remains tenant-scoped and a settled repeat read is bounded',async()=>{
       // The generic clean-path scenarios intentionally start without supply_lots.
       // This final subtest covers the actual PostgreSQL lot and lot-balance joins.
@@ -162,6 +183,46 @@ test('862: isolated real PostgreSQL clean reads, coalescing, lock repair and iso
       assert.ok(cleanSql.every(({sql})=>sql.trimStart().startsWith('SELECT')&&!sql.includes('FOR UPDATE')),'clean preflight must not request row locks');
       assert.ok(cleanSql.filter(x=>x.args?.length).every(x=>x.args[0]===2),'preflight binds the originating business');
       t.diagnostic('real PostgreSQL supply lots: B drift repaired, A unchanged, clean repeat 4 SELECTs');
+
+      const snapshotQueries=[];
+      const unified={async query(sql,args=[]){
+        snapshotQueries.push({sql,args});
+        return pool.query(sql,args);
+      }};
+      const liveA=await inventoryLocationReadSnapshot(unified,{businessId:1});
+      assert.equal(liveA.locations.every(row=>Number(row.business_id)===1),true);
+      assert.equal(liveA.balances.length,1000);
+      const liveB=await inventoryLocationReadSnapshot(unified,{businessId:2});
+      assert.equal(liveB.balances.length,1);
+      assert.equal(liveB.balances[0].inventory_id,2001);
+      assert.equal(liveB.balances[0].quantity,9);
+      assert.deepEqual(snapshotQueries.map(call=>call.args),[[1],[2]],'one scoped SQL statement per Merchant');
+      assert.ok(snapshotQueries.every(call=>
+        call.sql.startsWith('WITH base_items AS MATERIALIZED (')&&!call.sql.includes('FOR UPDATE')
+      ));
+      t.diagnostic('real PostgreSQL: two Merchant Storage snapshots = two read-only SQL statements');
+
+      const captured=[];
+      let unblock;
+      const barrier=new Promise(resolve=>{unblock=resolve});
+      let entered;
+      const notified=new Promise(resolve=>{entered=resolve});
+      const delayed={async query(sql,args=[]){
+        captured.push({sql,args});
+        if(sql.startsWith('WITH base_items AS MATERIALIZED (')){
+          entered();await barrier;
+        }
+        return pool.query(sql,args);
+      }};
+      const first=inventoryLocationReadSnapshot(delayed,{businessId:1});
+      await notified;
+      const second=inventoryLocationReadSnapshot(delayed,{businessId:1});
+      unblock();
+      const [firstData,secondData]=await Promise.all([first,second]);
+      assert.equal(captured.length,1,'two concurrent Merchant Storage GETs share a single PostgreSQL snapshot');
+      assert.deepEqual(firstData,secondData);
+      assert.equal(firstData.balances.length,1000);
+    
     });
 
   }finally{await pool.end()}
