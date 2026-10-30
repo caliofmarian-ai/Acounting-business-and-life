@@ -1,6 +1,6 @@
 # Merchant Voice AI — accounting and operator safety gates
 
-Status: IMPLEMENTATION V1C / gated source code in Draft PR #870 only; NOT in Preview or Production. Owner requirement 30 October 2026. Refs #863, #814, #860.
+Status: IMPLEMENTATION V1D / passkey-backed, gated source code in Draft PR #870 only; NOT YET in Preview or Production. Refs #863, #814, #860.
 
 ## Non-negotiable boundaries
 1. Voice/LLM may only interpret instructions and prepare an editable Merchant order DRAFT. It has no direct capability to write transactions, record received payments, mark an order paid, modify stock, change product prices, issue refunds or generate legally valid invoices.
@@ -22,25 +22,42 @@ Daily reports must come from canonical Orders, payment, cancellation/refund, sto
 - Parallel duplicate confirmations, retry/refresh, crash/recovery, cross-business switch and 403/401 fail-closed, using isolated PostgreSQL and genuine browser actions.
 - Zero unapproved Orders, payments, ledger rows or stock writes in the tested adversarial corpus. Reconcile every accepted source ID and all period totals before production acceptance.
 
-## Implementation state — 30 October 2026
+## Implementati## Implementation state — 30 October 2026 (V1D)
 
-The original local proof was superseded by Draft [PR #870](https://github.com/caliofmarian-ai/Acounting-business-and-life/pull/870), issue #863. Canonical `main` and `https://caliof.com` do **not** contain this branch.
+**Canonical scope:** Existing Draft [PR #870](https://github.com/caliofmarian-ai/Acounting-business-and-life/pull/870), issue #863. Not in canonical `main`, not live at `https://caliof.com`, and not accepted through a real authenticated Merchant Preview session.
 
-Implemented and source-tested:
-- Provider-gated conversational draft reducer and typed/push-to-talk Android companion (English PH/Filipino), with explicit transcript review before AI; no raw audio/transcript storage or AI write tool.
-- Authenticated exact-business Merchant Catalog turns and rate-limited model provider; `store:false`, no fabricated Catalog IDs/prices, no speaker biometric identity claims.
-- Signed two-minute server Catalog quote, exact identity/session/variants/modifiers/quantity/price check, unpaid cash pickup, and no receipt/payment inference.
-- Shared canonical `createOrder` PostgreSQL client handling: normal Orders behavior retained; voice approval uses an outer unique business/account/request-key transaction and current Catalog snapshots. Existing high-risk `order_create` velocity gate applies only to new approvals, not replay.
-- Recent V2-session password step-up checked under PostgreSQL `FOR SHARE` to prevent revoke-before-commit. This **does not** replace a device-held credential.
-- Android operator UI has a separate manual Confirm action, reads back the current total and unpaid status, and preserves one idempotency request key for explicit retries. Browser microphone is supported where available with consent; this is push-to-talk turns, not full duplex.
+### Implemented (feature flags OFF unless deliberately set)
 
-Verified: focused local Node tests, repository CI, Admin Runtime Contract, plus a dedicated isolated real PostgreSQL 16 GitHub Actions run [#41145267196](https://github.com/caliofmarian-ai/Acounting-business-and-life/actions/runs/41145267196) that passed parallel duplicate claims, transaction rollback, business-scoped request keys and session-revocation lock. Android-sized Chromium synthetic-API interface traversal also passed on 390 px width without JS errors or horizontal overflow. These are NOT authenticated real-Merchant Preview or physical Android acceptance.
+- **Voice / text draft:** multi-turn, English PH/Filipino, current same-business Catalog products/variants/modifiers, ambiguous name clarification and strict max quantities. No model authority for order/payment/stock writes; OpenAI Responses uses `store:false` and per-user/business request quotas.
+- **Android UX:** tap-to-speak, explicit speech processing consent, editable recognized text, readback, server-priced quote, password step-up, native WebAuthn `navigator.credentials.create/get`, human-typed one-time phrase and explicit confirm. Android emulation with mocked APIs is NOT physical device/browser-microphone proof.
+- **Authoritative quote:** two-minute HMAC of Merchant business, operator, active session, products, variants, modifiers, customer and PHP centavo amounts. Server re-prices every line in the canonical transaction.
+- **WebAuthn ES256:** server checks HTTPS exact Origin, RP ID hash, cryptographic challenge, user presence (UP), user verification (UV), valid registered P-256 signature and monotonic counters where available. Registration accepts only `fmt:none` with strict COSE validation, so the server **does not certify authenticator hardware provenance**. Synced passkeys may be backed up across devices.
+- **Device approval:** short-lived (90 second) random challenge and a manually typed random phrase tied in PostgreSQL to account/session/business/quote hash/request key. The device signature and one-time phrase are checked and consumed **inside the same PostgreSQL transaction** as the idempotency claim, canonical Orders/stock reservation and committed order ID. Duplicate request keys replay the original order result without creating another transaction.
+- **Operator check:** fresh V2-session password step-up `FOR SHARE` resists concurrent session revocation. It is **in addition to**, not a substitute for, the passkey.
+- **Manual Orders continuity:** ordinary Merchant creates use the existing own transaction; voice confirmation uses the same client under its protective outer transaction. High-risk `order_create` velocity rules apply to a new voice claim, not an idempotent replay.
+- **Financial correctness:** only pickup/cash, `unpaid` and presence not confirmed. No cash receipt, payment, direct Inventory adjustment, fee settlement, fiscal invoice, or autonomous money movement. Canonical Orders remains the one authority.
 
-**HARD RELEASE BLOCKER:** `ORDER_VOICE_CREATE_ENABLED=1` by itself CANNOT enable order creation. Server confirmation `ready()` also requires a real injected, server-side `verifyDeviceApproval` callback. No such device-held/passkey verifier is wired in the Production server; capabilities expose `can_confirm_order=false`. A one-time human confirmation phrase and vetted WebAuthn/passkey/device-held proof, scoped to account/session/business/signed quote and consumed atomically, must be implemented and independently audited before turning on voice order posting. Never replace this with a browser-supplied boolean, LLM judgment, ASR speaker label or password-only step-up.
+### Explicit release flags
 
-**Remaining QA:** real authenticated Android mic/customer/background tests, same-account two-business switch, real Merchant Catalog/stock/Orders totals, temporary network disconnect + retry after committed create, independent device approval credential tests, serialized exact-head Preview acceptance, reviewed merge, production deployment SUCCESS and direct `caliof.com` smoke. Do not close #863 yet.
+Enabling voice UI/AI/order submission alone must not be enough. No credential or secret values should be committed:
 
-## Primary references
+- `ORDER_VOICE_UI_ENABLED=1` — show experimental Merchant companion
+- `ORDER_VOICE_AI_ENABLED=1`, `ORDER_VOICE_AI_MODEL` and `OPENAI_API_KEY` — consent-gated model interpretation
+- `ORDER_VOICE_WEBAUTHN_ENABLED=1`, `ORDER_VOICE_WEBAUTHN_RP_ID`, `ORDER_VOICE_WEBAUTHN_ORIGIN` — server verifier is live only for an exact HTTPS origin and matching RP ID (no untrusted Host-derived defaults)
+- `ORDER_VOICE_PASSKEY_ENROLLMENT_ENABLED=1` — **separate**, temporary first-passkey enrolment authorisation; requires active account, verified email and recent password step-up. Once a passkey exists, another cannot be registered using password alone; recovery requires a separately reviewed procedure. Disabling enrolment does not disable use of an already-registered passkey
+- `ORDER_VOICE_CREATE_ENABLED=1` — allows an explicit, credential-verified, idempotent canonical order create. Requires all preceding gates and real Merchant QA acceptance
+- `TOKEN_SECRET` — existing V2 signed session authority; no caller-provided device-trust boolean is accepted
+
+**First-device bootstrap remains a separate security review gate:** historic email verification plus password step-up do not constitute a fresh second-channel proof. Do not activate initial passkey enrolment for public real-world Merchant accounts until secure bootstrap/recovery policy has been reviewed, tested and approved. A compromised session+password must not silently allow a fraudulent first device to be trusted.
+
+### Verified evidence and what is still missing
+
+- Focused Node tests for model suggestions, Catalog match, quote/HMAC, current session, WebAuthn CBOR/ES256 registration and assertion, tampering, missing UV, origin/RP mismatch, cloned counters, account/business switching and phrase reuse.
+- Dedicated GitHub Actions on disposable real PostgreSQL 16 tests the same-transaction order/idempotency/stock path, password step-up versus session revocation, concurrent double-submit, passkey challenge consumption and rollback. Refer to **the latest exact-head successful CI run**; do not carry a historic success forward after branch changes.
+- 390×844 Android-sized Chromium with synthetic auth/API shows no JS errors or horizontal overflow across voice/text draft → quote → operator password → passkey enrolment → one-time phrase → explicit create UI. This is synthetic client evidence, not live AI and not physical device microphone/passkey acceptance.
+- **Outstanding:** secure first-device bootstrap and recovery, independently vetted WebAuthn security review, real authenticated Merchant A↔B and all-error-case tests in isolated Preview, physical Android native passkey/microphone/noise checks, real model integration, staging reconciliation, reviewed merge, production deployment SUCCESS, and agent-run `https://caliof.com` smoke. Do not turn on live order writes or close #863 before all acceptance gates.
+
+rences
 - NIST SP 800-63B-4: https://pages.nist.gov/800-63-4/sp800-63b.html
 - OpenAI Realtime VAD: https://developers.openai.com/api/docs/guides/realtime-vad
 - OpenAI Realtime transcription limitations: https://developers.openai.com/api/docs/guides/realtime-transcription
