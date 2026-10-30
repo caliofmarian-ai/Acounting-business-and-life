@@ -239,6 +239,12 @@
         <form id="stockForm" class="card stack">
           <input id="stockInventoryId" type="hidden" />
           <div><h2>Add stock from a purchase</h2><p class="muted">Example: 1 kg carrots for ₱80 becomes 1000 g at ₱0.08/g automatically.</p></div>
+          <label for="stockPickerSearch">Find ingredient (English / Filipino / Tagalog)
+            <input id="stockPickerSearch" type="search" autocomplete="off"
+              placeholder="Search fishball, itlog pugo, sitaw, pancit, tahong…"
+              aria-describedby="stockPickerSearchStatus" />
+          </label>
+          <small id="stockPickerSearchStatus" class="muted" role="status">Type a name to find ingredients across all categories. Choosing an option does not add stock.</small>
           <div class="grid2">
             <label>Category
               <select id="stockCategoryPicker">
@@ -252,6 +258,7 @@
             </label>
           </div>
           <small class="muted">Choose an item from the lists to fill the form faster, or type your own item below.</small>
+          <small id="stockPickerLocalSafetyNote" class="muted hidden" role="status" aria-live="polite"></small>
           <div class="grid2">
             <label>Inventory area
               <select id="stockInventoryDomain">
