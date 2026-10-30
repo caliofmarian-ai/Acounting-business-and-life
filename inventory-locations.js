@@ -268,8 +268,54 @@ export async function reconcileBusinessInventoryLocations(client,{businessId,act
   }
 }
 
+
+// GET-only bulk drift preflight: avoid unconditional per-item/lot row locks.
+// Coalesce concurrent reads per pool/business; never cache completed checks or failures.
+const readReconcileFlights=new WeakMap();
+export async function reconcileBusinessInventoryLocationsForRead(pool,{businessId,actorAccountId=null}={}){
+  let flights=readReconcileFlights.get(pool);
+  if(!flights){flights=new Map();readReconcileFlights.set(pool,flights)}
+  const key=String(businessId);
+  if(flights.has(key))return flights.get(key);
+  const task=(async()=>{
+    const items=await pool.query('SELECT id,quantity,storage_location_label,storage_area_type FROM inventory WHERE business_id=$1 ORDER BY id',[businessId]);
+    const [locations,balances]=await Promise.all([
+      pool.query('SELECT name FROM inventory_storage_locations WHERE business_id=$1',[businessId]),
+      pool.query('SELECT inventory_id,COALESCE(SUM(quantity),0) AS quantity FROM inventory_location_balances WHERE business_id=$1 GROUP BY inventory_id',[businessId])
+    ]);
+    const names=new Set(locations.rows.map(row=>String(row.name??'').toLowerCase()));
+    const allocated=new Map(balances.rows.map(row=>[String(row.inventory_id),Number(row.quantity)]));
+    let needsRepair=items.rows.some(row=>{
+      const canonical=Math.max(0,Number(row.quantity||0));
+      const assigned=Math.max(0,allocated.get(String(row.id))||0);
+      return !Number.isFinite(canonical)||!Number.isFinite(assigned)||
+        Math.abs(canonical-assigned)>EPS||!names.has(locationNameFromInventory(row).toLowerCase());
+    });
+    if(!needsRepair&&await supplyLotsAvailable(pool)){
+      const [lots,lotBalances]=await Promise.all([
+        pool.query('SELECT id,quantity_remaining_base FROM supply_lots WHERE business_id=$1 AND inventory_id IS NOT NULL',[businessId]),
+        pool.query('SELECT lot_id,COALESCE(SUM(quantity),0) AS quantity FROM inventory_lot_location_balances WHERE business_id=$1 GROUP BY lot_id',[businessId])
+      ]);
+      const lotAllocated=new Map(lotBalances.rows.map(row=>[String(row.lot_id),Number(row.quantity)]));
+      needsRepair=lots.rows.some(row=>{
+        const canonical=Math.max(0,Number(row.quantity_remaining_base||0));
+        const assigned=Math.max(0,lotAllocated.get(String(row.id))||0);
+        return !Number.isFinite(canonical)||!Number.isFinite(assigned)||Math.abs(canonical-assigned)>EPS;
+      });
+    }
+    if(needsRepair)await reconcileBusinessInventoryLocations(pool,{businessId,actorAccountId});
+  })();
+  flights.set(key,task);
+  try{return await task}finally{
+    if(flights.get(key)===task){
+      flights.delete(key);
+      if(!flights.size)readReconcileFlights.delete(pool);
+    }
+  }
+}
+
 export async function inventoryLocationBalanceRows(client,{businessId,inventoryId=null}={}){
-  await reconcileBusinessInventoryLocations(client,{businessId});
+  await reconcileBusinessInventoryLocationsForRead(client,{businessId});
   const params=[businessId];let filter='';
   if(inventoryId!=null){params.push(Number(inventoryId));filter=' AND b.inventory_id=$2'}
   const {rows}=await client.query(`
@@ -365,7 +411,7 @@ export function registerInventoryLocationRoutes(app,{pool,jsonBody,accountingCon
   app.get('/api/inventory/locations',async(req,res,next)=>{
     try{
       const ctx=await merchantContext(req);
-      await reconcileBusinessInventoryLocations(pool,{businessId:ctx.business.id,actorAccountId:ctx.me.account.id});
+      await reconcileBusinessInventoryLocationsForRead(pool,{businessId:ctx.business.id,actorAccountId:ctx.me.account.id});
       const {rows}=await pool.query(`
         SELECT * FROM inventory_storage_locations
          WHERE business_id=$1 AND active=TRUE
