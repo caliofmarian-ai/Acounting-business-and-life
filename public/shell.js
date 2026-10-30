@@ -328,8 +328,27 @@ function openAccountMoneySettings(){
   showToast('Money & Banking is still loading. Try again in a moment.');
   return false;
 }
+function openMerchantLocalDestination(name){
+  if(activeSurface!=='profile'||activeRole!=='merchant')return showToast('Open the Merchant profile first.');
+  if(name==='Menu'&&document.getElementById('merchantRecipesNav')?.classList.contains('roleFinanceHidden'))
+    return showToast('Products & recipes is unavailable for this business.');
+  closeDrawer();
+  hideFeatureWorkspaces();
+  document.getElementById('accountSettingsWorkspace')?.classList.add('hidden');
+  document.getElementById('roleHub')?.classList.add('hidden');
+  const legacyNav=document.querySelector('.bottomNav');
+  legacyNav?.classList.remove('hidden'); // Keep its existing canonical click handlers, not its appearance.
+  const destination=legacyNav?.querySelector('[data-view="'+name+'"]');
+  if(!destination)return showToast('This Merchant destination is unavailable.');
+  destination.click();
+  window.scrollTo({top:0,behavior:'auto'});
+  return true;
+}
 function openMerchantDestination(destination){
   if(destination==='merchantHome')return showActiveWorkspace();
+  if(destination==='stockQuickButton')return openMerchantLocalDestination('Stock');
+  if(destination==='moneyQuickButton')return openMerchantLocalDestination('Money');
+  if(destination==='recipesQuickButton')return openMerchantLocalDestination('Menu');
   if(destination==='profileSettings')return openProfileSettingsForRole('merchant');
   const action=destination==='ordersQuickButton'?window.BusinessLifeOrders?.openMerchantOrders
     :destination==='catalogQuickButton'?window.BusinessLifeMarketplace?.openMerchantCatalog
@@ -369,12 +388,15 @@ function ensureShellChrome() {
     nav.id='merchantWorkspaceNav';
     nav.className='merchantWorkspaceNav hidden';
     nav.setAttribute('aria-label','Merchant workspace navigation');
-    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton" type="button" data-merchant-nav="home">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="catalogQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="catalog">Catalog</button><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button><button id="profileSettingsQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="settings">Settings</button></div>';
+    nav.innerHTML='<div id="merchantWorkspaceActions" class="merchantWorkspaceActions"><button id="merchantHomeButton" class="merchantWorkspaceButton merchantHomeButton active" type="button" data-merchant-nav="home" aria-current="page">Today</button><button id="ordersQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="orders">Orders</button><button id="catalogQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="catalog">Catalog</button><button id="merchantRecipesTopButton" class="merchantWorkspaceButton roleFinanceHidden" type="button" data-merchant-nav="recipes">Products &amp; recipes</button><button id="merchantStockTopButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="stock">Stock</button><button id="merchantMoneyTopButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="money">Money</button><details id="merchantBusinessTools" class="merchantBusinessTools"><summary class="merchantWorkspaceButton">Business tools</summary><div class="merchantBusinessToolsMenu"><button id="marketQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="storefront">Storefront</button><button id="supQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="suppliers">Suppliers</button><button id="deliveryQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="delivery">Delivery</button><button id="profileSettingsQuickButton" class="merchantWorkspaceButton" type="button" data-merchant-nav="settings">Settings</button></div></details></div><span class="merchantWorkspaceLoading" role="status">Preparing Merchant menu…</span>';
     shell.querySelector('.topbar')?.insertAdjacentElement('afterend',nav);
     const merchantDesktopRoutes={
       merchantHomeButton:'merchantHome',
       ordersQuickButton:'ordersQuickButton',
       catalogQuickButton:'catalogQuickButton',
+      merchantRecipesTopButton:'recipesQuickButton',
+      merchantStockTopButton:'stockQuickButton',
+      merchantMoneyTopButton:'moneyQuickButton',
       marketQuickButton:'marketQuickButton',
       supQuickButton:'supQuickButton',
       deliveryQuickButton:'deliveryQuickButton',
@@ -384,7 +406,10 @@ function ensureShellChrome() {
       const button=nav.querySelector('#'+buttonId);
       if(button&&!button.dataset.shellMerchantWired){
         button.dataset.shellMerchantWired='true';
-        button.addEventListener('click',()=>openMerchantDestination(destination));
+        button.addEventListener('click',()=>{
+          button.closest?.('#merchantBusinessTools')?.removeAttribute('open');
+          openMerchantDestination(destination);
+        });
       }
     }
   }
@@ -1021,7 +1046,8 @@ function syncFeatureLauncherState(activeWorkspaceId=null){
   if(catalog){catalog.classList.remove('active');catalog.removeAttribute('aria-current')}
   const home=document.getElementById('merchantHomeButton');
   if(home){
-    const active=!activeWorkspaceId;
+    const localView=document.querySelector('#shell > .view:not(.hidden)');
+    const active=!activeWorkspaceId&&(!localView||localView.id==='viewDashboard');
     home.classList.toggle('active',active);
     if(active)home.setAttribute('aria-current','page');else home.removeAttribute('aria-current');
   }
@@ -1056,10 +1082,11 @@ function syncMerchantMarketplaceSurface(surface='storefront'){
 document.addEventListener('abl:marketplace-merchant-surface',event=>syncMerchantMarketplaceSurface(event.detail?.surface||'storefront'));
 document.addEventListener('abl:merchant-local-view',event=>{
   if(activeSurface!=='profile'||activeRole!=='merchant')return;
-  const localName=event.detail?.name,homeActive=localName==='Dashboard';
+  const localName=event.detail?.name;
+  const navTarget={Dashboard:'home',Stock:'stock',Money:'money',Menu:'recipes'}[localName]||'';
   for(const button of document.querySelectorAll('#merchantWorkspaceNav [data-merchant-nav],#merchantMobileTools [data-merchant-mobile-action]')){
-    const isHome=button.id==='merchantHomeButton'||button.dataset.merchantMobileAction==='merchantHome';
-    const active=homeActive&&isHome;
+    const active=button.dataset.merchantNav===navTarget
+      ||(navTarget==='home'&&button.dataset.merchantMobileAction==='merchantHome');
     button.classList.toggle('active',active);
     if(active)button.setAttribute('aria-current','page');
     else button.removeAttribute('aria-current');
