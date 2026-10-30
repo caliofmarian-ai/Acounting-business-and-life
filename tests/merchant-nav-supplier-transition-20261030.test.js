@@ -98,7 +98,7 @@ test('switching profiles clears the stale business attribution before Merchant T
     applyWorkspaceState:()=>{throw new Error('Unverified Merchant cache must not hydrate')},
     api:async()=>({}),wireSupplierAccountingTile:()=>{},console
   });
-  vm.runInContext(actual('async function bootAccountingWorkspace','function resetMerchantNavPresentation'),context);
+  vm.runInContext('let accountingWorkspaceAccountId=null;\n'+actual('async function bootAccountingWorkspace','function resetMerchantNavPresentation'),context);
   await context.bootAccountingWorkspace({
     surface:'profile',activeRole:'merchant',
     snapshot:{profiles:[{role:'merchant',enabled:true}]}
