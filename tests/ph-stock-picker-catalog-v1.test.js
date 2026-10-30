@@ -118,6 +118,9 @@ test('new picker UI only fills existing purchase form; it never creates products
   assert.match(stockUi,/option\.dataset\.unit=match\.unit/);
   assert.match(stockUi,/option\.dataset\.category=match\.category/);
   assert.match(stockUi,/syncUnitSelect\('stockPurchaseUnit',unit\)/);
+  assert.match(stockUi,/clearStaleSuggestion\(\)/);
+  assert.match(stockUi,/selectedSuggestedName=option\.value/);
+  assert.match(stockUi,/stockName\.value=''/);
   assert.match(stockUi,/philippineStockPickerSafetyNote\(name\)/);
   const start=stockUi.indexOf('function initStockPicker(){');
   const end=stockUi.indexOf('function unitMeta(',start);
