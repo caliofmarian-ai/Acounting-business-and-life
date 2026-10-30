@@ -543,7 +543,7 @@ window.BusinessLifeMerchantToday=Object.freeze({
   load:options=>loadMerchantToday(options)
 });
 async function openMerchantAction(action){
-  document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.merchantAction===action));
+  document.querySelectorAll('.bottomNav button').forEach(b=>{const current=b.dataset.merchantAction===action;b.classList.toggle('active',current);if(current)b.setAttribute?.('aria-current','page');else b.removeAttribute?.('aria-current')});
   if(action==='orders'){
     if(window.BusinessLifeOrders?.openMerchantOrders)return window.BusinessLifeOrders.openMerchantOrders();
     return document.getElementById('ordersQuickButton')?.click();
@@ -1544,7 +1544,7 @@ function setView(name){
   const view=$(`view${name}`);if(!view)return;
   document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));
   view.classList.remove('hidden');
-  document.querySelectorAll('.bottomNav button').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
+  document.querySelectorAll('.bottomNav button').forEach(b=>{const current=b.dataset.view===name;b.classList.toggle('active',current);if(current)b.setAttribute?.('aria-current','page');else b.removeAttribute?.('aria-current')});
   window.scrollTo({top:0,behavior:'smooth'});
   if(name==='Sell')updateSellPreview();
   loadMerchantView(name).catch(error=>{if(!error.staleMerchantRead)console.error(error)});
@@ -1588,23 +1588,31 @@ async function openPendingInventoryNotification(){
 }
 document.addEventListener('abl:profile-state',event=>{
   baseActiveRole=event.detail?.activeRole||null;
-  if(merchantTodayProfileKey!==merchantTodayProfileContext())invalidateMerchantToday();
+  if(merchantTodayProfileKey!==merchantTodayProfileContext()){
+    $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
+    invalidateMerchantToday();
+  }
   if(isMerchantBaseActive())loadMerchantToday().catch(()=>{});
   if(isMerchantBaseActive())openPendingInventoryNotification().catch(()=>{});
 });
 document.addEventListener('abl:business-workspace-changed',()=>{
+  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
   invalidateMerchantToday();
-  if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday({force:true}).catch(()=>{});
+  if(isMerchantBaseActive())loadMerchantToday({force:true}).catch(()=>{});
 });
 document.addEventListener('abl:merchant-storefront-saved',event=>{
   if(!isMerchantBaseActive())return;
   const businessId=Number(event.detail?.businessId);
   const activeId=currentMerchantBusinessId()||merchantTodayBusinessId||merchantTodayRequestBusinessId;
   if(!Number.isInteger(businessId)||businessId<1||businessId!==activeId)return;
+  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
   invalidateMerchantToday();
-  if(!$('viewDashboard')?.classList.contains('hidden'))loadMerchantToday().catch(()=>{});
+  loadMerchantToday().catch(()=>{});
 });
-document.addEventListener('abl:auth-expired',()=>invalidateMerchantToday());
+document.addEventListener('abl:auth-expired',()=>{
+  $('merchantRecipesNav')?.classList.add('roleFinanceHidden');
+  invalidateMerchantToday();
+});
 window.addEventListener('online',()=>{
   setOnline(true);
   if(isMerchantBaseActive()&&!$('viewDashboard')?.classList.contains('hidden')){
