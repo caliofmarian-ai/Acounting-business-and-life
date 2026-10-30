@@ -1,0 +1,58 @@
+name: Merchant Recipe Navigation Browser
+on:
+  pull_request:
+    paths:
+      - public/index.html
+      - public/v03.js
+      - public/v03.css
+      - public/styles.css
+      - public/shell.css
+      - public/business-accounting-ui.js
+      - public/business-accounting.css
+      - scripts/merchant-recipes-navigation-browser.mjs
+      - .github/workflows/merchant-recipes-nav-browser.yml
+  push:
+    branches: [main]
+    paths:
+      - public/index.html
+      - public/v03.js
+      - public/v03.css
+      - public/styles.css
+      - public/shell.css
+      - public/business-accounting-ui.js
+      - public/business-accounting.css
+      - scripts/merchant-recipes-navigation-browser.mjs
+      - .github/workflows/merchant-recipes-nav-browser.yml
+permissions:
+  contents: read
+concurrency:
+  group: recipe-nav-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install isolated browser tooling
+        run: npm install --prefix "$RUNNER_TEMP/recipe-nav" --no-package-lock --ignore-scripts playwright@1.58.2
+      - name: Verify native recipe navigation with shipped source and styles
+        env:
+          RECIPE_BROWSER_MODULE: ${{ runner.temp }}/recipe-nav/node_modules/playwright/index.mjs
+          RECIPE_BROWSER_CHANNEL: chrome
+          RECIPE_BROWSER_EVIDENCE: ${{ runner.temp }}/recipe-nav-evidence
+          RECIPE_BROWSER_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/merchant-recipes-navigation-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recipe-nav-evidence
+          path: ${{ runner.temp }}/recipe-nav-evidence
+          retention-days: 7
+          if-no-files-found: warn
