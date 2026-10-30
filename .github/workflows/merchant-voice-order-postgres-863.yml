@@ -4,8 +4,10 @@ on:
   pull_request:
     paths:
       - 'merchant-voice-order-*.js'
+      - 'merchant-voice-passkey-*.js'
       - 'server-orders.js'
       - 'tests/merchant-voice-order-*.test.js'
+      - 'tests/merchant-voice-passkey-*.test.js'
       - '.github/workflows/merchant-voice-order-postgres-863.yml'
   workflow_dispatch:
 

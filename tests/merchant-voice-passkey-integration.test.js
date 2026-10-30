@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const server=readFileSync(new URL('../server-orders.js',import.meta.url),'utf8');
 const routes=readFileSync(new URL('../merchant-voice-passkey-routes.js',import.meta.url),'utf8');
+const voiceRoutes=readFileSync(new URL('../merchant-voice-order-routes.js',import.meta.url),'utf8');
 const confirm=readFileSync(new URL('../merchant-voice-order-confirm.js',import.meta.url),'utf8');
 const ui=readFileSync(new URL('../public/merchant-voice-order-ui.js',import.meta.url),'utf8');
 const css=readFileSync(new URL('../public/merchant-voice-order.css',import.meta.url),'utf8');
@@ -31,7 +32,7 @@ test('password and phone proof must both precede existing canonical order with o
  assert.match(confirm,/guard\(db,\{/);
  assert.match(server,/if\(!sharedClient\)await client\.query\('BEGIN'\)/);
  assert.match(server,/if\(!sharedClient\)\{await client\.query\('COMMIT'\)/);
- assert.match(routes,/passkey_enrollment_available:ready\(\)&&passkeyReady\(\)/);
+ assert.match(voiceRoutes,/passkey_enrollment_available:ready\(\)&&passkeyReady\(\)/);
 });
 
 test('Android UI keeps native device confirmation and human phrase separate from speech recognition',()=>{
