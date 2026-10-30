@@ -134,7 +134,7 @@ import {auditRestaurantBacoorCompleteSnapshots as auditAll}
 function completeSnapshot(){
   const data=snapshot();
   data.catalogProducts=plan.privateCatalog.map((entry,i)=>({
-    id:String(3001+i),business_id:B,...entry.bodyTemplate,
+    id:String(3001+i),...entry.bodyTemplate,business_id:B,
     active:true,inventory_id:null,stock_tracked:false,stock_quantity:null
   }));
   return data;
