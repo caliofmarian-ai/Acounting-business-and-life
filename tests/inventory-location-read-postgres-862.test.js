@@ -26,7 +26,7 @@ test('862: isolated real PostgreSQL clean reads, coalescing, lock repair and iso
       const counted={async query(sql,args){sqlLog.push({sql,args});return pool.query(sql,args)}};
       await reconcileBusinessInventoryLocationsForRead(counted,{businessId:1});
       assert.equal(sqlLog.length,3);
-      assert.ok(sqlLog.every(x=>!x.sql.includes('FOR UPDATE')&&(!x.args.length||x.args[0]===1)));
+      assert.ok(sqlLog.every(x=>!x.sql.includes('FOR UPDATE')&&(!x.args?.length||x.args[0]===1)));
       const clean=await pool.query('SELECT COUNT(*) AS count FROM inventory_location_balances WHERE business_id=1');
       assert.equal(Number(clean.rows[0].count),1000);
       t.diagnostic('real PostgreSQL: 1000 inventory rows, three SELECTs, no per-item row locks');
