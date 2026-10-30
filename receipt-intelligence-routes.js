@@ -52,6 +52,15 @@ export async function ensureReceiptIntelligenceSchema(pool){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(draft_id,client_request_key)
     );
+    CREATE TABLE IF NOT EXISTS receipt_intelligence_aliases(
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+      supplier_key TEXT NOT NULL,
+      alias TEXT NOT NULL,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      confirmed_by_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(business_id,supplier_key,alias)
+    );
   `);
   return{ready:true};
 }
@@ -77,6 +86,15 @@ async function businessInventory(db,businessId){
     'SELECT id,business_id,item,unit,base_unit,internal_sku,barcode FROM inventory WHERE business_id=$1 ORDER BY id LIMIT $2',
     [businessId,RECEIPT_LIMITS.inventoryCandidates]
   )).rows;
+}
+async function supplierAliases(pool,businessId,vendorName){
+  const supplierKey=String(vendorName||'').trim().toLowerCase().slice(0,180);
+  if(!supplierKey)return[];
+  const result=await pool.query(
+    'SELECT business_id,inventory_id,alias FROM receipt_intelligence_aliases WHERE business_id=$1 AND supplier_key=$2 LIMIT 300',
+    [businessId,supplierKey]
+  );
+  return result.rows;
 }
 async function latestDraft(pool,businessId,documentId){
   const q=await pool.query(
@@ -150,8 +168,9 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
       const fingerprint=crypto.createHash('sha256').update(JSON.stringify(req.body.extraction)).digest('hex');
       const source=receiptExtractionFingerprint({documentId:receipt.id,sha256:fingerprint,provider:'manual'});
       const inventory=await businessInventory(pool,businessId);
+      const aliases=await supplierAliases(pool,businessId,req.body.extraction.vendor_name);
       const draft=buildReceiptIntelligenceDraft({
-        extraction:req.body.extraction,businessId,inventoryRows:inventory,
+        extraction:req.body.extraction,businessId,inventoryRows:inventory,aliases,
         meta:{provider:'manual',model:'manual_input_v1'}
       });
       const insert=await pool.query(`
@@ -198,7 +217,8 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
       claimId=Number(insert.rows[0].id);
       const result=await analyzer({bytes:file.bytes,mime:file.metadata.detected_mime,consent:true});
       const inventory=await businessInventory(pool,businessId);
-      const draft=buildReceiptIntelligenceDraft({extraction:result.extraction,businessId,inventoryRows:inventory,
+      const aliases=await supplierAliases(pool,businessId,result.extraction.vendor_name);
+      const draft=buildReceiptIntelligenceDraft({extraction:result.extraction,businessId,inventoryRows:inventory,aliases,
         meta:{provider:result.provider||'openai_vision',model:result.model||cfg.model}});
       const update=await pool.query(`
         UPDATE receipt_intelligence_drafts SET status='draft',extraction_json=$1::jsonb,
@@ -251,6 +271,25 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
           reviewed_by_account_id=$2,version=version+1,updated_at=NOW()
         WHERE id=$3 AND business_id=$4
       `,[JSON.stringify(review),actorId,did,businessId]);
+      // Learn only Merchant-confirmed inventory aliases for this exact supplier and business.
+      const supplierKey=String(draft.extraction_json.vendor_name||'').trim().toLowerCase().slice(0,180);
+      if(supplierKey){
+        for(const action of review.actions){
+          if(action.action!=='receive')continue;
+          const alias=String(draft.extraction_json.lines[action.line_index]?.description||'').trim().toLowerCase().slice(0,180);
+          if(!alias)continue;
+          await client.query(`
+            INSERT INTO receipt_intelligence_aliases(
+              business_id,supplier_key,alias,inventory_id,confirmed_by_account_id
+            )
+            SELECT $1,$2,$3,i.id,$5 FROM inventory i WHERE i.id=$4 AND i.business_id=$1
+            ON CONFLICT(business_id,supplier_key,alias) DO UPDATE SET
+              inventory_id=EXCLUDED.inventory_id,
+              confirmed_by_account_id=EXCLUDED.confirmed_by_account_id,
+              confirmed_at=NOW()
+          `,[businessId,supplierKey,alias,action.inventory_id,actorId]);
+        }
+      }
       await client.query('COMMIT');
       res.json({review,already_saved:false,stock_posted:false});
     }catch(e){if(client)await client.query('ROLLBACK').catch(()=>{});next(e)}
