@@ -26,8 +26,10 @@ export function normalizeReceiptExtraction(input){
   if(!input||typeof input!=='object'||Array.isArray(input))error('Structured receipt extraction is required');
   if(JSON.stringify(input).length>RECEIPT_LIMITS.bodyBytes)error('Receipt extraction exceeds size limit',413);
   if(!Array.isArray(input.lines)||input.lines.length<1||input.lines.length>RECEIPT_LIMITS.lines)error('Receipt must contain 1–80 lines');
-  const warnings=[],currency=trim(input.currency_code||'PHP',3).toUpperCase();
+  const warnings=[],currencyVisible=Boolean(trim(input.currency_code,3));
+  const currency=trim(input.currency_code||'PHP',3).toUpperCase();
   if(!/^[A-Z]{3}$/.test(currency))error('Unsupported currency format');
+  if(!currencyVisible)warnings.push('CURRENCY_NOT_VISIBLE_REVIEW');
   if(currency!=='PHP')warnings.push('NON_PHP_CURRENCY_REVIEW');
   const totals={};
   for(const field of ['document_total','subtotal','tax_amount','discount_amount','shipping_amount','other_charge_amount']){
@@ -77,6 +79,7 @@ export function normalizeReceiptExtraction(input){
   return{
     schema_version:1,source:'untrusted_receipt_suggestion',vendor_name:trim(input.vendor_name,180),
     document_number:trim(input.document_number,100),issue_date:date,currency_code:currency,
+    currency_observed_on_document:currencyVisible,
     ...totals,lines,reconciliation:{status,line_sum:moneyFromCents(sum),
       predicted_total:moneyFromCents(predicted),difference:moneyFromCents(difference),
       subtotal_difference:moneyFromCents(subtotalDifference),parsed_lines:lines.filter(x=>x.line_total!=null).length},
