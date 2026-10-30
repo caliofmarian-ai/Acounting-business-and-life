@@ -70,6 +70,21 @@ test('862: one thousand settled items require bounded bulk reads without row loc
   assert.ok(pool.calls.every(({sql,params})=>!sql.includes('FOR UPDATE')&&(params[0]===1||sql.includes('to_regclass'))));
 });
 
+test('862: independent Item/Location/schema read checks start before slow Item SELECT resolves',async()=>{
+  let entered;const started=new Promise(resolve=>{entered=resolve});
+  let release;const pending=new Promise(resolve=>{release=resolve});
+  const pool=fixture({inventoryGate:async()=>{entered();await pending}});
+  const read=reconcileBusinessInventoryLocationsForRead(pool,{businessId:1});
+  await started;
+  // The first SQL call is still pending: the two unrelated calls must already have started.
+  assert.equal(pool.calls.length,3);
+  assert.ok(pool.calls.some(c=>c.sql.startsWith('SELECT name FROM inventory_storage_locations')));
+  assert.ok(pool.calls.some(c=>c.sql.startsWith("SELECT to_regclass('public.supply_lots')")));
+  release();
+  await read;
+  assert.equal(pool.calls.filter(c=>c.sql.includes('FOR UPDATE')).length,0);
+});
+
 test('862: two simultaneous reads of one business share an in-flight check',async()=>{
   let entered;const started=new Promise(resolve=>{entered=resolve});
   let release;const pending=new Promise(resolve=>{release=resolve});
