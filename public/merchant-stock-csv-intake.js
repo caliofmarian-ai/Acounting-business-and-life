@@ -47,11 +47,17 @@ export function parseStockIntakeCsv(text){
     const expected=data.recomputed_line_php===''||data.recomputed_line_php===undefined?null:Number(data.recomputed_line_php);
     const unit=data.proposed_unit||'';
     const flag=data.posting_status||'';
+    const paidRaw=data.actual_total_paid_php||'';
+    const paidTotal=paidRaw===''?null:Number(paidRaw);
+    if(paidTotal!==null&&(!Number.isFinite(paidTotal)||paidTotal<=0||
+      Math.abs(paidTotal*100-Math.round(paidTotal*100))>1e-6)){
+      throw new Error('Invalid confirmed paid total on CSV line '+(index+2));
+    }
     const costMismatch=expected!==null&&Number.isFinite(expected)&&Number.isFinite(total)&&Math.abs(expected-total)>0.009;
     const requiresReview=!Number.isFinite(quantity)||quantity===null||quantity<=0||costMismatch
       ||/(VERIFY|CONFIRM QTY|CHECK PRICE|REVIEW|UNKNOWN)/i.test(flag);
     return{
-      key:String(index+1),item,quantity,unit,total,expected,flag,
+      key:String(index+1),item,quantity,unit,total,expected,flag,paidTotal,
       note:String(data.review_note||'').slice(0,240),
       requiresReview,reviewConfirmed:false,selected:false,
       exists:null,result:'pending',error:''
@@ -264,10 +270,16 @@ if(hasDocument){
     if(file.size>250000){message('fileStatus','CSV is too large.','error');return}
     try{
       const parsed=parseStockIntakeCsv(await file.text());
+      const sourcePaidTotals=[...new Set(parsed.map(row=>row.paidTotal).filter(value=>value!==null))];
+      if(sourcePaidTotals.length>1)
+        throw new Error('CSV contains different confirmed paid totals. Reconcile the source before importing.');
       state.rows=parsed;state.resultLog=[];
-      $('physicalConfirm').checked=false;$('moneyConfirm').checked=false;$('actualTotalPaid').value='';
+      $('physicalConfirm').checked=false;$('moneyConfirm').checked=false;
+      $('actualTotalPaid').value=sourcePaidTotals.length?sourcePaidTotals[0].toFixed(2):'';
       refreshExisting();renderRows();
-      message('fileStatus',parsed.length+' rows loaded locally. No server writes have occurred.','ok');
+      message('fileStatus',parsed.length+' rows loaded locally. '+(sourcePaidTotals.length?
+        'Source says ₱'+sourcePaidTotals[0].toFixed(2)+' was paid; verify this amount against purchase evidence. ': 
+        'Enter the amount actually paid. ')+ 'No server writes have occurred.','ok');
       message('results','No changes made.');
     }catch(error){state.rows=[];renderRows();message('fileStatus',error.message,'error')}
   }
