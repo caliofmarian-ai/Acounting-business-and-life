@@ -5,6 +5,7 @@ on:
     paths:
       - inventory-locations.js
       - tests/inventory-location-read-performance-862.test.js
+      - tests/inventory-location-read-postgres-862.test.js
       - .github/workflows/inventory-location-read-862.yml
 
 permissions:
@@ -42,7 +43,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Check source syntax
-        run: node --check inventory-locations.js && node --check tests/inventory-location-read-performance-862.test.js
+        run: node --check inventory-locations.js && node --check tests/inventory-location-read-performance-862.test.js && node --check tests/inventory-location-read-postgres-862.test.js
       - name: Execute isolated source regression
         run: node --test tests/inventory-location-read-performance-862.test.js
       - name: Real PostgreSQL concurrency and business-isolation regression
