@@ -1595,6 +1595,7 @@ function setView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));
   view.classList.remove('hidden');
   document.querySelectorAll('.bottomNav button').forEach(b=>{const current=b.dataset.view===name;b.classList.toggle('active',current);if(current)b.setAttribute?.('aria-current','page');else b.removeAttribute?.('aria-current')});
+  if(typeof CustomEvent==='function')document.dispatchEvent(new CustomEvent('abl:merchant-local-view',{detail:{name}}));
   window.scrollTo({top:0,behavior:'smooth'});
   if(name==='Sell')updateSellPreview();
   loadMerchantView(name).catch(error=>{if(!error.staleMerchantRead)console.error(error)});
