@@ -96,6 +96,7 @@ test('switching profiles clears the stale business attribution before Merchant T
     },
     window:{BusinessLifeMerchantToday:{getState:()=>({workspace:null})}},
     applyWorkspaceState:()=>{throw new Error('Unverified Merchant cache must not hydrate')},
+    applyFinancePresentation:()=>{},
     api:async()=>({}),wireSupplierAccountingTile:()=>{},console
   });
   vm.runInContext('let accountingWorkspaceAccountId=null;\n'+actual('async function bootAccountingWorkspace','function resetMerchantNavPresentation'),context);
