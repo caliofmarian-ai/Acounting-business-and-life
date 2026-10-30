@@ -169,7 +169,7 @@ try{
         "SELECT COUNT(*)::int AS blocked FROM pg_stat_activity " +
         "WHERE datname=current_database() AND pid<>pg_backend_pid() " +
         "AND state='active' AND wait_event_type='Lock' " +
-        "AND query LIKE '%SELECT * FROM marketplace_products WHERE id=%FOR UPDATE%'"
+        "AND query LIKE '%FROM marketplace_products WHERE id=%FOR UPDATE%'"
       );
       if(Number(waiting.rows[0].blocked)>=minimum)return;
       await new Promise(resolve=>setTimeout(resolve,50));
