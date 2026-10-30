@@ -6,7 +6,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const loader=read('public/mobile-feature-loader.js');
 const admin=read('public/admin-operations-ui.js');
 const authServer=read('server-auth.js');
-const promo=read('public/referral/promotion-center.html');
+const promo=read('public/referral/promotion-copy.js');
 const help=read('public/help-linking.js');
 const helpCss=read('public/help-linking.css');
 const payments=read('public/payments-ui.js');
@@ -32,10 +32,10 @@ test('referral public origin can never silently use localhost upstream host',()=
 });
 
 test('Promotion Center explains unavailable states instead of generic Unavailable',()=>{
-  assert.doesNotMatch(promo,/codeNode\.textContent='Unavailable'/);
-  assert.match(promo,/Profile not enabled/);
-  assert.match(promo,/Sharing temporarily unavailable/);
-  assert.match(promo,/Choose another enabled profile/);
+  assert.match(promo,/This profile is no longer available/);
+  assert.match(promo,/Your invitation could not load\. Check your connection and try again/);
+  assert.match(promo,/An enabled profile has been selected/);
+  assert.match(read('public/referral/promotion-page.js'),/showFeedback\(errorKey/);
 });
 
 test('voice support provides Android overlay fallback guidance',()=>{

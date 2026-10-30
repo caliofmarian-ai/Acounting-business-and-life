@@ -461,6 +461,7 @@ function injectedIndex() {
 
 app.get('/', (_req, res) => res.type('html').send(injectedIndex()));
 app.get('/index.html', (_req, res) => res.type('html').send(injectedIndex()));
+app.get(['/referral', '/referral/'], (_req, res) => res.sendFile(join(publicDir, 'referral', 'index.html')));
 app.use(express.static(publicDir, { index: false }));
 
 app.get('/health',async(req,res)=>{
@@ -929,7 +930,7 @@ app.get('/api/growth/referral', auth, async (req, res, next) => {
       inviterDisplayName: account.rows[0].display_name || ''
     });
     const qr = await buildLocalReferralQr(payload.referralUrl);
-    res.json({ ...payload, campaign: new URL(payload.referralUrl).searchParams.get('utm_campaign'), qr });
+    res.json({ ...payload, account_id: req.accountId, campaign: new URL(payload.referralUrl).searchParams.get('utm_campaign'), qr });
   } catch (err) {
     next(err);
   }
