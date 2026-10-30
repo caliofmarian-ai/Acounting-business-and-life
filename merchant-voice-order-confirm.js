@@ -12,7 +12,8 @@ const problem=(status,code,message)=>Object.assign(new Error(message),{status,co
 const positiveId=v=>Number.isSafeInteger(Number(v))&&Number(v)>0;
 const allowed=new Set(['VOICE_CONFIRM_QUOTE_INVALID','VOICE_CONTEXT_STALE','VOICE_QUOTE_STALE',
   'VOICE_CREATE_BAD_REQUEST','VOICE_CREATE_KEY_REUSED','VOICE_CREATE_PENDING',
-  'VOICE_STEP_UP_REQUIRED','VOICE_CONFIRMATION_REQUIRED','VOICE_CREATE_DISABLED']);
+  'VOICE_STEP_UP_REQUIRED','VOICE_CONFIRMATION_REQUIRED','VOICE_CREATE_DISABLED',
+  'HIGH_RISK_VELOCITY_LIMIT']);
 
 export async function requireVoiceOperatorStepUp(client,{token,tokenSecret,accountId,now=new Date()}={}){
   const current=verifyV2SessionTokenSignature(tokenSecret,token,{now:now.getTime()});
@@ -31,7 +32,8 @@ export async function requireVoiceOperatorStepUp(client,{token,tokenSecret,accou
 
 export function installMerchantVoiceOrderConfirmation(app,{
   db,requireMerchant,quoteSecret,tokenSecret,canonicalSnapshots,createCanonicalOrder,orderDetail,
-  bodyMiddleware,env=process.env,now=()=>new Date(),guard=withVoiceOrderExactlyOnce
+  bodyMiddleware,env=process.env,now=()=>new Date(),guard=withVoiceOrderExactlyOnce,
+  checkCreateVelocity=async()=>{}
 }={}){
   if(!app?.post||!db?.connect||typeof requireMerchant!=='function'||
      typeof canonicalSnapshots!=='function'||typeof createCanonicalOrder!=='function'||
@@ -66,6 +68,9 @@ export function installMerchantVoiceOrderConfirmation(app,{
           await requireVoiceOperatorStepUp(client,{token,tokenSecret,accountId:aid,now:now()});
           const snapshots=await canonicalSnapshots(client,{businessId:bid,items:parsed.orderItems});
           assertVoiceQuoteMatchesSnapshots(parsed.quote,snapshots);
+          // Match the same anti-abuse decision used by manual Merchant create.
+          // This callback runs only for a new idempotency claim, not a retry.
+          await checkCreateVelocity({accountId:aid,businessId:bid});
           // Existing canonical engine: SAME PostgreSQL client/transaction,
           // quantity/prices locked and revalidated, stock reserves only once.
           return createCanonicalOrder({businessId:bid,customerAccountId:null,
@@ -84,6 +89,7 @@ export function installMerchantVoiceOrderConfirmation(app,{
         currency_code:order.currency_code,subtotal:order.subtotal,total:order.total});
     }catch(error){
       const code=String(error?.code||'');const status=[400,401,403,409,422,428,429,503].includes(error?.status)?error.status:503;
+      if(status===429)res.set('Retry-After',String(Math.max(1,Number(error.retryAfterSeconds)||60)));
       if(status===428)res.set('Cache-Control','private, no-store, max-age=0');
       return res.status(status).json({code:allowed.has(code)?code:'VOICE_CREATE_UNAVAILABLE',
         error:allowed.has(code)?String(error.message||'Please try again.').slice(0,220):

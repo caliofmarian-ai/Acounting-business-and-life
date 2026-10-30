@@ -40,12 +40,13 @@ function db({verified=true,revoked=false}={}){
     },release(){} }}}
 }
 function setup({disabled=false,accountId=44,businessId=7,verified=true,mutateCanonical=false,clock=now}={}){
-  const handlers={},store=db({verified}),created=[],catalogCalls=[];
+  const handlers={},store=db({verified}),created=[],catalogCalls=[],velocity=[];
   const app={post:(path,...args)=>handlers[path]=args.at(-1)};
   installMerchantVoiceOrderConfirmation(app,{db:store,quoteSecret,tokenSecret,
     requireMerchant:async()=>({me:{account:{id:accountId}},business:{id:businessId}}),
     canonicalSnapshots:async(_client,p)=>{catalogCalls.push(p);return[{...snapshot,line_total:mutateCanonical?80:70}]},
     createCanonicalOrder:async params=>{created.push(params);return{id:501}},orderDetail:async()=>order,
+    checkCreateVelocity:async context=>velocity.push(context),
     env:{ORDER_VOICE_UI_ENABLED:'1',ORDER_VOICE_AI_ENABLED:'1',ORDER_VOICE_CREATE_ENABLED:disabled?'0':'1'},now:()=>clock});
   const call=async body=>{
     let status=0,output=null;
@@ -54,7 +55,7 @@ function setup({disabled=false,accountId=44,businessId=7,verified=true,mutateCan
     await handlers['/api/orders/voice/confirm'](input,res);
     return{status,body:output};
   };
-  return{store,created,catalogCalls,call};
+  return{store,created,catalogCalls,velocity,call};
 }
 test('voice confirm is disabled by default even for signed draft',async()=>{
   const f=setup({disabled:true}),r=await f.call({});assert.equal(r.status,503);assert.equal(r.body.code,'VOICE_CREATE_DISABLED');assert.equal(f.created.length,0);
@@ -63,7 +64,8 @@ test('explicit secure confirmation creates once; replay returns original unpaid 
   const f=setup(),first=await f.call({}),again=await f.call({});
   assert.equal(first.status,201);assert.equal(again.status,200);assert.equal(first.body.replayed,false);assert.equal(again.body.replayed,true);
   assert.equal(first.body.order_status,'awaiting_customer_presence');assert.equal(first.body.payment_status,'unpaid');
-  assert.equal(f.created.length,1);assert.equal(f.created[0].counterPresence,false);
+  assert.equal(f.created.length,1);assert.equal(f.velocity.length,1);assert.deepEqual(f.velocity[0],{accountId:44,businessId:7});
+  assert.equal(f.created[0].counterPresence,false);
   assert.equal(f.created[0].client!==undefined,true);assert.equal(f.catalogCalls.length,1);
 });
 test('required explicit operator button confirmation and same merchant account/business',async()=>{
