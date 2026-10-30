@@ -42,6 +42,12 @@ Current image adapter supports JPEG/PNG/WEBP and OpenAI Responses JSON-schema ou
 
 **None are set by this PR.** The integration fails closed without explicit configuration and per-document Merchant consent. The model request uses `store:false`, constrained structured JSON, and `detail:original` for small receipt text. Payloads are fetched solely from the malware-scanned private evidence vault. Do not log raw file bytes, personal data, tokens or the provider key. AI calls incur separate usage costs and must not start automatically merely because a receipt was uploaded.
 
+## Duplicate prevention, confirmed aliases and provider cost control
+
+The Merchant is warned if another receipt in the same business has the same original file digest or matching supplier, document number, date and amount. Suggestions never automatically create or reverse an Inventory transaction. The current OpenAI call budget defaults to **30 analysis attempts per business per 24 hours**; the operator can set `RECEIPT_AI_DAILY_LIMIT` between 1 and 100. This is a safeguard against unintended model expenses, not a promise about provider billing.
+
+When the Merchant explicitly confirms that a receipt line represents an existing Inventory item, an alias can be learned for that exact Merchant business and named supplier. The alias mapping is audited by the related review event, and similarity/alias matches still require explicit selection in subsequent receipts. A supplier name that cannot be identified does not create an alias.
+
 ## Physical count and fraud safeguards
 
 Existing #718 blind count, review and posted variance safeguards remain unchanged. Variance evidence is exposed only after the server confirms count status `review` / `posted`; it includes recent actual purchases and originals when linked. Photos can help investigate a mismatch but cannot prove present stock.
