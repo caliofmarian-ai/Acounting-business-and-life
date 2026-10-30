@@ -317,6 +317,8 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     const state=detail?.snapshot?detail:window.BusinessLifeProfileState;
     const me=state?.snapshot,role=state?.surface==='profile'?state.activeRole:null;
     if(!me||!['merchant','supplier'].includes(role)){
+      // Never carry a former Merchant/Supplier business into a different profile.
+      accountingState={role:null,activeBusinessId:null,businesses:[]};
       document.getElementById('businessWorkspaceBar')?.remove();
       document.getElementById('supplierAccountingWorkspace')?.classList.add('hidden');
       document.body.classList.remove('supplierAccountingMode');
@@ -325,6 +327,17 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     const profile=me.profiles?.find(p=>p.role===role);
     if(!profile?.enabled) return;
     if(role==='merchant'){
+      if(accountingState.role!=='merchant'){
+        // Supplier → Merchant: do not render the Supplier's business identity
+        // or attach its business_id to Merchant requests while Today hydrates.
+        accountingState={role:'merchant',activeBusinessId:null,businesses:[]};
+        const bar=document.getElementById('businessWorkspaceBar');
+        if(bar){
+          bar.className='businessWorkspaceBar businessWorkspaceBarPending';
+          bar.setAttribute('aria-busy','true');
+          bar.innerHTML='<div><span class="workspaceEyebrow">Current business</span><strong>Preparing workspace…</strong></div><span class="workspaceIsolated">Loading</span>';
+        }
+      }
       const cached=window.BusinessLifeMerchantToday?.getState?.()?.workspace;
       if(cached)applyWorkspaceState(cached);
       return;
