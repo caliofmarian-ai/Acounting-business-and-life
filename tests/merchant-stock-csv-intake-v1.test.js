@@ -71,8 +71,9 @@ test('paid stock intake requires one Merchant, and records exactly a linked purc
   assert.match(js,/findExistingInventory\(row,state\.inventory\)/);
   assert.match(js,/record_expense:true/);
   assert.match(js,/account:paidFrom/);
-  assert.match(js,/result\.transaction\?\.id/);
+  assert.match(js,/result\?\.transaction\?\.id/);
   assert.match(js,/method:'PATCH'/);
+  assert.match(js,/originalDate!==localDatePH\(\)/);
   assert.match(js,/originalDate\+'T12:00:00\+08:00'/);
   assert.match(js,/api\('\/api\/transactions'/);
   assert.match(js,/No automatic retry/);
