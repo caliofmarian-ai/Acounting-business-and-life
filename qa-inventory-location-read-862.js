@@ -3,8 +3,12 @@ import {validateRuntimeSafety} from './runtime-safety.js';
 
 export const INVENTORY_LOCATION_READ_862_WAVE='inventory_location_read_862';
 export const INVENTORY_862_PATHS=Object.freeze([
+  '/api/inventory/location-summary'
+]);
+export const INVENTORY_862_LEGACY_PATHS=Object.freeze([
   '/api/inventory/locations',
-  '/api/inventory/location-balances'
+  '/api/inventory/location-balances',
+  '/api/inventory/transfers'
 ]);
 
 export function inventory862Percentile(values,percentage=0.95){
@@ -18,6 +22,18 @@ export function inventory862AssertScopedRows(rows,businessId,path){
   if(rows.some(row=>Number(row.business_id)!==Number(businessId)))
     throw new Error('Inventory 862 cross-business rows detected in '+path);
   return rows.length;
+}
+export function inventory862AssertPayload(body,businessId,path){
+  if(path==='/api/inventory/location-summary'){
+    if(!body||!Array.isArray(body.locations)||!Array.isArray(body.balances)||
+      !Array.isArray(body.transfers))
+      throw new Error('Inventory 862 combined Storage payload is malformed.');
+    inventory862AssertScopedRows(body.locations,businessId,'summary locations');
+    inventory862AssertScopedRows(body.balances,businessId,'summary balances');
+    inventory862AssertScopedRows(body.transfers,businessId,'summary transfers');
+    return body.locations.length+body.balances.length+body.transfers.length;
+  }
+  return inventory862AssertScopedRows(body,businessId,path);
 }
 export function inventory862ValidateRuntime(env=process.env){
   const runtime=validateRuntimeSafety(env);
@@ -103,7 +119,7 @@ export async function runInventoryLocationRead862Acceptance({
       throw new Error('Inventory 862 active Merchant workspace is not bound.');
 
     const before=await fingerprintBusiness(pool,originalBusinessId);
-    for(const path of INVENTORY_862_PATHS)
+    for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS])
       assertHttp(await measureAuthorized(base,path),401,'Guest '+path);
 
     customer=await qaAccountSession({pool,base,secret,email:aliases.customer,
@@ -115,14 +131,14 @@ export async function runInventoryLocationRead862Acceptance({
        customerMe.json?.account?.active_role!=='customer'){
       throw new Error('Inventory 862 customer negative must use Customer QA profile.');
     }
-    for(const path of INVENTORY_862_PATHS)
+    for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS])
       assertHttp(await measureAuthorized(base,path,customer.token),403,'Customer '+path);
 
     const warmups=[];
     for(const path of INVENTORY_862_PATHS){
       const warm=await measureAuthorized(base,path,merchant.token);
       assertHttp(warm,200,'Warm Merchant '+path);
-      inventory862AssertScopedRows(warm.body,originalBusinessId,path);
+      inventory862AssertPayload(warm.body,originalBusinessId,path);
       warmups.push(warm.elapsed);
     }
 
@@ -134,7 +150,7 @@ export async function runInventoryLocationRead862Acceptance({
       for(let idx=0;idx<responses.length;idx++){
         const path=INVENTORY_862_PATHS[idx],response=responses[idx];
         assertHttp(response,200,'Merchant '+path);
-        inventory862AssertScopedRows(response.body,originalBusinessId,path);
+        inventory862AssertPayload(response.body,originalBusinessId,path);
         if(response.elapsed>10000)throw new Error('Inventory 862 unexplained >10 s request: '+path);
         timings[path].push(response.elapsed);
       }
@@ -145,12 +161,12 @@ export async function runInventoryLocationRead862Acceptance({
       const foreignInventory=await pool.query(
         'SELECT id FROM inventory WHERE business_id=$1 ORDER BY id LIMIT 1',[otherId]
       );
-      for(const path of INVENTORY_862_PATHS){
+      for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS]){
         const suffix=path.includes('location-balances')&&foreignInventory.rows.length
           ?'&inventory_id='+Number(foreignInventory.rows[0].id):'';
         const forged=await measureAuthorized(base,path+'?business_id='+otherId+suffix,merchant.token);
         assertHttp(forged,200,'Forged business query '+path);
-        inventory862AssertScopedRows(forged.body,originalBusinessId,path);
+        inventory862AssertPayload(forged.body,originalBusinessId,path);
         if(suffix&&forged.body.length)throw new Error('Foreign Inventory item leaked in scoped balance GET.');
       }
       await selectBusiness({base,token:merchant.token,businessId:otherId});
@@ -160,10 +176,10 @@ export async function runInventoryLocationRead862Acceptance({
       if(Number(switched.json?.active_business_id)!==otherId)
         throw new Error('Inventory 862 selected workspace did not update.');
       const beforeB=await fingerprintBusiness(pool,otherId);
-      for(const path of INVENTORY_862_PATHS){
+      for(const path of [...INVENTORY_862_PATHS,...INVENTORY_862_LEGACY_PATHS]){
         const result=await measureAuthorized(base,path,merchant.token);
         assertHttp(result,200,'Merchant switched B '+path);
-        inventory862AssertScopedRows(result.body,otherId,path);
+        inventory862AssertPayload(result.body,otherId,path);
       }
       const afterB=await fingerprintBusiness(pool,otherId);
       if(JSON.stringify(beforeB)!==JSON.stringify(afterB))
@@ -172,7 +188,7 @@ export async function runInventoryLocationRead862Acceptance({
       changedBusiness=false;
       const back=await measureAuthorized(base,INVENTORY_862_PATHS[0],merchant.token);
       assertHttp(back,200,'Merchant restored A');
-      inventory862AssertScopedRows(back.body,originalBusinessId,INVENTORY_862_PATHS[0]);
+      inventory862AssertPayload(back.body,originalBusinessId,INVENTORY_862_PATHS[0]);
     }
     const after=await fingerprintBusiness(pool,originalBusinessId);
     if(JSON.stringify(before)!==JSON.stringify(after))
@@ -185,11 +201,10 @@ export async function runInventoryLocationRead862Acceptance({
       status:'PASS',wave:INVENTORY_LOCATION_READ_862_WAVE,
       authenticated_qa_merchant:true,customer_403:true,guest_401:true,
       business_a_b_verified:Boolean(otherId),queried_business_override_ignored:Boolean(otherId),
-      rounds,concurrent_requests:rounds*2,
-      location_p95_ms:p95[INVENTORY_862_PATHS[0]],
-      location_balances_p95_ms:p95[INVENTORY_862_PATHS[1]],
-      location_max_ms:Math.max(...timings[INVENTORY_862_PATHS[0]]),
-      location_balances_max_ms:Math.max(...timings[INVENTORY_862_PATHS[1]]),
+      rounds,storage_summary_requests:rounds,
+      storage_summary_p95_ms:p95[INVENTORY_862_PATHS[0]],
+      storage_summary_max_ms:Math.max(...timings[INVENTORY_862_PATHS[0]]),
+      legacy_endpoints_authorized_and_tenant_scoped:true,
       warmup_ms:warmups,
       no_stock_or_money_write:true,credentials_restored_by_outer_harness:true
     };
