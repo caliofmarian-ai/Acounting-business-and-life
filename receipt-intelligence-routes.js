@@ -3,7 +3,7 @@ import {supplierDomainV2Internals} from './server-supplier-domain-v2.js';
 import {readPrivateEvidence} from './private-evidence-core.js';
 import {
   buildReceiptIntelligenceDraft,validateReceiptReceivingReview,
-  receiptExtractionFingerprint,RECEIPT_LIMITS
+  receiptExtractionFingerprint,receiptReviewSubmissionFingerprint,RECEIPT_LIMITS
 } from './receipt-intelligence-core.js';
 import {receiptVisionConfig,extractReceiptImage} from './receipt-intelligence-provider.js';
 
@@ -51,10 +51,12 @@ export async function ensureReceiptIntelligenceSchema(pool){
       draft_id BIGINT NOT NULL REFERENCES receipt_intelligence_drafts(id) ON DELETE RESTRICT,
       actor_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
       client_request_key TEXT NOT NULL,
+      submission_sha256 TEXT NOT NULL DEFAULT '',
       review_json JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(draft_id,client_request_key)
     );
+    ALTER TABLE receipt_intelligence_reviews ADD COLUMN IF NOT EXISTS submission_sha256 TEXT NOT NULL DEFAULT '';
     CREATE TABLE IF NOT EXISTS receipt_intelligence_aliases(
       business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
       supplier_key TEXT NOT NULL,
@@ -250,6 +252,9 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
       const {businessId,actorId}=await scope(pool,identity,req,true);
       const receipt=await receiptFor(pool,businessId,req.params.id);
       const did=id(req.body?.draft_id,'draft_id'),key=requestKey(req.body?.client_request_key);
+      const submissionHash=receiptReviewSubmissionFingerprint({
+        draftId:did,expectedVersion:req.body?.expected_version,decisions:req.body?.decisions
+      });
       client=await pool.connect();
       await client.query('BEGIN');
       const q=await client.query(
@@ -259,10 +264,12 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
       if(!q.rowCount)fail('Draft not found in this business',404);
       const draft=q.rows[0];
       const previous=await client.query(
-        'SELECT review_json FROM receipt_intelligence_reviews WHERE draft_id=$1 AND client_request_key=$2',
+        'SELECT review_json,submission_sha256 FROM receipt_intelligence_reviews WHERE draft_id=$1 AND client_request_key=$2',
         [did,key]
       );
       if(previous.rowCount){
+        if(previous.rows[0].submission_sha256&&previous.rows[0].submission_sha256!==submissionHash)
+          fail('This request key was already used for a different receipt review',409);
         await client.query('COMMIT');
         return res.json({review:previous.rows[0].review_json,already_saved:true,stock_posted:false});
       }
@@ -273,9 +280,9 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
         draft:draft.extraction_json,submission:req.body,businessId,inventoryRows:inventory
       });
       await client.query(`
-        INSERT INTO receipt_intelligence_reviews(draft_id,actor_account_id,client_request_key,review_json)
-        VALUES($1,$2,$3,$4::jsonb)
-      `,[did,actorId,key,JSON.stringify(review)]);
+        INSERT INTO receipt_intelligence_reviews(draft_id,actor_account_id,client_request_key,submission_sha256,review_json)
+        VALUES($1,$2,$3,$4,$5::jsonb)
+      `,[did,actorId,key,submissionHash,JSON.stringify(review)]);
       await client.query(`
         UPDATE receipt_intelligence_drafts SET status='reviewed',review_json=$1::jsonb,
           reviewed_by_account_id=$2,version=version+1,updated_at=NOW()
