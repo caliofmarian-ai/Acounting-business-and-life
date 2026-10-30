@@ -355,7 +355,7 @@ document.addEventListener('abl:business-workspace-changed',event=>{
 },{passive:true});
 document.addEventListener('abl:auth-expired',resetMerchantNavPresentation,{passive:true});
 document.addEventListener('abl:merchant-today-error',()=>{
-  if(accountingState.role==='merchant')applyFinancePresentation({role:'merchant',presentation:{merchant_domain:'unknown',legacy_recipe_ui_allowed:false}});
+  if(accountingState.role==='merchant'||window.BusinessLifeProfileState?.activeRole==='merchant')applyFinancePresentation({role:'merchant',presentation:{merchant_domain:'unknown',legacy_recipe_ui_allowed:false}});
 },{passive:true});
 document.addEventListener('abl:merchant-money-opened',()=>{
   if(accountingState.role==='merchant')mountEconomicSummary('viewMoney');
