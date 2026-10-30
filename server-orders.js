@@ -8,6 +8,8 @@ import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetiza
 import { readOrderDetail } from './orders-read-core.js';
 import {merchantCounterCatalog,merchantCounterSnapshots} from './merchant-counter-catalog-core.js';
 import {installMerchantVoiceOrderRoutes,ensureVoiceOrderUsageSchema} from './merchant-voice-order-routes.js';
+import {installMerchantVoiceOrderConfirmation} from './merchant-voice-order-confirm.js';
+import {ensureVoiceOrderSubmissionSchema} from './merchant-voice-order-idempotency.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {restoreLotAllocation,inventoryAvailabilityRows} from './inventory-lot-runtime.js';
@@ -246,6 +248,7 @@ async function initDb() {
   `);
   await ensureOrderStockReservationSchema(pool);
   if(process.env.ORDER_VOICE_UI_ENABLED==='1')await ensureVoiceOrderUsageSchema(pool);
+  if(process.env.ORDER_VOICE_CREATE_ENABLED==='1')await ensureVoiceOrderSubmissionSchema(pool);
 }
 
 async function orderDetail(id,client=pool){return readOrderDetail(client,id)}
@@ -292,15 +295,16 @@ async function productSnapshots(items, businessId, client=pool) {
   return normalized.sort((a,b)=>a.source_id-b.source_id);
 }
 
-async function createOrder({ businessId, customerAccountId=null, customerName='', customerContact='', items, fulfilmentMethod, paymentMethod, deliveryAddress='', note='', preparationEtaMinutes=15, counterPresence=false, merchantCounter=false }) {
+async function createOrder({ businessId, customerAccountId=null, customerName='', customerContact='', items, fulfilmentMethod, paymentMethod, deliveryAddress='', note='', preparationEtaMinutes=15, counterPresence=false, merchantCounter=false, client:sharedClient=null, expectedCurrencyCode=null }) {
   if (!FULFILMENT.has(fulfilmentMethod)) throw Object.assign(new Error('Choose pickup or delivery'),{status:400});
   if (!PAYMENT_METHODS.has(paymentMethod)) throw Object.assign(new Error('Choose cash or online payment'),{status:400});
   if (fulfilmentMethod==='delivery' && paymentMethod==='cash') throw Object.assign(new Error('Cash delivery is not enabled yet. Choose online payment or pickup.'),{status:409});
   if (fulfilmentMethod==='delivery' && !clean(deliveryAddress,400)) throw Object.assign(new Error('Delivery address is required'),{status:400});
-  const client=await pool.connect();
+  const client=sharedClient||await pool.connect();
   try{
-    await client.query('BEGIN');
+    if(!sharedClient)await client.query('BEGIN');
     const b=await client.query(`SELECT id,name,currency_code FROM businesses WHERE id=$1`,[businessId]);if(!b.rowCount) throw Object.assign(new Error('Merchant not found'),{status:404});
+    if(expectedCurrencyCode&&String(b.rows[0].currency_code||'PHP')!==expectedCurrencyCode)throw Object.assign(new Error('Voice quotes require the Merchant PHP currency'),{status:409});
     const itemRows=merchantCounter?await merchantCounterSnapshots(client,{businessId,items}):await productSnapshots(items,businessId,client);
     const subtotal=money(itemRows.reduce((s,i)=>s+i.line_total,0));const deliveryFee=0;const total=money(subtotal+deliveryFee);
     let trust={completed_orders:0,eligible:false,allowed:false,suspended:false};
@@ -316,8 +320,11 @@ async function createOrder({ businessId, customerAccountId=null, customerName=''
     }
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Order created')`,[id,status,customerAccountId]);
     await reserveOrderStock(client,{...order.rows[0],id,order_number:orderNumber,order_status:status,business_id:businessId,fulfilment_method:fulfilmentMethod});
-    await client.query('COMMIT');return orderDetail(id);
-  }catch(e){try{await client.query('ROLLBACK')}catch{}throw e}finally{client.release()}
+    if(!sharedClient){await client.query('COMMIT');return orderDetail(id)}
+    // The caller owns the outer idempotent transaction; do not commit or read
+    // the uncommitted order on another PostgreSQL connection.
+    return{id,order_number:orderNumber};
+  }catch(e){if(!sharedClient){try{await client.query('ROLLBACK')}catch{}}throw e}finally{if(!sharedClient)client.release()}
 }
 
 async function consumeStock(client, order) {
@@ -362,11 +369,17 @@ app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 
 app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);res.json(await merchantCounterCatalog(pool,{businessId:business.id}))}catch(e){next(e)}});
 
+const merchantVoiceSigningSecret=crypto.createHmac('sha256',process.env.ORDER_VOICE_SIGNING_SECRET||process.env.TOKEN_SECRET||crypto.randomBytes(32))
+  .update('merchant-voice-orders-863').digest();
 installMerchantVoiceOrderRoutes(app,{
   db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
   snapshotsForBusiness:({businessId,items})=>merchantCounterSnapshots(pool,{businessId,items}),
-  secret:crypto.createHmac('sha256',process.env.ORDER_VOICE_SIGNING_SECRET||process.env.TOKEN_SECRET||crypto.randomBytes(32))
-    .update('merchant-voice-orders-863').digest(),bodyMiddleware:body
+  secret:merchantVoiceSigningSecret,bodyMiddleware:body
+});
+installMerchantVoiceOrderConfirmation(app,{
+  db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,tokenSecret:process.env.TOKEN_SECRET,
+  canonicalSnapshots:(client,{businessId,items})=>merchantCounterSnapshots(client,{businessId,items}),
+  createCanonicalOrder:createOrder,orderDetail,bodyMiddleware:body
 });
 
 app.get('/api/orders/inventory',async(req,res,next)=>{try{
