@@ -9,11 +9,13 @@
   const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const state={businessId:null,capability:null,draft:null,processing:false,consent:false,
     transcript:'',message:'',clarification:false,question:'',quote:null,open:false,epoch:0,recognition:null,
-    request:null,language:'en-PH',autoSpeech:false,confirmationKey:null,operatorVerified:false,confirmedOrder:null};
+    deviceChallenge:null,phraseTyped:'',request:null,language:'en-PH',autoSpeech:false,confirmationKey:null,operatorVerified:false,confirmedOrder:null};
   const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const pesos=centavos=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(centavos||0)/100);
   const enabled=()=>state.capability?.enabled===true;
   const canConfirm=()=>state.capability?.can_confirm_order===true;
+  const canEnroll=()=>state.capability?.passkey_enrollment_available===true;
+  const passkeySupported=()=>Boolean(window.PublicKeyCredential&&window.navigator?.credentials?.create&&window.navigator?.credentials?.get);
   function uniqueConfirmationKey(){
     const bytes=new Uint8Array(24);window.crypto.getRandomValues(bytes);
     return [...bytes].map(n=>n.toString(16).padStart(2,'0')).join('');
@@ -41,7 +43,7 @@
     state.epoch++;state.request?.abort();state.request=null;
     stopRecognition();stopSpeech();state.processing=false;state.draft=null;state.quote=null;
     state.consent=false;state.transcript='';state.message=message;state.open=false;
-    state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;
+    state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;state.deviceChallenge=null;state.phraseTyped='';
     state.clarification=false;state.question='';state.capability=null;state.businessId=null;
     render();
   }
@@ -80,9 +82,17 @@
           canConfirm()&&state.quote?`<section class="merchantVoiceConfirm" aria-label="Operator order approval"><strong>Secure order confirmation</strong>
             <p>Review every item, customer name and ${pesos(state.quote.quote.total_centavos)} total. Pickup, cash, <b>NOT PAID</b>. Voice recognition does not verify who spoke. Only the signed-in operator may confirm this order.</p>
             ${state.operatorVerified?'<p>Current operator password verification is valid for this session.</p>':`<label for="merchantVoiceVerifyPassword">Verify your current account password (not sent to AI)</label><input id="merchantVoiceVerifyPassword" type="password" autocomplete="current-password" placeholder="Account password" /><button type="button" id="merchantVoiceVerify" ${state.processing?'disabled':''}>Verify password</button>`}
-            <button type="button" class="merchantVoiceCreate" id="merchantVoiceCreate" ${state.processing||!state.operatorVerified?'disabled':''}>Confirm and create unpaid pickup order</button>
-            <small>Nothing is charged. Order, receivable and stock authority remain with Business & Life Orders; duplicate confirmation requests reuse the same transaction key.</small>
-          </section>`:`<div class="merchantVoiceLocked" role="note">Secure order confirmation is not enabled for this Merchant. Use the regular counter-order form after checking every item.</div>`}
+            ${state.operatorVerified?`<div class="merchantVoicePasskeySetup"><p>Your phone passkey verifies who approves this order. It is independent of speech recognition and the account password.</p>
+              <button id="merchantVoiceEnroll" type="button" ${state.processing||!passkeySupported()?'disabled':''}>Register phone passkey</button></div>`:''}
+            ${state.operatorVerified&&!state.deviceChallenge?`<button id="merchantVoiceApprove" type="button" ${state.processing||!passkeySupported()?'disabled':''}>Request one-time device approval</button>`:''}
+            ${state.deviceChallenge?`<div class="merchantVoicePhrase"><strong>One-time approval phrase</strong><p>For this customer and ${pesos(state.quote.quote.total_centavos)} only: <b>${escapeHtml(state.deviceChallenge.confirmation_phrase)}</b></p><label for="merchantVoicePhraseInput">Type the phrase above yourself (do not speak it)</label><input type="text" id="merchantVoicePhraseInput" autocomplete="off" autocapitalize="off" spellcheck="false" value="${escapeHtml(state.phraseTyped)}" placeholder="Approval phrase"></div>`:''}
+            <button type="button" class="merchantVoiceCreate" id="merchantVoiceCreate" ${state.processing||!state.operatorVerified||!state.deviceChallenge||!state.phraseTyped.trim()||!passkeySupported()?'disabled':''}>Use passkey and create unpaid pickup order</button>
+            <small>Nothing is charged. A device/passkey confirmation plus the typed one-time phrase is required. Stock and accounting remain under the existing Orders engine.</small>
+          </section>`:state.quote&&canEnroll()?`<section class="merchantVoiceConfirm" aria-label="Secure device enrolment"><strong>Prepare your phone passkey</strong><p>Secure voice-order creation is not active yet. You may register a passkey, but cannot create orders through the assistant until the release is verified.</p>
+            ${state.operatorVerified?'<p>Account password verified for this session.</p>':`<label for="merchantVoiceVerifyPassword">Verify current account password before enrolling</label><input id="merchantVoiceVerifyPassword" type="password" autocomplete="current-password" placeholder="Account password" /><button id="merchantVoiceVerify" type="button" ${state.processing?'disabled':''}>Verify password</button>`}
+            <button id="merchantVoiceEnroll" type="button" ${state.processing||!state.operatorVerified||!passkeySupported()?'disabled':''}>Register this phone passkey</button>
+            <small>Registering a passkey is not a payment or an order confirmation.</small></section>`:
+          `<div class="merchantVoiceLocked" role="note">Secure order confirmation is not enabled for this Merchant. Use the regular counter-order form after checking every item.</div>`}
       </div></details>`;
     bind(panel);
   }
@@ -112,7 +122,7 @@
       const result=await api('/api/orders/voice/turn',{method:'POST',signal:controller.signal,
         body:JSON.stringify({business_id:bid,consent:true,transcript:instruction,previous_draft:state.draft})});
       if(!canContinue(epoch,bid))return;
-      state.draft=result.draft;state.quote=null;state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;state.clarification=Boolean(result.needs_clarification);
+      state.draft=result.draft;state.quote=null;state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;state.deviceChallenge=null;state.phraseTyped='';state.clarification=Boolean(result.needs_clarification);
       state.question=result.needs_clarification?result.question:'';
       state.message=result.needs_clarification?'':(result.draft?.lines?.length?'Draft updated. Review it before creating an order.':'No order items recognized. Try a clearer instruction.');
       state.transcript='';
@@ -132,8 +142,8 @@
       const result=await api('/api/orders/voice/quote',{method:'POST',signal:controller.signal,
         body:JSON.stringify({business_id:bid,consent:true,draft:state.draft})});
       if(!canContinue(epoch,bid))return;
-      state.quote=result;state.confirmationKey=null;state.confirmedOrder=null;state.operatorVerified=false;
-      if(canConfirm()){try{const verification=await api('/api/auth/step-up/status',{signal:controller.signal});
+      state.quote=result;state.confirmationKey=null;state.confirmedOrder=null;state.operatorVerified=false;state.deviceChallenge=null;state.phraseTyped='';
+      if(canConfirm()||canEnroll()){try{const verification=await api('/api/auth/step-up/status',{signal:controller.signal});
           if(canContinue(epoch,bid))state.operatorVerified=verification.verified===true;
         }catch{state.operatorVerified=false}}
       state.message='Current Catalog quote checked. It is not a confirmed order.';
@@ -143,7 +153,7 @@
   async function verifyOperatorPassword(){
     const input=document.getElementById('merchantVoiceVerifyPassword');const password=String(input?.value||'');
     if(input)input.value='';
-    if(!password||state.processing||!state.quote||!canConfirm())return;
+    if(!password||state.processing||!state.quote||!(canConfirm()||canEnroll()))return;
     const epoch=state.epoch,bid=state.businessId;
     state.processing=true;state.message='Verifying current operator…';render();
     const controller=new AbortController();state.request=controller;
@@ -156,26 +166,93 @@
       state.operatorVerified=false;state.message=String(error.message||'Password verification failed.').slice(0,220)}}
     finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
   }
+  function bufferToBase64Url(bytes){
+    const b=new Uint8Array(bytes);let str='';for(let i=0;i<b.length;i++)str+=String.fromCharCode(b[i]);
+    return btoa(str).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  function base64UrlToBuffer(raw){
+    const value=String(raw||'').replace(/-/g,'+').replace(/_/g,'/');
+    const bytes=atob(value+'='.repeat((4-value.length%4)%4));
+    return Uint8Array.from(bytes,ch=>ch.charCodeAt(0));
+  }
+  function publicKeyOptions(options,registration){
+    if(registration&&window.PublicKeyCredential?.parseCreationOptionsFromJSON)
+      return window.PublicKeyCredential.parseCreationOptionsFromJSON(options);
+    if(!registration&&window.PublicKeyCredential?.parseRequestOptionsFromJSON)
+      return window.PublicKeyCredential.parseRequestOptionsFromJSON(options);
+    return{...options,challenge:base64UrlToBuffer(options.challenge),
+      ...(registration?{user:{...options.user,id:base64UrlToBuffer(options.user.id)},
+        excludeCredentials:(options.excludeCredentials||[]).map(c=>({...c,id:base64UrlToBuffer(c.id)}))}:
+        {allowCredentials:(options.allowCredentials||[]).map(c=>({...c,id:base64UrlToBuffer(c.id)}))})};
+  }
+  function publicKeyResult(credential){
+    if(typeof credential?.toJSON==='function')return credential.toJSON();
+    const response=credential?.response||{};
+    return{id:credential.id,rawId:bufferToBase64Url(credential.rawId),type:credential.type,
+      response:{clientDataJSON:bufferToBase64Url(response.clientDataJSON),
+        ...(response.attestationObject?{attestationObject:bufferToBase64Url(response.attestationObject)}:{}),
+        ...(response.authenticatorData?{authenticatorData:bufferToBase64Url(response.authenticatorData)}:{}),
+        ...(response.signature?{signature:bufferToBase64Url(response.signature)}:{}),
+        userHandle:response.userHandle?bufferToBase64Url(response.userHandle):null}};
+  }
+  async function enrollPhonePasskey(){
+    if(!state.operatorVerified||!state.quote||!canEnroll()||!passkeySupported()||state.processing)return;
+    const epoch=state.epoch,bid=state.businessId;state.processing=true;
+    state.message='Registering the passkey on your device…';render();
+    const controller=new AbortController();state.request=controller;
+    try{
+      const options=await api('/api/orders/voice/passkey/enroll/options',{method:'POST',signal:controller.signal,
+        body:JSON.stringify({business_id:bid})});
+      if(!canContinue(epoch,bid))return;
+      const credential=await navigator.credentials.create({publicKey:publicKeyOptions(options.publicKey,true),signal:controller.signal});
+      if(!canContinue(epoch,bid)||!credential)return;
+      const saved=await api('/api/orders/voice/passkey/enroll/verify',{method:'POST',signal:controller.signal,
+        body:JSON.stringify({business_id:bid,challenge_id:options.challenge_id,credential:publicKeyResult(credential)})});
+      if(!canContinue(epoch,bid))return;
+      state.message=saved.enrolled?'Phone passkey enrolled. Request a fresh device approval for this order.':'Passkey enrolment was not confirmed.';
+    }catch(error){if(canContinue(epoch,bid)&&error?.name!=='AbortError')state.message='Passkey enrolment not completed: '+String(error.message||'Try again.').slice(0,180)}
+    finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
+  }
+  async function requestPhoneApproval(){
+    if(!state.operatorVerified||!state.quote||!canConfirm()||!passkeySupported()||state.processing)return;
+    const epoch=state.epoch,bid=state.businessId;
+    if(!state.confirmationKey)state.confirmationKey=uniqueConfirmationKey();
+    state.processing=true;state.message='Preparing an approval for this exact unpaid order…';render();
+    const controller=new AbortController();state.request=controller;
+    try{
+      const options=await api('/api/orders/voice/passkey/approval/options',{method:'POST',signal:controller.signal,
+        body:JSON.stringify({business_id:bid,signed_quote:state.quote,request_key:state.confirmationKey})});
+      if(!canContinue(epoch,bid))return;
+      state.deviceChallenge=options;state.phraseTyped='';
+      state.message='Type the displayed phrase and use your phone passkey to approve the order.';
+    }catch(error){if(canContinue(epoch,bid)&&error?.name!=='AbortError'){
+      state.deviceChallenge=null;state.message=String(error.message||'Cannot request passkey approval.').slice(0,220)}}
+    finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
+  }
   async function confirmCurrentOrder(){
-    if(!state.quote||!canConfirm()||!state.operatorVerified||state.processing||state.confirmedOrder)return;
+    if(!state.quote||!state.deviceChallenge||!state.phraseTyped.trim()||!canConfirm()||!state.operatorVerified||state.processing||state.confirmedOrder)return;
     const epoch=state.epoch,bid=state.businessId;
     // Keep the same high-entropy idempotency key after an uncertain network result.
     if(!state.confirmationKey)state.confirmationKey=uniqueConfirmationKey();
     stopRecognition();state.processing=true;state.message='Confirming this unpaid pickup order…';render();
     const controller=new AbortController();state.request=controller;
     try{
+      const proof=await navigator.credentials.get({publicKey:publicKeyOptions(state.deviceChallenge.publicKey,false),signal:controller.signal});
+      if(!proof||!canContinue(epoch,bid))return;
       const result=await api('/api/orders/voice/confirm',{method:'POST',signal:controller.signal,
         body:JSON.stringify({business_id:bid,operator_confirmed:true,signed_quote:state.quote,
-          request_key:state.confirmationKey})});
+          request_key:state.confirmationKey,device_approval:{challenge_id:state.deviceChallenge.challenge_id,
+            confirmation_phrase:state.phraseTyped.trim(),credential:publicKeyResult(proof)}})});
       if(!canContinue(epoch,bid))return;
       state.confirmedOrder=result;state.operatorVerified=false;
       state.message=result.replayed?'Existing order retrieved. No duplicate order was made.':'Order created. No payment was recorded.';
       // Refresh the existing Merchant Orders board, without a second order POST.
       document.querySelector('#ordersWorkspace [data-orders-refresh]')?.click();
     }catch(error){if(!canContinue(epoch,bid)||error?.name==='AbortError')return;
-      if(error?.code==='VOICE_STEP_UP_REQUIRED')state.operatorVerified=false;
+      if(error?.code==='VOICE_STEP_UP_REQUIRED'){state.operatorVerified=false;state.deviceChallenge=null;}
+      if(error?.code==='VOICE_PASSKEY_EXPIRED'||error?.code==='VOICE_PASSKEY_INVALID')state.deviceChallenge=null;
       if(error?.code==='VOICE_QUOTE_STALE'||error?.code==='VOICE_CONFIRM_QUOTE_INVALID'){
-        state.quote=null;state.confirmationKey=null;
+        state.quote=null;state.confirmationKey=null;state.deviceChallenge=null;state.phraseTyped='';
       }
       state.message=String(error.message||'Could not confirm. Check Orders before trying again.').slice(0,240);
     }finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
@@ -224,8 +301,12 @@
     panel.querySelector('#merchantVoiceSend')?.addEventListener('click',()=>void sendTurn(state.transcript));
     panel.querySelector('#merchantVoiceQuote')?.addEventListener('click',()=>void checkCurrentQuote());
     panel.querySelector('#merchantVoiceVerify')?.addEventListener('click',()=>void verifyOperatorPassword());
+    panel.querySelector('#merchantVoiceEnroll')?.addEventListener('click',()=>void enrollPhonePasskey());
+    panel.querySelector('#merchantVoiceApprove')?.addEventListener('click',()=>void requestPhoneApproval());
+    panel.querySelector('#merchantVoicePhraseInput')?.addEventListener('input',e=>{state.phraseTyped=e.target.value;
+      const confirm=panel.querySelector('#merchantVoiceCreate');if(confirm)confirm.disabled=!state.phraseTyped.trim()});
     panel.querySelector('#merchantVoiceCreate')?.addEventListener('click',()=>void confirmCurrentOrder());
-    panel.querySelector('#merchantVoiceClear')?.addEventListener('click',()=>{stopRecognition();stopSpeech();state.epoch++;state.request?.abort();state.request=null;state.draft=null;state.quote=null;state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;state.transcript='';state.processing=false;state.question='';state.message='Started a fresh draft. Previously created orders remain recorded in Orders.';render()});
+    panel.querySelector('#merchantVoiceClear')?.addEventListener('click',()=>{stopRecognition();stopSpeech();state.epoch++;state.request?.abort();state.request=null;state.draft=null;state.quote=null;state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;state.deviceChallenge=null;state.phraseTyped='';state.transcript='';state.processing=false;state.question='';state.message='Started a fresh draft. Previously created orders remain recorded in Orders.';render()});
   }
   async function attach(){
     if(!merchantVisible()){if(state.businessId!==null)reset();return}

@@ -37,3 +37,9 @@
 .merchantVoiceConfirm small{color:#526957;line-height:1.45;font-size:11px}
 .merchantVoiceSuccess{border-radius:12px;padding:13px;background:#def4e8;color:#14503a;display:grid;gap:7px;line-height:1.45}
 .merchantVoiceSuccess small{font-size:12px}
+
+.merchantVoicePasskeySetup{border-top:1px solid #cee2d0;padding-top:10px;display:grid;gap:9px}
+.merchantVoicePasskeySetup p{font-size:12px;line-height:1.5}
+.merchantVoicePhrase{border:1px solid #a3c9a8;background:#fff;border-radius:12px;padding:12px;display:grid;gap:8px}
+.merchantVoicePhrase p{line-height:1.45}
+.merchantVoicePhrase b{font-size:16px;letter-spacing:.03em;overflow-wrap:anywhere}
