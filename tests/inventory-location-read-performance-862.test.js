@@ -7,15 +7,17 @@ function fixture({items=[item(1)],locations=['Pantry'],balances=[{inventory_id:1
   const calls=[];
   return {calls,async query(sql,params=[]){
     calls.push({sql,params});
-    if(sql.startsWith('SELECT id,quantity,storage_location_label,storage_area_type FROM inventory')){
+    if(sql.startsWith('SELECT i.id,i.quantity,i.storage_location_label')){
       if(inventoryGate)await inventoryGate();
-      return {rows:items};
+      const assigned=new Map(balances.map(row=>[String(row.inventory_id),row.quantity]));
+      return {rows:items.map(row=>({...row,allocated:assigned.get(String(row.id))||'0'}))};
     }
     if(sql.startsWith('SELECT name FROM inventory_storage_locations'))return {rows:locations.map(name=>({name}))};
-    if(sql.startsWith('SELECT inventory_id,COALESCE(SUM(quantity),0) AS quantity FROM inventory_location_balances'))return {rows:balances};
     if(sql.startsWith("SELECT to_regclass('public.supply_lots')"))return {rows:[{rel:hasLots?'supply_lots':null}]};
-    if(sql.startsWith('SELECT id,quantity_remaining_base FROM supply_lots'))return {rows:lots};
-    if(sql.startsWith('SELECT lot_id,COALESCE(SUM(quantity),0) AS quantity FROM inventory_lot_location_balances'))return {rows:lotBalances};
+    if(sql.startsWith('SELECT l.id,l.quantity_remaining_base')){
+      const assigned=new Map(lotBalances.map(row=>[String(row.lot_id),row.quantity]));
+      return {rows:lots.map(row=>({...row,allocated:assigned.get(String(row.id))||'0'}))};
+    }
     if(sql.startsWith('SELECT id FROM inventory WHERE business_id=$1 ORDER BY id'))throw new Error('full_reconciliation_requested');
     throw new Error('Unexpected query: '+sql);
   }};
@@ -25,7 +27,8 @@ test('862: one thousand settled items require bounded bulk reads without row loc
   const items=Array.from({length:1000},(_,n)=>item(n+1,3));
   const pool=fixture({items,balances:items.map(row=>({inventory_id:row.id,quantity:'3'}))});
   await reconcileBusinessInventoryLocationsForRead(pool,{businessId:1});
-  assert.equal(pool.calls.length,4);
+  assert.equal(pool.calls.length,3);
+  assert.match(pool.calls[0].sql,/FROM inventory_location_balances/);
   assert.ok(pool.calls.every(({sql,params})=>!sql.includes('FOR UPDATE')&&(params[0]===1||sql.includes('to_regclass'))));
 });
 
@@ -40,14 +43,14 @@ test('862: two simultaneous reads of one business share an in-flight check',asyn
   release();
   await Promise.all([first,second]);
   assert.equal(reads,1);
-  assert.equal(pool.calls.length,4);
+  assert.equal(pool.calls.length,3);
 });
 
 test('862: finished reads are checked again rather than caching stale state',async()=>{
   const pool=fixture();
   await reconcileBusinessInventoryLocationsForRead(pool,{businessId:1});
   await reconcileBusinessInventoryLocationsForRead(pool,{businessId:1});
-  assert.equal(pool.calls.length,8);
+  assert.equal(pool.calls.length,6);
 });
 
 test('862: canonical stock drift triggers existing locked reconciler',async()=>{
@@ -65,7 +68,7 @@ test('862: matching lots skip repair, lot drift invokes it',async()=>{
   const lot={id:15,quantity_remaining_base:'2'};
   const matching=fixture({hasLots:true,lots:[lot],lotBalances:[{lot_id:15,quantity:'2'}]});
   await reconcileBusinessInventoryLocationsForRead(matching,{businessId:1});
-  assert.equal(matching.calls.length,6);
+  assert.equal(matching.calls.length,4);
   const drift=fixture({hasLots:true,lots:[lot],lotBalances:[{lot_id:15,quantity:'1'}]});
   await assert.rejects(reconcileBusinessInventoryLocationsForRead(drift,{businessId:1}),/full_reconciliation_requested/);
 });
@@ -83,6 +86,6 @@ test('862: different businesses never coalesce or reuse one business query',asyn
     reconcileBusinessInventoryLocationsForRead(pool,{businessId:1}),
     reconcileBusinessInventoryLocationsForRead(pool,{businessId:2})
   ]);
-  const reads=pool.calls.filter(x=>x.sql.startsWith('SELECT id,quantity,storage_location_label,storage_area_type'));
+  const reads=pool.calls.filter(x=>x.sql.startsWith('SELECT i.id,i.quantity,i.storage_location_label'));
   assert.deepEqual(reads.map(x=>x.params[0]).sort(),[1,2]);
 });

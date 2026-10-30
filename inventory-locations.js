@@ -278,28 +278,27 @@ export async function reconcileBusinessInventoryLocationsForRead(pool,{businessI
   const key=String(businessId);
   if(flights.has(key))return flights.get(key);
   const task=(async()=>{
-    const items=await pool.query('SELECT id,quantity,storage_location_label,storage_area_type FROM inventory WHERE business_id=$1 ORDER BY id',[businessId]);
-    const [locations,balances]=await Promise.all([
-      pool.query('SELECT name FROM inventory_storage_locations WHERE business_id=$1',[businessId]),
-      pool.query('SELECT inventory_id,COALESCE(SUM(quantity),0) AS quantity FROM inventory_location_balances WHERE business_id=$1 GROUP BY inventory_id',[businessId])
-    ]);
+    // Each quantity comparison uses one MVCC statement/snapshot, even during concurrent stock writes.
+    const items=await pool.query(
+      'SELECT i.id,i.quantity,i.storage_location_label,i.storage_area_type,COALESCE(b.allocated,0) AS allocated FROM inventory i LEFT JOIN (SELECT inventory_id,SUM(quantity) AS allocated FROM inventory_location_balances WHERE business_id=$1 GROUP BY inventory_id) b ON b.inventory_id=i.id WHERE i.business_id=$1 ORDER BY i.id',
+      [businessId]
+    );
+    const locations=await pool.query('SELECT name FROM inventory_storage_locations WHERE business_id=$1',[businessId]);
     const names=new Set(locations.rows.map(row=>String(row.name??'').toLowerCase()));
-    const allocated=new Map(balances.rows.map(row=>[String(row.inventory_id),Number(row.quantity)]));
     let needsRepair=items.rows.some(row=>{
       const canonical=Math.max(0,Number(row.quantity||0));
-      const assigned=Math.max(0,allocated.get(String(row.id))||0);
+      const assigned=Math.max(0,Number(row.allocated||0));
       return !Number.isFinite(canonical)||!Number.isFinite(assigned)||
         Math.abs(canonical-assigned)>EPS||!names.has(locationNameFromInventory(row).toLowerCase());
     });
     if(!needsRepair&&await supplyLotsAvailable(pool)){
-      const [lots,lotBalances]=await Promise.all([
-        pool.query('SELECT id,quantity_remaining_base FROM supply_lots WHERE business_id=$1 AND inventory_id IS NOT NULL',[businessId]),
-        pool.query('SELECT lot_id,COALESCE(SUM(quantity),0) AS quantity FROM inventory_lot_location_balances WHERE business_id=$1 GROUP BY lot_id',[businessId])
-      ]);
-      const lotAllocated=new Map(lotBalances.rows.map(row=>[String(row.lot_id),Number(row.quantity)]));
+      const lots=await pool.query(
+        'SELECT l.id,l.quantity_remaining_base,COALESCE(a.allocated,0) AS allocated FROM supply_lots l LEFT JOIN (SELECT lot_id,SUM(quantity) AS allocated FROM inventory_lot_location_balances WHERE business_id=$1 GROUP BY lot_id) a ON a.lot_id=l.id WHERE l.business_id=$1 AND l.inventory_id IS NOT NULL',
+        [businessId]
+      );
       needsRepair=lots.rows.some(row=>{
         const canonical=Math.max(0,Number(row.quantity_remaining_base||0));
-        const assigned=Math.max(0,lotAllocated.get(String(row.id))||0);
+        const assigned=Math.max(0,Number(row.allocated||0));
         return !Number.isFinite(canonical)||!Number.isFinite(assigned)||Math.abs(canonical-assigned)>EPS;
       });
     }
