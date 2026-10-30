@@ -363,7 +363,10 @@ app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);res.json(await merchantCounterCatalog(pool,{businessId:business.id}))}catch(e){next(e)}});
 
 installMerchantVoiceOrderRoutes(app,{
-  db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),bodyMiddleware:body
+  db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
+  snapshotsForBusiness:({businessId,items})=>merchantCounterSnapshots(pool,{businessId,items}),
+  secret:crypto.createHmac('sha256',process.env.ORDER_VOICE_SIGNING_SECRET||process.env.TOKEN_SECRET||crypto.randomBytes(32))
+    .update('merchant-voice-orders-863').digest(),bodyMiddleware:body
 });
 
 app.get('/api/orders/inventory',async(req,res,next)=>{try{
