@@ -95,7 +95,7 @@ test('shellfish safety notice does not claim any particular 2026 ban is currentl
   assert.match(philippineStockPickerSafetyNote('Oysters (talaba)'),/Cavite/);
   assert.match(philippineStockPickerSafetyNote('Clams (halaan)'),/check current/);
   assert.equal(philippineStockPickerSafetyNote('Shrimp'),'');
-  assert.equal(philippineStockPickerSafetyNote('Fish balls'),'');
+  assert.match(philippineStockPickerSafetyNote('Fish balls'),/Pack sizes vary/);
 });
 
 test('item-specific perishable handling and variable pack guidance protect new quick picks',()=>{
