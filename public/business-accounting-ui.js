@@ -73,7 +73,11 @@ function applyFinancePresentation(overview){
   const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn){const label=stockBtn.querySelector?.('.merchantNavLabel');const text=role==='supplier'?'Inventory':'Stock';if(label)label.textContent=text;else stockBtn.textContent=text;}
   const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Stock';
   const stockFormTitle=document.querySelector('#viewStock form h2');if(stockFormTitle)stockFormTitle.textContent='Add or update inventory item';
-  // Resolve Food/Mixed recipe eligibility before presenting the entire navigation.
+  // Resolve Food/Mixed recipe eligibility before presenting the sole visible menu.
+  const shellNav=document.getElementById('merchantWorkspaceNav');
+  const recipes=shellNav?.querySelector('#merchantRecipesTopButton');
+  recipes?.classList.toggle('roleFinanceHidden',!foodAllowed);
+  if(shellNav){shellNav.setAttribute('data-ready','true');shellNav.removeAttribute('aria-busy')}
   const nav=document.querySelector('.merchantPrimaryNav');
   if(nav){nav.setAttribute('data-ready','true');nav.removeAttribute('aria-busy')}
   document.getElementById('budgetForm')?.classList.add('roleFinanceHidden');
@@ -332,6 +336,13 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
 }
 
 function resetMerchantNavPresentation(){
+  const shellNav=document.getElementById('merchantWorkspaceNav');
+  if(shellNav){
+    shellNav.removeAttribute('data-ready');
+    shellNav.setAttribute('aria-busy','true');
+    shellNav.querySelector('#merchantRecipesTopButton')?.classList.add('roleFinanceHidden');
+    shellNav.querySelector('#merchantBusinessTools')?.removeAttribute('open');
+  }
   const nav=document.querySelector('.merchantPrimaryNav');
   if(nav){nav.removeAttribute('data-ready');nav.setAttribute('aria-busy','true')}
 }
@@ -343,6 +354,9 @@ document.addEventListener('abl:business-workspace-changed',event=>{
   if(event.detail?.role==='merchant')resetMerchantNavPresentation();
 },{passive:true});
 document.addEventListener('abl:auth-expired',resetMerchantNavPresentation,{passive:true});
+document.addEventListener('abl:merchant-today-error',()=>{
+  if(accountingState.role==='merchant')applyFinancePresentation({role:'merchant',presentation:{merchant_domain:'unknown',legacy_recipe_ui_allowed:false}});
+},{passive:true});
 document.addEventListener('abl:merchant-money-opened',()=>{
   if(accountingState.role==='merchant')mountEconomicSummary('viewMoney');
 },{passive:true});
