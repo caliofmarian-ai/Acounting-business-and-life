@@ -34,7 +34,7 @@
       .osdSend:disabled{background:#b5c3c5;cursor:not-allowed}.osdMessage{font:14px/1.4 system-ui;color:#097866;min-height:18px}.osdMessage.error{color:#b3261e}
       .osdDisclaimer{font:13px/1.55 system-ui;background:#f3f7fa;border-radius:10px;padding:11px;color:#465f6b}
       @media(max-width:600px){.osdPanel{height:100dvh;border-radius:0}.osdBody{padding:12px}.osdHeader{padding:12px}}
-    `.replaceAll('\\`','`');
+    `;
     document.head.appendChild(node);
   }
   function close(){if(modal){modal.remove();modal=null;activeBusiness=null}}
