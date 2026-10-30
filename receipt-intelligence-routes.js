@@ -6,6 +6,7 @@ import {
   receiptExtractionFingerprint,receiptReviewSubmissionFingerprint,RECEIPT_LIMITS
 } from './receipt-intelligence-core.js';
 import {receiptVisionConfig,extractReceiptImage} from './receipt-intelligence-provider.js';
+import {buildReceiptReceivingPreflight} from './receipt-receiving-preflight.js';
 
 const {exactProfileBusiness}=supplierDomainV2Internals;
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
@@ -312,6 +313,50 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
     }catch(e){if(client)await client.query('ROLLBACK').catch(()=>{});next(e)}
     finally{client?.release()}
   });
+
+  app.get('/api/procurement/purchase-documents/:id/intelligence/receiving-readiness',async(req,res,next)=>{
+    try{
+      const {businessId}=await scope(pool,identity,req);
+      const receipt=await receiptFor(pool,businessId,req.params.id);
+      const reviewed=await pool.query(
+        "SELECT * FROM receipt_intelligence_drafts WHERE business_id=$1 AND purchase_document_id=$2 AND status='reviewed' AND review_json IS NOT NULL ORDER BY updated_at DESC,id DESC LIMIT 1",
+        [businessId,receipt.id]
+      );
+      if(!reviewed.rowCount)fail('Review and save the scanned lines before preparing receiving',409);
+      const record=reviewed.rows[0];
+      const [inventory,linked,duplicates]=await Promise.all([
+        businessInventory(pool,businessId),
+        pool.query(
+          "SELECT linked_id FROM merchant_purchase_document_links WHERE document_id=$1 AND link_kind='inventory_purchase'",
+          [receipt.id]
+        ),
+        pool.query(`
+          SELECT other.id FROM merchant_purchase_documents other
+          LEFT JOIN private_evidence_objects source ON source.id=$3
+          LEFT JOIN private_evidence_objects candidate ON candidate.id=other.private_evidence_object_id
+          WHERE other.business_id=$1 AND other.id<>$2
+            AND ((source.sha256 IS NOT NULL AND source.sha256=candidate.sha256)
+              OR ($4<>'' AND LOWER(other.document_number)=LOWER($4)
+                AND LOWER(other.issuer_name)=LOWER($5) AND other.issue_date=$6::date
+                AND other.gross_amount IS NOT DISTINCT FROM $7::numeric))
+          ORDER BY other.id DESC LIMIT 20
+        `,[
+          businessId,receipt.id,receipt.private_evidence_object_id,
+          receipt.document_number||'',receipt.issuer_name||'',
+          receipt.issue_date,receipt.gross_amount
+        ])
+      ]);
+      const preflight=buildReceiptReceivingPreflight({
+        document:receipt,extraction:record.extraction_json,
+        review:record.review_json,inventoryRows:inventory,
+        linkedPurchaseIds:linked.rows.map(x=>Number(x.linked_id)),
+        duplicateDocumentIds:duplicates.rows.map(x=>Number(x.id))
+      });
+      res.json({preflight,draft_id:Number(record.id),draft_version:Number(record.version),
+        source_receipt_id:Number(receipt.id),stock_posting_enabled:false});
+    }catch(e){next(e)}
+  });
+
   app.get('/api/procurement/receipt-intelligence/count-sessions/:id/variance-evidence',async(req,res,next)=>{
     try{
       const {businessId}=await scope(pool,identity,req);
