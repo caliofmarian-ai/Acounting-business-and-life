@@ -383,7 +383,8 @@ installMerchantVoiceOrderRoutes(app,{
   db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
   snapshotsForBusiness:({businessId,items})=>merchantCounterSnapshots(pool,{businessId,items}),
   secret:merchantVoiceSigningSecret,bodyMiddleware:body,
-  confirmationReady:()=>merchantVoiceConfirmation?.ready()===true
+  confirmationReady:()=>merchantVoiceConfirmation?.ready()===true,
+  passkeyReady:()=>merchantVoicePasskey.ready()
 });
 merchantVoiceConfirmation=installMerchantVoiceOrderConfirmation(app,{
   db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,tokenSecret:process.env.TOKEN_SECRET,
