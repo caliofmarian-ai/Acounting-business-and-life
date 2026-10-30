@@ -162,6 +162,18 @@ export function validateReceiptReceivingReview({draft,submission,businessId,inve
     source_document_total:draft.document_total,actions,stock_posted:false,payment_recorded:false,
     manual_receiving_required:true,warning:'This review does not change Inventory.'};
 }
+export function receiptReviewSubmissionFingerprint({draftId,expectedVersion,decisions}={}){
+  if(!validId(draftId)||!Number.isSafeInteger(Number(expectedVersion))||Number(expectedVersion)<1)
+    error('Valid draft/version required for a receipt review');
+  if(!Array.isArray(decisions)||decisions.length<1||decisions.length>RECEIPT_LIMITS.lines)
+    error('Receipt review must include a bounded set of decisions');
+  const payload=JSON.stringify({
+    draft_id:Number(draftId),expected_version:Number(expectedVersion),decisions
+  });
+  if(payload.length>RECEIPT_LIMITS.bodyBytes)error('Receipt review exceeds size limit',413);
+  return crypto.createHash('sha256').update(payload,'utf8').digest('hex');
+}
+
 export function receiptExtractionFingerprint({documentId,sha256,provider='manual',version='v1'}){
   if(!validId(documentId)||!/^[a-f0-9]{64}$/i.test(String(sha256||'')))error('Valid receipt document and source SHA256 required');
   return crypto.createHash('sha256').update([documentId,sha256,provider,version].join(':')).digest('hex');
