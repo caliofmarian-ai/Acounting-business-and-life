@@ -226,6 +226,7 @@ test('862: authenticated HTTP location GETs reject guests and wrong profiles, an
   const pool={
     async query(sql,args=[]){
       queries.push({sql,args});
+      if(sql.includes('SELECT t.*,i.item,sl.name source_location'))return {rows:[]};
       if(sql.startsWith('WITH base_items AS MATERIALIZED (')){
         const businessId=Number(args[0]),inventoryId=businessId*10+1;
         return{rows:[{
@@ -284,9 +285,10 @@ test('862: authenticated HTTP location GETs reject guests and wrong profiles, an
     const beforeSummary=queries.length;
     const aSummary=await get('/api/inventory/location-summary?business_id=202','merchant-a');
     assert.equal(aSummary.status,200);
-    assert.equal(queries.length,beforeSummary+1,'summary uses one scoped PostgreSQL SELECT');
+    assert.equal(queries.length,beforeSummary+2,'summary uses one stock snapshot and one concurrent transfer SELECT');
     assert.deepEqual(aSummary.body.locations.map(row=>row.business_id),[101]);
     assert.deepEqual(aSummary.body.balances.map(row=>row.business_id),[101]);
+    assert.deepEqual(aSummary.body.transfers,[],'one read response also hydrates the transfer board');
     const bSummary=await get('/api/inventory/location-summary?business_id=101','merchant-b');
     assert.equal(bSummary.status,200);
     assert.deepEqual(bSummary.body.locations.map(row=>row.business_id),[202]);
