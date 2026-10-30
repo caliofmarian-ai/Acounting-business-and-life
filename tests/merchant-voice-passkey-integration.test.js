@@ -13,7 +13,7 @@ test('all passkey endpoints attach to the existing Orders router and exact Merch
  assert.match(server,/requireMerchant,quoteSecret:merchantVoiceSigningSecret/);
  assert.match(server,/tokenSecret:process\.env\.TOKEN_SECRET/);
  assert.match(server,/verifyDeviceApproval:merchantVoicePasskey\.ready\(\)\?merchantVoicePasskey\.verifyDeviceApproval:null/);
- assert.match(server,/passkeyReady:\(\)=>merchantVoicePasskey\.ready\(\)/);
+ assert.match(server,/passkeyReady:\(\)=>merchantVoicePasskey\.enrollmentReady\(\)/);
  assert.match(server,/passkeyConfig\(\)\.ready\)await ensureMerchantVoicePasskeySchema\(pool\)/);
  for(const suffix of ['enroll/options','enroll/verify','approval/options'])
    assert.ok(routes.includes("/api/orders/voice/passkey/"+suffix));

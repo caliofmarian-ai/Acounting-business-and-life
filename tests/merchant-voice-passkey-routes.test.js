@@ -6,7 +6,7 @@ import {authoritativeVoiceOrderQuote,verifyVoiceOrderSignedQuote} from '../merch
 import {safeSessionId} from '../merchant-voice-order-routes.js';
 const rpId='caliof.com',origin='https://caliof.com',accountId=44,businessId=7;
 const quoteSecret=Buffer.from('0123456789abcdef0123456789abcdef'),tokenSecret='test-session-secret';
-const env={ORDER_VOICE_UI_ENABLED:'1',ORDER_VOICE_WEBAUTHN_ENABLED:'1',ORDER_VOICE_WEBAUTHN_RP_ID:rpId,ORDER_VOICE_WEBAUTHN_ORIGIN:origin};
+const env={ORDER_VOICE_UI_ENABLED:'1',ORDER_VOICE_PASSKEY_ENROLLMENT_ENABLED:'1',ORDER_VOICE_WEBAUTHN_ENABLED:'1',ORDER_VOICE_WEBAUTHN_RP_ID:rpId,ORDER_VOICE_WEBAUTHN_ORIGIN:origin};
 const b64=bytes=>Buffer.from(bytes).toString('base64url');
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest();
 const h=bytes=>sha(bytes).toString('hex');
@@ -41,7 +41,7 @@ function fakeStore(){
    if(norm==='BEGIN')return ok();
    if(norm==='COMMIT'){st.commits++;return ok()}
    if(norm==='ROLLBACK'){st.rollbacks++;return ok()}
-   if(norm.includes('FROM accounts WHERE id=$1 FOR UPDATE'))return ok([{id:accountId}]);
+   if(norm.includes('FROM accounts WHERE id=$1 FOR UPDATE'))return ok([{id:accountId,email_verified_at:new Date(),auth_status:'active'}]);
    if(norm.includes('SELECT COUNT(*)::int count FROM merchant_voice_passkey_challenges'))return ok([{count:0}]);
    if(norm.includes('INSERT INTO merchant_voice_passkey_challenges')){
      const [id,bid,aid,session_binding,kind,challenge_digest,quote_hash,request_key,phrase_digest]=args;
@@ -96,6 +96,8 @@ test('passkey registration is challenge-bound and one-time for exact Merchant se
  const registered=await h.request(path('enroll/verify'),{challenge_id:opt.payload.challenge_id,credential:credential.register});
  assert.equal(registered.status,200);assert.equal(registered.payload.enrolled,true);
  assert.equal(h.db.state.credentials.size,1);
+ const secondDevice=await h.request(path('enroll/options'));
+ assert.equal(secondDevice.status,409);assert.equal(secondDevice.payload.code,'VOICE_PASSKEY_ALREADY_ENROLLED');
  const replay=await h.request(path('enroll/verify'),{challenge_id:opt.payload.challenge_id,credential:credential.register});
  assert.equal(replay.status,409);assert.equal(replay.payload.code,'VOICE_PASSKEY_EXPIRED');
 });
@@ -143,4 +145,16 @@ test('missing passkey configuration denies registration even for a valid merchan
  assert.equal(other.ready(),false);
  let status=0;await app[path('enroll/options')]({body:{business_id:businessId}},
    {set(){},status(n){status=n;return this},json(){}});assert.equal(status,503);
+});
+
+test('first passkey enrollment is gated separately from approval of already enrolled keys',async()=>{
+ const h=harness(),app={post:(path,...args)=>{app[path]=args.at(-1)}};
+ const restricted=installMerchantVoicePasskeyRoutes(app,{db:h.db,quoteSecret,tokenSecret,
+   env:{...env,ORDER_VOICE_PASSKEY_ENROLLMENT_ENABLED:'0'},
+   requireMerchant:async()=>({me:{account:{id:accountId}},business:{id:businessId}}),
+   verifyStepUp:async()=>({accountId})});
+ assert.equal(restricted.ready(),true);assert.equal(restricted.enrollmentReady(),false);
+ let status=0,body;await app[path('enroll/options')]({headers:{authorization:'Bearer test'},body:{business_id:businessId}},
+   {set(){},status(x){status=x;return this},json(x){body=x;return this}});
+ assert.equal(status,503);assert.equal(body.code,'VOICE_PASSKEY_ENROLLMENT_BLOCKED');
 });

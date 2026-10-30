@@ -16,7 +16,8 @@ const phraseWords=['amber','bamboo','coconut','coral','dawn','ember','forest','g
   'harbor','island','jasmine','lagoon','mango','moon','orchid','palm','quartz','river',
   'sunrise','tiger','umber','violet','water','yellow'];
 const safeCodes=new Set(['VOICE_PASSKEY_UNAVAILABLE','VOICE_PASSKEY_NOT_ENROLLED',
-  'VOICE_PASSKEY_LIMIT','VOICE_PASSKEY_EXPIRED','VOICE_PASSKEY_INVALID',
+  'VOICE_PASSKEY_LIMIT','VOICE_PASSKEY_ALREADY_ENROLLED','VOICE_PASSKEY_ENROLLMENT_BLOCKED',
+  'VOICE_PASSKEY_EXPIRED','VOICE_PASSKEY_INVALID',
   'VOICE_PASSKEY_STEP_UP_REQUIRED','VOICE_PASSKEY_PHRASE_INVALID','VOICE_PASSKEY_RETRY_LIMIT',
   'VOICE_PASSKEY_MISSING','VOICE_CONTEXT_STALE','VOICE_CONFIRM_QUOTE_INVALID','VOICE_QUOTE_STALE']);
 const text=v=>String(v??'');
@@ -129,6 +130,9 @@ export function installMerchantVoicePasskeyRoutes(app,{
   const config=passkeyConfig(env);
   const ready=()=>env.ORDER_VOICE_UI_ENABLED==='1'&&config.ready&&Boolean(tokenSecret)&&
     (Buffer.isBuffer(quoteSecret)?quoteSecret.length:Buffer.byteLength(String(quoteSecret||'')))>=16;
+  // First passkey registration is a separately controlled identity ceremony.
+  // Disabling enrolment cannot disable use of previously registered passkeys.
+  const enrollmentReady=()=>ready()&&env.ORDER_VOICE_PASSKEY_ENROLLMENT_ENABLED==='1';
   const route=(path,handler)=>app.post(path,...(bodyMiddleware?[bodyMiddleware]:[]),async(req,res)=>{
     res.set('Cache-Control','private, no-store, max-age=0');
     try{
@@ -150,6 +154,13 @@ export function installMerchantVoicePasskeyRoutes(app,{
   async function transaction(cb){const client=await db.connect();try{
     await client.query('BEGIN');const value=await cb(client);await client.query('COMMIT');return value;
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}finally{client.release()}}
+  async function verifiedAccountForEnrolment(client,accountId){
+    const q=await client.query(`SELECT email_verified_at,auth_status FROM accounts
+      WHERE id=$1 FOR UPDATE`,[accountId]);
+    if(q.rowCount!==1||!q.rows[0]?.email_verified_at||q.rows[0].auth_status!=='active')
+      throw err('VOICE_PASSKEY_ENROLLMENT_BLOCKED',
+        'Verify your account email and activate your account before enrolling a passkey.',403);
+  }
   async function limitChallenges(client,{businessId,accountId,kind}){
     // Avoid unbounded challenges/verification attempts while protecting registration by step-up.
     await client.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
@@ -169,11 +180,16 @@ export function installMerchantVoicePasskeyRoutes(app,{
     return{id,challenge:b64(challenge),expires_in_seconds:timeLimit};
   }
   route('/api/orders/voice/passkey/enroll/options',ctx=>transaction(async client=>{
+    if(!enrollmentReady())throw err('VOICE_PASSKEY_ENROLLMENT_BLOCKED','Secure device registration is not enabled.',503);
     await sessionCheck(client,ctx);
+    await verifiedAccountForEnrolment(client,ctx.accountId);
     const existing=await client.query(`SELECT credential_id FROM merchant_voice_passkey_credentials
       WHERE account_id=$1 AND rp_id=$2 AND revoked_at IS NULL ORDER BY created_at LIMIT 6`,
       [ctx.accountId,config.rpId]);
-    if(existing.rowCount>=5)throw err('VOICE_PASSKEY_LIMIT','Maximum of five active passkeys. Revoke an unused passkey first.',409);
+    // Existing device must authorise further device onboarding; password-only
+    // re-enrolment would let a stolen password bypass the passkey factor.
+    if(existing.rowCount>0)throw err('VOICE_PASSKEY_ALREADY_ENROLLED',
+      'A phone passkey is already registered. Use it to approve orders; additional devices require secure recovery.',409);
     const challenge=await createChallenge(client,ctx,'register');
     return{challenge_id:challenge.id,publicKey:{challenge:challenge.challenge,
       rp:{id:config.rpId,name:'Business & Life'},
@@ -183,7 +199,9 @@ export function installMerchantVoicePasskeyRoutes(app,{
       attestation:'none',excludeCredentials:existing.rows.map(serialiseCredential)}};
   }));
   route('/api/orders/voice/passkey/enroll/verify',ctx=>transaction(async client=>{
+    if(!enrollmentReady())throw err('VOICE_PASSKEY_ENROLLMENT_BLOCKED','Secure device registration is not enabled.',503);
     await sessionCheck(client,ctx);
+    await verifiedAccountForEnrolment(client,ctx.accountId);
     const record=await lockChallenge(client,{id:reqId(ctx),kind:'register',
       accountId:ctx.accountId,businessId:ctx.businessId,sessionId:ctx.sessionId});
     const saved=verifyPasskeyRegistration({credential:ctx.req.body?.credential,
@@ -191,7 +209,8 @@ export function installMerchantVoicePasskeyRoutes(app,{
     await client.query('SELECT id FROM accounts WHERE id=$1 FOR UPDATE',[ctx.accountId]);
     const other=await client.query(`SELECT credential_id FROM merchant_voice_passkey_credentials
       WHERE account_id=$1 AND rp_id=$2 AND revoked_at IS NULL`,[ctx.accountId,config.rpId]);
-    if(other.rowCount>=5)throw err('VOICE_PASSKEY_LIMIT','Maximum five passkeys reached.');
+    if(other.rowCount>0)throw err('VOICE_PASSKEY_ALREADY_ENROLLED',
+      'An operator passkey is already registered. Device changes require secure recovery.');
     const inserted=await client.query(`INSERT INTO merchant_voice_passkey_credentials
        (credential_id,account_id,rp_id,public_key_pem,user_handle,sign_count,backup_eligible)
        VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING credential_id`,
@@ -225,5 +244,5 @@ export function installMerchantVoicePasskeyRoutes(app,{
       publicKey:{challenge:challenge.challenge,rpId:config.rpId,
         allowCredentials:saved.rows.map(serialiseCredential),userVerification:'required',timeout:60000}};
   }));
-  return {ready,config,verifyDeviceApproval:(client,ctx)=>verifyVoiceDevicePasskey(client,{...ctx,config})};
+  return {ready,enrollmentReady,config,verifyDeviceApproval:(client,ctx)=>verifyVoiceDevicePasskey(client,{...ctx,config})};
 }
