@@ -64,7 +64,7 @@ export function validStockIntakeRow(row){
     Number.isFinite(row.quantity)&&row.quantity>0&&row.quantity<=1000000&&
     Math.abs(row.quantity*10000-Math.round(row.quantity*10000))<1e-6&&
     SUPPORTED_UNITS.has(row.unit)&&Number.isFinite(row.total)&&
-    row.total>=0&&row.total<=100000000&&
+    row.total>0&&row.total<=100000000&&
     Math.abs(row.total*100-Math.round(row.total*100))<1e-6&&
     (!row.requiresReview||row.reviewConfirmed)&&
     !row.exists&&row.result==='pending');
@@ -234,8 +234,19 @@ if(hasDocument){
     const validDate=/^\d{4}-\d{2}-\d{2}$/.test(date)&&
       Number.isFinite(Date.parse(date+'T12:00:00+08:00'))&&date<=localDatePH();
     const validAccount=['cash','gcash','bank','other'].includes($('purchaseAccount').value);
+    const selectedPaid=CENTS(selected.reduce((sum,row)=>sum+Number(row.total||0),0));
+    const paidText=String($('actualTotalPaid').value||'');
+    const confirmedPaid=paidText===''?NaN:Number(paidText);
+    const totalsMatch=Number.isFinite(confirmedPaid)&&confirmedPaid>0&&
+      Math.abs(CENTS(confirmedPaid)-selectedPaid)<0.005;
+    message('reconciliation',
+      'Selected item costs: ₱'+selectedPaid.toFixed(2)+
+      ' · Actual total paid: '+(Number.isFinite(confirmedPaid)&&paidText!==''?'₱'+CENTS(confirmedPaid).toFixed(2):'not entered')+
+      ' · Difference: '+(Number.isFinite(confirmedPaid)&&paidText!==''?'₱'+CENTS(selectedPaid-confirmedPaid).toFixed(2):'unknown')+
+      (totalsMatch?' · Reconciled':' · NOT RECONCILED'),
+      totalsMatch?'ok':selected.length?'error':'');
     $('post').disabled=state.busy||!state.context||!exactlyConfirmedBusiness()||
-      !selected.length||selected.length!==valid.length||!validDate||!validAccount||
+      !selected.length||selected.length!==valid.length||!validDate||!validAccount||!totalsMatch||
       !$('physicalConfirm').checked||!$('moneyConfirm').checked;
     $('purchaseAccount').disabled=state.busy;
     $('purchaseDate').disabled=state.busy;
@@ -254,6 +265,7 @@ if(hasDocument){
     try{
       const parsed=parseStockIntakeCsv(await file.text());
       state.rows=parsed;state.resultLog=[];
+      $('physicalConfirm').checked=false;$('moneyConfirm').checked=false;$('actualTotalPaid').value='';
       refreshExisting();renderRows();
       message('fileStatus',parsed.length+' rows loaded locally. No server writes have occurred.','ok');
       message('results','No changes made.');
@@ -353,6 +365,9 @@ if(hasDocument){
     $('moneyConfirm').checked=false;updateControls();
   });
   $('purchaseDate').addEventListener('change',()=>{
+    $('moneyConfirm').checked=false;updateControls();
+  });
+  $('actualTotalPaid').addEventListener('input',()=>{
     $('moneyConfirm').checked=false;updateControls();
   });
   $('purchaseDate').max=localDatePH();
