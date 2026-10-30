@@ -62,17 +62,22 @@ test('same-business duplicate names are blocked before purchase',()=>{
   assert.equal(validStockIntakeRow(row),false);
 });
 
-test('stock intake uses one selected Merchant and never silently writes finance or retries',()=>{
+test('paid stock intake requires one Merchant, and records exactly a linked purchase expense without retry',()=>{
   assert.match(js,/workspace\.businesses\.length!==1/);
   assert.match(js,/business\.country_code/);
   assert.match(js,/sameContext\(next,verify\)/);
   assert.match(js,/sameContext\(after,state\.context\)/);
   assert.match(js,/await assertLiveContext\(\)/);
   assert.match(js,/findExistingInventory\(row,state\.inventory\)/);
-  assert.match(js,/record_expense:false/);
+  assert.match(js,/record_expense:true/);
+  assert.match(js,/account:paidFrom/);
+  assert.match(js,/result\.transaction\?\.id/);
+  assert.match(js,/method:'PATCH'/);
+  assert.match(js,/originalDate\+'T12:00:00\+08:00'/);
+  assert.match(js,/api\('\/api\/transactions'/);
   assert.match(js,/No automatic retry/);
-  assert.doesNotMatch(js,/localStorage|sessionStorage/);
-  assert.doesNotMatch(js,/record_expense:true/);
+  assert.match(js,/saved-date-pending/);
+  assert.doesNotMatch(js,/localStorage|sessionStorage|record_expense:false/);
   assert.match(ui,/session-security\.js/);
   assert.match(ui,/merchant-stock-csv-intake\.js/);
 });
@@ -81,6 +86,10 @@ test('the self-service tool requires explicit physical count and business confir
   assert.match(ui,/physicalConfirm/);
   assert.match(ui,/moneyConfirm/);
   assert.match(ui,/businessName/);
+  assert.match(ui,/purchaseAccount/);
+  assert.match(ui,/purchaseDate/);
+  assert.match(ui,/actual payment/);
+  assert.match(js,/localDatePH\(\)/);
   assert.match(ui,/type="file"/);
   assert.match(ui,/noindex,nofollow/);
   assert.match(js,/exactlyConfirmedBusiness\(\)/);
