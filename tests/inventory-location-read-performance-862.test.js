@@ -275,11 +275,22 @@ test('862: authenticated HTTP location GETs reject guests and wrong profiles, an
       });
       return {status:response.status,body:await response.json()};
     };
-    for(const path of ['/api/inventory/locations','/api/inventory/location-balances']){
+    for(const path of ['/api/inventory/locations','/api/inventory/location-balances','/api/inventory/location-summary']){
       assert.equal((await get(path)).status,401,'guest read must fail');
       assert.equal((await get(path,'customer')).status,403,'non-Merchant read must fail');
     }
     assert.equal(queries.length,0,'rejected requests must never query Inventory');
+
+    const beforeSummary=queries.length;
+    const aSummary=await get('/api/inventory/location-summary?business_id=202','merchant-a');
+    assert.equal(aSummary.status,200);
+    assert.equal(queries.length,beforeSummary+1,'summary uses one scoped PostgreSQL SELECT');
+    assert.deepEqual(aSummary.body.locations.map(row=>row.business_id),[101]);
+    assert.deepEqual(aSummary.body.balances.map(row=>row.business_id),[101]);
+    const bSummary=await get('/api/inventory/location-summary?business_id=101','merchant-b');
+    assert.equal(bSummary.status,200);
+    assert.deepEqual(bSummary.body.locations.map(row=>row.business_id),[202]);
+    assert.deepEqual(bSummary.body.balances.map(row=>row.business_id),[202]);
 
     const aLocations=await get('/api/inventory/locations?business_id=202','merchant-a');
     const bLocations=await get('/api/inventory/locations?business_id=101','merchant-b');
