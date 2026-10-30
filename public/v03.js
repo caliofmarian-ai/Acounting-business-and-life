@@ -563,6 +563,7 @@ function merchantTodayError(error){
   $('todayContent')?.classList.add('hidden');
   $('todayError')?.classList.remove('hidden');
   if($('todayErrorMessage'))$('todayErrorMessage').textContent=error?.message||'Check your connection and try again.';
+  document.dispatchEvent(new CustomEvent('abl:merchant-today-error'));
 }
 async function loadMerchantToday({force=false}={}){
   if(!isMerchantBaseActive()||!$('viewDashboard'))return null;
