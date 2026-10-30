@@ -70,9 +70,12 @@ function applyFinancePresentation(overview){
   document.body.dataset.businessFinanceRole=role||'';document.body.dataset.merchantDomain=domain;
   const foodAllowed=role==='merchant'&&Boolean(overview?.presentation?.legacy_recipe_ui_allowed);
   for(const name of ['Sell','Menu']){const btn=document.querySelector('.bottomNav [data-view="'+name+'"]');if(btn){btn.classList.toggle('roleFinanceHidden',!foodAllowed);if(name==='Menu'&&foodAllowed){const label=btn.querySelector?.('.merchantNavLabel');if(label)label.textContent='Products & recipes';else btn.textContent='Products & recipes'}}const view=document.getElementById('view'+name);if(view)view.classList.toggle('roleFinanceHidden',!foodAllowed)}
-  const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn){const label=stockBtn.querySelector?.('.merchantNavLabel');const text=role==='supplier'?'Inventory':domain==='non_food'?'Inventory':'Stock';if(label)label.textContent=text;else stockBtn.textContent=text;}
-  const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Inventory';
+  const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn){const label=stockBtn.querySelector?.('.merchantNavLabel');const text=role==='supplier'?'Inventory':'Stock';if(label)label.textContent=text;else stockBtn.textContent=text;}
+  const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Stock';
   const stockFormTitle=document.querySelector('#viewStock form h2');if(stockFormTitle)stockFormTitle.textContent='Add or update inventory item';
+  // Resolve Food/Mixed recipe eligibility before presenting the entire navigation.
+  const nav=document.querySelector('.merchantPrimaryNav');
+  if(nav){nav.setAttribute('data-ready','true');nav.removeAttribute('aria-busy')}
   document.getElementById('budgetForm')?.classList.add('roleFinanceHidden');
   document.querySelectorAll('option[value="personal_withdrawal"]').forEach(o=>o.textContent='Owner drawing / withdrawal');
   document.querySelectorAll('[data-view-link="Sell"]').forEach(el=>el.classList.toggle('roleFinanceHidden',!foodAllowed));
@@ -328,7 +331,18 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
   }catch(err){console.warn('Accounting workspace:',err.message)}
 }
 
-document.addEventListener('abl:profile-state',event=>bootAccountingWorkspace(event.detail),{passive:true});
+function resetMerchantNavPresentation(){
+  const nav=document.querySelector('.merchantPrimaryNav');
+  if(nav){nav.removeAttribute('data-ready');nav.setAttribute('aria-busy','true')}
+}
+document.addEventListener('abl:profile-state',event=>{
+  if(event.detail?.activeRole!=='merchant')resetMerchantNavPresentation();
+  bootAccountingWorkspace(event.detail);
+},{passive:true});
+document.addEventListener('abl:business-workspace-changed',event=>{
+  if(event.detail?.role==='merchant')resetMerchantNavPresentation();
+},{passive:true});
+document.addEventListener('abl:auth-expired',resetMerchantNavPresentation,{passive:true});
 document.addEventListener('abl:merchant-money-opened',()=>{
   if(accountingState.role==='merchant')mountEconomicSummary('viewMoney');
 },{passive:true});
