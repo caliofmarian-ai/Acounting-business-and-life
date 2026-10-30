@@ -208,3 +208,39 @@ test('Service Job expired, missing or invalid intent expiry fails closed before 
     assert.equal(calls,1,'expired service intent must be rejected before job/quote queries');
   }
 });
+
+test('pending Service Job checkout refuses inconsistent currencies before monetary lookup or provider call',async()=>{
+  // Regression: earlier descriptor code returned a EUR checkout for a PHP job.
+  for(const [intentCurrency,jobCurrency] of [
+    ['EUR','PHP'],['PHP','EUR'],['EUR','EUR'],['','PHP'],['PHP',''],[null,'PHP'],['php','PHP']
+  ]){
+    let queries=0;
+    const pool={query:async(sql)=>{
+      queries++;
+      if(queries===1){
+        assert.match(sql,/FROM payment_intents/);
+        return{rowCount:1,rows:[{
+          id:92,public_id:'pi_currency_92',source_type:'service_job',source_id:44,
+          payer_account_id:9,currency_code:intentCurrency,amount:'1250.00',
+          status:'requires_provider',expires_at:new Date(Date.now()+30*60_000).toISOString()
+        }]};
+      }
+      if(queries===2){
+        assert.match(sql,/FROM service_jobs j JOIN accounts p/);
+        return{rowCount:1,rows:[{
+          id:44,customer_account_id:9,provider_account_id:15,
+          status:'completed',service_label:'Aircon cleaning',
+          currency_code:jobCurrency,customer_confirmed_at:'2026-10-29T10:00:00Z',
+          provider_name:'Synthetic provider'
+        }]};
+      }
+      throw new Error('Must reject mismatched currency before Service Job money queries');
+    }};
+    await assert.rejects(
+      resolvePayMongoCheckoutDescriptor(pool,{intentPublicId:'pi_currency_92',accountId:9}),
+      error=>error?.status===409&&error?.code==='SERVICE_JOB_CURRENCY_INTEGRITY_MISMATCH',
+      'pending Service Job mismatch: '+String(intentCurrency)+' / '+String(jobCurrency)
+    );
+    assert.equal(queries,2,'currency mismatch must not fetch payable summary or call provider');
+  }
+});

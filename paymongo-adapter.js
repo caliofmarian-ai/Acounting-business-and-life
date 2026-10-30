@@ -279,6 +279,15 @@ export async function resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,acc
     const j=jq.rows[0];
     if(Number(j.customer_account_id)!==Number(accountId))throw Object.assign(new Error('Payment intent belongs to another Customer'),{status:403});
     if(j.status!=='completed'||!j.customer_confirmed_at)throw Object.assign(new Error('Service Job is not payable until completion is Customer-confirmed'),{status:409});
+    // Pending Service Job checkout is Philippine-peso only. An intent with a
+    // different or missing currency cannot become a provider charge merely
+    // because its numeric amount matches the PHP receivable. Historical paid
+    // intents remain readable without attempting another checkout.
+    if(i.status!=='succeeded'&&(i.currency_code!=='PHP'||j.currency_code!=='PHP')){
+      throw Object.assign(new Error('Service Job checkout currency differs from the PHP payable authority'),{
+        status:409,code:'SERVICE_JOB_CURRENCY_INTEGRITY_MISMATCH'
+      });
+    }
     const summary=await serviceJobPaymentSummary(pool,j.id);
     if(i.status!=='succeeded'&&Number(i.amount)>Number(summary.payment.outstanding)+0.001){
       throw Object.assign(new Error('Service Job outstanding amount changed before checkout'),{status:409,code:'SERVICE_JOB_OUTSTANDING_CHANGED'});
