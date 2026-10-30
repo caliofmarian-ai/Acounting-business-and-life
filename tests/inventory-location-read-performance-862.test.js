@@ -89,3 +89,85 @@ test('862: different businesses never coalesce or reuse one business query',asyn
   const reads=pool.calls.filter(x=>x.sql.startsWith('SELECT i.id,i.quantity,i.storage_location_label'));
   assert.deepEqual(reads.map(x=>x.params[0]).sort(),[1,2]);
 });
+
+test('862: authenticated HTTP location GETs reject guests and wrong profiles, and stay tenant-bound',async()=>{
+  // Runs the registered Express handlers over HTTP with an isolated synthetic
+  // accountingContext. It does not substitute for real Preview auth acceptance.
+  const express=(await import('express')).default;
+  const {registerInventoryLocationRoutes}=await import('../inventory-locations.js');
+  const app=express();
+  const queries=[];
+  const pool={
+    async query(sql,args=[]){
+      queries.push({sql,args});
+      if(sql.startsWith('SELECT i.id,i.quantity,i.storage_location_label'))return {rows:[]};
+      if(sql.startsWith('SELECT name FROM inventory_storage_locations'))return {rows:[{name:'Pantry'}]};
+      if(sql.startsWith("SELECT to_regclass('public.supply_lots')"))return {rows:[{rel:null}]};
+      if(sql.includes('SELECT * FROM inventory_storage_locations')){
+        return {rows:[{id:Number(args[0])*10,business_id:Number(args[0]),name:'Pantry',active:true}]};
+      }
+      if(sql.includes('SELECT b.business_id,b.inventory_id,b.location_id')){
+        const businessId=Number(args[0]),inventoryId=businessId*10+1;
+        if(args.length===2&&Number(args[1])!==inventoryId)return {rows:[]};
+        return {rows:[{business_id:businessId,inventory_id:inventoryId,
+          location_id:businessId*10,quantity:'3',item:'Synthetic item',unit:'pcs'}]};
+      }
+      throw new Error('Unexpected Inventory SQL: '+sql);
+    }
+  };
+  const accountingContext=async req=>{
+    const identity=req.headers['x-qa-identity'];
+    if(identity==='merchant-a'||identity==='merchant-b'){
+      const id=identity==='merchant-a'?101:202;
+      return {role:'merchant',business:{id},me:{account:{id:id+1000}}};
+    }
+    if(identity==='customer')return {role:'customer',business:{id:303},me:{account:{id:1303}}};
+    throw Object.assign(new Error('Authentication required'),{status:401});
+  };
+  registerInventoryLocationRoutes(app,{pool,jsonBody:express.json(),accountingContext});
+  app.use((err,req,res,next)=>res.status(err.status||500).json({error:err.message}));
+  const server=await new Promise((resolve,reject)=>{
+    const listener=app.listen(0,'127.0.0.1',()=>resolve(listener));
+    listener.once('error',reject);
+  });
+  try{
+    const base='http://127.0.0.1:'+server.address().port;
+    const get=async(path,identity)=>{
+      const response=await fetch(base+path,{
+        headers:identity?{'x-qa-identity':identity}:{}
+      });
+      return {status:response.status,body:await response.json()};
+    };
+    for(const path of ['/api/inventory/locations','/api/inventory/location-balances']){
+      assert.equal((await get(path)).status,401,'guest read must fail');
+      assert.equal((await get(path,'customer')).status,403,'non-Merchant read must fail');
+    }
+    assert.equal(queries.length,0,'rejected requests must never query Inventory');
+
+    const aLocations=await get('/api/inventory/locations?business_id=202','merchant-a');
+    const bLocations=await get('/api/inventory/locations?business_id=101','merchant-b');
+    assert.equal(aLocations.status,200);
+    assert.equal(bLocations.status,200);
+    assert.deepEqual(aLocations.body.map(row=>row.business_id),[101]);
+    assert.deepEqual(bLocations.body.map(row=>row.business_id),[202]);
+
+    const aBalances=await get('/api/inventory/location-balances?business_id=202&inventory_id=1011','merchant-a');
+    const bBalances=await get('/api/inventory/location-balances?business_id=101&inventory_id=2021','merchant-b');
+    assert.equal(aBalances.status,200);
+    assert.equal(bBalances.status,200);
+    assert.deepEqual(aBalances.body.map(row=>row.business_id),[101]);
+    assert.deepEqual(bBalances.body.map(row=>row.business_id),[202]);
+
+    const foreignInventory=await get('/api/inventory/location-balances?business_id=202&inventory_id=2021','merchant-a');
+    assert.equal(foreignInventory.status,200);
+    assert.deepEqual(foreignInventory.body,[],'a Merchant cannot read another business inventory item');
+
+    assert.ok(queries.filter(row=>row.args.length).every(row=>
+      Number(row.args[0])===101||Number(row.args[0])===202
+    ),'all Inventory SQL must bind the authenticated Merchant business, never the query override');
+    assert.ok(queries.some(row=>row.args[0]===101&&row.args[1]===2021),
+      'cross-business item filter is checked with the authenticated business ID');
+  }finally{
+    await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+  }
+});
