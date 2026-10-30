@@ -1129,9 +1129,6 @@ export const PH_STOCK_PICKER_ALIASES={
     "tokwa",
     "tofu"
   ],
-  "Chicharon (pork cracklings)": [
-    "chicharon"
-  ],
   "Pork chicharon (crispy pork skin)": [
     "chicharon",
     "pancit puso garnish"
