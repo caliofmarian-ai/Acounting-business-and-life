@@ -67,6 +67,27 @@ Official references used for the provider contract:
 - https://docs.aws.amazon.com/textract/latest/dg/expensedocuments.html
 - https://docs.cloud.google.com/document-ai/docs/processors-list
 
+## V1B — read-only receiving preflight and count evidence UI (2026-10-30)
+
+New modules in PR #861:
+
+- `receipt-receiving-preflight.js` groups reviewed source lines by authorized existing Inventory item and base unit, without posting goods or costs.
+- Merchant receiving readiness GET validates the saved review, source totals, cross-business item identity, existing receipt-to-purchase links and possible duplicate receipt sources. It reports reasons/flags and never returns stock-posting permission.
+- Multiple receipt lines for the same item are grouped; no expense is generated and charges/discounts are never allocated silently.
+- The review button now shows the preflight details and explicitly states that receipt posting is disabled.
+- Review-idempotency keys include a SHA-256 submission fingerprint. A retry with the same key and changed quantities or linked items is rejected.
+- The Guided Inventory Count → Review pane now has a **Check scanned receipts for stock differences** button. It obtains the current Review session from the server and shows existing private original links and last recorded purchases without changing stock. Blind-count mode hides it, and the server separately refuses evidence access until status is review or posted.
+
+### Release hold: do not enable stock writes yet
+
+Existing `/api/inventory/purchase` records a single-line purchase, expense and lot; invoking it repeatedly for a scanned receipt risks partial stock updates or duplicate bookkeeping. Safe activation requires an atomic, idempotent batch receiving adapter with exact-business authorization after #841 and original vault #856 are reconciled. No invoice/PO/payment/stock is changed in this V1B slice.
+
+### Remaining checks
+
+- Exact-head CI, controlled isolated Preview file/scan/Android tests, malformed document and cross-business negative tests.
+- Reconcile PR #858 before PR #861 and rebase the shared `server-suppliers.js` composition without displacing another agent's Preview deployment.
+- Production release and owner acceptance strictly at https://caliof.com, after exact production deployment and smoke.
+
 ## Agent coordination
 
 This slice only touches isolated new modules plus the Supplier procurement composition entrypoint. It does **not** edit the active agents' Inventory mutation logic (#841/#821), Merchant Orders, catalog AI (#845/#170), and Promotion Center (#836). Because the pending receipt vault #858 touches `server-suppliers.js` too, reconcile its reviewed exact head first and rebase this PR before promotion.
