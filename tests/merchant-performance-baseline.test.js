@@ -22,7 +22,8 @@ test('Merchant cold profile state loads Today and reuses its workspace metadata'
   assert.match(merchantUi,/workspace:data\.workspace\|\|null/);
 
   assert.match(accountingUi,/document\.addEventListener\('abl:profile-state',event=>\{/);
-  assert.match(accountingUi,/bootAccountingWorkspace\(event\.detail\)/);
+  assert.match(accountingUi,/bootAccountingWorkspace\(detail\)/);
+  assert.match(accountingUi,/merchantNavPresentationScope/);
   assert.match(accountingUi,/resetMerchantNavPresentation\(\)/);
   assert.match(accountingUi,/if\(role==='merchant'\)\{/);
   assert.match(accountingUi,/BusinessLifeMerchantToday\?\.getState\?\.\(\)\?\.workspace/);
