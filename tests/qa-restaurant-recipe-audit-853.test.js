@@ -46,7 +46,7 @@ function snapshot(){
           per_sale_quantity:String(c.per_sale_quantity),
           percentage:c.percentage===null?null:String(c.percentage),
           unit_cost:String(inv.unit_cost),
-          batch_cost:String(c.base_quantity*Number(inv.unit_cost))};
+          batch_cost:c.base_quantity*Number(inv.unit_cost)};
       }),
       recipe:computed.components.map(c=>{
         const inv=byId.get(c.inventory_id);
