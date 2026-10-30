@@ -73,11 +73,14 @@ function applyFinancePresentation(overview){
   const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn){const label=stockBtn.querySelector?.('.merchantNavLabel');const text=role==='supplier'?'Inventory':'Stock';if(label)label.textContent=text;else stockBtn.textContent=text;}
   const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Stock';
   const stockFormTitle=document.querySelector('#viewStock form h2');if(stockFormTitle)stockFormTitle.textContent='Add or update inventory item';
-  // Resolve Food/Mixed recipe eligibility before presenting the sole visible menu.
+  // Supplier finance may hydrate first during a profile switch. It must never
+  // resolve or reveal the Merchant navigation, even temporarily.
   const shellNav=document.getElementById('merchantWorkspaceNav');
-  const recipes=shellNav?.querySelector('#merchantRecipesTopButton');
-  recipes?.classList.toggle('roleFinanceHidden',!foodAllowed);
-  if(shellNav){shellNav.setAttribute('data-ready','true');shellNav.removeAttribute('aria-busy')}
+  if(role==='merchant'){
+    const recipes=shellNav?.querySelector('#merchantRecipesTopButton');
+    recipes?.classList.toggle('roleFinanceHidden',!foodAllowed);
+    if(shellNav){shellNav.setAttribute('data-ready','true');shellNav.removeAttribute('aria-busy')}
+  }
   const nav=document.querySelector('.merchantPrimaryNav');
   if(nav){nav.setAttribute('data-ready','true');nav.removeAttribute('aria-busy')}
   document.getElementById('budgetForm')?.classList.add('roleFinanceHidden');
