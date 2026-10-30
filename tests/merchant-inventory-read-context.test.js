@@ -451,3 +451,20 @@ for(const failedComponent of ['locations','count'])for(const status of [403,500]
   const requestsBeforeWrite=h.requests.length;await assert.rejects(h.api.raw('/api/inventory/purchase',{method:'POST'}),/Reload Inventory online/);assert.equal(h.requests.length,requestsBeforeWrite);
   await completeRealInventoryRead(h);assert.equal(h.mutationsDisabled(),false);assert.equal(h.advanced.hidden,false);assert.match(h.status(),/confirmed just now/i);assert.equal(count.getSession().id,44);assert.equal(locations.getLocations().length,1);
 });
+
+test('confirmed Inventory list appears read-only while slow Storage is still being verified',async()=>{
+  const h=harness(),release=h.pauseLocations(),pending=h.api.load();
+  assert.equal(h.stock.hidden,true,'do not show old Inventory before the scoped GET');
+  assert.equal(h.mutationsDisabled(),true);
+  await h.respond(0,inventoryRows(1));
+  assert.deepEqual(h.renders,[inventoryRows(1)]);
+  assert.equal(h.stock.hidden,false,'show newly verified item list without waiting on Storage');
+  assert.equal(h.advanced.hidden,true,'advanced actions remain gated');
+  assert.equal(h.mutationsDisabled(),true,'no stock mutations while Storage checks are pending');
+  assert.match(h.status(),/Inventory items loaded\. Checking storage locations/i);
+  release();
+  await pending;
+  assert.equal(h.mutationsDisabled(),false);
+  assert.equal(h.advanced.hidden,false);
+  assert.match(h.status(),/confirmed just now/i);
+});
