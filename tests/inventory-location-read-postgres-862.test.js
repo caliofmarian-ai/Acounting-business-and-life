@@ -113,7 +113,7 @@ test('862: isolated real PostgreSQL clean reads, coalescing, lock repair and iso
       const settled={async query(sql,args=[]){cleanSql.push({sql,args});return pool.query(sql,args)}};
       await reconcileBusinessInventoryLocationsForRead(settled,{businessId:2});
       assert.equal(cleanSql.length,4,'clean lot inventory should need four read-only SQL queries');
-      assert.ok(cleanSql.every(({sql})=>/^\\s*SELECT\\b/i.test(sql)&&!sql.includes('FOR UPDATE')),'clean preflight must not request row locks');
+      assert.ok(cleanSql.every(({sql})=>sql.trimStart().startsWith('SELECT')&&!sql.includes('FOR UPDATE')),'clean preflight must not request row locks');
       assert.ok(cleanSql.filter(x=>x.args?.length).every(x=>x.args[0]===2),'preflight binds the originating business');
       t.diagnostic('real PostgreSQL supply lots: B drift repaired, A unchanged, clean repeat 4 SELECTs');
     });
