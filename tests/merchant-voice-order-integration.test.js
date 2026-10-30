@@ -28,6 +28,8 @@ test('voice UI protects operator consent, offers editable text fallback and neve
   assert.match(ui,/merchantVoiceStop/);
   assert.match(ui,/merchantVoiceClear/);
   assert.match(ui,/merchantVoiceReadback/);
+  assert.match(ui,/merchantVoiceQuote/);
+  assert.match(ui,/\/api\/orders\/voice\/quote/);
   assert.match(ui,/SpeechSynthesisUtterance/);
   assert.match(ui,/fetch\('\/api\/accounting\/workspaces/);
   assert.doesNotMatch(ui,/\/api\/orders\/merchant\/create/);

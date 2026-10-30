@@ -4,7 +4,8 @@
  * posting. Nothing here writes to Orders, Inventory, payments or accounting.
  */
 import crypto from 'node:crypto';
-import {applyVoiceOrderTurn} from './merchant-voice-order-core.js';
+import {applyVoiceOrderTurn,voiceDraftForQuote} from './merchant-voice-order-core.js';
+import {authoritativeVoiceOrderQuote} from './merchant-voice-order-quote.js';
 import {interpretVoiceOrderText,voiceOrderAIConfig} from './merchant-voice-order-provider.js';
 
 const fail=(status,code,message)=>Object.assign(new Error(message),{status,code});
@@ -20,7 +21,7 @@ const allowedCodes=new Set([
   'MODIFIER_DUPLICATE','MODIFIER_GROUP_INVALID','MODIFIER_SELECTION_REQUIRED',
   'QUANTITY_UNCLEAR','QUANTITY_LIMIT','LINE_LIMIT','LINE_UNCLEAR',
   'LINE_UNKNOWN','LINE_AMBIGUOUS','VOICE_CLEAR_UNCLEAR','CUSTOMER_UNCLEAR',
-  'ORDER_TOTAL_LIMIT','INVALID_CATALOG_PRICE'
+  'ORDER_TOTAL_LIMIT','INVALID_CATALOG_PRICE','DRAFT_EMPTY','VOICE_QUOTE_STALE'
 ]);
 
 function responseError(res,error){
@@ -89,7 +90,7 @@ export async function chargeVoiceOrderQuota(db,{businessId,accountId,now=new Dat
 
 /** Allows fake Express app, authorized catalog and provider in isolated tests. */
 export function installMerchantVoiceOrderRoutes(app,{
-  db,requireMerchant,catalogForBusiness,bodyMiddleware=null,
+  db,requireMerchant,catalogForBusiness,snapshotsForBusiness,bodyMiddleware=null,
   env=process.env,fetchImpl=fetch,secret=crypto.randomBytes(32),
   interpret=interpretVoiceOrderText,chargeQuota=chargeVoiceOrderQuota
 }={}){
@@ -114,6 +115,29 @@ export function installMerchantVoiceOrderRoutes(app,{
         reason:ready()?null:'Voice AI is not available for this Merchant yet. Use the regular counter order.'});
     }catch(error){responseError(res,error)}
   });
+  const quoteHandler=async(req,res)=>{
+    res.set('Cache-Control','private, no-store');
+    try{
+      const ctx=await requireContext(req,req.body?.business_id);
+      if(!ready())throw fail(503,'ORDER_VOICE_NOT_CONFIGURED','Voice AI is not available. Use the normal counter order.');
+      if(req.body?.consent!==true)throw fail(403,'ORDER_VOICE_CONSENT_REQUIRED','Consent is required for an order quote.');
+      if(!req.body?.draft||typeof req.body.draft!=='object'||Array.isArray(req.body.draft)||JSON.stringify(req.body.draft).length>40000)
+        throw fail(400,'ORDER_VOICE_BAD_REQUEST','Provide a current Merchant voice order draft.');
+      if(typeof snapshotsForBusiness!=='function')throw fail(503,'ORDER_VOICE_NOT_CONFIGURED','Authoritative quoting is not configured.');
+      const catalog=await catalogForBusiness(ctx.businessId);
+      const validated=applyVoiceOrderTurn({businessId:ctx.businessId,sessionId:ctx.sessionId,catalog,
+        previousDraft:req.body.draft,turn:{operations:[]}}).draft;
+      const items=voiceDraftForQuote(validated).items;
+      await chargeQuota(db,{businessId:ctx.businessId,accountId:ctx.accountId});
+      const snapshots=await snapshotsForBusiness({businessId:ctx.businessId,items});
+      const quote=authoritativeVoiceOrderQuote({draft:validated,snapshots,accountId:ctx.accountId,
+        businessId:ctx.businessId,sessionId:ctx.sessionId,secret:secretBytes});
+      res.json(quote);
+    }catch(error){responseError(res,error)}
+  };
+  if(bodyMiddleware)app.post('/api/orders/voice/quote',bodyMiddleware,quoteHandler);
+  else app.post('/api/orders/voice/quote',quoteHandler);
+
   const handler=async(req,res)=>{
     res.set('Cache-Control','private, no-store');
     try{

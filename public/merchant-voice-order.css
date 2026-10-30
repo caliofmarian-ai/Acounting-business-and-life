@@ -26,3 +26,5 @@
 .merchantVoiceDraft small{font-size:11px;line-height:1.5;color:#65766f}
 .merchantVoiceLocked{font-size:12px;line-height:1.5;border:1px dashed #aabfb6;border-radius:10px;background:#f8f9f6;color:#455c52;padding:10px}
 @media(max-width:390px){.merchantVoiceChip{font-size:9px}.merchantVoiceIntro strong{font-size:14px}.merchantVoiceSymbol{width:36px;min-width:36px;height:36px}.merchantVoiceDetails>summary{padding:12px}}
+
+.merchantVoiceQuote{padding:12px;border:1px solid #aacdbd;background:#eaf7f0;border-radius:11px;display:grid;gap:6px;font-size:14px;color:#14513d}.merchantVoiceQuote small{font-size:12px;color:#456b5b;line-height:1.45}

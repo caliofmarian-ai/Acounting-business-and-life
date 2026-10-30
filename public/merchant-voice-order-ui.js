@@ -8,7 +8,7 @@
   'use strict';
   const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const state={businessId:null,capability:null,draft:null,processing:false,consent:false,
-    transcript:'',message:'',clarification:false,question:'',epoch:0,recognition:null,
+    transcript:'',message:'',clarification:false,question:'',quote:null,epoch:0,recognition:null,
     request:null,language:'en-PH',autoSpeech:false};
   const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const pesos=centavos=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(centavos||0)/100);
@@ -34,7 +34,7 @@
   function stopSpeech(){try{window.speechSynthesis?.cancel()}catch{}}
   function reset(message=''){
     state.epoch++;state.request?.abort();state.request=null;
-    stopRecognition();stopSpeech();state.processing=false;state.draft=null;
+    stopRecognition();stopSpeech();state.processing=false;state.draft=null;state.quote=null;
     state.consent=false;state.transcript='';state.message=message;
     state.clarification=false;state.question='';state.capability=null;state.businessId=null;
     render();
@@ -42,6 +42,7 @@
   function canContinue(epoch,businessId){
     const workspace=accountContext();
     const current=Number(workspace?.role==='merchant'?workspace.activeBusinessId:0);
+    if(workspace?.role&&workspace.role!=='merchant')return false;
     return epoch===state.epoch&&state.businessId===businessId&&merchantVisible()&&
       (!current||current===businessId)&&window.ABLSession?.authenticated?.()!==false;
   }
@@ -64,9 +65,10 @@
         <div class="merchantVoiceActions"><button id="merchantVoiceSpeak" type="button" ${!SpeechRecognition||state.processing?'disabled':''}>${SpeechRecognition?'🎙️ Start speaking':'Microphone unavailable'}</button><button id="merchantVoiceStop" type="button" ${!state.recognition?'disabled':''}>Stop</button><button id="merchantVoiceReadback" type="button" ${!state.draft?.lines?.length?'disabled':''}>🔊 Read back</button></div>
         <label class="merchantVoiceTextLabel" for="merchantVoiceText">Spoken or typed instruction</label>
         <textarea id="merchantVoiceText" rows="3" maxlength="1200" placeholder="Order for Ana: three chicken adobo, one rice, two juices">${escapeHtml(state.transcript)}</textarea>
-        <div class="merchantVoiceActions"><button id="merchantVoiceSend" type="button" class="merchantVoicePrimary" ${state.processing?'disabled':''}>${state.processing?'Checking Catalog…':'Prepare draft'}</button><button id="merchantVoiceClear" type="button">Discard draft</button></div>
+        <div class="merchantVoiceActions"><button id="merchantVoiceSend" type="button" class="merchantVoicePrimary" ${state.processing?'disabled':''}>${state.processing?'Checking Catalog…':'Prepare draft'}</button><button id="merchantVoiceQuote" type="button" ${state.processing||!state.draft?.lines?.length?'disabled':''}>Check current total</button><button id="merchantVoiceClear" type="button">Discard draft</button></div>
         <div id="merchantVoiceFeedback" role="status" aria-live="polite" class="merchantVoiceFeedback">${escapeHtml(state.question||state.message||'Speak one instruction, then correct the draft in another turn.')}</div>
         ${state.draft?`<div class="merchantVoiceDraft"><strong>Customer: ${escapeHtml(state.draft.customer_name||'Walk-in customer')}</strong><ul>${state.draft.lines.map(line=>`<li><span>${escapeHtml(line.quantity)} × ${escapeHtml(line.name)}${line.variant_name?` — ${escapeHtml(line.variant_name)}`:''}${line.modifier_names?.length?` (${escapeHtml(line.modifier_names.join(', '))})`:''}</span><b>${pesos(line.line_total_centavos)}</b></li>`).join('')}</ul><div class="merchantVoiceTotal"><strong>Estimated items subtotal</strong><b>${pesos(state.draft.subtotal_centavos)}</b></div><small>Delivery, final availability, taxes and payment are not confirmed. No receivable, charge or stock movement has been recorded.</small></div>`:''}
+        ${state.quote?`<div class="merchantVoiceQuote" role="status"><strong>Server-checked subtotal ${pesos(state.quote.quote.total_centavos)}</strong><small>Quote expires ${escapeHtml(new Date(state.quote.quote.expires_at).toLocaleTimeString('en-PH'))}. Products and stock are checked again when an order is created. No stock is reserved and no payment has been taken.</small></div>`:''}
         <div class="merchantVoiceLocked" role="note">Secure order confirmation is not enabled in this version. Use the regular counter-order form to create an order after checking the items.</div>
       </div></details>`;
     bind(panel);
@@ -91,7 +93,7 @@
       const result=await api('/api/orders/voice/turn',{method:'POST',signal:controller.signal,
         body:JSON.stringify({business_id:bid,consent:true,transcript:instruction,previous_draft:state.draft})});
       if(!canContinue(epoch,bid))return;
-      state.draft=result.draft;state.clarification=Boolean(result.needs_clarification);
+      state.draft=result.draft;state.quote=null;state.clarification=Boolean(result.needs_clarification);
       state.question=result.needs_clarification?result.question:'';
       state.message=result.needs_clarification?'':(result.draft?.lines?.length?'Draft updated. Review it before creating an order.':'No order items recognized. Try a clearer instruction.');
       state.transcript='';
@@ -101,6 +103,19 @@
     }finally{
       if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}
     }
+  }
+  async function checkCurrentQuote(){
+    if(!state.consent){state.message='Consent is required for a current order quote.';render();return}
+    if(!state.draft?.lines?.length||state.processing||!enabled()||!state.businessId)return;
+    const epoch=state.epoch,bid=state.businessId;
+    const controller=new AbortController();state.request=controller;state.processing=true;state.message='Checking current Catalog pricing…';render();
+    try{
+      const result=await api('/api/orders/voice/quote',{method:'POST',signal:controller.signal,
+        body:JSON.stringify({business_id:bid,consent:true,draft:state.draft})});
+      if(!canContinue(epoch,bid))return;
+      state.quote=result;state.message='Current Catalog quote checked. It is not a confirmed order.';
+    }catch(error){if(canContinue(epoch,bid)&&error?.name!=='AbortError'){state.quote=null;state.message=String(error.message||'Unable to check the total.').slice(0,220)}}
+    finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
   }
   function startRecognition(){
     if(!state.consent){state.message='Consent is required before activating the microphone.';render();return}
@@ -141,7 +156,8 @@
     panel.querySelector('#merchantVoiceReadback')?.addEventListener('click',()=>readBack());
     panel.querySelector('#merchantVoiceText')?.addEventListener('input',event=>{state.transcript=event.target.value});
     panel.querySelector('#merchantVoiceSend')?.addEventListener('click',()=>void sendTurn(state.transcript));
-    panel.querySelector('#merchantVoiceClear')?.addEventListener('click',()=>{stopRecognition();stopSpeech();state.epoch++;state.request?.abort();state.request=null;state.draft=null;state.transcript='';state.processing=false;state.question='';state.message='Draft discarded. Nothing was posted.';render()});
+    panel.querySelector('#merchantVoiceQuote')?.addEventListener('click',()=>void checkCurrentQuote());
+    panel.querySelector('#merchantVoiceClear')?.addEventListener('click',()=>{stopRecognition();stopSpeech();state.epoch++;state.request?.abort();state.request=null;state.draft=null;state.quote=null;state.transcript='';state.processing=false;state.question='';state.message='Draft discarded. Nothing was posted.';render()});
   }
   async function attach(){
     if(!merchantVisible()){if(state.businessId!==null)reset();return}

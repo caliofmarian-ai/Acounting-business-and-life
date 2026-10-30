@@ -9,12 +9,13 @@ function rig({businesses=[7],flag=true,configured=true,turns=[{operations:[op('s
   installMerchantVoiceOrderRoutes(app,{db:{},env:{ORDER_VOICE_UI_ENABLED:flag?'1':'0',ORDER_VOICE_AI_ENABLED:configured?'1':'0',ORDER_VOICE_AI_MODEL:'test-model',OPENAI_API_KEY:'fake'},
     requireMerchant:async(req,bid)=>{calls.push(['auth',bid]);if(!req.headers?.authorization)throw Object.assign(new Error('Unauthorized'),{status:401});if(!businesses.includes(bid))throw Object.assign(new Error('Not allowed'),{status:403});return{me:{account:{id:44}},business:{id:bid}}},
     catalogForBusiness:async bid=>{calls.push(['catalog',bid]);return catalogItems},
+    snapshotsForBusiness:async({businessId,items})=>{calls.push(['snapshots',businessId]);return items.map(i=>({source_kind:i.source_kind,source_id:i.product_id,name_snapshot:'Rice',quantity:i.quantity,catalog_variant_id:i.variant_id,modifier_snapshot_json:{groups:[]},unit_price_snapshot:'25.00',line_total:(i.quantity*25).toFixed(2)}))},
     interpret:interpreter|| (async({transcript})=>{calls.push(['provider',transcript]);return turns.shift()}),
-    chargeQuota:charge|| (async()=>{calls.push(['quota'])}),secret:Buffer.from('test-secret')
+    chargeQuota:charge|| (async()=>{calls.push(['quota'])}),secret:Buffer.from('test-secret-test-secret-test')
   });
-  const request=async(verb,path,{business_id=7,consent=true,transcript='three rice',previous_draft=null,headers={authorization}}={})=>{
+  const request=async(verb,path,{business_id=7,consent=true,transcript='three rice',previous_draft=null,draft=null,headers={authorization}}={})=>{
     let status=200,payload=null,respHeaders={};const res={set:(k,v)=>{respHeaders[k]=v;return res},status:(s)=>{status=s;return res},json:(x)=>{payload=x;return res}};
-    const req={headers,query:{business_id},body:{business_id,consent,transcript,previous_draft}};
+    const req={headers,query:{business_id},body:{business_id,consent,transcript,previous_draft,draft}};
     await handlers.get(`${verb} ${path}`)(req,res);
     return {status,payload,headers:respHeaders};
   };
@@ -79,4 +80,25 @@ test('daily and minute quotas are charged atomically and rolled back on limit',a
 });
 test('insecure session omitted from request cannot reach provider',async()=>{
   const a=rig();const x=await a.request('POST','/api/orders/voice/turn',{headers:{}});assert.equal(x.status,401);assert.equal(a.calls.some(v=>v[0]==='provider'),false);
+});
+
+test('read-only quote revalidates exact current Catalog and returns signed server totals',async()=>{
+  const obj=rig();const turn=await obj.request('POST','/api/orders/voice/turn');
+  const quote=await obj.request('POST','/api/orders/voice/quote',{draft:turn.payload.draft});
+  assert.equal(quote.status,200);assert.equal(quote.payload.status,'quote_only');
+  assert.equal(quote.payload.quote.total_centavos,7500);assert.equal(quote.payload.stock_reserved,false);
+  assert.equal(quote.payload.creates_orders,false);assert.match(quote.payload.signature,/^[A-Za-z0-9_-]{43}$/);
+  assert.equal(obj.calls.filter(x=>x[0]==='snapshots').length,1);
+});
+test('quote cannot reuse a draft after business or session change',async()=>{
+  const obj=rig();const turn=await obj.request('POST','/api/orders/voice/turn');
+  const q=await obj.request('POST','/api/orders/voice/quote',{draft:turn.payload.draft,headers:{authorization:'Bearer different'}});
+  assert.equal(q.status,409);assert.equal(q.payload.code,'VOICE_CONTEXT_STALE');
+  assert.equal(obj.calls.filter(x=>x[0]==='snapshots').length,0);
+});
+test('quote refuses absent draft or missing explicit operator consent',async()=>{
+  const obj=rig();
+  assert.equal((await obj.request('POST','/api/orders/voice/quote')).status,400);
+  assert.equal((await obj.request('POST','/api/orders/voice/quote',{consent:false,draft:{lines:[]}})).status,403);
+  assert.equal(obj.calls.filter(x=>x[0]==='snapshots').length,0);
 });
