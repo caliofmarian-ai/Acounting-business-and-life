@@ -116,7 +116,9 @@ test('switching profiles clears the stale business attribution before Merchant T
   let reused=0;
   context.applyWorkspaceState=()=>{reused++};
   context.window.BusinessLifeMerchantToday.getState=()=>({
-    workspace:{role:'merchant',active_business_id:77,businesses:[{id:77}]}
+    data:{presentation:{merchant_domain:'food',legacy_recipe_ui_allowed:true}},
+    workspace:{role:'merchant',active_business_id:77,businesses:[{id:77}]},
+    profileKey:'45:merchant'
   });
   context.accountingState={role:'merchant',activeBusinessId:77,businesses:[{id:77}]};
   vm.runInContext('accountingWorkspaceAccountId=45',context);
