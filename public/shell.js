@@ -1054,6 +1054,17 @@ function syncMerchantMarketplaceSurface(surface='storefront'){
   });
 }
 document.addEventListener('abl:marketplace-merchant-surface',event=>syncMerchantMarketplaceSurface(event.detail?.surface||'storefront'));
+document.addEventListener('abl:merchant-local-view',event=>{
+  if(activeSurface!=='profile'||activeRole!=='merchant')return;
+  const localName=event.detail?.name,homeActive=localName==='Dashboard';
+  for(const button of document.querySelectorAll('#merchantWorkspaceNav [data-merchant-nav],#merchantMobileTools [data-merchant-mobile-action]')){
+    const isHome=button.id==='merchantHomeButton'||button.dataset.merchantMobileAction==='merchantHome';
+    const active=homeActive&&isHome;
+    button.classList.toggle('active',active);
+    if(active)button.setAttribute('aria-current','page');
+    else button.removeAttribute('aria-current');
+  }
+});
 
 function hideFeatureWorkspaces(keepWorkspaceId=null) {
   for (const id of FEATURE_WORKSPACE_IDS) {
