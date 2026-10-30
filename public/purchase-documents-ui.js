@@ -19,6 +19,7 @@
     return result;
   }
   function message(text,error=false){
+    if(!overlay)return;
     const node=$('#mpdMessage',overlay);
     if(!node)return;
     node.textContent=text||'';
@@ -93,18 +94,22 @@
     message('');
   }
   async function linkable(){
-    const box=$('#mpdLinkable',overlay);
-    const data=await api(ROOT+'/linkable-purchases?business_id='+encodeURIComponent(businessId));
-    if(!overlay||!box)return;
+    const panel=overlay,biz=businessId;
+    if(!panel||!biz)return;
+    const box=$('#mpdLinkable',panel);
+    const data=await api(ROOT+'/linkable-purchases?business_id='+encodeURIComponent(biz));
+    if(panel!==overlay||biz!==businessId||!box)return;
     if(!data.purchases?.length){box.innerHTML='<p class="mpdHelp">No recorded Inventory purchases yet. Save this receipt now and link it later.</p>';return}
     box.innerHTML=data.purchases.map(p=>'<label><input type="checkbox" name="mpdLink" value="'+Number(p.id)+'">'+
       '<span><strong>'+escape(p.inventory_name)+'</strong> · '+escape(currency(p.total_cost))+
       '<br><small>'+escape(String(p.created_at).slice(0,10))+' · '+escape(p.purchase_quantity)+' '+escape(p.purchase_unit)+'</small></span></label>').join('');
   }
   async function archive(){
-    const box=$('#mpdSaved',overlay);
-    const data=await api(ROOT+'?business_id='+encodeURIComponent(businessId));
-    if(!overlay||!box)return;
+    const panel=overlay,biz=businessId;
+    if(!panel||!biz)return;
+    const box=$('#mpdSaved',panel);
+    const data=await api(ROOT+'?business_id='+encodeURIComponent(biz));
+    if(panel!==overlay||biz!==businessId||!box)return;
     if(!data.documents?.length){box.innerHTML='<p class="mpdHelp">No purchase documents saved yet.</p>';return}
     box.innerHTML=data.documents.map(d=>
       '<div class="mpdDoc"><strong>'+escape(d.issuer_name||'Purchase document')+' · '+escape(d.document_kind.replaceAll('_',' '))+'</strong>'+
@@ -123,30 +128,36 @@
   }
   async function save(event){
     event.preventDefault();
-    const btn=$('#mpdSave',overlay);btn.disabled=true;
+    const panel=overlay,biz=businessId;
+    if(!panel||!biz)return;
+    const btn=$('#mpdSave',panel);btn.disabled=true;
     try{
       const workspace=await api('/api/accounting/workspaces');
-      if(workspace.role!=='merchant'||Number(workspace.active_business_id)!==businessId)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
-      const form=$('#mpdForm',overlay),data=new FormData(form);
+      if(panel!==overlay||workspace.role!=='merchant'||Number(workspace.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
+      const form=$('#mpdForm',panel),data=new FormData(form);
       if(!pendingKey)pendingKey=requestKey();
       const payload={
-        business_id:businessId,client_request_key:pendingKey,
+        business_id:biz,client_request_key:pendingKey,
         document_kind:String(data.get('document_kind')||'purchase_receipt'),
         issuer_name:String(data.get('issuer_name')||''),
         issue_date:String(data.get('issue_date')||today()),
         document_number:String(data.get('document_number')||''),
         gross_amount:String(data.get('gross_amount')||''),
         currency_code:'PHP',note:String(data.get('note')||''),
-        links:[...overlay.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
+        links:[...panel.querySelectorAll('input[name="mpdLink"]:checked')].map(n=>({kind:'inventory_purchase',id:Number(n.value)}))
       };
       if(chosenFile){payload.file_name=chosenFile.name;payload.data_url=await readFile(chosenFile)}
+      if(panel!==overlay||biz!==businessId)return;
+      const confirmed=await api('/api/accounting/workspaces');
+      if(panel!==overlay||confirmed.role!=='merchant'||Number(confirmed.active_business_id)!==biz)throw new Error('Merchant workspace changed. Close and reopen Purchase receipts.');
       const result=await api(ROOT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(panel!==overlay||biz!==businessId)return;
       pendingKey=null;chosenFile=null;
       form.reset();form.elements.issue_date.value=today();
       $('#mpdChosenFile',overlay).textContent='No file selected.';
       message(result.already_saved?'This document was already saved.':'Purchase document saved securely.');
       await archive();await linkable();
-    }catch(error){message(error.message,true)}
+    }catch(error){if(panel===overlay)message(error.message,true)}
     finally{if(btn)btn.disabled=false}
   }
   function close(){
@@ -172,7 +183,7 @@
     const heading=$('#viewStock h1');
     if(!heading)return;
     const old=$('#merchantPurchaseDocumentsButton');
-    if(role!=='merchant'){if(old)old.remove();return}
+    if(role!=='merchant'){if(old)old.remove();if(overlay)close();return}
     if(old)return;
     const btn=document.createElement('button');
     btn.id='merchantPurchaseDocumentsButton';btn.type='button';
