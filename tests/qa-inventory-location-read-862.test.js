@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  INVENTORY_LOCATION_READ_862_WAVE,INVENTORY_862_PATHS,inventory862Percentile,
-  inventory862AssertScopedRows,inventory862ValidateRuntime,
+  INVENTORY_LOCATION_READ_862_WAVE,INVENTORY_862_PATHS,INVENTORY_862_LEGACY_PATHS,inventory862Percentile,
+  inventory862AssertScopedRows,inventory862AssertPayload,inventory862ValidateRuntime,
   runInventoryLocationRead862Acceptance
 } from '../qa-inventory-location-read-862.js';
 
@@ -14,6 +14,7 @@ const qaEnv={
 };
 const code=readFileSync(new URL('../qa-inventory-location-read-862.js',import.meta.url),'utf8');
 const harness=readFileSync(new URL('../qa-acceptance.js',import.meta.url),'utf8');
+const locationUi=readFileSync(new URL('../public/inventory-location-ui.js',import.meta.url),'utf8');
 
 test('862: percentile uses observed nearest-rank latency; missing samples are an error',()=>{
   assert.equal(inventory862Percentile([800,450,100,1000,250,300,150,200,350,600]),1000);
@@ -25,6 +26,15 @@ test('862: every returned location and balance must belong to the authenticated 
   assert.equal(inventory862AssertScopedRows([{business_id:9},{business_id:'9'}],9,'locations'),2);
   assert.throws(()=>inventory862AssertScopedRows([{business_id:8}],9,'balances'),/cross-business/);
   assert.throws(()=>inventory862AssertScopedRows({error:'Unauthorized'},9,'locations'),/non-array/);
+  assert.equal(inventory862AssertPayload({
+    locations:[{business_id:9}],balances:[{business_id:9}],transfers:[]
+  },9,'/api/inventory/location-summary'),2);
+  assert.throws(()=>inventory862AssertPayload({
+    locations:[{business_id:9}],balances:[{business_id:8}],transfers:[]
+  },9,'/api/inventory/location-summary'),/cross-business/);
+  assert.throws(()=>inventory862AssertPayload({
+    locations:[],balances:[]
+  },9,'/api/inventory/location-summary'),/malformed/);
 });
 test('862: QA benchmark fails closed for production, wrong service and non-isolated databases',()=>{
   assert.equal(inventory862ValidateRuntime(qaEnv).databaseName,'accounting_qa');
@@ -34,7 +44,16 @@ test('862: QA benchmark fails closed for production, wrong service and non-isola
 });
 test('862: the authorized QA wave uses existing credential-restoration and runs no stock write',()=>{
   assert.equal(INVENTORY_LOCATION_READ_862_WAVE,'inventory_location_read_862');
-  assert.deepEqual(INVENTORY_862_PATHS,['/api/inventory/locations','/api/inventory/location-balances']);
+  assert.deepEqual(INVENTORY_862_PATHS,['/api/inventory/location-summary']);
+  assert.deepEqual(INVENTORY_862_LEGACY_PATHS,[
+    '/api/inventory/locations','/api/inventory/location-balances','/api/inventory/transfers'
+  ]);
+  const from=locationUi.indexOf('async function load(');
+  const to=locationUi.indexOf('async function createLocation(',from);
+  assert.ok(from>0&&to>from);
+  const loading=locationUi.slice(from,to);
+  assert.match(loading,/api\('\/api\/inventory\/location-summary'\)/);
+  assert.doesNotMatch(loading,/api\('\/api\/inventory\/(locations|location-balances|transfers)'\)/);
   assert.match(harness,/ACCEPTANCE_WAVES\.add\(INVENTORY_LOCATION_READ_862_WAVE\)/);
   assert.match(harness,/runInventoryLocationRead862Acceptance\(/);
   assert.match(harness,/await restoreAutomationCredentials\(pool\)/);
@@ -83,6 +102,12 @@ test('862: controlled Merchant + Customer sessions exercise concurrent authentic
     const auth=String(opts.headers?.Authorization||'');
     const status=!auth?401:auth==='Bearer customer'?403:200;
     let body=status===200?[]:{error:'Unauthorized'};
+    if(status===200&&pathname==='/api/inventory/location-summary')
+      body={
+        locations:[{business_id:business,id:business*10}],
+        balances:[{business_id:business,inventory_id:business*10+1}],
+        transfers:[]
+      };
     if(status===200&&pathname==='/api/inventory/locations')
       body=[{business_id:business,id:business*10}];
     if(status===200&&pathname==='/api/inventory/location-balances'){
@@ -103,7 +128,9 @@ test('862: controlled Merchant + Customer sessions exercise concurrent authentic
     assert.equal(result.business_a_b_verified,true);
     assert.equal(result.guest_401,true);
     assert.equal(result.customer_403,true);
-    assert.equal(result.concurrent_requests,24);
+    assert.equal(result.storage_summary_requests,12);
+    assert.ok(Number.isFinite(result.storage_summary_p95_ms));
+    assert.equal(result.legacy_endpoints_authorized_and_tenant_scoped,true);
     assert.equal(result.no_stock_or_money_write,true);
     assert.equal(business,111,'original business must be restored');
     assert.ok(calls.includes('switch-222'));
