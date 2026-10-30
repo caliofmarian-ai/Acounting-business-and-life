@@ -215,11 +215,12 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
     }
   });
   app.post('/api/procurement/purchase-documents/:id/intelligence/review',body,async(req,res,next)=>{
-    const client=await pool.connect();
+    let client;
     try{
       const {businessId,actorId}=await scope(pool,identity,req,true);
       const receipt=await receiptFor(pool,businessId,req.params.id);
       const did=id(req.body?.draft_id,'draft_id'),key=requestKey(req.body?.client_request_key);
+      client=await pool.connect();
       await client.query('BEGIN');
       const q=await client.query(
         'SELECT * FROM receipt_intelligence_drafts WHERE id=$1 AND purchase_document_id=$2 AND business_id=$3 FOR UPDATE',
@@ -252,8 +253,8 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
       `,[JSON.stringify(review),actorId,did,businessId]);
       await client.query('COMMIT');
       res.json({review,already_saved:false,stock_posted:false});
-    }catch(e){await client.query('ROLLBACK').catch(()=>{});next(e)}
-    finally{client.release()}
+    }catch(e){if(client)await client.query('ROLLBACK').catch(()=>{});next(e)}
+    finally{client?.release()}
   });
   app.get('/api/procurement/receipt-intelligence/count-sessions/:id/variance-evidence',async(req,res,next)=>{
     try{
