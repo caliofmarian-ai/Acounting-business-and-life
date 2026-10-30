@@ -459,6 +459,7 @@ function ensureShellChrome() {
 
 function syncMerchantWorkspaceNavVisibility(){
   const visible=activeSurface==='profile'&&activeRole==='merchant';
+  document.body.dataset.merchantNav=visible?'unified':'';
   document.getElementById('merchantWorkspaceNav')?.classList.toggle('hidden',!visible);
   document.getElementById('merchantMobileTools')?.classList.toggle('hidden',!visible);
 }
