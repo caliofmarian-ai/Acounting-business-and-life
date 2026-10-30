@@ -25,7 +25,7 @@ test('Merchant-recorded payment has separate commercial label, not automatic fis
   assert.equal(x.merchant_recorded_payment,145);
   assert.equal(x.amount_due,0);
   assert.equal(x.items.length,1);
-  assert.match(x.disclaimer,/not a BIR-issued/);
+  assert.match(x.disclaimer,/not a BIR-issued/i);
   const msg=salesDocumentMessage(x);
   assert.equal(msg.total,'145.00');
   assert.match(msg.item_summary,/Bread & eggs/);
