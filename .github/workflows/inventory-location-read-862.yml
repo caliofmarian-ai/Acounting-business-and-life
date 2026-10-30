@@ -1,0 +1,56 @@
+name: Inventory Location Read Exact Head 862
+
+on:
+  pull_request:
+    paths:
+      - inventory-locations.js
+      - public/inventory-location-ui.js
+      - qa-inventory-location-read-862.js
+      - qa-acceptance.js
+      - tests/qa-inventory-location-read-862.test.js
+      - tests/inventory-location-read-performance-862.test.js
+      - tests/inventory-location-read-postgres-862.test.js
+      - .github/workflows/inventory-location-read-862.yml
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qa862
+          POSTGRES_PASSWORD: qa862_only
+          POSTGRES_DB: inventory862
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qa862 -d inventory862"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check source syntax
+        run: node --check inventory-locations.js && node --check public/inventory-location-ui.js && node --check qa-inventory-location-read-862.js && node --check qa-acceptance.js && node --check tests/inventory-location-read-performance-862.test.js && node --check tests/inventory-location-read-postgres-862.test.js && node --check tests/qa-inventory-location-read-862.test.js
+      - name: Execute isolated source regression
+        run: node --test tests/inventory-location-read-performance-862.test.js tests/qa-inventory-location-read-862.test.js
+      - name: Real PostgreSQL concurrency and business-isolation regression
+        env:
+          INVENTORY_862_PG_URL: postgres://qa862:qa862_only@127.0.0.1:5432/inventory862
+        run: node --test tests/inventory-location-read-postgres-862.test.js
