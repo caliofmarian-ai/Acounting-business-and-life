@@ -44,7 +44,7 @@ test('one shell-owned navigation is the only rendered Merchant menu',()=>{
 
 test('Food/Mixed eligibility is resolved before revealing main shell navigation',()=>{
   const presentation=accounting.slice(accounting.indexOf('function applyFinancePresentation('),accounting.indexOf('\nconst BUSINESS_FINANCE_COMPATIBILITY_COPY'));
-  assert.match(presentation,/shellNav\.querySelector\('#merchantRecipesTopButton'\)/);
+  assert.match(presentation,/shellNav\?\.querySelector\('#merchantRecipesTopButton'\)/);
   assert.match(presentation,/recipes\?\.classList\.toggle\('roleFinanceHidden',!foodAllowed\)/);
   assert.match(presentation,/shellNav\.setAttribute\('data-ready','true'\)/);
   const reset=accounting.slice(accounting.indexOf('function resetMerchantNavPresentation(){'),accounting.indexOf("\ndocument.addEventListener('abl:profile-state'"));
