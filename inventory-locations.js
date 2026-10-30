@@ -533,10 +533,24 @@ export function registerInventoryLocationRoutes(app,{pool,jsonBody,accountingCon
   app.get('/api/inventory/location-summary',async(req,res,next)=>{
     try{
       const ctx=await merchantContext(req);
-      const snapshot=await inventoryLocationReadSnapshot(pool,{
-        businessId:ctx.business.id,actorAccountId:ctx.me.account.id
-      });
-      res.json(snapshot);
+      // Read the transfer board concurrently with the Inventory snapshot,
+      // but authenticate once. The Merchant Storage UI needs one HTTP call.
+      const [snapshot,transferResult]=await Promise.all([
+        inventoryLocationReadSnapshot(pool,{
+          businessId:ctx.business.id,actorAccountId:ctx.me.account.id
+        }),
+        pool.query(`
+          SELECT t.*,i.item,sl.name source_location,dl.name destination_location
+            FROM inventory_location_transfers t
+            JOIN inventory i ON i.id=t.inventory_id AND i.business_id=t.business_id
+            JOIN inventory_storage_locations sl ON sl.id=t.source_location_id AND sl.business_id=t.business_id
+            JOIN inventory_storage_locations dl ON dl.id=t.destination_location_id AND dl.business_id=t.business_id
+           WHERE t.business_id=$1
+           ORDER BY t.created_at DESC,t.id DESC
+           LIMIT 100
+        `,[ctx.business.id])
+      ]);
+      res.json({...snapshot,transfers:transferResult.rows});
     }catch(error){next(error)}
   });
 
