@@ -1,163 +1,51 @@
 <!doctype html>
 <html lang="en-PH">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0f172a">
-<title>Business & Life — Marketing Kit</title>
-<style>
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#0f172a;background:#edf4fa}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(#f8fbff,#edf4fa)}button,a,select{font:inherit}main{width:min(100%,720px);margin:auto;padding:16px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.brand{font-weight:900;letter-spacing:.12em;font-size:12px}.badge{font-size:11px;font-weight:900;color:#0369a1;background:#e0f2fe;border-radius:999px;padding:7px 10px}.card{background:#fff;border:1px solid #dbe5ef;border-radius:24px;padding:20px;box-shadow:0 18px 55px #0f172a14}h1{font-size:32px;letter-spacing:-.04em;margin:4px 0 8px}.lead{margin:0 0 18px;color:#64748b;line-height:1.55}.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field{display:grid;gap:6px}.field label{font-size:11px;font-weight:900;letter-spacing:.07em;color:#0369a1}.field select{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff}.preview{margin-top:16px;background:#e2e8f0;border:1px solid #cbd5e1;border-radius:18px;padding:12px;display:grid;place-items:center;min-height:300px;overflow:hidden}.previewCanvas{width:100%;display:grid;place-items:center}.preview svg{display:block;max-width:100%;max-height:70vh;width:auto;height:auto;border-radius:10px;box-shadow:0 8px 28px #0f172a24;background:#fff}.previewPlaceholder,.previewError{max-width:360px;padding:18px;border-radius:14px;background:#fff;color:#64748b;text-align:center;line-height:1.45}.previewError{color:#9a3412;background:#fff7ed;border:1px solid #fed7aa}.actions{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin-top:14px}.actions button,.actions a{min-height:48px;border-radius:12px;border:1px solid #cbd5e1;background:#fff;color:#0f172a;font-weight:850;text-decoration:none;display:grid;place-items:center;cursor:pointer}.actions .primary{background:#0f172a;color:#fff;border-color:#0f172a}.status{min-height:20px;margin-top:10px;font-size:12px;color:#0369a1}.notice{margin-top:14px;border-radius:14px;background:#f8fafc;padding:13px;color:#475569;font-size:12px;line-height:1.5}.signin{margin-top:12px;border-radius:14px;background:#fff7ed;border:1px solid #fed7aa;padding:13px;color:#9a3412;font-size:13px}.hidden{display:none!important}@media(max-width:520px){main{padding:11px}.card{padding:16px}.controls,.actions{grid-template-columns:1fr}.preview{min-height:230px}}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#087560">
+  <title>Business &amp; Life — Marketing Kit</title>
+  <link rel="stylesheet" href="/referral/promotion.css">
 </head>
-<body><main>
-<div class="top"><div class="brand">BUSINESS &amp; LIFE</div><div class="badge">MARKETING KIT</div></div>
-<section class="card">
-<h1>Create your referral asset</h1>
-<p class="lead">Generate a personalized, scalable SVG from your live referral identity and locally generated QR.</p>
-<div class="controls">
-<div class="field"><label for="role">SHARING PROFILE</label><select id="role">
-<option value="customer">Customer</option><option value="merchant">Merchant</option><option value="supplier">Supplier</option><option value="courier">Courier / Delivery Provider</option><option value="service_provider">Service Provider / Local Services</option>
-</select></div>
-<div class="field"><label for="template">FORMAT</label><select id="template"></select></div>
-<div class="field"><label for="locale">CREATIVE LANGUAGE</label><select id="locale"><option value="en-PH">English (Philippines)</option><option value="fil-PH">Filipino / Tagalog</option></select></div>
-<div class="field"><label for="variant">MESSAGE</label><select id="variant"></select></div>
-</div>
-<div id="signin" class="signin hidden">Sign in to generate a personalized Marketing Kit asset. <a href="/">Open Business &amp; Life</a>.</div>
-<div class="preview"><div id="preview" class="previewCanvas" role="img" aria-label="Personalized referral marketing asset preview"><div class="previewPlaceholder">Loading personalized preview…</div></div></div>
-<div class="actions">
-<button id="export" class="primary" type="button">Export SVG</button>
-<button id="share" type="button">Share asset</button>
-<a href="/referral/promotion-center.html" id="back">Back to Promotion Center</a>
-<a href="/" id="app">Back to app</a>
-</div>
-<div id="status" class="status" role="status" aria-live="polite"></div>
-<div class="notice"><strong>Privacy:</strong> assets contain only your public referral identity, referral URL and QR. They do not include recipient email, phone, contacts or private documents. Figma/Canva remain editable design sources; this runtime export is generated locally in the app from the canonical field contract.</div>
-</section>
+<body data-promotion-page="kit">
+<main>
+  <header class="top"><div class="brand">BUSINESS &amp; LIFE</div><a class="back" id="back" href="/referral/promotion-center.html" data-i18n="backPromotion">Back to Promotion Center</a></header>
+  <section class="card" aria-labelledby="pageTitle">
+    <p class="eyebrow" data-i18n="marketingKit">MARKETING KIT</p>
+    <h1 id="pageTitle" data-i18n="kitTitle">Create a shareable design</h1>
+    <p class="lead" data-i18n="kitIntro">Choose a format and a message. Your referral link and QR code are added for you.</p>
+    <section id="signin" class="signin" hidden aria-labelledby="signInTitle">
+      <h2 id="signInTitle" data-i18n="signInTitle">Sign in to continue</h2><p data-i18n="signInBody">Open Business &amp; Life and sign in to load your own invitation. Then return here.</p>
+      <div class="actions"><a class="button primary" href="/" data-i18n="openApp">Open Business &amp; Life</a><button class="button" id="signinRetry" type="button" data-i18n="retry">Try again</button></div>
+    </section>
+    <div id="feedback" class="feedback" hidden role="status"><p id="feedbackText"></p><button class="button" id="retry" type="button" data-i18n="retry">Try again</button></div>
+    <div class="kitLayout">
+      <div class="kitControls">
+        <div class="controls">
+          <div class="field"><label for="role" data-i18n="profileLabel">Sharing profile</label><select id="role" disabled><option value="" data-i18n="loading">Loading…</option></select></div>
+          <div class="field"><label for="locale" data-i18n="languageLabel">Language</label><select id="locale"><option value="en-PH">English (Philippines)</option><option value="fil-PH">Filipino / Tagalog</option></select></div>
+          <div class="field full"><label for="template" data-i18n="formatLabel">Design format</label><select id="template"></select></div>
+          <div class="field full"><label for="variant" data-i18n="messageLabel">Message</label><select id="variant"></select></div>
+          <div class="field full"><label for="format" data-i18n="downloadFormat">File format</label><select id="format"><option value="png" data-i18n="png">PNG · recommended</option><option value="jpg" data-i18n="jpg">JPEG · image</option><option value="svg" data-i18n="svg">SVG · vector</option></select></div>
+        </div>
+        <fieldset class="artworkPicker" aria-describedby="artworkHelp artworkStatus">
+          <legend data-i18n="artworkLabel">Choose your artwork</legend>
+          <p id="artworkHelp" class="small" data-i18n="artworkKitHelp">Choose an image for your promotional design.</p>
+          <div id="artworkOptions" class="artworkOptions"></div>
+          <p id="artworkStatus" class="small artworkStatus" role="status" aria-live="polite" data-i18n="artworkWaiting">Your artwork will load with your verified invitation.</p>
+          <button id="artworkRetry" class="button artworkRetry" type="button" hidden data-i18n="artworkRetry">Try artwork again</button>
+        </fieldset>
+        <div class="actions"><button class="button primary" id="export" type="button" disabled data-i18n="download">Download image</button><button class="button" id="share" type="button" disabled data-i18n="shareDesign">Share design</button><button class="button" id="print" type="button" disabled data-i18n="printPdf">Print / Save as PDF</button></div>
+        <p class="small exportNote" data-i18n="exportHelp">PNG and JPEG work in most messaging and social apps. Use SVG for a vector file, or Print / Save as PDF for printing.</p>
+        <p id="status" class="status" role="status" aria-live="polite" data-i18n="loadingIdentity">Loading your invitation…</p>
+      </div>
+      <div><div class="preview"><div id="preview" class="previewCanvas" role="img" aria-label="Your design preview"><div class="previewPlaceholder" data-i18n="previewLoading">Preparing your design…</div></div></div><p id="previewCaption" class="previewCaption"></p></div>
+    </div>
+    <aside class="scope"><p data-i18n="privacy">Your design contains your public name, invitation link and QR code. Review it before sharing.</p></aside>
+    <div class="bottomLinks"><a class="back" id="app" href="/" data-i18n="backApp">Back to Business &amp; Life</a></div>
+  </section>
 </main>
 <script src="/session-security.js"></script>
-<script type="module">
-import { RUNTIME_MARKETING_TEMPLATES, RUNTIME_MARKETING_COPY, SUPPORTED_MARKETING_LOCALES, deriveReferrerName, generateMarketingKitSvg, marketingKitFileName } from '/referral/marketing-kit-runtime.js';
-
-const role=document.querySelector('#role');
-const template=document.querySelector('#template');
-const locale=document.querySelector('#locale');
-const variant=document.querySelector('#variant');
-const preview=document.querySelector('#preview');
-const status=document.querySelector('#status');
-const signin=document.querySelector('#signin');
-const exportButton=document.querySelector('#export');
-const shareButton=document.querySelector('#share');
-const backLink=document.querySelector('#back');
-const params=new URLSearchParams(location.search);
-const PUBLIC_ROLES=new Set(['customer','merchant','supplier','courier','service_provider']);
-let current=null;
-
-for(const item of RUNTIME_MARKETING_TEMPLATES){
-  const option=document.createElement('option');
-  option.value=item.id;option.textContent=item.label+' — '+item.width+'×'+item.height;
-  template.append(option);
-}
-role.value=PUBLIC_ROLES.has(params.get('profile'))?params.get('profile'):'customer';
-locale.value=SUPPORTED_MARKETING_LOCALES.includes(params.get('locale'))?params.get('locale'):'en-PH';
-
-function syncVariantOptions(){
-  const previous=variant.value||params.get('variant')||'personal_share_v1';
-  const pack=RUNTIME_MARKETING_COPY[locale.value]||RUNTIME_MARKETING_COPY['en-PH'];
-  variant.replaceChildren();
-  for(const item of pack.variants){
-    const option=document.createElement('option');
-    option.value=item.id;option.textContent=item.headline;
-    variant.append(option);
-  }
-  variant.value=pack.variants.some(item=>item.id===previous)?previous:'personal_share_v1';
-  document.documentElement.lang=locale.value;
-}
-syncVariantOptions();
-
-function token(){return window.ABLSession?.authenticated()?'cookie-session':''}
-function setStatus(message){status.textContent=message}
-function syncBackLink(){backLink.href='/referral/promotion-center.html?profile='+encodeURIComponent(role.value)}
-function setEnabled(enabled){exportButton.disabled=!enabled;shareButton.disabled=!enabled}
-function currentSvg(){
-  if(!current)return '';
-  return generateMarketingKitSvg({templateId:template.value,fields:current,locale:locale.value,variantId:variant.value});
-}
-function currentBlob(){
-  const svg=currentSvg();
-  return svg?new Blob([svg],{type:'image/svg+xml;charset=utf-8'}):null;
-}
-function previewFailure(message){
-  preview.replaceChildren();
-  const box=document.createElement('div');
-  box.className='previewError';
-  box.textContent=message;
-  preview.append(box);
-  setStatus(message);
-}
-function render(){
-  if(!current)return;
-  try{
-    const svg=currentSvg();
-    preview.innerHTML=svg;
-    const node=preview.querySelector('svg');
-    if(!node)throw new Error('The SVG preview could not be created.');
-    node.setAttribute('aria-hidden','true');
-    node.setAttribute('focusable','false');
-    const qr=node.querySelector('image');
-    if(qr)qr.addEventListener('error',()=>{
-      qr.setAttribute('visibility','hidden');
-      setStatus('The creative rendered, but the QR image could not be displayed on this device. Export remains available.');
-    },{once:true});
-    setStatus('');
-  }catch(error){
-    previewFailure(String(error?.message||'Could not render the Marketing Kit preview.'));
-  }
-}
-async function load(){
-  const auth=token();
-  if(!auth){current=null;signin.classList.remove('hidden');setEnabled(false);setStatus('Sign in required.');return}
-  signin.classList.add('hidden');setEnabled(false);setStatus('Loading your live referral identity…');
-  try{
-    const response=await fetch('/api/growth/referral?profile='+encodeURIComponent(role.value));
-    const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(data.error||'Could not load referral identity');
-    current={
-      referrerName:deriveReferrerName(data.share?.text||''),
-      referralCode:data.code,
-      referralUrl:data.referralUrl,
-      qrDataUrl:data.qr?.dataUrl||''
-    };
-    render();setEnabled(true);setStatus('');
-  }catch(error){current=null;setEnabled(false);previewFailure(String(error?.message||'Could not load Marketing Kit data'))}
-}
-function downloadBlob(blob,fileName){
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download=fileName;document.body.append(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
-}
-exportButton.addEventListener('click',()=>{
-  if(!current)return;
-  const blob=currentBlob();
-  downloadBlob(blob,marketingKitFileName(template.value,current.referralCode,locale.value));
-  setStatus('SVG exported. It stays sharp for digital use and print scaling.');
-});
-shareButton.addEventListener('click',async()=>{
-  if(!current)return;
-  const blob=currentBlob();
-  const fileName=marketingKitFileName(template.value,current.referralCode,locale.value);
-  if(typeof File==='function'&&navigator.share&&navigator.canShare){
-    const file=new File([blob],fileName,{type:'image/svg+xml'});
-    if(navigator.canShare({files:[file]})){
-      try{await navigator.share({title:'Business & Life referral asset',files:[file]});setStatus('Share sheet opened.');return}catch(error){if(error?.name==='AbortError')return}
-    }
-  }
-  downloadBlob(blob,fileName);setStatus('File sharing is unavailable here, so the SVG was exported instead.');
-});
-role.addEventListener('change',()=>{syncBackLink();load()});
-template.addEventListener('change',render);
-locale.addEventListener('change',()=>{syncVariantOptions();render()});
-variant.addEventListener('change',render);
-syncBackLink();
-load();
-</script>
-</body></html>
+<script type="module" src="/referral/promotion-page.js"></script>
+</body>
+</html>
