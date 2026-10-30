@@ -63,15 +63,12 @@ jobs:
     name: Android Chromium UI using live Preview JS and synthetic API fixtures
     needs: smoke
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install isolated Playwright runtime (QA only)
+      - name: Install Playwright runtime in matching browser image
         run: npm install --no-save playwright@1.56.1
-      - name: Install Chromium runtime
-        run: npx playwright install --with-deps chromium
       - name: Exercise actual Preview-served receipt UI on Android viewport
         run: node scripts/receipt-preview-browser-smoke.mjs
