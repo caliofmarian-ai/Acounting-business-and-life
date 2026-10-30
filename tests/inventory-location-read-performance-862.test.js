@@ -29,7 +29,7 @@ test('862: settled boot schema initialization skips legacy O(items+lots) row loc
   const base=fixture({items,balances:items.map(row=>({inventory_id:row.id,quantity:'2'}))});
   const pool={
     async query(sql,args=[]){
-      if(sql.startsWith('CREATE TABLE IF NOT EXISTS inventory_storage_locations')){
+      if(sql.includes('CREATE TABLE IF NOT EXISTS inventory_storage_locations')){
         base.calls.push({sql:'schema-setup',params:[]});
         return{rows:[]};
       }
@@ -51,7 +51,7 @@ test('862: boot schema initialization retains locked repair when existing stock 
   const base=fixture({items:[item(1,5)],balances:[{inventory_id:1,quantity:'4'}]});
   const pool={
     async query(sql,args=[]){
-      if(sql.startsWith('CREATE TABLE IF NOT EXISTS inventory_storage_locations'))return{rows:[]};
+      if(sql.includes('CREATE TABLE IF NOT EXISTS inventory_storage_locations'))return{rows:[]};
       if(sql.startsWith('SELECT DISTINCT business_id FROM inventory WHERE business_id IS NOT NULL'))
         return{rows:[{business_id:1}]};
       return base.query(sql,args);
