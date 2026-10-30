@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import { readOrderDetail } from './orders-read-core.js';
 import {merchantCounterCatalog,merchantCounterSnapshots} from './merchant-counter-catalog-core.js';
+import {installMerchantVoiceOrderRoutes,ensureVoiceOrderUsageSchema} from './merchant-voice-order-routes.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {restoreLotAllocation,inventoryAvailabilityRows} from './inventory-lot-runtime.js';
@@ -40,7 +41,7 @@ function manilaDateStamp() {
 
 export function isOrdersOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
-  if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js')return true;
+  if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js'||pathname==='/merchant-voice-order-ui.js'||pathname==='/merchant-voice-order.css')return true;
   if(pathname==='/api/orders'||pathname.startsWith('/api/orders/'))return true;
   return false;
 }
@@ -71,6 +72,10 @@ export async function ordersFetch(path,options={}){
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/orders.css" />\n</head>')
       .replace('</body>','  <script type="module" src="/orders-ui.js"></script>\n</body>');
+    if(process.env.ORDER_VOICE_UI_ENABLED==='1'){
+      html=html.replace('</head>','  <link rel="stylesheet" href="/merchant-voice-order.css" />\n</head>')
+        .replace('</body>','  <script src="/merchant-voice-order-ui.js" defer></script>\n</body>');
+    }
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
   return accountAuthFetch(path,options);
@@ -240,6 +245,7 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(business_id,order_status,created_at DESC);
   `);
   await ensureOrderStockReservationSchema(pool);
+  if(process.env.ORDER_VOICE_UI_ENABLED==='1')await ensureVoiceOrderUsageSchema(pool);
 }
 
 async function orderDetail(id,client=pool){return readOrderDetail(client,id)}
@@ -349,10 +355,16 @@ app.get('/health',async(req,res)=>{const r=await ordersFetch('/health',{headers:
 app.get('/orders-receivable-view.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-receivable-view.js'),'utf8')));
 app.get('/orders-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-ui.js'),'utf8')));
 app.get('/orders.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','orders.css'),'utf8')));
+app.get('/merchant-voice-order-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','merchant-voice-order-ui.js'),'utf8')));
+app.get('/merchant-voice-order.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','merchant-voice-order.css'),'utf8')));
 async function proxyHtml(req,res){const r=await ordersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 
 app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);res.json(await merchantCounterCatalog(pool,{businessId:business.id}))}catch(e){next(e)}});
+
+installMerchantVoiceOrderRoutes(app,{
+  db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),bodyMiddleware:body
+});
 
 app.get('/api/orders/inventory',async(req,res,next)=>{try{
   const businessId=Number(req.query.business_id);
