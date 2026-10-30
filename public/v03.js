@@ -972,7 +972,7 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
     for(const child of [...view.children])if(child!==status&&!child.classList.contains('sectionHead'))content.appendChild(child);
     view.appendChild(content);
   }
-  const ready=state==='ready',cached=state==='cached';
+  const ready=state==='ready',cached=state==='cached',preview=state==='partial';
   // A disabled fieldset preserves each widget's own disabled/capability decisions.
   content.disabled=!ready;
   inventoryConfirmedContext=ready?merchantReadContext():null;
@@ -982,17 +982,17 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
   copy.textContent=ready?'Inventory confirmed just now.':cached
     ?'Connection unavailable. Showing last confirmed Inventory from '+new Date(savedAt).toLocaleString('en-PH',{timeZone:'Asia/Manila'})+' (Philippine time). Stock changes are disabled.'
     :state==='error'?'Inventory could not be loaded. '+(error?.message||'Try again.')
-    :state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
+    :state==='partial'?'Inventory items loaded. Checking storage locations, lots and stock controls…':state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
   status.appendChild(copy);
   if(state==='error'||state==='idle'||cached){const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent=state==='idle'?'Load Inventory':'Retry';retry.onclick=()=>loadStock();status.appendChild(retry)}
-  view.setAttribute('aria-busy',String(state==='loading'));
+  view.setAttribute('aria-busy',String(state==='loading'||preview));
   const stockCard=$('stockList')?.closest('.card');
   for(const child of content.children){
     if(!inventoryHiddenSections.has(child))inventoryHiddenSections.set(child,child.hidden||child.classList.contains('hidden'));
-    child.hidden=ready?inventoryHiddenSections.get(child):cached?child!==stockCard:true;
+    child.hidden=ready?inventoryHiddenSections.get(child):(cached||preview)?child!==stockCard:true;
     child.classList.toggle('hidden',child.hidden);
   }
-  if(!ready&&!cached){if($('lowStock'))$('lowStock').textContent='—';if($('restockSummary'))$('restockSummary').textContent='Restock information has not loaded.'}
+  if(!ready&&!cached&&!preview){if($('lowStock'))$('lowStock').textContent='—';if($('restockSummary'))$('restockSummary').textContent='Restock information has not loaded.'}
 }
 function inventoryReadApi(path,options={}){return api(path,options,['GET','HEAD'].includes(String(options.method||'GET').toUpperCase())?{isCurrent:inventoryReadGuard()}:{})}
 function inventoryReadGuard(){const current=merchantReadGuard(),generation=inventoryLoadGeneration;return()=>generation===inventoryLoadGeneration&&current()}
@@ -1002,6 +1002,10 @@ async function loadStock(){
   const generation=++inventoryLoadGeneration;
   const isCurrent=()=>generation===inventoryLoadGeneration&&merchantReadIsCurrent(context);
   inventoryReadState('loading');
+  // Begin the independent, read-only Storage GET immediately; its UI render waits
+  // until Inventory items and the originating Merchant business are verified.
+  const prefetchedStorage=typeof inventoryLocationUi.prefetch==='function'
+    ?inventoryLocationUi.prefetch():null;
   try{
     let cachedAt=null;
     const items=await cachedJson('/api/inventory','inventory',{offline:true,onCache:stamp=>{cachedAt=stamp}});
@@ -1011,10 +1015,11 @@ async function loadStock(){
     renderInventoryList();
     if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.available_quantity??i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
     if(cachedAt!==null){inventoryReadState('cached',{savedAt:cachedAt});return inventory}
+    inventoryReadState('partial'); // The verified list can be read before advanced stock controls are enabled.
     fillIngredientSelect();
     fillConsumableRuleInventory();fillStockAdjustmentInventory();fillStorageEditor();fillRestockSettingsEditor();fillInventoryUnavailableEditor();
     inventoryScanUi.syncInventory();
-    const count=inventoryLocationUi.load().then(result=>{
+    const count=inventoryLocationUi.load({isCurrent,prefetched:prefetchedStorage}).then(result=>{
       if(!isCurrent())return;
       if(result?.readError)return result;
       inventoryCountUi.syncScopeOptions();
