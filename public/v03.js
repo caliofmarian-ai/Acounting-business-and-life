@@ -1001,6 +1001,10 @@ async function loadStock(){
   const generation=++inventoryLoadGeneration;
   const isCurrent=()=>generation===inventoryLoadGeneration&&merchantReadIsCurrent(context);
   inventoryReadState('loading');
+  // Begin the independent, read-only Storage GET immediately; its UI render waits
+  // until Inventory items and the originating Merchant business are verified.
+  const prefetchedStorage=typeof inventoryLocationUi.prefetch==='function'
+    ?inventoryLocationUi.prefetch():null;
   try{
     let cachedAt=null;
     const items=await cachedJson('/api/inventory','inventory',{offline:true,onCache:stamp=>{cachedAt=stamp}});
@@ -1013,7 +1017,7 @@ async function loadStock(){
     fillIngredientSelect();
     fillConsumableRuleInventory();fillStockAdjustmentInventory();fillStorageEditor();fillRestockSettingsEditor();fillInventoryUnavailableEditor();
     inventoryScanUi.syncInventory();
-    const count=inventoryLocationUi.load().then(result=>{
+    const count=inventoryLocationUi.load({isCurrent,prefetched:prefetchedStorage}).then(result=>{
       if(!isCurrent())return;
       if(result?.readError)return result;
       inventoryCountUi.syncScopeOptions();
