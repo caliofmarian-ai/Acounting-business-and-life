@@ -1,73 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { fixture, read, referral, tick } from './promotion-page-fixture.js';
 
-const html = readFileSync(new URL('../public/referral/promotion-center.html', import.meta.url), 'utf8');
+const copyNode = (f, key) => f.document.querySelectorAll('[data-i18n]').find(node => node.dataset.i18n === key);
 
-test('Promotion Center does not promise earnings while rewards are disabled', () => {
-  assert.match(html, /INVITE &amp; SHARE/);
-  assert.doesNotMatch(html, /INVITE &amp; EARN/);
-  assert.match(html, /id="progressRewards">Not enabled/);
+test('Promotion Center describes platform invitations and unavailable rewards without earnings promises', async t => {
+  const f = fixture(); t.after(() => f.ui.destroy()); await tick();
+  assert.equal(copyNode(f, 'inviteShare').textContent, 'INVITE & SHARE');
+  assert.match(copyNode(f, 'availabilityNote').textContent, /Rewards and automatic invitations are not enabled/);
+  assert.match(copyNode(f, 'invitationScope').textContent, /do not create product discounts or automatically approve business profiles/);
+  assert.match(copyNode(f, 'promotionIntro').textContent, /Invite people to Business & Life/);
 });
 
-test('Promotion Center exposes all five public profile sources', () => {
-  for (const role of ['customer','merchant','supplier','courier','service_provider']) {
-    assert.match(html, new RegExp('value="'+role+'"'));
-  }
+test('Promotion Center offers only canonical enabled profiles and explains an unavailable query choice', async t => {
+  const f = fixture({ query: '?profile=supplier' }); t.after(() => f.ui.destroy()); await tick();
+  assert.deepEqual(f.el('role').children.map(node => node.value), ['customer', 'merchant']);
+  assert.equal(f.el('role').value, 'merchant');
+  assert.match(f.el('feedbackText').textContent, /not available on this account/);
+  assert.equal(f.el('referralUrl').value, referral('merchant').referralUrl);
+  assert.equal(f.requests.some(request => request.path.includes('profile=supplier')), false);
 });
 
-test('Promotion Center loads authenticated account identity instead of embedding demo identity', () => {
-  assert.match(html, /\/api\/growth\/referral\?profile=/);
+test('Promotion Center uses the cookie-session bootstrap and real API identity without activation side effects', async t => {
+  const f = fixture(); t.after(() => f.ui.destroy()); await tick();
+  const html = read('public/referral/promotion-center.html');
   assert.match(html, /<script src="\/session-security\.js"><\/script>/);
-  assert.match(html, /window\.ABLSession\?\.authenticated\(\)/);
-  assert.doesNotMatch(html, /localStorage\.getItem\('abl_token'\)|Authorization:'Bearer '/);
-  assert.match(html, /Sign in required/);
-  assert.doesNotMatch(html, /r1_DemoReferral2026/);
+  assert.match(html, /type="module" src="\/referral\/promotion-page\.js"/);
+  assert.equal(f.el('referralCode').textContent, referral('merchant').code);
+  assert.ok(f.requests.some(request => request.path === '/api/me'));
+  assert.ok(f.requests.some(request => request.path === '/api/growth/referral?profile=merchant'));
+  assert.equal(f.requests.every(request => !request.init.method || request.init.method === 'GET'), true);
 });
 
-test('Promotion Center supports explicit user-initiated sharing channels', () => {
-  for (const marker of ['navigator.share','wa.me','t.me\/share\/url','sms:','mailto:']) {
-    assert.match(html, new RegExp(marker));
-  }
+test('Promotion Center shares its actual invitation and passes language/profile into the Marketing Kit', async t => {
+  const f = fixture({ locale: 'fil-PH' }); t.after(() => f.ui.destroy()); await tick();
+  const invitation = referral('merchant').referralUrl;
+  assert.equal(new URL(f.el('tg').href).searchParams.get('url'), invitation);
+  assert.ok(decodeURIComponent(f.el('wa').href).includes(invitation));
+  assert.ok(f.el('sms').href.startsWith('sms:'));
+  assert.ok(f.el('mail').href.startsWith('mailto:'));
+  const kit = new URL(f.el('marketingKit').href, 'https://caliof.com');
+  assert.equal(kit.pathname, '/referral/marketing-kit.html');
+  assert.equal(kit.searchParams.get('profile'), 'merchant');
+  assert.equal(kit.searchParams.get('locale'), 'fil-PH');
 });
 
-test('direct server email/phone sending remains disabled pending referral-specific gates', () => {
-  assert.match(html, /direct referral sending stays disabled/i);
-  assert.match(html, /<input disabled/);
-  assert.match(html, /<button disabled>Send invitation<\/button>/);
-});
-
-test('Promotion Center repeats the operational authority boundary', () => {
-  assert.match(html, /never approves Merchant, Supplier, Courier, Service Provider or Admin authority/i);
-});
-
-test('Promotion Center renders the authenticated local QR and keeps code fallback', () => {
-  assert.match(html, /id="qrImage"/);
-  assert.match(html, /id="qrFallback"/);
-  assert.match(html, /data\.qr\.dataUrl/);
-  assert.match(html, /data\.qr\.referralUrl!==data\.referralUrl/);
-  assert.match(html, /data\.qr\.marker!=='qr'/);
-  assert.match(html, /one-shot local <code>#qr<\/code> origin marker/i);
-  assert.match(html, /Use your referral code if QR is unavailable/i);
-  assert.doesNotMatch(html, /api\.qrserver|quickchart|chart\.google/);
-});
-
-
-test('Promotion Center links the selected sharing profile into the runtime Marketing Kit', () => {
-  assert.match(html, /id="marketingKit"/);
-  assert.match(html, /\/referral\/marketing-kit\.html\?profile=/);
-  assert.match(html, /syncMarketingKit\(\)/);
-});
-
-
-test('Promotion Center shows a truthful referral progress summary without invented counters', () => {
-  assert.match(html, /id="progressSummary"/);
-  assert.match(html, /id="progressLink"/);
-  assert.match(html, /id="progressQr"/);
-  assert.match(html, /Ready through account creation start/);
-  assert.match(html, /id="progressConversions">Not counted yet/);
-  assert.match(html, /id="progressRewards">Not enabled/);
-  assert.match(html, /durable conversion attribution and reward policy are not enabled yet/i);
-  assert.doesNotMatch(html, />\s*0 referrals\s*</i);
-  assert.doesNotMatch(html, />\s*0 rewards\s*</i);
+test('Promotion Center readiness represents loaded link and decoded QR without invented conversion totals', async t => {
+  const f = fixture(); t.after(() => f.ui.destroy()); await tick();
+  assert.equal(f.el('progressLink').textContent, 'Ready');
+  assert.equal(f.el('progressQr').textContent, 'Ready');
+  assert.equal(f.el('qrImage').src, referral('merchant').qr.dataUrl);
+  assert.match(copyNode(f, 'availabilityNote').textContent, /Referral totals are not available here/);
+  assert.equal(f.el('progressConversions'), undefined);
+  f.signOut(); await f.document.fire('abl:auth-expired');
+  assert.equal(f.el('progressLink').textContent, 'Unavailable');
+  assert.equal(f.el('progressQr').textContent, 'Unavailable');
+  assert.equal(f.el('qrImage').src, undefined);
+  assert.equal(f.el('signin').hidden, false);
 });
