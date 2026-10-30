@@ -541,3 +541,25 @@ test('Hangul fillers and Braille blank do not disguise unverified display-hint w
   assert.deepEqual(emoji.ingredient_names,['Fish']);
   assert.equal(emoji.draft_only,true);
 });
+
+test('blank model name falls back to valid sanitized title, with the primary name still preferred',()=>{
+  for(const malformedName of ['   ', '\u200b', '<>', 42, {untrusted:true}]){
+    const suggestion=draft('merchant_non_food',{
+      catalog_category_code:'furniture_home',name:malformedName,title:'Bright Oak Table'
+    });
+    assert.equal(suggestion.hints.name,'Bright Oak Table');
+    assert.equal(suggestion.state,'REVIEW_REQUIRED');
+    assert.equal(suggestion.publishable,false);
+    assert.equal(suggestion.canonical_write_payload,false);
+  }
+  const sanitizedTitle=draft('merchant_non_food',{
+    name:'  ',title:'Bright\u200dOak Table',catalog_category_code:'furniture_home'
+  });
+  assert.equal(sanitizedTitle.hints.name,'Bright Oak Table');
+  assert.equal(draft('merchant_non_food',{
+    name:'Primary Lamp',title:'Secondary Table',catalog_category_code:'furniture_home'
+  }).hints.name,'Primary Lamp');
+  assert.equal(draft('merchant_non_food',{
+    name:'  ',title:'  ',catalog_category_code:'furniture_home'
+  }).hints.name,'');
+});

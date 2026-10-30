@@ -195,7 +195,7 @@ export function normalizeAiCatalogDraft({mode,modelOutput}={}){
   const data=snapshot.data;
   const category=categoryFor(mode,own(data,'catalog_category_code'));
   const hints={
-    name:clean(own(data,'name')||own(data,'title'),120),
+    name:clean(own(data,'name'),120)||clean(own(data,'title'),120),
     description:clean(own(data,'description'),600),
     catalog_category_code:category,
     supplier_category_text:mode==='supplier_catalog'?clean(own(data,'category'),80):'',
