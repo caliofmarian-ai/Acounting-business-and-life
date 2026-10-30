@@ -37,7 +37,7 @@ The user asked for **street vendors and restaurants in the Philippines**, first 
 
 ## Handling details
 
-Default storage category is only a **suggestion**. E.g. ready-to-fry packaged items default to frozen; chilled toppings to fridge; dry toppings to pantry. The merchant must verify the actual supplier instructions, original package size, expiry, allergens, food safety and local restrictions before saving a purchase.
+Default storage category is only a **suggestion**. E.g. ready-to-fry packaged items default to frozen; chilled toppings to fridge; dry toppings to pantry. Per-item overrides keep fresh tofu, dumpling wrappers, fresh coconut cream and Pancit Malabon noodles chilled, and cheese powder/powdered milk dry when sold shelf-stable. The merchant must verify actual supplier instructions, original package size, expiry, allergens, food safety and local restrictions before saving a purchase.
 
 A unit for **French fries** may refer to one pack, while **Quail eggs** may need conversion from boxes to eggs: the form must still capture the actual unit and packing conversion. Search aliases never promise a universal pack size.
 
