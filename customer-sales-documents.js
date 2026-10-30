@@ -172,22 +172,25 @@ async function queueDocument(pool,{document,actor,requestKey,emit=emitNotificati
       [document.id,requestKey]
     );
     if(existing.rowCount){
+      attempt=existing.rows[0];
       await client.query('COMMIT');
-      return{attempt:existing.rows[0],already_queued:true};
+      // Reusing this exact request key is safe: notification event keys are idempotent.
+      if(attempt.queue_status==='queued')return{attempt,already_queued:true};
+    }else{
+      const recent=await client.query(`
+        SELECT id FROM customer_sales_document_sends
+         WHERE document_id=$1 AND queue_status IN ('pending','queued')
+           AND created_at>NOW()-INTERVAL '5 minutes' LIMIT 1
+      `,[document.id]);
+      if(recent.rowCount)throw err(429,'A document email was requested recently. Try again later.');
+      const eventKey='order-sales-document:'+document.id+':'+crypto.randomUUID();
+      const added=await client.query(`
+        INSERT INTO customer_sales_document_sends(document_id,sent_by_account_id,customer_account_id,client_request_key,event_key)
+        VALUES($1,$2,$3,$4,$5) RETURNING *
+      `,[document.id,actor,customerId,requestKey,eventKey]);
+      attempt=added.rows[0];
+      await client.query('COMMIT');
     }
-    const recent=await client.query(`
-      SELECT id FROM customer_sales_document_sends
-       WHERE document_id=$1 AND queue_status IN ('pending','queued')
-         AND created_at>NOW()-INTERVAL '5 minutes' LIMIT 1
-    `,[document.id]);
-    if(recent.rowCount)throw err(429,'A document email was requested recently. Try again later.');
-    const eventKey='order-sales-document:'+document.id+':'+crypto.randomUUID();
-    const added=await client.query(`
-      INSERT INTO customer_sales_document_sends(document_id,sent_by_account_id,customer_account_id,client_request_key,event_key)
-      VALUES($1,$2,$3,$4,$5) RETURNING *
-    `,[document.id,actor,customerId,requestKey,eventKey]);
-    attempt=added.rows[0];
-    await client.query('COMMIT');
   }catch(e){
     await client.query('ROLLBACK').catch(()=>{});
     throw e;
