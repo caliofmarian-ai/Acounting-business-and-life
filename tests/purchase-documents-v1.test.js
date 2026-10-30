@@ -78,3 +78,51 @@ test('no public file/blob URL and original accounting source stays authoritative
   assert.doesNotMatch(core,/UPDATE inventory_purchases/i);
   assert.match(core,/SELECT \* FROM merchant_purchase_documents WHERE id=\$1 AND business_id=\$2/);
 });
+
+test('cross-business purchase link is rejected before a scanned original can be saved',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const calls=[];
+  const pool={query:async(sql,params)=>{
+    calls.push({sql,params});
+    if(sql.includes('SELECT * FROM merchant_purchase_documents'))return{rowCount:0,rows:[]};
+    return{rowCount:0,rows:[]}; // foreign or missing purchase
+  }};
+  await assert.rejects(
+    ()=>merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{
+      actorAccountId:9,record:normalizeMerchantPurchaseDocument({
+        ...base(),links:[{kind:'inventory_purchase',id:808}]
+      })
+    }),
+    /Linked purchase record unavailable/
+  );
+  assert.equal(calls.length,2);
+  assert.equal(calls[1].params[1],14);
+  assert.match(calls[1].sql,/business_id=\$2/);
+});
+
+test('replayed identical request returns existing evidence without adding stock, expenses or files',async()=>{
+  const {merchantPurchaseDocumentInternals}=await import('../merchant-purchase-documents.js');
+  const record=normalizeMerchantPurchaseDocument({...base(),links:[]});
+  const fingerprint=(await import('node:crypto')).default.createHash('sha256').update(JSON.stringify({
+    kind:record.kind,issueDate:record.issueDate,currency:record.currency,amount:record.amount,
+    issuer:record.issuer,number:record.documentNumber,note:record.note,
+    links:record.links,fileName:record.fileName,fileDigest:''
+  })).digest('hex');
+  const row={
+    id:23,business_id:14,request_fingerprint:fingerprint,
+    document_kind:'purchase_receipt',issuer_name:'Local market',
+    document_number:'',issue_date:'2026-10-30',currency_code:'PHP',
+    gross_amount:'145.25',note:'',private_evidence_object_id:null
+  };
+  let queries=0;
+  const pool={query:async(sql,params)=>{
+    queries++;
+    assert.match(sql,/SELECT \* FROM merchant_purchase_documents/);
+    assert.deepEqual(params,[14,record.key]);
+    return{rowCount:1,rows:[row]};
+  }};
+  const result=await merchantPurchaseDocumentInternals.savePurchaseDocument(pool,{actorAccountId:9,record});
+  assert.equal(result.already_saved,true);
+  assert.equal(result.document.id,23);
+  assert.equal(queries,1);
+});
