@@ -921,3 +921,5 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
     grid-template-columns:repeat(3,minmax(0,1fr))
   }
 }
+
+@media(max-width:649px){body[data-merchant-nav="unified"] #app{padding-bottom:20px!important}}
