@@ -1215,7 +1215,37 @@ const SHELLFISH_CAUTION_NAMES=new Set([
   'blue swimming crab alimasag','mud crab alimango'
 ]);
 
+
+const PH_STORAGE_OVERRIDES=Object.freeze({
+  'tofu tokwa':{condition:'chilled',area:'fridge'},
+  'bean curd sheets':{condition:'chilled',area:'fridge'},
+  'siomai wrappers':{condition:'chilled',area:'fridge'},
+  'dumpling wrappers':{condition:'chilled',area:'fridge'},
+  'coconut cream kakang gata':{condition:'chilled',area:'fridge'},
+  'pancit malabon noodles':{condition:'chilled',area:'fridge'},
+  'cheese powder':{condition:'dry',area:'pantry'},
+  'powdered milk':{condition:'dry',area:'pantry'}
+});
+
+export function philippineStockPickerStorageSuggestion(name,categoryDefault={}){
+  // Item-specific suggestions override generic picker category defaults.
+  // Suppliers' label requirements and on-site handling must still be confirmed by the Merchant.
+  const override=PH_STORAGE_OVERRIDES[NORMALIZE_STOCK_NAME(name)];
+  return override?{...categoryDefault,...override}:{...categoryDefault};
+}
+
+const PH_PACK_NOTICE_NAMES=new Set([
+  'quail eggs','french fries','lumpia wrappers','hot sauce',
+  'fish balls','kikiam','frozen siomai','frozen siopao'
+]);
+
 export function philippineStockPickerSafetyNote(name){
-  if(!SHELLFISH_CAUTION_NAMES.has(NORMALIZE_STOCK_NAME(name)))return'';
-  return 'Shellfish/crab: check current BFAR red-tide bulletins and Bacoor/Cavite sale restrictions before buying, storing or selling. Listing an ingredient does not confirm it is safe or permitted.';
+  const key=NORMALIZE_STOCK_NAME(name);
+  if(SHELLFISH_CAUTION_NAMES.has(key)){
+    return 'Shellfish/crab: check current BFAR red-tide bulletins and Bacoor/Cavite sale restrictions before buying, storing or selling. Listing an ingredient does not confirm it is safe or permitted.';
+  }
+  if(PH_PACK_NOTICE_NAMES.has(key)){
+    return 'Pack sizes vary by seller. Confirm whether quantity means a single piece, bag, box or bottle and use the actual purchased unit before saving stock.';
+  }
+  return'';
 }
