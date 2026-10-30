@@ -41,7 +41,7 @@ function validTurn(turn){
        (op.quantity!==null&&!Number.isInteger(op.quantity))||
        (op.line_reference!==null&&!['last','only'].includes(op.line_reference))||
        !Array.isArray(op.modifier_names)||op.modifier_names.length>20||op.modifier_names.some(name=>typeof name!=='string'||name.length>120)||
-       Object.keys(op).some(key=>!(key in opProperties)))failure('ORDER_VOICE_AI_INVALID_OUTPUT',422);
+       Object.keys(op).some(key=>!Object.hasOwn(opProperties,key)))failure('ORDER_VOICE_AI_INVALID_OUTPUT',422);
     if([op.product_name,op.variant_name,op.customer_name].some(s=>typeof s==='string'&&s.length>160))failure('ORDER_VOICE_AI_INVALID_OUTPUT',422);
   }
   return turn;
