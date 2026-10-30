@@ -195,6 +195,12 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
       const cfg=receiptVisionConfig();
       if(!cfg.ready)fail('AI is not configured. Use manual entry.',503);
       if(!receipt.private_evidence_object_id)fail('Save a photo before analyzing',409);
+      const dailyLimit=Math.max(1,Math.min(100,Number(process.env.RECEIPT_AI_DAILY_LIMIT)||30));
+      const recent=await pool.query(
+        "SELECT COUNT(*)::int attempts FROM receipt_intelligence_drafts WHERE business_id=$1 AND provider='openai_vision' AND created_at>=NOW()-INTERVAL '24 hours'",
+        [businessId]
+      );
+      if(Number(recent.rows[0]?.attempts||0)>=dailyLimit)fail('Daily receipt AI analysis limit reached. Use manual entry.',429);
       const file=await readPrivateEvidence(pool,{objectId:receipt.private_evidence_object_id,
         actorAccountId:actorId,purpose:'merchant_receipt_analysis'});
       const source=receiptExtractionFingerprint({
