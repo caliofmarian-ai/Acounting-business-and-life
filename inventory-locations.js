@@ -281,12 +281,17 @@ export async function reconcileBusinessInventoryLocationsForRead(pool,{businessI
   const key=String(businessId);
   if(flights.has(key))return flights.get(key);
   const task=(async()=>{
-    // Each quantity comparison uses one MVCC statement/snapshot, even during concurrent stock writes.
-    const items=await pool.query(
-      'SELECT i.id,i.quantity,i.storage_location_label,i.storage_area_type,COALESCE(b.allocated,0) AS allocated FROM inventory i LEFT JOIN (SELECT inventory_id,SUM(quantity) AS allocated FROM inventory_location_balances WHERE business_id=$1 GROUP BY inventory_id) b ON b.inventory_id=i.id WHERE i.business_id=$1 ORDER BY i.id',
-      [businessId]
-    );
-    const locations=await pool.query('SELECT name FROM inventory_storage_locations WHERE business_id=$1',[businessId]);
+    // Run independent read-only checks in parallel: over networked PostgreSQL
+    // this avoids three consecutive database round trips for every page open.
+    // The stock-vs-location comparison remains within ONE MVCC SELECT statement.
+    const [items,locations,hasSupplyLots]=await Promise.all([
+      pool.query(
+        'SELECT i.id,i.quantity,i.storage_location_label,i.storage_area_type,COALESCE(b.allocated,0) AS allocated FROM inventory i LEFT JOIN (SELECT inventory_id,SUM(quantity) AS allocated FROM inventory_location_balances WHERE business_id=$1 GROUP BY inventory_id) b ON b.inventory_id=i.id WHERE i.business_id=$1 ORDER BY i.id',
+        [businessId]
+      ),
+      pool.query('SELECT name FROM inventory_storage_locations WHERE business_id=$1',[businessId]),
+      supplyLotsAvailable(pool)
+    ]);
     const names=new Set(locations.rows.map(row=>String(row.name??'').toLowerCase()));
     let needsRepair=items.rows.some(row=>{
       const canonical=Math.max(0,Number(row.quantity||0));
@@ -294,7 +299,7 @@ export async function reconcileBusinessInventoryLocationsForRead(pool,{businessI
       return !Number.isFinite(canonical)||!Number.isFinite(assigned)||
         Math.abs(canonical-assigned)>EPS||!names.has(locationNameFromInventory(row).toLowerCase());
     });
-    if(!needsRepair&&await supplyLotsAvailable(pool)){
+    if(!needsRepair&&hasSupplyLots){
       const lots=await pool.query(
         'SELECT l.id,l.quantity_remaining_base,COALESCE(a.allocated,0) AS allocated FROM supply_lots l LEFT JOIN (SELECT lot_id,SUM(quantity) AS allocated FROM inventory_lot_location_balances WHERE business_id=$1 GROUP BY lot_id) a ON a.lot_id=l.id WHERE l.business_id=$1 AND l.inventory_id IS NOT NULL',
         [businessId]
