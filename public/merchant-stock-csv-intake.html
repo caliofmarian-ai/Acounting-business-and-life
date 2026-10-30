@@ -73,11 +73,25 @@
     </section>
 
     <section id="commitPanel" class="panel safety hidden">
-      <h2>4 · Post confirmed stock only</h2>
+      <h2>4 · Record purchased stock and expenses</h2>
+      <p class="tip">These are goods already purchased and paid for. The importer records the stock plus a linked business-expense entry for each selected product. No payment will be sent. A single physical checkout may appear as multiple itemized expense rows; do not record the same checkout again in Money.</p>
+      <label for="purchaseAccount">How were these purchases actually paid?</label>
+      <select id="purchaseAccount" required>
+        <option value="">Select the actual payment account</option>
+        <option value="cash">Cash</option>
+        <option value="gcash">GCash</option>
+        <option value="bank">Bank</option>
+        <option value="other">Other / another payment method</option>
+      </select>
+      <p class="muted">Select one method only when all the chosen products were paid that way. For mixed payment methods, import separate groups.</p>
+      <label for="purchaseDate">Actual purchase/payment date in the Philippines</label>
+      <input id="purchaseDate" type="date" required>
+      <p class="muted">When the date is in the past, the importer uses the existing audited transaction-date correction immediately after each linked stock purchase. An interrupted date correction stops the batch for manual review, without making a second purchase.</p>
+      <p id="ledgerStatus" class="status muted" role="status" aria-live="polite">Refresh Merchant context to review recent entries already in Money.</p>
       <label class="check"><input id="physicalConfirm" type="checkbox">I have checked that selected quantities represent stock physically on hand, not just a shopping list.</label>
-      <label class="check"><input id="moneyConfirm" type="checkbox">I understand this import does not record money spent, payment source, or a tax receipt. Financial records are handled separately to avoid duplication.</label>
+      <label class="check"><input id="moneyConfirm" type="checkbox">These purchases were actually paid and have NOT already been entered in this Merchant's Money ledger. I confirm the selected payment method and original date.</label>
       <div class="buttons">
-        <button id="post" type="button" disabled>Save selected stock in production</button>
+        <button id="post" type="button" disabled>Save purchased stock + expense</button>
         <button id="stop" type="button" class="secondary" disabled>Stop after current item</button>
       </div>
       <p id="results" role="status" aria-live="polite">No changes made.</p>
