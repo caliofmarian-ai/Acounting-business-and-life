@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - inventory-locations.js
+      - public/inventory-location-ui.js
       - qa-inventory-location-read-862.js
       - qa-acceptance.js
       - tests/qa-inventory-location-read-862.test.js
@@ -46,7 +47,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Check source syntax
-        run: node --check inventory-locations.js && node --check qa-inventory-location-read-862.js && node --check qa-acceptance.js && node --check tests/inventory-location-read-performance-862.test.js && node --check tests/inventory-location-read-postgres-862.test.js && node --check tests/qa-inventory-location-read-862.test.js
+        run: node --check inventory-locations.js && node --check public/inventory-location-ui.js && node --check qa-inventory-location-read-862.js && node --check qa-acceptance.js && node --check tests/inventory-location-read-performance-862.test.js && node --check tests/inventory-location-read-postgres-862.test.js && node --check tests/qa-inventory-location-read-862.test.js
       - name: Execute isolated source regression
         run: node --test tests/inventory-location-read-performance-862.test.js tests/qa-inventory-location-read-862.test.js
       - name: Real PostgreSQL concurrency and business-isolation regression
