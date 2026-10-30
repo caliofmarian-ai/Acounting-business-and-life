@@ -1,0 +1,60 @@
+name: Receipt Preview #860 smoke (temporary)
+on:
+  push:
+    branches:
+      - qa/receipt-preview-smoke-860
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check exact preview public runtime, assets and private route denial
+        shell: bash
+        env:
+          BASE: https://preview.caliof.com
+        run: |
+          set -euo pipefail
+          http_code() {
+            curl --silent --show-error --max-time 25 --retry 3 --retry-delay 3 \
+              -o /dev/null -w '%{http_code}' "$@"
+          }
+          echo "Checking Preview HTTPS + DB health (no credentials)"
+          health_code="$(http_code "$BASE/health")"
+          test "$health_code" = "200" || { echo "FAIL: Preview health HTTP $health_code"; exit 1; }
+          curl --fail --silent --show-error --max-time 25 "$BASE/health" > health.json
+          grep -q '"ok":true' health.json || { echo "FAIL: Preview unhealthy"; exit 1; }
+          echo "PASS: /health 200 healthy"
+          curl --fail --silent --show-error --max-time 25 "$BASE/" > index.html
+          grep -q 'purchase-documents-ui.js' index.html || { echo "FAIL: receipt vault UI missing from HTML"; exit 1; }
+          grep -q 'receipt-intelligence-ui.js' index.html || { echo "FAIL: receipt intelligence UI missing from HTML"; exit 1; }
+          echo "PASS: root HTML injects both receipt UI modules"
+          curl --fail --silent --show-error --max-time 25 "$BASE/purchase-documents-ui.js" > receipt-vault.js
+          grep -q 'mpdSave' receipt-vault.js || { echo "FAIL: purchase vault script missing"; exit 1; }
+          curl --fail --silent --show-error --max-time 25 "$BASE/receipt-intelligence-ui.js" > receipt-ai.js
+          grep -q 'receiptCountEvidenceButton' receipt-ai.js || { echo "FAIL: count review code missing"; exit 1; }
+          grep -q 'receiving-readiness' receipt-ai.js || { echo "FAIL: receiving preflight missing"; exit 1; }
+          echo "PASS: both new JavaScript assets serve successfully"
+          denial() {
+            local path="$1"
+            local code
+            code="$(http_code "$BASE$path")"
+            case "$code" in
+              401|403) echo "PASS: unauthenticated GET $path -> $code" ;;
+              *) echo "FAIL: GET $path returned $code (expected 401/403)"; exit 1 ;;
+            esac
+          }
+          denial "/api/procurement/purchase-documents?business_id=1"
+          denial "/api/procurement/purchase-documents/1/file?business_id=1"
+          denial "/api/procurement/purchase-documents/1/intelligence?business_id=1"
+          denial "/api/procurement/receipt-intelligence/config?business_id=1"
+          denial "/api/procurement/receipt-intelligence/count-sessions/1/variance-evidence?business_id=1"
+          post_code="$(curl --silent --show-error --max-time 25 -o /dev/null -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data '{"business_id":1,"client_request_key":"qa-unauthenticated-001"}' \
+            "$BASE/api/procurement/purchase-documents")"
+          case "$post_code" in
+            401|403) echo "PASS: anonymous upload rejected $post_code" ;;
+            *) echo "FAIL: anonymous POST HTTP $post_code"; exit 1 ;;
+          esac
+          echo "PASS: public Preview smoke + no unauthorized receipt access"
