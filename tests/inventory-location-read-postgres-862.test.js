@@ -92,6 +92,52 @@ test('862: isolated real PostgreSQL clean reads, coalescing, lock repair and iso
         blocker.release();
       }
     });
+
+    await t.test('uncommitted stock plus allocation writer leaves reads on one committed snapshot',async()=>{
+      // A real writer holds both row locks until COMMIT. A read-only preflight must
+      // see the previous committed pair without blocking or triggering repair.
+      const writer=await pool.connect();
+      let inTransaction=false,timeoutId;
+      const snapshots=[],sqlMillis=[];
+      const observed={async query(sql,args=[]){
+        const started=performance.now();
+        const result=await pool.query(sql,args);
+        sqlMillis.push(Math.round((performance.now()-started)*1000)/1000);
+        if(sql.startsWith('SELECT i.id,i.quantity')){
+          const row=result.rows.find(item=>Number(item.id)===2001);
+          assert.ok(row,'expected isolated business B item');
+          snapshots.push([Number(row.quantity),Number(row.allocated)]);
+        }
+        return result;
+      }};
+      try{
+        await writer.query('BEGIN');inTransaction=true;
+        await writer.query('UPDATE inventory SET quantity=11 WHERE id=2001 AND business_id=2');
+        await writer.query('UPDATE inventory_location_balances SET quantity=11 WHERE business_id=2 AND inventory_id=2001');
+        await Promise.race([
+          reconcileBusinessInventoryLocationsForRead(observed,{businessId:2}),
+          new Promise((_,reject)=>{timeoutId=setTimeout(()=>reject(new Error('clean preflight blocked behind uncommitted writer')),3500)})
+        ]);
+        clearTimeout(timeoutId);timeoutId=null;
+        assert.deepEqual(snapshots,[[9,9]],'one MVCC statement must see old committed stock and allocation');
+        assert.equal(sqlMillis.length,3,'no locked repair during uncommitted consistent update');
+        await writer.query('COMMIT');inTransaction=false;
+        await reconcileBusinessInventoryLocationsForRead(observed,{businessId:2});
+        assert.deepEqual(snapshots,[[9,9],[11,11]],'subsequent GET observes both committed changes');
+        assert.equal(sqlMillis.length,6,'no cached preflight and no repair of valid committed stock');
+        const a=await pool.query('SELECT SUM(quantity) AS total FROM inventory_location_balances WHERE business_id=1');
+        assert.equal(Number(a.rows[0].total),3000,'other tenant is untouched');
+        t.diagnostic('real PostgreSQL uncommitted writer: old/new MVCC pairs verified; per-statement read times (ms) '+JSON.stringify(sqlMillis));
+      }finally{
+        clearTimeout(timeoutId);
+        if(inTransaction)await writer.query('ROLLBACK').catch(()=>{});
+        writer.release();
+      }
+      // Restore the original synthetic fixture for the following supply-lot case.
+      await pool.query('UPDATE inventory SET quantity=9 WHERE id=2001 AND business_id=2');
+      await pool.query('UPDATE inventory_location_balances SET quantity=9 WHERE business_id=2 AND inventory_id=2001');
+    });
+
     await t.test('real supply-lot drift repair remains tenant-scoped and a settled repeat read is bounded',async()=>{
       // The generic clean-path scenarios intentionally start without supply_lots.
       // This final subtest covers the actual PostgreSQL lot and lot-balance joins.
