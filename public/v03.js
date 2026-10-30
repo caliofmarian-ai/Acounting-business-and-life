@@ -211,6 +211,15 @@ function initStockPicker(){
   const search=$('stockPickerSearch'),searchStatus=$('stockPickerSearchStatus');
   const safety=$('stockPickerLocalSafetyNote');
   if(!category||!item)return;
+  let selectedSuggestedName='';
+  const clearStaleSuggestion=()=>{
+    const stockName=$('stockItem');
+    if(stockName&&stockName.value===selectedSuggestedName&&selectedSuggestedName){
+      stockName.value='';
+      if($('stockInventoryId'))$('stockInventoryId').value='';
+    }
+    selectedSuggestedName='';
+  };
   const showSafetyNote=name=>{
     if(!safety)return;
     const note=philippineStockPickerSafetyNote(name);
@@ -253,11 +262,13 @@ function initStockPicker(){
     }
   };
   category.addEventListener('change',()=>{
+    clearStaleSuggestion();
     if(search)search.value='';
     showSafetyNote('');
     renderItems();
   });
   search?.addEventListener('input',()=>{
+    clearStaleSuggestion();
     showSafetyNote('');
     renderItems();
   });
@@ -266,6 +277,7 @@ function initStockPicker(){
     if(!option?.value)return;
     if($('stockInventoryId'))$('stockInventoryId').value='';
     $('stockItem').value=option.value;
+    selectedSuggestedName=option.value;
     const unit=option.dataset.unit||'unit';
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===(option.dataset.category||category.value));
     if(group)category.value=group.category;
@@ -284,7 +296,10 @@ function initStockPicker(){
   for(const id of ['stockStorageCondition','stockStorageArea','stockStorageLocation'])$(id)?.addEventListener('change',updateStockStorageHint);
   $('stockStorageLocation')?.addEventListener('input',updateStockStorageHint);
   $('stockStorageSegregated')?.addEventListener('change',updateStockStorageHint);
-  $('stockItem')?.addEventListener('input',()=>{if($('stockInventoryId'))$('stockInventoryId').value='';});
+  $('stockItem')?.addEventListener('input',()=>{
+    selectedSuggestedName='';
+    if($('stockInventoryId'))$('stockInventoryId').value='';
+  });
   renderItems();
   syncUniversalInventoryClassification({fromLegacy:true,storage:false});
   updateStockStorageHint();
