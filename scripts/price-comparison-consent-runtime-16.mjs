@@ -130,6 +130,43 @@ try{
   product=await expect('/api/merchant/storefront/products/'+productId,{
     method:'PATCH',token,body:{name:marker+'-edited'}},200);
   same(product.price_comparison_override,true,'unrelated product edit preserves opt-in');
+  // A stale, unrelated product edit must not re-enable comparison after
+  // an explicit listing revocation. Verify with two real HTTP PATCH requests
+  // observed blocked behind the same PostgreSQL row lock (not a fake DB).
+  const productLock=await pool.connect();
+  let productRevocationPending,staleProductSavePending;
+  const waitForBlockedProductLocks=async minimum=>{
+    const deadline=Date.now()+10000;
+    while(Date.now()<deadline){
+      const waiting=await pool.query(
+        "SELECT COUNT(*)::int AS blocked FROM pg_stat_activity " +
+        "WHERE datname=current_database() AND pid<>pg_backend_pid() " +
+        "AND state='active' AND wait_event_type='Lock' " +
+        "AND query LIKE '%SELECT * FROM marketplace_products WHERE id=%FOR UPDATE%'"
+      );
+      if(Number(waiting.rows[0].blocked)>=minimum)return;
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    throw new Error('Expected '+minimum+' HTTP product row-lock waiters.');
+  };
+  try{
+    await productLock.query('BEGIN');
+    await productLock.query('SELECT id FROM marketplace_products WHERE id=$1 FOR UPDATE',[productId]);
+    productRevocationPending=expect('/api/merchant/storefront/products/'+productId,{
+      method:'PATCH',token,body:{price_comparison_override:false}},200);
+    await waitForBlockedProductLocks(1);
+    staleProductSavePending=expect('/api/merchant/storefront/products/'+productId,{
+      method:'PATCH',token,body:{description:'Unrelated stale listing edit after revocation'}},200);
+    await waitForBlockedProductLocks(2);
+  }finally{
+    await productLock.query('ROLLBACK').catch(()=>{});
+    productLock.release();
+  }
+  const [revokedListing,staleListing]=await Promise.all([productRevocationPending,staleProductSavePending]);
+  same(revokedListing.price_comparison_override,false,'queued listing revocation committed');
+  same(staleListing.price_comparison_override,false,'later stale listing edit preserved revocation');
+  row=await pool.query('SELECT price_comparison_override FROM marketplace_products WHERE id=$1',[productId]);
+  same(row.rows[0].price_comparison_override,false,'PostgreSQL listing consent stays OFF after concurrent stale PATCH');
   product=await expect('/api/merchant/storefront/products/'+productId,{
     method:'PATCH',token,body:{price_comparison_override:'false'}},200);
   same(product.price_comparison_override,false,'listing revocation persisted');
