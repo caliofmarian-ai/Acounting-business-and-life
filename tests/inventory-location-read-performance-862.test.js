@@ -302,8 +302,11 @@ test('862: authenticated HTTP location GETs reject guests and wrong profiles, an
     assert.ok(queries.filter(row=>row.args.length).every(row=>
       Number(row.args[0])===101||Number(row.args[0])===202
     ),'all Inventory SQL must bind the authenticated Merchant business, never the query override');
-    assert.ok(queries.some(row=>row.args[0]===101&&row.args[1]===2021),
-      'cross-business item filter is checked with the authenticated business ID');
+    assert.ok(queries.filter(row=>row.sql.startsWith('WITH base_items AS MATERIALIZED ('))
+      .every(row=>row.args.length===1&&(row.args[0]===101||row.args[0]===202)),
+      'the unified snapshot never accepts a caller-supplied inventory ID or business ID');
+    assert.equal(foreignInventory.body.length,0,
+      'cross-business item filtering is applied after the authenticated business-scoped snapshot');
   }finally{
     await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
   }
