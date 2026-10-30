@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import {installMerchantVoiceOrderRoutes,chargeVoiceOrderQuota} from '../merchant-voice-order-routes.js';
 const op=(action,fields={})=>({action,product_name:null,quantity:null,variant_name:null,modifier_names:[],customer_name:null,line_reference:null,...fields});
 const catalog=[{id:2,source_kind:'marketplace_product',name:'Rice',active:true,available:true,selling_price:25,modifier_groups:[]}];
-function rig({businesses=[7],flag=true,configured=true,turns=[{operations:[op('set_customer',{customer_name:'Ana'}),op('add',{product_name:'Rice',quantity:3})]}],interpreter=null,charge=null,catalogItems=catalog,authorization='Bearer test-token'}={}){
+function rig({businesses=[7],flag=true,configured=true,turns=[{operations:[op('set_customer',{customer_name:'Ana'}),op('add',{product_name:'Rice',quantity:3})]}],interpreter=null,charge=null,catalogItems=catalog,authorization='Bearer test-token',confirmationReady=false}={}){
   const handlers=new Map(),method=(verb)=>(path,...args)=>handlers.set(`${verb} ${path}`,args.at(-1));
   const app={get:method('GET'),post:method('POST')},calls=[];
-  installMerchantVoiceOrderRoutes(app,{db:{},env:{ORDER_VOICE_UI_ENABLED:flag?'1':'0',ORDER_VOICE_AI_ENABLED:configured?'1':'0',ORDER_VOICE_AI_MODEL:'test-model',OPENAI_API_KEY:'fake'},
+  installMerchantVoiceOrderRoutes(app,{db:{},env:{ORDER_VOICE_UI_ENABLED:flag?'1':'0',ORDER_VOICE_AI_ENABLED:configured?'1':'0',ORDER_VOICE_CREATE_ENABLED:'1',ORDER_VOICE_AI_MODEL:'test-model',OPENAI_API_KEY:'fake'},
+    confirmationReady:()=>confirmationReady,
     requireMerchant:async(req,bid)=>{calls.push(['auth',bid]);if(!req.headers?.authorization)throw Object.assign(new Error('Unauthorized'),{status:401});if(!businesses.includes(bid))throw Object.assign(new Error('Not allowed'),{status:403});return{me:{account:{id:44}},business:{id:bid}}},
     catalogForBusiness:async bid=>{calls.push(['catalog',bid]);return catalogItems},
     snapshotsForBusiness:async({businessId,items})=>{calls.push(['snapshots',businessId]);return items.map(i=>({source_kind:i.source_kind,source_id:i.product_id,name_snapshot:'Rice',quantity:i.quantity,catalog_variant_id:i.variant_id,modifier_snapshot_json:{groups:[]},unit_price_snapshot:'25.00',line_total:(i.quantity*25).toFixed(2)}))},
@@ -24,6 +25,7 @@ function rig({businesses=[7],flag=true,configured=true,turns=[{operations:[op('s
 test('authenticated Merchant can request capabilities without publishing provider secrets',async()=>{
   const {request}=rig();const x=await request('GET','/api/orders/voice/capabilities');
   assert.equal(x.status,200);assert.equal(x.payload.enabled,true);assert.equal(x.payload.creates_orders,false);
+  assert.equal(x.payload.can_confirm_order,false);
   assert.equal(JSON.stringify(x).includes('fake'),false);assert.equal(x.headers['Cache-Control'],'private, no-store');
 });
 test('a normal AI turn gives a corrected server-Catalog PHP draft, never an order',async()=>{
@@ -101,4 +103,10 @@ test('quote refuses absent draft or missing explicit operator consent',async()=>
   assert.equal((await obj.request('POST','/api/orders/voice/quote')).status,400);
   assert.equal((await obj.request('POST','/api/orders/voice/quote',{consent:false,draft:{lines:[]}})).status,403);
   assert.equal(obj.calls.filter(x=>x[0]==='snapshots').length,0);
+});
+
+test('voice create button remains hidden despite enabled flags until a real server-side device verifier is wired',async()=>{
+  const blocked=await rig().request('GET','/api/orders/voice/capabilities');
+  const enabled=await rig({confirmationReady:true}).request('GET','/api/orders/voice/capabilities');
+  assert.equal(blocked.payload.can_confirm_order,false);assert.equal(enabled.payload.can_confirm_order,true);
 });

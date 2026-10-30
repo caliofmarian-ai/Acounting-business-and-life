@@ -39,7 +39,7 @@ function db({verified=true,revoked=false}={}){
       throw Error('Unexpected SQL '+sql.slice(0,110));
     },release(){} }}}
 }
-function setup({disabled=false,accountId=44,businessId=7,verified=true,mutateCanonical=false,clock=now}={}){
+function setup({disabled=false,deviceReady=true,accountId=44,businessId=7,verified=true,mutateCanonical=false,clock=now}={}){
   const handlers={},store=db({verified}),created=[],catalogCalls=[],velocity=[];
   const app={post:(path,...args)=>handlers[path]=args.at(-1)};
   installMerchantVoiceOrderConfirmation(app,{db:store,quoteSecret,tokenSecret,
@@ -47,6 +47,7 @@ function setup({disabled=false,accountId=44,businessId=7,verified=true,mutateCan
     canonicalSnapshots:async(_client,p)=>{catalogCalls.push(p);return[{...snapshot,line_total:mutateCanonical?80:70}]},
     createCanonicalOrder:async params=>{created.push(params);return{id:501}},orderDetail:async()=>order,
     checkCreateVelocity:async context=>velocity.push(context),
+    verifyDeviceApproval:deviceReady?async()=>true:null,
     env:{ORDER_VOICE_UI_ENABLED:'1',ORDER_VOICE_AI_ENABLED:'1',ORDER_VOICE_CREATE_ENABLED:disabled?'0':'1'},now:()=>clock});
   const call=async body=>{
     let status=0,output=null;
@@ -60,7 +61,7 @@ function setup({disabled=false,accountId=44,businessId=7,verified=true,mutateCan
 test('voice confirm is disabled by default even for signed draft',async()=>{
   const f=setup({disabled:true}),r=await f.call({});assert.equal(r.status,503);assert.equal(r.body.code,'VOICE_CREATE_DISABLED');assert.equal(f.created.length,0);
 });
-test('explicit secure confirmation creates once; replay returns original unpaid order',async()=>{
+test('explicit secure confirmation with a fake device verifier creates once; replay returns original unpaid order',async()=>{
   const f=setup(),first=await f.call({}),again=await f.call({});
   assert.equal(first.status,201);assert.equal(again.status,200);assert.equal(first.body.replayed,false);assert.equal(again.body.replayed,true);
   assert.equal(first.body.order_status,'awaiting_customer_presence');assert.equal(first.body.payment_status,'unpaid');
@@ -96,4 +97,9 @@ test('expired quote may replay committed key, not create new order',async()=>{
 test('same PostgreSQL transaction holds step-up session row FOR SHARE until commit',async()=>{
   const q=[];await requireVoiceOperatorStepUp({query:async(sql,params)=>{q.push({sql,params});return{rowCount:1,rows:[{step_up_verified_at:'2026-10-30T23:00:55Z'}]}}},
     {token,tokenSecret,accountId:44,now});assert.match(q[0].sql,/FOR SHARE/);assert.deepEqual(q[0].params,['session-a',44]);
+});
+
+test('environment flags alone cannot enable voice order creation without a real device verifier',async()=>{
+  const f=setup({deviceReady:false});const r=await f.call({});
+  assert.equal(r.status,503);assert.equal(r.body.code,'VOICE_CREATE_DISABLED');assert.equal(f.created.length,0);
 });

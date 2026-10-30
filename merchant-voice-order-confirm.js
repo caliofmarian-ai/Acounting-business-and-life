@@ -13,7 +13,7 @@ const positiveId=v=>Number.isSafeInteger(Number(v))&&Number(v)>0;
 const allowed=new Set(['VOICE_CONFIRM_QUOTE_INVALID','VOICE_CONTEXT_STALE','VOICE_QUOTE_STALE',
   'VOICE_CREATE_BAD_REQUEST','VOICE_CREATE_KEY_REUSED','VOICE_CREATE_PENDING',
   'VOICE_STEP_UP_REQUIRED','VOICE_CONFIRMATION_REQUIRED','VOICE_CREATE_DISABLED',
-  'HIGH_RISK_VELOCITY_LIMIT']);
+  'HIGH_RISK_VELOCITY_LIMIT','VOICE_DEVICE_APPROVAL_REQUIRED']);
 
 export async function requireVoiceOperatorStepUp(client,{token,tokenSecret,accountId,now=new Date()}={}){
   const current=verifyV2SessionTokenSignature(tokenSecret,token,{now:now.getTime()});
@@ -33,13 +33,15 @@ export async function requireVoiceOperatorStepUp(client,{token,tokenSecret,accou
 export function installMerchantVoiceOrderConfirmation(app,{
   db,requireMerchant,quoteSecret,tokenSecret,canonicalSnapshots,createCanonicalOrder,orderDetail,
   bodyMiddleware,env=process.env,now=()=>new Date(),guard=withVoiceOrderExactlyOnce,
-  checkCreateVelocity=async()=>{}
+  checkCreateVelocity=async()=>{},verifyDeviceApproval=null
 }={}){
   if(!app?.post||!db?.connect||typeof requireMerchant!=='function'||
      typeof canonicalSnapshots!=='function'||typeof createCanonicalOrder!=='function'||
      typeof orderDetail!=='function')throw new TypeError('Voice approval requires canonical Orders transaction services.');
+  // The current Product has no verified device-held/passkey challenge adapter.
+  // Deliberately fail CLOSED even when all environment flags are switched on.
   const ready=()=>env.ORDER_VOICE_UI_ENABLED==='1'&&env.ORDER_VOICE_AI_ENABLED==='1'&&
-    env.ORDER_VOICE_CREATE_ENABLED==='1';
+    env.ORDER_VOICE_CREATE_ENABLED==='1'&&typeof verifyDeviceApproval==='function';
   const route=async(req,res)=>{
     res.set('Cache-Control','private, no-store, max-age=0');
     try{
@@ -66,6 +68,13 @@ export function installMerchantVoiceOrderConfirmation(app,{
           if(Date.parse(parsed.quote.expires_at)<=now().getTime())
             throw problem(409,'VOICE_QUOTE_STALE','Order quote expired. Check the current price again.');
           await requireVoiceOperatorStepUp(client,{token,tokenSecret,accountId:aid,now:now()});
+          // A separate server-side, device-held challenge verification must be
+          // implemented and consumed atomically before the create release gate.
+          // A browser-supplied boolean or transcribed phrase is NEVER proof.
+          const deviceOk=await verifyDeviceApproval(client,{req,accountId:aid,businessId:bid,
+            sessionId,quoteHash:parsed.quoteHash,requestKey:req.body?.request_key});
+          if(deviceOk!==true)throw problem(428,'VOICE_DEVICE_APPROVAL_REQUIRED',
+            'Device approval is required before creating a voice order.');
           const snapshots=await canonicalSnapshots(client,{businessId:bid,items:parsed.orderItems});
           assertVoiceQuoteMatchesSnapshots(parsed.quote,snapshots);
           // Match the same anti-abuse decision used by manual Merchant create.
