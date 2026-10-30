@@ -63,7 +63,7 @@ export function normalizeMerchantPurchaseDocument(input={}){
 
 export async function ensureMerchantPurchaseDocumentSchema(pool){
   await ensurePrivateEvidenceSchema(pool);
-  await pool.query(\`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS merchant_purchase_documents(
       id BIGSERIAL PRIMARY KEY,
       business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
@@ -92,7 +92,7 @@ export async function ensureMerchantPurchaseDocumentSchema(pool){
       PRIMARY KEY(document_id,link_kind,linked_id),
       CHECK(link_kind IN ('inventory_purchase','purchase_order','supplier_invoice','expense_transaction'))
     );
-  \`);
+  `);
 }
 
 async function requireMerchantDocumentBusiness(pool,identity,req,source='query'){
@@ -156,7 +156,7 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
     client=await pool.connect();
     await client.query('BEGIN');
     await validatePurchaseLinks(client,record.businessId,record.links);
-    const added=await client.query(\`
+    const added=await client.query(`
       INSERT INTO merchant_purchase_documents(
         business_id,created_by_account_id,client_request_key,request_fingerprint,
         document_kind,issuer_name,document_number,issue_date,currency_code,gross_amount,
@@ -164,7 +164,7 @@ async function savePurchaseDocument(pool,{actorAccountId,record}){
       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       ON CONFLICT(business_id,client_request_key) DO NOTHING
       RETURNING *
-    \`,[
+    `,[
       record.businessId,actorAccountId,record.key,fingerprint,
       record.kind,record.issuer,record.documentNumber,record.issueDate,
       record.currency,record.amount,record.note,evidence?.id||null
@@ -203,13 +203,13 @@ export function registerMerchantPurchaseDocumentRoutes({app,pool,body,identity})
   app.get('/api/procurement/purchase-documents/linkable-purchases',async(req,res,next)=>{
     try{
       const {businessId}=await requireMerchantDocumentBusiness(pool,identity,req);
-      const q=await pool.query(\`
+      const q=await pool.query(`
         SELECT p.id,p.created_at,p.total_cost,p.purchase_quantity,p.purchase_unit,
                p.transaction_id,i.item inventory_name
           FROM inventory_purchases p JOIN inventory i ON i.id=p.inventory_id
          WHERE p.business_id=$1 AND i.business_id=$1
          ORDER BY p.created_at DESC,p.id DESC LIMIT 100
-      \`,[businessId]);
+      `,[businessId]);
       res.json({purchases:q.rows});
     }catch(e){next(e)}
   });
