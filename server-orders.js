@@ -371,12 +371,14 @@ app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number
 
 const merchantVoiceSigningSecret=crypto.createHmac('sha256',process.env.ORDER_VOICE_SIGNING_SECRET||process.env.TOKEN_SECRET||crypto.randomBytes(32))
   .update('merchant-voice-orders-863').digest();
+let merchantVoiceConfirmation=null;
 installMerchantVoiceOrderRoutes(app,{
   db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
   snapshotsForBusiness:({businessId,items})=>merchantCounterSnapshots(pool,{businessId,items}),
-  secret:merchantVoiceSigningSecret,bodyMiddleware:body
+  secret:merchantVoiceSigningSecret,bodyMiddleware:body,
+  confirmationReady:()=>merchantVoiceConfirmation?.ready()===true
 });
-installMerchantVoiceOrderConfirmation(app,{
+merchantVoiceConfirmation=installMerchantVoiceOrderConfirmation(app,{
   db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,tokenSecret:process.env.TOKEN_SECRET,
   canonicalSnapshots:(client,{businessId,items})=>merchantCounterSnapshots(client,{businessId,items}),
   createCanonicalOrder:createOrder,orderDetail,bodyMiddleware:body,
