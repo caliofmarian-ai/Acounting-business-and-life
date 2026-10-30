@@ -30,11 +30,19 @@ const expect=async(path,options,status)=>{
   same(result.status,status,path+' status; response='+JSON.stringify(result.payload).slice(0,350));
   return result.payload;
 };
-const storeWrite=(token,extra={})=>expect('/api/merchant/storefront',{
-  method:'PUT',token,body:{
-    business_id:1,store_name:'CI Price Consent Store',merchant_domain:'mixed',
-    publication_status:'draft',...extra
-  }},200);
+const storeWrite=async(token,extra={})=>{
+  let consentFields=extra;
+  if(extra.price_comparison_enabled===true||extra.price_comparison_enabled==='true'){
+    // Simulate the authorized Merchant form's current PostgreSQL row revision.
+    const rev=await pool.query('SELECT xmin::text AS revision FROM merchant_storefronts WHERE business_id=1');
+    consentFields={...extra,price_comparison_expected_version:rev.rows[0]?.revision||''};
+  }
+  return expect('/api/merchant/storefront',{
+    method:'PUT',token,body:{
+      business_id:1,store_name:'CI Price Consent Store',merchant_domain:'mixed',
+      publication_status:'draft',...consentFields
+    }},200);
+};
 try{
   const current=await pool.query('SELECT current_database() AS name');
   same(current.rows[0].name,'abl_admin_ci','isolated database only');
@@ -71,6 +79,8 @@ try{
   row=await pool.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=1');
   same(row.rows[0].price_comparison_enabled,false,'revocation committed to PostgreSQL');
 
+  const staleStoreRevision=(await pool.query(
+    'SELECT xmin::text AS revision FROM merchant_storefronts WHERE business_id=1')).rows[0].revision;
   // Emulate an old Storefront save already in flight while the Merchant revokes
   // comparison consent. Both HTTP requests read the old TRUE row before their
   // UPSERTs can acquire the lock; the later unrelated save must not opt back in.
@@ -108,6 +118,20 @@ try{
   same(staleSaveResult.price_comparison_enabled,false,'later stale form update must preserve revocation');
   row=await pool.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=1');
   same(row.rows[0].price_comparison_enabled,false,'real PostgreSQL consent stays OFF after concurrent stale save');
+  // A stale explicit opt-in is different from an omitted unrelated edit.
+  await expect('/api/merchant/storefront',{method:'PUT',token,body:{
+    business_id:1,store_name:'CI Price Consent Store',merchant_domain:'mixed',
+    publication_status:'draft',price_comparison_enabled:true,
+    price_comparison_expected_version:staleStoreRevision
+  }},409);
+  row=await pool.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=1');
+  same(row.rows[0].price_comparison_enabled,false,'stale explicit storefront ON cannot reverse revoked OFF');
+  await expect('/api/merchant/storefront',{method:'PUT',token,body:{
+    business_id:1,store_name:'CI Price Consent Store',merchant_domain:'mixed',
+    publication_status:'draft',price_comparison_enabled:true
+  }},409);
+  row=await pool.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=1');
+  same(row.rows[0].price_comparison_enabled,false,'missing revision cannot opt in a storefront');
   await expect('/api/merchant/storefront',{
     method:'PUT',token,body:{business_id:1,store_name:'CI Price Consent Store',
       merchant_domain:'mixed',publication_status:'draft',price_comparison_enabled:'off'}},400);
@@ -124,8 +148,11 @@ try{
   same(product.price_comparison_override,false,'private product explicitly excluded');
   same(product.published,false,'comparison setting cannot publish product');
 
+  const staleProductRevision=(await pool.query(
+    'SELECT xmin::text AS revision FROM marketplace_products WHERE id=$1',[productId])).rows[0].revision;
   product=await expect('/api/merchant/storefront/products/'+productId,{
-    method:'PATCH',token,body:{price_comparison_override:true}},200);
+    method:'PATCH',token,body:{price_comparison_override:true,
+      price_comparison_expected_version:staleProductRevision}},200);
   same(product.price_comparison_override,true,'listing explicitly opted in');
   product=await expect('/api/merchant/storefront/products/'+productId,{
     method:'PATCH',token,body:{name:marker+'-edited'}},200);
@@ -167,11 +194,23 @@ try{
   same(staleListing.price_comparison_override,false,'later stale listing edit preserved revocation');
   row=await pool.query('SELECT price_comparison_override FROM marketplace_products WHERE id=$1',[productId]);
   same(row.rows[0].price_comparison_override,false,'PostgreSQL listing consent stays OFF after concurrent stale PATCH');
+  await expect('/api/merchant/storefront/products/'+productId,{
+    method:'PATCH',token,body:{price_comparison_override:true,
+      price_comparison_expected_version:staleProductRevision}},409);
+  row=await pool.query('SELECT price_comparison_override FROM marketplace_products WHERE id=$1',[productId]);
+  same(row.rows[0].price_comparison_override,false,'stale explicit listing ON cannot re-enable revoked listing');
+  await expect('/api/merchant/storefront/products/'+productId,{
+    method:'PATCH',token,body:{price_comparison_override:true}},409);
+  row=await pool.query('SELECT price_comparison_override FROM marketplace_products WHERE id=$1',[productId]);
+  same(row.rows[0].price_comparison_override,false,'missing revision cannot opt in a listing');
   product=await expect('/api/merchant/storefront/products/'+productId,{
     method:'PATCH',token,body:{price_comparison_override:'false'}},200);
   same(product.price_comparison_override,false,'listing revocation persisted');
+  const freshProductRevision=(await pool.query(
+    'SELECT xmin::text AS revision FROM marketplace_products WHERE id=$1',[productId])).rows[0].revision;
   product=await expect('/api/merchant/storefront/products/'+productId,{
-    method:'PATCH',token,body:{price_comparison_override:null}},200);
+    method:'PATCH',token,body:{price_comparison_override:null,
+      price_comparison_expected_version:freshProductRevision}},200);
   same(product.price_comparison_override,null,'listing returns to inherited consent');
   await expect('/api/merchant/storefront/products/'+productId,{
     method:'PATCH',token,body:{price_comparison_override:'off'}},400);

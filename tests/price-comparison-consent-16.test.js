@@ -75,6 +75,9 @@ test('Merchant server routes use strict parsing; omitted storefront consent is p
   assert.match(server,/price_comparison_enabled=CASE WHEN \$23::boolean THEN EXCLUDED\.price_comparison_enabled ELSE merchant_storefronts\.price_comparison_enabled END/);
   assert.match(server,/normalizeListingComparisonConsent\(req\.body\|\|\{\}\)/);
   assert.match(server,/normalizeListingComparisonConsent\(req\.body\|\|\{\},old\.price_comparison_override\)/);
+  assert.match(server,/merchant_storefronts\.xmin::text=\$24::text/);
+  assert.match(server,/req\.body\.price_comparison_expected_version!==old\.comparison_version/);
+  assert.match(server,/SELECT \*,xmin::text AS comparison_version FROM marketplace_products/);
   assert.doesNotMatch(server,/Boolean\(req\.body\?\.price_comparison_enabled\)/);
   assert.doesNotMatch(server,/Boolean\(req\.body\.price_comparison_override\)/);
 });
@@ -88,6 +91,8 @@ test('private Merchant catalog create and edit expose explicit three-way choices
   assert.match(ui,/price_comparison_override:comparisonChoiceFromSelect\('merchantCatalogCreateCompare'\)/);
   assert.match(ui,/price_comparison_override:comparisonConsentChanged\(p\.price_comparison_override\?\?null,comparisonChoiceFromSelect\('catalogEditCompare'\)\)/);
   assert.match(ui,/id="storeCompare"/);
+  assert.match(ui,/data-initial-version=/);
+  assert.match(ui,/price_comparison_expected_version:p\.comparison_version/);
 });
 
 test('stale private form saves omit unchanged consent and cannot reverse a remote withdrawal',()=>{

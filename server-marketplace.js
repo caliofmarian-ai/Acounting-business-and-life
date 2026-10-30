@@ -239,7 +239,7 @@ async function publicStorefronts(domain=''){
   return rows.filter(row=>eligible.has(Number(row.business_id)))
 }
 async function storefront(businessId,includePrivate=false){
-  const q=await pool.query(`SELECT s.*,b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 ${includePrivate?'':"AND s.publication_status='published'"}`,[businessId]);
+  const q=await pool.query(`SELECT s.*${includePrivate?',s.xmin::text AS comparison_version':''},b.country_code,b.currency_code FROM merchant_storefronts s JOIN businesses b ON b.id=s.business_id WHERE s.business_id=$1 ${includePrivate?'':"AND s.publication_status='published'"}`,[businessId]);
   const row=q.rows[0]||null;if(!row)return null;
   if(!includePrivate){
     const eligible=await filterCommerceEligibleBusinessIds(pool,[businessId]);
@@ -310,7 +310,7 @@ async function products(businessId,includePrivate=false,domain=''){
   const safeDomain=['food','non_food'].includes(domain)?domain:'';
   const args=[businessId];const domainSql=safeDomain?(args.push(safeDomain),' AND p.product_domain=$2'):'';
   const query=includePrivate
-    ?`SELECT p.*,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1${domainSql} ORDER BY p.category,p.name`
+    ?`SELECT p.*,p.xmin::text AS comparison_version,i.item inventory_item_name,i.quantity inventory_quantity,i.unit inventory_unit,i.unit_cost inventory_unit_cost FROM marketplace_products p LEFT JOIN inventory i ON i.id=p.inventory_id AND i.business_id=p.business_id WHERE p.business_id=$1${domainSql} ORDER BY p.category,p.name`
     :`SELECT p.* FROM marketplace_products p WHERE p.business_id=$1 AND p.published=TRUE AND p.active=TRUE${domainSql} ORDER BY p.category,p.name`;
   const{rows}=await pool.query(query,args);
   const compatibleRows=rows.map(catalogCompatibilityProjection);
@@ -926,6 +926,14 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
   const{me,business}=await requireMerchant(req,Number(req.body?.business_id||undefined));
   const current=await storefront(business.id,true);
   const storeComparisonConsent=normalizeStoreComparisonConsent(req.body||{},current?.price_comparison_enabled);
+  // Re-enabling participation needs an unchanged row revision observed by the
+  // authorized Merchant. Omitted fields and explicit withdrawals are safe
+  // irrespective of a concurrent session's newer opt-out.
+  const enablingComparison=storeComparisonConsent.provided&&storeComparisonConsent.value===true;
+  const comparisonVersion=req.body?.price_comparison_expected_version;
+  if(enablingComparison&&(!current||typeof comparisonVersion!=='string'||!/^[0-9]{1,10}$/.test(comparisonVersion))){
+    throw Object.assign(new Error('Reload the storefront before enabling price comparison.'),{status:409,code:'PRICE_COMPARISON_STALE_CONSENT'});
+  }
   const domain=['food','non_food','mixed'].includes(req.body?.merchant_domain)?req.body.merchant_domain:'food';
   const status=['draft','published','paused'].includes(req.body?.publication_status)?req.body.publication_status:'draft';
   if(status==='published')await requireMicrobusinessCommerceEligibility(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id,action:'publish the Merchant storefront'});
@@ -968,6 +976,10 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
       delivery_enabled=EXCLUDED.delivery_enabled,cash_enabled=EXCLUDED.cash_enabled,online_enabled=EXCLUDED.online_enabled,
       public_reputation_enabled=EXCLUDED.public_reputation_enabled,price_comparison_enabled=CASE WHEN $23::boolean THEN EXCLUDED.price_comparison_enabled ELSE merchant_storefronts.price_comparison_enabled END,
       logo_data_url=EXCLUDED.logo_data_url,updated_at=NOW()
+    -- Evaluated by PostgreSQL AFTER the conflicting row lock is acquired.
+    -- xmin changes on every write even when a Boolean toggles OFF and back.
+    WHERE NOT ($23::boolean AND EXCLUDED.price_comparison_enabled)
+       OR merchant_storefronts.xmin::text=$24::text
     RETURNING *
   `,[
     business.id,clean(req.body?.store_name,120)||business.name,clean(req.body?.description,1000),domain,status,
@@ -975,8 +987,9 @@ app.put('/api/merchant/storefront',body,async(req,res,next)=>{try{
     clean(req.body?.finding_instructions,500),clean(req.body?.opening_hours_text,500),lat,lng,open,
     Math.max(1,Math.min(240,Number(req.body?.preparation_eta_minutes)||15)),req.body?.pickup_enabled!==false,
     Boolean(req.body?.delivery_enabled),req.body?.cash_enabled!==false,Boolean(req.body?.online_enabled),
-    Boolean(req.body?.public_reputation_enabled),storeComparisonConsent.value,logo,storeComparisonConsent.provided
+    Boolean(req.body?.public_reputation_enabled),storeComparisonConsent.value,logo,storeComparisonConsent.provided,comparisonVersion||''
   ]);
+  if(!rows.length)throw Object.assign(new Error('Price comparison consent changed in another session. Reload and choose again.'),{status:409,code:'PRICE_COMPARISON_STALE_CONSENT'});
   res.json(attachStorefrontMedia(rows[0],await storefrontMedia(business.id)));
 }catch(e){next(e)}})
 app.post('/api/merchant/storefront/import-legacy',body,async(req,res,next)=>{try{const{business}=await requireMerchant(req,Number(req.body?.business_id||1));res.json({imported_or_updated:await importLegacyProducts(business.id),products:await products(business.id,true)})}catch(e){next(e)}})
@@ -1071,10 +1084,18 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
     const id=Number(req.params.id);
     if(!Number.isInteger(id)||id<1)return res.status(400).json({error:'Invalid product'});
     await client.query('BEGIN');
-    const own=await client.query('SELECT * FROM marketplace_products WHERE id=$1 FOR UPDATE',[id]);
+    const own=await client.query('SELECT *,xmin::text AS comparison_version FROM marketplace_products WHERE id=$1 FOR UPDATE',[id]);
     if(!own.rowCount)throw Object.assign(new Error('Product not found'),{status:404});
     const old=own.rows[0],{business}=await requireMerchant(req,old.business_id);
     const comparisonConsent=normalizeListingComparisonConsent(req.body||{},old.price_comparison_override);
+    // An explicit TRUE or inherited (NULL) may re-enable comparison. Validate
+    // its observed revision while holding the product row lock; OFF is always
+    // permitted as a privacy-safe withdrawal.
+    const enablingComparison=comparisonConsent.provided&&comparisonConsent.value!==false;
+    if(enablingComparison&&(!/^[0-9]{1,10}$/.test(req.body?.price_comparison_expected_version)||
+      req.body.price_comparison_expected_version!==old.comparison_version)){
+      throw Object.assign(new Error('Price comparison consent changed in another session. Reload this product and choose again.'),{status:409,code:'PRICE_COMPARISON_STALE_CONSENT'});
+    }
     const kind=['prepared_food','fresh_direct','packaged_resale','non_food_resale'].includes(clean(req.body?.product_kind??old.product_kind,40))
       ?clean(req.body?.product_kind??old.product_kind,40):old.product_kind;
     const domain=kind==='non_food_resale'?'non_food':'food';
@@ -1176,7 +1197,7 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
 async function merchantOwnedMarketplaceProduct(req){
   const id=Number(req.params.id);
   if(!Number.isInteger(id)||id<1)throw Object.assign(new Error('Invalid product.'),{status:400});
-  const q=await pool.query(`SELECT * FROM marketplace_products WHERE id=$1`,[id]);
+  const q=await pool.query(`SELECT *,xmin::text AS comparison_version FROM marketplace_products WHERE id=$1`,[id]);
   if(!q.rowCount)throw Object.assign(new Error('Product not found.'),{status:404});
   const product=q.rows[0];
   const owner=await requireMerchant(req,product.business_id);
