@@ -448,3 +448,35 @@ test('untrusted invisible word boundaries are visible while ordinary emoji joins
     {code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'}
   ]);
 });
+
+test('additional invisible model formatting controls are displayed as boundaries, not trusted typed values',()=>{
+  // A model may hide word boundaries with default-ignorable marks other than
+  // U+200B/U+2060. They must not survive as invisible catalogue hints.
+  for(const hidden of ['\u00ad','\u034f','\u180e','\u200c','\u2061','\u2064','\u206a']){
+    const result=draft('merchant_non_food',{
+      catalog_category_code:'furniture_home',
+      name:'Bacoor'+hidden+'Outlet',
+      description:'Natural'+hidden+'wood',
+      tags:['home'+hidden+'office'],
+      variant_attributes:{color:'Light'+hidden+'Oak',width_cm:'1'+hidden+'2'}
+    });
+    assert.equal(result.hints.name,'Bacoor Outlet');
+    assert.equal(result.hints.description,'Natural wood');
+    assert.deepEqual(result.hints.tags,['home office']);
+    assert.deepEqual(result.hints.variant_attributes,[
+      {code:'color',value:'Light Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+    ]);
+    const select=draft('merchant_non_food',{
+      catalog_category_code:'clothing_fashion',
+      variant_attributes:{target_audience:'wo'+hidden+'men'}
+    });
+    assert.deepEqual(select.hints.variant_attributes,[]);
+    assert.equal(result.draft_only,true);
+    assert.equal(result.publishable,false);
+    assert.equal(result.canonical_write_payload,false);
+  }
+  // Do not break the ordinary zero-width joiner used in emoji sequences.
+  assert.equal(draft('merchant_non_food',{
+    catalog_category_code:'furniture_home',name:'Chef 👩‍🍳'
+  }).hints.name,'Chef 👩‍🍳');
+});
