@@ -1,6 +1,7 @@
 import {createInventoryCountUi} from './inventory-count-ui.js';
 import {createInventoryScanUi} from './inventory-scan-ui.js';
 import {createInventoryLocationUi} from './inventory-location-ui.js';
+import {extendPhilippineStockPickerCatalog,searchPhilippineStockPicker,philippineStockPickerSafetyNote} from './ph-stock-picker-catalog.js';
 const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
@@ -20,7 +21,7 @@ const UNIT_META={
   ml:{family:'volume',base:'ml',factor:1},L:{family:'volume',base:'ml',factor:1000},
   unit:{family:'count',base:'unit',factor:1}
 };
-const STOCK_PICKER_CATALOG=[
+const STOCK_PICKER_CATALOG=extendPhilippineStockPickerCatalog([
   {category:'Meat & poultry',type:'ingredient',storage:{condition:'chilled',area:'fridge',label:'',segregated:false},items:[
     ['Chicken thighs / drumsticks','kg'],['Chicken leg quarters','kg'],['Chicken breast','kg'],['Whole chicken','kg'],
     ['Pork belly','kg'],['Pork shoulder','kg'],['Ground pork','kg'],['Pork ribs','kg'],['Beef brisket','kg'],['Beef sirloin','kg'],
@@ -93,7 +94,7 @@ const STOCK_PICKER_CATALOG=[
     ['Receipt paper rolls','unit'],['Order paper / kitchen tickets','unit'],['Pens','unit'],
     ['Thermal labels','unit'],['Delivery stickers / tamper seals','unit']
   ]}
-];
+]);
 
 const STORAGE_CONDITION_LABELS={ambient:'Ambient',dry:'Dry',chilled:'Chilled',frozen:'Frozen',other:'Not set / other'};
 const STORAGE_AREA_LABELS={
@@ -207,11 +208,35 @@ function updateStockStorageHint(){
 }
 function initStockPicker(){
   const category=$('stockCategoryPicker'),item=$('stockItemPicker');
+  const search=$('stockPickerSearch'),searchStatus=$('stockPickerSearchStatus');
+  const safety=$('stockPickerLocalSafetyNote');
   if(!category||!item)return;
+  const showSafetyNote=name=>{
+    if(!safety)return;
+    const note=philippineStockPickerSafetyNote(name);
+    safety.textContent=note;
+    safety.classList.toggle('hidden',!note);
+  };
   category.replaceChildren(new Option('Choose a category',''),...STOCK_PICKER_CATALOG.map(group=>new Option(group.category,group.category)));
   const renderItems=()=>{
+    const query=String(search?.value||'').trim();
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
     item.replaceChildren();
+    if(query){
+      const matches=searchPhilippineStockPicker(STOCK_PICKER_CATALOG,query,{limit:90});
+      item.append(new Option(matches.length?'Choose an ingredient':'No matching ingredient',''));
+      item.disabled=matches.length===0;
+      for(const match of matches){
+        const option=new Option(match.name+' · '+match.category,match.name);
+        option.dataset.unit=match.unit;
+        option.dataset.category=match.category;
+        item.append(option);
+      }
+      if(searchStatus)searchStatus.textContent=matches.length+
+        (matches.length===90?'+':'')+' matching suggestions. Choose an ingredient; no stock or expense is created until you save a purchase.';
+      return;
+    }
+    if(searchStatus)searchStatus.textContent='Search English or Filipino names across all categories, or browse a category below. Selection alone never changes Inventory.';
     if(group&&$('stockInventoryType')){$('stockInventoryType').value=group.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     if(group)applyStockStorageSuggestion(storageSuggestionFor(group,''));
     if(!group){
@@ -227,18 +252,28 @@ function initStockPicker(){
       item.append(option);
     }
   };
-  category.addEventListener('change',renderItems);
+  category.addEventListener('change',()=>{
+    if(search)search.value='';
+    showSafetyNote('');
+    renderItems();
+  });
+  search?.addEventListener('input',()=>{
+    showSafetyNote('');
+    renderItems();
+  });
   item.addEventListener('change',()=>{
     const option=item.selectedOptions?.[0];
     if(!option?.value)return;
     if($('stockInventoryId'))$('stockInventoryId').value='';
     $('stockItem').value=option.value;
     const unit=option.dataset.unit||'unit';
-    const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
+    const group=STOCK_PICKER_CATALOG.find(x=>x.category===(option.dataset.category||category.value));
+    if(group)category.value=group.category;
     if($('stockInventoryType')){$('stockInventoryType').value=group?.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     applyStockStorageSuggestion(storageSuggestionFor(group,option.value));
     syncUnitSelect('stockPurchaseUnit',unit);
     syncUnitSelect('stockReorderUnit',unit);
+    showSafetyNote(option.value);
     stockPurchasePreview();
   });
   $('stockInventoryType')?.addEventListener('change',()=>{
