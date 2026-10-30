@@ -140,7 +140,7 @@ function ensureMore(){
   bg.addEventListener('click',event=>{if(event.target===bg)closeMore()});
   bg.querySelector('#lazyMoreClose').onclick=closeMore;
   bg.querySelector('[data-lazy-action="payments"]').onclick=()=>openButtonFeature('payments','paymentCenterBtn');
-  bg.querySelector('[data-lazy-action="legal"]').onclick=()=>openButtonFeature('legal','legalCenterBtn');
+  bg.querySelector('[data-lazy-action="legal"]').onclick=openLegalCenter;
   bg.querySelector('[data-lazy-action="report"]').onclick=()=>openButtonFeature('incidents','incidentQuickButton');
 }
 
