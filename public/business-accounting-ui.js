@@ -346,9 +346,15 @@ function resetMerchantNavPresentation(){
   const nav=document.querySelector('.merchantPrimaryNav');
   if(nav){nav.removeAttribute('data-ready');nav.setAttribute('aria-busy','true')}
 }
+let merchantNavPresentationScope=null;
 document.addEventListener('abl:profile-state',event=>{
-  if(event.detail?.activeRole!=='merchant')resetMerchantNavPresentation();
-  bootAccountingWorkspace(event.detail);
+  const detail=event.detail||{};
+  const scope=detail.surface==='profile'&&detail.activeRole==='merchant'
+    ?String(detail.accountId??'unknown')+':merchant'
+    :null;
+  if(scope!==merchantNavPresentationScope)resetMerchantNavPresentation();
+  merchantNavPresentationScope=scope;
+  bootAccountingWorkspace(detail);
 },{passive:true});
 document.addEventListener('abl:business-workspace-changed',event=>{
   if(event.detail?.role==='merchant')resetMerchantNavPresentation();
