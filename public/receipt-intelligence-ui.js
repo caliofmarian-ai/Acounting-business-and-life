@@ -151,9 +151,47 @@
           ['','unit','kg','g','L','ml'].map(u=>'<option value="'+u+'"'+(line.unit?.toLowerCase()===u.toLowerCase()?' selected':'')+'>'+esc(u||'Choose unit')+'</option>').join('')+
           '</select></label><label>Confirmed line cost PHP<input data-confirmed-cost inputmode="decimal" value="'+esc(line.line_total??'')+'"></label><label>Note<input data-note></label></div></div>';
       }).join('')+'<div class="riNote">Saving this review does NOT add Inventory, create an expense, or register payment. Separate physical receiving remains required.</div>'+
-      '<button class="riBtn" type="submit">Save reviewed plan (stock unchanged)</button></form></section>';
+      '<button class="riBtn" type="submit">Save reviewed plan (stock unchanged)</button></form></section>'+
+      '<section id="riPreflight" class="riCard" hidden></section>';
     $('#riReview').onsubmit=review;
+    if(draft.status==='reviewed')loadReceivingReadiness().catch(()=>{});
   }
+
+  async function loadReceivingReadiness(){
+    const panel=overlay,bid=businessId,receiptId=selected;
+    if(!panel||!bid||!receiptId)return;
+    const box=$('#riPreflight');
+    if(!box)return;
+    box.hidden=false;
+    box.innerHTML='<h3>Preparing physical receiving</h3><p>Checking saved review and duplicate receipts…</p>';
+    try{
+      const response=await api(BASE+'/purchase-documents/'+Number(receiptId)+
+        '/intelligence/receiving-readiness?business_id='+encodeURIComponent(bid));
+      if(panel!==overlay||bid!==businessId||receiptId!==selected)return;
+      const p=response.preflight||{},issues=Array.isArray(p.issues)?p.issues:[],warnings=Array.isArray(p.warnings)?p.warnings:[];
+      const formatFlags=arr=>arr.length?'<ul>'+arr.map(code=>'<li>'+esc(String(code).replaceAll('_',' ').toLowerCase())+'</li>').join('')+'</ul>':'<p>None identified.</p>';
+      const groups=(p.grouped_inventory_candidates||[]).map(group=>
+        '<li>'+esc(group.product_name||'Inventory product')+' · '+esc(group.base_quantity)+' '+
+        esc(group.base_unit||'')+' · Confirmed line value '+esc(peso(group.confirmed_line_cost))+'</li>'
+      ).join('');
+      box.innerHTML='<h3>Physical receiving preflight</h3>'+
+        '<p class="riNote">State: '+esc(String(p.status||'unknown').replaceAll('_',' '))+
+        ' · Original total: '+esc(peso(p.receipt_total))+
+        ' · Confirmed stock lines: '+esc(peso(p.received_line_cost))+'</p>'+
+        '<p><strong>Products prepared for future receiving</strong></p><ul>'+(groups||'<li>No reviewed stock lines</li>')+'</ul>'+
+        '<p><strong>Items to resolve</strong></p>'+formatFlags(issues)+
+        (warnings.length?'<p><strong>Cost/quantity notes</strong></p>'+formatFlags(warnings):'')+
+        '<p class="riNote">Stock posting is disabled. No Inventory quantity, transaction or payment has been changed. A separate authorized, atomic receiving operation is still required.</p>'+
+        '<button id="riPreflightRefresh" class="riBtn secondary" type="button">Refresh preflight</button>';
+      $('#riPreflightRefresh').onclick=loadReceivingReadiness;
+    }catch(error){
+      if(panel!==overlay||bid!==businessId||receiptId!==selected)return;
+      box.innerHTML='<h3>Receiving preflight unavailable</h3><p>'+esc(error.message||'Please refresh the reviewed receipt.')+'</p>'+
+        '<button id="riPreflightRetry" class="riBtn secondary" type="button">Retry preflight</button>';
+      $('#riPreflightRetry').onclick=loadReceivingReadiness;
+    }
+  }
+
   async function review(e){
     e.preventDefault();const instance=overlay,bid=businessId,submit=$('#riReview button[type=submit]');
     const decisions=[...overlay.querySelectorAll('[data-review-line]')].map(n=>({
@@ -164,9 +202,13 @@
     }));
     if(!key)key=ref();submit.disabled=true;
     try{
-      await api(url('/review'),{method:'POST',headers:{'Content-Type':'application/json'},
+      const saved=await api(url('/review'),{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({business_id:bid,draft_id:draft.id,expected_version:draft.version,client_request_key:key,decisions})});
-      if(instance===overlay&&bid===businessId)message('Review securely saved. Stock unchanged; use approved receiving to add products.');
+      if(instance===overlay&&bid===businessId){
+        draft={...draft,status:'reviewed',review:saved.review,version:Number(draft.version)+1};
+        message('Review securely saved. Stock unchanged. Checking receiving readiness…');
+        await loadReceivingReadiness();
+      }
     }catch(e){if(instance===overlay){message(e.message,true);submit.disabled=false}}
   }
 
