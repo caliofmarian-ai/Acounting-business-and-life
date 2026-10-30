@@ -343,9 +343,15 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
         }
       }
       accountingWorkspaceAccountId=accountId;
-      const cached=window.BusinessLifeMerchantToday?.getState?.()?.workspace;
-      // Never hydrate a newly entered Merchant session from a preceding identity.
-      if(cached&&!scopeChanged)applyWorkspaceState(cached);
+      const today=window.BusinessLifeMerchantToday?.getState?.();
+      // The Accounting module loads lazily. Today's event may already have
+      // fired, so hydrate only a cache carrying the matching original account
+      // and Merchant profile key; never borrow a previous session's workspace.
+      const verifiedCache=Boolean(today?.data&&today?.workspace&&today.profileKey===String(accountId??'')+':merchant');
+      if(verifiedCache){
+        applyWorkspaceState(today.workspace);
+        applyFinancePresentation({role:'merchant',presentation:today.data.presentation||{}});
+      }
       return;
     }
     accountingWorkspaceAccountId=accountId;
