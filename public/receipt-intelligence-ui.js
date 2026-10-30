@@ -73,6 +73,9 @@
   function url(path){return BASE+'/purchase-documents/'+Number(selected)+'/intelligence'+path}
   async function choose(id){
     selected=id;draft=null;key=null;const instance=overlay,bid=businessId;
+    const duplicates=await api(url('/duplicates?business_id='+bid)).catch(()=>null);
+    if(instance!==overlay||bid!==businessId)return;
+    if(duplicates?.possible_duplicates?.length)message('Possible duplicate receipt found in this business. Verify original document before receiving any goods.',true);
     try{
       const data=await api(url('?business_id='+bid));
       if(instance!==overlay||bid!==businessId)return;
