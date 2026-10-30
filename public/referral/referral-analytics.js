@@ -49,7 +49,11 @@ export async function captureReferralEvent({
       body: JSON.stringify(body),
       keepalive: true
     });
-    return response.ok;
+    if (!response.ok) return false;
+    const result = await response.json();
+    // HTTP 202 also represents rejected referral codes. Acceptance does not
+    // imply external delivery: privacy/provider gates can keep delivery off.
+    return result?.accepted === true;
   } catch {
     return false;
   }

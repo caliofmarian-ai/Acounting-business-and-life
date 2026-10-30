@@ -399,3 +399,28 @@
   #inventoryUnavailableCard .grid2{grid-template-columns:1fr}
   .inventoryDomainFilters{margin-inline:-2px;padding-bottom:6px}
 }
+
+/* #843 / Figma V2: six unmistakable navigation controls. Only the current
+   destination fills green; every inactive destination still looks clickable. */
+.merchantPrimaryNav{gap:6px}
+.merchantPrimaryNav button{
+  position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  min-width:0;min-height:56px;padding:7px 5px 8px;box-sizing:border-box;
+  color:#173b37;background:#fff;border:1px solid #b5cdc8;border-radius:14px;
+  font-size:.72rem;font-weight:750;line-height:1.18;white-space:normal;text-align:center;
+  transition:background-color .16s,border-color .16s,color .16s
+}
+.merchantPrimaryNav .merchantNavIcon{width:20px;height:20px;flex:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.merchantPrimaryNav .merchantNavLabel{display:block;overflow-wrap:anywhere}
+.merchantPrimaryNav button.active{background:#056b5e;border-color:#056b5e;color:#fff;box-shadow:0 3px 9px rgba(5,107,94,.16)}
+.merchantPrimaryNav button.active::after{content:"";position:absolute;top:6px;right:6px;width:5px;height:5px;border-radius:50%;background:currentColor}
+.merchantPrimaryNav button:not(.active):hover{background:#f0fdfa;border-color:#78b8ae}
+.merchantPrimaryNav button:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
+.merchantPrimaryNav [data-view="Menu"].roleFinanceHidden{display:none!important}
+.merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)){grid-template-columns:repeat(6,minmax(0,1fr))!important}
+@media(max-width:649px){
+  .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)){grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)) button{min-height:56px;font-size:.73rem;padding:7px 4px;line-height:1.18}
+  body:has(.merchantPrimaryNav:not(.hidden) [data-view="Menu"]:not(.roleFinanceHidden)) #app{padding-bottom:calc(158px + env(safe-area-inset-bottom,0px))}
+}
+@media(prefers-reduced-motion:reduce){.merchantPrimaryNav button{transition:none}}
