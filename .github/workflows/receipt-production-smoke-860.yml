@@ -1,0 +1,73 @@
+name: Receipt Production V1 read-only smoke (#860)
+on:
+  push:
+    branches:
+      - qa/receipt-prod-verify-860
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    steps:
+      - name: Verify live release assets, health and unauthenticated denials
+        shell: bash
+        env:
+          BASE: https://caliof.com
+        run: |
+          set -euo pipefail
+          # A Railway release uses health-gated deployment; do not query the old live
+          # version and mistake its missing feature for a new code regression.
+          ready=0
+          for attempt in $(seq 1 35); do
+            curl -fsS --max-time 25 -H 'Cache-Control: no-cache' "$BASE/?receipt_release=860" > root.html || :
+            curl -fsS --max-time 25 -H 'Cache-Control: no-cache' "$BASE/health" > health.json || :
+            if grep -q 'purchase-documents-ui.js' root.html &&
+              grep -q 'receipt-intelligence-ui.js' root.html &&
+              grep -q '"ok":true' health.json; then ready=1; break; fi
+            echo "Production not serving both receipt modules yet (attempt $attempt)"
+            sleep 10
+          done
+          test "$ready" = 1 || { echo "FAIL: Receipt release not live on caliof.com"; exit 1; }
+          echo "PASS: Production HTTPS health and both receipt modules"
+          curl --fail --silent --show-error --max-time 25 "$BASE/purchase-documents-ui.js" > receipt-vault.js
+          curl --fail --silent --show-error --max-time 25 "$BASE/receipt-intelligence-ui.js" > receipt-ai.js
+          grep -q 'mpdSave' receipt-vault.js || { echo "FAIL: Vault UI script content"; exit 1; }
+          grep -q 'receiptCountEvidenceButton' receipt-ai.js || { echo "FAIL: Count evidence UI script content"; exit 1; }
+          grep -q 'receiving-readiness' receipt-ai.js || { echo "FAIL: read-only preflight UI script content"; exit 1; }
+          echo "PASS: Production JS assets contain both independently built receipt modules"
+          denial() {
+            local path="$1" code
+            code="$(curl --silent --show-error --max-time 25 -o /dev/null -w '%{http_code}' "$BASE$path")"
+            case "$code" in
+              401|403) echo "PASS: private route guest GET denied with $code: $path" ;;
+              *) echo "FAIL: private route guest GET yielded $code: $path"; exit 1 ;;
+            esac
+          }
+          denial "/api/procurement/purchase-documents?business_id=1"
+          denial "/api/procurement/purchase-documents/1/file?business_id=1"
+          denial "/api/procurement/purchase-documents/1/intelligence?business_id=1"
+          denial "/api/procurement/receipt-intelligence/config?business_id=1"
+          denial "/api/procurement/receipt-intelligence/count-sessions/1/variance-evidence?business_id=1"
+          post_code="$(curl --silent --show-error --max-time 25 -o /dev/null -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"business_id":1,"client_request_key":"qa-unauthorized-prod-860"}' \
+            "$BASE/api/procurement/purchase-documents")"
+          case "$post_code" in
+            401|403) echo "PASS: unauthenticated receipt upload POST denied with $post_code" ;;
+            *) echo "FAIL: unauthenticated receipt upload POST yielded $post_code"; exit 1 ;;
+          esac
+          echo "PASS: Production live smoke of read-only release + unauthorized negative tests"
+  browser:
+    name: Mobile Chromium interaction with actual Production-served JavaScript
+    needs: smoke
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated testing tools (never deployed)
+        run: npm install --no-save playwright@1.56.1
+      - name: Verify mobile layout and client flow with synthetic API responses
+        run: node scripts/receipt-production-browser-smoke.mjs
