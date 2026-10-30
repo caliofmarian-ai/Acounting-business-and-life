@@ -379,7 +379,10 @@ installMerchantVoiceOrderRoutes(app,{
 installMerchantVoiceOrderConfirmation(app,{
   db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,tokenSecret:process.env.TOKEN_SECRET,
   canonicalSnapshots:(client,{businessId,items})=>merchantCounterSnapshots(client,{businessId,items}),
-  createCanonicalOrder:createOrder,orderDetail,bodyMiddleware:body
+  createCanonicalOrder:createOrder,orderDetail,bodyMiddleware:body,
+  checkCreateVelocity:({accountId,businessId})=>enforceHighRiskVelocity(pool,{
+    actorAccountId:accountId,actionCode:'order_create',subjectType:'business',subjectId:businessId
+  })
 });
 
 app.get('/api/orders/inventory',async(req,res,next)=>{try{
