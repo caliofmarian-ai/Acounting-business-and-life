@@ -1,6 +1,7 @@
 const ablToken = () => window.ABLSession?.authenticated()?'cookie-session':'';
 const originalFetch = window.fetch.bind(window);
 let accountingState = { role: null, activeBusinessId: null, businesses: [] };
+let accountingWorkspaceAccountId=null;
 
 async function api(path, options={}) {
   const headers={ 'Content-Type':'application/json', ...(options.headers||{}) };
@@ -316,9 +317,11 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
   try{
     const state=detail?.snapshot?detail:window.BusinessLifeProfileState;
     const me=state?.snapshot,role=state?.surface==='profile'?state.activeRole:null;
+    const accountId=Number(state?.accountId??me?.account?.id)||null;
     if(!me||!['merchant','supplier'].includes(role)){
       // Never carry a former Merchant/Supplier business into a different profile.
       accountingState={role:null,activeBusinessId:null,businesses:[]};
+      accountingWorkspaceAccountId=null;
       document.getElementById('businessWorkspaceBar')?.remove();
       document.getElementById('supplierAccountingWorkspace')?.classList.add('hidden');
       document.body.classList.remove('supplierAccountingMode');
@@ -327,8 +330,9 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     const profile=me.profiles?.find(p=>p.role===role);
     if(!profile?.enabled) return;
     if(role==='merchant'){
-      if(accountingState.role!=='merchant'){
-        // Supplier → Merchant: do not render the Supplier's business identity
+      const scopeChanged=accountingState.role!=='merchant'||accountingWorkspaceAccountId!==accountId;
+      if(scopeChanged){
+        // Profile/account → Merchant: do not render another business identity
         // or attach its business_id to Merchant requests while Today hydrates.
         accountingState={role:'merchant',activeBusinessId:null,businesses:[]};
         const bar=document.getElementById('businessWorkspaceBar');
@@ -338,10 +342,13 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
           bar.innerHTML='<div><span class="workspaceEyebrow">Current business</span><strong>Preparing workspace…</strong></div><span class="workspaceIsolated">Loading</span>';
         }
       }
+      accountingWorkspaceAccountId=accountId;
       const cached=window.BusinessLifeMerchantToday?.getState?.()?.workspace;
-      if(cached)applyWorkspaceState(cached);
+      // Never hydrate a newly entered Merchant session from a preceding identity.
+      if(cached&&!scopeChanged)applyWorkspaceState(cached);
       return;
     }
+    accountingWorkspaceAccountId=accountId;
     accountingState={role:'supplier',activeBusinessId:null,businesses:[]};
     wireSupplierAccountingTile();
     const workspaceState=await api('/api/accounting/workspaces');
@@ -375,7 +382,11 @@ document.addEventListener('abl:profile-state',event=>{
 document.addEventListener('abl:business-workspace-changed',event=>{
   if(event.detail?.role==='merchant')resetMerchantNavPresentation();
 },{passive:true});
-document.addEventListener('abl:auth-expired',resetMerchantNavPresentation,{passive:true});
+document.addEventListener('abl:auth-expired',()=>{
+  accountingWorkspaceAccountId=null;
+  accountingState={role:null,activeBusinessId:null,businesses:[]};
+  resetMerchantNavPresentation();
+},{passive:true});
 document.addEventListener('abl:merchant-today-error',()=>{
   if(accountingState.role==='merchant'||window.BusinessLifeProfileState?.activeRole==='merchant')applyFinancePresentation({role:'merchant',presentation:{merchant_domain:'unknown',legacy_recipe_ui_allowed:false}});
 },{passive:true});
