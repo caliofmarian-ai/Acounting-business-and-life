@@ -1,0 +1,38 @@
+name: App Back Browser 850
+on:
+  pull_request:
+    paths:
+      - 'public/app-back-*.js'
+      - 'public/shell.js'
+      - 'tests/app-back-navigation-850.test.js'
+      - 'scripts/app-back-navigation-browser-850.mjs'
+      - '.github/workflows/app-back-browser-850.yml'
+permissions:
+  contents: read
+concurrency:
+  group: back-browser-850-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Exact head and source tests
+        run: |
+          git rev-parse HEAD
+          node --test tests/app-back-navigation-850.test.js
+      - name: Native Chrome Back and dialog checks
+        run: node scripts/app-back-navigation-browser-850.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: back-browser-850-${{ github.event.pull_request.head.sha }}
+          path: artifacts/back-navigation-850/
+          if-no-files-found: warn

@@ -11,11 +11,18 @@ test('marketing kit has stable unique template ids and positive dimensions', () 
   for (const template of manifest.templates) {
     assert.ok(template.width > 0);
     assert.ok(template.height > 0);
-    assert.match(template.figmaNodeId, /^\d+:\d+$/);
+    if (template.runtimeStatus === 'runtime_only') {
+      assert.equal(template.figmaNodeId, null, 'runtime-only formats must not invent a Figma master');
+      assert.equal(template.figmaStatus, 'not_created');
+      assert.equal(template.canvaStatus, 'not_created');
+      assert.equal(template.runtimeSource, 'public/referral/marketing-kit-runtime.js');
+    } else {
+      assert.match(template.figmaNodeId, /^\d+:\d+$/);
+    }
   }
 });
 
-test('all current masters require QR and referral fallback code', () => {
+test('all current templates require QR and referral fallback code', () => {
   for (const template of manifest.templates) {
     assert.ok(template.requiredFields.includes('QR_ASSET'));
     assert.ok(template.requiredFields.includes('REFERRAL_CODE'));
