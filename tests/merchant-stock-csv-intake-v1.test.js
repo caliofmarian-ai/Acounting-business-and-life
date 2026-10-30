@@ -51,6 +51,7 @@ test('invalid units, precision, duplicates and omitted columns fail closed',()=>
   assert.equal(validStockIntakeRow({...row,quantity:0}),false);
   assert.equal(validStockIntakeRow({...row,quantity:1.12345}),false);
   assert.equal(validStockIntakeRow({...row,total:-2}),false);
+  assert.equal(validStockIntakeRow({...row,total:0}),false);
   assert.throws(()=>parseStockIntakeCsv('item,proposed_quantity,proposed_unit\nRice,2,kg'),/Missing required/);
   assert.throws(()=>parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nRice,2,kg,120\nrice,3,kg,90'),/Duplicate product/);
 });
@@ -78,6 +79,9 @@ test('paid stock intake requires one Merchant, and records exactly a linked purc
   assert.match(js,/api\('\/api\/transactions'/);
   assert.match(js,/No automatic retry/);
   assert.match(js,/saved-date-pending/);
+  assert.match(js,/totalsMatch/);
+  assert.match(js,/selectedPaid/);
+  assert.match(js,/actualTotalPaid/);
   assert.doesNotMatch(js,/localStorage|sessionStorage|record_expense:false/);
   assert.match(ui,/session-security\.js/);
   assert.match(ui,/merchant-stock-csv-intake\.js/);
@@ -89,6 +93,8 @@ test('the self-service tool requires explicit physical count and business confir
   assert.match(ui,/businessName/);
   assert.match(ui,/purchaseAccount/);
   assert.match(ui,/purchaseDate/);
+  assert.match(ui,/actualTotalPaid/);
+  assert.match(ui,/reconciliation/);
   assert.match(ui,/actual payment/);
   assert.match(js,/localDatePH\(\)/);
   assert.match(ui,/type="file"/);
