@@ -873,6 +873,9 @@ body{background:var(--bl-bg-canvas);color:var(--bl-text-primary)}
   text-align:center;padding:9px 7px;overflow-wrap:anywhere;cursor:pointer;
   box-shadow:none;box-sizing:border-box
 }
+/* The older seven-link shell assigned CSS order values; the new grid uses one DOM/keyboard order. */
+#shell .merchantWorkspaceActions > button,
+#shell .merchantWorkspaceActions > details{order:0!important}
 #shell .merchantWorkspaceNav .merchantWorkspaceButton.active,
 #shell .merchantWorkspaceNav .merchantWorkspaceButton[aria-current="page"],
 #shell .merchantWorkspaceNav .merchantBusinessTools:has(.active)>summary{
