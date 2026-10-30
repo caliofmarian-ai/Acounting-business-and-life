@@ -78,3 +78,43 @@ test('Supplier finance cannot hydrate an inactive Merchant navigation, and switc
   emit('abl:profile-state',{surface:'profile',activeRole:'merchant',accountId:46});
   assert.equal(nav.getAttribute('data-ready'),null,'another account must not inherit readiness');
 });
+
+test('switching profiles clears the stale business attribution before Merchant Today loads',async()=>{
+  const bar={
+    className:'businessWorkspaceBar',innerHTML:'<strong>Supplier private business</strong>',
+    removed:false,setAttribute(name,value){this[name]=String(value)},
+    remove(){this.removed=true}
+  };
+  const supplierWorkspace={classList:{add(){}}};
+  const context=vm.createContext({
+    accountingState:{role:'supplier',activeBusinessId:77,businesses:[{id:77,name:'Supplier private business'}]},
+    ablToken:()=>true,
+    document:{
+      getElementById:id=>id==='businessWorkspaceBar'?bar:
+        id==='supplierAccountingWorkspace'?supplierWorkspace:null,
+      body:{classList:{remove(){}}}
+    },
+    window:{BusinessLifeMerchantToday:{getState:()=>({workspace:null})}},
+    applyWorkspaceState:()=>{throw new Error('Unverified Merchant cache must not hydrate')},
+    api:async()=>({}),wireSupplierAccountingTile:()=>{},console
+  });
+  vm.runInContext(actual('async function bootAccountingWorkspace','function resetMerchantNavPresentation'),context);
+  await context.bootAccountingWorkspace({
+    surface:'profile',activeRole:'merchant',
+    snapshot:{profiles:[{role:'merchant',enabled:true}]}
+  });
+  assert.equal(context.accountingState.role,'merchant');
+  assert.equal(context.accountingState.activeBusinessId,null);
+  assert.deepEqual(context.accountingState.businesses,[]);
+  assert.match(bar.innerHTML,/Preparing workspace/);
+  assert.doesNotMatch(bar.innerHTML,/Supplier private business/);
+  assert.match(bar.className,/businessWorkspaceBarPending/);
+
+  await context.bootAccountingWorkspace({
+    surface:'profile',activeRole:'customer',
+    snapshot:{profiles:[{role:'customer',enabled:true}]}
+  });
+  assert.equal(context.accountingState.role,null);
+  assert.equal(context.accountingState.activeBusinessId,null);
+  assert.equal(bar.removed,true);
+});
