@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {reconcileBusinessInventoryLocationsForRead,ensureInventoryLocationSchema} from '../inventory-locations.js';
+import {reconcileBusinessInventoryLocationsForRead,ensureInventoryLocationSchema,inventoryLocationReadSnapshot} from '../inventory-locations.js';
 
 const item=(id,quantity=5)=>({id,quantity:String(quantity),storage_area_type:'pantry',storage_location_label:''});
 function fixture({items=[item(1)],locations=['Pantry'],balances=[{inventory_id:1,quantity:'5'}],lots=[],lotBalances=[],hasLots=false,inventoryGate=null}={}){
@@ -143,6 +143,79 @@ test('862: different businesses never coalesce or reuse one business query',asyn
   assert.deepEqual(reads.map(x=>x.params[0]).sort(),[1,2]);
 });
 
+
+test('862: unified location snapshot executes ONE scoped PostgreSQL statement for two concurrent reads',async()=>{
+  let opened;const started=new Promise(resolve=>{opened=resolve});
+  let release;const barrier=new Promise(resolve=>{release=resolve});
+  const calls=[];
+  const pool={async query(sql,args){
+    calls.push({sql,args});
+    assert.ok(sql.startsWith('WITH base_items AS MATERIALIZED ('));
+    opened();
+    await barrier;
+    const business=Number(args[0]);
+    return{rows:[{
+      items:[{id:business*10+1,quantity:3,allocated:3,storage_area_type:'pantry',storage_location_label:''}],
+      all_locations:[{id:business*10,business_id:business,name:'Pantry',active:true}],
+      active_locations:[{id:business*10,business_id:business,name:'Pantry',active:true}],
+      lots:[{id:business*10+2,quantity_remaining_base:3,allocated:3}],
+      balances:[{business_id:business,inventory_id:business*10+1,
+        location_id:business*10,item:'Synthetic',unit:'g',quantity:3,location_name:'Pantry'}]
+    }]};
+  }};
+  const first=inventoryLocationReadSnapshot(pool,{businessId:101});
+  await started;
+  const second=inventoryLocationReadSnapshot(pool,{businessId:101});
+  release();
+  const [a,b]=await Promise.all([first,second]);
+  assert.deepEqual(a,b);
+  assert.equal(a.locations[0].business_id,101);
+  assert.equal(a.balances[0].business_id,101);
+  assert.equal(calls.length,1,'two concurrent requests must use the same snapshot');
+  assert.equal(calls[0].args[0],101);
+  assert.doesNotMatch(calls[0].sql,/FOR UPDATE/);
+});
+
+test('862: a later snapshot is uncached and business B never reuses A results',async()=>{
+  const calls=[];
+  const pool={async query(sql,args){
+    calls.push(args[0]);
+    const id=Number(args[0]);
+    return{rows:[{
+      items:[{id:id+10,quantity:0,allocated:0,storage_area_type:'pantry',storage_location_label:''}],
+      all_locations:[{id:id+1,name:'Pantry'}],
+      active_locations:[{id:id+1,business_id:id,name:'Pantry'}],
+      lots:[],balances:[]
+    }]};
+  }};
+  await inventoryLocationReadSnapshot(pool,{businessId:11});
+  await inventoryLocationReadSnapshot(pool,{businessId:11});
+  await inventoryLocationReadSnapshot(pool,{businessId:22});
+  assert.deepEqual(calls,[11,11,22]);
+  await assert.rejects(inventoryLocationReadSnapshot(pool,{businessId:0}),/Invalid Merchant business/);
+  assert.deepEqual(calls,[11,11,22]);
+});
+
+test('862: unified snapshot discovers stock drift and calls the existing locked repair',async()=>{
+  const calls=[];
+  const pool={async query(sql,args){
+    calls.push({sql,args});
+    if(sql.startsWith('WITH base_items AS MATERIALIZED (')){
+      return{rows:[{
+        items:[{id:1,quantity:4,allocated:3,storage_area_type:'pantry',storage_location_label:''}],
+        all_locations:[{id:1,name:'Pantry'}],active_locations:[{id:1,name:'Pantry'}],
+        lots:[],balances:[]
+      }]};
+    }
+    if(sql.startsWith('SELECT id FROM inventory WHERE business_id=$1 ORDER BY id'))
+      throw new Error('unified_snapshot_requested_locked_repair');
+    throw new Error('Unexpected SQL '+sql);
+  }};
+  await assert.rejects(inventoryLocationReadSnapshot(pool,{businessId:7}),
+    /unified_snapshot_requested_locked_repair/);
+  assert.equal(calls.filter(x=>x.sql.startsWith('SELECT id FROM inventory WHERE')).length,1);
+});
+
 test('862: authenticated HTTP location GETs reject guests and wrong profiles, and stay tenant-bound',async()=>{
   // Runs the registered Express handlers over HTTP with an isolated synthetic
   // accountingContext. It does not substitute for real Preview auth acceptance.
@@ -153,6 +226,17 @@ test('862: authenticated HTTP location GETs reject guests and wrong profiles, an
   const pool={
     async query(sql,args=[]){
       queries.push({sql,args});
+      if(sql.startsWith('WITH base_items AS MATERIALIZED (')){
+        const businessId=Number(args[0]),inventoryId=businessId*10+1;
+        return{rows:[{
+          items:[{id:inventoryId,quantity:3,allocated:3,storage_area_type:'pantry',storage_location_label:''}],
+          all_locations:[{id:businessId*10,business_id:businessId,name:'Pantry',active:true}],
+          active_locations:[{id:businessId*10,business_id:businessId,name:'Pantry',active:true}],
+          lots:[],
+          balances:[{business_id:businessId,inventory_id:inventoryId,
+            location_id:businessId*10,quantity:3,item:'Synthetic item',unit:'pcs',location_name:'Pantry'}]
+        }]};
+      }
       if(sql.startsWith('SELECT i.id,i.quantity,i.storage_location_label'))return {rows:[]};
       if(sql.startsWith('SELECT name FROM inventory_storage_locations'))return {rows:[{name:'Pantry'}]};
       if(sql.startsWith("SELECT to_regclass('public.supply_lots')"))return {rows:[{rel:null}]};
