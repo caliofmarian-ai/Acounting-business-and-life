@@ -84,6 +84,7 @@
   }
   function showStart(){
     $('#riContent').innerHTML='<section class="riCard"><h3>Receipt #'+Number(selected)+'</h3>'+
+      '<p><a href="'+BASE+'/purchase-documents/'+Number(selected)+'/file?business_id='+encodeURIComponent(businessId)+'" target="_blank" rel="noopener noreferrer">Open private original document</a></p>'+
       (providerReady?'<label><input id="riConsent" type="checkbox"> I consent to sending this receipt photo to the configured AI processing service.</label><p><button id="riAnalyze" class="riBtn" type="button">Analyze saved photo</button></p>':
         '<p>AI extraction is not enabled yet. Manual entry still works.</p>')+
       '</section><section class="riCard"><h3>Manual transcription</h3><form class="riForm" id="riManual">'+
@@ -139,6 +140,7 @@
     if(!extraction?.lines){message('Draft is being processed. Reopen later.');return}
     const recon=extraction.reconciliation||{};
     $('#riContent').innerHTML='<section class="riCard"><h3>Confirm product identity and received quantities</h3>'+
+      '<p><a href="'+BASE+'/purchase-documents/'+Number(selected)+'/file?business_id='+encodeURIComponent(businessId)+'" target="_blank" rel="noopener noreferrer">Open scanned original for comparison</a></p>'+
       '<div class="riNote">Printed total: '+esc(peso(extraction.document_total))+' · Calculated: '+esc(peso(recon.predicted_total))+' · '+esc(recon.status||'unverified')+'</div>'+
       '<form id="riReview" class="riForm">'+extraction.lines.map((line,i)=>{
         const candidate=extraction.matches?.[i]?.suggested_inventory_id;
