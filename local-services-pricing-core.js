@@ -160,6 +160,12 @@ export function resolveAcceptedServiceJobPayable(job={},acceptedQuote=null){
     throw pricingIntegrity('Service Job currency differs from the accepted quote');
   }
   const legacyQuote=acceptedQuote.legacy_record===true;
+  // Customer acceptance locks the quote ID, agreed amount and pricing timestamp
+  // together. A non-legacy quote without that lock is an incomplete authority
+  // snapshot, even if the quoted amount happens to match.
+  if(!legacyQuote&&!job.pricing_locked_at){
+    throw pricingIntegrity('Accepted V2 Service Job is missing its pricing lock');
+  }
   // A completed new Pricing V2 job must have the completion amount recorded.
   // Older migrated jobs may legitimately lack final_price: their explicitly
   // tagged legacy accepted quote remains the payable authority.

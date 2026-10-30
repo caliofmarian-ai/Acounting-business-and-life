@@ -256,7 +256,7 @@ test('unsafe BIGINT IDs cannot be rounded into a different accepted quote or job
 test('canonical safe PostgreSQL quote/job IDs work while ambiguous ID encodings fail closed',()=>{
   const job={
     id:'44',status:'completed',currency_code:'PHP',accepted_quote_id:'91',
-    agreed_total:'100.00',final_price:'100.00'
+    agreed_total:'100.00',final_price:'100.00',pricing_locked_at:'2026-10-29T10:00:00Z'
   };
   const quote={
     id:'91',job_id:'44',status:'accepted',total_amount:'100.00',
@@ -330,4 +330,24 @@ test('completed new Pricing V2 requires final-price evidence; orphan legacy adju
     status:'completed',final_price:'300.00',quote_amount:'275.00',
     accepted_quote_id:null,agreed_total:null,pricing_locked_at:null,legacy_final_adjustment:null
   }).payable_value,300);
+});
+
+
+test('accepted V2 payable authority requires its pricing lock; migrated legacy remains readable',()=>{
+  const job={id:44,status:'accepted',currency_code:'PHP',accepted_quote_id:91,
+    agreed_total:'250.00',final_price:null,pricing_locked_at:'2026-10-29T08:00:00Z'};
+  const quote={id:91,job_id:44,status:'accepted',total_amount:'250.00',
+    currency_code:'PHP',legacy_record:false};
+  const invalid=e=>e?.status===409&&e?.code==='SERVICE_JOB_PRICE_INTEGRITY_MISMATCH';
+  assert.equal(resolveAcceptedServiceJobPayable(job,quote).payable_value,250);
+  for(const missing of [undefined,null,'']){
+    assert.throws(()=>resolveAcceptedServiceJobPayable({...job,pricing_locked_at:missing},quote),invalid,
+      'accepted V2 quote cannot be charged without its pricing lock');
+  }
+  const noLock={...job};delete noLock.pricing_locked_at;
+  assert.throws(()=>resolveAcceptedServiceJobPayable(noLock,quote),invalid,
+    'a missing lock field is not proof of quote acceptance');
+  // Genuine migrated rows are identified by the stored quote record, not a
+  // browser flag; they may lack legacy timestamps from an earlier schema.
+  assert.equal(resolveAcceptedServiceJobPayable(noLock,{...quote,legacy_record:true}).payable_value,250);
 });
