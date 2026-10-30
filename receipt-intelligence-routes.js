@@ -226,7 +226,8 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
   app.get('/api/procurement/receipt-intelligence/count-sessions/:id/variance-evidence',async(req,res,next)=>{
     try{
       const {businessId}=await scope(pool,identity,req);
-      await receiptFor(pool,businessId,id(req.query?.receipt_id,'receipt_id'));
+      const vault=await pool.query("SELECT to_regclass('public.merchant_purchase_documents') vault");
+      if(!vault.rows[0]?.vault)fail('Receipt archive is not installed',503);
       const session=id(req.params.id,'count_session_id');
       const q=await pool.query(
         'SELECT status FROM inventory_count_sessions WHERE id=$1 AND business_id=$2',
