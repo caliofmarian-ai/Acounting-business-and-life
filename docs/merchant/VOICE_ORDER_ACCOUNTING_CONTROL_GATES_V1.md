@@ -1,6 +1,6 @@
 # Merchant Voice AI — accounting and operator safety gates
 
-Status: Design / non-writing local proof only. Owner requirement 30 October 2026. Refs #863, #814, #860.
+Status: IMPLEMENTATION V1C / gated source code in Draft PR #870 only; NOT in Preview or Production. Owner requirement 30 October 2026. Refs #863, #814, #860.
 
 ## Non-negotiable boundaries
 1. Voice/LLM may only interpret instructions and prepare an editable Merchant order DRAFT. It has no direct capability to write transactions, record received payments, mark an order paid, modify stock, change product prices, issue refunds or generate legally valid invoices.
@@ -22,8 +22,23 @@ Daily reports must come from canonical Orders, payment, cancellation/refund, sto
 - Parallel duplicate confirmations, retry/refresh, crash/recovery, cross-business switch and 403/401 fail-closed, using isolated PostgreSQL and genuine browser actions.
 - Zero unapproved Orders, payments, ledger rows or stock writes in the tested adversarial corpus. Reconcile every accepted source ID and all period totals before production acceptance.
 
-## Implementation state
-Local source proof comprises merchant-voice-order-core.js, merchant-voice-order-provider.js, merchant-voice-order-approval-core.js plus three test files: 28 local Node tests PASS, 0 FAIL. This GitHub document does NOT deploy those local files, is NOT authenticated Preview QA, and does NOT authorize production activation.
+## Implementation state — 30 October 2026
+
+The original local proof was superseded by Draft [PR #870](https://github.com/caliofmarian-ai/Acounting-business-and-life/pull/870), issue #863. Canonical `main` and `https://caliof.com` do **not** contain this branch.
+
+Implemented and source-tested:
+- Provider-gated conversational draft reducer and typed/push-to-talk Android companion (English PH/Filipino), with explicit transcript review before AI; no raw audio/transcript storage or AI write tool.
+- Authenticated exact-business Merchant Catalog turns and rate-limited model provider; `store:false`, no fabricated Catalog IDs/prices, no speaker biometric identity claims.
+- Signed two-minute server Catalog quote, exact identity/session/variants/modifiers/quantity/price check, unpaid cash pickup, and no receipt/payment inference.
+- Shared canonical `createOrder` PostgreSQL client handling: normal Orders behavior retained; voice approval uses an outer unique business/account/request-key transaction and current Catalog snapshots. Existing high-risk `order_create` velocity gate applies only to new approvals, not replay.
+- Recent V2-session password step-up checked under PostgreSQL `FOR SHARE` to prevent revoke-before-commit. This **does not** replace a device-held credential.
+- Android operator UI has a separate manual Confirm action, reads back the current total and unpaid status, and preserves one idempotency request key for explicit retries. Browser microphone is supported where available with consent; this is push-to-talk turns, not full duplex.
+
+Verified: focused local Node tests, repository CI, Admin Runtime Contract, plus a dedicated isolated real PostgreSQL 16 GitHub Actions run [#41145267196](https://github.com/caliofmarian-ai/Acounting-business-and-life/actions/runs/41145267196) that passed parallel duplicate claims, transaction rollback, business-scoped request keys and session-revocation lock. Android-sized Chromium synthetic-API interface traversal also passed on 390 px width without JS errors or horizontal overflow. These are NOT authenticated real-Merchant Preview or physical Android acceptance.
+
+**HARD RELEASE BLOCKER:** `ORDER_VOICE_CREATE_ENABLED=1` by itself CANNOT enable order creation. Server confirmation `ready()` also requires a real injected, server-side `verifyDeviceApproval` callback. No such device-held/passkey verifier is wired in the Production server; capabilities expose `can_confirm_order=false`. A one-time human confirmation phrase and vetted WebAuthn/passkey/device-held proof, scoped to account/session/business/signed quote and consumed atomically, must be implemented and independently audited before turning on voice order posting. Never replace this with a browser-supplied boolean, LLM judgment, ASR speaker label or password-only step-up.
+
+**Remaining QA:** real authenticated Android mic/customer/background tests, same-account two-business switch, real Merchant Catalog/stock/Orders totals, temporary network disconnect + retry after committed create, independent device approval credential tests, serialized exact-head Preview acceptance, reviewed merge, production deployment SUCCESS and direct `caliof.com` smoke. Do not close #863 yet.
 
 ## Primary references
 - NIST SP 800-63B-4: https://pages.nist.gov/800-63-4/sp800-63b.html
