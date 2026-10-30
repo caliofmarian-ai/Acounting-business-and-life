@@ -92,7 +92,8 @@ export async function chargeVoiceOrderQuota(db,{businessId,accountId,now=new Dat
 export function installMerchantVoiceOrderRoutes(app,{
   db,requireMerchant,catalogForBusiness,snapshotsForBusiness,bodyMiddleware=null,
   env=process.env,fetchImpl=fetch,secret=crypto.randomBytes(32),
-  interpret=interpretVoiceOrderText,chargeQuota=chargeVoiceOrderQuota,confirmationReady=()=>false
+  interpret=interpretVoiceOrderText,chargeQuota=chargeVoiceOrderQuota,
+  confirmationReady=()=>false,passkeyReady=()=>false
 }={}){
   if(!app||typeof app.get!=='function'||typeof app.post!=='function'||typeof requireMerchant!=='function'||typeof catalogForBusiness!=='function')
     throw new TypeError('Voice Orders requires the canonical Orders router, auth and Merchant Catalog.');
@@ -113,6 +114,7 @@ export function installMerchantVoiceOrderRoutes(app,{
       res.json({business_id:ctx.businessId,enabled:ready(),mode:'push_to_talk_turns',
         languages:['en-PH','fil-PH'],creates_orders:false,
         can_confirm_order:ready()&&env.ORDER_VOICE_CREATE_ENABLED==='1'&&confirmationReady(),
+        passkey_enrollment_available:ready()&&passkeyReady(),
         reason:ready()?null:'Voice AI is not available for this Merchant yet. Use the regular counter order.'});
     }catch(error){responseError(res,error)}
   });
