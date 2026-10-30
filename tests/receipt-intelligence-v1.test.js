@@ -145,3 +145,28 @@ test('route and UI preserve scope, verified originals, blind-count gate and NO i
   assert.match(ui,/stock unchanged|Stock unchanged/i);
   assert.doesNotMatch(ui,/fetch\(['"]\/api\/inventory\/purchase/);
 });
+
+test('unspecified currency cannot be mistaken for confirmed PHP and aliases stay local to one supplier',()=>{
+  const x=normalizeReceiptExtraction({...input(),currency_code:null});
+  assert.equal(x.currency_observed_on_document,false);
+  assert.ok(x.warnings.includes('CURRENCY_NOT_VISIBLE_REVIEW'));
+  const matches=suggestReceiptInventoryMatches({
+    extraction:normalizeReceiptExtraction({...input(),lines:[{raw_text:'CKN BRST',description:'CKN BRST',line_total:'30'}],document_total:'30',subtotal:null}),
+    businessId:5,inventoryRows:rows,
+    confirmedAliases:[{business_id:5,inventory_id:11,alias:'CKN BRST'},{business_id:6,inventory_id:99,alias:'CKN BRST'}]
+  });
+  assert.equal(matches[0].match_type,'confirmed_alias');
+  assert.equal(matches[0].suggested_inventory_id,11);
+});
+test('duplicate receipt checks, daily AI spend cap and same-business alias SQL are present',()=>{
+  const routes=read('receipt-intelligence-routes.js');
+  assert.match(routes,/possible_duplicates/);
+  assert.match(routes,/same_original_file/);
+  assert.match(routes,/other.business_id=\$1 AND other.id<>\$2/);
+  assert.match(routes,/RECEIPT_AI_DAILY_LIMIT/);
+  assert.match(routes,/provider='openai_vision' AND created_at>=NOW\(\)-INTERVAL '24 hours'/);
+  assert.match(routes,/receipt_intelligence_aliases/);
+  assert.match(routes,/i.id=\$4 AND i.business_id=\$1/);
+  const ui=read('public/receipt-intelligence-ui.js');
+  assert.match(ui,/Possible duplicate receipt/);
+});
