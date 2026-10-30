@@ -8,7 +8,7 @@
   'use strict';
   const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const state={businessId:null,capability:null,draft:null,processing:false,consent:false,
-    transcript:'',message:'',clarification:false,question:'',quote:null,epoch:0,recognition:null,
+    transcript:'',message:'',clarification:false,question:'',quote:null,open:false,epoch:0,recognition:null,
     request:null,language:'en-PH',autoSpeech:false};
   const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const pesos=centavos=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(centavos||0)/100);
@@ -35,7 +35,7 @@
   function reset(message=''){
     state.epoch++;state.request?.abort();state.request=null;
     stopRecognition();stopSpeech();state.processing=false;state.draft=null;state.quote=null;
-    state.consent=false;state.transcript='';state.message=message;
+    state.consent=false;state.transcript='';state.message=message;state.open=false;
     state.clarification=false;state.question='';state.capability=null;state.businessId=null;
     render();
   }
@@ -56,7 +56,7 @@
   function render(){
     const panel=document.getElementById('merchantVoiceOrderPanel');if(!panel)return;
     if(!enabled()){panel.remove();return}
-    panel.innerHTML=`<details class="merchantVoiceDetails" ${state.draft||state.processing||state.message?'open':''}>
+    panel.innerHTML=`<details class="merchantVoiceDetails" ${state.open||state.draft||state.processing||state.message?'open':''}>
       <summary><span class="merchantVoiceSymbol" aria-hidden="true">🎙️</span><span class="merchantVoiceIntro"><strong>AI voice order assistant</strong><small>Speak naturally, review the draft — no order or payment is created</small></span><span class="merchantVoiceChip">DRAFT ONLY</span></summary>
       <div class="merchantVoiceBody">
         <p class="merchantVoiceNotice">Only the signed-in operator should activate the microphone. Background voices cannot be reliably identified. Browser speech services and our AI provider may process speech/text after you consent. Not a payment or identity verification.</p>
@@ -134,7 +134,9 @@
       if(Number.isFinite(alt?.confidence)&&alt.confidence>0&&alt.confidence<0.6){
         state.message='Low recognition confidence. Check the text, then tap Prepare draft.';render();return;
       }
-      void sendTurn(transcript);
+      // A speaker cannot be reliably authenticated from speech. Require a
+      // separate operator action after inspecting the transcribed words.
+      state.message='Check the recognized words, then tap Prepare draft.';render();
     };
     recognition.onerror=()=>{
       if(state.recognition!==recognition)return;
@@ -147,6 +149,7 @@
     try{recognition.start()}catch{state.recognition=null;state.message='Microphone unavailable. Type the instruction instead.';render()}
   }
   function bind(panel){
+    panel.querySelector('.merchantVoiceDetails')?.addEventListener('toggle',event=>{state.open=Boolean(event.target.open)});
     panel.querySelector('#merchantVoiceConsent')?.addEventListener('change',event=>{
       state.consent=Boolean(event.target.checked);if(!state.consent){stopRecognition();stopSpeech()}render();
     });
