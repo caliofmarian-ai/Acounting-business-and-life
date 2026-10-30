@@ -35,7 +35,7 @@ function responseError(res,error){
   if(status===429)res.set('Retry-After','60');
   return res.status(status).json(payload);
 }
-function safeSessionId(req,accountId,businessId,secret){
+export function safeSessionId(req,accountId,businessId,secret){
   const token=String(req.ablSessionToken||req.headers?.authorization||'').replace(/^Bearer\s+/i,'').trim();
   if(!token || token.length>10000)throw fail(401,'ORDER_VOICE_SESSION_REQUIRED','Sign in again to use the Merchant assistant.');
   return crypto.createHmac('sha256',secret).update(`${accountId}:${businessId}:`).update(token).digest('base64url').slice(0,48);
@@ -112,6 +112,7 @@ export function installMerchantVoiceOrderRoutes(app,{
       const ctx=await requireContext(req,req.query?.business_id);
       res.json({business_id:ctx.businessId,enabled:ready(),mode:'push_to_talk_turns',
         languages:['en-PH','fil-PH'],creates_orders:false,
+        can_confirm_order:ready()&&env.ORDER_VOICE_CREATE_ENABLED==='1',
         reason:ready()?null:'Voice AI is not available for this Merchant yet. Use the regular counter order.'});
     }catch(error){responseError(res,error)}
   });

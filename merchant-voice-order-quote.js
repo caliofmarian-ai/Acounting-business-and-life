@@ -45,3 +45,82 @@ export function authoritativeVoiceOrderQuote({draft,snapshots,accountId,sessionI
   const signature=crypto.createHmac('sha256',key).update(JSON.stringify(quote)).digest('base64url');
   return {status:'quote_only',creates_orders:false,stock_reserved:false,quote,signature};
 }
+
+/** Verify an immutable server-issued quote before a separately authorized create. */
+export function verifyVoiceOrderSignedQuote({signedQuote,accountId,businessId,sessionId,secret,
+  now=new Date(),allowExpired=false}={}){
+  if(!signedQuote||typeof signedQuote!=='object'||Array.isArray(signedQuote)||
+     !signedQuote.quote||typeof signedQuote.quote!=='object'||Array.isArray(signedQuote.quote)||
+     typeof signedQuote.signature!=='string'||signedQuote.signature.length!==43)
+    reject('Create a fresh server-checked quote before confirming.','VOICE_CONFIRM_QUOTE_INVALID');
+  const quote=signedQuote.quote;
+  const json=JSON.stringify(quote);
+  if(!json||json.length>28000)reject('Order quote is invalid.','VOICE_CONFIRM_QUOTE_INVALID');
+  const key=Buffer.isBuffer(secret)?secret:Buffer.from(secret||'');
+  if(key.length<16)reject('Order confirmation is not configured.','VOICE_QUOTE_KEY_REQUIRED');
+  const expected=crypto.createHmac('sha256',key).update(json).digest();
+  let provided;
+  try{provided=Buffer.from(signedQuote.signature,'base64url')}catch{}
+  if(!provided||provided.length!==expected.length||!crypto.timingSafeEqual(provided,expected))
+    reject('Order quote has changed. Check the current total again.','VOICE_CONFIRM_QUOTE_INVALID');
+  if(quote.business_id!==Number(businessId)||quote.operator_account_id!==Number(accountId)||
+     quote.session_id!==sessionId)
+    reject('Merchant or signed-in operator changed. Check the order again.','VOICE_CONTEXT_STALE');
+  const issued=Date.parse(quote.issued_at),expires=Date.parse(quote.expires_at),clock=now.getTime();
+  if(!Number.isFinite(issued)||!Number.isFinite(expires)||!Number.isFinite(clock)||
+     expires<=issued||expires-issued>120000||issued>clock+15000||(!allowExpired&&clock>=expires))
+    reject('Order quote has expired. Check the current total again.','VOICE_QUOTE_STALE');
+  if(quote.fulfilment_method!=='pickup'||quote.payment_method!=='cash'||
+     quote.currency_code!=='PHP'||quote.payment_status!=='unpaid'||
+     quote.delivery_fee_centavos!==0||typeof quote.customer_name!=='string'||quote.customer_name.length>120)
+    reject('Quote payment or delivery terms are invalid.','VOICE_CONFIRM_QUOTE_INVALID');
+  const lines=quote.line_items;
+  if(!Array.isArray(lines)||!lines.length||lines.length>50)
+    reject('Quote must have 1–50 products.','VOICE_CONFIRM_QUOTE_INVALID');
+  const seen=new Set();let total=0;
+  for(const line of lines){
+    if(!line||typeof line!=='object'||!['product','marketplace_product'].includes(line.source_kind)||
+       !Number.isSafeInteger(line.product_id)||line.product_id<1||
+       !Number.isSafeInteger(line.quantity)||line.quantity<1||line.quantity>999||
+       !Number.isSafeInteger(line.unit_price_centavos)||line.unit_price_centavos<0||
+       !Number.isSafeInteger(line.line_total_centavos)||line.line_total_centavos<0||
+       line.line_total_centavos!==line.unit_price_centavos*line.quantity||
+       typeof line.name!=='string'||!line.name.trim()||line.name.length>160||
+       (line.variant_id!==null&&(!Number.isSafeInteger(line.variant_id)||line.variant_id<1))||
+       !Array.isArray(line.modifier_option_ids)||line.modifier_option_ids.length>20||
+       line.modifier_option_ids.some(id=>!Number.isSafeInteger(id)||id<1)||
+       new Set(line.modifier_option_ids).size!==line.modifier_option_ids.length)
+      reject('Quote has an invalid product selection or amount.','VOICE_CONFIRM_QUOTE_INVALID');
+    const key=voiceOrderLineKey(line.source_kind,line.product_id,line.variant_id,line.modifier_option_ids);
+    if(seen.has(key))reject('Quote contains duplicate product configurations.','VOICE_CONFIRM_QUOTE_INVALID');
+    seen.add(key);total+=line.line_total_centavos;
+  }
+  if(!Number.isSafeInteger(total)||total>999999999||quote.subtotal_centavos!==total||quote.total_centavos!==total)
+    reject('Quote total does not match its products.','VOICE_CONFIRM_QUOTE_INVALID');
+  return {quote,quoteHash:crypto.createHash('sha256').update(json).update('.').update(signedQuote.signature).digest('hex'),
+    orderItems:lines.map(l=>({product_id:l.product_id,source_kind:l.source_kind,quantity:l.quantity,
+      variant_id:l.variant_id,modifier_option_ids:[...l.modifier_option_ids]}))};
+}
+
+/** Canonical PostgreSQL price/option snapshot checks, before posting in that same transaction. */
+export function assertVoiceQuoteMatchesSnapshots(quote,snapshots){
+  if(!quote||!Array.isArray(quote.line_items)||!Array.isArray(snapshots)||
+     snapshots.length!==quote.line_items.length)
+    reject('The Catalog changed. Check the order again.');
+  const expected=new Map(quote.line_items.map(line=>[
+    voiceOrderLineKey(line.source_kind,line.product_id,line.variant_id,line.modifier_option_ids),line
+  ]));
+  let total=0;
+  for(const snapshot of snapshots){
+    const key=rowKey(snapshot),line=expected.get(key);
+    if(!line||Number(snapshot.quantity)!==line.quantity||
+       String(snapshot.name_snapshot||'').slice(0,160)!==line.name||
+       cents(snapshot.unit_price_snapshot)!==line.unit_price_centavos||
+       cents(snapshot.line_total)!==line.line_total_centavos)
+      reject('Product, price or options changed. Check the current total again.');
+    expected.delete(key);total+=line.line_total_centavos;
+  }
+  if(expected.size||total!==quote.total_centavos)
+    reject('Current Catalog quote no longer matches the order.');
+  return true;
+}

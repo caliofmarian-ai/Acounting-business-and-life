@@ -28,3 +28,12 @@
 @media(max-width:390px){.merchantVoiceChip{font-size:9px}.merchantVoiceIntro strong{font-size:14px}.merchantVoiceSymbol{width:36px;min-width:36px;height:36px}.merchantVoiceDetails>summary{padding:12px}}
 
 .merchantVoiceQuote{padding:12px;border:1px solid #aacdbd;background:#eaf7f0;border-radius:11px;display:grid;gap:6px;font-size:14px;color:#14513d}.merchantVoiceQuote small{font-size:12px;color:#456b5b;line-height:1.45}
+.merchantVoiceConfirm{border:1px solid #c1d6b4;border-radius:13px;background:#f0f8eb;padding:12px;display:grid;gap:10px;font-size:13px;line-height:1.4;color:#23462e}
+.merchantVoiceConfirm p{margin:0}.merchantVoiceConfirm label{font-weight:700}
+.merchantVoiceConfirm input{min-height:44px;width:100%;box-sizing:border-box;border:1px solid #9aafa0;border-radius:10px;padding:11px;font-size:16px;color:#193a35;background:#fff}
+.merchantVoiceConfirm button{min-height:48px;border-radius:11px;padding:12px;font-size:14px;font-weight:800;border:1px solid #39734b;background:#fff;color:#23462e}
+.merchantVoiceConfirm .merchantVoiceCreate{background:#086648;color:#fff;border-color:#086648}
+.merchantVoiceConfirm button:disabled{opacity:.52;cursor:not-allowed}
+.merchantVoiceConfirm small{color:#526957;line-height:1.45;font-size:11px}
+.merchantVoiceSuccess{border-radius:12px;padding:13px;background:#def4e8;color:#14503a;display:grid;gap:7px;line-height:1.45}
+.merchantVoiceSuccess small{font-size:12px}

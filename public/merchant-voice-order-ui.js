@@ -9,10 +9,15 @@
   const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const state={businessId:null,capability:null,draft:null,processing:false,consent:false,
     transcript:'',message:'',clarification:false,question:'',quote:null,open:false,epoch:0,recognition:null,
-    request:null,language:'en-PH',autoSpeech:false};
+    request:null,language:'en-PH',autoSpeech:false,confirmationKey:null,operatorVerified:false,confirmedOrder:null};
   const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const pesos=centavos=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(centavos||0)/100);
   const enabled=()=>state.capability?.enabled===true;
+  const canConfirm=()=>state.capability?.can_confirm_order===true;
+  function uniqueConfirmationKey(){
+    const bytes=new Uint8Array(24);window.crypto.getRandomValues(bytes);
+    return [...bytes].map(n=>n.toString(16).padStart(2,'0')).join('');
+  }
   const merchantVisible=()=>{
     const target=document.getElementById('ordersWorkspace');
     return Boolean(target&&!target.classList.contains('hidden')&&target.querySelector('#counterOrderForm'));
@@ -36,6 +41,7 @@
     state.epoch++;state.request?.abort();state.request=null;
     stopRecognition();stopSpeech();state.processing=false;state.draft=null;state.quote=null;
     state.consent=false;state.transcript='';state.message=message;state.open=false;
+    state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;
     state.clarification=false;state.question='';state.capability=null;state.businessId=null;
     render();
   }
@@ -50,14 +56,15 @@
     const result=await fetch(path,{credentials:'same-origin',cache:'no-store',...options,
       headers:{'Content-Type':'application/json',...(options.headers||{})}});
     const data=await result.json().catch(()=>({}));
-    if(!result.ok)throw new Error(data.error||`Assistant request failed (${result.status}).`);
+    if(!result.ok){const error=new Error(data.error||`Assistant request failed (${result.status}).`);
+      error.code=data.code||'';error.status=result.status;throw error}
     return data;
   }
   function render(){
     const panel=document.getElementById('merchantVoiceOrderPanel');if(!panel)return;
     if(!enabled()){panel.remove();return}
     panel.innerHTML=`<details class="merchantVoiceDetails" ${state.open||state.draft||state.processing||state.message?'open':''}>
-      <summary><span class="merchantVoiceSymbol" aria-hidden="true">🎙️</span><span class="merchantVoiceIntro"><strong>AI voice order assistant</strong><small>Speak naturally, review the draft — no order or payment is created</small></span><span class="merchantVoiceChip">DRAFT ONLY</span></summary>
+      <summary><span class="merchantVoiceSymbol" aria-hidden="true">🎙️</span><span class="merchantVoiceIntro"><strong>AI voice order assistant</strong><small>Speak naturally, review the draft — no order or payment is created</small></span><span class="merchantVoiceChip">${canConfirm()?'REVIEW + CONFIRM':'DRAFT ONLY'}</span></summary>
       <div class="merchantVoiceBody">
         <p class="merchantVoiceNotice">Only the signed-in operator should activate the microphone. Background voices cannot be reliably identified. Browser speech services and our AI provider may process speech/text after you consent. Not a payment or identity verification.</p>
         <label class="merchantVoiceConsent"><input id="merchantVoiceConsent" type="checkbox" ${state.consent?'checked':''}><span>I agree to process this instruction for an order draft.</span></label>
@@ -65,15 +72,26 @@
         <div class="merchantVoiceActions"><button id="merchantVoiceSpeak" type="button" ${!SpeechRecognition||state.processing?'disabled':''}>${SpeechRecognition?'🎙️ Start speaking':'Microphone unavailable'}</button><button id="merchantVoiceStop" type="button" ${!state.recognition?'disabled':''}>Stop</button><button id="merchantVoiceReadback" type="button" ${!state.draft?.lines?.length?'disabled':''}>🔊 Read back</button></div>
         <label class="merchantVoiceTextLabel" for="merchantVoiceText">Spoken or typed instruction</label>
         <textarea id="merchantVoiceText" rows="3" maxlength="1200" placeholder="Order for Ana: three chicken adobo, one rice, two juices">${escapeHtml(state.transcript)}</textarea>
-        <div class="merchantVoiceActions"><button id="merchantVoiceSend" type="button" class="merchantVoicePrimary" ${state.processing?'disabled':''}>${state.processing?'Checking Catalog…':'Prepare draft'}</button><button id="merchantVoiceQuote" type="button" ${state.processing||!state.draft?.lines?.length?'disabled':''}>Check current total</button><button id="merchantVoiceClear" type="button">Discard draft</button></div>
+        <div class="merchantVoiceActions"><button id="merchantVoiceSend" type="button" class="merchantVoicePrimary" ${state.processing||state.confirmedOrder?'disabled':''}>${state.processing?'Checking Catalog…':'Prepare draft'}</button><button id="merchantVoiceQuote" type="button" ${state.processing||!state.draft?.lines?.length||state.confirmedOrder?'disabled':''}>Check current total</button><button id="merchantVoiceClear" type="button">Discard draft</button></div>
         <div id="merchantVoiceFeedback" role="status" aria-live="polite" class="merchantVoiceFeedback">${escapeHtml(state.question||state.message||'Speak one instruction, then correct the draft in another turn.')}</div>
         ${state.draft?`<div class="merchantVoiceDraft"><strong>Customer: ${escapeHtml(state.draft.customer_name||'Walk-in customer')}</strong><ul>${state.draft.lines.map(line=>`<li><span>${escapeHtml(line.quantity)} × ${escapeHtml(line.name)}${line.variant_name?` — ${escapeHtml(line.variant_name)}`:''}${line.modifier_names?.length?` (${escapeHtml(line.modifier_names.join(', '))})`:''}</span><b>${pesos(line.line_total_centavos)}</b></li>`).join('')}</ul><div class="merchantVoiceTotal"><strong>Estimated items subtotal</strong><b>${pesos(state.draft.subtotal_centavos)}</b></div><small>Delivery, final availability, taxes and payment are not confirmed. No receivable, charge or stock movement has been recorded.</small></div>`:''}
         ${state.quote?`<div class="merchantVoiceQuote" role="status"><strong>Server-checked subtotal ${pesos(state.quote.quote.total_centavos)}</strong><small>Quote expires ${escapeHtml(new Date(state.quote.quote.expires_at).toLocaleTimeString('en-PH'))}. Products and stock are checked again when an order is created. No stock is reserved and no payment has been taken.</small></div>`:''}
-        <div class="merchantVoiceLocked" role="note">Secure order confirmation is not enabled in this version. Use the regular counter-order form to create an order after checking the items.</div>
+        ${state.confirmedOrder?`<div class="merchantVoiceSuccess" role="status"><strong>Order ${escapeHtml(state.confirmedOrder.order_number||state.confirmedOrder.order_id)} created${state.confirmedOrder.replayed?' (confirmed retry)':''}.</strong><small>Payment: ${escapeHtml(state.confirmedOrder.payment_status||'unpaid')}. Status: ${escapeHtml(state.confirmedOrder.order_status||'pending')}. To start a new order, select Discard draft.</small></div>`:
+          canConfirm()&&state.quote?`<section class="merchantVoiceConfirm" aria-label="Operator order approval"><strong>Secure order confirmation</strong>
+            <p>Review every item, customer name and ${pesos(state.quote.quote.total_centavos)} total. Pickup, cash, <b>NOT PAID</b>. Voice recognition does not verify who spoke. Only the signed-in operator may confirm this order.</p>
+            ${state.operatorVerified?'<p>Current operator password verification is valid for this session.</p>':`<label for="merchantVoiceVerifyPassword">Verify your current account password (not sent to AI)</label><input id="merchantVoiceVerifyPassword" type="password" autocomplete="current-password" placeholder="Account password" /><button type="button" id="merchantVoiceVerify" ${state.processing?'disabled':''}>Verify password</button>`}
+            <button type="button" class="merchantVoiceCreate" id="merchantVoiceCreate" ${state.processing||!state.operatorVerified?'disabled':''}>Confirm and create unpaid pickup order</button>
+            <small>Nothing is charged. Order, receivable and stock authority remain with Business & Life Orders; duplicate confirmation requests reuse the same transaction key.</small>
+          </section>`:`<div class="merchantVoiceLocked" role="note">Secure order confirmation is not enabled for this Merchant. Use the regular counter-order form after checking every item.</div>`}
       </div></details>`;
     bind(panel);
   }
   function readBack(text=state.draft?.readback){
+    if(state.quote?.quote){const q=state.quote.quote;
+      const lines=q.line_items.map(item=>`${item.quantity} ${item.name}`).join(', ');
+      text=state.language==='fil-PH'?`Order para kay ${q.customer_name}. ${lines}. Kabuuan ${pesos(q.total_centavos)}. Cash pickup, hindi pa bayad. Kailangan ng kumpirmasyon ng operator.`:
+        `Order for ${q.customer_name}. ${lines}. Total ${pesos(q.total_centavos)}. Cash pickup, unpaid. Operator confirmation is required.`;
+    }
     stopSpeech();if(!text||!window.speechSynthesis||typeof window.SpeechSynthesisUtterance!=='function'){
       state.message='Voice playback is unavailable. The draft is readable on screen.';render();return;
     }
@@ -93,7 +111,7 @@
       const result=await api('/api/orders/voice/turn',{method:'POST',signal:controller.signal,
         body:JSON.stringify({business_id:bid,consent:true,transcript:instruction,previous_draft:state.draft})});
       if(!canContinue(epoch,bid))return;
-      state.draft=result.draft;state.quote=null;state.clarification=Boolean(result.needs_clarification);
+      state.draft=result.draft;state.quote=null;state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;state.clarification=Boolean(result.needs_clarification);
       state.question=result.needs_clarification?result.question:'';
       state.message=result.needs_clarification?'':(result.draft?.lines?.length?'Draft updated. Review it before creating an order.':'No order items recognized. Try a clearer instruction.');
       state.transcript='';
@@ -113,9 +131,51 @@
       const result=await api('/api/orders/voice/quote',{method:'POST',signal:controller.signal,
         body:JSON.stringify({business_id:bid,consent:true,draft:state.draft})});
       if(!canContinue(epoch,bid))return;
-      state.quote=result;state.message='Current Catalog quote checked. It is not a confirmed order.';
+      state.quote=result;state.confirmationKey=null;state.confirmedOrder=null;state.operatorVerified=false;
+      if(canConfirm()){try{const verification=await api('/api/auth/step-up/status',{signal:controller.signal});
+          if(canContinue(epoch,bid))state.operatorVerified=verification.verified===true;
+        }catch{state.operatorVerified=false}}
+      state.message='Current Catalog quote checked. It is not a confirmed order.';
     }catch(error){if(canContinue(epoch,bid)&&error?.name!=='AbortError'){state.quote=null;state.message=String(error.message||'Unable to check the total.').slice(0,220)}}
     finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
+  }
+  async function verifyOperatorPassword(){
+    const input=document.getElementById('merchantVoiceVerifyPassword');const password=String(input?.value||'');
+    if(input)input.value='';
+    if(!password||state.processing||!state.quote||!canConfirm())return;
+    const epoch=state.epoch,bid=state.businessId;
+    state.processing=true;state.message='Verifying current operator…';render();
+    const controller=new AbortController();state.request=controller;
+    try{
+      const response=await api('/api/auth/step-up/password',{method:'POST',signal:controller.signal,body:JSON.stringify({password})});
+      if(!canContinue(epoch,bid))return;
+      state.operatorVerified=response.verified===true;
+      state.message=state.operatorVerified?'Operator verified. Review the order and press Confirm to create it.':'Verification was not successful.';
+    }catch(error){if(canContinue(epoch,bid)&&error?.name!=='AbortError'){
+      state.operatorVerified=false;state.message=String(error.message||'Password verification failed.').slice(0,220)}}
+    finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
+  }
+  async function confirmCurrentOrder(){
+    if(!state.quote||!canConfirm()||!state.operatorVerified||state.processing||state.confirmedOrder)return;
+    const epoch=state.epoch,bid=state.businessId;
+    // Keep the same high-entropy idempotency key after an uncertain network result.
+    if(!state.confirmationKey)state.confirmationKey=uniqueConfirmationKey();
+    stopRecognition();state.processing=true;state.message='Confirming this unpaid pickup order…';render();
+    const controller=new AbortController();state.request=controller;
+    try{
+      const result=await api('/api/orders/voice/confirm',{method:'POST',signal:controller.signal,
+        body:JSON.stringify({business_id:bid,operator_confirmed:true,signed_quote:state.quote,
+          request_key:state.confirmationKey})});
+      if(!canContinue(epoch,bid))return;
+      state.confirmedOrder=result;state.operatorVerified=false;
+      state.message=result.replayed?'Existing order retrieved. No duplicate order was made.':'Order created. No payment was recorded.';
+    }catch(error){if(!canContinue(epoch,bid)||error?.name==='AbortError')return;
+      if(error?.code==='VOICE_STEP_UP_REQUIRED')state.operatorVerified=false;
+      if(error?.code==='VOICE_QUOTE_STALE'||error?.code==='VOICE_CONFIRM_QUOTE_INVALID'){
+        state.quote=null;state.confirmationKey=null;
+      }
+      state.message=String(error.message||'Could not confirm. Check Orders before trying again.').slice(0,240);
+    }finally{if(canContinue(epoch,bid)){state.processing=false;state.request=null;render()}}
   }
   function startRecognition(){
     if(!state.consent){state.message='Consent is required before activating the microphone.';render();return}
@@ -160,7 +220,9 @@
     panel.querySelector('#merchantVoiceText')?.addEventListener('input',event=>{state.transcript=event.target.value});
     panel.querySelector('#merchantVoiceSend')?.addEventListener('click',()=>void sendTurn(state.transcript));
     panel.querySelector('#merchantVoiceQuote')?.addEventListener('click',()=>void checkCurrentQuote());
-    panel.querySelector('#merchantVoiceClear')?.addEventListener('click',()=>{stopRecognition();stopSpeech();state.epoch++;state.request?.abort();state.request=null;state.draft=null;state.quote=null;state.transcript='';state.processing=false;state.question='';state.message='Draft discarded. Nothing was posted.';render()});
+    panel.querySelector('#merchantVoiceVerify')?.addEventListener('click',()=>void verifyOperatorPassword());
+    panel.querySelector('#merchantVoiceCreate')?.addEventListener('click',()=>void confirmCurrentOrder());
+    panel.querySelector('#merchantVoiceClear')?.addEventListener('click',()=>{stopRecognition();stopSpeech();state.epoch++;state.request?.abort();state.request=null;state.draft=null;state.quote=null;state.confirmationKey=null;state.operatorVerified=false;state.confirmedOrder=null;state.transcript='';state.processing=false;state.question='';state.message='Draft discarded. Nothing was posted.';render()});
   }
   async function attach(){
     if(!merchantVisible()){if(state.businessId!==null)reset();return}
