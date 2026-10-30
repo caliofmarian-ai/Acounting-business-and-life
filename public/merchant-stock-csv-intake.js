@@ -78,7 +78,7 @@ export function findExistingInventory(row,inventory){
 const hasDocument=typeof document!=='undefined';
 if(hasDocument){
   const $=id=>document.getElementById(id);
-  const state={context:null,inventory:[],rows:[],busy:false,stop:false,accountId:null,resultLog:[]};
+  const state={context:null,inventory:[],transactions:[],rows:[],busy:false,stop:false,accountId:null,resultLog:[]};
   function message(id,text,kind=''){
     const el=$(id);if(!el)return;el.textContent=text;el.classList.toggle('error',kind==='error');el.classList.toggle('ok',kind==='ok');
   }
@@ -129,14 +129,21 @@ if(hasDocument){
     if(state.busy)return;
     $('refreshContext').disabled=true;
     message('authStatus','Checking Merchant profile, business binding, and live Inventory…');
-    state.context=null;state.inventory=[];
+    state.context=null;state.inventory=[];state.transactions=[];
     try{
       const next=await snapshot();
-      const inventory=await api('/api/inventory');
+      const [inventory,transactions]=await Promise.all([
+        api('/api/inventory'),api('/api/transactions')
+      ]);
       const verify=await snapshot();
-      if(!sameContext(next,verify))throw new Error('Merchant business changed during Inventory read.');
+      if(!sameContext(next,verify))throw new Error('Merchant business changed during Inventory/Money read.');
       state.context=verify;state.accountId=verify.accountId;
       state.inventory=Array.isArray(inventory)?inventory:[];
+      state.transactions=Array.isArray(transactions)?transactions:[];
+      const expenses=state.transactions.filter(tx=>tx.type==='business_expense');
+      const total=expenses.reduce((sum,tx)=>sum+Number(tx.amount||0),0);
+      message('ledgerStatus','This business already has '+expenses.length+' recent expense entries in Money, totaling ₱'+
+        CENTS(total).toFixed(2)+'. Check for any payment that covered these products; this list is not guaranteed to include older entries.');
       refreshExisting();renderRows();renderBusiness();
     }catch(error){
       message('authStatus',error.message||'Merchant and Inventory could not be checked.','error');
@@ -167,10 +174,10 @@ if(hasDocument){
   function renderRows(){
     const target=$('rows');target.replaceChildren();
     state.rows.forEach(row=>{
-      const item=element('article','item'+(row.exists?' existing':'')+(row.requiresReview?' review':'')+(row.result==='saved'?' saved':''));
+      const item=element('article','item'+(row.exists?' existing':'')+(row.requiresReview?' review':'')+(['saved','saved-date-pending'].includes(row.result)?' saved':''));
       const top=element('div','controls');
       const title=element('h3','',row.item);top.appendChild(title);
-      const status=row.result==='saved'?'Saved':row.exists?'Already in Inventory':row.result==='uncertain'?'Needs investigation':row.result==='error'?'Stopped':row.requiresReview?'Review required':'Ready to review';
+      const status=row.result==='saved'?'Saved stock and expense':row.result==='saved-date-pending'?'Saved; date needs correction':row.exists?'Already in Inventory':row.result==='uncertain'?'Needs investigation':row.result==='error'?'Stopped':row.requiresReview?'Review required':'Ready to review';
       top.appendChild(element('span','tag'+(row.exists||row.result==='error'?' error':row.requiresReview?' warn':' ok'),status));
       item.appendChild(top);
       const detail=element('p','muted',
@@ -206,7 +213,7 @@ if(hasDocument){
       const check=document.createElement('input');check.type='checkbox';check.checked=row.selected;
       check.disabled=state.busy||row.result!=='pending'||Boolean(row.exists);
       check.addEventListener('change',()=>{row.selected=check.checked;updateControls()});
-      select.append(check,element('span','',row.result==='saved'?'Saved to Merchant Stock':
+      select.append(check,element('span','',row.result==='saved'?'Saved to Merchant Stock and Money':
         row.exists?'Not selected — existing stock detected':'Include this item in the approved stock batch'));
       item.appendChild(select);
       if(row.error)item.appendChild(element('p','error',row.error));
@@ -222,13 +229,24 @@ if(hasDocument){
     $('rowsCounter').textContent=
       state.rows.length+' lines · '+selected.length+' selected · '+valid.length+' validated · '+
       state.rows.filter(x=>x.exists).length+' already in Inventory · '+
-      state.rows.filter(x=>x.result==='saved').length+' saved this session';
+      state.rows.filter(x=>['saved','saved-date-pending'].includes(x.result)).length+' saved this session';
+    const date=String($('purchaseDate').value||'');
+    const validDate=/^\d{4}-\d{2}-\d{2}$/.test(date)&&
+      Number.isFinite(Date.parse(date+'T12:00:00+08:00'))&&date<=localDatePH();
+    const validAccount=['cash','gcash','bank','other'].includes($('purchaseAccount').value);
     $('post').disabled=state.busy||!state.context||!exactlyConfirmedBusiness()||
-      !selected.length||selected.length!==valid.length||
+      !selected.length||selected.length!==valid.length||!validDate||!validAccount||
       !$('physicalConfirm').checked||!$('moneyConfirm').checked;
+    $('purchaseAccount').disabled=state.busy;
+    $('purchaseDate').disabled=state.busy;
     $('stop').disabled=!state.busy;
     $('selectSafe').disabled=state.busy||!state.rows.length;
     $('clearSelection').disabled=state.busy||!state.rows.length;
+  }
+  function localDatePH(){
+    return new Intl.DateTimeFormat('en-CA',{
+      timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'
+    }).format(new Date());
   }
   async function readFile(){
     const file=$('csv').files?.[0];if(!file)return;
@@ -240,6 +258,11 @@ if(hasDocument){
       message('fileStatus',parsed.length+' rows loaded locally. No server writes have occurred.','ok');
       message('results','No changes made.');
     }catch(error){state.rows=[];renderRows();message('fileStatus',error.message,'error')}
+  }
+  async function assertMerchantContext(){
+    const before=await snapshot();
+    if(!sameContext(before,state.context)||state.accountId!==before.accountId)
+      throw new Error('Active Merchant account or business changed. Import stopped.');
   }
   async function assertLiveContext(){
     const before=await snapshot();
@@ -254,6 +277,7 @@ if(hasDocument){
     if($('post').disabled||state.busy)return;
     state.busy=true;state.stop=false;updateControls();
     const originalContext=state.context;
+    const paidFrom=$('purchaseAccount').value,originalDate=$('purchaseDate').value;
     const pending=state.rows.filter(row=>row.selected&&validStockIntakeRow(row));
     let saved=0;
     for(const row of pending){
@@ -266,30 +290,55 @@ if(hasDocument){
         if(existing){row.exists=existing;row.selected=false;row.error='Item appeared in existing Inventory; no automatic additional purchase posted.';continue}
         if(!validStockIntakeRow(row))throw new Error('Stock quantity, unit, cost or review confirmation is not valid.');
         row.result='posting';renderRows();
-        // One canonical purchase per line. Never set record_expense=true for a historical import.
+        // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
         const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({
           item:row.item,inventory_domain:'food',stock_role:'ingredient',inventory_type:'ingredient',
           purchase_quantity:row.quantity,purchase_unit:row.unit,total_cost:CENTS(row.total),
-          account:'other',record_expense:false,
-          note:'Physical Merchant stock intake from reviewed CSV. Original purchase date/payment not asserted. '+row.note
+          account:paidFrom,record_expense:true,
+          note:'Paid stock intake from reviewed Merchant CSV. Actual purchase date: '+originalDate+'. '+row.note
         })});
-        if(!result?.inventory?.id||!result?.purchase?.id)throw new Error('Purchase response was incomplete; manual reconciliation required.');
-        row.result='saved';row.selected=false;saved++;
+        if(!result?.inventory?.id||!result?.purchase?.id||!result?.transaction?.id){
+          throw new Error('Purchase/payment response was incomplete; manually reconcile before retry.');
+        }
+        // At this point the stock and a linked expense exist even if the date correction fails.
+        row.result='saved-date-pending';row.selected=false;saved++;
         state.inventory.push(result.inventory);
-        state.resultLog.push(row.item+' — confirmed purchase #'+result.purchase.id);
-        message('results',saved+' item(s) saved. No money transactions created.\n'+state.resultLog.join('\n'),'ok');
+        const note=row.item+' — stock purchase #'+result.purchase.id+
+          ' · linked expense #'+result.transaction.id+' · ₱'+CENTS(row.total).toFixed(2);
+        state.resultLog.push(note);
+        message('results',saved+' paid item(s) saved; checking historical purchase date.\n'+state.resultLog.join('\n'),'ok');
+        renderRows();
+        // Existing accounting backend records NOW. Apply its audited correction endpoint to the
+        // same linked expense so the real PH purchase date, not import date, appears in Money.
+        await assertMerchantContext();
+        const dated=await api('/api/transactions/'+result.transaction.id,{
+          method:'PATCH',
+          body:JSON.stringify({
+            occurred_at:originalDate+'T12:00:00+08:00',
+            reason:'Merchant verified original PH purchase/payment date during CSV stock intake'
+          })
+        });
+        if(Number(dated?.id)!==Number(result.transaction.id))
+          throw new Error('Linked expense date correction could not be verified.');
+        row.result='saved';
+        message('results',saved+' purchase(s) and linked expenses dated '+originalDate+'.\n'+state.resultLog.join('\n'),'ok');
         renderRows();
       }catch(error){
         // No automatic retry: the server endpoint has no request-key idempotency.
-        row.result='uncertain';row.error='STOPPED: '+(error?.message||'Unknown error')+
-          '. The request may have reached production; reconcile Stock before any retry.';
+        if(row.result==='saved-date-pending'){
+          row.error='STOCK AND EXPENSE ARE SAVED, but the original payment date could not be confirmed: '+
+            (error?.message||'Unknown error')+'. Correct expense date in Money; do NOT post the stock purchase again.';
+        }else{
+          row.result='uncertain';row.error='STOPPED: '+(error?.message||'Unknown error')+
+            '. The request may have reached production; reconcile both Stock and Money before any retry.';
+        }
         state.stop=true;renderRows();
-        message('results','Batch STOPPED after '+saved+' confirmed item(s). Review the last item and refreshed Inventory before attempting anything else.','error');
+        message('results','Batch STOPPED after '+saved+' saved purchase(s). Review Stock AND Money. Never retry an uncertain purchase until both are reconciled.\n'+state.resultLog.join('\n'),'error');
         break;
       }
     }
     state.busy=false;
-    if(!state.stop)message('results',saved+' new item(s) saved to the active Merchant, with no financial expense posted.\n'+state.resultLog.join('\n'),'ok');
+    if(!state.stop)message('results',saved+' stock purchase(s) and '+saved+' linked paid business expense(s) saved to the active Merchant, dated '+originalDate+'. No payment was sent.\n'+state.resultLog.join('\n'),'ok');
     renderRows();updateControls();
   }
   $('refreshContext').addEventListener('click',refreshContext);
@@ -297,6 +346,13 @@ if(hasDocument){
   $('businessName').addEventListener('input',updateControls);
   $('physicalConfirm').addEventListener('change',updateControls);
   $('moneyConfirm').addEventListener('change',updateControls);
+  $('purchaseAccount').addEventListener('change',()=>{
+    $('moneyConfirm').checked=false;updateControls();
+  });
+  $('purchaseDate').addEventListener('change',()=>{
+    $('moneyConfirm').checked=false;updateControls();
+  });
+  $('purchaseDate').max=localDatePH();
   $('post').addEventListener('click',saveSelected);
   $('stop').addEventListener('click',()=>{state.stop=true;message('results','Stopping after the active purchase request finishes. No next item will be sent.','error')});
   $('selectSafe').addEventListener('click',()=>{
