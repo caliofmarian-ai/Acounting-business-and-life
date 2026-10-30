@@ -13,6 +13,20 @@ permissions:
 jobs:
   exact-head:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qa862
+          POSTGRES_PASSWORD: qa862_only
+          POSTGRES_DB: inventory862
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qa862 -d inventory862"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,3 +45,7 @@ jobs:
         run: node --check inventory-locations.js && node --check tests/inventory-location-read-performance-862.test.js
       - name: Execute isolated source regression
         run: node --test tests/inventory-location-read-performance-862.test.js
+      - name: Real PostgreSQL concurrency and business-isolation regression
+        env:
+          INVENTORY_862_PG_URL: postgres://qa862:qa862_only@127.0.0.1:5432/inventory862
+        run: node --test tests/inventory-location-read-postgres-862.test.js
