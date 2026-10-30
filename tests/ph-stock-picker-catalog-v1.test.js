@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {
   PH_STOCK_PICKER_ADDITIONS,PH_STOCK_PICKER_EXTRA_GROUPS,PH_STOCK_PICKER_ALIASES,
   extendPhilippineStockPickerCatalog,searchPhilippineStockPicker,
-  philippineStockPickerSafetyNote
+  philippineStockPickerSafetyNote,philippineStockPickerStorageSuggestion
 } from '../public/ph-stock-picker-catalog.js';
 
 const stockUi=readFileSync(new URL('../public/v03.js',import.meta.url),'utf8');
@@ -96,6 +96,20 @@ test('shellfish safety notice does not claim any particular 2026 ban is currentl
   assert.match(philippineStockPickerSafetyNote('Clams (halaan)'),/check current/);
   assert.equal(philippineStockPickerSafetyNote('Shrimp'),'');
   assert.equal(philippineStockPickerSafetyNote('Fish balls'),'');
+});
+
+test('item-specific perishable handling and variable pack guidance protect new quick picks',()=>{
+  const dry={condition:'dry',area:'pantry',label:'',segregated:false};
+  const cold={condition:'chilled',area:'fridge',label:'',segregated:false};
+  assert.equal(philippineStockPickerStorageSuggestion('Tofu (tokwa)',dry).condition,'chilled');
+  assert.equal(philippineStockPickerStorageSuggestion('Siomai wrappers',dry).area,'fridge');
+  assert.equal(philippineStockPickerStorageSuggestion('Coconut cream (kakang gata)',dry).condition,'chilled');
+  assert.equal(philippineStockPickerStorageSuggestion('Cheese powder',cold).condition,'dry');
+  assert.equal(philippineStockPickerStorageSuggestion('Powdered milk',cold).area,'pantry');
+  assert.match(philippineStockPickerSafetyNote('Quail eggs'),/Pack sizes vary/);
+  assert.match(philippineStockPickerSafetyNote('French fries'),/piece, bag, box or bottle/);
+  assert.match(philippineStockPickerSafetyNote('Kikiam'),/before saving stock/);
+  assert.match(stockUi,/philippineStockPickerStorageSuggestion\(itemName,base\)/);
 });
 
 test('new picker UI only fills existing purchase form; it never creates products or expenses on selection',()=>{
