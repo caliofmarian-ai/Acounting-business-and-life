@@ -82,7 +82,7 @@ test('Merchant-only send and private Customer read must enforce order and busine
   assert.match(core,/created_at>NOW\(\)-INTERVAL '5 minutes'/);
   assert.match(core,/mandatory:true,emailDefault:true,pushDefault:false/);
   assert.match(core,/INSERT INTO customer_sales_documents/);
-  assert.match(core,/NOT (a BIR|automatically valid)/);
+  assert.match(core,/not a BIR-issued/i);
   assert.match(server,/ensureCustomerSalesDocumentsSchema\(pool\)/);
   assert.match(server,/registerCustomerSalesDocumentRoutes/);
   assert.match(server,/order-sales-documents-ui.js/);
