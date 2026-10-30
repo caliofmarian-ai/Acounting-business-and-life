@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "scope": "guest_account_access",
+  "status": "draft",
+  "policy_ref": null,
+  "approval_ref": null,
+  "operator_ref": null,
+  "backup_procedure_ref": null,
+  "hold_review_ref": null,
+  "approved_at": null,
+  "expires_at": null,
+  "age_basis": "last_updated_at",
+  "disposal": "delete_request_row",
+  "retention_days": { "new": null, "reviewing": null, "closed": null }
+}

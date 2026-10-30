@@ -24,11 +24,11 @@ Every published article has a stable slug, version, explicit `PUBLIC`/`EFFECTIVE
 
 When a feature changes, review its source-path dependencies in article verification metadata. Update the applicable guide, bump its version and refresh its translation only after reviewing the corresponding behavior. Unchanged guides do not need their verified revision changed for unrelated releases. The broader PR impact/dependency enforcement and feedback-maintenance loop remain later V3 slices.
 
-## Guest account-access limitation
+## Guest account-access follow-up (#815 — separate draft release)
 
-`POST /api/support/tickets` authenticates the requester. The email architecture documents an outbound Support sender while explicitly deferring inbound Support email. Neither proves a monitored public account-access inbox.
+V3A initially documented the genuine guest-contact limitation. `POST /api/support/tickets` still authenticates requesters, and the outbound Support sender is **not** a monitored inbound mailbox. The independently scoped #815/PR #834 guest form at `/help/account-access` writes only confirmed saves to a separate private staff queue; it does not create authenticated tickets, email Support, verify account ownership, reset credentials or promise a response time.
 
-The guide offers actual password/email recovery and explains the current contact limitation. It does not invent a working `mailto:` destination or send unauthenticated users to a ticket form that requires sign-in. #815 owns a verified public contact/intake, private staff handling and its abuse/identity protections. That capability remains undelivered by V3A.
+On the #815 implementation branch only, the public Help home/footers and English/Filipino support/sign-in guides now link directly to this form, and the old limitation text is reconciled. `publicAccountAccessContact.available=true` describes this proposed release's built route and must **not** be read as proof that current Production already serves it. CI uses the full gateway for anonymous Help → form navigation, not just an offline DOM mock. #815 stays open until operational staff authority/triage, retention and shared Preview→Production gates pass. See `docs/public-help/ACCOUNT_ACCESS_OPERATIONS_815.md`.
 
 ## Validation
 
@@ -36,7 +36,7 @@ The guide offers actual password/email recovery and explains the current contact
 - Run focused contracts with `node --test tests/help-self-service-v3.test.js tests/help-center.test.js tests/account-settings-help-unification-v1.test.js`.
 - The repository suite must run with `TZ=UTC npm test`; the existing Courier PostgreSQL DATE test depends on this timezone contract. No Courier code is changed.
 - `Help Center Acceptance` checks the exact PR head, starts the full application gateway against its own temporary PostgreSQL service and runs pinned Chromium journeys. Screenshots and result JSON are revision-bound CI artifacts with seven-day retention.
-- Browser journeys cover anonymous use, article/profile search, natural questions, guided money clarification, known/unknown codes, evidence guidance, English/Filipino, language-preserving help topics, honest guest limits, keyboard recovery and same-origin GET-only behavior. Mobile viewport and 2x CSS-zoom checks are simulations, not physical Android acceptance.
+- Browser journeys cover anonymous use, article/profile search, natural questions, guided money clarification, known/unknown codes, evidence guidance, English/Filipino, language-preserving help topics, guest form discoverability without guest submission, keyboard recovery and same-origin GET-only behavior. Mobile viewport and 2x CSS-zoom checks are simulations, not physical Android acceptance.
 - A dedicated `help-center-qa-808` Railway service runs `server-help.js` from the exact head without a database or shared Preview pointer changes. Its health route exposes only a normalized source revision and the public Help version. This supplies isolated public Help Preview verification; full-gateway routing is also exercised in CI.
 - Runtime delivery still requires exact-head Preview acceptance, reviewed merge, successful production deployment and smoke at `https://caliof.com`. An open PR or passing CI alone is not Production delivery. Record final SHA/deployment evidence in #808.
 

@@ -1,0 +1,33 @@
+# Guest request disposal mechanism — #815 / #834
+
+**DRAFT / INACTIVE / NOT A POLICY APPROVAL.** This engineering slice does not activate public intake, retention or a scheduler. The controlled Privacy Notice and controller/operator decisions remain release gates. See `ACCOUNT_ACCESS_OPERATIONS_815.md`, `docs/agreements/PRIVACY_NOTICE_FRAMEWORK.md` section 7, and `docs/privacy/INITIAL_PIC_DPO_GOVERNANCE.md`.
+
+## What is implemented
+
+`account-access-retention.js` and the operator-only `scripts/account-access-retention.mjs` provide one bounded database batch. There is no HTTP endpoint, app-start hook, new service, external communication or automatic scheduled run. The checked-in `privacy/account-access-retention.json` is deliberately `draft` with null days and references. Both preview and apply refuse that draft before any database connection. Test-only policy values are synthetic fixtures, not proposed live periods.
+
+A complete approved policy must explicitly decide the retention age for **each** of `new`, `reviewing`, and `closed`, based on the last persisted update, and approve whole-row disposal. No period is inherited from Referral or another domain. The machine validates shape, dates, scope and references; it cannot prove that an approval, operator or backup procedure really exists. Release reviewers must verify each controlled decision. The optional display name, contact email, message, staff note and deduplication hash disappear with the request row. Shared accounts, authenticated tickets, financial records and existing admin audits are never modified by this job.
+
+## Safety and execution
+
+Default `--dry-run` opens a PostgreSQL **read-only transaction**, returns only an aggregate bounded eligible count, and cannot initialize tables. `--apply` and `--initialize` additionally require `ACCOUNT_ACCESS_RETENTION_ENABLED=true` and `ACCOUNT_ACCESS_RETENTION_POLICY_SHA256` equal to the digest returned by validation/dry-run for the exact approved policy. A changed or expired policy fails closed. There is no command-line override for days, scope, approval or database credentials; the approved checked-in policy and existing runtime `DATABASE_URL` are used.
+
+The explicit initialization creates only a hold registry and a content-free run ledger. No existing request is modified. Once operators have verified the policy, target database and backup/hold procedures, they initialize these tables in the approved isolated environment, populate and verify holds, run a dry-run, then validate an apply batch there before release. **Do not set the gates or edit the policy to approved simply to make a test or launch green.**
+
+The batch is 50 by default, at most 200 (engineering work bounds, not a retention period). A PostgreSQL advisory transaction lock serializes retention workers. Candidate request rows are locked with `FOR UPDATE SKIP LOCKED`: active triage is skipped, and later runs re-evaluate the latest state/timestamp. A hold recorded in `guest_account_access_retention_holds` excludes the request; its `ON DELETE RESTRICT` foreign key adds a second deletion barrier. No job removes a hold. The responsible privacy/operator process must record holds **before** disposal is allowed and govern their eventual release; pending/unrecorded hold intentions are not detectable by software. Only purpose-limited reference codes, never copies of case evidence, belong in `hold_ref`.
+
+Deletion and the non-PII run ledger commit together. A missing audit or hold table, timeout, constraint error or unknown database result fails safely; a failed audit insert rolls back deletion. Output contains only a random run ID, policy digest and counts, not request IDs, contacts, text, notes, credentials or raw SQL errors. If the commit acknowledgement is lost, report an **unknown outcome**, inspect the run ledger/remaining rows through authorized operations, and do not infer that no rows changed merely from a CLI failure. Re-running a completed batch only considers remaining current rows.
+
+## Still required before activation
+
+The policy must be backed by actual controller/privacy approval, processing notice, record-type decisions, hold ownership, monitoring and failure response. The actual operator must verify handling of unresolved requests, reasons to extend a hold, deletion requests, and any security/incident evidence that must follow its own authorized process. Structural JSON approval fields do not supply these facts.
+
+This job affects the **online request table only**. It does not erase historical backups, replicas outside the transaction, exports or browser evidence. An approved backup-expiry and restore/reconciliation procedure is mandatory; an old restored database must remain restricted until the current approved disposal/hold policy has been reconciled. Existing shared admin audit retention stays with its own controlled policy. Rate-limit metadata retains its existing technical cleanup behavior and is not represented as request retention.
+
+No live migration, deletion, environment variable change or scheduling has been executed by this implementation. CI uses a guarded, disposable loopback PostgreSQL database named `account_access_retention_815`; it verifies dry-run preservation, holds/FK protection, per-status age rules, audit rollback, missing storage, concurrent workers and in-flight triage. This does not substitute for approved policy, actual Railway Preview or Production acceptance.
+
+## Read-only ingress checkpoint, 2026-10-27
+
+Railway `accounting-preview` was read through the connected API: source `fix/merchant-food-tools-816`, exact commit `91cdd060d1431c1c09528e78f9ba42642d30dee0`, successful deployment `fd9047e3-8b80-4021-803c-993da1a9886e`, one Europe West replica, custom `preview.caliof.com` plus Railway domains, and no TCP proxies. That reservation is not changed. The topology read does **not** prove the precise upstream peer/header sanitization contract or remove a possible CDN hop.
+
+Railway's official [edge documentation](https://docs.railway.com/networking/edge-networking) describes edge TLS termination and internal forwarding. Express's official [proxy guidance](https://expressjs.com/en/guide/behind-proxies/) requires a topology-matched trust boundary and warns against blindly accepting forwarded headers. Therefore the existing socket-based 60/source/hour bucket remains conservative; global/contact limits remain intact. No `trust proxy` setting or forwarded-IP parsing has been added. A serialized Preview ingress probe, including spoofed-header negatives and shared-source behavior, remains required before claiming per-visitor rate limiting or calibrated availability.

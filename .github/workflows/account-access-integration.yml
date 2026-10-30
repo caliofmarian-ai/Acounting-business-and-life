@@ -1,0 +1,61 @@
+name: Account Access Integration
+on:
+  pull_request:
+    paths:
+      - 'account-access-core.js'
+      - 'server-account-access.js'
+      - 'server-paymongo.js'
+      - 'session-cookie-core.js'
+      - 'admin-authorization.js'
+      - 'public/account-access/**'
+      - 'tests/account-access*.test.js'
+      - 'scripts/account-access-http-acceptance.mjs'
+      - '.github/workflows/account-access-integration.yml'
+permissions:
+  contents: read
+concurrency:
+  group: account-access-integration-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  isolated-http-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: fixture-only-815
+          POSTGRES_DB: account_access_815
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d account_access_815"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgres://postgres:fixture-only-815@127.0.0.1:5432/account_access_815
+      ACCOUNT_ACCESS_FIXTURE_DB: '1'
+      TESTED_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Unit and route contracts
+        run: node --test tests/account-access*.test.js
+      - name: Real PostgreSQL and HTTP boundaries
+        run: node scripts/account-access-http-acceptance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: account-access-integration-${{ github.event.pull_request.head.sha }}
+          path: artifacts/account-access-integration.json
+          retention-days: 7
+          if-no-files-found: warn
