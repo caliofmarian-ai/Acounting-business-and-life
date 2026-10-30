@@ -105,7 +105,7 @@ test('switching profiles clears the stale business attribution before Merchant T
   });
   assert.equal(context.accountingState.role,'merchant');
   assert.equal(context.accountingState.activeBusinessId,null);
-  assert.deepEqual(context.accountingState.businesses,[]);
+  assert.equal(context.accountingState.businesses.length,0);
   assert.match(bar.innerHTML,/Preparing workspace/);
   assert.doesNotMatch(bar.innerHTML,/Supplier private business/);
   assert.match(bar.className,/businessWorkspaceBarPending/);
