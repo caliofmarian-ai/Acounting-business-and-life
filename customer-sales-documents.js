@@ -257,7 +257,10 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       const businessId=id(req.body?.business_id,'business_id');
       const requestKey=clientKey(req.body?.client_request_key);
       await requireMerchantBusiness(pool,actor,businessId);
-      const order=await readOrderDetail(pool,req.params.id);
+      const orderId=id(req.params.id,'Order');
+      const ownOrder=await pool.query('SELECT id FROM orders WHERE id=$1 AND business_id=$2',[orderId,businessId]);
+      if(!ownOrder.rowCount)throw err(404,'Order not found for this Merchant');
+      const order=await readOrderDetail(pool,orderId);
       if(!order||Number(order.business_id)!==businessId)throw err(404,'Order not found for this Merchant');
       if(!order.customer_account_id)throw err(422,'Only registered Customers may receive an email document');
       const customer=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
