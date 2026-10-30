@@ -87,6 +87,10 @@
       <label for="purchaseDate">Actual purchase/payment date in the Philippines</label>
       <input id="purchaseDate" type="date" required>
       <p class="muted">When the date is in the past, the importer uses the existing audited transaction-date correction immediately after each linked stock purchase. An interrupted date correction stops the batch for manual review, without making a second purchase.</p>
+      <label for="actualTotalPaid">Actual total already paid for the SELECTED products (PHP)</label>
+      <input id="actualTotalPaid" inputmode="decimal" type="number" min="0.01" step="0.01" placeholder="e.g. 3772.50" required>
+      <p id="reconciliation" class="status muted" role="status" aria-live="polite">Select products to reconcile the sum of itemized costs against what was actually paid.</p>
+      <p class="muted">If the shopping note total differs from the sum of products, do not force a match. Check discounts, omitted items, handwritten mistakes or multiple checkout payments before posting.</p>
       <p id="ledgerStatus" class="status muted" role="status" aria-live="polite">Refresh Merchant context to review recent entries already in Money.</p>
       <label class="check"><input id="physicalConfirm" type="checkbox">I have checked that selected quantities represent stock physically on hand, not just a shopping list.</label>
       <label class="check"><input id="moneyConfirm" type="checkbox">These purchases were actually paid and have NOT already been entered in this Merchant's Money ledger. I confirm the selected payment method and original date.</label>
