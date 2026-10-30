@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en-PH">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <title>Stock intake | Business & Life</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#14243b;background:#f3f7f6;color-scheme:light}
+    *{box-sizing:border-box}body{margin:0}main{max-width:790px;margin:auto;padding:20px 14px 80px}
+    header{background:linear-gradient(110deg,#132b46,#087f70);color:#fff;padding:28px 15px}
+    header>div{max-width:790px;margin:auto}h1{margin:8px 0 6px;font-size:26px}h2{font-size:19px;margin:0 0 14px}
+    p{line-height:1.5}a{color:inherit}.brand{font-size:12px;letter-spacing:.12em;font-weight:800}
+    .panel{background:#fff;border:1px solid #dae7e3;border-radius:17px;padding:17px;margin:14px 0;box-shadow:0 5px 12px #152b3d08}
+    .muted{color:#596b77;font-size:13px}.tip{background:#fff9e5;border-left:4px solid #b98720;padding:11px 13px;border-radius:7px;font-size:13px;line-height:1.5;margin:12px 0}
+    .ok{color:#046c55}.warn{color:#9d5911}.error{color:#a12336}.status{font-size:14px;line-height:1.45;white-space:pre-wrap}
+    button,input,select{font:inherit}button{background:#067765;color:#fff;padding:11px 15px;border:0;border-radius:12px;min-height:44px;font-weight:800}
+    button.secondary{background:#e8f2ef;color:#0f514b;border:1px solid #acc9bf}button:disabled{opacity:.45;cursor:not-allowed}
+    input:not([type="checkbox"]),select{width:100%;border:1px solid #bfccc8;border-radius:9px;padding:11px;min-height:44px;background:#fff;color:#132b46}
+    label{display:block;font-size:13px;font-weight:700;margin:9px 0}.check{display:flex;gap:9px;align-items:flex-start;line-height:1.4}
+    .check input{width:20px;height:20px;margin:0;flex:none;accent-color:#0a806c}.controls{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+    .columns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .rows{display:grid;gap:12px}.item{border:1px solid #d9e6e0;padding:13px;border-radius:14px;background:#fcfefd}
+    .item.review{border-left:4px solid #b98720}.item.existing{border-left:4px solid #a12336}.item.saved{border-left:4px solid #067765}
+    .item h3{font-size:17px;margin:0 0 5px}.item p{margin:4px 0 10px}
+    .tag{display:inline-block;font-size:11px;border-radius:6px;background:#e5f1ed;padding:3px 6px;font-weight:800}
+    .tag.warn{background:#fff0c8}.tag.error{background:#ffe4e8}.tag.ok{background:#d9f4e8}
+    #results{white-space:pre-wrap;font-size:13px}.hidden{display:none!important}
+    .safety{background:#fff4e9;border:1px solid #e2c2a3}.buttons{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+    .buttons button{flex:1}#rowsCounter{font-variant-numeric:tabular-nums}
+    a.back{display:inline-block;margin-top:8px;font-size:13px;text-decoration:none;color:#e4f9f2}
+    :focus-visible{outline:3px solid #efa82e;outline-offset:3px}
+    @media(max-width:460px){.columns{grid-template-columns:1fr 1fr}.panel{padding:13px}.item{padding:11px}}
+  </style>
+</head>
+<body>
+  <header><div>
+    <div class="brand">BUSINESS &amp; LIFE · PHILIPPINES</div>
+    <h1>Receive purchased stock</h1>
+    <p>Review a CSV on your phone and add confirmed purchases to your existing Merchant Inventory.</p>
+    <a class="back" href="/">← Back to Business &amp; Life</a>
+  </div></header>
+  <main>
+    <section class="panel">
+      <h2>1 · Verify the Merchant business</h2>
+      <p id="authStatus" class="status" role="status" aria-live="polite">Checking your signed-in Merchant session…</p>
+      <button type="button" id="refreshContext" class="secondary">Refresh Merchant &amp; Inventory</button>
+      <div id="businessCheck" class="hidden">
+        <p class="tip">This page never changes profiles or businesses. Sign in as the Merchant responsible for these purchases. Import is blocked when an account can access more than one Merchant business until business-bound writes are supported.</p>
+        <label for="businessName">Type the exact business name displayed above</label>
+        <input id="businessName" autocomplete="off" spellcheck="false" placeholder="Exact business name">
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>2 · Open stock CSV</h2>
+      <label for="csv">Choose an UTF-8 CSV containing the columns <code>item</code>, <code>proposed_quantity</code>, <code>proposed_unit</code>, and <code>screenshot_line_php</code>.</label>
+      <input id="csv" type="file" accept=".csv,text/csv,text/plain">
+      <p id="fileStatus" class="status muted" role="status" aria-live="polite">CSV stays in this browser. It is not uploaded to a document vault or shared with other merchants.</p>
+      <p class="muted">The 20-item checklist can be imported using the CSV prepared for the Merchant. Manual notes are not official shop receipts.</p>
+    </section>
+
+    <section id="reviewPanel" class="panel hidden">
+      <h2>3 · Review physical quantities</h2>
+      <div class="tip">An item may have been purchased but partially consumed already. Enter only the quantity you confirm is physically on hand. Price mismatches must be resolved by the Merchant. Existing Inventory names are never automatically added twice.</div>
+      <div class="controls">
+        <button id="selectSafe" class="secondary" type="button">Select straightforward rows</button>
+        <button id="clearSelection" class="secondary" type="button">Clear selection</button>
+      </div>
+      <p id="rowsCounter" class="muted"></p>
+      <div id="rows" class="rows"></div>
+    </section>
+
+    <section id="commitPanel" class="panel safety hidden">
+      <h2>4 · Post confirmed stock only</h2>
+      <label class="check"><input id="physicalConfirm" type="checkbox">I have checked that selected quantities represent stock physically on hand, not just a shopping list.</label>
+      <label class="check"><input id="moneyConfirm" type="checkbox">I understand this import does not record money spent, payment source, or a tax receipt. Financial records are handled separately to avoid duplication.</label>
+      <div class="buttons">
+        <button id="post" type="button" disabled>Save selected stock in production</button>
+        <button id="stop" type="button" class="secondary" disabled>Stop after current item</button>
+      </div>
+      <p id="results" role="status" aria-live="polite">No changes made.</p>
+    </section>
+  </main>
+  <script src="/session-security.js"></script>
+  <script type="module" src="/merchant-stock-csv-intake.js"></script>
+</body>
+</html>
