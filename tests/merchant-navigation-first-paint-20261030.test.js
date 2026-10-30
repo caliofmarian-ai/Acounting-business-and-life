@@ -87,6 +87,6 @@ test('local Stock or Money routes clear false shell Today state',()=>{
   assert.ok(start>0&&end>start);
   assert.match(merchant.slice(start,end),/CustomEvent\('abl:merchant-local-view',\{detail:\{name\}\}\)/);
   assert.match(shell,/document.addEventListener\('abl:merchant-local-view'/);
-  assert.match(shell,/const localName=event.detail\?\.name,homeActive=localName==='Dashboard'/);
+  assert.match(shell,/const navTarget=\{Dashboard:'home',Stock:'stock',Money:'money',Menu:'recipes'\}/);
   assert.match(shell,/if\(active\)button.setAttribute\('aria-current','page'\)/);
 });
