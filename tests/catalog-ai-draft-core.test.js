@@ -420,3 +420,31 @@ test('V3 typed numeric and Boolean strings are normalized only when canonical-co
   assert.equal(got.model_authority,'UNVERIFIED');
   assert.equal(got.canonical_write_payload,false);
 });
+
+test('untrusted invisible word boundaries are visible while ordinary emoji joins survive',()=>{
+  for(const hidden of ['\u200b','\u2060']){
+    const d=draft('merchant_non_food',{
+      catalog_category_code:'furniture_home',
+      name:'Bacoor'+hidden+'Outlet',
+      description:'Wood'+hidden+'finish',
+      tags:['home'+hidden+'office'],
+      variant_attributes:{color:'Light'+hidden+'Oak',width_cm:'1'+hidden+'2'}
+    });
+    assert.equal(d.hints.name,'Bacoor Outlet');
+    assert.equal(d.hints.description,'Wood finish');
+    assert.deepEqual(d.hints.tags,['home office']);
+    assert.deepEqual(d.hints.variant_attributes,[
+      {code:'color',value:'Light Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+    ]);
+    assert.equal(d.publishable,false);
+    assert.equal(d.canonical_write_payload,false);
+  }
+  const emoji=draft('merchant_non_food',{
+    catalog_category_code:'furniture_home',name:'Chef 👩‍🍳',
+    variant_attributes:{color:'Blue'}
+  });
+  assert.equal(emoji.hints.name,'Chef 👩‍🍳');
+  assert.deepEqual(emoji.hints.variant_attributes,[
+    {code:'color',value:'Blue',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+});
