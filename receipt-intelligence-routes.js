@@ -103,6 +103,38 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
         sku:x.internal_sku||'',barcode:x.barcode||''}))});
     }catch(e){next(e)}
   });
+  // A scan can repeat under another request key: warn about suspected duplicate originals.
+  app.get('/api/procurement/purchase-documents/:id/intelligence/duplicates',async(req,res,next)=>{
+    try{
+      const {businessId}=await scope(pool,identity,req);
+      const receipt=await receiptFor(pool,businessId,req.params.id);
+      const q=await pool.query(`
+        SELECT other.id,other.issuer_name,other.document_number,other.issue_date,
+          other.gross_amount,
+          CASE WHEN original.sha256 IS NOT NULL AND original.sha256=copy.sha256
+            THEN 'same_original_file' ELSE 'same_supplier_reference' END reason
+          FROM merchant_purchase_documents other
+          LEFT JOIN private_evidence_objects original ON original.id=$3
+          LEFT JOIN private_evidence_objects copy ON copy.id=other.private_evidence_object_id
+         WHERE other.business_id=$1 AND other.id<>$2
+           AND (
+             (original.sha256 IS NOT NULL AND original.sha256=copy.sha256)
+             OR ($4<>'' AND LOWER(other.document_number)=LOWER($4)
+                 AND LOWER(other.issuer_name)=LOWER($5)
+                 AND other.issue_date=$6::date
+                 AND other.gross_amount IS NOT DISTINCT FROM $7::numeric)
+           )
+         ORDER BY other.id DESC LIMIT 20
+      `,[
+        businessId,receipt.id,receipt.private_evidence_object_id,
+        receipt.document_number||'',receipt.issuer_name||'',
+        receipt.issue_date,receipt.gross_amount
+      ]);
+      res.json({possible_duplicates:q.rows.map(x=>({...x,id:Number(x.id)})),
+        note:'Potential duplicates are warnings; they never create or reverse stock.'});
+    }catch(e){next(e)}
+  });
+
   app.get('/api/procurement/purchase-documents/:id/intelligence',async(req,res,next)=>{
     try{
       const {businessId}=await scope(pool,identity,req);
