@@ -1,7 +1,7 @@
 import {createInventoryCountUi} from './inventory-count-ui.js';
 import {createInventoryScanUi} from './inventory-scan-ui.js';
 import {createInventoryLocationUi} from './inventory-location-ui.js';
-import {extendPhilippineStockPickerCatalog,searchPhilippineStockPicker,philippineStockPickerSafetyNote} from './ph-stock-picker-catalog.js';
+import {extendPhilippineStockPickerCatalog,searchPhilippineStockPicker,philippineStockPickerSafetyNote,philippineStockPickerStorageSuggestion} from './ph-stock-picker-catalog.js';
 const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
@@ -157,7 +157,7 @@ function storageSuggestionFor(group,itemName=''){
   const base={...(group?.storage||{condition:'other',area:'other',label:'',segregated:false})};
   if(itemName==='Ice')return{condition:'frozen',area:'freezer',label:'',segregated:false};
   if(['Condensed milk','Evaporated milk'].includes(itemName))return{condition:'ambient',area:'pantry',label:'',segregated:false};
-  return base;
+  return philippineStockPickerStorageSuggestion(itemName,base);
 }
 function storageSuggestionForType(type='ingredient'){
   if(type==='cleaning_sanitation')return{condition:'ambient',area:'chemical_storage',label:'Chemical storage',segregated:true};
