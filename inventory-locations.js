@@ -527,6 +527,19 @@ export function registerInventoryLocationRoutes(app,{pool,jsonBody,accountingCon
     return ctx;
   }
 
+  // Inventory page's combined read: one authenticated business context and
+  // one canonical PostgreSQL snapshot replace two independent Storage GETs.
+  // Legacy endpoints below remain fully supported for callers that need them.
+  app.get('/api/inventory/location-summary',async(req,res,next)=>{
+    try{
+      const ctx=await merchantContext(req);
+      const snapshot=await inventoryLocationReadSnapshot(pool,{
+        businessId:ctx.business.id,actorAccountId:ctx.me.account.id
+      });
+      res.json(snapshot);
+    }catch(error){next(error)}
+  });
+
   app.get('/api/inventory/locations',async(req,res,next)=>{
     try{
       const ctx=await merchantContext(req);
