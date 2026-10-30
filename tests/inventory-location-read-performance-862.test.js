@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {reconcileBusinessInventoryLocationsForRead} from '../inventory-locations.js';
+import {reconcileBusinessInventoryLocationsForRead,ensureInventoryLocationSchema} from '../inventory-locations.js';
 
 const item=(id,quantity=5)=>({id,quantity:String(quantity),storage_area_type:'pantry',storage_location_label:''});
 function fixture({items=[item(1)],locations=['Pantry'],balances=[{inventory_id:1,quantity:'5'}],lots=[],lotBalances=[],hasLots=false,inventoryGate=null}={}){
@@ -22,6 +22,44 @@ function fixture({items=[item(1)],locations=['Pantry'],balances=[{inventory_id:1
     throw new Error('Unexpected query: '+sql);
   }};
 }
+
+
+test('862: settled boot schema initialization skips legacy O(items+lots) row locking',async()=>{
+  const items=Array.from({length:1000},(_,n)=>item(n+1,2));
+  const base=fixture({items,balances:items.map(row=>({inventory_id:row.id,quantity:'2'}))});
+  const pool={
+    async query(sql,args=[]){
+      if(sql.startsWith('CREATE TABLE IF NOT EXISTS inventory_storage_locations')){
+        base.calls.push({sql:'schema-setup',params:[]});
+        return{rows:[]};
+      }
+      if(sql.startsWith('SELECT DISTINCT business_id FROM inventory WHERE business_id IS NOT NULL')){
+        base.calls.push({sql:'list-businesses',params:[]});
+        return{rows:[{business_id:1}]};
+      }
+      return base.query(sql,args);
+    }
+  };
+  await ensureInventoryLocationSchema(pool);
+  assert.equal(base.calls.length,5);
+  assert.equal(base.calls.filter(x=>x.sql.startsWith('SELECT i.id,i.quantity,i.storage_location_label')).length,1);
+  assert.ok(base.calls.every(({sql})=>!sql.includes('FOR UPDATE')),
+    'no legacy row locks on settled 1000-item startup');
+});
+
+test('862: boot schema initialization retains locked repair when existing stock drifts',async()=>{
+  const base=fixture({items:[item(1,5)],balances:[{inventory_id:1,quantity:'4'}]});
+  const pool={
+    async query(sql,args=[]){
+      if(sql.startsWith('CREATE TABLE IF NOT EXISTS inventory_storage_locations'))return{rows:[]};
+      if(sql.startsWith('SELECT DISTINCT business_id FROM inventory WHERE business_id IS NOT NULL'))
+        return{rows:[{business_id:1}]};
+      return base.query(sql,args);
+    }
+  };
+  await assert.rejects(ensureInventoryLocationSchema(pool),/full_reconciliation_requested/);
+  assert.equal(base.calls.filter(x=>x.sql.startsWith('SELECT id FROM inventory WHERE business_id=$1 ORDER BY id')).length,1);
+});
 
 test('862: one thousand settled items require bounded bulk reads without row locks',async()=>{
   const items=Array.from({length:1000},(_,n)=>item(n+1,3));
