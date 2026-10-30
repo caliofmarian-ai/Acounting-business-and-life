@@ -15,6 +15,7 @@ const view=row=>({
   id:Number(row.id),business_id:Number(row.business_id),document_id:Number(row.purchase_document_id),
   status:row.status,version:Number(row.version),provider:row.provider,model:row.model,
   extraction:row.extraction_json,review:row.review_json,
+  external_processing_consent_recorded:Boolean(row.external_consent_at),
   stock_posted:false,payment_recorded:false,fiscal_validated:false,
   created_at:row.created_at,updated_at:row.updated_at
 });
@@ -35,6 +36,8 @@ export async function ensureReceiptIntelligenceSchema(pool){
       version INTEGER NOT NULL DEFAULT 1,
       created_by_account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
       reviewed_by_account_id BIGINT REFERENCES accounts(id) ON DELETE RESTRICT,
+      external_consent_at TIMESTAMPTZ,
+      external_consent_actor_account_id BIGINT REFERENCES accounts(id) ON DELETE RESTRICT,
       last_error_code TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -208,8 +211,9 @@ export function registerReceiptIntelligenceRoutes({app,pool,body,identity,analyz
       });
       const insert=await pool.query(`
         INSERT INTO receipt_intelligence_drafts(
-          business_id,purchase_document_id,source_sha256,provider,model,status,created_by_account_id
-        ) VALUES($1,$2,$3,'openai_vision',$4,'processing',$5)
+          business_id,purchase_document_id,source_sha256,provider,model,status,created_by_account_id,
+          external_consent_at,external_consent_actor_account_id
+        ) VALUES($1,$2,$3,'openai_vision',$4,'processing',$5,NOW(),$5)
         ON CONFLICT(purchase_document_id,source_sha256) DO NOTHING RETURNING *
       `,[businessId,receipt.id,source,cfg.model,actorId]);
       if(!insert.rowCount){
