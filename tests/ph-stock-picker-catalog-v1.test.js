@@ -74,6 +74,9 @@ test('Filipino/English aliases resolve to canonical options, never invent a new 
   assert.ok(search('sago').some(x=>x.name==='Sago pearls (dry)'));
   assert.ok(search('gulaman').some(x=>x.name==='Gulaman powder (agar)'));
   assert.ok(Object.keys(PH_STOCK_PICKER_ALIASES).length>=35);
+  const knownNames=new Set(all.map(item=>item.name));
+  assert.ok(Object.keys(PH_STOCK_PICKER_ALIASES).every(name=>knownNames.has(name)),
+    'Every alias must resolve to a real selectable ingredient');
   assert.deepEqual(search('this-item-does-not-exist'),[]);
   assert.deepEqual(search(''),[]);
 });
