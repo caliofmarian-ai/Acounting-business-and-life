@@ -9,6 +9,8 @@ import { readOrderDetail } from './orders-read-core.js';
 import {merchantCounterCatalog,merchantCounterSnapshots} from './merchant-counter-catalog-core.js';
 import {installMerchantVoiceOrderRoutes,ensureVoiceOrderUsageSchema} from './merchant-voice-order-routes.js';
 import {installMerchantVoiceOrderConfirmation} from './merchant-voice-order-confirm.js';
+import {installMerchantVoicePasskeyRoutes,ensureMerchantVoicePasskeySchema} from './merchant-voice-passkey-routes.js';
+import {passkeyConfig} from './merchant-voice-passkey-core.js';
 import {ensureVoiceOrderSubmissionSchema} from './merchant-voice-order-idempotency.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
@@ -249,6 +251,7 @@ async function initDb() {
   await ensureOrderStockReservationSchema(pool);
   if(process.env.ORDER_VOICE_UI_ENABLED==='1')await ensureVoiceOrderUsageSchema(pool);
   if(process.env.ORDER_VOICE_CREATE_ENABLED==='1')await ensureVoiceOrderSubmissionSchema(pool);
+  if(process.env.ORDER_VOICE_UI_ENABLED==='1'&&passkeyConfig().ready)await ensureMerchantVoicePasskeySchema(pool);
 }
 
 async function orderDetail(id,client=pool){return readOrderDetail(client,id)}
@@ -372,6 +375,10 @@ app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number
 const merchantVoiceSigningSecret=crypto.createHmac('sha256',process.env.ORDER_VOICE_SIGNING_SECRET||process.env.TOKEN_SECRET||crypto.randomBytes(32))
   .update('merchant-voice-orders-863').digest();
 let merchantVoiceConfirmation=null;
+const merchantVoicePasskey=installMerchantVoicePasskeyRoutes(app,{
+  db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,
+  tokenSecret:process.env.TOKEN_SECRET,bodyMiddleware:body
+});
 installMerchantVoiceOrderRoutes(app,{
   db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
   snapshotsForBusiness:({businessId,items})=>merchantCounterSnapshots(pool,{businessId,items}),
@@ -382,6 +389,7 @@ merchantVoiceConfirmation=installMerchantVoiceOrderConfirmation(app,{
   db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,tokenSecret:process.env.TOKEN_SECRET,
   canonicalSnapshots:(client,{businessId,items})=>merchantCounterSnapshots(client,{businessId,items}),
   createCanonicalOrder:createOrder,orderDetail,bodyMiddleware:body,
+  verifyDeviceApproval:merchantVoicePasskey.ready()?merchantVoicePasskey.verifyDeviceApproval:null,
   checkCreateVelocity:({accountId,businessId})=>enforceHighRiskVelocity(pool,{
     actorAccountId:accountId,actionCode:'order_create',subjectType:'business',subjectId:businessId
   })
