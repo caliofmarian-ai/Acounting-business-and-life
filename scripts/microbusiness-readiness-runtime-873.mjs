@@ -46,15 +46,48 @@ try{
   // Pools, not just the single-Pool WeakMap gate. All databases are disposable.
   const ciDbName='abl_readiness_lock_ci';
   const maintenance=new pg.Pool({database:'postgres',max:2});
-  let bootstrap=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
+  let bootstrap=null,recoveryPool=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
   let lockHeld=false,created=false,settledTasks=null;
   try{
     await maintenance.query('CREATE DATABASE '+ciDbName);
     created=true;
     bootstrap=new pg.Pool({database:ciDbName,max:1});
-    await bootstrap.query('CREATE TABLE accounts(id BIGINT PRIMARY KEY); CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    await bootstrap.query('CREATE TABLE accounts(id BIGINT PRIMARY KEY); CREATE VIEW businesses AS SELECT 1::bigint AS id');
     await bootstrap.end();
     bootstrap=null;
+
+    // Deliberately fail at the LAST schema step: a view named businesses
+    // cannot be the target of the FK in the DO block. Every earlier table,
+    // index and column change must roll back atomically in PostgreSQL, not
+    // leave a half-created schema that a later Merchant request could use.
+    recoveryPool=new pg.Pool({database:ciDbName,max:1});
+    let expectedLateFailure=false;
+    try{
+      await ensureMicrobusinessReadinessSchema(recoveryPool);
+    }catch(error){
+      if(error?.code!=='42809')throw error;
+      expectedLateFailure=true;
+    }
+    same(expectedLateFailure,true,'invalid FK target rejects the late DDL step');
+    const rolledBack=await recoveryPool.query(`SELECT
+      to_regclass('public.microbusiness_readiness') AS readiness,
+      to_regclass('public.microbusiness_readiness_events') AS events`);
+    same(rolledBack.rows[0].readiness,null,'late DDL failure rolls back readiness table and indexes');
+    same(rolledBack.rows[0].events,null,'late DDL failure rolls back events table and indexes');
+
+    // Reuse the exact same Pool to prove a rejected WeakMap promise is evicted
+    // and the corrected schema can be initialized without a process restart.
+    await recoveryPool.query('DROP VIEW businesses; CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    await ensureMicrobusinessReadinessSchema(recoveryPool);
+    const recovered=await recoveryPool.query(`SELECT count(*)::int AS fks
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+      AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(recovered.rows[0].fks),1,'same-Pool retry creates the proper FK after failure');
+    await recoveryPool.query('DROP TABLE microbusiness_readiness_events; DROP TABLE microbusiness_readiness');
+    await recoveryPool.end();
+    recoveryPool=null;
+
+    // Now verify a genuinely COLD initialization in two separate Pools.
     lockPool=new pg.Pool({database:ciDbName,max:1});
     poolA=new pg.Pool({database:ciDbName,max:1});
     poolB=new pg.Pool({database:ciDbName,max:1});
@@ -101,7 +134,7 @@ try{
     if(lockHeld&&lockClient)await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)').catch(()=>{});
     if(settledTasks)await settledTasks;
     lockClient?.release();
-    await Promise.all([bootstrap?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
+    await Promise.all([bootstrap?.end(),recoveryPool?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
     // A normal DROP, never WITH FORCE: a leaked connection must fail loudly,
     // rather than emit an unhandled 57P01 and hide the original assertion.
     if(created)await maintenance.query('DROP DATABASE IF EXISTS '+ciDbName);
