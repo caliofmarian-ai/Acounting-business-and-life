@@ -57,7 +57,7 @@ export function validateStaffOrderAttribution(input={}){
  * the recorded human who confirmed this particular order.
  */
 export async function recordStaffOrderAttribution(client,input,{now=new Date()}={}){
-  if(!client||typeof client.query!=='function'||typeof client.connect==='function')
+  if(!client||typeof client.query!=='function'||typeof client.release!=='function')
     throw error('STAFF_ATTRIBUTION_TX_REQUIRED','Use the existing Orders transaction to record the operator.',500);
   const x=validateStaffOrderAttribution(input);
   const q=await client.query(`SELECT o.id order_id, o.business_id,

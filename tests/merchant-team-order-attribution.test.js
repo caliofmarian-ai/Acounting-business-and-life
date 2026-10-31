@@ -17,7 +17,7 @@ const row={order_id:5,business_id:7,session_id:order.terminalSessionId,
 const now=new Date('2026-10-31T07:00:00Z');
 function db({actor=row,existing=null,duplicate=false}={}){
   let calls=[];
-  return{calls,async query(sql,args=[]){calls.push({sql,args});
+  return{calls,release(){},async query(sql,args=[]){calls.push({sql,args});
     if(sql.includes('SELECT o.id order_id'))return{rowCount:actor?1:0,rows:actor?[actor]:[]};
     if(sql.includes('INSERT INTO merchant_team_order_attribution'))return{rowCount:duplicate?0:1,rows:duplicate?[]:[{order_id:5}]};
     if(sql.includes('FROM merchant_team_order_attribution WHERE'))return{rowCount:existing?1:0,rows:existing?[existing]:[]};
