@@ -1,0 +1,79 @@
+name: Merchant Team operator-only HTTP runtime #863
+
+on:
+  pull_request:
+    paths:
+      - 'merchant-team-*.js'
+      - 'server-orders.js'
+      - 'public/merchant-operator*'
+      - 'public/merchant-team-ui.js'
+      - 'scripts/qa-merchant-team-terminal-http.js'
+      - '.github/workflows/merchant-team-terminal-http-863.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terminal-auth-runtime:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_terminal_http_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_terminal_http_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      STAFF_TERMINAL_HTTP_CI: '1'
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/abl_terminal_http_ci
+      TOKEN_SECRET: ci-main-account-token-secret-only-for-terminal-http
+      MERCHANT_TEAM_ENABLED: '1'
+      MERCHANT_TEAM_TERMINAL_ENABLED: '1'
+      MERCHANT_TEAM_SECRET: ci-merchant-team-private-secret-for-operator-http
+      MERCHANT_TEAM_PIN_PEPPER: ci-merchant-team-pin-pepper-only-for-operator-http
+      ORDER_VOICE_AI_ENABLED: '0'
+      ORDER_VOICE_UI_ENABLED: '0'
+      ORDER_VOICE_CREATE_ENABLED: '0'
+      NODE_ENV: test
+      RAILWAY_SERVICE_NAME: accounting-terminal-ci
+      PAYMONGO_MODE: sandbox
+      PAYMONGO_LIVE_ENABLED: 'false'
+      PORT: '3000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --global npm@10.8.2
+      - run: npm ci
+      - name: Start real application on disposable PostgreSQL
+        run: |
+          npm start > /tmp/abl-terminal-http.log 2>&1 &
+          echo $! > /tmp/abl-terminal-http.pid
+      - name: Wait for application health
+        run: |
+          for i in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:3000/health > /tmp/abl-terminal-health.json; then
+              cat /tmp/abl-terminal-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          tail -n 60 /tmp/abl-terminal-http.log
+          exit 1
+      - name: Real HTTP owner-to-worker restricted access smoke
+        run: node scripts/qa-merchant-team-terminal-http.js
+      - name: Stop application
+        if: always()
+        run: |
+          if [ -f /tmp/abl-terminal-http.pid ]; then
+            kill "$(cat /tmp/abl-terminal-http.pid)" 2>/dev/null || true
+          fi
