@@ -493,7 +493,12 @@ export function ensureMicrobusinessReadinessSchema(pool){
   const existing=readinessSchemaByPool.get(pool);
   if(existing)return existing;
   const pending=(async()=>{
+  // One implicit PostgreSQL transaction: advisory lock, all DDL and the FK
+  // guard are one simple-query message. This serializes *different* Node Pools
+  // and replicas as well as this process's WeakMap single-flight. A failure
+  // rolls the entire schema batch back without leaving an open transaction.
   await pool.query(`
+    SELECT pg_advisory_xact_lock(87320261031::bigint);
     CREATE TABLE IF NOT EXISTS microbusiness_readiness (
       id BIGSERIAL PRIMARY KEY,
       account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -544,20 +549,23 @@ export function ensureMicrobusinessReadinessSchema(pool){
     );
     CREATE INDEX IF NOT EXISTS microbusiness_readiness_events_subject_idx
       ON microbusiness_readiness_events(account_id,created_at DESC);
-  `);
 
-  const businessTable=await pool.query("SELECT to_regclass('public.businesses') AS table_name");
-  if(businessTable.rows[0]?.table_name){
-    const fk=await pool.query(
-      "SELECT 1 FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk' LIMIT 1"
-    );
-    if(!fk.rowCount){
-      await pool.query(
-        "ALTER TABLE microbusiness_readiness ADD CONSTRAINT microbusiness_readiness_business_fk "+
-        "FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE"
-      );
-    }
-  }
+    DO $readiness_fk$
+    BEGIN
+      IF to_regclass('public.businesses') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname='microbusiness_readiness_business_fk'
+            AND conrelid='microbusiness_readiness'::regclass
+        )
+      THEN
+        ALTER TABLE microbusiness_readiness
+          ADD CONSTRAINT microbusiness_readiness_business_fk
+          FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE;
+      END IF;
+    END
+    $readiness_fk$;
+  `);
   })();
   readinessSchemaByPool.set(pool,pending);
   // An unsuccessful migration must never poison future requests. The failed

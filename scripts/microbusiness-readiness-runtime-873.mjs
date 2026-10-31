@@ -41,6 +41,52 @@ try{
   const table=await pool.query("SELECT to_regclass('public.microbusiness_readiness') IS NOT NULL AS exists");
   same(table.rows[0].exists,true,'readiness schema exists in PostgreSQL');
 
+
+  // Cold schema exercise in a SECOND disposable database. Two distinct Pool
+  // objects mean WeakMap single-flight cannot serialize these calls; the SQL
+  // advisory xact lock must do it across genuine PostgreSQL connections.
+  const maintenance=new pg.Pool({database:'postgres',max:2});
+  let isolated=null,lockClient=null,lockHeld=false;
+  try{
+    await maintenance.query('CREATE DATABASE abl_readiness_lock_ci');
+    isolated=new pg.Pool({database:'abl_readiness_lock_ci',max:6});
+    await isolated.query('CREATE TABLE accounts(id BIGINT PRIMARY KEY); CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    lockClient=await isolated.connect();
+    await lockClient.query('SELECT pg_advisory_lock(87320261031::bigint)');
+    lockHeld=true;
+    const wrappers=Array.from({length:2},()=>({query(sql){return isolated.query(sql)}}));
+    const concurrent=wrappers.map(wrapper=>ensureMicrobusinessReadinessSchema(wrapper));
+    let waiting=0;
+    for(let attempt=0;attempt<100;attempt++){
+      const probe=await isolated.query(`SELECT count(*)::int AS waiting
+        FROM pg_stat_activity
+        WHERE datname='abl_readiness_lock_ci'
+          AND wait_event_type='Lock' AND wait_event='advisory'
+          AND query LIKE '%pg_advisory_xact_lock%'`);
+      waiting=Number(probe.rows[0].waiting);
+      if(waiting===2)break;
+      await new Promise(resolve=>setTimeout(resolve,30));
+    }
+    same(waiting,2,'independent Pool DDL callers both await the same real database advisory lock');
+    await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)');
+    lockHeld=false;
+    await Promise.all(concurrent);
+    const readiness=await isolated.query("SELECT to_regclass('public.microbusiness_readiness') IS NOT NULL AS available");
+    same(readiness.rows[0].available,true,'concurrent initializers create readiness table exactly once');
+    const fk=await isolated.query(`SELECT COUNT(*)::int AS count FROM pg_constraint
+      WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(fk.rows[0].count),1,'two independent Pools preserve one real FK constraint');
+    const isolatedDeadlocks=await isolated.query("SELECT deadlocks FROM pg_stat_database WHERE datname='abl_readiness_lock_ci'");
+    same(Number(isolatedDeadlocks.rows[0].deadlocks),0,'concurrent cold schema setup has zero deadlocks');
+  }finally{
+    if(lockHeld)await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)').catch(()=>{});
+    lockClient?.release();
+    await isolated?.end();
+    await maintenance.query('DROP DATABASE IF EXISTS abl_readiness_lock_ci WITH (FORCE)').catch(()=>{});
+    await maintenance.end();
+  }
+
   // Account 1/business 1 exist only in bootstrap CI fixture; never real users.
   const acc=await pool.query('SELECT email_verified_at FROM accounts WHERE id=1');
   same(acc.rowCount,1,'synthetic seeded account required');

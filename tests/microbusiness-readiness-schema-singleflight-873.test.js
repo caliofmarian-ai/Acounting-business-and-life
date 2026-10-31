@@ -33,9 +33,11 @@ test('12 concurrent callers share one schema DDL task and success is reused',asy
   assert.equal(pool.statements.length,1,'DDL begins exactly once while in flight');
   release();
   await Promise.all(attempts);
-  assert.equal(pool.statements.length,2,'one DDL plus one FK-schema lookup');
+  assert.equal(pool.statements.length,1,'one atomic, transaction-scoped DDL and FK batch');
+  assert.match(pool.statements[0],/pg_advisory_xact_lock\(87320261031::bigint\)/,'shared database-session lock in the DDL batch');
+  assert.match(pool.statements[0],/DO \$readiness_fk\$/,'FK guard is inside the same locked transaction');
   await ensureMicrobusinessReadinessSchema(pool);
-  assert.equal(pool.statements.length,2,'successful initialization is not repeated on every GET');
+  assert.equal(pool.statements.length,1,'successful initialization is not repeated on every GET');
 });
 
 test('failed schema initialization retries on the next call without caching a rejection',async()=>{
@@ -45,13 +47,13 @@ test('failed schema initialization retries on the next call without caching a re
   const attempts=pool.statements.filter(sql=>sql.includes('CREATE TABLE IF NOT EXISTS microbusiness_readiness ('));
   assert.equal(attempts.length,2,'failed provisioning is retried, not silently accepted');
   await ensureMicrobusinessReadinessSchema(pool);
-  assert.equal(pool.statements.length,3,'successful retry remains cached');
+  assert.equal(pool.statements.length,2,'successful retry remains cached');
 });
 
 test('unrelated Pools have independent schema initialization and no shared readiness state',async()=>{
   const a=fakePool(),b=fakePool();
   await Promise.all([ensureMicrobusinessReadinessSchema(a),ensureMicrobusinessReadinessSchema(b)]);
-  assert.equal(a.statements.length,2);
-  assert.equal(b.statements.length,2);
+  assert.equal(a.statements.length,1);
+  assert.equal(b.statements.length,1);
   assert.notEqual(ensureMicrobusinessReadinessSchema(a),ensureMicrobusinessReadinessSchema(b));
 });
