@@ -345,6 +345,7 @@ function invalidateMerchantReads(){
   for(const id of ['budgetPersonalDaily','budgetPersonalWeekly','budgetBusinessDaily','budgetMinimum']){if($(id))$(id).value=''}
   inventoryLocationUi.reset();inventoryCountUi?.reset();inventoryScanUi.reset();
   inventoryReadState('idle');
+  resetStockTools();
 }
 function reconcileMerchantReads(){
   const next=merchantReadContext(),previous=merchantReadLastContext;
@@ -619,7 +620,7 @@ async function loadMerchantView(name){
     document.dispatchEvent(new CustomEvent('abl:merchant-money-opened'));
     return Promise.all([loadDay(),loadRemittances(),loadAnalysis(7),loadAnalysis(30)]);
   }
-  if(name==='Stock')return loadStock();
+  if(name==='Stock')return; // #875: each Stock tool fetches only when explicitly expanded.
   if(name==='Sell')return Promise.all([loadStock(),loadProducts()]);
   if(name==='Menu')return Promise.all([loadStock(),loadProducts(),loadProductSales(),loadProfitability(7),loadProfitability(30)]);
   if(name==='History')return loadTransactions();
@@ -957,6 +958,10 @@ function wireInventoryUnavailableUi(){
 }
 let inventoryLoadGeneration=0;
 let inventoryConfirmedContext=null;
+// #875: Stock tools form one on-demand menu. Keep selected business binding and
+// inventoryReadState's server-side write guards; no tool preloads on navigation.
+let stockToolActive=null;
+let stockToolTask=null;
 const inventoryHiddenSections=new WeakMap();
 function inventoryReadState(state,{savedAt=null,error=null}={}){
   const view=$('viewStock');if(!view)return;
@@ -973,21 +978,38 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
     view.appendChild(content);
   }
   const ready=state==='ready',cached=state==='cached',preview=state==='partial';
+  const toolMenu=Boolean(view.querySelector('.stockToolDeck'));
   // A disabled fieldset preserves each widget's own disabled/capability decisions.
   content.disabled=!ready;
   inventoryConfirmedContext=ready?merchantReadContext():null;
   status.setAttribute('role',state==='error'?'alert':'status');
   status.replaceChildren();
   const copy=document.createElement('p');
-  copy.textContent=ready?'Inventory confirmed just now.':cached
+  copy.textContent=toolMenu&&state==='idle'?'Select a Stock tool to load it.':ready?'Inventory confirmed just now.':cached
     ?'Connection unavailable. Showing last confirmed Inventory from '+new Date(savedAt).toLocaleString('en-PH',{timeZone:'Asia/Manila'})+' (Philippine time). Stock changes are disabled.'
     :state==='error'?'Inventory could not be loaded. '+(error?.message||'Try again.')
     :state==='partial'?'Inventory items loaded. Checking storage locations, lots and stock controls…':state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
   status.appendChild(copy);
-  if(state==='error'||state==='idle'||cached){const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent=state==='idle'?'Load Inventory':'Retry';retry.onclick=()=>loadStock();status.appendChild(retry)}
+  if(toolMenu){
+    // No second 'Load Inventory' button: each summary is the load action.
+    if(state==='error'&&stockToolActive){
+      const retry=document.createElement('button');retry.type='button';retry.className='secondary';
+      retry.textContent='Retry this tool';retry.onclick=()=>openStockTool(stockToolActive,{force:true});
+      status.appendChild(retry);
+    }
+  }else if(state==='error'||state==='idle'||cached){
+    const retry=document.createElement('button');retry.type='button';retry.className='secondary';
+    retry.textContent=state==='idle'?'Load Inventory':'Retry';retry.onclick=()=>loadStock();
+    status.appendChild(retry);
+  }
   view.setAttribute('aria-busy',String(state==='loading'||preview));
   const stockCard=$('stockList')?.closest('.card');
   for(const child of content.children){
+    if(toolMenu&&child.classList.contains('stockToolDeck')){
+      // Never hide the menu while private data fetches are blocked/working.
+      // A closed <details> keeps the previous tool content inaccessible.
+      child.hidden=false;child.classList.remove('hidden');continue;
+    }
     if(!inventoryHiddenSections.has(child))inventoryHiddenSections.set(child,child.hidden||child.classList.contains('hidden'));
     child.hidden=ready?inventoryHiddenSections.get(child):(cached||preview)?child!==stockCard:true;
     child.classList.toggle('hidden',child.hidden);
@@ -996,7 +1018,7 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
 }
 function inventoryReadApi(path,options={}){return api(path,options,['GET','HEAD'].includes(String(options.method||'GET').toUpperCase())?{isCurrent:inventoryReadGuard()}:{})}
 function inventoryReadGuard(){const current=merchantReadGuard(),generation=inventoryLoadGeneration;return()=>generation===inventoryLoadGeneration&&current()}
-async function loadStock(){
+async function loadStock({tool=null}={}){
   let context;
   try{context=captureMerchantRead()}catch(error){inventoryReadState('error',{error});return}
   const generation=++inventoryLoadGeneration;
@@ -1004,7 +1026,8 @@ async function loadStock(){
   inventoryReadState('loading');
   // Begin the independent, read-only Storage GET immediately; its UI render waits
   // until Inventory items and the originating Merchant business are verified.
-  const prefetchedStorage=typeof inventoryLocationUi.prefetch==='function'
+  const usesLocations=!tool||tool==='locations'||tool==='count'||tool==='purchase';
+  const prefetchedStorage=usesLocations&&typeof inventoryLocationUi.prefetch==='function'
     ?inventoryLocationUi.prefetch():null;
   try{
     let cachedAt=null;
@@ -1016,29 +1039,102 @@ async function loadStock(){
     if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.available_quantity??i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
     if(cachedAt!==null){inventoryReadState('cached',{savedAt:cachedAt});return inventory}
     inventoryReadState('partial'); // The verified list can be read before advanced stock controls are enabled.
-    fillIngredientSelect();
-    fillConsumableRuleInventory();fillStockAdjustmentInventory();fillStorageEditor();fillRestockSettingsEditor();fillInventoryUnavailableEditor();
-    inventoryScanUi.syncInventory();
-    const count=inventoryLocationUi.load({isCurrent,prefetched:prefetchedStorage}).then(result=>{
-      if(!isCurrent())return;
-      if(result?.readError)return result;
-      inventoryCountUi.syncScopeOptions();
-      return inventoryCountUi.load();
-    });
-    const details=await Promise.all([fillIngredientAllergenEditor(isCurrent),count,loadRestockSuggestions(isCurrent),loadConsumableRules(isCurrent),loadStockAdjustments(isCurrent),loadInventoryLots(isCurrent),loadWasteAnalytics(wasteAnalyticsDays,isCurrent)]);
-    if(details.some(result=>result?.readError))throw new Error('Some Inventory details could not be verified. Try again.');
-    if(!isCurrent())return;
-    if(selectedPositiveInventoryId($('inventoryUnavailableItem'))!=null)await loadInventoryUnavailableAllocations(isCurrent);
-    else{
-      const list=$('inventoryUnavailableList'),message=$('inventoryUnavailableMessage');
-      if(list)list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
-      if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
+    // Existing complete refresh remains for sell/menu/write paths. In the Stock
+    // accordion, initialize only this opened tool and its minimum prerequisites.
+    if(!tool||tool==='purchase')fillIngredientSelect();
+    if(!tool||tool==='consumables')fillConsumableRuleInventory();
+    if(!tool||tool==='adjustments')fillStockAdjustmentInventory();
+    if(!tool||tool==='storage')fillStorageEditor();
+    if(!tool||tool==='restockSettings')fillRestockSettingsEditor();
+    if(!tool||tool==='unavailable')fillInventoryUnavailableEditor();
+    if(!tool||tool==='scanner')inventoryScanUi.syncInventory();
+    const jobs=[];
+    if(usesLocations){
+      const locations=inventoryLocationUi.load({isCurrent,prefetched:prefetchedStorage});
+      jobs.push(tool==='count'||!tool?locations.then(result=>{
+        if(!isCurrent()||result?.readError)return result;
+        inventoryCountUi.syncScopeOptions();
+        return inventoryCountUi.load();
+      }):locations);
     }
-    if(isCurrent())inventoryReadState('ready');
+    if(!tool||tool==='allergens')jobs.push(fillIngredientAllergenEditor(isCurrent));
+    if(!tool||tool==='restock')jobs.push(loadRestockSuggestions(isCurrent));
+    if(!tool||tool==='consumables')jobs.push(loadConsumableRules(isCurrent));
+    if(!tool||tool==='adjustments')jobs.push(loadStockAdjustments(isCurrent));
+    if(!tool||tool==='lots')jobs.push(loadInventoryLots(isCurrent));
+    if(!tool||tool==='wasteAnalytics')jobs.push(loadWasteAnalytics(wasteAnalyticsDays,isCurrent));
+    const details=await Promise.all(jobs);
+    if(details.some(result=>result?.readError))throw new Error('This Stock tool could not be verified. Try opening it again.');
+    if(!isCurrent())return;
+    if(!tool||tool==='unavailable'){
+      if(selectedPositiveInventoryId($('inventoryUnavailableItem'))!=null)await loadInventoryUnavailableAllocations(isCurrent);
+      else{
+        const list=$('inventoryUnavailableList'),message=$('inventoryUnavailableMessage');
+        if(list)list.replaceChildren(emptyRow('Choose an Inventory item to review unavailable stock.'));
+        if(message&&/invalid inventory item|could not be loaded/i.test(message.textContent||''))message.textContent='';
+      }
+    }
+    if(isCurrent()){
+      inventoryReadState('ready');
+      if(tool){
+        const panel=$('stockTool-'+tool);
+        if(panel&&panel.open&&stockToolActive===tool){
+          panel.dataset.stockLoading='false';panel.dataset.stockLoaded='true';panel.dataset.stockError='false';
+        }
+      }
+    }
     return inventory;
   }catch(error){
     if(!isCurrent())return;
-    if(!error.staleMerchantRead){inventory=[];inventoryReadState('error',{error})}
+    if(!error.staleMerchantRead){
+      inventory=[];inventoryReadState('error',{error});
+      if(tool){
+        const panel=$('stockTool-'+tool);
+        if(panel&&panel.open&&stockToolActive===tool){
+          panel.dataset.stockLoading='false';panel.dataset.stockLoaded='false';panel.dataset.stockError='true';
+        }
+      }
+    }
+  }
+}
+
+// One expanded instrument at a time. Never reuse a previous business's
+// readiness after a switch, or silently trigger all Stock GETs on navigation.
+function resetStockTools(){
+  stockToolActive=null;stockToolTask=null;
+  for(const detail of $('stockToolDeck')?.querySelectorAll('.stockTool')||[]){
+    detail.open=false;
+    detail.dataset.stockLoading='false';detail.dataset.stockLoaded='false';detail.dataset.stockError='false';
+  }
+}
+function openStockTool(name,{force=false}={}){
+  const detail=$('stockTool-'+name);if(!detail||!isMerchantBaseActive())return Promise.resolve();
+  if(!force&&stockToolActive===name&&stockToolTask)return stockToolTask;
+  for(const other of $('stockToolDeck')?.querySelectorAll('.stockTool')||[]){
+    if(other!==detail){
+      other.open=false;other.dataset.stockLoading='false';
+      other.dataset.stockLoaded='false';other.dataset.stockError='false';
+    }
+  }
+  detail.open=true;stockToolActive=name;
+  detail.dataset.stockLoading='true';detail.dataset.stockLoaded='false';detail.dataset.stockError='false';
+  const task=loadStock({tool:name});
+  stockToolTask=task;
+  task.finally(()=>{if(stockToolTask===task)stockToolTask=null}).catch(()=>{});
+  return task;
+}
+function initStockTools(){
+  const deck=$('stockToolDeck');if(!deck)return;
+  for(const detail of deck.querySelectorAll('.stockTool')){
+    detail.querySelector('summary')?.addEventListener('click',event=>{
+      event.preventDefault(); // native keyboard activation also dispatches click
+      if(detail.open){
+        detail.open=false;detail.dataset.stockLoading='false';detail.dataset.stockLoaded='false';
+        detail.dataset.stockError='false';stockToolActive=null;stockToolTask=null;
+        inventoryLoadGeneration++;inventoryConfirmedContext=null;
+        inventoryReadState('idle'); // Keep all edits locked while no tool is selected.
+      }else openStockTool(detail.dataset.stockTool).catch(error=>console.error(error));
+    });
   }
 }
 
@@ -1598,6 +1694,7 @@ $('editCancel').onclick=()=>$('editDialog').close();$('editForm').addEventListen
 
 function setView(name){
   const view=$(`view${name}`);if(!view)return;
+  if(name==='Stock')resetStockTools();
   document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));
   view.classList.remove('hidden');
   document.querySelectorAll('.bottomNav button').forEach(b=>{const current=b.dataset.view===name;b.classList.toggle('active',current);if(current)b.setAttribute?.('aria-current','page');else b.removeAttribute?.('aria-current')});
@@ -1609,7 +1706,8 @@ function setView(name){
 async function openInventoryNotificationContext({inventoryId=null,lotId=null}={}){
   if(!isMerchantBaseActive())throw new Error('Open the Merchant profile to view this Inventory alert.');
   setView('Stock');
-  await loadStock();
+  if($('stockToolDeck'))await openStockTool(lotId?'lots':'inventory');
+  else await loadStock();
   const selector=lotId?`[data-lot-id="${Number(lotId)}"]`:inventoryId?`[data-inventory-id="${Number(inventoryId)}"]`:null;
   const node=selector?document.querySelector(selector):$('viewStock');
   if(node){
@@ -1683,6 +1781,7 @@ document.addEventListener('abl:auth-expired',()=>{invalidateMerchantReads();clea
 setOnline(navigator.onLine);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 initStockPicker();
+initStockTools();
 wireInventoryDomainFilters();
 wireInventoryUnavailableUi();
 inventoryReadState('idle');
