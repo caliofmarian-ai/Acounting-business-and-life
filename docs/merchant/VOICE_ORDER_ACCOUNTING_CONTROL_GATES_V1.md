@@ -1,64 +1,54 @@
-# Merchant Voice AI — accounting and operator safety gates
+# Merchant Voice AI — operator identity and accounting safety
 
-Status: IMPLEMENTATION V1D / passkey-backed, gated source code in Draft PR #870 only; NOT YET in Preview or Production. Refs #863, #814, #860.
+Status: **V1F source implementation in Draft PR #870, NOT in Preview or Production.** Issue #863; related Orders #814/#852 and Inventory #841. Owner acceptance only on `https://caliof.com` after deployment and independent QA.
 
-## Non-negotiable boundaries
-1. Voice/LLM may only interpret instructions and prepare an editable Merchant order DRAFT. It has no direct capability to write transactions, record received payments, mark an order paid, modify stock, change product prices, issue refunds or generate legally valid invoices.
-2. Use the authenticated operator's current account, device session and EXACT Merchant business. Microphone activation must be deliberate (prefer close-talk headset plus push-to-talk). VAD and speech recognition do not establish speaker identity. Unknown, overlapping or background speech must fail closed; no false guarantee of identifying a voice is permitted.
-3. NIST SP 800-63B-4 disallows voice biometric comparison as an authenticator. A one-time spoken phrase confirms INTENT, not IDENTITY. Actions that can create orders or financial obligations need independent server-validated, device-held authentication (e.g. WebAuthn/passkey step-up), in addition to the active session and spoken confirmation.
-4. The server rebuilds and verifies the Catalog selection, variants, quantities, availability and PHP amounts in INTEGER centavos. AI-estimated prices and speech transcripts are not trusted for any final amount. Any change to the products, total, operator, session, Merchant business or quoted price invalidates the confirmation and requires a new readback.
-5. Before creating an order, assistant reads back named customer, every product/variant, quantities, pickup/delivery, amount, and payment method; states that no money has been received. Issue a short-lived, unpredictable, one-time phrase tied to a hash of the full order and server quote; lock after limited bad attempts.
-6. The write side must atomically consume its server-owned approval record and enforce a UNIQUE idempotency key with result persistence before calling the canonical Orders engine; all retries return the same order, not a second one. Never accept a pending challenge object or device-trust boolean from the AI or browser as proof.
-7. The existing POST /api/orders/merchant/create path currently has no demonstrated server-enforced idempotency request key. This is a HARD PRODUCTION RELEASE BLOCKER for voice order submission. Keep the new helper non-writing until coordinated backend hardening and isolated PostgreSQL concurrency QA.
-8. Creating an order can create an UNPAID receivable and stock reservation, but never constitutes payment. Confirmed money comes only from verified payment sources and explicit independently authorized payment recording. Do not allow voice to record sales proceeds, account transfers, VAT claims, refunds or closing balances.
+## Canonical business model
 
-## Periodic accounting integrity
-Daily reports must come from canonical Orders, payment, cancellation/refund, stock and ledger records, never AI transcripts or model-written summaries. Every confirmed order needs an auditable actor, business, idempotency key, immutable source event and linkage to its actual order number. Corrections use reversing/audited events, not deletion. Weekly, monthly and yearly totals must reconcile to the underlying immutable daily/source transactions. Any difference goes to a human exception queue: AI cannot silently auto-fix it.
+- One existing Business & Life account can own **one Merchant profile and one business**, with many human operators inside that business. Staff operators are **not** new top-level platform accounts, Merchant profiles, companies, or separate financial ledgers.
+- Staff are business-scoped subidentities in `merchant_team_operators`. An operator may be active, temporary with an expiry, or immediately disabled by the owner. Each action must identify the actual operator, not simply the owner account.
+- An operator's PIN is a shift credential, **not** a login to the owner's main account. No owner password, account bearer, or broad financial role may be shared with staff.
+- Roles `manager`, `order_operator`, `temporary` currently allow read-only Orders and voice drafts; `stock_helper` currently has read-only stock scope. No staff scope permits Money, payments, refunds, financial transfers, account settings, or staff management.
 
-## Release tests
-- Real Android: operator vs customers speaking, multiple/similar voices, artificial/recorded voices, TV, overlap, microphone revoked, silence and noisy environments.
-- English PH and Filipino numeric/product names: uncertainty asks a question, never invents a product/amount.
-- Verified one-time phrase, server-bound account/session/business, device step-up, expired/replayed/guessed phrase, corrected draft and stale quoted price.
-- Parallel duplicate confirmations, retry/refresh, crash/recovery, cross-business switch and 403/401 fail-closed, using isolated PostgreSQL and genuine browser actions.
-- Zero unapproved Orders, payments, ledger rows or stock writes in the tested adversarial corpus. Reconcile every accepted source ID and all period totals before production acceptance.
+## Separate worker terminal — V1F
 
-## Implementati## Implementation state — 30 October 2026 (V1D)
+The original in-account shift picker had a security flaw: while the owner's main login cookie remained valid, hiding Money controls did not prevent access to privileged owner APIs. **Do not launch staff operations in the primary logged-in Merchant shell.**
 
-**Canonical scope:** Existing Draft [PR #870](https://github.com/caliofmarian-ai/Acounting-business-and-life/pull/870), issue #863. Not in canonical `main`, not live at `https://caliof.com`, and not accepted through a real authenticated Merchant Preview session.
+New V1F operator access is separate and explicitly gated:
 
-### Implemented (feature flags OFF unless deliberately set)
+1. Authenticated, recently password-verified business **owner** issues a **one-time, 10-minute** pairing code. The code is randomly generated and only its HMAC digest is stored. The private link uses a URL `#fragment` so the code does not appear in request URL logs.
+2. The worker opens `/operator` on a separate phone/browser context, or signs the owner completely out of a shared browser. The staff API **rejects any request that still carries the owner's `__Host-abl_session` cookie**. The link alone is not enough: the worker selects their own authorized name and supplies their individual PIN.
+3. PostgreSQL validates the code, exact business/owner membership and enabled Merchant profile, active operator and PIN. Wrong PIN increments a durable counter; after repeated attempts the link is unusable. Successful sign-in consumes the pairing code and issues a separate `__Host-abl_operator` **Secure, HttpOnly, SameSite=Strict** session, expiring no later than eight hours or the operator assignment expiry.
+4. The staff terminal has only `/api/orders/operator/*` routes for a scoped operator session, live catalog, limited order status and AI non-posting draft/quote; mutating staff routes require session-specific CSRF. It does not mount the ordinary Business & Life account UI and cannot call its privileged Merchant Money endpoints as the owner.
+5. Server-side operator disablement, business/owner suspension and expiry invalidate future worker API access immediately. Switching workers creates a different session/voice draft binding. Each shift and step remains attributable to a business and person.
+6. The staff catalog projection omits **unit costs, Inventory internal identifiers, supplier terms and sensitive financial information**, while retaining the sellable products/options needed for drafting.
 
-- **Voice / text draft:** multi-turn, English PH/Filipino, current same-business Catalog products/variants/modifiers, ambiguous name clarification and strict max quantities. No model authority for order/payment/stock writes; OpenAI Responses uses `store:false` and per-user/business request quotas.
-- **Android UX:** tap-to-speak, explicit speech processing consent, editable recognized text, readback, server-priced quote, password step-up, native WebAuthn `navigator.credentials.create/get`, human-typed one-time phrase and explicit confirm. Android emulation with mocked APIs is NOT physical device/browser-microphone proof.
-- **Authoritative quote:** two-minute HMAC of Merchant business, operator, active session, products, variants, modifiers, customer and PHP centavo amounts. Server re-prices every line in the canonical transaction.
-- **WebAuthn ES256:** server checks HTTPS exact Origin, RP ID hash, cryptographic challenge, user presence (UP), user verification (UV), valid registered P-256 signature and monotonic counters where available. Registration accepts only `fmt:none` with strict COSE validation, so the server **does not certify authenticator hardware provenance**. Synced passkeys may be backed up across devices.
-- **Device approval:** short-lived (90 second) random challenge and a manually typed random phrase tied in PostgreSQL to account/session/business/quote hash/request key. The device signature and one-time phrase are checked and consumed **inside the same PostgreSQL transaction** as the idempotency claim, canonical Orders/stock reservation and committed order ID. Duplicate request keys replay the original order result without creating another transaction.
-- **Operator check:** fresh V2-session password step-up `FOR SHARE` resists concurrent session revocation. It is **in addition to**, not a substitute for, the passkey.
-- **Manual Orders continuity:** ordinary Merchant creates use the existing own transaction; voice confirmation uses the same client under its protective outer transaction. High-risk `order_create` velocity rules apply to a new voice claim, not an idempotent replay.
-- **Financial correctness:** only pickup/cash, `unpaid` and presence not confirmed. No cash receipt, payment, direct Inventory adjustment, fee settlement, fiscal invoice, or autonomous money movement. Canonical Orders remains the one authority.
+The original owner-cookie-backed worker-shift endpoints are **blocked** whenever the dedicated terminal is enabled. Owner management remains available through the existing Merchant profile.
 
-### Explicit release flags
+## AI and order-writing authority
 
-Enabling voice UI/AI/order submission alone must not be enough. No credential or secret values should be committed:
+- AI listens only after explicit consent and an operator-activated microphone or edited text. Speech recognition is **not** identity verification. The model may suggest a draft only; exact-business Catalog IDs/variants/modifiers/quantities and current prices are verified by the server.
+- A server-generated HMAC quote lasts two minutes and binds the business, operator session, customer, lines and integer PHP centavos. Neither AI nor client can supply an authoritative price or payment state.
+- The **staff terminal deliberately has no order-posting, payment, refund, stock mutation or account-impersonation endpoint** in V1F. `creates_orders=false` is returned for worker drafts/quotes. The outstanding release-critical work is **per-operator device-held passkey/approval, independent server authorization and atomic canonical Order-to-operator attribution**; an owner-level passkey cannot silently approve an employee's sale.
+- The existing account-level experimental confirmation code remains off by default when Team mode is enabled. It uses the canonical Orders engine, same PostgreSQL transaction and idempotency key, but **is not authority for staff orders**.
+- A confirmed pickup/cash order is **UNPAID**; order creation does not prove payment. Only verified payment/receipt workflows may mark money received or change ledgers. Daily, weekly, monthly and annual reports always derive from canonical Orders, Inventory and payment records, not AI text.
 
-- `ORDER_VOICE_UI_ENABLED=1` — show experimental Merchant companion
-- `ORDER_VOICE_AI_ENABLED=1`, `ORDER_VOICE_AI_MODEL` and `OPENAI_API_KEY` — consent-gated model interpretation
-- `ORDER_VOICE_WEBAUTHN_ENABLED=1`, `ORDER_VOICE_WEBAUTHN_RP_ID`, `ORDER_VOICE_WEBAUTHN_ORIGIN` — server verifier is live only for an exact HTTPS origin and matching RP ID (no untrusted Host-derived defaults)
-- `ORDER_VOICE_PASSKEY_ENROLLMENT_ENABLED=1` — **separate**, temporary first-passkey enrolment authorisation; requires active account, verified email and recent password step-up. Once a passkey exists, another cannot be registered using password alone; recovery requires a separately reviewed procedure. Disabling enrolment does not disable use of an already-registered passkey
-- `ORDER_VOICE_CREATE_ENABLED=1` — allows an explicit, credential-verified, idempotent canonical order create. Requires all preceding gates and real Merchant QA acceptance
-- `TOKEN_SECRET` — existing V2 signed session authority; no caller-provided device-trust boolean is accepted
+## Feature flags (none enabled in Production by this PR)
 
-**First-device bootstrap remains a separate security review gate:** historic email verification plus password step-up do not constitute a fresh second-channel proof. Do not activate initial passkey enrolment for public real-world Merchant accounts until secure bootstrap/recovery policy has been reviewed, tested and approved. A compromised session+password must not silently allow a fraudulent first device to be trusted.
+- `MERCHANT_TEAM_ENABLED=1`: internal Merchant operator roles/management; requires secure worker access before commercial use.
+- `MERCHANT_TEAM_TERMINAL_ENABLED=1`: separate staff-only pairing and operator terminal. Both Team flags must be on, and the terminal requires server-side secrets.
+- `MERCHANT_TEAM_SECRET` and `MERCHANT_TEAM_PIN_PEPPER`: server-only, independent high-entropy secrets; never expose in browser, source, CI logs or issue text.
+- `ORDER_VOICE_AI_ENABLED=1`, `ORDER_VOICE_AI_MODEL`, `OPENAI_API_KEY`: separately reviewed consent-gated provider. Without these, manual Catalog and limited order viewing remain possible but AI drafts report unavailable.
+- `ORDER_VOICE_UI_ENABLED=1`: experimental main-account Merchant voice companion; not the worker account permission model.
+- `ORDER_VOICE_WEBAUTHN_ENABLED`, RP ID and HTTPS Origin, separate initial enrollment gate, `ORDER_VOICE_CREATE_ENABLED`: previous account-level passkey/confirmation experiments; they do **not** authorize employee orders. Do not enable public first-passkey bootstrap without a reviewed independent recovery process.
 
-### Verified evidence and what is still missing
+## Acceptance evidence and remaining gates
 
-- Focused Node tests for model suggestions, Catalog match, quote/HMAC, current session, WebAuthn CBOR/ES256 registration and assertion, tampering, missing UV, origin/RP mismatch, cloned counters, account/business switching and phrase reuse.
-- Dedicated GitHub Actions on disposable real PostgreSQL 16 tests the same-transaction order/idempotency/stock path, password step-up versus session revocation, concurrent double-submit, passkey challenge consumption and rollback. Refer to **the latest exact-head successful CI run**; do not carry a historic success forward after branch changes.
-- 390×844 Android-sized Chromium with synthetic auth/API shows no JS errors or horizontal overflow across voice/text draft → quote → operator password → passkey enrolment → one-time phrase → explicit create UI. This is synthetic client evidence, not live AI and not physical device microphone/passkey acceptance.
-- **Outstanding:** secure first-device bootstrap and recovery, independently vetted WebAuthn security review, real authenticated Merchant A↔B and all-error-case tests in isolated Preview, physical Android native passkey/microphone/noise checks, real model integration, staging reconciliation, reviewed merge, production deployment SUCCESS, and agent-run `https://caliof.com` smoke. Do not turn on live order writes or close #863 before all acceptance gates.
+Exact V1F implementation is in Draft PR #870 on the issue-numbered branch, with new unit/source tests and dedicated disposable PostgreSQL 16 staff security suite. The branch's CI must pass **at its latest head**, not at a past commit. Tests cover: one company/two operators, pairing TTL, one-time use, wrong PIN, independent cookies/CSRF, main-owner cookie rejection, permission denial for Money, immediate employee revocation, business switching and Catalog cost filtering.
 
-rences
+**Not yet completed:** actual authenticated Merchant Owner-to-Worker pairing via live Preview, physical Android camera/microphone and native passkey QA, independent threat/security review, employee credential-backed *order confirmation*, operator-to-canonical-order audit under a single transaction, serialized Preview acceptance without disrupting the Orders #820 owner, reviewed merge, Production deploy SUCCESS, and direct verification of `https://caliof.com`. Until then, keep #863 OPEN and #870 DRAFT, no commercial worker activation or owner acceptance claim.
+
+## References
+
 - NIST SP 800-63B-4: https://pages.nist.gov/800-63-4/sp800-63b.html
-- OpenAI Realtime VAD: https://developers.openai.com/api/docs/guides/realtime-vad
-- OpenAI Realtime transcription limitations: https://developers.openai.com/api/docs/guides/realtime-transcription
 - OWASP LLM06 Excessive Agency: https://genai.owasp.org/llmrisk/llm062025-excessive-agency/
+- OpenAI speech recognition and VAD documentation: https://developers.openai.com/api/docs/guides/realtime-vad
