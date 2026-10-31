@@ -75,6 +75,12 @@ try{
       if(evidence)await page.screenshot({path:join(evidence,viewport.width+'-'+label+'.png')});
     };
     await status.getByText('Inventory confirmed just now.',{exact:true}).waitFor();
+    // #875: the actual Stock markup defaults to a menu, never an expanded list.
+    assert.equal(await page.locator('#stockToolDeck .stockTool').count(),14);
+    assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
+    assert.equal(await page.locator('#stockList').isVisible(),false);
+    await page.locator('#stockTool-inventory > summary').click();
+    assert.equal(await page.locator('#stockList').isVisible(),true);
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false,'Capability-disabled picker stays disabled');
     const styles=await fieldset.evaluate(el=>{
@@ -97,7 +103,9 @@ try{
     assert.equal(await page.locator('#stockList').isVisible(),true,'Cached Inventory stays readable');
     assert.equal(await page.locator('#stockForm').isVisible(),false);
     await fit('offline');
-    await status.getByRole('button',{name:'Retry',exact:true}).click();
+    // Menu mode has no unrelated Load/Retry button; each instrument is the action.
+    assert.equal(await status.getByRole('button').count(),0);
+    await page.getByRole('button',{name:'Test ready',exact:true}).click();
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false,'Retry cannot clear an independent disabled state');
     checks.push(viewport.width+'px retry preserves individual widget restrictions');
@@ -108,7 +116,8 @@ try{
     assert.equal(await input.isEnabled(),false);
     assert.equal(await page.locator('#stockList').isVisible(),false,'Failed reads expose no retained stock');
     await fit('error');
-    await status.getByRole('button',{name:'Retry',exact:true}).click();
+    assert.equal(await status.getByRole('button').count(),0);
+    await page.getByRole('button',{name:'Test ready',exact:true}).click();
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false);
 
@@ -116,7 +125,8 @@ try{
     assert.equal(await input.isEnabled(),false);
     assert.equal(await page.locator('#stockList').isVisible(),false);
     await fit('idle');
-    await status.getByRole('button',{name:'Load Inventory',exact:true}).click();
+    assert.equal(await status.getByRole('button').count(),0);
+    await page.getByRole('button',{name:'Test ready',exact:true}).click();
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false);
     await context.close();
