@@ -493,6 +493,9 @@
 #viewStock .stockToolPanel{padding:12px;min-width:0;overflow-wrap:anywhere}
 #viewStock .stockToolPanel > .card,
 #viewStock .stockToolPanel > form.card{margin:0}
+#viewStock[data-inventory-read-state="loading"] .stockToolPanel,
+#viewStock[data-inventory-read-state="error"] .stockToolPanel,
+#viewStock[data-inventory-read-state="idle"] .stockToolPanel,
 #viewStock .stockTool[data-stock-loading="true"] .stockToolPanel,
 #viewStock .stockTool[data-stock-error="true"] .stockToolPanel{display:none}
 #viewStock .stockTool[data-stock-loading="true"]::after{
