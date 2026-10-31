@@ -72,6 +72,18 @@ export function csvReadIsCurrent(ticket,latestTicket,posting){
   return Number.isSafeInteger(ticket)&&ticket===latestTicket&&!posting;
 }
 
+// Human confirmation and private paid-stock evidence are scoped to one verified
+// account/business identity, not just an identical displayed business name.
+export function preserveIntakeReviewForMerchant(state,previous,next){
+  const same=Boolean(previous&&next&&
+    Number.isSafeInteger(previous.accountId)&&previous.accountId>0&&
+    Number.isSafeInteger(previous.businessId)&&previous.businessId>0&&
+    previous.accountId===next.accountId&&previous.businessId===next.businessId&&
+    previous.businessName===next.businessName);
+  if(!same){state.rows=[];state.resultLog=[]}
+  return same;
+}
+
 export function parseStockIntakeCsv(text){
   const records=parseCsvRecords(text);
   if(records.length<2)throw new Error('CSV must have a header and at least one product.');
@@ -160,7 +172,7 @@ export function guardNewPaidStockIntakeRow(row,inventory){
 const hasDocument=typeof document!=='undefined';
 if(hasDocument){
   const $=id=>document.getElementById(id);
-  const state={context:null,inventory:[],transactions:[],rows:[],busy:false,stop:false,accountId:null,resultLog:[],csvReadRevision:0};
+  const state={context:null,inventory:[],transactions:[],rows:[],busy:false,stop:false,accountId:null,resultLog:[],csvReadRevision:0,contextReadRevision:0};
   function message(id,text,kind=''){
     const el=$(id);if(!el)return;el.textContent=text;el.classList.toggle('error',kind==='error');el.classList.toggle('ok',kind==='ok');
   }
@@ -207,18 +219,39 @@ if(hasDocument){
     }
     updateControls();
   }
+  function resetIntakeReviewFields(){
+    $('csv').value='';
+    $('businessName').value='';
+    $('actualTotalPaid').value='';
+    $('physicalConfirm').checked=false;
+    $('moneyConfirm').checked=false;
+    message('fileStatus','Select and review a CSV for the verified Merchant business.');
+    message('results','No stock or Money changes were made by this review session.');
+  }
   async function refreshContext(){
     if(state.busy)return;
+    const previous=state.context;
+    const revision=++state.contextReadRevision;
+    // Cancel any pending file read before a different session can be shown.
+    ++state.csvReadRevision;
     $('refreshContext').disabled=true;
     message('authStatus','Checking Merchant profile, business binding, and live Inventory…');
-    state.context=null;state.inventory=[];state.transactions=[];
+    message('ledgerStatus','Verifying Merchant identity before showing Money details…');
+    // Do not display a previous account's private review while auth is pending.
+    $('rows').replaceChildren();
+    $('reviewPanel').classList.add('hidden');
+    $('commitPanel').classList.add('hidden');
+    message('results','Verifying Merchant identity before showing review history…');
+    state.context=null;state.inventory=[];state.transactions=[];state.accountId=null;
     try{
       const next=await snapshot();
       const [inventory,transactions]=await Promise.all([
         api('/api/inventory'),api('/api/transactions')
       ]);
       const verify=await snapshot();
+      if(revision!==state.contextReadRevision)return;
       if(!sameContext(next,verify))throw new Error('Merchant business changed during Inventory/Money read.');
+      if(!preserveIntakeReviewForMerchant(state,previous,verify))resetIntakeReviewFields();
       state.context=verify;state.accountId=verify.accountId;
       state.inventory=Array.isArray(inventory)?inventory:[];
       state.transactions=Array.isArray(transactions)?transactions:[];
@@ -228,9 +261,18 @@ if(hasDocument){
         CENTS(total).toFixed(2)+'. Check for any payment that covered these products; this list is not guaranteed to include older entries.');
       refreshExisting();renderRows();renderBusiness();
     }catch(error){
+      if(revision!==state.contextReadRevision)return;
+      preserveIntakeReviewForMerchant(state,previous,null);
+      resetIntakeReviewFields();
+      renderRows();
+      message('ledgerStatus','Money details unavailable until Merchant verification succeeds.');
       message('authStatus',error.message||'Merchant and Inventory could not be checked.','error');
       $('businessCheck').classList.add('hidden');
-    }finally{$('refreshContext').disabled=false;updateControls()}
+    }finally{
+      if(revision===state.contextReadRevision){
+        $('refreshContext').disabled=false;updateControls();
+      }
+    }
   }
   function element(tag,cls,text){
     const el=document.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=text;return el;

@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
-  reviseStockIntakeRow,guardNewPaidStockIntakeRow,csvReadIsCurrent
+  reviseStockIntakeRow,guardNewPaidStockIntakeRow,csvReadIsCurrent,preserveIntakeReviewForMerchant
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -215,4 +215,38 @@ test('stale asynchronous CSV reads cannot replace a posted or newer reviewed bat
   assert.match(js,/state\.csvReadRevision\+\+;\s*state\.busy=true/);
   assert.match(js,/\$\('csv'\)\.disabled=state\.busy/);
   assert.match(js,/\$\('actualTotalPaid'\)\.disabled=state\.busy/);
+});
+
+test('re-verified Merchant identity revokes a different account or business CSV approvals and private results',()=>{
+  const source={accountId:11,businessId:100,businessName:'Trizian'};
+  for(const target of [
+    {accountId:12,businessId:100,businessName:'Trizian'},
+    {accountId:11,businessId:200,businessName:'Trizian'},
+    {accountId:11,businessId:100,businessName:'Trizian New'},null
+  ]){
+    const row=parseStockIntakeCsv(example)[0];row.selected=true;row.reviewConfirmed=true;
+    const session={rows:[row],resultLog:['Old Merchant private expense #123']};
+    assert.equal(preserveIntakeReviewForMerchant(session,source,target),false);
+    assert.deepEqual(session.rows,[]);
+    assert.deepEqual(session.resultLog,[]);
+  }
+  const same={rows:[{reviewConfirmed:true}],resultLog:['Current Merchant']};
+  assert.equal(preserveIntakeReviewForMerchant(same,source,{...source}),true);
+  assert.deepEqual(same.rows,[{reviewConfirmed:true}]);
+  assert.deepEqual(same.resultLog,['Current Merchant']);
+  const invalid={rows:[{selected:true}],resultLog:['private']};
+  assert.equal(preserveIntakeReviewForMerchant(invalid,{...source,accountId:NaN},source),false);
+  assert.deepEqual(invalid,{rows:[],resultLog:[]});
+});
+
+test('older Merchant refresh and pending file reads cannot resurrect prior login evidence',()=>{
+  assert.ok(js.includes('const revision=++state.contextReadRevision;'));
+  assert.ok(js.includes('++state.csvReadRevision;'));
+  assert.ok(js.includes('if(revision!==state.contextReadRevision)return;'));
+  assert.ok(js.includes('preserveIntakeReviewForMerchant(state,previous,verify)'));
+  assert.ok(js.includes('preserveIntakeReviewForMerchant(state,previous,null)'));
+  assert.ok(js.includes('state.context=null;state.inventory=[];state.transactions=[];state.accountId=null;'));
+  assert.ok(js.includes("$('rows').replaceChildren();"));
+  assert.ok(js.includes("$('businessName').value='';"));
+  assert.ok(js.includes("$('moneyConfirm').checked=false;"));
 });
