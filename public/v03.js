@@ -775,8 +775,13 @@ inventoryCountUi=createInventoryCountUi({
 });
 inventoryCountUi.wire();
 
-function useInventoryForReceiving(item){
+async function useInventoryForReceiving(item){
   if(!item)return;
+  if($('stockToolDeck')){
+    const stillAuthorized=merchantReadGuard();
+    await openStockTool('purchase'); // Reveal the purchase tool before pre-filling it.
+    if(!stillAuthorized()||stockToolActive!=='purchase')return;
+  }
   if($('stockInventoryId'))$('stockInventoryId').value=String(item.id||'');
   if($('stockItem'))$('stockItem').value=item.item||'';
   if($('stockInventoryType'))$('stockInventoryType').value=item.inventory_type||'ingredient';
@@ -807,7 +812,14 @@ const inventoryScanUi=createInventoryScanUi({
   escapeHtml:esc,
   formatNumber:num,
   onReceiveItem:useInventoryForReceiving,
-  onCountItem:item=>inventoryCountUi.selectItem(item?.id)
+  onCountItem:async item=>{
+    if($('stockToolDeck')){
+      const stillAuthorized=merchantReadGuard();
+      await openStockTool('count');
+      if(!stillAuthorized()||stockToolActive!=='count')return;
+    }
+    inventoryCountUi.selectItem(item?.id);
+  }
 });
 inventoryScanUi.wire();
 
