@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer"><title>Staff Orders · Business & Life</title>
+<link rel="stylesheet" href="/merchant-operator.css"></head>
+<body><main class="terminal">
+  <header><div class="brand">Business &amp; Life <small>Staff terminal</small></div><span class="private">Orders only · No Money access</span></header>
+  <section id="ownerWarning" class="notice hidden" role="alert">This browser is still signed into the owner's Business &amp; Life account. Sign out there before using the restricted staff terminal. Employee PINs do not protect the owner's full account.</section>
+  <section id="pairPanel" class="panel"><h1>Start a staff shift</h1><p>Use the one-time link from your Merchant owner. Choose your name and enter your individual PIN. No new Business &amp; Life account is required.</p>
+    <form id="pairLookup"><label>Private pairing code<input id="pairCode" maxlength="100" autocomplete="off" spellcheck="false" required placeholder="Paste your pairing code"></label><button type="submit">Find my team</button></form>
+    <form id="shiftLogin" class="hidden"><label>Your name<select id="operatorChoice" required></select></label><label>Your PIN<input id="operatorPin" inputmode="numeric" type="password" minlength="6" maxlength="10" autocomplete="off" required></label><button type="submit">Start shift</button></form></section>
+  <section id="workPanel" class="hidden"><div class="panel heading"><div><h1 id="operatorName">Operator</h1><small>Shared Merchant Catalog and Orders · Individual shift</small></div><button type="button" id="endShift" class="muted">End shift</button></div>
+    <section class="panel"><h2>Available Catalog</h2><div id="catalog" class="items" aria-live="polite">Loading…</div></section>
+    <section class="panel"><h2>AI order draft</h2><p>Only you can activate the microphone. Review the recognized words before sending them to AI. Customer/background speech cannot verify identity.</p>
+      <label class="inline"><input type="checkbox" id="aiConsent"> I consent to sending this text to the AI for preparing an order.</label>
+      <label>Spoken or typed instruction<textarea id="transcript" rows="3" maxlength="1200" placeholder="Order for Ana: three adobo, two juices"></textarea></label>
+      <div class="actions"><button type="button" id="microphone" class="muted">🎙️ Speak</button><button type="button" id="prepare">Prepare draft</button><button type="button" id="discard" class="muted">Discard</button></div>
+      <div id="draft" class="items" aria-live="polite">No draft yet.</div>
+      <button type="button" id="quote" class="muted" disabled>Check current total</button>
+      <p class="safety">Draft and quote only. This terminal cannot record payments, refunds or complete orders. A separately approved staff order-confirmation step is required before posting.</p>
+    </section>
+    <section class="panel"><h2>Latest orders</h2><div id="orders" class="items">Loading…</div><button class="muted" type="button" id="refreshOrders">Refresh orders</button></section>
+  </section><p id="status" role="status" aria-live="polite"></p>
+</main><script src="/merchant-operator-ui.js" defer></script></body></html>

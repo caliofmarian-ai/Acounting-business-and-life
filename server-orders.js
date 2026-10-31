@@ -7,6 +7,18 @@ import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import { readOrderDetail } from './orders-read-core.js';
 import {merchantCounterCatalog,merchantCounterSnapshots} from './merchant-counter-catalog-core.js';
+import {installMerchantVoiceOrderRoutes,ensureVoiceOrderUsageSchema,chargeVoiceOrderQuota} from './merchant-voice-order-routes.js';
+import {installMerchantVoiceOrderConfirmation} from './merchant-voice-order-confirm.js';
+import {installMerchantVoicePasskeyRoutes,ensureMerchantVoicePasskeySchema} from './merchant-voice-passkey-routes.js';
+import {passkeyConfig} from './merchant-voice-passkey-core.js';
+import {installMerchantTeamRoutes} from './merchant-team-routes.js';
+import {installMerchantTeamTerminalRoutes} from './merchant-team-terminal-routes.js';
+import {ensureMerchantTeamTerminalSchema} from './merchant-team-terminal-core.js';
+import {applyVoiceOrderTurn,voiceDraftForQuote} from './merchant-voice-order-core.js';
+import {interpretVoiceOrderText} from './merchant-voice-order-provider.js';
+import {authoritativeVoiceOrderQuote} from './merchant-voice-order-quote.js';
+import {ensureMerchantTeamSchema} from './merchant-team-operators.js';
+import {ensureVoiceOrderSubmissionSchema} from './merchant-voice-order-idempotency.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
 import {restoreLotAllocation,inventoryAvailabilityRows} from './inventory-lot-runtime.js';
@@ -40,7 +52,8 @@ function manilaDateStamp() {
 
 export function isOrdersOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
-  if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js')return true;
+  if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js'||pathname==='/merchant-voice-order-ui.js'||pathname==='/merchant-voice-order.css'||pathname==='/merchant-team-ui.js'||pathname==='/merchant-team.css')return true;
+  if(pathname==='/operator'||pathname==='/merchant-operator-ui.js'||pathname==='/merchant-operator.css')return true;
   if(pathname==='/api/orders'||pathname.startsWith('/api/orders/'))return true;
   return false;
 }
@@ -71,6 +84,14 @@ export async function ordersFetch(path,options={}){
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/orders.css" />\n</head>')
       .replace('</body>','  <script type="module" src="/orders-ui.js"></script>\n</body>');
+    if(process.env.MERCHANT_TEAM_ENABLED==='1'){
+      html=html.replace('</head>','  <link rel="stylesheet" href="/merchant-team.css" />\n</head>')
+        .replace('</body>','  <script src="/merchant-team-ui.js" defer></script>\n</body>');
+    }
+    if(process.env.ORDER_VOICE_UI_ENABLED==='1'){
+      html=html.replace('</head>','  <link rel="stylesheet" href="/merchant-voice-order.css" />\n</head>')
+        .replace('</body>','  <script src="/merchant-voice-order-ui.js" defer></script>\n</body>');
+    }
     return new Response(html,{status:r.status,headers:{'content-type':'text/html; charset=utf-8'}});
   }
   return accountAuthFetch(path,options);
@@ -240,6 +261,11 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(business_id,order_status,created_at DESC);
   `);
   await ensureOrderStockReservationSchema(pool);
+  if(process.env.ORDER_VOICE_UI_ENABLED==='1'||(process.env.MERCHANT_TEAM_TERMINAL_ENABLED==='1'&&process.env.ORDER_VOICE_AI_ENABLED==='1'))await ensureVoiceOrderUsageSchema(pool);
+  if(process.env.ORDER_VOICE_CREATE_ENABLED==='1')await ensureVoiceOrderSubmissionSchema(pool);
+  if(process.env.MERCHANT_TEAM_ENABLED==='1')await ensureMerchantTeamSchema(pool);
+  if(process.env.MERCHANT_TEAM_ENABLED==='1'&&process.env.MERCHANT_TEAM_TERMINAL_ENABLED==='1')await ensureMerchantTeamTerminalSchema(pool);
+  if(process.env.ORDER_VOICE_UI_ENABLED==='1'&&passkeyConfig().ready)await ensureMerchantVoicePasskeySchema(pool);
 }
 
 async function orderDetail(id,client=pool){return readOrderDetail(client,id)}
@@ -286,15 +312,16 @@ async function productSnapshots(items, businessId, client=pool) {
   return normalized.sort((a,b)=>a.source_id-b.source_id);
 }
 
-async function createOrder({ businessId, customerAccountId=null, customerName='', customerContact='', items, fulfilmentMethod, paymentMethod, deliveryAddress='', note='', preparationEtaMinutes=15, counterPresence=false, merchantCounter=false }) {
+async function createOrder({ businessId, customerAccountId=null, customerName='', customerContact='', items, fulfilmentMethod, paymentMethod, deliveryAddress='', note='', preparationEtaMinutes=15, counterPresence=false, merchantCounter=false, client:sharedClient=null, expectedCurrencyCode=null }) {
   if (!FULFILMENT.has(fulfilmentMethod)) throw Object.assign(new Error('Choose pickup or delivery'),{status:400});
   if (!PAYMENT_METHODS.has(paymentMethod)) throw Object.assign(new Error('Choose cash or online payment'),{status:400});
   if (fulfilmentMethod==='delivery' && paymentMethod==='cash') throw Object.assign(new Error('Cash delivery is not enabled yet. Choose online payment or pickup.'),{status:409});
   if (fulfilmentMethod==='delivery' && !clean(deliveryAddress,400)) throw Object.assign(new Error('Delivery address is required'),{status:400});
-  const client=await pool.connect();
+  const client=sharedClient||await pool.connect();
   try{
-    await client.query('BEGIN');
+    if(!sharedClient)await client.query('BEGIN');
     const b=await client.query(`SELECT id,name,currency_code FROM businesses WHERE id=$1`,[businessId]);if(!b.rowCount) throw Object.assign(new Error('Merchant not found'),{status:404});
+    if(expectedCurrencyCode&&String(b.rows[0].currency_code||'PHP')!==expectedCurrencyCode)throw Object.assign(new Error('Voice quotes require the Merchant PHP currency'),{status:409});
     const itemRows=merchantCounter?await merchantCounterSnapshots(client,{businessId,items}):await productSnapshots(items,businessId,client);
     const subtotal=money(itemRows.reduce((s,i)=>s+i.line_total,0));const deliveryFee=0;const total=money(subtotal+deliveryFee);
     let trust={completed_orders:0,eligible:false,allowed:false,suspended:false};
@@ -310,8 +337,11 @@ async function createOrder({ businessId, customerAccountId=null, customerName=''
     }
     await client.query(`INSERT INTO order_status_events(order_id,from_status,to_status,actor_account_id,note) VALUES($1,NULL,$2,$3,'Order created')`,[id,status,customerAccountId]);
     await reserveOrderStock(client,{...order.rows[0],id,order_number:orderNumber,order_status:status,business_id:businessId,fulfilment_method:fulfilmentMethod});
-    await client.query('COMMIT');return orderDetail(id);
-  }catch(e){try{await client.query('ROLLBACK')}catch{}throw e}finally{client.release()}
+    if(!sharedClient){await client.query('COMMIT');return orderDetail(id)}
+    // The caller owns the outer idempotent transaction; do not commit or read
+    // the uncommitted order on another PostgreSQL connection.
+    return{id,order_number:orderNumber};
+  }catch(e){if(!sharedClient){try{await client.query('ROLLBACK')}catch{}}throw e}finally{if(!sharedClient)client.release()}
 }
 
 async function consumeStock(client, order) {
@@ -349,10 +379,65 @@ app.get('/health',async(req,res)=>{const r=await ordersFetch('/health',{headers:
 app.get('/orders-receivable-view.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-receivable-view.js'),'utf8')));
 app.get('/orders-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-ui.js'),'utf8')));
 app.get('/orders.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','orders.css'),'utf8')));
+app.get('/merchant-team-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','merchant-team-ui.js'),'utf8')));
+app.get('/merchant-team.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','merchant-team.css'),'utf8')));
+app.get('/merchant-voice-order-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','merchant-voice-order-ui.js'),'utf8')));
+app.get('/merchant-voice-order.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','merchant-voice-order.css'),'utf8')));
 async function proxyHtml(req,res){const r=await ordersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
 app.get('/',proxyHtml);app.get('/index.html',proxyHtml);
 
 app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number(req.query.business_id);if(!Number.isInteger(businessId)||businessId<1)return res.status(400).json({error:'A valid business_id is required'});const{business}=await requireMerchant(req,businessId);res.json(await merchantCounterCatalog(pool,{businessId:business.id}))}catch(e){next(e)}});
+
+const merchantVoiceSigningSecret=crypto.createHmac('sha256',process.env.ORDER_VOICE_SIGNING_SECRET||process.env.TOKEN_SECRET||crypto.randomBytes(32))
+  .update('merchant-voice-orders-863').digest();
+const merchantTeam=installMerchantTeamRoutes(app,{
+  db:pool,requireMerchant,bodyMiddleware:body,
+  secret:process.env.MERCHANT_TEAM_SECRET||process.env.TOKEN_SECRET||'',
+  pinPepper:process.env.MERCHANT_TEAM_PIN_PEPPER||'',
+  tokenSecret:process.env.TOKEN_SECRET||''
+});
+installMerchantTeamTerminalRoutes(app,{
+  db:pool,requireMerchant,bodyMiddleware:body,
+  secret:process.env.MERCHANT_TEAM_SECRET||'',
+  pepper:process.env.MERCHANT_TEAM_PIN_PEPPER||'',
+  tokenSecret:process.env.TOKEN_SECRET||'',
+  catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
+  listOrdersForBusiness:async businessId=>(await pool.query(
+    'SELECT id,order_number,order_status,payment_status,total FROM orders WHERE business_id=$1 ORDER BY created_at DESC LIMIT 30',
+    [businessId])).rows,
+  interpretTurn:input=>interpretVoiceOrderText({...input,env:process.env}),
+  applyTurn:applyVoiceOrderTurn,
+  quoteForDraft:async({business_id,owner_account_id,voice_session_id,draft})=>{
+    const items=voiceDraftForQuote(draft).items;
+    const snapshots=await merchantCounterSnapshots(pool,{businessId:business_id,items});
+    return authoritativeVoiceOrderQuote({draft,snapshots,accountId:owner_account_id,
+      sessionId:voice_session_id,businessId:business_id,secret:merchantVoiceSigningSecret});
+  },
+  chargeAiQuota:input=>chargeVoiceOrderQuota(pool,input)
+});
+let merchantVoiceConfirmation=null;
+const merchantVoicePasskey=installMerchantVoicePasskeyRoutes(app,{
+  db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,
+  tokenSecret:process.env.TOKEN_SECRET,bodyMiddleware:body
+});
+installMerchantVoiceOrderRoutes(app,{
+  db:pool,requireMerchant,catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
+  snapshotsForBusiness:({businessId,items})=>merchantCounterSnapshots(pool,{businessId,items}),
+  secret:merchantVoiceSigningSecret,bodyMiddleware:body,
+  confirmationReady:()=>merchantVoiceConfirmation?.ready()===true,
+  passkeyReady:()=>merchantVoicePasskey.enrollmentReady(),
+  teamEnabled:merchantTeam.enabled,operatorResolver:merchantTeam.resolveForVoice
+});
+merchantVoiceConfirmation=installMerchantVoiceOrderConfirmation(app,{
+  db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,tokenSecret:process.env.TOKEN_SECRET,
+  canonicalSnapshots:(client,{businessId,items})=>merchantCounterSnapshots(client,{businessId,items}),
+  createCanonicalOrder:createOrder,orderDetail,bodyMiddleware:body,
+  teamEnabled:merchantTeam.enabled,
+  verifyDeviceApproval:merchantVoicePasskey.ready()?merchantVoicePasskey.verifyDeviceApproval:null,
+  checkCreateVelocity:({accountId,businessId})=>enforceHighRiskVelocity(pool,{
+    actorAccountId:accountId,actionCode:'order_create',subjectType:'business',subjectId:businessId
+  })
+});
 
 app.get('/api/orders/inventory',async(req,res,next)=>{try{
   const businessId=Number(req.query.business_id);
