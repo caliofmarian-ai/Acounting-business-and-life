@@ -484,7 +484,15 @@ export function nextMicrobusinessReadinessAction(state={}){
   return 'grow_business';
 }
 
-export async function ensureMicrobusinessReadinessSchema(pool){
+// Schema provisioning is a one-time task for each running database Pool, not
+// a read-path operation. Concurrent Merchant/Services requests used to run
+// DDL simultaneously and could deadlock on PostgreSQL catalog locks.
+// Cache only the schema task: never cache per-account/business readiness data.
+const readinessSchemaByPool=new WeakMap();
+export function ensureMicrobusinessReadinessSchema(pool){
+  const existing=readinessSchemaByPool.get(pool);
+  if(existing)return existing;
+  const pending=(async()=>{
   await pool.query(`
     CREATE TABLE IF NOT EXISTS microbusiness_readiness (
       id BIGSERIAL PRIMARY KEY,
@@ -550,6 +558,14 @@ export async function ensureMicrobusinessReadinessSchema(pool){
       );
     }
   }
+  })();
+  readinessSchemaByPool.set(pool,pending);
+  // An unsuccessful migration must never poison future requests. The failed
+  // promise remains rejected for its callers; a later request can retry.
+  pending.catch(()=>{
+    if(readinessSchemaByPool.get(pool)===pending)readinessSchemaByPool.delete(pool);
+  });
+  return pending;
 }
 
 async function subjectOwnership(pool,{accountId,profileRole,businessId}){
