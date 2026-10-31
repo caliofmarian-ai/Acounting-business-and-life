@@ -563,3 +563,27 @@ test('blank model name falls back to valid sanitized title, with the primary nam
     name:'  ',title:'  ',catalog_category_code:'furniture_home'
   }).hints.name,'');
 });
+
+
+test('model Unicode review hints preserve complete emoji and never expose lone surrogate halves',()=>{
+  const almostFull='A'.repeat(119);
+  const truncated=draft('merchant_non_food',{
+    name:almostFull+'😀',description:'D'.repeat(599)+'😀',
+    tags:['Clean😀','Bad\uD800value','Leading\uDC00value']
+  });
+  assert.equal(truncated.hints.name,almostFull);
+  assert.equal(truncated.hints.description,'D'.repeat(599));
+  assert.deepEqual(truncated.hints.tags,['Clean😀','Bad value','Leading value']);
+  const fits=draft('merchant_non_food',{name:'A'.repeat(118)+'😀',
+    description:'D'.repeat(598)+'😀'});
+  assert.equal(fits.hints.name,'A'.repeat(118)+'😀');
+  assert.equal(fits.hints.description,'D'.repeat(598)+'😀');
+  const jsonSuggestion=JSON.parse('{"name":"\\ud800","title":"Philippine mango"}');
+  const fallback=draft('merchant_non_food',jsonSuggestion);
+  assert.equal(fallback.hints.name,'Philippine mango');
+  for(const d of [truncated,fits,fallback]){
+    assert.equal(d.publishable,false);
+    assert.equal(d.canonical_write_payload,false);
+    assert.equal(d.state,'REVIEW_REQUIRED');
+  }
+});
