@@ -48,3 +48,4 @@ jobs:
         run: |
           node --test tests/merchant-team-postgres.test.js
           node --test tests/merchant-team-terminal-postgres.test.js
+          node --test tests/merchant-team-order-attribution-postgres.test.js
