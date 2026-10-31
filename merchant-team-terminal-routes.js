@@ -27,7 +27,16 @@ const safeErrors=new Set([
 ]);
 const cookieHeader=req=>String(req.headers?.cookie||'');
 const sessionToken=req=>terminalCookieValue(cookieHeader(req));
-const noOwner=req=>forbidOwnerSession(cookieHeader(req));
+const noOwner=req=>{
+  forbidOwnerSession(cookieHeader(req));
+  // The canonical account gateway also accepts Authorization bearers.
+  // A distinct operator cookie must never coexist with any owner credential.
+  const authorization=Object.entries(req.headers||{}).some(([name,value])=>
+    name.toLowerCase()==='authorization'&&String(value??'').trim().length>0);
+  if(authorization||req.ablSessionToken)
+    throw failure(409,'OPERATOR_OWNER_SESSION',
+      'Sign out of the primary Business & Life account before opening a staff terminal on this browser.');
+};
 const sessionCookie=(token,maxAge)=>`${TERMINAL_COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`;
 const flag=env=>env.MERCHANT_TEAM_ENABLED==='1'&&env.MERCHANT_TEAM_TERMINAL_ENABLED==='1';
 // A staff terminal does not receive raw unit costs, Inventory bindings, supplier

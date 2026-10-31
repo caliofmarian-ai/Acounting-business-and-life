@@ -32,12 +32,12 @@ function rig({terminal=true,ai=true,role='order_operator'}={}){
    applyTurn:({businessId,sessionId,previousDraft})=>({draft:previousDraft||{business_id:businessId,session_id:sessionId,lines:[]}}),
    chargeAiQuota:async()=>{},quoteForDraft:async()=>({status:'quote_only',quote:{total_centavos:12900}})
  });
- const request=async(verb,path,{body={},cookie=`${TERMINAL_COOKIE}=${token}`,headers={}}={})=>{
+ const request=async(verb,path,{body={},cookie=`${TERMINAL_COOKIE}=${token}`,headers={},ablSessionToken=null}={})=>{
    let status=200,data=null,html=null,ended=false,headersOut={};
    const res={headersSent:false,set(k,v){headersOut[k]=v;return this},status(x){status=x;return this},
      json(x){data=x;this.headersSent=true;return this},type(){return this},send(x){html=x;this.headersSent=true;return this},end(){ended=true;this.headersSent=true;return this}};
    const fn=handlers.get(`${verb} ${path}`);if(!fn)throw Error('No handler '+verb+' '+path);
-   const req={method:verb,path,headers:{cookie,...headers},body,query:{},params:{}};
+   const req={method:verb,path,headers:{cookie,...headers},body,query:{},params:{},...(ablSessionToken==null?{}:{ablSessionToken})};
    await fn(req,res);return{status,data,headers:headersOut,html,ended};
  };
  return{request,routes,calls};
@@ -64,6 +64,44 @@ test('owner cookie present on the staff terminal blocks all restricted worker re
   cookie:`${TERMINAL_COOKIE}=${token}; __Host-abl_session=owner-auth-cookie`});
  assert.equal(r.status,409);assert.equal(r.data.code,'OPERATOR_OWNER_SESSION');
 });
+test('all restricted staff endpoints reject simultaneous account bearer and operator cookie before data access',async()=>{
+ const {request,calls}=rig();
+ const routes=[
+  ['GET','/api/orders/operator/session'],
+  ['GET','/api/orders/operator/catalog'],
+  ['GET','/api/orders/operator/orders'],
+  ['POST','/api/orders/operator/voice/turn'],
+  ['POST','/api/orders/operator/voice/quote'],
+  ['POST','/api/orders/operator/pair/operators'],
+  ['POST','/api/orders/operator/pair/start'],
+  ['POST','/api/orders/operator/logout']
+ ];
+ for(const [verb,path] of routes){
+   const r=await request(verb,path,{headers:{authorization:'Bearer synthetic-owner-session'}});
+   assert.equal(r.status,409,path);
+   assert.equal(r.data.code,'OPERATOR_OWNER_SESSION',path);
+ }
+ const caseInsensitive=await request('GET','/api/orders/operator/catalog',{
+   headers:{Authorization:'Bearer synthetic-owner-session'}});
+ assert.equal(caseInsensitive.status,409);
+ assert.equal(caseInsensitive.data.code,'OPERATOR_OWNER_SESSION');
+ assert.equal(calls.length,0,'no private DB query or business Catalog read after mixed credentials');
+});
+test('resolved canonical account session token also blocks a staff terminal request',async()=>{
+ const {request,calls}=rig();
+ const r=await request('GET','/api/orders/operator/session',{ablSessionToken:'synthetic-owner-token'});
+ assert.equal(r.status,409);
+ assert.equal(r.data.code,'OPERATOR_OWNER_SESSION');
+ assert.equal(calls.length,0);
+});
+test('owner-only pairing still reaches the existing owner authorization path, not the staff guard',async()=>{
+ const {request}=rig();
+ const r=await request('POST','/api/orders/team/terminal/pair',{
+   body:{business_id:7},headers:{authorization:'Bearer synthetic-owner-session'}});
+ assert.equal(r.status,403,'the test owner authorization stub denies this request');
+ assert.notEqual(r.data.code,'OPERATOR_OWNER_SESSION');
+});
+
 test('a worker without staff cookie is denied, even without an account cookie',async()=>{
  const {request}=rig();const r=await request('GET','/api/orders/operator/session',{cookie:''});
  assert.equal(r.status,401);assert.equal(r.data.code,'OPERATOR_SESSION_REQUIRED');
