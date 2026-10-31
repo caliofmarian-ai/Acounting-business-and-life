@@ -135,6 +135,34 @@
           <div id="sellMessage"></div>
         </form>
         <div class="card stack"><div class="sectionHead"><h2>Recent menu sales</h2><button data-view-link="Menu" class="linkBtn">Menu & margins</button></div><div id="productSaleList" class="list"></div></div>
+        <details id="preparedRemovalDetails" class="card stack">
+          <summary><strong>Remove prepared portions — not a sale</strong></summary>
+          <div class="stack" style="padding-top:0.75rem">
+            <p class="muted">Use this for prepared food eaten by the owner, damaged, spoiled or rejected at quality control. The saved recipe ingredients and their cost are removed without creating revenue or moving cash. Choose the truthful reason.</p>
+            <form id="preparedRemovalForm" class="stack">
+              <label>Prepared product<select id="preparedRemovalProduct" required><option value="">Choose a prepared product</option></select></label>
+              <div class="grid2">
+                <label>Portions to remove<input id="preparedRemovalQty" type="number" min="0.0001" step="0.0001" value="1" required /></label>
+                <label>Reason<select id="preparedRemovalReason" required>
+                  <option value="owner_consumption">Owner consumption / personal use</option>
+                  <option value="damaged">Damaged prepared food</option>
+                  <option value="spoilage">Spoiled prepared food</option>
+                  <option value="quality_rejected">Failed quality control</option>
+                </select></label>
+              </div>
+              <label>Explanation (optional)<input id="preparedRemovalNote" maxlength="300" placeholder="E.g., two portions eaten by the owner" /></label>
+              <div id="preparedRemovalPreview" class="salePreview" aria-live="polite">Choose a prepared product.</div>
+              <button id="preparedRemovalSubmit" class="secondary" type="submit">Record non-sale removal</button>
+              <div id="preparedRemovalMessage" aria-live="polite"></div>
+            </form>
+          </div>
+        </details>
+        <div class="card stack">
+          <div class="sectionHead"><h2>Prepared portions removed without sale</h2><small class="muted">Owner use separate from waste · values are noncash</small></div>
+          <div id="preparedRemovalSummary" class="salePreview">No removals recorded in the last 30 days.</div>
+          <div id="preparedRemovalList" class="list"></div>
+        </div>
+
       </section>
 
       <section id="viewAdd" class="view hidden">

@@ -23,6 +23,7 @@ import {
 } from './food-allergen-core.js';
 import {directProductCostEstimate} from './food-cost-core.js';
 import {buildWasteAnalytics} from './inventory-waste-core.js';
+import {parsePreparedRemoval,estimatedPreparedRemovalCost} from './prepared-portion-removal-core.js';
 import {ensureInventoryCountSessionSchema,registerInventoryCountSessionRoutes} from './inventory-count-sessions.js';
 import {ensureInventoryIdentifierSchema,registerInventoryIdentifierRoutes} from './inventory-identifiers.js';
 import {ensureInventoryLocationSchema,registerInventoryLocationRoutes,reconcileInventoryLocationBalance,reconcileLotLocationBalance,reconcileBusinessInventoryLocations,planLocationStockReduction,applyLocationLotReductions} from './inventory-locations.js';
@@ -241,6 +242,46 @@ async function initAccountingTenancyDb() {
     );
     CREATE INDEX IF NOT EXISTS inventory_adjustment_lot_allocations_lot_idx
       ON inventory_adjustment_lot_allocations(lot_id,created_at DESC);
+
+
+    -- Prepared portions removed without a sale: costed, noncash and reason-specific.
+    -- Source ingredients are consumed on sale/disposition, not on batch recipe definition.
+    CREATE TABLE IF NOT EXISTS prepared_product_removals (
+      id BIGSERIAL PRIMARY KEY,
+      business_id BIGINT NOT NULL REFERENCES businesses(id) ON DELETE RESTRICT,
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      product_name_snapshot TEXT NOT NULL,
+      removal_reason TEXT NOT NULL CHECK(removal_reason IN ('owner_consumption','damaged','spoilage','quality_rejected')),
+      accounting_treatment TEXT NOT NULL CHECK(accounting_treatment IN ('noncash_owner_draw','noncash_product_loss')),
+      quantity NUMERIC(14,4) NOT NULL CHECK(quantity>0),
+      unit_cost_snapshot NUMERIC(14,6) NOT NULL DEFAULT 0,
+      estimated_cost NUMERIC(14,2) NOT NULL DEFAULT 0,
+      recipe_batch_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+      note TEXT NOT NULL DEFAULT '',
+      actor_account_id BIGINT REFERENCES accounts(id) ON DELETE SET NULL,
+      idempotency_key TEXT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(business_id,idempotency_key)
+    );
+    CREATE INDEX IF NOT EXISTS prepared_product_removals_business_time_idx
+      ON prepared_product_removals(business_id,occurred_at DESC,id DESC);
+    CREATE TABLE IF NOT EXISTS prepared_product_removal_ingredients (
+      removal_id BIGINT NOT NULL REFERENCES prepared_product_removals(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      ingredient_name_snapshot TEXT NOT NULL,
+      quantity_used NUMERIC(16,6) NOT NULL CHECK(quantity_used>0),
+      unit_cost_snapshot NUMERIC(14,6) NOT NULL DEFAULT 0,
+      cost_snapshot NUMERIC(16,4) NOT NULL DEFAULT 0,
+      PRIMARY KEY(removal_id,inventory_id)
+    );
+    CREATE TABLE IF NOT EXISTS prepared_product_removal_lots (
+      removal_id BIGINT NOT NULL REFERENCES prepared_product_removals(id) ON DELETE CASCADE,
+      inventory_id BIGINT NOT NULL REFERENCES inventory(id) ON DELETE RESTRICT,
+      lot_id BIGINT NOT NULL,
+      quantity_used NUMERIC(16,6) NOT NULL CHECK(quantity_used>0),
+      expires_at_snapshot TIMESTAMPTZ,
+      PRIMARY KEY(removal_id,inventory_id,lot_id)
+    );
 
     CREATE TABLE IF NOT EXISTS product_sale_lot_allocations (
       sale_id BIGINT NOT NULL REFERENCES product_sales(id) ON DELETE CASCADE,
@@ -1520,6 +1561,125 @@ app.put('/api/products/:id/recipe-batch',jsonBody,async(req,res,next)=>{
       throw error;
     }finally{client.release()}
   }catch(error){next(error)}
+});
+
+
+// Prepared-product removals are not transactions/sales: keep cash, revenue and
+// existing raw-ingredient waste evidence unchanged. This ledger holds costed
+// personal use and prepared-food quality losses at their actual reason.
+app.get('/api/prepared-product-removals',async(req,res,next)=>{
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const [history,summary]=await Promise.all([
+      pool.query(
+        "SELECT id,product_id,product_name_snapshot,removal_reason,accounting_treatment,quantity,unit_cost_snapshot,estimated_cost,recipe_batch_snapshot,note,actor_account_id,occurred_at FROM prepared_product_removals WHERE business_id=$1 ORDER BY occurred_at DESC,id DESC LIMIT 250",
+        [ctx.business.id]
+      ),
+      pool.query(
+        "SELECT removal_reason,accounting_treatment,COALESCE(SUM(quantity),0) portions,COALESCE(SUM(estimated_cost),0) estimated_cost FROM prepared_product_removals WHERE business_id=$1 AND occurred_at>=NOW()-INTERVAL '30 days' GROUP BY removal_reason,accounting_treatment ORDER BY removal_reason",
+        [ctx.business.id]
+      )
+    ]);
+    res.json({entries:history.rows,summary_30d:summary.rows});
+  }catch(error){next(error)}
+});
+
+app.post('/api/prepared-product-removals',jsonBody,async(req,res,next)=>{
+  let client;
+  try{
+    const ctx=await accountingContext(req);
+    if(ctx.role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    const parsed=parsePreparedRemoval(req.body,ctx.business.id);
+    client=await pool.connect();
+    await client.query('BEGIN');
+    const productResult=await client.query(
+      "SELECT * FROM products WHERE id=$1 AND business_id=$2 FOR SHARE",
+      [parsed.productId,ctx.business.id]
+    );
+    if(!productResult.rowCount)throw Object.assign(new Error('Prepared product not found in this Merchant business.'),{status:404});
+    const product=productResult.rows[0];
+    if(product.product_kind!=='prepared_recipe'){
+      throw Object.assign(new Error('This action only removes portions made from a saved prepared recipe.'),{status:409});
+    }
+    const recipeBatch=await client.query(
+      "SELECT yield_quantity,yield_unit,selling_quantity,selling_unit,sale_units_per_batch FROM product_recipe_batches WHERE product_id=$1",
+      [parsed.productId]
+    );
+    const claimed=await client.query(
+      "INSERT INTO prepared_product_removals(business_id,product_id,product_name_snapshot,removal_reason,accounting_treatment,quantity,unit_cost_snapshot,estimated_cost,recipe_batch_snapshot,note,actor_account_id,idempotency_key) VALUES($1,$2,$3,$4,$5,$6,0,0,$7::jsonb,$8,$9,$10) ON CONFLICT (business_id,idempotency_key) DO NOTHING RETURNING *",
+      [ctx.business.id,parsed.productId,product.name,parsed.reason,parsed.treatment,parsed.quantity,
+       JSON.stringify(recipeBatch.rows[0]||{}),clean(req.body?.note,300),ctx.me.account.id,parsed.idempotencyKey]
+    );
+    if(!claimed.rowCount){
+      const existing=await client.query(
+        "SELECT * FROM prepared_product_removals WHERE business_id=$1 AND idempotency_key=$2",
+        [ctx.business.id,parsed.idempotencyKey]
+      );
+      const row=existing.rows[0];
+      if(!row||Number(row.product_id)!==parsed.productId||Number(row.quantity)!==parsed.quantity||row.removal_reason!==parsed.reason){
+        throw Object.assign(new Error('A different removal already used this confirmation key.'),{status:409});
+      }
+      await client.query('COMMIT');
+      return res.status(200).json({removal:row,already_recorded:true});
+    }
+    const removalId=claimed.rows[0].id;
+    const ingredients=await client.query(
+      "SELECT r.inventory_id,r.quantity recipe_quantity,i.item,i.unit,i.quantity stock_quantity,i.unit_cost FROM recipes r JOIN inventory i ON i.id=r.inventory_id WHERE r.product_id=$1 AND i.business_id=$2 ORDER BY i.id FOR UPDATE OF i",
+      [parsed.productId,ctx.business.id]
+    );
+    if(!ingredients.rowCount){
+      throw Object.assign(new Error('Save the prepared product recipe before removing portions.'),{status:409});
+    }
+    const shortages=[],plans=new Map();
+    for(const ingredient of ingredients.rows){
+      const needed=Number(ingredient.recipe_quantity)*parsed.quantity;
+      const plan=await planInventoryFefo(client,{
+        businessId:ctx.business.id,inventoryId:ingredient.inventory_id,
+        inventoryQuantity:Number(ingredient.stock_quantity),quantityNeeded:needed,lock:true
+      });
+      plans.set(Number(ingredient.inventory_id),plan);
+      if(!plan.ok)shortages.push({
+        item:ingredient.item,unit:ingredient.unit,required:needed,
+        available:plan.usable_quantity,reason:'expired_or_held_lot_stock'
+      });
+    }
+    if(shortages.length){
+      throw Object.assign(new Error('Not enough usable recipe ingredients to remove these prepared portions.'),{status:409,shortages});
+    }
+    const estimatedCost=estimatedPreparedRemovalCost(ingredients.rows,parsed.quantity);
+    for(const ingredient of ingredients.rows){
+      const used=Number(ingredient.recipe_quantity)*parsed.quantity;
+      const unitCost=Number(ingredient.unit_cost);
+      const stock=await client.query(
+        "UPDATE inventory SET quantity=quantity-$1,updated_at=NOW() WHERE id=$2 AND business_id=$3 AND quantity>=$1 RETURNING quantity",
+        [used,ingredient.inventory_id,ctx.business.id]
+      );
+      if(!stock.rowCount)throw Object.assign(new Error('Ingredient stock changed; nothing was removed.'),{status:409});
+      await client.query(
+        "INSERT INTO prepared_product_removal_ingredients(removal_id,inventory_id,ingredient_name_snapshot,quantity_used,unit_cost_snapshot,cost_snapshot) VALUES($1,$2,$3,$4,$5,$6)",
+        [removalId,ingredient.inventory_id,ingredient.item,used,unitCost,Number((used*unitCost).toFixed(4))]
+      );
+      const plan=plans.get(Number(ingredient.inventory_id));
+      await applyLotAllocations(client,plan?.allocations||[]);
+      for(const allocation of plan?.allocations||[]){
+        await client.query(
+          "INSERT INTO prepared_product_removal_lots(removal_id,inventory_id,lot_id,quantity_used,expires_at_snapshot) VALUES($1,$2,$3,$4,$5)",
+          [removalId,ingredient.inventory_id,allocation.lot_id,allocation.quantity,allocation.expires_at||null]
+        );
+      }
+    }
+    const saved=await client.query(
+      "UPDATE prepared_product_removals SET unit_cost_snapshot=$1,estimated_cost=$2 WHERE id=$3 AND business_id=$4 RETURNING *",
+      [Number((estimatedCost/parsed.quantity).toFixed(6)),estimatedCost,removalId,ctx.business.id]
+    );
+    await client.query('COMMIT');
+    return res.status(201).json({removal:saved.rows[0],ingredient_lines:ingredients.rows.length,already_recorded:false});
+  }catch(error){
+    if(client)await client.query('ROLLBACK').catch(()=>{});
+    if(error.shortages)return res.status(error.status||409).json({error:error.message,shortages:error.shortages});
+    next(error);
+  }finally{if(client)client.release()}
 });
 
 app.post('/api/product-sales',jsonBody,async(req,res,next)=>{
