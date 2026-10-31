@@ -127,7 +127,7 @@ export function merchantTodayViewModel({
       inventory:'business-scoped inventory evidence only',
       supplier:'procurement, RFQ and Supplier exception evidence; no automatic winner or PO creation',
       catalog:'merchant storefront, catalog publication and catalog media evidence',
-      money:'order merchandise is a completed-sale value, not cash; linked Quick Sale receipts are separate from confirmed order payments'
+      money:'order value is never treated as cash; completed orders and linked Quick Sale receipts are distinct evidence with no cash double-counting'
     }
   };
 }
