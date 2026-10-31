@@ -12,7 +12,7 @@ if(process.env.ABL_CONSENT_CI!=='1'||process.env.NODE_ENV!=='test'||
   throw new Error('Merchant consent runtime requires the disposable Admin CI PostgreSQL environment.');
 }
 const pool=new pg.Pool();
-let sessionId=null,productId=null,foreignBusinessId=null,foreignProductId=null;
+let sessionId=null,productId=null,foreignBusinessId=null,foreignProductId=null,raceBusinessId=null;
 let originalEmailVerifiedAt=null,emailVerifiedTouched=false;
 let assertions=0;
 const same=(actual,expected,message)=>{assert.equal(actual,expected,message);assertions++};
@@ -132,6 +132,31 @@ try{
     same(conditional.status,200,'private storefront never reuses an ETag 304 response');
     same(conditional.cacheControl,'private, no-store, max-age=0','conditional private GET stays no-store');
   }
+
+  // Two or more concurrent authorized first-open reads of a NEW disposable
+  // Merchant workspace must all converge on one default-OFF storefront. Before
+  // the fix, both can SELECT an absent row and one plain INSERT gets 23505.
+  raceBusinessId=Number((await pool.query(
+    "INSERT INTO businesses(name,country_code,currency_code) VALUES($1,'PH','PHP') RETURNING id",
+    ['CI Concurrent Store '+crypto.randomBytes(6).toString('hex')])).rows[0].id);
+  await pool.query(
+    "INSERT INTO business_memberships(business_id,account_id,membership_role,active) VALUES($1,1,'owner',TRUE)",
+    [raceBusinessId]);
+  await pool.query(
+    "INSERT INTO profile_business_bindings(account_id,role,business_id,status,is_primary) VALUES(1,'merchant',$1,'active',FALSE)",
+    [raceBusinessId]);
+  const racePath='/api/merchant/storefront?business_id='+raceBusinessId+'&include_products=false';
+  const freshReads=await Promise.all(Array.from({length:6},()=>request(racePath,{token})));
+  for(const reply of freshReads){
+    same(reply.status,200,'concurrent first-open private storefront GET must succeed');
+    same(Number(reply.payload.business_id),raceBusinessId,'first-open result stays in authorized workspace');
+    same(reply.payload.price_comparison_enabled,false,'new Merchant never automatically opts into comparison');
+  }
+  const bootstrap=await pool.query(
+    'SELECT COUNT(*)::int AS count,BOOL_AND(price_comparison_enabled=FALSE) AS disabled FROM merchant_storefronts WHERE business_id=$1',
+    [raceBusinessId]);
+  same(bootstrap.rows[0].count,1,'only one storefront row is created under concurrent first-open reads');
+  same(bootstrap.rows[0].disabled,true,'concurrent bootstrap retains consent OFF');
 
   let stored=await storeWrite(token,{price_comparison_enabled:true});
   same(stored.price_comparison_enabled,true,'explicit storefront opt-in persisted');
@@ -321,6 +346,7 @@ try{
   try{if(productId)await pool.query('DELETE FROM marketplace_products WHERE id=$1 AND business_id=1',[productId]);}catch{}
   try{if(foreignProductId)await pool.query('DELETE FROM marketplace_products WHERE id=$1',[foreignProductId]);}catch{}
   try{if(foreignBusinessId)await pool.query('DELETE FROM businesses WHERE id=$1',[foreignBusinessId]);}catch{}
+  try{if(raceBusinessId)await pool.query('DELETE FROM businesses WHERE id=$1',[raceBusinessId]);}catch{}
   try{if(sessionId)await pool.query('DELETE FROM account_sessions WHERE session_id=$1',[sessionId]);}catch{}
   try{if(emailVerifiedTouched)await pool.query('UPDATE accounts SET email_verified_at=$1 WHERE id=1',[originalEmailVerifiedAt]);}catch{}
   await pool.end();

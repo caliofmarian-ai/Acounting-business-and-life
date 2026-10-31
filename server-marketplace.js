@@ -889,7 +889,12 @@ app.get('/api/merchant/storefront',async(req,res,next)=>{try{
   delete req.headers['if-modified-since'];
   const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));
   let s=await storefront(business.id,true);
-  if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}
+  if(!s){
+    // Concurrent first-open GETs must converge on one default-OFF storefront.
+    // A second authorized request may already have inserted the same business.
+    await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2) ON CONFLICT (business_id) DO NOTHING`,[business.id,business.name]);
+    s=await storefront(business.id,true);
+  }
   const readiness=await microbusinessReadinessSnapshot(pool,{accountId:me.account.id,profileRole:'merchant',businessId:business.id});
   const includeProducts=String(req.query.include_products||'true').toLowerCase()!=='false';
   const domain=['food','non_food'].includes(clean(req.query.product_domain,20))?clean(req.query.product_domain,20):'';

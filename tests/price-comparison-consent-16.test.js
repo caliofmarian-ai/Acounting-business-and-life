@@ -20,6 +20,19 @@ test('private Merchant storefront consent revisions are not cached or conditiona
     'denied private requests must also be marked no-store');
 });
 
+test('concurrent authorized first-open storefront GETs cannot race into a duplicate-key failure',()=>{
+  const server=source('server-marketplace.js');
+  const start=server.indexOf("app.get('/api/merchant/storefront',");
+  const end=server.indexOf("app.get('/api/merchant/storefront/geocode'",start);
+  assert.ok(start>=0&&end>start);
+  const handler=server.slice(start,end);
+  assert.match(handler,/INSERT INTO merchant_storefronts\(business_id,store_name\) VALUES\(\$1,\$2\) ON CONFLICT \(business_id\) DO NOTHING/);
+  assert.ok(handler.indexOf('await storefront(business.id,true)')<handler.indexOf('ON CONFLICT (business_id) DO NOTHING'),
+    'bootstrap may only happen after authorized lookup');
+  assert.ok(handler.lastIndexOf('await storefront(business.id,true)')>handler.indexOf('ON CONFLICT (business_id) DO NOTHING'),
+    'winner and loser must both read the committed private storefront');
+});
+
 test('store comparison is OFF by default and an unrelated edit preserves prior opt-in',()=>{
   assert.deepEqual(store({}),{provided:false,value:false});
   assert.deepEqual(store({store_name:'Updated'},true),{provided:false,value:true});
