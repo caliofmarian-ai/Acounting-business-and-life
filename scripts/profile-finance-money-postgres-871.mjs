@@ -104,7 +104,7 @@ try{
   await pool.query(`
     ALTER TABLE profile_finance_audit_events
       ADD CONSTRAINT synthetic_audit_rejection
-      CHECK (event_code <> 'budget_allocation_changed')
+      CHECK (NOT (event_code = 'budget_allocation_changed' AND detail_json->>'amount' = '9.99'))
   `);
   const entriesBefore=await rowCount('profile_budget_entries');
   const auditsBefore=await rowCount('profile_finance_audit_events');
