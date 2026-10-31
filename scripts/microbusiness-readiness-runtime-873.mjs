@@ -46,7 +46,7 @@ try{
   // Pools, not just the single-Pool WeakMap gate. All databases are disposable.
   const ciDbName='abl_readiness_lock_ci';
   const maintenance=new pg.Pool({database:'postgres',max:2});
-  let bootstrap=null,recoveryPool=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
+  let bootstrap=null,recoveryPool=null,stagedPool=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
   let lockHeld=false,created=false,settledTasks=null;
   try{
     await maintenance.query('CREATE DATABASE '+ciDbName);
@@ -86,6 +86,31 @@ try{
     await recoveryPool.query('DROP TABLE microbusiness_readiness_events; DROP TABLE microbusiness_readiness');
     await recoveryPool.end();
     recoveryPool=null;
+
+    // Staged bootstrap negative case: the first initializer can run before
+    // businesses exists. Later creation must attach the optional FK without
+    // replaying all readiness table/index DDL or restarting that Pool.
+    stagedPool=new pg.Pool({database:ciDbName,max:1});
+    await stagedPool.query('DROP TABLE businesses');
+    await ensureMicrobusinessReadinessSchema(stagedPool);
+    const noBusinessFk=await stagedPool.query(`SELECT COUNT(*)::int AS count
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(noBusinessFk.rows[0].count),0,'first bootstrap without businesses has no invalid FK');
+    await stagedPool.query('CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    await Promise.all(Array.from({length:12},()=>ensureMicrobusinessReadinessSchema(stagedPool)));
+    const lateBusinessFk=await stagedPool.query(`SELECT COUNT(*)::int AS count
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(lateBusinessFk.rows[0].count),1,'later businesses creation adds FK in same Pool');
+    await ensureMicrobusinessReadinessSchema(stagedPool);
+    const lateFkUnique=await stagedPool.query(`SELECT COUNT(*)::int AS count
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(lateFkUnique.rows[0].count),1,'staged FK is not duplicated');
+    await stagedPool.query('DROP TABLE microbusiness_readiness_events; DROP TABLE microbusiness_readiness');
+    await stagedPool.end();
+    stagedPool=null;
 
     // Now verify a genuinely COLD initialization in two separate Pools.
     lockPool=new pg.Pool({database:ciDbName,max:1});
@@ -134,7 +159,7 @@ try{
     if(lockHeld&&lockClient)await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)').catch(()=>{});
     if(settledTasks)await settledTasks;
     lockClient?.release();
-    await Promise.all([bootstrap?.end(),recoveryPool?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
+    await Promise.all([bootstrap?.end(),recoveryPool?.end(),stagedPool?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
     // A normal DROP, never WITH FORCE: a leaked connection must fail loudly,
     // rather than emit an unhandled 57P01 and hide the original assertion.
     if(created)await maintenance.query('DROP DATABASE IF EXISTS '+ciDbName);
