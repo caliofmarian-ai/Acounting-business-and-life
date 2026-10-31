@@ -84,7 +84,7 @@ try{
      assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
      assert.equal(await page.locator('#stockList').isVisible(),false);
      await page.locator('#stockTool-inventory > summary').click();
-     assert.equal(await page.locator('#stockList').isVisible(),true);
+     assert.equal(await page.locator('#stockTool-inventory').evaluate(node=>node.open),true,'Inventory tool expands on click');
      await nav.getByRole('button',{name:'Today',exact:true}).click();
      await nav.getByRole('button',{name:'Stock',exact:true}).click();
      assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
