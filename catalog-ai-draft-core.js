@@ -31,6 +31,22 @@ const clean=(v,n)=>typeof v==='string'?clipUtf16(v
 const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;
 // Numeric hints must not reinterpret radix notation or round unsafe quantities.
 const DECIMAL_HINT=/^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+// Preserve decimal meaning of review hints. Number() silently rounds some
+// finite fractional strings (1.0000000000000001 -> 1), misleading reviewers.
+// Compare normalized decimal coefficients/exponents, without huge expansion.
+const sameDecimalValue=(raw,parsed)=>{
+  const parts=value=>{
+    const [mantissa,exponent='0']=value.toLowerCase().split('e');
+    const point=mantissa.indexOf('.');
+    const fraction=point<0?0:mantissa.length-point-1;
+    const digits=mantissa.replace(/^\+/,'').replace('.','').replace(/^0+/,'');
+    if(!/[1-9]/.test(digits))return '0';
+    const trailing=(digits.match(/0+$/)||[''])[0].length;
+    return digits.slice(0,digits.length-trailing)+'e'+(Number(exponent)-fraction+trailing);
+  };
+  return parts(raw)===parts(String(parsed));
+};
+
 // Measure actual enumerable JSON; inherited or model-owned toJSON serializers
 // must never conceal oversized untrusted suggestions from the 32 KiB gate.
 function snapshotJsonData(value){
@@ -174,7 +190,8 @@ function attributeHints(category,raw){
         const parsed=Number(trimmed);
         if(!Number.isFinite(parsed)||parsed<0||
           (Number.isInteger(parsed)&&!Number.isSafeInteger(parsed))||
-          (parsed===0&&/[1-9]/.test(trimmed.split(/[eE]/)[0])))continue;
+          (parsed===0&&/[1-9]/.test(trimmed.split(/[eE]/)[0]))||
+          !sameDecimalValue(trimmed,parsed))continue;
         candidate=String(parsed);
       }else{
         if(trimmed!=='true'&&trimmed!=='false')continue;

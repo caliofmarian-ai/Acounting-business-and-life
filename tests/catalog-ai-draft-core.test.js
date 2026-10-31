@@ -656,3 +656,27 @@ test('AI numeric display hints reject non-decimal radix, unsafe integers and non
     assert.equal(result.canonical_write_payload,false);
   }
 });
+
+
+test('fractional decimal model hints never silently lose digits during display normalization',()=>{
+  const result=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:'1.0000000000000001',height_cm:'0.10000000000000001',
+      weight_kg:'1.2300',length_cm:'2e3',color:'Oak'}});
+  assert.deepEqual(result.hints.variant_attributes,[
+    {code:'weight_kg',value:'1.23',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'length_cm',value:'2000',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'color',value:'Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  const controls=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:'+.75',height_cm:'0.50',weight_kg:'1e-7'}});
+  assert.deepEqual(controls.hints.variant_attributes,[
+    {code:'width_cm',value:'0.75',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'height_cm',value:'0.5',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'weight_kg',value:'1e-7',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  for(const value of [result,controls]){
+    assert.equal(value.state,'REVIEW_REQUIRED');
+    assert.equal(value.publishable,false);
+    assert.equal(value.canonical_write_payload,false);
+  }
+});
