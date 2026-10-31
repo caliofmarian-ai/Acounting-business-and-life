@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
-  parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate
+  parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
+  reviseStockIntakeRow,guardNewPaidStockIntakeRow
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -147,4 +148,47 @@ test('posting controls validate raw human-paid amount and date before any mutati
   assert.match(js,/validPhilippinePurchaseDate\(date,localDatePH\(\)\)/);
   assert.match(js,/row\.total=value===''\?null:parsePhpMoney\(value\)/);
   assert.match(js,/row\.quantity=value===''\?null:parseStockQuantity\(value\)/);
+});
+
+test('editing an approved quantity, cost, or unit revokes review and batch selection',()=>{
+  const row=parseStockIntakeCsv(example)[0];
+  row.reviewConfirmed=true;row.selected=true;
+  assert.equal(reviseStockIntakeRow(row,'quantity','4.0000'),true);
+  assert.equal(row.quantity,4);
+  assert.equal(row.reviewConfirmed,false);
+  assert.equal(row.selected,false);
+  assert.equal(row.requiresReview,true);
+  assert.equal(validStockIntakeRow(row),false);
+  row.reviewConfirmed=true;row.selected=true;
+  assert.equal(reviseStockIntakeRow(row,'quantity','4'),false);
+  assert.equal(row.reviewConfirmed,true,'identical quantity does not revoke a valid approval');
+  assert.equal(reviseStockIntakeRow(row,'total','346.00'),true);
+  assert.equal(row.reviewConfirmed,false);
+  assert.equal(row.selected,false);
+  row.reviewConfirmed=true;row.selected=true;
+  assert.equal(reviseStockIntakeRow(row,'unit','g'),true);
+  assert.equal(row.unit,'g');
+  assert.equal(row.reviewConfirmed,false);
+  assert.equal(row.selected,false);
+  row.reviewConfirmed=true;row.selected=true;
+  assert.equal(reviseStockIntakeRow(row,'total','1e3'),true);
+  assert.equal(row.total,null);
+  assert.equal(validStockIntakeRow(row),false);
+  row.result='saved';
+  assert.equal(reviseStockIntakeRow(row,'quantity','7'),false,'posted rows cannot be edited');
+});
+
+test('a newly discovered duplicate aborts paid intake instead of silently posting other rows',()=>{
+  const row=parseStockIntakeCsv(example)[0];
+  row.reviewConfirmed=true;row.selected=true;
+  assert.equal(guardNewPaidStockIntakeRow(row,[]),true);
+  assert.equal(row.selected,true);
+  assert.throws(()=>guardNewPaidStockIntakeRow(row,[{id:123,item:' FISH   BALLS ',quantity:5}]),
+    error=>error.paidBatchConflict===true&&/reconcile the entire Stock and Money batch/.test(error.message));
+  assert.equal(row.exists.id,123);
+  assert.equal(row.selected,false);
+  assert.equal(validStockIntakeRow(row),false);
+  assert.match(js,/guardNewPaidStockIntakeRow\(row,state\.inventory\)/);
+  assert.match(js,/error\?\.paidBatchConflict/);
+  assert.doesNotMatch(js,/if\(existing\).*continue/);
 });

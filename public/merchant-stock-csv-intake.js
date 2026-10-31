@@ -110,6 +110,33 @@ export function findExistingInventory(row,inventory){
   return (Array.isArray(inventory)?inventory:[]).find(value=>NORMALIZE(value.item)===name)||null;
 }
 
+// A changed physical count, unit, or paid value voids any prior human approval.
+// Never carry an old review checkbox or selection onto a different purchase.
+export function reviseStockIntakeRow(row,field,raw){
+  if(!row||row.result!=='pending'||!['quantity','unit','total'].includes(field))return false;
+  const next=field==='quantity'?(raw===''?null:parseStockQuantity(raw)):
+    field==='total'?(raw===''?null:parsePhpMoney(raw)):String(raw??'');
+  if(Object.is(row[field],next))return false;
+  row[field]=next;
+  row.requiresReview=true;
+  row.reviewConfirmed=false;
+  row.selected=false;
+  return true;
+}
+
+// Client preflight is not a server-side idempotency or create-only guarantee.
+// If one selected item becomes present, STOP the full paid batch; continuing
+// the remaining purchases would no longer reconcile to the confirmed total.
+export function guardNewPaidStockIntakeRow(row,inventory){
+  const existing=findExistingInventory(row,inventory);
+  if(!existing)return true;
+  row.exists=existing;
+  row.selected=false;
+  const error=new Error('Selected item appeared in live Inventory after paid-total confirmation. No purchase was submitted for this item. Stop and reconcile the entire Stock and Money batch before any further posting.');
+  error.paidBatchConflict=true;
+  throw error;
+}
+
 const hasDocument=typeof document!=='undefined';
 if(hasDocument){
   const $=id=>document.getElementById(id);
@@ -226,13 +253,13 @@ if(hasDocument){
         ' '+String(row.exists.unit||'')+'). This tool will NOT add it again. Use ordinary Stock receiving if this is a distinct new purchase.'));
       const columns=element('div','columns');
       columns.appendChild(createField('Physically confirmed quantity',row.quantity,{step:'0.0001'},value=>{
-        row.quantity=value===''?null:parseStockQuantity(value);renderRows();
+        reviseStockIntakeRow(row,'quantity',value);renderRows();
       }));
       columns.appendChild(createField('Unit',row.unit,{choices:['kg','g','L','ml','unit']},value=>{
-        row.unit=value;renderRows();
+        reviseStockIntakeRow(row,'unit',value);renderRows();
       }));
       columns.appendChild(createField('Value of stock to add (₱)',row.total,{step:'0.01'},value=>{
-        row.total=value===''?null:parsePhpMoney(value);renderRows();
+        reviseStockIntakeRow(row,'total',value);renderRows();
       }));
       item.appendChild(columns);
       if(row.requiresReview){
@@ -339,8 +366,7 @@ if(hasDocument){
         await assertLiveContext();
         if(!sameContext(originalContext,state.context))throw new Error('Merchant context changed.');
         // Existing-name checks stop this row rather than silently increasing stock.
-        const existing=findExistingInventory(row,state.inventory);
-        if(existing){row.exists=existing;row.selected=false;row.error='Item appeared in existing Inventory; no automatic additional purchase posted.';continue}
+        guardNewPaidStockIntakeRow(row,state.inventory);
         if(!validStockIntakeRow(row))throw new Error('Stock quantity, unit, cost or review confirmation is not valid.');
         row.result='posting';renderRows();
         // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
@@ -381,7 +407,10 @@ if(hasDocument){
         renderRows();
       }catch(error){
         // No automatic retry: the server endpoint has no request-key idempotency.
-        if(row.result==='saved-date-pending'){
+        if(error?.paidBatchConflict){
+          row.result='error';
+          row.error='NOT POSTED: '+error.message;
+        }else if(row.result==='saved-date-pending'){
           row.error='STOCK AND EXPENSE ARE SAVED, but the original payment date could not be confirmed: '+
             (error?.message||'Unknown error')+'. Correct expense date in Money; do NOT post the stock purchase again.';
         }else{
