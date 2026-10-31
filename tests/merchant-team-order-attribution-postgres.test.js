@@ -64,7 +64,7 @@ test('real PostgreSQL: staff attribution is same-transaction, immutable and revo
     const first=await db.query('SELECT * FROM merchant_team_order_attribution WHERE order_id=$1',[firstOrder]);
     assert.equal(first.rowCount,1);
     assert.equal(first.rows[0].operator_name_snapshot,'CI Family Helper');
-    assert.equal(first.rows[0].business_id,bid);
+    assert.equal(Number(first.rows[0].business_id),bid);
     assert.equal((await db.query('SELECT 1 FROM merchant_team_order_attribution WHERE order_id=$1',[secondOrder])).rowCount,0);
     assert.equal((await db.query('SELECT 1 FROM orders WHERE id=$1',[secondOrder])).rowCount,0);
 
