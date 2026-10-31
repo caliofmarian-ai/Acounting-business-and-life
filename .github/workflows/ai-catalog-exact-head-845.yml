@@ -1,0 +1,33 @@
+name: AI Catalog Exact Head 845
+on:
+  pull_request:
+    paths:
+      - 'catalog-ai-draft-core.js'
+      - 'catalog-v3-core.js'
+      - 'tests/catalog-ai-draft-core.test.js'
+      - '.github/workflows/ai-catalog-exact-head-845.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ai-catalog-exact-head-845-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify literal PR head and run actual-source regressions
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check catalog-ai-draft-core.js
+          node --check tests/catalog-ai-draft-core.test.js
+          node --test tests/catalog-ai-draft-core.test.js
