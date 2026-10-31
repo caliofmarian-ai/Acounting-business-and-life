@@ -79,9 +79,19 @@ function normalizeBudgetPurpose(value){
   return v;
 }
 function normalizePositiveMoney(value,label='Amount'){
-  const n=Number(value);
-  if(!Number.isFinite(n)||n<=0)fail(label+' must be greater than zero');
-  return Math.round((n+Number.EPSILON)*100)/100;
+  // Every consumer writes NUMERIC(14,2): never coerce hex/exponents/booleans
+  // or round fractional cents into a different ledger, budget or HOLD amount.
+  const raw=typeof value==='number'
+    ?(Number.isFinite(value)?String(value):'')
+    :(typeof value==='string'?value.trim():'');
+  if(raw.length>32||!/^\\d{1,12}(?:\\.\\d{1,2})?$/.test(raw))
+    fail(label+' must be a positive decimal amount with at most two fractional digits');
+  const [units,part='']=raw.split('.');
+  const cents=BigInt(units)*100n+BigInt(part.padEnd(2,'0'));
+  // NUMERIC(14,2) fits at most 12 integer digits and 2 decimal digits.
+  if(cents<=0n||cents>99999999999999n)
+    fail(label+' must be between 0.01 and 999999999999.99');
+  return Number(cents)/100;
 }
 function normalizeBudgetScope(profileRole,businessId){
   const role=normalizeRole(profileRole);
