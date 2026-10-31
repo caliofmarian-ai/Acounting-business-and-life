@@ -322,6 +322,29 @@ try{
     "INSERT INTO marketplace_products(business_id,name,product_domain,product_kind,selling_price,published,price_comparison_override) VALUES($1,$2,'food','prepared_food',19.75,FALSE,FALSE) RETURNING id",
     [foreignBusinessId,marker+'-foreign'])).rows[0].id);
   same(Number.isSafeInteger(foreignProductId)&&foreignProductId>0,true,'synthetic foreign listing exists');
+  // Hold a real PostgreSQL row lock on a foreign Merchant's private listing.
+  // A denied authenticated PATCH must return 403 while that lock is STILL held;
+  // locking first would block this HTTP response until the transaction ends.
+  const foreignLock=await pool.connect();
+  try{
+    await foreignLock.query('BEGIN');
+    await foreignLock.query('SELECT id FROM marketplace_products WHERE id=$1 FOR UPDATE',[foreignProductId]);
+    let deadline;
+    try{
+      const denial=await Promise.race([
+        request('/api/merchant/storefront/products/'+foreignProductId,{
+          method:'PATCH',token,body:{price_comparison_override:true}
+        }),
+        new Promise((_,reject)=>{
+          deadline=setTimeout(()=>reject(new Error('Unauthorized PATCH waited on a foreign product row lock')),8000);
+        })
+      ]);
+      same(denial.status,403,'unauthorized Merchant PATCH must be rejected before the foreign row lock');
+    }finally{clearTimeout(deadline)}
+  }finally{
+    await foreignLock.query('ROLLBACK').catch(()=>{});
+    foreignLock.release();
+  }
   await expect('/api/merchant/storefront/products/'+foreignProductId,{
     method:'PATCH',token,body:{price_comparison_override:true}},403);
   await expect('/api/merchant/storefront/products/'+foreignProductId,{

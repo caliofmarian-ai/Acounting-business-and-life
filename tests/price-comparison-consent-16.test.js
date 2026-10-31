@@ -5,6 +5,21 @@ import {normalizeStoreComparisonConsent as store,normalizeListingComparisonConse
 import {buildInternalPriceComparison} from '../price-comparison-core.js';
 
 const source=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
+test('Merchant product PATCH checks business authority before any foreign row lock',()=>{
+  const server=source('server-marketplace.js');
+  const start=server.indexOf("app.patch('/api/merchant/storefront/products/:id'");
+  const end=server.indexOf('async function merchantOwnedMarketplaceProduct',start);
+  assert.ok(start>=0&&end>start);
+  const handler=server.slice(start,end);
+  const auth=handler.indexOf('await requireMerchant(req)');
+  const scope=handler.indexOf('SELECT business_id FROM marketplace_products WHERE id=$1');
+  const lock=handler.indexOf('FOR UPDATE');
+  assert.ok(auth>=0&&scope>auth&&lock>scope,'authorization must precede product row locks');
+  assert.match(handler,/merchantBusiness\(me,scope\.rows\[0\]\.business_id\)/);
+  assert.match(handler,/WHERE id=\$1 AND business_id=\$2 FOR UPDATE/);
+  assert.match(handler,/if\(client\)await client\.query\('ROLLBACK'\)/);
+});
+
 test('private Merchant storefront consent revisions are not cached or conditionally reused',()=>{
   const server=source('server-marketplace.js');
   const start=server.indexOf("app.get('/api/merchant/storefront',");

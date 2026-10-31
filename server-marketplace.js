@@ -1097,14 +1097,23 @@ app.post('/api/merchant/storefront/products',body,async(req,res,next)=>{
 });
 
 app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
-  const client=await pool.connect();
+  let client;
   try{
     const id=Number(req.params.id);
     if(!Number.isInteger(id)||id<1)return res.status(400).json({error:'Invalid product'});
+    // Authenticate before reading a listing; a foreign ID must not acquire a
+    // row lock or consume a transaction connection before business authorization.
+    const{me}=await requireMerchant(req);
+    const scope=await pool.query('SELECT business_id FROM marketplace_products WHERE id=$1',[id]);
+    if(!scope.rowCount)throw Object.assign(new Error('Product not found'),{status:404});
+    const business=merchantBusiness(me,scope.rows[0].business_id);
+    if(!business)throw Object.assign(new Error('Business workspace not available'),{status:403});
+    client=await pool.connect();
     await client.query('BEGIN');
-    const own=await client.query('SELECT *,xmin::text AS comparison_version FROM marketplace_products WHERE id=$1 FOR UPDATE',[id]);
+    // Recheck scope while locking: never mutate a row from a different business.
+    const own=await client.query('SELECT *,xmin::text AS comparison_version FROM marketplace_products WHERE id=$1 AND business_id=$2 FOR UPDATE',[id,business.id]);
     if(!own.rowCount)throw Object.assign(new Error('Product not found'),{status:404});
-    const old=own.rows[0],{business}=await requireMerchant(req,old.business_id);
+    const old=own.rows[0];
     const comparisonConsent=normalizeListingComparisonConsent(req.body||{},old.price_comparison_override);
     // An explicit TRUE or inherited (NULL) may re-enable comparison. Validate
     // its observed revision while holding the product row lock; OFF is always
@@ -1206,10 +1215,10 @@ app.patch('/api/merchant/storefront/products/:id',body,async(req,res,next)=>{
     await client.query('COMMIT');
     res.json({...rows[0],catalog_attributes:transition.attributes,catalog_attribute_reviews:reviews});
   }catch(e){
-    await client.query('ROLLBACK').catch(()=>{});
+    if(client)await client.query('ROLLBACK').catch(()=>{});
     if(catalogRouteValidation(res,e))return;
     next(e);
-  }finally{client.release()}
+  }finally{client?.release()}
 });
 
 async function merchantOwnedMarketplaceProduct(req){
