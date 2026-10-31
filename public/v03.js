@@ -12,6 +12,7 @@ let restockSuggestions = [];
 let wasteAnalyticsDays = 7;
 let products = [];
 let preparedRemovalPendingKey = null;
+let productSalesHistoryGeneration = 0;
 let recipeDraft = [];
 let allergenCatalog = [];
 let currentProductAllergenSummary = null;
@@ -545,6 +546,9 @@ function renderMerchantToday(data){
 
   $('todayMoneyReceived').textContent=money(data.money?.confirmed_received);
   $('todayCompletedSales').textContent=money(data.money?.completed_sales);
+  const salesSources=data.money?.sources||{};
+  if($('todaySalesSources'))$('todaySalesSources').textContent='Orders '+money(salesSources.completed_order_value)+
+    ' · Quick Sale '+num(salesSources.quick_sale_portions||0)+' portion(s) / '+money(salesSources.quick_sale_value);
   $('todayAwaitingPayment').textContent=money(data.money?.awaiting_payment);
   $('todayBusinessExpenses').textContent=money(data.money?.business_expenses);
   $('todayFoodActions').classList.toggle('hidden',!data.presentation?.food_modules_enabled);
@@ -1612,7 +1616,37 @@ async function loadPreparedRemovals(){
   $('preparedRemovalList')?.replaceChildren(...(nodes.length?nodes:[emptyRow('No prepared portions removed without sale yet.')]));
 }
 
-async function loadProductSales(){const isCurrent=merchantReadGuard();const rows=await cachedJson('/api/product-sales','product_sales');if(!isCurrent())return;const nodes=rows.slice(0,20).map(s=>{const d=document.createElement('div');d.className='listRow';const margin=Number(s.revenue)>0?Number(s.gross_profit)/Number(s.revenue)*100:0;d.innerHTML=`<div class="rowMain"><strong>${num(s.quantity)} × ${esc(s.product_name_snapshot)}</strong><small>${esc(accountLabel(s.account))} • cost ${money(s.estimated_cogs)} • margin ${margin.toFixed(1)}%</small></div><div class="rowRight"><span>${money(s.revenue)}</span><small class="positive">gross ${money(s.gross_profit)}</small></div>`;return d});$('productSaleList').replaceChildren(...(nodes.length?nodes:[emptyRow('No menu sales yet.')]))}
+async function loadProductSales(){
+  const list=$('productSaleList');
+  if(!list)return[];
+  const generation=++productSalesHistoryGeneration,guard=merchantReadGuard();
+  const active=()=>guard()&&generation===productSalesHistoryGeneration;
+  list.replaceChildren(emptyRow('Loading recent Quick Sales…'));
+  try{
+    // Never accept a browser-cached empty/304 history after posting new sales.
+    // This read is business-bound and does not regenerate or repost transactions.
+    const rows=await api('/api/product-sales',{cache:'no-store'},{isCurrent:active});
+    if(!active())return[];
+    if(!Array.isArray(rows))throw new Error('Quick Sale history returned an invalid response.');
+    const nodes=rows.slice(0,30).map(s=>{
+      const d=document.createElement('div');d.className='listRow';
+      const margin=Number(s.revenue)>0?Number(s.gross_profit)/Number(s.revenue)*100:0;
+      d.innerHTML=`<div class="rowMain"><strong>${num(s.quantity)} × ${esc(s.product_name_snapshot)}</strong><small>${esc(accountLabel(s.account))} • cost ${money(s.estimated_cogs)} • margin ${margin.toFixed(1)}%</small></div><div class="rowRight"><span>${money(s.revenue)}</span><small class="positive">gross ${money(s.gross_profit)}</small></div>`;
+      return d;
+    });
+    list.replaceChildren(...(nodes.length?nodes:[emptyRow('No Quick Sale records for this business yet.')]));
+    return rows;
+  }catch(error){
+    // An old business/session must never overwrite a newer Merchant's history.
+    if(!active())return[];
+    const message=emptyRow('Quick Sale history could not be loaded. '+(error.message||'Check your connection.'));
+    const retry=document.createElement('button');
+    retry.type='button';retry.className='secondary';retry.textContent='Retry sales history';
+    retry.addEventListener('click',()=>loadProductSales().catch(e=>console.error(e)));
+    list.replaceChildren(message,retry);
+    return[];
+  }
+}
 function profitRows(report){const nodes=[];for(const p of report.products||[]){const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(p.name)}</strong><small>Quick sale history · ${num(p.quantity)} portions • revenue ${money(p.revenue)} • ingredient cost ${money(p.cogs)}</small></div><div class="rowRight"><span class="${Number(p.gross_profit)>=0?'positive':'negative'}">${money(p.gross_profit)}</span><small>${Number(p.margin_pct).toFixed(1)}%</small></div>`;nodes.push(d)}
   const orders=report.completed_order_direct_cost?.orders||[];
   for(const o of orders.slice(0,8)){const d=document.createElement('div');d.className='listRow';d.innerHTML=`<div class="rowMain"><strong>${esc(o.order_number||('Order #'+o.order_id))} · ${esc(o.fulfilment_method||'order')}</strong><small>Ingredient ${money(o.ingredient_cost)} • packaging/direct consumables ${money(o.direct_consumable_cost)} • direct food cost ${money(o.direct_food_cost)}</small></div><div class="rowRight"><span class="${Number(o.direct_gross_profit)>=0?'positive':'negative'}">${money(o.direct_gross_profit)}</span><small>${Number(o.direct_margin_pct).toFixed(1)}%</small></div>`;nodes.push(d)}

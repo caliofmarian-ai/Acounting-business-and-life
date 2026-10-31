@@ -107,8 +107,8 @@
           <section class="todayCard todayMoneyCard">
             <div class="todayCardHead"><div><span>Money</span><h2>Confirmed business snapshot</h2></div></div>
             <div class="todayMoneyGrid">
-              <div><span>Money received</span><strong id="todayMoneyReceived">₱0</strong><small>Confirmed customer payments</small></div>
-              <div><span>Completed sales</span><strong id="todayCompletedSales">₱0</strong><small>Merchandise value</small></div>
+              <div><span>Money received</span><strong id="todayMoneyReceived">₱0</strong><small>Confirmed customer payments + paid Quick Sales</small></div>
+              <div><span>Completed sales</span><strong id="todayCompletedSales">₱0</strong><small id="todaySalesSources">Completed orders + Quick Sale</small></div>
               <div><span>Awaiting payment</span><strong id="todayAwaitingPayment">₱0</strong><small>Completed, not fully paid</small></div>
               <div><span>Expenses</span><strong id="todayBusinessExpenses">₱0</strong><small>Business expenses</small></div>
             </div>
@@ -134,7 +134,7 @@
           <button class="primary bigAction">Record product sale</button>
           <div id="sellMessage"></div>
         </form>
-        <div class="card stack"><div class="sectionHead"><h2>Recent menu sales</h2><button data-view-link="Menu" class="linkBtn">Menu & margins</button></div><div id="productSaleList" class="list"></div></div>
+        <div class="card stack"><div class="sectionHead"><h2>Recent menu sales</h2><button data-view-link="Menu" class="linkBtn">Menu & margins</button></div><div id="productSaleList" class="list" role="status" aria-live="polite"></div></div>
         <details id="preparedRemovalDetails" class="card stack">
           <summary><strong>Remove prepared portions — not a sale</strong></summary>
           <div class="stack" style="padding-top:0.75rem">
