@@ -146,8 +146,8 @@ test('paid date cannot normalize invalid calendar days or future PH dates',()=>{
 test('posting controls validate raw human-paid amount and date before any mutation',()=>{
   assert.match(js,/const parsedPaid=parsePhpMoney\(paidText\)/);
   assert.match(js,/validPhilippinePurchaseDate\(date,localDatePH\(\)\)/);
-  assert.match(js,/row\.total=value===''\?null:parsePhpMoney\(value\)/);
-  assert.match(js,/row\.quantity=value===''\?null:parseStockQuantity\(value\)/);
+  assert.match(js,/reviseStockIntakeRow\(row,'total',value\)/);
+  assert.match(js,/reviseStockIntakeRow\(row,'quantity',value\)/);
 });
 
 test('editing an approved quantity, cost, or unit revokes review and batch selection',()=>{
