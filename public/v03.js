@@ -979,6 +979,7 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
   }
   const ready=state==='ready',cached=state==='cached',preview=state==='partial';
   const toolMenu=Boolean(view.querySelector('.stockToolDeck'));
+  if(toolMenu)view.dataset.inventoryReadState=state; // CSS masks stale private tool contents until verified.
   // A disabled fieldset preserves each widget's own disabled/capability decisions.
   content.disabled=!ready;
   inventoryConfirmedContext=ready?merchantReadContext():null;
