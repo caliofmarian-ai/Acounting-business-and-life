@@ -78,6 +78,34 @@ try{
   expect(await request('/api/orders/merchant/list?business_id=1',{headers:workerHeaders}),401,'worker denied owner orders API');
   const ownerCookieConflict=await request('/api/orders/operator/session',{headers:{Cookie:cookie+'; __Host-abl_session=owner-login'}});
   expect(ownerCookieConflict,409,'no employee terminal with owner session');
+  // Root account bearer is a real, already-validated V2 token from /api/me,
+  // not an invented string; staff cookies and owner auth must never coexist.
+  const mixedHeaders={...workerHeaders,Authorization:'Bearer '+ownerToken,
+    'x-team-csrf-token':session.csrf_token};
+  for(const path of ['/api/orders/operator/session','/api/orders/operator/catalog',
+    '/api/orders/operator/orders']){
+    const denied=await request(path,{headers:mixedHeaders});
+    expect(denied,409,'mixed owner bearer + operator cookie '+path);
+    assert.equal(denied.data.code,'OPERATOR_OWNER_SESSION');
+  }
+  for(const [path,body] of [
+    ['/api/orders/operator/voice/turn',{transcript:'Three adobo',consent:true}],
+    ['/api/orders/operator/voice/quote',{consent:true,draft:{}}],
+    ['/api/orders/operator/pair/operators',{pair_code:invite.pair_code}],
+    ['/api/orders/operator/pair/start',{pair_code:invite.pair_code,operator_id:operatorId,pin}],
+    ['/api/orders/operator/logout',{}]
+  ]){
+    const denied=await request(path,{method:'POST',headers:mixedHeaders,body});
+    expect(denied,409,'mixed owner bearer + operator cookie '+path);
+    assert.equal(denied.data.code,'OPERATOR_OWNER_SESSION');
+  }
+  for(const path of ['/api/orders/operator/pair/operators','/api/orders/operator/pair/start']){
+    const denied=await request(path,{method:'POST',headers:owner,body:{
+      pair_code:invite.pair_code,operator_id:operatorId,pin}});
+    expect(denied,409,'owner bearer without staff cookie '+path);
+    assert.equal(denied.data.code,'OPERATOR_OWNER_SESSION');
+  }
+
   const aiOff=await request('/api/orders/operator/voice/turn',{method:'POST',headers:{...workerHeaders,'x-team-csrf-token':session.csrf_token},
     body:{transcript:'Three adobo',consent:true}});
   expect(aiOff,503,'AI disabled by default');
