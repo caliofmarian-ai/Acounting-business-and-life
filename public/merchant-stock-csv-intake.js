@@ -34,22 +34,42 @@ export function validPhilippinePurchaseDate(value,today){
 export function parseCsvRecords(text){
   const source=String(text||'').replace(/^\uFEFF/,'');
   if(source.length>250000)throw new Error('CSV exceeds the 250 KB review limit.');
-  const records=[];let field='',fields=[],quoted=false;
+  const records=[];let field='',fields=[],mode='start';
+  const finishField=()=>{fields.push(field);field='';mode='start'};
+  const finishRecord=()=>{
+    finishField();
+    if(fields.some(value=>String(value).trim()))records.push(fields);
+    fields=[];
+  };
   for(let i=0;i<source.length;i++){
     const ch=source[i];
+    if(mode==='quoted'){
+      if(ch==='"'){
+        if(source[i+1]==='"'){field+='"';i++}
+        else mode='closed';
+      }else field+=ch;
+      continue;
+    }
     if(ch==='"'){
-      if(quoted&&source[i+1]==='"'){field+='"';i++}
-      else quoted=!quoted;
-    }else if(ch===','&&!quoted){fields.push(field);field=''}
-    else if((ch==='\n'||ch==='\r')&&!quoted){
-      fields.push(field);field='';
-      if(fields.some(x=>String(x).trim()))records.push(fields);
-      fields=[];if(ch==='\r'&&source[i+1]==='\n')i++;
-    }else{field+=ch}
+      if(mode!=='start')throw new Error('Invalid CSV quote boundary at character '+(i+1)+'. Review the source before importing.');
+      mode='quoted';
+    }else if(ch===','){finishField()}
+    else if(ch==='\n'||ch==='\r'){
+      finishRecord();
+      if(ch==='\r'&&source[i+1]==='\n')i++;
+    }else{
+      if(mode==='closed')throw new Error('Unexpected content after a quoted CSV field at character '+(i+1)+'.');
+      mode='unquoted';field+=ch;
+    }
   }
-  if(quoted)throw new Error('Unclosed quoted CSV field.');
-  if(field||fields.length){fields.push(field);if(fields.some(x=>String(x).trim()))records.push(fields)}
+  if(mode==='quoted')throw new Error('Unclosed quoted CSV field.');
+  if(field||fields.length||mode==='closed')finishRecord();
   return records;
+}
+
+// An older File.text() promise cannot replace posted outcomes or a newer CSV.
+export function csvReadIsCurrent(ticket,latestTicket,posting){
+  return Number.isSafeInteger(ticket)&&ticket===latestTicket&&!posting;
 }
 
 export function parseStockIntakeCsv(text){
@@ -140,7 +160,7 @@ export function guardNewPaidStockIntakeRow(row,inventory){
 const hasDocument=typeof document!=='undefined';
 if(hasDocument){
   const $=id=>document.getElementById(id);
-  const state={context:null,inventory:[],transactions:[],rows:[],busy:false,stop:false,accountId:null,resultLog:[]};
+  const state={context:null,inventory:[],transactions:[],rows:[],busy:false,stop:false,accountId:null,resultLog:[],csvReadRevision:0};
   function message(id,text,kind=''){
     const el=$(id);if(!el)return;el.textContent=text;el.classList.toggle('error',kind==='error');el.classList.toggle('ok',kind==='ok');
   }
@@ -310,6 +330,11 @@ if(hasDocument){
     $('post').disabled=state.busy||!state.context||!exactlyConfirmedBusiness()||
       !selected.length||selected.length!==valid.length||!validDate||!validAccount||!totalsMatch||
       !$('physicalConfirm').checked||!$('moneyConfirm').checked;
+    $('csv').disabled=state.busy;
+    $('businessName').disabled=state.busy;
+    $('physicalConfirm').disabled=state.busy;
+    $('moneyConfirm').disabled=state.busy;
+    $('actualTotalPaid').disabled=state.busy;
     $('purchaseAccount').disabled=state.busy;
     $('purchaseDate').disabled=state.busy;
     $('stop').disabled=!state.busy;
@@ -322,10 +347,14 @@ if(hasDocument){
     }).format(new Date());
   }
   async function readFile(){
+    if(state.busy)return;
     const file=$('csv').files?.[0];if(!file)return;
+    const ticket=++state.csvReadRevision;
     if(file.size>250000){message('fileStatus','CSV is too large.','error');return}
     try{
-      const parsed=parseStockIntakeCsv(await file.text());
+      const csvText=await file.text();
+      if(!csvReadIsCurrent(ticket,state.csvReadRevision,state.busy))return;
+      const parsed=parseStockIntakeCsv(csvText);
       const sourcePaidTotals=[...new Set(parsed.map(row=>row.paidTotal).filter(value=>value!==null))];
       if(sourcePaidTotals.length>1)
         throw new Error('CSV contains different confirmed paid totals. Reconcile the source before importing.');
@@ -337,7 +366,10 @@ if(hasDocument){
         'Source says ₱'+sourcePaidTotals[0].toFixed(2)+' was paid; verify this amount against purchase evidence. ': 
         'Enter the amount actually paid. ')+ 'No server writes have occurred.','ok');
       message('results','No changes made.');
-    }catch(error){state.rows=[];renderRows();message('fileStatus',error.message,'error')}
+    }catch(error){
+      if(!csvReadIsCurrent(ticket,state.csvReadRevision,state.busy))return;
+      state.rows=[];renderRows();message('fileStatus',error.message,'error');
+    }
   }
   async function assertMerchantContext(){
     const before=await snapshot();
@@ -355,6 +387,8 @@ if(hasDocument){
   }
   async function saveSelected(){
     if($('post').disabled||state.busy)return;
+    // Invalidate outstanding file reads before the first durable request.
+    state.csvReadRevision++;
     state.busy=true;state.stop=false;updateControls();
     const originalContext=state.context;
     const paidFrom=$('purchaseAccount').value,originalDate=$('purchaseDate').value;

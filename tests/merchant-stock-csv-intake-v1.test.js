@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
-  reviseStockIntakeRow,guardNewPaidStockIntakeRow
+  reviseStockIntakeRow,guardNewPaidStockIntakeRow,csvReadIsCurrent
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -191,4 +191,28 @@ test('a newly discovered duplicate aborts paid intake instead of silently postin
   assert.match(js,/guardNewPaidStockIntakeRow\(row,state\.inventory\)/);
   assert.match(js,/error\?\.paidBatchConflict/);
   assert.doesNotMatch(js,/if\(existing\).*continue/);
+});
+
+test('malformed quote boundaries cannot silently rewrite paid CSV line amounts',()=>{
+  const header='item,proposed_quantity,proposed_unit,screenshot_line_php';
+  for(const line of [
+    'Rice,2,kg,1"2"0',
+    'Rice,2,kg,"120"garbage',
+    'Rice,2,kg,"120',
+    'Rice,2,kg,120"'
+  ])assert.throws(()=>parseStockIntakeCsv(header+'\n'+line),/CSV quote|quoted CSV|Unexpected content/i,line);
+  assert.deepEqual(parseCsvRecords('item,note\r\n"Fish, frozen","The receipt says ""paid""\nsecond line"\r\n'),
+    [['item','note'],['Fish, frozen','The receipt says "paid"\nsecond line']]);
+});
+
+test('stale asynchronous CSV reads cannot replace a posted or newer reviewed batch',()=>{
+  assert.equal(csvReadIsCurrent(4,4,false),true);
+  assert.equal(csvReadIsCurrent(3,4,false),false,'a newer file selection wins');
+  assert.equal(csvReadIsCurrent(4,4,true),false,'a running stock/expense write blocks file replacement');
+  assert.equal(csvReadIsCurrent(4,5,false),false,'a past read stays cancelled after posting');
+  assert.match(js,/const ticket=\+\+state\.csvReadRevision;/);
+  assert.match(js,/const csvText=await file\.text\(\);\s*if\(!csvReadIsCurrent\(ticket,state\.csvReadRevision,state\.busy\)\)return;/);
+  assert.match(js,/state\.csvReadRevision\+\+;\s*state\.busy=true/);
+  assert.match(js,/\$\('csv'\)\.disabled=state\.busy/);
+  assert.match(js,/\$\('actualTotalPaid'\)\.disabled=state\.busy/);
 });
