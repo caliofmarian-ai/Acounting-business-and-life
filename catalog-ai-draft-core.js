@@ -23,7 +23,7 @@ const clipUtf16=(text,n)=>{
 };
 const clean=(v,n)=>typeof v==='string'?clipUtf16(v
   .replace(/\u200d/g,(joiner,index,text)=>emojiJoiner(index,text)?joiner:' ')
-  .replace(/[<>\u0000-\u001f\u007f\u00ad\u034f\u061c\u115f-\u1160\u180e\u200b-\u200c\u2800\u3164\uffa0\u200e-\u200f\u202a-\u202e\u2060-\u206f]/g,' ')
+  .replace(/[<>\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f-\u1160\u180e\u200b-\u200c\u2800\u3164\uffa0\u200e-\u200f\u202a-\u202e\u2060-\u206f]/g,' ')
   .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,' ')
   .replace(/\s+/g,' ').trim(),n):'';
 // Model JSON can inherit polluted Object.prototype properties. Only fields

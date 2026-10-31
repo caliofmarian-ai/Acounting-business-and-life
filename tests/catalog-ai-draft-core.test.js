@@ -587,3 +587,27 @@ test('model Unicode review hints preserve complete emoji and never expose lone s
     assert.equal(d.state,'REVIEW_REQUIRED');
   }
 });
+
+test('C1 nonprinting controls cannot be hidden inside model review hints',()=>{
+  // U+0085 NEXT LINE and other C1 control codes are not JavaScript whitespace.
+  // They must not survive as invisible bytes in untrusted displayed labels.
+  for(const hidden of ['\u0085','\u008e','\u009c','\u009f']){
+    const d=draft('merchant_non_food',{
+      catalog_category_code:'furniture_home',
+      name:'Bacoor'+hidden+'Outlet',
+      description:'Natural'+hidden+'wood',
+      tags:['home'+hidden+'office'],
+      variant_attributes:{color:'Light'+hidden+'Oak',width_cm:'1'+hidden+'2'}
+    });
+    assert.equal(d.hints.name,'Bacoor Outlet');
+    assert.equal(d.hints.description,'Natural wood');
+    assert.deepEqual(d.hints.tags,['home office']);
+    assert.deepEqual(d.hints.variant_attributes,[
+      {code:'color',value:'Light Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+    ],'typed C1 control hint must be dropped, not converted');
+    assert.equal(d.state,'REVIEW_REQUIRED');
+    assert.equal(d.publishable,false);
+    assert.equal(d.canonical_write_payload,false);
+  }
+  assert.equal(draft('merchant_prepared_food',{name:'Chef 👩‍🍳'}).hints.name,'Chef 👩‍🍳');
+});
