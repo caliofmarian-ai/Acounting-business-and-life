@@ -113,20 +113,27 @@ export function merchantTodayViewModel({
       completed_sales:money(finance?.commercial?.completed_merchandise_value),
       awaiting_payment:money(finance?.receivables?.completed_customer_receivables),
       business_expenses:money(finance?.ledger?.business_expenses),
-      currency_code:finance?.business?.currency_code||business?.currency_code||'PHP'
+      currency_code:finance?.business?.currency_code||business?.currency_code||'PHP',
+      sources:{
+        completed_order_value:money(finance?.sources?.completed_order_value),
+        quick_sale_value:money(finance?.sources?.quick_sale_value),
+        quick_sale_portions:n(finance?.sources?.quick_sale_portions),
+        confirmed_order_received:money(finance?.sources?.confirmed_order_received),
+        confirmed_quick_sale_received:money(finance?.sources?.confirmed_quick_sale_received)
+      }
     },
     authority:{
       orders:'canonical orders state machine',
       inventory:'business-scoped inventory evidence only',
       supplier:'procurement, RFQ and Supplier exception evidence; no automatic winner or PO creation',
       catalog:'merchant storefront, catalog publication and catalog media evidence',
-      money:'existing role-aware finance overview; order value is never treated as cash'
+      money:'order merchandise is a completed-sale value, not cash; linked Quick Sale receipts are separate from confirmed order payments'
     }
   };
 }
 
 
-async function merchantTodayFinanceSnapshot(pool,ctx){
+export async function merchantTodayFinanceSnapshot(pool,ctx){
   const bid=Number(ctx.business.id);
   const {rows}=await pool.query(`
     WITH store AS (
@@ -149,6 +156,23 @@ async function merchantTodayFinanceSnapshot(pool,ctx){
         COALESCE(SUM(GREATEST(subtotal-merchandise_received,0)) FILTER(WHERE order_status='completed'),0) completed_receivables
       FROM x
     ),
+    -- One product_sales row represents one direct counter sale. Its linked ledger
+    -- transaction is the payment evidence; do not sum the sale again from the
+    -- general ledger or count prepared portions withdrawn without sale.
+    quick_sale_finance AS (
+      SELECT
+        COALESCE(SUM(ps.revenue),0) completed_quick_sale_value,
+        COALESCE(SUM(t.amount),0) confirmed_quick_sale_received,
+        COALESCE(SUM(ps.quantity),0) quick_sale_portions
+      FROM product_sales ps
+      JOIN transactions t
+        ON t.id=ps.transaction_id
+       AND t.business_id=ps.business_id
+       AND t.source='product_sale'
+       AND t.type='sale'
+       AND t.source_id=ps.id
+      WHERE ps.business_id=$1
+    ),
     ledger AS (
       SELECT COALESCE(SUM(amount) FILTER(WHERE type='business_expense'),0) business_expenses
       FROM transactions
@@ -160,8 +184,11 @@ async function merchantTodayFinanceSnapshot(pool,ctx){
       order_finance.completed_merchandise_value,
       order_finance.confirmed_merchandise_received,
       order_finance.completed_receivables,
+      quick_sale_finance.completed_quick_sale_value,
+      quick_sale_finance.confirmed_quick_sale_received,
+      quick_sale_finance.quick_sale_portions,
       ledger.business_expenses
-    FROM order_finance CROSS JOIN ledger
+    FROM order_finance CROSS JOIN quick_sale_finance CROSS JOIN ledger
   `,[bid]);
   const x=rows[0]||{};
   const domain=x.merchant_domain||'unknown';
@@ -174,10 +201,21 @@ async function merchantTodayFinanceSnapshot(pool,ctx){
       non_food_modules_enabled:['non_food','mixed'].includes(domain),
       legacy_recipe_ui_allowed:['food','mixed'].includes(domain)
     },
-    commercial:{completed_merchandise_value:money(x.completed_merchandise_value)},
-    cash_evidence:{confirmed_merchandise_received:money(x.confirmed_merchandise_received)},
+    commercial:{
+      completed_merchandise_value:money(n(x.completed_merchandise_value)+n(x.completed_quick_sale_value))
+    },
+    cash_evidence:{
+      confirmed_merchandise_received:money(n(x.confirmed_merchandise_received)+n(x.confirmed_quick_sale_received))
+    },
     receivables:{completed_customer_receivables:money(x.completed_receivables)},
-    ledger:{business_expenses:money(x.business_expenses)}
+    ledger:{business_expenses:money(x.business_expenses)},
+    sources:{
+      completed_order_value:money(x.completed_merchandise_value),
+      quick_sale_value:money(x.completed_quick_sale_value),
+      quick_sale_portions:n(x.quick_sale_portions),
+      confirmed_order_received:money(x.confirmed_merchandise_received),
+      confirmed_quick_sale_received:money(x.confirmed_quick_sale_received)
+    }
   };
 }
 
