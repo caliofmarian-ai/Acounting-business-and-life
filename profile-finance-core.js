@@ -84,7 +84,7 @@ function normalizePositiveMoney(value,label='Amount'){
   const raw=typeof value==='number'
     ?(Number.isFinite(value)?String(value):'')
     :(typeof value==='string'?value.trim():'');
-  if(raw.length>32||!/^\\d{1,12}(?:\\.\\d{1,2})?$/.test(raw))
+  if(raw.length>32||!/^\d{1,12}(?:\.\d{1,2})?$/.test(raw))
     fail(label+' must be a positive decimal amount with at most two fractional digits');
   const [units,part='']=raw.split('.');
   const cents=BigInt(units)*100n+BigInt(part.padEnd(2,'0'));
