@@ -7,10 +7,10 @@ import crypto from 'node:crypto';
 import pg from 'pg';
 import {signV2SessionToken} from '../auth-session-core.js';
 
-if(process.env.STAFF_TERMINAL_HTTP_CI!=='1'||!String(process.env.DATABASE_URL||'').endsWith('/abl_terminal_http_ci'))
+if(process.env.STAFF_TERMINAL_HTTP_CI!=='1'||process.env.PGDATABASE!=='abl_terminal_http_ci'||process.env.DATABASE_URL)
   throw new Error('Refusing to run staff terminal HTTP test outside isolated CI database');
 const port=Number(process.env.PORT||3000),base=`http://127.0.0.1:${port}`;
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
+const pool=new pg.Pool(); // PGHOST/PGDATABASE on disposable non-TLS CI Postgres only
 const request=async(path,{method='GET',body=null,headers={}}={})=>{
   const r=await fetch(base+path,{method,headers:{'Content-Type':'application/json',...headers},
     body:body==null?undefined:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(20000)});

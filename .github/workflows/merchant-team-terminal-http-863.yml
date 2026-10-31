@@ -33,7 +33,15 @@ jobs:
           --health-retries 12
     env:
       STAFF_TERMINAL_HTTP_CI: '1'
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/abl_terminal_http_ci
+      # The full Business & Life runtime uses DATABASE_URL to enable TLS. The
+      # disposable GitHub Postgres service has no TLS; match Admin Runtime CI's
+      # verified PGHOST/PGDATABASE transport instead of disabling TLS in app code.
+      PGHOST: '127.0.0.1'
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_terminal_http_ci
+      APP_PIN: '0000'
       TOKEN_SECRET: ci-main-account-token-secret-only-for-terminal-http
       MERCHANT_TEAM_ENABLED: '1'
       MERCHANT_TEAM_TERMINAL_ENABLED: '1'
