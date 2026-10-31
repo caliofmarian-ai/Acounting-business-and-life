@@ -32,7 +32,9 @@ test('password and phone proof must both precede existing canonical order with o
  assert.match(confirm,/guard\(db,\{/);
  assert.match(server,/if\(!sharedClient\)await client\.query\('BEGIN'\)/);
  assert.match(server,/if\(!sharedClient\)\{await client\.query\('COMMIT'\)/);
- assert.match(voiceRoutes,/passkey_enrollment_available:ready\(\)&&passkeyReady\(\)/);
+ assert.match(voiceRoutes,/passkey_enrollment_available:!teamEnabled\(\)&&ready\(\)&&passkeyReady\(\)/);
+  // Operators use individually scoped shift authority; account-level passkey enrollment is not an employee substitute.
+  assert.match(voiceRoutes,/can_confirm_order:!teamEnabled\(\)/);
 });
 
 test('Android UI keeps native device confirmation and human phrase separate from speech recognition',()=>{
