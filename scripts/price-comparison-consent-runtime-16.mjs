@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import pg from 'pg';
+import {readFileSync} from 'node:fs';
 
 if(process.env.ABL_CONSENT_CI!=='1'||process.env.NODE_ENV!=='test'||
    process.env.PGDATABASE!=='abl_admin_ci'||process.env.PGHOST!=='127.0.0.1'||
@@ -43,9 +44,55 @@ const storeWrite=async(token,extra={})=>{
       publication_status:'draft',...consentFields
     }},200);
 };
+
+async function verifyLegacyComparisonColumns(){
+  // Execute the exact startup ALTER statements, not rewritten test-only SQL.
+  // TEMP tables shadow public names on this dedicated CI connection. No
+  // existing business, Inventory or merchant tables are touched by this drill.
+  const startupSource=readFileSync(new URL('../server-marketplace.js',import.meta.url),'utf8');
+  const upgrades=[
+    'ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS price_comparison_enabled BOOLEAN NOT NULL DEFAULT FALSE;',
+    'ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS price_comparison_override BOOLEAN;'
+  ];
+  for(const statement of upgrades){
+    same(startupSource.includes(statement),true,'startup contains tested legacy migration');
+  }
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SET LOCAL search_path = pg_temp');
+    await client.query('CREATE TEMP TABLE merchant_storefronts(business_id BIGINT PRIMARY KEY,store_name TEXT NOT NULL) ON COMMIT DROP');
+    await client.query('CREATE TEMP TABLE marketplace_products(id BIGINT PRIMARY KEY,business_id BIGINT NOT NULL) ON COMMIT DROP');
+    await client.query("INSERT INTO merchant_storefronts(business_id,store_name) VALUES(998,'legacy')");
+    await client.query('INSERT INTO marketplace_products(id,business_id) VALUES(898,998)');
+    for(const statement of upgrades)await client.query(statement);
+    let store=await client.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=998');
+    let listing=await client.query('SELECT price_comparison_override FROM marketplace_products WHERE id=898');
+    same(store.rows[0].price_comparison_enabled,false,'legacy Storefront remains comparison OFF');
+    same(listing.rows[0].price_comparison_override,null,'legacy listing inherits default-OFF storefront');
+    await client.query('UPDATE merchant_storefronts SET price_comparison_enabled=TRUE WHERE business_id=998');
+    await client.query('UPDATE marketplace_products SET price_comparison_override=FALSE WHERE id=898');
+    for(const statement of upgrades)await client.query(statement);
+    store=await client.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=998');
+    listing=await client.query('SELECT price_comparison_override FROM marketplace_products WHERE id=898');
+    same(store.rows[0].price_comparison_enabled,true,'repeat startup preserves explicit storefront opt-in');
+    same(listing.rows[0].price_comparison_override,false,'repeat startup preserves explicit listing opt-out');
+    await client.query("INSERT INTO merchant_storefronts(business_id,store_name) VALUES(999,'new')");
+    await client.query('INSERT INTO marketplace_products(id,business_id) VALUES(899,999)');
+    store=await client.query('SELECT price_comparison_enabled FROM merchant_storefronts WHERE business_id=999');
+    listing=await client.query('SELECT price_comparison_override FROM marketplace_products WHERE id=899');
+    same(store.rows[0].price_comparison_enabled,false,'new Storefront remains comparison OFF');
+    same(listing.rows[0].price_comparison_override,null,'new listing inherits default-OFF storefront');
+  }finally{
+    await client.query('ROLLBACK').catch(()=>{});
+    client.release();
+  }
+}
+
 try{
   const current=await pool.query('SELECT current_database() AS name');
   same(current.rows[0].name,'abl_admin_ci','isolated database only');
+  await verifyLegacyComparisonColumns();
   const merchant=await pool.query(
     "SELECT 1 FROM profile_business_bindings WHERE account_id=1 AND role='merchant' AND business_id=1 AND status='active'");
   same(merchant.rowCount,1,'preexisting isolated Merchant fixture must be bound');

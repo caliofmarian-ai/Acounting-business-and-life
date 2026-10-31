@@ -154,3 +154,18 @@ test('Catalog comparison choice requires an explicit recognized selector value',
   assert.deepEqual(listing({price_comparison_override:choose('inherit')},false),
     {provided:true,value:null});
 });
+
+test('existing Merchant tables gain idempotent opt-in columns before any consent request',()=>{
+  const server=source('server-marketplace.js');
+  const upgrades=[
+    ['merchant_storefronts','ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS price_comparison_enabled BOOLEAN NOT NULL DEFAULT FALSE;'],
+    ['marketplace_products','ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS price_comparison_override BOOLEAN;']
+  ];
+  const route=server.indexOf("app.put('/api/merchant/storefront'");
+  for(const [table,upgrade] of upgrades){
+    const create=server.indexOf('CREATE TABLE IF NOT EXISTS '+table+' (');
+    const migration=server.indexOf(upgrade);
+    assert.ok(create>=0&&migration>create&&migration<route,table+' must upgrade older database tables before use');
+    assert.equal(server.indexOf(upgrade,migration+upgrade.length),-1,table+' upgrade must occur once');
+  }
+});

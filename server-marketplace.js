@@ -158,6 +158,8 @@ async function initDb(){await pool.query(`
   ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS opening_hours_text TEXT NOT NULL DEFAULT '';
   ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS pickup_lat DOUBLE PRECISION;
   ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS pickup_lng DOUBLE PRECISION;
+  -- Existing stores predate price-comparison opt-in. Never enroll them on upgrade.
+  ALTER TABLE merchant_storefronts ADD COLUMN IF NOT EXISTS price_comparison_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
   CREATE TABLE IF NOT EXISTS merchant_storefront_media (
     id BIGSERIAL PRIMARY KEY,
@@ -197,6 +199,8 @@ async function initDb(){await pool.query(`
     CHECK (product_domain IN ('food','non_food')),
     UNIQUE(business_id,name)
   );
+  -- Existing listings retain ordinary Marketplace visibility but default OUT of price comparison.
+  ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS price_comparison_override BOOLEAN;
   ALTER TABLE marketplace_products ADD COLUMN IF NOT EXISTS inventory_id BIGINT REFERENCES inventory(id) ON DELETE SET NULL;
   CREATE INDEX IF NOT EXISTS marketplace_products_inventory_idx ON marketplace_products(business_id,inventory_id) WHERE inventory_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS marketplace_products_public_idx ON marketplace_products(business_id,product_domain,published,active);
