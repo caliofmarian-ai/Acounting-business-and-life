@@ -35,7 +35,7 @@ export async function requireVoiceOperatorStepUp(client,{token,tokenSecret,accou
 export function installMerchantVoiceOrderConfirmation(app,{
   db,requireMerchant,quoteSecret,tokenSecret,canonicalSnapshots,createCanonicalOrder,orderDetail,
   bodyMiddleware,env=process.env,now=()=>new Date(),guard=withVoiceOrderExactlyOnce,
-  checkCreateVelocity=async()=>{},verifyDeviceApproval=null
+  checkCreateVelocity=async()=>{},verifyDeviceApproval=null,teamEnabled=()=>false
 }={}){
   if(!app?.post||!db?.connect||typeof requireMerchant!=='function'||
      typeof canonicalSnapshots!=='function'||typeof createCanonicalOrder!=='function'||
@@ -43,7 +43,7 @@ export function installMerchantVoiceOrderConfirmation(app,{
   // The current Product has no verified device-held/passkey challenge adapter.
   // Deliberately fail CLOSED even when all environment flags are switched on.
   const ready=()=>env.ORDER_VOICE_UI_ENABLED==='1'&&env.ORDER_VOICE_AI_ENABLED==='1'&&
-    env.ORDER_VOICE_CREATE_ENABLED==='1'&&typeof verifyDeviceApproval==='function';
+    env.ORDER_VOICE_CREATE_ENABLED==='1'&&!teamEnabled()&&typeof verifyDeviceApproval==='function';
   const route=async(req,res)=>{
     res.set('Cache-Control','private, no-store, max-age=0');
     try{
