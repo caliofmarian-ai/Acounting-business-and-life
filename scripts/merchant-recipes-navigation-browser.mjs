@@ -19,7 +19,7 @@ assert.ok(navMarkup?.includes('merchantBusinessTools'),'actual shell nav markup 
 const states=['food','mixed','non_food','unknown','supplier'];
 const controls='<aside id="syntheticFixture"><strong>SYNTHETIC UI CHECK — no live account or stock</strong>'+states.map(s=>'<button type="button" data-fixture="'+s+'">Fixture '+s+'</button>').join('')+'</aside>';
 const script=[
- "const $=id=>document.getElementById(id);const accountingState={role:'merchant'};const activeSurface='profile',activeRole='merchant';async function loadMerchantView(name){document.body.dataset.requestedView=name}function updateSellPreview(){}",
+ "const $=id=>document.getElementById(id);const accountingState={role:'merchant'};const activeSurface='profile',activeRole='merchant';async function loadMerchantView(name){document.body.dataset.requestedView=name}function updateSellPreview(){}function resetStockTools(){document.querySelectorAll('#stockToolDeck details').forEach(d=>d.open=false)}",
  "const primary=document.createElement('nav');primary.id='merchantWorkspaceNav';primary.className='merchantWorkspaceNav';primary.setAttribute('aria-label','Merchant workspace navigation');primary.innerHTML="+JSON.stringify(navMarkup)+";document.getElementById('shell').insertAdjacentElement('afterbegin',primary);document.body.dataset.merchantNav='unified';",
  shellActive,setView,presentation,actions,
  "$('login').classList.add('hidden');$('shell').classList.remove('hidden');$('todayContent').classList.remove('hidden');$('todayLoading').classList.add('hidden');",
@@ -79,6 +79,15 @@ try{
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'no horizontal overflow');
     if(evidence&&domain==='food')await page.screenshot({path:join(evidence,width+'-recipes.png')});
     await nav.getByRole('button',{name:'Stock',exact:true}).click();assert.equal(await page.locator('#viewStock').isVisible(),true);assert.equal(await nav.getByRole('button',{name:'Stock',exact:true}).getAttribute('aria-current'),'page');
+     // #875: Stock is a menu of closed tools, not an eager expanded Inventory page.
+     assert.equal(await page.locator('#stockToolDeck .stockTool').count(),14);
+     assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
+     assert.equal(await page.locator('#stockList').isVisible(),false);
+     await page.locator('#stockTool-inventory > summary').click();
+     assert.equal(await page.locator('#stockTool-inventory').evaluate(node=>node.open),true,'Inventory tool expands on click');
+     await nav.getByRole('button',{name:'Today',exact:true}).click();
+     await nav.getByRole('button',{name:'Stock',exact:true}).click();
+     assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
     await recipes.click();assert.equal(await page.locator('#viewMenu').isVisible(),true);
     await nav.getByRole('button',{name:'Money',exact:true}).click();assert.equal(await page.locator('#viewMoney').isVisible(),true);
     await nav.getByRole('button',{name:'Today',exact:true}).click();

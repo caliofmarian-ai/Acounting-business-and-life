@@ -78,13 +78,17 @@ test('normal standalone Storage refresh still calls the canonical single summary
   assert.deepEqual(paths,['/api/inventory/location-summary']);
 }));
 
-test('Stock starts prefetch before waiting on Inventory items and retains controlled ready gate',()=>{
+test('opened Stock tools fetch only their required details; full refresh preserves prefetch before ready',()=>{
   const source=readFileSync(new URL('../public/v03.js',import.meta.url),'utf8');
-  const start=source.indexOf('async function loadStock(){');
-  const stop=source.indexOf('\nfunction lotExpiryCopy(',start);
+  const start=source.indexOf('async function loadStock({tool=null}={}){');
+  const stop=source.indexOf('\n// One expanded instrument at a time.',start);
   const block=source.slice(start,stop);
-  assert.ok(block.indexOf('inventoryLocationUi.prefetch()')>0);
+  assert.ok(start>0&&stop>start);
+  assert.match(block,/const usesLocations=!tool\|\|tool==='locations'\|\|tool==='count'\|\|tool==='purchase'/);
+  assert.match(block,/usesLocations&&typeof inventoryLocationUi\.prefetch==='function'/);
   assert.ok(block.indexOf('inventoryLocationUi.prefetch()')<block.indexOf("await cachedJson('/api/inventory'"));
   assert.match(block,/inventoryLocationUi\.load\(\{isCurrent,prefetched:prefetchedStorage\}\)/);
+  assert.match(block,/if\(!tool\|\|tool==='lots'\)jobs\.push\(loadInventoryLots\(isCurrent\)\)/);
+  assert.match(block,/if\(!tool\|\|tool==='consumables'\)jobs\.push\(loadConsumableRules\(isCurrent\)\)/);
   assert.ok(block.indexOf("inventoryReadState('ready')")>block.indexOf('await Promise.all'));
 });
