@@ -36,7 +36,8 @@ test('Merchant presentation reuses canonical food non-food mixed storefront doma
   assert.match(core,/food_modules_enabled/);
   assert.match(core,/non_food_modules_enabled/);
   assert.match(core,/legacy_recipe_ui_allowed/);
-  assert.match(ui,/domain==='non_food'/);
+  assert.match(ui,/const text=role==='supplier'\?'Inventory':'Stock'/);
+  assert.doesNotMatch(ui,/domain==='non_food'\?'Inventory'/);
   assert.match(ui,/legacy_recipe_ui_allowed/);
 });
 

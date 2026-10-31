@@ -1,6 +1,7 @@
 import {createInventoryCountUi} from './inventory-count-ui.js';
 import {createInventoryScanUi} from './inventory-scan-ui.js';
 import {createInventoryLocationUi} from './inventory-location-ui.js';
+import {extendPhilippineStockPickerCatalog,searchPhilippineStockPicker,philippineStockPickerSafetyNote,philippineStockPickerStorageSuggestion} from './ph-stock-picker-catalog.js';
 const $ = (id) => document.getElementById(id);
 let token = false;
 let transactions = [];
@@ -20,7 +21,7 @@ const UNIT_META={
   ml:{family:'volume',base:'ml',factor:1},L:{family:'volume',base:'ml',factor:1000},
   unit:{family:'count',base:'unit',factor:1}
 };
-const STOCK_PICKER_CATALOG=[
+const STOCK_PICKER_CATALOG=extendPhilippineStockPickerCatalog([
   {category:'Meat & poultry',type:'ingredient',storage:{condition:'chilled',area:'fridge',label:'',segregated:false},items:[
     ['Chicken thighs / drumsticks','kg'],['Chicken leg quarters','kg'],['Chicken breast','kg'],['Whole chicken','kg'],
     ['Pork belly','kg'],['Pork shoulder','kg'],['Ground pork','kg'],['Pork ribs','kg'],['Beef brisket','kg'],['Beef sirloin','kg'],
@@ -93,7 +94,7 @@ const STOCK_PICKER_CATALOG=[
     ['Receipt paper rolls','unit'],['Order paper / kitchen tickets','unit'],['Pens','unit'],
     ['Thermal labels','unit'],['Delivery stickers / tamper seals','unit']
   ]}
-];
+]);
 
 const STORAGE_CONDITION_LABELS={ambient:'Ambient',dry:'Dry',chilled:'Chilled',frozen:'Frozen',other:'Not set / other'};
 const STORAGE_AREA_LABELS={
@@ -156,7 +157,7 @@ function storageSuggestionFor(group,itemName=''){
   const base={...(group?.storage||{condition:'other',area:'other',label:'',segregated:false})};
   if(itemName==='Ice')return{condition:'frozen',area:'freezer',label:'',segregated:false};
   if(['Condensed milk','Evaporated milk'].includes(itemName))return{condition:'ambient',area:'pantry',label:'',segregated:false};
-  return base;
+  return philippineStockPickerStorageSuggestion(itemName,base);
 }
 function storageSuggestionForType(type='ingredient'){
   if(type==='cleaning_sanitation')return{condition:'ambient',area:'chemical_storage',label:'Chemical storage',segregated:true};
@@ -207,11 +208,44 @@ function updateStockStorageHint(){
 }
 function initStockPicker(){
   const category=$('stockCategoryPicker'),item=$('stockItemPicker');
+  const search=$('stockPickerSearch'),searchStatus=$('stockPickerSearchStatus');
+  const safety=$('stockPickerLocalSafetyNote');
   if(!category||!item)return;
+  let selectedSuggestedName='';
+  const clearStaleSuggestion=()=>{
+    const stockName=$('stockItem');
+    if(stockName&&stockName.value===selectedSuggestedName&&selectedSuggestedName){
+      stockName.value='';
+      if($('stockInventoryId'))$('stockInventoryId').value='';
+    }
+    selectedSuggestedName='';
+  };
+  const showSafetyNote=name=>{
+    if(!safety)return;
+    const note=philippineStockPickerSafetyNote(name);
+    safety.textContent=note;
+    safety.classList.toggle('hidden',!note);
+  };
   category.replaceChildren(new Option('Choose a category',''),...STOCK_PICKER_CATALOG.map(group=>new Option(group.category,group.category)));
   const renderItems=()=>{
+    const query=String(search?.value||'').trim();
     const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
     item.replaceChildren();
+    if(query){
+      const matches=searchPhilippineStockPicker(STOCK_PICKER_CATALOG,query,{limit:90});
+      item.append(new Option(matches.length?'Choose an ingredient':'No matching ingredient',''));
+      item.disabled=matches.length===0;
+      for(const match of matches){
+        const option=new Option(match.name+' · '+match.category,match.name);
+        option.dataset.unit=match.unit;
+        option.dataset.category=match.category;
+        item.append(option);
+      }
+      if(searchStatus)searchStatus.textContent=matches.length+
+        (matches.length===90?'+':'')+' matching suggestions. Choose an ingredient; no stock or expense is created until you save a purchase.';
+      return;
+    }
+    if(searchStatus)searchStatus.textContent='Search English or Filipino names across all categories, or browse a category below. Selection alone never changes Inventory.';
     if(group&&$('stockInventoryType')){$('stockInventoryType').value=group.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     if(group)applyStockStorageSuggestion(storageSuggestionFor(group,''));
     if(!group){
@@ -227,18 +261,31 @@ function initStockPicker(){
       item.append(option);
     }
   };
-  category.addEventListener('change',renderItems);
+  category.addEventListener('change',()=>{
+    clearStaleSuggestion();
+    if(search)search.value='';
+    showSafetyNote('');
+    renderItems();
+  });
+  search?.addEventListener('input',()=>{
+    clearStaleSuggestion();
+    showSafetyNote('');
+    renderItems();
+  });
   item.addEventListener('change',()=>{
     const option=item.selectedOptions?.[0];
     if(!option?.value)return;
     if($('stockInventoryId'))$('stockInventoryId').value='';
     $('stockItem').value=option.value;
+    selectedSuggestedName=option.value;
     const unit=option.dataset.unit||'unit';
-    const group=STOCK_PICKER_CATALOG.find(x=>x.category===category.value);
+    const group=STOCK_PICKER_CATALOG.find(x=>x.category===(option.dataset.category||category.value));
+    if(group)category.value=group.category;
     if($('stockInventoryType')){$('stockInventoryType').value=group?.type||'ingredient';syncUniversalInventoryClassification({fromLegacy:true,storage:false})}
     applyStockStorageSuggestion(storageSuggestionFor(group,option.value));
     syncUnitSelect('stockPurchaseUnit',unit);
     syncUnitSelect('stockReorderUnit',unit);
+    showSafetyNote(option.value);
     stockPurchasePreview();
   });
   $('stockInventoryType')?.addEventListener('change',()=>{
@@ -249,7 +296,10 @@ function initStockPicker(){
   for(const id of ['stockStorageCondition','stockStorageArea','stockStorageLocation'])$(id)?.addEventListener('change',updateStockStorageHint);
   $('stockStorageLocation')?.addEventListener('input',updateStockStorageHint);
   $('stockStorageSegregated')?.addEventListener('change',updateStockStorageHint);
-  $('stockItem')?.addEventListener('input',()=>{if($('stockInventoryId'))$('stockInventoryId').value='';});
+  $('stockItem')?.addEventListener('input',()=>{
+    selectedSuggestedName='';
+    if($('stockInventoryId'))$('stockInventoryId').value='';
+  });
   renderItems();
   syncUniversalInventoryClassification({fromLegacy:true,storage:false});
   updateStockStorageHint();
@@ -513,6 +563,7 @@ function merchantTodayError(error){
   $('todayContent')?.classList.add('hidden');
   $('todayError')?.classList.remove('hidden');
   if($('todayErrorMessage'))$('todayErrorMessage').textContent=error?.message||'Check your connection and try again.';
+  document.dispatchEvent(new CustomEvent('abl:merchant-today-error'));
 }
 async function loadMerchantToday({force=false}={}){
   if(!isMerchantBaseActive()||!$('viewDashboard'))return null;
@@ -539,7 +590,7 @@ async function loadMerchantToday({force=false}={}){
   return merchantTodayPromise;
 }
 window.BusinessLifeMerchantToday=Object.freeze({
-  getState:()=>({data:merchantTodayCache,workspace:merchantTodayCache?.workspace||null,businessId:merchantTodayBusinessId}),
+  getState:()=>({data:merchantTodayCache,workspace:merchantTodayCache?.workspace||null,businessId:merchantTodayBusinessId,profileKey:merchantTodayProfileKey}),
   load:options=>loadMerchantToday(options)
 });
 async function openMerchantAction(action){
@@ -921,7 +972,7 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
     for(const child of [...view.children])if(child!==status&&!child.classList.contains('sectionHead'))content.appendChild(child);
     view.appendChild(content);
   }
-  const ready=state==='ready',cached=state==='cached';
+  const ready=state==='ready',cached=state==='cached',preview=state==='partial';
   // A disabled fieldset preserves each widget's own disabled/capability decisions.
   content.disabled=!ready;
   inventoryConfirmedContext=ready?merchantReadContext():null;
@@ -931,17 +982,17 @@ function inventoryReadState(state,{savedAt=null,error=null}={}){
   copy.textContent=ready?'Inventory confirmed just now.':cached
     ?'Connection unavailable. Showing last confirmed Inventory from '+new Date(savedAt).toLocaleString('en-PH',{timeZone:'Asia/Manila'})+' (Philippine time). Stock changes are disabled.'
     :state==='error'?'Inventory could not be loaded. '+(error?.message||'Try again.')
-    :state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
+    :state==='partial'?'Inventory items loaded. Checking storage locations, lots and stock controls…':state==='loading'?'Loading Inventory for the current business…':'Inventory for the current business has not loaded.';
   status.appendChild(copy);
   if(state==='error'||state==='idle'||cached){const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent=state==='idle'?'Load Inventory':'Retry';retry.onclick=()=>loadStock();status.appendChild(retry)}
-  view.setAttribute('aria-busy',String(state==='loading'));
+  view.setAttribute('aria-busy',String(state==='loading'||preview));
   const stockCard=$('stockList')?.closest('.card');
   for(const child of content.children){
     if(!inventoryHiddenSections.has(child))inventoryHiddenSections.set(child,child.hidden||child.classList.contains('hidden'));
-    child.hidden=ready?inventoryHiddenSections.get(child):cached?child!==stockCard:true;
+    child.hidden=ready?inventoryHiddenSections.get(child):(cached||preview)?child!==stockCard:true;
     child.classList.toggle('hidden',child.hidden);
   }
-  if(!ready&&!cached){if($('lowStock'))$('lowStock').textContent='—';if($('restockSummary'))$('restockSummary').textContent='Restock information has not loaded.'}
+  if(!ready&&!cached&&!preview){if($('lowStock'))$('lowStock').textContent='—';if($('restockSummary'))$('restockSummary').textContent='Restock information has not loaded.'}
 }
 function inventoryReadApi(path,options={}){return api(path,options,['GET','HEAD'].includes(String(options.method||'GET').toUpperCase())?{isCurrent:inventoryReadGuard()}:{})}
 function inventoryReadGuard(){const current=merchantReadGuard(),generation=inventoryLoadGeneration;return()=>generation===inventoryLoadGeneration&&current()}
@@ -951,6 +1002,10 @@ async function loadStock(){
   const generation=++inventoryLoadGeneration;
   const isCurrent=()=>generation===inventoryLoadGeneration&&merchantReadIsCurrent(context);
   inventoryReadState('loading');
+  // Begin the independent, read-only Storage GET immediately; its UI render waits
+  // until Inventory items and the originating Merchant business are verified.
+  const prefetchedStorage=typeof inventoryLocationUi.prefetch==='function'
+    ?inventoryLocationUi.prefetch():null;
   try{
     let cachedAt=null;
     const items=await cachedJson('/api/inventory','inventory',{offline:true,onCache:stamp=>{cachedAt=stamp}});
@@ -960,10 +1015,11 @@ async function loadStock(){
     renderInventoryList();
     if($('lowStock'))$('lowStock').textContent=String(inventory.filter(i=>Number(i.available_quantity??i.usable_quantity??i.quantity)<=Number(i.reorder_level)).length);
     if(cachedAt!==null){inventoryReadState('cached',{savedAt:cachedAt});return inventory}
+    inventoryReadState('partial'); // The verified list can be read before advanced stock controls are enabled.
     fillIngredientSelect();
     fillConsumableRuleInventory();fillStockAdjustmentInventory();fillStorageEditor();fillRestockSettingsEditor();fillInventoryUnavailableEditor();
     inventoryScanUi.syncInventory();
-    const count=inventoryLocationUi.load().then(result=>{
+    const count=inventoryLocationUi.load({isCurrent,prefetched:prefetchedStorage}).then(result=>{
       if(!isCurrent())return;
       if(result?.readError)return result;
       inventoryCountUi.syncScopeOptions();
@@ -1545,6 +1601,7 @@ function setView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.add('hidden'));
   view.classList.remove('hidden');
   document.querySelectorAll('.bottomNav button').forEach(b=>{const current=b.dataset.view===name;b.classList.toggle('active',current);if(current)b.setAttribute?.('aria-current','page');else b.removeAttribute?.('aria-current')});
+  if(typeof CustomEvent==='function')document.dispatchEvent(new CustomEvent('abl:merchant-local-view',{detail:{name}}));
   window.scrollTo({top:0,behavior:'smooth'});
   if(name==='Sell')updateSellPreview();
   loadMerchantView(name).catch(error=>{if(!error.staleMerchantRead)console.error(error)});

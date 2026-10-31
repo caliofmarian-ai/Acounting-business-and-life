@@ -13,7 +13,7 @@ test('recipe destination occurs once in primary nav immediately before Stock',()
  assert.match(nav,/id="merchantRecipesNav"[^>]*class="roleFinanceHidden"[^>]*data-view="Menu"[^>]*aria-controls="viewMenu"[^>]*>[\s\S]*?<span class="merchantNavLabel">Products &amp; recipes<\/span><\/button><button data-view="Stock">/);
  assert.equal((html.match(/data-today-action="recipes"/g)||[]).length,0);
  assert.match(html,/data-today-action="quick-sale">Quick Sale/);
- for(const label of ['Today','Orders','Catalog','Inventory','Money'])assert.ok(nav.includes('>'+label+'<'));
+ for(const label of ['Today','Orders','Catalog','Stock','Money'])assert.ok(nav.includes('>'+label+'<'));
 });
 function presentation(){
  const recipe=node(['roleFinanceHidden']);recipe.textContent='Products & recipes';const stock=node();const views={viewMenu:node(['hidden','roleFinanceHidden']),viewSell:node(['hidden','roleFinanceHidden'])};

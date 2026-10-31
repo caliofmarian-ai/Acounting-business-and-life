@@ -29,6 +29,8 @@ const clean=(v,n)=>typeof v==='string'?clipUtf16(v
 // Model JSON can inherit polluted Object.prototype properties. Only fields
 // actually present on the supplied JSON object may become unverified hints.
 const own=(v,name)=>Object.hasOwn(v,name)?v[name]:undefined;
+// Numeric hints must not reinterpret radix notation or round unsafe quantities.
+const DECIMAL_HINT=/^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 // Measure actual enumerable JSON; inherited or model-owned toJSON serializers
 // must never conceal oversized untrusted suggestions from the 32 KiB gate.
 function snapshotJsonData(value){
@@ -155,7 +157,8 @@ function attributeHints(category,raw){
     const definition=allowed.get(key),type=definition?.value_type,hint=raw[key];
     let candidate=hint;
     if(typeof hint==='number'){
-      if(type!=='number'||!Number.isFinite(hint)||hint<0)continue;
+      if(type!=='number'||!Number.isFinite(hint)||hint<0||
+        (Number.isInteger(hint)&&!Number.isSafeInteger(hint)))continue;
       candidate=String(hint);
     }else if(typeof hint==='boolean'){
       if(type!=='boolean')continue;
@@ -167,8 +170,11 @@ function attributeHints(category,raw){
       const trimmed=hint.trim();
       if(!trimmed||trimmed.length>120||clean(trimmed,120)!==trimmed)continue;
       if(type==='number'){
+        if(!DECIMAL_HINT.test(trimmed))continue;
         const parsed=Number(trimmed);
-        if(!Number.isFinite(parsed)||parsed<0)continue;
+        if(!Number.isFinite(parsed)||parsed<0||
+          (Number.isInteger(parsed)&&!Number.isSafeInteger(parsed))||
+          (parsed===0&&/[1-9]/.test(trimmed.split(/[eE]/)[0])))continue;
         candidate=String(parsed);
       }else{
         if(trimmed!=='true'&&trimmed!=='false')continue;

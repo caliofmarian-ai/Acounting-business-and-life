@@ -383,7 +383,7 @@ for(const component of ['locations','count','scan'])test(`actual ${component} co
     const target=component==='locations'?'inventoryTransferMessage':component==='count'?'countSessionMessage':'inventoryLookupMessage';
     h.switchBusiness(2);h.node(target).textContent='Current component state';
     if(fail)await h.reject(0,new Error('Previous component failure'));
-    else if(component==='locations'){await h.respond(0,[{id:1,name:'Prior location'}]);await h.respond(1,[]);await h.respond(2,[])}
+    else if(component==='locations'){await h.respond(0,{locations:[{id:1,name:'Prior location'}],balances:[],transfers:[]})}
     else await h.respond(0,component==='count'?{id:1,status:'posted'}:[]);
     await old;assert.equal(h.node(target).textContent,'Current component state');
     if(component==='locations')assert.deepEqual(plain(ui.getLocations()),[]);
@@ -398,10 +398,10 @@ test('location and count reset clear confirmed private closure state and invalid
   for(const component of ['locations','count']){
     const h=harness(),ui=component==='locations'?h.installComponent('inventory-location-ui.js','createInventoryLocationUi'):h.installComponent('inventory-count-ui.js','createInventoryCountUi');
     const initial=ui.load();
-    if(component==='locations'){await h.respond(0,[{id:1,name:'Synthetic confirmed location'}]);await h.respond(1,[]);await h.respond(2,[]);await initial;assert.equal(ui.getLocations().length,1)}
+    if(component==='locations'){await h.respond(0,{locations:[{id:1,name:'Synthetic confirmed location'}],balances:[],transfers:[]});await initial;assert.equal(ui.getLocations().length,1)}
     else{await h.respond(0,{id:1,status:'posted'});await initial;assert.equal(ui.getSession().id,1)}
     const index=h.requests.length,pending=ui.load();ui.reset();
-    if(component==='locations'){await h.respond(index,[{id:2,name:'Synthetic late location'}]);await h.respond(index+1,[]);await h.respond(index+2,[])}
+    if(component==='locations'){await h.respond(index,{locations:[{id:2,name:'Synthetic late location'}],balances:[],transfers:[]})}
     else await h.respond(index,{id:2,status:'posted'});
     await pending;
     if(component==='locations')assert.deepEqual(plain(ui.getLocations()),[]);else assert.equal(ui.getSession(),null);
@@ -412,16 +412,17 @@ const confirmedCount={id:44,status:'in_progress',items:[{inventory_id:10,item:'S
 const confirmedLocations=[{id:11,name:'Synthetic private location'}];
 const confirmedBalances=[{inventory_id:10,location_id:11,item:'Synthetic private stock',location_name:'Synthetic private location',quantity:4,unit:'unit'}];
 const confirmedTransfers=[{id:12,item:'Synthetic private stock',quantity:1,unit:'unit',source_location:'Synthetic private source',destination_location:'Synthetic private destination'}];
+const confirmedStorage={locations:confirmedLocations,balances:confirmedBalances,transfers:confirmedTransfers};
 
 for(const component of ['locations','count'])for(const status of [403,500])test(`actual ${component} HTTP ${status} after success clears retained private state and reports failed read evidence`,async()=>{
   const h=harness(),ui=component==='locations'?h.installComponent('inventory-location-ui.js','createInventoryLocationUi'):h.installComponent('inventory-count-ui.js','createInventoryCountUi');
   const first=ui.load();
   if(component==='locations'){
-    await h.respond(0,confirmedLocations);await h.respond(1,confirmedBalances);await h.respond(2,confirmedTransfers);await first;
+    await h.respond(0,confirmedStorage);await first;
     assert.equal(ui.getLocations().length,1);assert.equal(ui.getBalances().length,1);assert.equal(h.node('inventoryTransferList').children.length,1);
   }else{await h.respond(0,confirmedCount);await first;assert.equal(ui.getSession().id,44);assert.equal(h.node('countSessionActivePane').classList.contains('hidden'),false)}
   const start=h.requests.length,failed=ui.load();await h.respond(start,{error:'Synthetic current read denied'},status);
-  if(component==='locations'){await h.respond(start+1,confirmedBalances);await h.respond(start+2,confirmedTransfers)}
+
   const result=await failed;assert.equal(result?.readError,true);
   if(component==='locations'){
     assert.deepEqual(plain(ui.getLocations()),[]);assert.deepEqual(plain(ui.getBalances()),[]);
@@ -432,12 +433,11 @@ for(const component of ['locations','count'])for(const status of [403,500])test(
 
 async function completeRealInventoryRead(h,{failedComponent=null,status=200}={}){
   const start=h.requests.length,pending=h.api.load();await h.respond(start,inventoryRows(1));
-  assert.match(h.requests[start+1]?.path||'',/\/inventory\/locations$/);
-  await h.respond(start+1,failedComponent==='locations'?{error:'Synthetic current locations denied'}:confirmedLocations,failedComponent==='locations'?status:200);
-  await h.respond(start+2,confirmedBalances);await h.respond(start+3,confirmedTransfers);
+  assert.match(h.requests[start+1]?.path||'',/\/inventory\/location-summary$/);
+  await h.respond(start+1,failedComponent==='locations'?{error:'Synthetic current locations denied'}:confirmedStorage,failedComponent==='locations'?status:200);
   if(failedComponent!=='locations'){
-    assert.match(h.requests[start+4]?.path||'',/\/count-sessions\/active$/);
-    await h.respond(start+4,failedComponent==='count'?{error:'Synthetic current count denied'}:confirmedCount,failedComponent==='count'?status:200);
+    assert.match(h.requests[start+2]?.path||'',/\/count-sessions\/active$/);
+    await h.respond(start+2,failedComponent==='count'?{error:'Synthetic current count denied'}:confirmedCount,failedComponent==='count'?status:200);
   }
   await pending;
 }
@@ -450,4 +450,21 @@ for(const failedComponent of ['locations','count'])for(const status of [403,500]
   if(failedComponent==='locations')assert.deepEqual(plain(locations.getLocations()),[]);else assert.equal(count.getSession(),null);
   const requestsBeforeWrite=h.requests.length;await assert.rejects(h.api.raw('/api/inventory/purchase',{method:'POST'}),/Reload Inventory online/);assert.equal(h.requests.length,requestsBeforeWrite);
   await completeRealInventoryRead(h);assert.equal(h.mutationsDisabled(),false);assert.equal(h.advanced.hidden,false);assert.match(h.status(),/confirmed just now/i);assert.equal(count.getSession().id,44);assert.equal(locations.getLocations().length,1);
+});
+
+test('confirmed Inventory list appears read-only while slow Storage is still being verified',async()=>{
+  const h=harness(),release=h.pauseLocations(),pending=h.api.load();
+  assert.equal(h.stock.hidden,true,'do not show old Inventory before the scoped GET');
+  assert.equal(h.mutationsDisabled(),true);
+  await h.respond(0,inventoryRows(1));
+  assert.deepEqual(h.renders,[inventoryRows(1)]);
+  assert.equal(h.stock.hidden,false,'show newly verified item list without waiting on Storage');
+  assert.equal(h.advanced.hidden,true,'advanced actions remain gated');
+  assert.equal(h.mutationsDisabled(),true,'no stock mutations while Storage checks are pending');
+  assert.match(h.status(),/Inventory items loaded\. Checking storage locations/i);
+  release();
+  await pending;
+  assert.equal(h.mutationsDisabled(),false);
+  assert.equal(h.advanced.hidden,false);
+  assert.match(h.status(),/confirmed just now/i);
 });

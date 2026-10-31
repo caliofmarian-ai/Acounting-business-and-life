@@ -423,4 +423,17 @@
   .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)) button{min-height:56px;font-size:.73rem;padding:7px 4px;line-height:1.18}
   body:has(.merchantPrimaryNav:not(.hidden) [data-view="Menu"]:not(.roleFinanceHidden)) #app{padding-bottom:calc(158px + env(safe-area-inset-bottom,0px))}
 }
+/* Until Merchant capabilities arrive, show one stable, noninteractive nav placeholder.
+   Do not briefly paint Inventory or a five-button grid before Recipes eligibility resolves. */
+.merchantPrimaryNav .merchantNavLoading{display:none}
+.merchantPrimaryNav:not([data-ready="true"]) button{visibility:hidden!important;pointer-events:none}
+.merchantPrimaryNav:not([data-ready="true"]){min-height:64px}
+.merchantPrimaryNav:not([data-ready="true"]) .merchantNavLoading{
+  position:absolute;inset:6px;display:grid;place-items:center;z-index:1;
+  border:1px solid #b5cdc8;border-radius:14px;background:#f4faf9;
+  color:#173b37;font-size:.8rem;font-weight:700;text-align:center;
+}
+@media(max-width:649px){
+  .merchantPrimaryNav:not([data-ready="true"]){min-height:120px}
+}
 @media(prefers-reduced-motion:reduce){.merchantPrimaryNav button{transition:none}}

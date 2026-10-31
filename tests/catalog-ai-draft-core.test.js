@@ -629,3 +629,30 @@ test('unknown model attribute keys cannot crowd valid V3 hints out of the bounde
   assert.equal(d.publishable,false);
   assert.equal(d.canonical_write_payload,false);
 });
+
+test('AI numeric display hints reject non-decimal radix, unsafe integers and nonzero underflow',()=>{
+  const d=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:'0x10',height_cm:'0b10',length_cm:'1e-1000',
+      weight_kg:'9007199254740993',color:'Oak'}});
+  assert.deepEqual(d.hints.variant_attributes,[
+    {code:'color',value:'Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  const unsafe=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:9007199254740992,material:'Wood'}});
+  assert.deepEqual(unsafe.hints.variant_attributes,[
+    {code:'material',value:'Wood',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  const good=draft('merchant_non_food',{catalog_category_code:'furniture_home',
+    variant_attributes:{width_cm:'2e3',height_cm:'.75',weight_kg:2.25,assembly_required:true}});
+  assert.deepEqual(good.hints.variant_attributes,[
+    {code:'width_cm',value:'2000',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'height_cm',value:'0.75',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'weight_kg',value:'2.25',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'assembly_required',value:'true',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  for(const result of [d,unsafe,good]){
+    assert.equal(result.state,'REVIEW_REQUIRED');
+    assert.equal(result.publishable,false);
+    assert.equal(result.canonical_write_payload,false);
+  }
+});
