@@ -878,6 +878,15 @@ app.patch('/api/merchant/storefront/products/:id/availability',body,async(req,re
 }catch(e){next(e)}})
 
 app.get('/api/merchant/storefront',async(req,res,next)=>{try{
+  // Private per-business consent, xmin revision and stock/cost projections
+  // must never be reused from another account or stale browser session.
+  res.set('Cache-Control','private, no-store, max-age=0');
+  res.vary('Cookie');
+  res.vary('Authorization');
+  // Disallow conditional 304 reuse even when Express would synthesize an
+  // ETag from an otherwise identical JSON body.
+  delete req.headers['if-none-match'];
+  delete req.headers['if-modified-since'];
   const{me,business}=await requireMerchant(req,Number(req.query.business_id||undefined));
   let s=await storefront(business.id,true);
   if(!s){await pool.query(`INSERT INTO merchant_storefronts(business_id,store_name) VALUES($1,$2)`,[business.id,business.name]);s=await storefront(business.id,true)}

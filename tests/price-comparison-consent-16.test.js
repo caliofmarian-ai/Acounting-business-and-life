@@ -5,6 +5,21 @@ import {normalizeStoreComparisonConsent as store,normalizeListingComparisonConse
 import {buildInternalPriceComparison} from '../price-comparison-core.js';
 
 const source=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
+test('private Merchant storefront consent revisions are not cached or conditionally reused',()=>{
+  const server=source('server-marketplace.js');
+  const start=server.indexOf("app.get('/api/merchant/storefront',");
+  const next=server.indexOf("app.get('/api/merchant/storefront/geocode'",start);
+  assert.ok(start>=0&&next>start,'Merchant storefront GET exists');
+  const handler=server.slice(start,next);
+  assert.match(handler,/res\.set\('Cache-Control','private, no-store, max-age=0'\)/);
+  assert.match(handler,/res\.vary\('Cookie'\)/);
+  assert.match(handler,/res\.vary\('Authorization'\)/);
+  assert.match(handler,/delete req\.headers\['if-none-match'\]/);
+  assert.match(handler,/delete req\.headers\['if-modified-since'\]/);
+  assert.ok(handler.indexOf("Cache-Control")<handler.indexOf('await requireMerchant'),
+    'denied private requests must also be marked no-store');
+});
+
 test('store comparison is OFF by default and an unrelated edit preserves prior opt-in',()=>{
   assert.deepEqual(store({}),{provided:false,value:false});
   assert.deepEqual(store({store_name:'Updated'},true),{provided:false,value:true});

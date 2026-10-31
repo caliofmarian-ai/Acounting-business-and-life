@@ -16,15 +16,18 @@ let sessionId=null,productId=null,foreignBusinessId=null,foreignProductId=null;
 let originalEmailVerifiedAt=null,emailVerifiedTouched=false;
 let assertions=0;
 const same=(actual,expected,message)=>{assert.equal(actual,expected,message);assertions++};
-const request=async(path,{method='GET',body,token}={})=>{
+const request=async(path,{method='GET',body,token,ifNoneMatch}={})=>{
   const res=await fetch('http://127.0.0.1:3000'+path,{
     method,
     headers:{...(token?{Authorization:'Bearer '+token}:{}),
+      ...(ifNoneMatch?{'If-None-Match':ifNoneMatch}:{}),
       ...(body===undefined?{}:{'Content-Type':'application/json'})},
     ...(body===undefined?{}:{body:JSON.stringify(body)})
   });
   const payload=await res.json().catch(()=>({}));
-  return {status:res.status,payload};
+  return {status:res.status,payload,
+    cacheControl:res.headers.get('cache-control'),vary:res.headers.get('vary'),
+    etag:res.headers.get('etag')};
 };
 const expect=async(path,options,status)=>{
   const result=await request(path,options);
@@ -111,8 +114,24 @@ try{
   const raw=['v2',Date.now(),'1',sessionId].join('.');
   const token=raw+'.'+crypto.createHmac('sha256',process.env.TOKEN_SECRET).update(raw).digest('hex');
 
-  await expect('/api/merchant/storefront?business_id=1&include_products=false',{},401);
-  await expect('/api/merchant/storefront?business_id=1&include_products=false',{token},200);
+  const privateStorePath='/api/merchant/storefront?business_id=1&include_products=false';
+  const unauthenticated=await request(privateStorePath);
+  same(unauthenticated.status,401,'unauthenticated Merchant storefront remains denied');
+  same(unauthenticated.cacheControl,'private, no-store, max-age=0',
+    'even denied private storefront responses cannot be cached');
+  const privateStore=await request(privateStorePath,{token});
+  same(privateStore.status,200,'authorized private Merchant storefront GET');
+  same(privateStore.cacheControl,'private, no-store, max-age=0',
+    'private Merchant storefront consent and revision cannot be cached');
+  const varyTokens=String(privateStore.vary||'').toLowerCase().split(',').map(value=>value.trim());
+  same(varyTokens.includes('cookie'),true,'private storefront varies by browser session cookie');
+  same(varyTokens.includes('authorization'),true,'private storefront varies by bearer authorization');
+  same(typeof privateStore.payload.comparison_version,'string','private consent revision is returned');
+  if(privateStore.etag){
+    const conditional=await request(privateStorePath,{token,ifNoneMatch:privateStore.etag});
+    same(conditional.status,200,'private storefront never reuses an ETag 304 response');
+    same(conditional.cacheControl,'private, no-store, max-age=0','conditional private GET stays no-store');
+  }
 
   let stored=await storeWrite(token,{price_comparison_enabled:true});
   same(stored.price_comparison_enabled,true,'explicit storefront opt-in persisted');
