@@ -182,7 +182,7 @@ test('counter UI adds independent variant/modifier lines and submits each chosen
   const inputs=[30,31].map((variant,index)=>({dataset:{counterProduct:'7',counterSource:'marketplace_product'},value:String(index+1),
     closest:()=>({querySelector:()=>({value:String(variant)}),querySelectorAll:()=>[{dataset:{counterModifier:String(40+index)}}]})}));
   const form={querySelectorAll:()=>inputs};
-  const context=vm.createContext({productsCache:[product],document:{getElementById:()=>form},h:String,php:value=>String(value),nice:String});
+  const context=vm.createContext({productsCache:[product],orderOperation:()=>({}),orderOperationCurrent:()=>true,document:{getElementById:()=>form},h:String,php:value=>String(value),nice:String});
   vm.runInContext(rowCode+formCode,context);
   const html=context.counterProductRow(product,{additional:true});
   assert.match(html,/Add another choice/);assert.match(html,/Remove this line/);

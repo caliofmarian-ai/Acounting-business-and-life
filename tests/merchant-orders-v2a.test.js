@@ -29,7 +29,7 @@ test('Merchant Orders resolves the canonical active business instead of hardcodi
   assert.match(ui,/active_business_id/);
   assert.match(ui,/merchantBusinessId=id/);
   assert.match(ui,/business_id=\$\{encodeURIComponent\(businessId\)\}/);
-  assert.match(ui,/business_id:merchantBusinessId/);
+  assert.match(ui,/business_id:operation\.businessId/);
   assert.doesNotMatch(ui,/business_id=1/);
   assert.doesNotMatch(ui,/business_id:1/);
 });
@@ -73,12 +73,12 @@ test('Orders boards do not use timer polling',()=>{
 
 test('business switching refreshes an already-open Merchant Orders workspace',()=>{
   assert.match(ui,/abl:business-workspace-changed/);
-  assert.match(ui,/merchantBusinessId=id;productsCache=\[\]/);
-  assert.match(ui,/ordersMode==='merchant'&&ordersVisible\(\)/);
+  assert.match(ui,/invalidateOrders\(\);merchantBusinessId=id/);
+  assert.match(ui,/function reconcileOrderBusiness/);
 });
 
 test('Merchant Orders has a retryable full-workspace load error',()=>{
-  assert.match(ui,/function merchantOrdersError/);
+  assert.match(ui,/function ordersLoadError/);
   assert.match(ui,/role="alert"/);
   assert.match(ui,/data-orders-retry/);
   assert.match(ui,/Try again/);
@@ -105,8 +105,8 @@ test('Merchant Orders protects narrow mobile layouts from accidental overflow',(
 
 
 test('Merchant Orders reuses the cached accounting business before requesting workspace state',()=>{
-  const resolverStart=ui.indexOf('async function resolveMerchantBusiness');
-  const resolverEnd=ui.indexOf('function merchantOrdersError',resolverStart);
+  const resolverStart=ui.indexOf('function selectedMerchantBusiness');
+  const resolverEnd=ui.indexOf('function ordersLoadError',resolverStart);
   const resolver=ui.slice(resolverStart,resolverEnd);
   assert.ok(resolverStart>=0&&resolverEnd>resolverStart);
   assert.ok(resolver.indexOf('BusinessLifeAccounting?.getState')<resolver.indexOf("oapi('/api/accounting/workspaces')"));
@@ -114,7 +114,7 @@ test('Merchant Orders reuses the cached accounting business before requesting wo
 
 
 test('Counter catalog load failure is not presented as an empty catalog',()=>{
-  assert.match(ui,/productsLoadError=error\?\.message\|\|'Counter catalog could not be loaded\.'/);
+  assert.match(ui,/error:error\?\.message\|\|'Counter catalog could not be loaded\.'/);
   assert.match(ui,/Counter catalog could not be loaded\. Use Refresh to try again\./);
   assert.match(ui,/ordersInlineError/);
   assert.match(css,/\.ordersInlineError\{/);

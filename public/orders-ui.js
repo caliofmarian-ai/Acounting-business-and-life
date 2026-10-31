@@ -1,6 +1,54 @@
 import {orderReceivableAmount,ordersReceivableTotal} from './orders-receivable-view.js';
 const ORDER_PROGRESS=['accepted','preparing','ready','completed'];
 let orderMe=null,orderWorkspace=null,productsCache=[],productsLoadError='',directSaleInventory=[],directSaleInventoryError='',merchantBusinessId=null,ordersMode=null;
+// Request authority is kept in memory. In particular, the opaque session marker
+// must never be copied into browser storage, markup, URLs or diagnostic output.
+let ordersViewEpoch=0,ordersRenderEpoch=0,ordersRequest=null,ordersOwner=null,orderModalEpoch=0,orderModalPreviousOverflow=null,ordersMutation=null;
+function orderIdentity(){
+  const state=window.BusinessLifeProfileState,accountId=Number(state?.accountId??state?.snapshot?.account?.id);
+  return {accountId,session:window.ABLSession?.csrfToken?.(),surface:state?.surface,role:state?.activeRole,navigationEpoch:state?.navigationEpoch};
+}
+function sameOrderIdentity(a,b){return Boolean(a&&b&&a.accountId===b.accountId&&a.session===b.session&&a.surface===b.surface&&a.role===b.role&&a.navigationEpoch===b.navigationEpoch)}
+function validOrderIdentity(identity,mode){return Boolean(orderToken()&&identity.accountId>0&&identity.surface==='profile'&&identity.role===mode)}
+function clearOrderPickers(){productsCache=[];productsLoadError='';directSaleInventory=[];directSaleInventoryError=''}
+function invalidateOrders({leave=false}={}){
+  ordersViewEpoch++;ordersRequest=null;ordersMutation=null;clearOrderPickers();closeOrderModal();
+  if(leave){ordersMode=null;ordersOwner=null;merchantBusinessId=null;if(orderWorkspace){orderWorkspace.classList.add('hidden');orderWorkspace.innerHTML=''}}
+}
+function selectedMerchantBusiness(){
+  const cached=window.BusinessLifeAccounting?.getState?.(),id=Number(cached?.role==='merchant'?cached.activeBusinessId:null);
+  const businesses=window.BusinessLifeProfileState?.snapshot?.businesses;
+  return Number.isInteger(id)&&id>0&&Array.isArray(businesses)&&businesses.some(b=>Number(b.id)===id)?id:null;
+}
+function orderViewCurrent(context){
+  if(!context||context.viewEpoch!==ordersViewEpoch||context.mode!==ordersMode||document.hidden||!ordersVisible())return false;
+  const identity=orderIdentity();
+  if(!validOrderIdentity(identity,context.mode)||!sameOrderIdentity(context.owner,identity))return false;
+  const selected=context.mode==='merchant'?(selectedMerchantBusiness()??merchantBusinessId):null;
+  return context.businessId==null||selected===context.businessId;
+}
+function orderReadCurrent(request){return ordersRequest===request&&orderViewCurrent(request)}
+function orderOperation(form=null){return {owner:orderIdentity(),mode:ordersMode,viewEpoch:ordersViewEpoch,businessId:merchantBusinessId,renderEpoch:ordersRenderEpoch,form}}
+function beginOrderMutation(operation){if(!orderOperationCurrent(operation)||(ordersMutation&&orderViewCurrent(ordersMutation)))return false;ordersRequest=null;ordersMutation=operation;return true}
+function endOrderMutation(operation){if(ordersMutation===operation)ordersMutation=null}
+function orderOperationCurrent(operation){return orderViewCurrent(operation)&&operation.renderEpoch===ordersRenderEpoch&&(!operation.form||document.getElementById(operation.form.id)===operation.form)}
+function readOrders(mode,showLoading,force,load){
+  const owner=orderIdentity();
+  if(mode!==ordersMode||document.hidden||!ordersVisible())return Promise.resolve();
+  if(!validOrderIdentity(owner,mode)||!sameOrderIdentity(owner,ordersOwner)){invalidateOrders({leave:true});return Promise.resolve()}
+  // A refresh during a pending write must not render a pre-write snapshot and
+  // replace the originating form. The write performs the single fresh read.
+  if(ordersMutation&&orderViewCurrent(ordersMutation))return Promise.resolve();
+  if(!force&&ordersRequest&&orderReadCurrent(ordersRequest))return ordersRequest.promise;
+  const request={owner,mode,viewEpoch:ordersViewEpoch,businessId:mode==='merchant'?(selectedMerchantBusiness()??merchantBusinessId):null};
+  ordersRequest=request;
+  if(showLoading){ordersRenderEpoch++;orderWorkspace.innerHTML=header(mode==='merchant'?'Orders':'My Orders',mode==='merchant'?'Customer orders for the selected business':'Preparation, payment and pickup status in one place')+'<div class="ordersEmpty" role="status">Loading orders…</div>'}
+  request.promise=(async()=>{
+    try{await load(request)}catch(error){if(orderReadCurrent(request))ordersLoadError(error,mode)}
+    finally{if(ordersRequest===request)ordersRequest=null}
+  })();
+  return request.promise;
+}
 const orderToken=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const h=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const php=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
@@ -14,14 +62,16 @@ function ensureWorkspace(){
   return true;
 }
 function hideBase(){document.querySelectorAll('#shell > .view').forEach(v=>v.classList.add('hidden'));document.querySelector('.bottomNav')?.classList.add('hidden');document.getElementById('roleHub')?.classList.add('hidden')}
-function closeOrders(){ordersMode=null;closeOrderModal();orderWorkspace?.classList.add('hidden');window.BusinessLifeShell?.showActiveWorkspace?.()}
+function closeOrders(){invalidateOrders({leave:true});window.BusinessLifeShell?.showActiveWorkspace?.()}
 function header(title,subtitle){return `<div class="ordersHeader"><button class="ordersBack" type="button" data-orders-back>‹</button><div class="ordersHeaderCopy"><h1>${h(title)}</h1><p>${h(subtitle)}</p></div><button class="ordersRefresh" type="button" data-orders-refresh>Refresh</button></div>`}
 function bindHeader(refresh){orderWorkspace.querySelector('[data-orders-back]').onclick=closeOrders;orderWorkspace.querySelector('[data-orders-refresh]').onclick=refresh}
 function statusBadge(status){return `<span class="orderStatus ${h(status)}">${h(nice(status))}</span>`}
 function progress(status){let idx=ORDER_PROGRESS.indexOf(status);if(status==='awaiting_payment'||status==='awaiting_customer_presence')idx=-1;return `<div class="customerOrderProgress">${ORDER_PROGRESS.map((_,i)=>`<span class="progressDot ${i<=idx?'done':''}"></span>`).join('')}</div>`}
 
 async function openCustomerOrders(){
-  ordersMode='customer';ensureWorkspace();
+  if(ordersMode==='customer'&&ordersMutation&&orderViewCurrent(ordersMutation))return;
+  if(ordersMode==='customer'&&ordersRequest&&orderReadCurrent(ordersRequest))return ordersRequest.promise;
+  invalidateOrders({leave:true});ordersMode='customer';ordersOwner=orderIdentity();if(!validOrderIdentity(ordersOwner,ordersMode)||!ensureWorkspace())return;
   if(!window.BusinessLifeShell?.openFeatureWorkspace?.('ordersWorkspace')){hideBase();orderWorkspace.classList.remove('hidden')}
   await renderCustomerOrders()
 }
@@ -32,77 +82,72 @@ function openCustomerDeliveries(){
   if(launcher)return launcher.click();
   toast('Delivery is still loading. Try again in a moment.');
 }
-async function renderCustomerOrders(showLoading=true){
-  if(showLoading)orderWorkspace.innerHTML=header('My Orders','Preparation, payment and pickup status in one place')+'<div class="ordersEmpty">Loading orders…</div>';
-  const orders=await oapi('/api/orders/mine');
+function renderCustomerOrders(showLoading=true,force=false){return readOrders('customer',showLoading,force,async request=>{
+  const orders=await oapi('/api/orders/mine');if(!orderReadCurrent(request))return;
+  ordersRenderEpoch++;
   const outstanding=ordersReceivableTotal(orders),active=orders.filter(o=>!['completed','cancelled'].includes(o.order_status)).length;
   orderWorkspace.innerHTML=header('My Orders','Preparation, payment and pickup status in one place')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active}</strong></div><div class="orderSummaryMetric"><small>Total orders</small><strong>${orders.length}</strong></div><div class="orderSummaryMetric"><small>Amount due</small><strong>${php(outstanding)}</strong></div></div><div class="customerOrderTools"><button id="customerDeliveriesBtn" type="button"><span>📍</span><span><strong>My deliveries</strong><small>Live status, ETA and secure handoff for delivery orders</small></span><b>›</b></button></div><div class="customerOrdersList">${orders.length?orders.map(customerCard).join(''):'<div class="ordersEmpty">No orders yet. Your Marketplace orders will appear here.</div>'}</div>`;
-  bindHeader(()=>renderCustomerOrders());
+  bindHeader(()=>renderCustomerOrders(true,true));
   document.getElementById('customerDeliveriesBtn')?.addEventListener('click',openCustomerDeliveries);
-  orderWorkspace.querySelectorAll('[data-checkin]').forEach(b=>b.onclick=()=>customerCheckIn(Number(b.dataset.checkin)));
+  const operation=orderOperation();
+  orderWorkspace.querySelectorAll('[data-checkin]').forEach(b=>b.onclick=()=>customerCheckIn(Number(b.dataset.checkin),operation));
   orderWorkspace.querySelectorAll('[data-track]').forEach(b=>b.onclick=()=>window.open(`/track.html?t=${encodeURIComponent(b.dataset.track)}`,'_blank'));
-}
+})}
+
 function orderBalanceCopy(o){const due=orderReceivableAmount(o);if(due>0)return `<small>Due ${php(due)}</small>`;return `<small>${o.order_status==='cancelled'?'No amount due':o.payment_status==='refunded'?'Refunded':o.payment_status==='paid'?'Paid':'No amount due'}</small>`}
 function customerCard(o){const waiting=o.order_status==='awaiting_customer_presence';return `<article class="customerOrderCard"><div class="orderCardTop"><div class="orderCardMain"><strong>${h(o.business_name)} • ${h(o.order_number)}</strong><p>${h(nice(o.fulfilment_method))} • ${new Date(o.created_at).toLocaleString()}</p></div>${statusBadge(o.order_status)}</div>${progress(o.order_status)}<div class="orderMoney"><div><small>${h(nice(o.payment_status))} • ${h(nice(o.payment_method))}</small><strong>${php(o.total)}</strong></div>${orderBalanceCopy(o)}</div><div class="customerOrderFooter">${waiting?`<button class="checkInButton" data-checkin="${o.id}" type="button">I'm here</button>`:''}<button class="trackButton" data-track="${h(o.public_token)}" type="button">Track order</button></div></article>`}
-async function customerCheckIn(id){try{await oapi(`/api/orders/${id}/check-in`,{method:'POST',body:'{}'});toast('Check-in sent to the Merchant.');await renderCustomerOrders(false)}catch(e){toast(e.message)}}
+async function customerCheckIn(id,operation=orderOperation()){if(!beginOrderMutation(operation))return;try{await oapi(`/api/orders/${id}/check-in`,{method:'POST',body:'{}'});endOrderMutation(operation);if(!orderOperationCurrent(operation))return;toast('Check-in sent to the Merchant.');await renderCustomerOrders(false,true)}catch(e){if(orderOperationCurrent(operation))toast(e.message)}finally{endOrderMutation(operation)}}
 
-async function resolveMerchantBusiness(){
-  if(Number.isInteger(merchantBusinessId)&&merchantBusinessId>0)return merchantBusinessId;
-  const cached=window.BusinessLifeAccounting?.getState?.();
-  const cachedId=Number(cached?.role==='merchant'?cached.activeBusinessId:null);
-  if(Number.isInteger(cachedId)&&cachedId>0){merchantBusinessId=cachedId;return cachedId}
+async function resolveMerchantBusiness(request){
+  if(request.businessId!=null){merchantBusinessId=request.businessId;return request.businessId}
   const state=await oapi('/api/accounting/workspaces');
-  const id=Number(state?.active_business_id);
+  if(!orderReadCurrent(request))return null;
+  const id=Number(state?.active_business_id),selected=selectedMerchantBusiness();
+  if(selected!=null&&selected!==id){
+    // Hydration selected a different business while the unknown workspace was
+    // loading. Start one current-business read; never dispatch the old pickers.
+    merchantBusinessId=selected;renderMerchantOrders(true,true);return null;
+  }
   if(!Number.isInteger(id)||id<1)throw new Error('Choose a Merchant business before opening Orders.');
-  merchantBusinessId=id;
+  request.businessId=id;merchantBusinessId=id;
   return id;
 }
-function merchantOrdersError(error){
+function ordersLoadError(error,mode='merchant'){
+  ordersRenderEpoch++;
   const message=error?.message||'Orders could not be loaded.';
-  orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+`<section class="ordersEmpty ordersLoadError" role="alert"><strong>We couldn’t load Orders</strong><p>${h(message)}</p><button type="button" class="primaryAction" data-orders-retry>Try again</button></section>`;
-  bindHeader(()=>renderMerchantOrders());
-  orderWorkspace.querySelector('[data-orders-retry]')?.addEventListener('click',()=>renderMerchantOrders());
+  orderWorkspace.innerHTML=header(mode==='merchant'?'Orders':'My Orders',mode==='merchant'?'Customer orders for the selected business':'Preparation, payment and pickup status in one place')+`<section class="ordersEmpty ordersLoadError" role="alert"><strong>We couldn’t load Orders</strong><p>${h(message)}</p><button type="button" class="primaryAction" data-orders-retry>Try again</button></section>`;
+  const retry=()=>mode==='merchant'?renderMerchantOrders(true,true):renderCustomerOrders(true,true);
+  bindHeader(retry);orderWorkspace.querySelector('[data-orders-retry]')?.addEventListener('click',retry);
 }
 async function openMerchantOrders(){
-  ordersMode='merchant';merchantBusinessId=null;ensureWorkspace();
+  if(ordersMode==='merchant'&&ordersMutation&&orderViewCurrent(ordersMutation))return;
+  if(ordersMode==='merchant'&&ordersRequest&&orderReadCurrent(ordersRequest))return ordersRequest.promise;
+  invalidateOrders({leave:true});ordersMode='merchant';ordersOwner=orderIdentity();if(!validOrderIdentity(ordersOwner,ordersMode)||!ensureWorkspace())return;
   if(!window.BusinessLifeShell?.openFeatureWorkspace?.('ordersWorkspace')){hideBase();orderWorkspace.classList.remove('hidden')}
   await renderMerchantOrders()
 }
 async function loadProducts(businessId){
-  try{
-    productsCache=await oapi(`/api/orders/products?business_id=${encodeURIComponent(businessId)}`);
-    productsLoadError='';
-  }catch(error){
-    productsCache=[];
-    productsLoadError=error?.message||'Counter catalog could not be loaded.';
-  }
-  return productsCache
+  try{return {items:await oapi(`/api/orders/products?business_id=${encodeURIComponent(businessId)}`),error:''}}
+  catch(error){return {items:[],error:error?.message||'Counter catalog could not be loaded.'}}
 }
 async function loadDirectSaleInventory(businessId){
-  try{
-    directSaleInventory=await oapi(`/api/orders/inventory?business_id=${encodeURIComponent(businessId)}`);
-    directSaleInventoryError='';
-  }catch(error){
-    directSaleInventory=[];
-    directSaleInventoryError=error?.message||'Inventory could not be loaded.';
-  }
-  return directSaleInventory
+  try{return {items:await oapi(`/api/orders/inventory?business_id=${encodeURIComponent(businessId)}`),error:''}}
+  catch(error){return {items:[],error:error?.message||'Inventory could not be loaded.'}}
 }
-async function renderMerchantOrders(showLoading=true){
-  if(showLoading)orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+'<div class="ordersEmpty" role="status">Loading order board…</div>';
-  try{
-    const businessId=await resolveMerchantBusiness();
-    const [orders]=await Promise.all([
+function renderMerchantOrders(showLoading=true,force=false){return readOrders('merchant',showLoading,force,async request=>{
+    const businessId=await resolveMerchantBusiness(request);if(businessId==null||!orderReadCurrent(request))return;
+    const [orders,products,inventory]=await Promise.all([
       oapi(`/api/orders/merchant/list?business_id=${encodeURIComponent(businessId)}`),
-      loadProducts(businessId),
-      loadDirectSaleInventory(businessId)
+      loadProducts(businessId),loadDirectSaleInventory(businessId)
     ]);
+    if(!orderReadCurrent(request))return;
+    productsCache=products.items;productsLoadError=products.error;directSaleInventory=inventory.items;directSaleInventoryError=inventory.error;
+    ordersRenderEpoch++;
     const active=orders.filter(o=>!['completed','cancelled'].includes(o.order_status));const due=ordersReceivableTotal(orders);
     const lanes=[['Waiting',['awaiting_customer_presence','awaiting_payment']],['Accepted',['accepted']],['Preparing',['preparing']],['Ready',['ready','handoff_to_delivery']]];
     orderWorkspace.innerHTML=header('Orders','Customer orders for the selected business')+`<div class="orderSummaryStrip"><div class="orderSummaryMetric"><small>Active</small><strong>${active.length}</strong></div><div class="orderSummaryMetric"><small>Ready</small><strong>${orders.filter(o=>o.order_status==='ready').length}</strong></div><div class="orderSummaryMetric"><small>Receivable</small><strong>${php(due)}</strong></div></div>${directSaleProductForm()}${counterForm()}<div class="ordersBoard">${lanes.map(([name,statuses])=>lane(name,orders.filter(o=>statuses.includes(o.order_status)))).join('')}</div>`;
-    bindHeader(()=>renderMerchantOrders());bindDirectSaleProductForm();bindCounterForm();bindMerchantActions();
-  }catch(error){merchantOrdersError(error)}
-}
+    bindHeader(()=>renderMerchantOrders(true,true));bindDirectSaleProductForm();bindCounterForm();bindMerchantActions();
+})}
 function directSaleProductForm(){
   const options=directSaleInventory.map(i=>{const available=Number(i.available_quantity??i.usable_quantity??i.quantity),reserved=Number(i.reserved_quantity||0);return `<option value="${i.id}" data-unit="${h(i.unit)}">${h(i.item)} — ${available.toLocaleString('en-PH',{maximumFractionDigits:4})} ${h(i.unit)} available${reserved>0?' · '+reserved.toLocaleString('en-PH',{maximumFractionDigits:4})+' reserved':''}</option>`}).join('');
   const unavailable=!directSaleInventory.length;
@@ -112,40 +157,44 @@ function directSaleProductForm(){
 function bindDirectSaleProductForm(){
   const form=document.getElementById('ordersDirectProductForm'),inventory=document.getElementById('ordersDirectInventory');
   if(!form||!inventory)return;
+  const operation=orderOperation(form),field=id=>form.querySelector('#'+id);
   const sync=()=>{
+    if(!orderOperationCurrent(operation))return;
     const option=inventory.selectedOptions?.[0],unit=option?.dataset?.unit||'unit';
-    const stored=document.getElementById('ordersDirectStockUnit');if(stored)stored.value=unit;
-    const qty=Number(document.getElementById('ordersDirectStockQty')?.value||0);
-    const preview=document.getElementById('ordersDirectProductPreview');
+    const stored=field('ordersDirectStockUnit');if(stored)stored.value=unit;
+    const qty=Number(field('ordersDirectStockQty')?.value||0);
+    const preview=field('ordersDirectProductPreview');
     if(preview)preview.textContent=qty>0?`Each sale consumes ${qty} ${unit} from ${option?.textContent?.split(' — ')[0]||'stock'}.`:'Enter how much stock one sold unit consumes.'
   };
   inventory.onchange=sync;
-  document.getElementById('ordersDirectStockQty')?.addEventListener('input',sync);
+  field('ordersDirectStockQty')?.addEventListener('input',sync);
   sync();
   form.onsubmit=async e=>{
-    e.preventDefault();
-    const msg=document.getElementById('ordersDirectProductMessage');
+    e.preventDefault();if(!orderOperationCurrent(operation))return;
+    const msg=field('ordersDirectProductMessage');
     if(msg)msg.textContent='';
-    const inventoryId=Number(inventory.value),quantityPerUnit=Number(document.getElementById('ordersDirectStockQty')?.value);
+    const inventoryId=Number(inventory.value),quantityPerUnit=Number(field('ordersDirectStockQty')?.value);
     if(!Number.isInteger(inventoryId)||inventoryId<1){if(msg)msg.textContent='Choose a stock item first.';return}
     if(!Number.isFinite(quantityPerUnit)||quantityPerUnit<=0){if(msg)msg.textContent='Enter a valid stock quantity per sold unit.';return}
+    if(!beginOrderMutation(operation))return;
     try{
       const option=inventory.selectedOptions?.[0],unit=option?.dataset?.unit||'unit';
       await oapi('/api/merchant/storefront/products',{method:'POST',body:JSON.stringify({
-        business_id:merchantBusinessId,
-        product_kind:document.getElementById('ordersDirectKind').value,
-        name:document.getElementById('ordersDirectName').value,
+        business_id:operation.businessId,
+        product_kind:field('ordersDirectKind').value,
+        name:field('ordersDirectName').value,
         inventory_id:inventoryId,
         quantity_per_unit:quantityPerUnit,
         unit_code:`${quantityPerUnit} ${unit}`,
-        category:document.getElementById('ordersDirectCategory').value,
-        selling_price:Number(document.getElementById('ordersDirectPrice').value),
-        description:document.getElementById('ordersDirectDescription').value,
+        category:field('ordersDirectCategory').value,
+        selling_price:Number(field('ordersDirectPrice').value),
+        description:field('ordersDirectDescription').value,
         published:false
       })});
+      endOrderMutation(operation);if(!orderOperationCurrent(operation))return;
       toast('Direct-sale product added as Private. Publish it from My Storefront when ready.');
-      await renderMerchantOrders(false)
-    }catch(err){if(msg)msg.textContent=err.message}
+      await renderMerchantOrders(false,true)
+    }catch(err){if(orderOperationCurrent(operation)&&msg)msg.textContent=err.message}finally{endOrderMutation(operation)}
   }
 }
 function counterProductRow(p,{additional=false}={}){
@@ -167,34 +216,84 @@ function counterOrderItems(f){
 }
 function bindCounterForm(){
   const f=document.getElementById('counterOrderForm');if(!f)return;
+  const operation=orderOperation(f),catalog=productsCache,field=id=>f.querySelector('#'+id);
   f.onclick=event=>{
+    if(!orderOperationCurrent(operation))return;
     const add=event.target.closest('[data-counter-add-line]');
     if(add){
-      const product=productsCache.find(p=>`${p.source_kind||'product'}:${p.id}`===add.dataset.counterAddLine);
+      const product=catalog.find(p=>`${p.source_kind||'product'}:${p.id}`===add.dataset.counterAddLine);
       if(product)add.closest('.counterProduct').insertAdjacentHTML('afterend',counterProductRow(product,{additional:true}));
       return;
     }
     event.target.closest('[data-counter-remove-line]')?.closest('.counterProduct')?.remove();
   };
   f.onsubmit=async e=>{
-    e.preventDefault();const items=counterOrderItems(f),msg=document.getElementById('counterMessage');msg.textContent='';
+    e.preventDefault();if(!orderOperationCurrent(operation))return;const items=counterOrderItems(f),msg=field('counterMessage');msg.textContent='';
     if(!items.length){msg.textContent='Choose at least one product.';return}
-    if(items.some(i=>productsCache.find(p=>p.id===i.product_id&&p.source_kind===i.source_kind)?.variant_mode&&!i.variant_id)){msg.textContent='Choose a variant for each selected product.';return}
+    if(items.some(i=>catalog.find(p=>p.id===i.product_id&&p.source_kind===i.source_kind)?.variant_mode&&!i.variant_id)){msg.textContent='Choose a variant for each selected product.';return}
+    if(!beginOrderMutation(operation))return;
     try{
-      await oapi('/api/orders/merchant/create',{method:'POST',body:JSON.stringify({business_id:merchantBusinessId,customer_name:document.getElementById('counterCustomer').value||'Walk-in customer',items,fulfilment_method:'pickup',payment_method:document.getElementById('counterPayment').value,counter_presence:true,note:document.getElementById('counterNote').value})});
-      toast('Order created.');await renderMerchantOrders(false)
-    }catch(err){msg.textContent=err.message}
+      await oapi('/api/orders/merchant/create',{method:'POST',body:JSON.stringify({business_id:operation.businessId,customer_name:field('counterCustomer').value||'Walk-in customer',items,fulfilment_method:'pickup',payment_method:field('counterPayment').value,counter_presence:true,note:field('counterNote').value})});
+      endOrderMutation(operation);if(!orderOperationCurrent(operation))return;
+      toast('Order created.');await renderMerchantOrders(false,true)
+    }catch(err){if(orderOperationCurrent(operation))msg.textContent=err.message}finally{endOrderMutation(operation)}
   }
 }
 
 function lane(name,orders){return `<section class="orderLane"><div class="orderLaneHeader"><h2>${h(name)}</h2><span>${orders.length}</span></div><div class="orderCards">${orders.length?orders.map(merchantCard).join(''):'<div class="ordersEmpty">Nothing here</div>'}</div></section>`}
 function merchantCard(o){const due=orderReceivableAmount(o)>0.001;let actions='';if(o.order_status==='awaiting_customer_presence')actions+=`<button class="warmAction" data-action="presence" data-id="${o.id}">Presence verified</button>`;if(o.order_status==='awaiting_payment')actions+=`<button class="primaryAction" data-action="payment" data-id="${o.id}">Record payment</button>`;if(o.order_status==='accepted')actions+=`<button class="primaryAction" data-action="start" data-id="${o.id}">Start preparing</button>`;if(o.order_status==='preparing')actions+=`<button class="primaryAction" data-action="ready" data-id="${o.id}">Mark ready</button>`;if(o.order_status==='ready'){if(due)actions+=`<button class="warmAction" data-action="payment" data-id="${o.id}">Record payment</button>`;if(o.fulfilment_method==='pickup')actions+=`<button class="primaryAction" data-action="complete" data-id="${o.id}" data-due="${due?'1':'0'}">Complete</button>`;else actions+=`<button class="primaryAction" data-action="handoff" data-id="${o.id}">Delivery handoff</button>`}if(!['completed','cancelled'].includes(o.order_status))actions+=`<button class="dangerAction" data-action="cancel" data-id="${o.id}">Cancel</button>`;return `<article class="orderCard"><div class="orderCardTop"><div class="orderCardMain"><strong>${h(o.order_number||`Order ${o.id}`)}</strong><p>${h(o.customer_name_snapshot||o.customer_account_name||'Customer')} • ${h(nice(o.fulfilment_method))}</p></div>${statusBadge(o.order_status)}</div><div class="orderMoney"><div><small>${h(nice(o.payment_status))}</small><strong>${php(o.total)}</strong></div>${orderBalanceCopy(o)}</div>${o.customer_checked_in_at&&!o.presence_confirmed_at?'<div class="miniBadge" style="margin-top:8px">Customer checked in</div>':''}<div class="orderActions">${actions}</div></article>`}
-function bindMerchantActions(){orderWorkspace.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>merchantAction(b.dataset.action,Number(b.dataset.id),b.dataset.due==='1'))}
-async function merchantAction(action,id,due){try{if(action==='presence')await oapi(`/api/orders/merchant/${id}/confirm-presence`,{method:'POST',body:JSON.stringify({manual_confirmation:true})});else if(action==='start')await oapi(`/api/orders/merchant/${id}/start`,{method:'POST',body:'{}'});else if(action==='ready')await oapi(`/api/orders/merchant/${id}/ready`,{method:'POST',body:'{}'});else if(action==='handoff')await oapi(`/api/orders/merchant/${id}/handoff`,{method:'POST',body:'{}'});else if(action==='payment')return openPaymentModal(id);else if(action==='cancel')return openCancelModal(id);else if(action==='complete'){const allowCredit=due?confirm('This order still has an amount due. Complete it as customer credit/receivable?'):false;await oapi(`/api/orders/merchant/${id}/complete`,{method:'POST',body:JSON.stringify({allow_credit:allowCredit})})}toast('Order updated.');await renderMerchantOrders(false)}catch(e){toast(e.data?.shortages?`${e.message}: ${e.data.shortages.map(s=>`${s.item} short ${Number(s.short).toFixed(2)}`).join(', ')}`:e.message)}}
-function openOrderModal(){document.getElementById('orderModalBackdrop')?.classList.remove('hidden');document.body.style.overflow='hidden'}
-function closeOrderModal(){document.getElementById('orderModalBackdrop')?.classList.add('hidden');document.body.style.overflow=''}
-function openPaymentModal(id){const back=document.getElementById('orderModalBackdrop'),m=document.getElementById('orderModal');m.innerHTML=`<h2>Record received payment</h2><form id="orderPaymentForm" class="orderModalForm"><label>Amount ₱<input id="orderPayAmount" type="number" min="0.01" step="0.01" required></label><label>Received into<select id="orderPayAccount"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label><label>Reference (optional)<input id="orderPayRef" placeholder="GCash reference, receipt…"></label><div class="orderModalMessage" id="orderModalMessage"></div><div class="orderModalButtons"><button class="cancelModal" type="button">Cancel</button><button class="saveModal">Confirm received</button></div></form>`;openOrderModal();m.querySelector('.cancelModal').onclick=closeOrderModal;oapi(`/api/orders/${id}`).then(o=>{document.getElementById('orderPayAmount').value=Number(o.outstanding_amount).toFixed(2);document.getElementById('orderPayAccount').value=o.payment_method==='cash'?'cash':'gcash'});m.querySelector('#orderPaymentForm').onsubmit=async e=>{e.preventDefault();try{await oapi(`/api/orders/merchant/${id}/payment`,{method:'POST',body:JSON.stringify({amount:Number(document.getElementById('orderPayAmount').value),account:document.getElementById('orderPayAccount').value,provider_reference:document.getElementById('orderPayRef').value})});closeOrderModal();toast('Payment recorded.');await renderMerchantOrders(false)}catch(err){document.getElementById('orderModalMessage').textContent=err.message}}}
-function openCancelModal(id){const back=document.getElementById('orderModalBackdrop'),m=document.getElementById('orderModal');m.innerHTML=`<h2>Cancel order</h2><form id="orderCancelForm" class="orderModalForm"><label>Reason<textarea id="orderCancelReason" rows="3" required placeholder="Why is this order being cancelled?"></textarea></label><div class="orderModalMessage" id="orderModalMessage"></div><div class="orderModalButtons"><button class="cancelModal" type="button">Keep order</button><button class="saveModal" style="background:#c7484a">Cancel order</button></div></form>`;openOrderModal();m.querySelector('.cancelModal').onclick=closeOrderModal;m.querySelector('#orderCancelForm').onsubmit=async e=>{e.preventDefault();try{await oapi(`/api/orders/merchant/${id}/cancel`,{method:'POST',body:JSON.stringify({reason:document.getElementById('orderCancelReason').value})});closeOrderModal();toast('Order cancelled and stock reversed if needed.');await renderMerchantOrders(false)}catch(err){document.getElementById('orderModalMessage').textContent=err.message}}}
+function bindMerchantActions(){const operation=orderOperation();orderWorkspace.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>merchantAction(b.dataset.action,Number(b.dataset.id),b.dataset.due==='1',operation))}
+async function merchantAction(action,id,due,operation=orderOperation()){
+  if(!orderOperationCurrent(operation))return;
+  if(action==='payment')return openPaymentModal(id,operation);
+  if(action==='cancel')return openCancelModal(id,operation);
+  if(!beginOrderMutation(operation))return;
+  try{
+    if(action==='presence')await oapi(`/api/orders/merchant/${id}/confirm-presence`,{method:'POST',body:JSON.stringify({manual_confirmation:true})});
+    else if(action==='start')await oapi(`/api/orders/merchant/${id}/start`,{method:'POST',body:'{}'});
+    else if(action==='ready')await oapi(`/api/orders/merchant/${id}/ready`,{method:'POST',body:'{}'});
+    else if(action==='handoff')await oapi(`/api/orders/merchant/${id}/handoff`,{method:'POST',body:'{}'});
+    else if(action==='complete'){const allowCredit=due?confirm('This order still has an amount due. Complete it as customer credit/receivable?'):false;await oapi(`/api/orders/merchant/${id}/complete`,{method:'POST',body:JSON.stringify({allow_credit:allowCredit})})}
+    endOrderMutation(operation);if(!orderOperationCurrent(operation))return;
+    toast('Order updated.');await renderMerchantOrders(false,true)
+  }catch(e){if(orderOperationCurrent(operation))toast(e.data?.shortages?`${e.message}: ${e.data.shortages.map(s=>`${s.item} short ${Number(s.short).toFixed(2)}`).join(', ')}`:e.message)}finally{endOrderMutation(operation)}
+}
+function openOrderModal(){orderModalEpoch++;const backdrop=document.getElementById('orderModalBackdrop');if(backdrop?.classList.contains('hidden'))orderModalPreviousOverflow=document.body.style.overflow;backdrop?.classList.remove('hidden');document.body.style.overflow='hidden';return orderModalEpoch}
+function closeOrderModal(){orderModalEpoch++;const backdrop=document.getElementById('orderModalBackdrop');if(backdrop&&!backdrop.classList.contains('hidden')&&orderModalPreviousOverflow!==null)document.body.style.overflow=orderModalPreviousOverflow;orderModalPreviousOverflow=null;backdrop?.classList.add('hidden')}
+function orderModalCurrent(operation,epoch,form){return orderOperationCurrent(operation)&&epoch===orderModalEpoch&&document.getElementById(form.id)===form&&!document.getElementById('orderModalBackdrop')?.classList.contains('hidden')}
+function openPaymentModal(id,operation=orderOperation()){
+  if(!orderOperationCurrent(operation)||(ordersMutation&&orderViewCurrent(ordersMutation)&&!ordersMutation.modal))return;
+  operation={...operation,modal:true};
+  const m=document.getElementById('orderModal');
+  m.innerHTML=`<h2>Record received payment</h2><form id="orderPaymentForm" class="orderModalForm"><label>Amount ₱<input id="orderPayAmount" type="number" min="0.01" step="0.01" required></label><label>Received into<select id="orderPayAccount"><option value="cash">Cash</option><option value="gcash">GCash</option><option value="bank">Bank</option><option value="other">Other</option></select></label><label>Reference (optional)<input id="orderPayRef" placeholder="GCash reference, receipt…"></label><div class="orderModalMessage" id="orderModalMessage"></div><div class="orderModalButtons"><button class="cancelModal" type="button">Cancel</button><button class="saveModal">Confirm received</button></div></form>`;
+  const epoch=openOrderModal(),form=m.querySelector('#orderPaymentForm'),field=id=>form.querySelector('#'+id),current=()=>orderModalCurrent(operation,epoch,form);
+  m.querySelector('.cancelModal').onclick=closeOrderModal;
+  oapi(`/api/orders/${id}`).then(o=>{if(!current())return;field('orderPayAmount').value=Number(o.outstanding_amount).toFixed(2);field('orderPayAccount').value=o.payment_method==='cash'?'cash':'gcash'}).catch(error=>{if(current())field('orderModalMessage').textContent=error.message});
+  form.onsubmit=async e=>{
+    e.preventDefault();if(!current()||!beginOrderMutation(operation))return;
+    try{
+      await oapi(`/api/orders/merchant/${id}/payment`,{method:'POST',body:JSON.stringify({amount:Number(field('orderPayAmount').value),account:field('orderPayAccount').value,provider_reference:field('orderPayRef').value})});
+      endOrderMutation(operation);if(!current())return;
+      closeOrderModal();toast('Payment recorded.');await renderMerchantOrders(false,true)
+    }catch(err){if(current())field('orderModalMessage').textContent=err.message}finally{endOrderMutation(operation)}
+  }
+}
+function openCancelModal(id,operation=orderOperation()){
+  if(!orderOperationCurrent(operation)||(ordersMutation&&orderViewCurrent(ordersMutation)&&!ordersMutation.modal))return;
+  operation={...operation,modal:true};
+  const m=document.getElementById('orderModal');
+  m.innerHTML=`<h2>Cancel order</h2><form id="orderCancelForm" class="orderModalForm"><label>Reason<textarea id="orderCancelReason" rows="3" required placeholder="Why is this order being cancelled?"></textarea></label><div class="orderModalMessage" id="orderModalMessage"></div><div class="orderModalButtons"><button class="cancelModal" type="button">Keep order</button><button class="saveModal" style="background:#c7484a">Cancel order</button></div></form>`;
+  const epoch=openOrderModal(),form=m.querySelector('#orderCancelForm'),field=id=>form.querySelector('#'+id),current=()=>orderModalCurrent(operation,epoch,form);
+  m.querySelector('.cancelModal').onclick=closeOrderModal;
+  form.onsubmit=async e=>{
+    e.preventDefault();if(!current()||!beginOrderMutation(operation))return;
+    try{
+      await oapi(`/api/orders/merchant/${id}/cancel`,{method:'POST',body:JSON.stringify({reason:field('orderCancelReason').value})});
+      endOrderMutation(operation);if(!current())return;
+      closeOrderModal();toast('Order cancelled and stock reversed if needed.');await renderMerchantOrders(false,true)
+    }catch(err){if(current())field('orderModalMessage').textContent=err.message}finally{endOrderMutation(operation)}
+  }
+}
 
 function applyOrderState(detail){const state=detail?.snapshot?detail:window.BusinessLifeProfileState;if(state?.snapshot)orderMe=state.snapshot}
 async function decorate(detail){if(!ensureWorkspace()||!orderToken())return;const state=detail?.snapshot?detail:window.BusinessLifeProfileState;applyOrderState(state);if(!orderMe)return;const role=state?.surface==='profile'?state.activeRole:null;const hub=document.getElementById('roleHub');if(hub&&role==='customer'){const orderTile=hub.querySelector('[data-hub-feature="Orders"]');if(orderTile)orderTile.onclick=openCustomerOrders}}
@@ -204,15 +303,24 @@ function refreshVisibleOrders(){
   if(ordersMode==='merchant')renderMerchantOrders(false).catch(()=>{});
   else if(ordersMode==='customer')renderCustomerOrders(false).catch(()=>{});
 }
-function observe(){
-  document.addEventListener('abl:profile-state',e=>decorate(e.detail).catch(()=>{}),{passive:true});
-  document.addEventListener('abl:business-workspace-changed',e=>{
-    const id=Number(e.detail?.activeBusinessId);
-    if(Number.isInteger(id)&&id>0){merchantBusinessId=id;productsCache=[];productsLoadError='';directSaleInventory=[];directSaleInventoryError=''}
-    if(ordersMode==='merchant'&&ordersVisible())renderMerchantOrders().catch(()=>{});
-  },{passive:true});
-  document.addEventListener('visibilitychange',refreshVisibleOrders,{passive:true});
+function reconcileOrderBusiness(id){
+  if(ordersMode!=='merchant'||!ordersVisible()||!Number.isInteger(id)||id<1||id===merchantBusinessId||id===ordersRequest?.businessId)return;
+  invalidateOrders();merchantBusinessId=id;renderMerchantOrders().catch(()=>{});
 }
+function observe(){
+  document.addEventListener('abl:profile-state',e=>{
+    if(ordersMode&&!sameOrderIdentity(ordersOwner,orderIdentity()))invalidateOrders({leave:true});
+    else if(ordersMode==='merchant')reconcileOrderBusiness(selectedMerchantBusiness());
+    decorate(e.detail).catch(()=>{});
+  },{passive:true});
+  document.addEventListener('abl:business-workspace-changed',e=>{
+    if(e.detail?.role==='merchant'&&orderIdentity().role==='merchant')reconcileOrderBusiness(selectedMerchantBusiness());
+  },{passive:true});
+  document.addEventListener('abl:feature-workspace',e=>{if(ordersMode&&e.detail?.workspaceId!=='ordersWorkspace')invalidateOrders({leave:true})},{passive:true});
+  document.addEventListener('abl:auth-expired',()=>invalidateOrders({leave:true}),{passive:true});
+  document.addEventListener('visibilitychange',()=>{if(!ordersMode)return;if(document.hidden)invalidateOrders();else refreshVisibleOrders()},{passive:true});
+}
+
 async function boot(){ensureWorkspace();observe();await decorate(window.BusinessLifeProfileState)}
 window.BusinessLifeOrders=Object.freeze({openMerchantOrders,openCustomerOrders,closeOrders});
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();

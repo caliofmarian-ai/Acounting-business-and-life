@@ -41,9 +41,10 @@ test('invalid/negative balances cannot corrupt totals and currency totals stay a
 });
 
 function browser(orders){
-  const board={innerHTML:'',querySelector:()=>({}),querySelectorAll:()=>[]};
+  const board={innerHTML:'',classList:{contains:()=>false},querySelector:()=>({}),querySelectorAll:()=>[]};
   const document={readyState:'loading',hidden:false,addEventListener(){},getElementById:()=>null};
-  const context=vm.createContext({window:{},document,Intl,Date,Number,JSON,orderReceivableAmount,ordersReceivableTotal,
+  const window={ABLSession:{authenticated:()=>true,csrfToken:()=>'test-session'},BusinessLifeProfileState:{surface:'profile',activeRole:'merchant',accountId:6,navigationEpoch:1}};
+  const context=vm.createContext({window,document,Intl,Date,Number,JSON,orderReceivableAmount,ordersReceivableTotal,
     fetch:async path=>({ok:true,json:async()=>path==='/api/orders/mine'||path.startsWith('/api/orders/merchant/list')?orders:[]})});
   const source=readFileSync(new URL('../public/orders-ui.js',import.meta.url),'utf8');
   assert.match(source,/import \{orderReceivableAmount,ordersReceivableTotal\} from '\.\/orders-receivable-view\.js'/);
@@ -51,7 +52,7 @@ function browser(orders){
   context.board=board;
   // Rendering/balance functions execute their real product implementation. Only
   // unrelated interaction binders are stubbed because this test has no DOM parser.
-  vm.runInContext("orderWorkspace=board;merchantBusinessId=4;bindHeader=()=>{};bindDirectSaleProductForm=()=>{};bindCounterForm=()=>{};bindMerchantActions=()=>{};",context);
+  vm.runInContext("orderWorkspace=board;ordersMode='merchant';ordersOwner=orderIdentity();merchantBusinessId=4;bindHeader=()=>{};bindDirectSaleProductForm=()=>{};bindCounterForm=()=>{};bindMerchantActions=()=>{};",context);
   return{context,board};
 }
 
@@ -69,6 +70,7 @@ test('Customer summary/history shows cancelled unpaid order with no amount due a
   const orders=[{id:1,order_status:'cancelled',outstanding_amount:1,payment_status:'unpaid',total:1,
     business_name:'QA Store',order_number:'QA-1',created_at:'2026-10-26T12:00:00Z',fulfilment_method:'pickup'}];
   const {context,board}=browser(orders);
+  vm.runInContext("window.BusinessLifeProfileState.activeRole='customer';ordersMode='customer';ordersOwner=orderIdentity();",context);
   await context.renderCustomerOrders(false);
   assert.match(board.innerHTML,/<small>Amount due<\/small><strong>₱0\.00<\/strong>/);
   assert.match(board.innerHTML,/<small>No amount due<\/small>/);
