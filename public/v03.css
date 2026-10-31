@@ -437,3 +437,33 @@
   .merchantPrimaryNav:not([data-ready="true"]){min-height:120px}
 }
 @media(prefers-reduced-motion:reduce){.merchantPrimaryNav button{transition:none}}
+
+/* #875 Merchant Stock receipt actions. One visible design for both independently
+   mounted modules, regardless of when either module injects its dialog CSS. */
+#viewStock > .sectionHead{align-items:stretch}
+#viewStock > .sectionHead > div:first-child{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;
+  min-width:0;flex:1 1 auto;align-content:start
+}
+#viewStock > .sectionHead > div:first-child > h1,
+#viewStock > .sectionHead > div:first-child > p{grid-column:1/-1;margin:0}
+#viewStock > .sectionHead #receiptIntelligenceButton,
+#viewStock > .sectionHead #merchantPurchaseDocumentsButton{
+  display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
+  min-width:0;width:100%;min-height:48px;margin:0;padding:12px 14px;
+  color:#fff;background:#056b5e;border:1px solid #056b5e;border-radius:14px;
+  font:750 14px/1.3 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  text-align:center;white-space:normal;overflow-wrap:anywhere;cursor:pointer;
+  box-shadow:0 3px 9px rgba(5,107,94,.16);
+}
+#viewStock > .sectionHead #receiptIntelligenceButton:hover,
+#viewStock > .sectionHead #merchantPurchaseDocumentsButton:hover{
+  background:#07594c;border-color:#07594c
+}
+#viewStock > .sectionHead #receiptIntelligenceButton:focus-visible,
+#viewStock > .sectionHead #merchantPurchaseDocumentsButton:focus-visible{
+  outline:3px solid #1d4ed8;outline-offset:2px
+}
+@media(max-width:520px){
+  #viewStock > .sectionHead > div:first-child{grid-template-columns:minmax(0,1fr)}
+}
