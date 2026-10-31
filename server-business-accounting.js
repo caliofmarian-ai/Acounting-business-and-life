@@ -13,6 +13,7 @@ import {startEmbeddedProfileGovernance,stopEmbeddedProfileGovernance} from './se
 import {authHardeningFetch} from './server-auth-hardening.js';
 import {readOrderDetail} from './orders-read-core.js';
 import { ensureLegacyAccountingBaseSchema } from './accounting-base-schema.js';
+import {inventoryMutationOrigin,boundInventoryOrigin} from './inventory-origin-core.js';
 import { inventoryLotExpiryStatus,planPhysicalStockReduction } from './inventory-lot-core.js';
 import {inventoryStorageDefaults,requireValidInventoryStorage} from './inventory-storage-core.js';
 import { planInventoryFefo,applyLotAllocations,canUseSupplyLots,inventoryLotRows,applyPhysicalLotReductions,inventoryAvailabilityRows } from './inventory-lot-runtime.js';
@@ -400,15 +401,23 @@ async function accountingContext(req){
   const role=clean(me.account?.active_role,40);
   if(!['merchant','supplier'].includes(role)) throw Object.assign(new Error('Switch to Merchant or Supplier to use Accounting'),{status:403});
   if(!roleEnabled(me,role)) throw Object.assign(new Error(`${role} profile is not active`),{status:403});
+  const originBusinessId=inventoryMutationOrigin(req);
   let bindings=await profileBindings(Number(me.account.id),role);
-  if(!bindings.length){
+  if(!bindings.length&&originBusinessId==null){
     await ensureProfileBusinessBinding(Number(me.account.id),role,null,'');
     bindings=await profileBindings(Number(me.account.id),role);
   }
-  if(!bindings.length) throw Object.assign(new Error('No accounting workspace is bound to this profile'),{status:409});
-  const pref=await pool.query(`SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role=$2`,[me.account.id,role]);
-  let selected=bindings.find(b=>Number(b.id)===Number(pref.rows[0]?.business_id))||bindings[0];
-  await pool.query(`INSERT INTO account_business_preferences(account_id,role,business_id) VALUES($1,$2,$3) ON CONFLICT(account_id,role) DO UPDATE SET business_id=EXCLUDED.business_id,updated_at=NOW()`,[me.account.id,role,selected.id]);
+  if(!bindings.length&&originBusinessId==null) throw Object.assign(new Error('No accounting workspace is bound to this profile'),{status:409});
+  let selected;
+  if(originBusinessId==null){
+    const pref=await pool.query(`SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role=$2`,[me.account.id,role]);
+    selected=bindings.find(b=>Number(b.id)===Number(pref.rows[0]?.business_id))||bindings[0];
+    await pool.query(`INSERT INTO account_business_preferences(account_id,role,business_id) VALUES($1,$2,$3) ON CONFLICT(account_id,role) DO UPDATE SET business_id=EXCLUDED.business_id,updated_at=NOW()`,[me.account.id,role,selected.id]);
+  }else{
+    if(role!=='merchant')throw Object.assign(new Error('Merchant profile required'),{status:403});
+    selected=boundInventoryOrigin(bindings,originBusinessId);
+    // Do not reset the live business preference when a delayed A write targets A.
+  }
   await ensureBudgetRow(Number(selected.id));
   return {me,role,business:selected,businesses:bindings};
 }
