@@ -42,48 +42,69 @@ try{
   same(table.rows[0].exists,true,'readiness schema exists in PostgreSQL');
 
 
-  // Cold schema exercise in a SECOND disposable database. Two distinct Pool
-  // objects mean WeakMap single-flight cannot serialize these calls; the SQL
-  // advisory xact lock must do it across genuine PostgreSQL connections.
+  // Verify first-time schema DDL with two truly independent PostgreSQL
+  // Pools, not just the single-Pool WeakMap gate. All databases are disposable.
+  const ciDbName='abl_readiness_lock_ci';
   const maintenance=new pg.Pool({database:'postgres',max:2});
-  let isolated=null,lockClient=null,lockHeld=false;
+  let bootstrap=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
+  let lockHeld=false,created=false,settledTasks=null;
   try{
-    await maintenance.query('CREATE DATABASE abl_readiness_lock_ci');
-    isolated=new pg.Pool({database:'abl_readiness_lock_ci',max:6});
-    await isolated.query('CREATE TABLE accounts(id BIGINT PRIMARY KEY); CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
-    lockClient=await isolated.connect();
+    await maintenance.query('CREATE DATABASE '+ciDbName);
+    created=true;
+    bootstrap=new pg.Pool({database:ciDbName,max:1});
+    await bootstrap.query('CREATE TABLE accounts(id BIGINT PRIMARY KEY); CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    await bootstrap.end();
+    bootstrap=null;
+    lockPool=new pg.Pool({database:ciDbName,max:1});
+    poolA=new pg.Pool({database:ciDbName,max:1});
+    poolB=new pg.Pool({database:ciDbName,max:1});
+    lockClient=await lockPool.connect();
     await lockClient.query('SELECT pg_advisory_lock(87320261031::bigint)');
     lockHeld=true;
-    const wrappers=Array.from({length:2},()=>({query(sql){return isolated.query(sql)}}));
-    const concurrent=wrappers.map(wrapper=>ensureMicrobusinessReadinessSchema(wrapper));
+    // Register rejection handlers BEFORE polling pg_stat_activity so a genuine
+    // SQL error cannot be masked by a later database-cleanup error.
+    settledTasks=Promise.allSettled([
+      ensureMicrobusinessReadinessSchema(poolA),
+      ensureMicrobusinessReadinessSchema(poolB)
+    ]);
     let waiting=0;
     for(let attempt=0;attempt<100;attempt++){
-      const probe=await isolated.query(`SELECT count(*)::int AS waiting
+      const probe=await maintenance.query(`SELECT count(*)::int AS waiting
         FROM pg_stat_activity
-        WHERE datname='abl_readiness_lock_ci'
-          AND wait_event_type='Lock' AND wait_event='advisory'
-          AND query LIKE '%pg_advisory_xact_lock%'`);
+        WHERE datname=$1 AND wait_event_type='Lock'
+          AND wait_event='advisory'
+          AND query LIKE 'SELECT pg_advisory_xact_lock%'`,[ciDbName]);
       waiting=Number(probe.rows[0].waiting);
       if(waiting===2)break;
       await new Promise(resolve=>setTimeout(resolve,30));
     }
-    same(waiting,2,'independent Pool DDL callers both await the same real database advisory lock');
     await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)');
     lockHeld=false;
-    await Promise.all(concurrent);
-    const readiness=await isolated.query("SELECT to_regclass('public.microbusiness_readiness') IS NOT NULL AS available");
-    same(readiness.rows[0].available,true,'concurrent initializers create readiness table exactly once');
-    const fk=await isolated.query(`SELECT COUNT(*)::int AS count FROM pg_constraint
+    const outcomes=await settledTasks;
+    settledTasks=null;
+    for(const result of outcomes){
+      if(result.status==='rejected')throw result.reason;
+    }
+    same(waiting,2,'two separate Pool DDL callers wait for the same real database advisory lock');
+    const readiness=await poolA.query("SELECT to_regclass('public.microbusiness_readiness') IS NOT NULL AS available");
+    same(readiness.rows[0].available,true,'concurrent initializers create readiness table');
+    const fk=await poolB.query(`SELECT COUNT(*)::int AS count FROM pg_constraint
       WHERE conname='microbusiness_readiness_business_fk'
         AND conrelid='microbusiness_readiness'::regclass`);
-    same(Number(fk.rows[0].count),1,'two independent Pools preserve one real FK constraint');
-    const isolatedDeadlocks=await isolated.query("SELECT deadlocks FROM pg_stat_database WHERE datname='abl_readiness_lock_ci'");
+    same(Number(fk.rows[0].count),1,'two independent Pools preserve one FK constraint');
+    const isolatedDeadlocks=await maintenance.query("SELECT deadlocks FROM pg_stat_database WHERE datname=$1",[ciDbName]);
     same(Number(isolatedDeadlocks.rows[0].deadlocks),0,'concurrent cold schema setup has zero deadlocks');
+  }catch(error){
+    console.error('READINESS_COLD_SCHEMA_873_FAILURE',error?.message||String(error));
+    throw error;
   }finally{
-    if(lockHeld)await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)').catch(()=>{});
+    if(lockHeld&&lockClient)await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)').catch(()=>{});
+    if(settledTasks)await settledTasks;
     lockClient?.release();
-    await isolated?.end();
-    await maintenance.query('DROP DATABASE IF EXISTS abl_readiness_lock_ci WITH (FORCE)').catch(()=>{});
+    await Promise.all([bootstrap?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
+    // A normal DROP, never WITH FORCE: a leaked connection must fail loudly,
+    // rather than emit an unhandled 57P01 and hide the original assertion.
+    if(created)await maintenance.query('DROP DATABASE IF EXISTS '+ciDbName);
     await maintenance.end();
   }
 
