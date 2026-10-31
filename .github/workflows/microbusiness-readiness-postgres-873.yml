@@ -52,10 +52,18 @@ jobs:
       ABL_READINESS_CI: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert literal checked-out revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - run: npm ci
+      - name: Literal-head single-flight unit regressions
+        run: node --test tests/microbusiness-readiness-schema-singleflight-873.test.js tests/microbusiness-readiness-runtime-v1.test.js
       - name: Start application with isolated PostgreSQL
         run: |
           npm start > /tmp/abl-readiness-873.log 2>&1 &
