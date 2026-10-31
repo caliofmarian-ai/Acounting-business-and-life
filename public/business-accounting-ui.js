@@ -1,6 +1,7 @@
 const ablToken = () => window.ABLSession?.authenticated()?'cookie-session':'';
 const originalFetch = window.fetch.bind(window);
 let accountingState = { role: null, activeBusinessId: null, businesses: [] };
+let accountingWorkspaceAccountId=null;
 
 async function api(path, options={}) {
   const headers={ 'Content-Type':'application/json', ...(options.headers||{}) };
@@ -70,9 +71,19 @@ function applyFinancePresentation(overview){
   document.body.dataset.businessFinanceRole=role||'';document.body.dataset.merchantDomain=domain;
   const foodAllowed=role==='merchant'&&Boolean(overview?.presentation?.legacy_recipe_ui_allowed);
   for(const name of ['Sell','Menu']){const btn=document.querySelector('.bottomNav [data-view="'+name+'"]');if(btn){btn.classList.toggle('roleFinanceHidden',!foodAllowed);if(name==='Menu'&&foodAllowed){const label=btn.querySelector?.('.merchantNavLabel');if(label)label.textContent='Products & recipes';else btn.textContent='Products & recipes'}}const view=document.getElementById('view'+name);if(view)view.classList.toggle('roleFinanceHidden',!foodAllowed)}
-  const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn){const label=stockBtn.querySelector?.('.merchantNavLabel');const text=role==='supplier'?'Inventory':domain==='non_food'?'Inventory':'Stock';if(label)label.textContent=text;else stockBtn.textContent=text;}
-  const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Inventory';
+  const stockBtn=document.querySelector('.bottomNav [data-view="Stock"]');if(stockBtn){const label=stockBtn.querySelector?.('.merchantNavLabel');const text=role==='supplier'?'Inventory':'Stock';if(label)label.textContent=text;else stockBtn.textContent=text;}
+  const stockTitle=document.querySelector('#viewStock h1');if(stockTitle)stockTitle.textContent=role==='supplier'?'Inventory / raw materials':'Stock';
   const stockFormTitle=document.querySelector('#viewStock form h2');if(stockFormTitle)stockFormTitle.textContent='Add or update inventory item';
+  // Supplier finance may hydrate first during a profile switch. It must never
+  // resolve or reveal the Merchant navigation, even temporarily.
+  const shellNav=document.getElementById('merchantWorkspaceNav');
+  if(role==='merchant'){
+    const recipes=shellNav?.querySelector('#merchantRecipesTopButton');
+    recipes?.classList.toggle('roleFinanceHidden',!foodAllowed);
+    if(shellNav){shellNav.setAttribute('data-ready','true');shellNav.removeAttribute('aria-busy')}
+  }
+  const nav=document.querySelector('.merchantPrimaryNav');
+  if(nav){nav.setAttribute('data-ready','true');nav.removeAttribute('aria-busy')}
   document.getElementById('budgetForm')?.classList.add('roleFinanceHidden');
   document.querySelectorAll('option[value="personal_withdrawal"]').forEach(o=>o.textContent='Owner drawing / withdrawal');
   document.querySelectorAll('[data-view-link="Sell"]').forEach(el=>el.classList.toggle('roleFinanceHidden',!foodAllowed));
@@ -306,7 +317,11 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
   try{
     const state=detail?.snapshot?detail:window.BusinessLifeProfileState;
     const me=state?.snapshot,role=state?.surface==='profile'?state.activeRole:null;
+    const accountId=Number(state?.accountId??me?.account?.id)||null;
     if(!me||!['merchant','supplier'].includes(role)){
+      // Never carry a former Merchant/Supplier business into a different profile.
+      accountingState={role:null,activeBusinessId:null,businesses:[]};
+      accountingWorkspaceAccountId=null;
       document.getElementById('businessWorkspaceBar')?.remove();
       document.getElementById('supplierAccountingWorkspace')?.classList.add('hidden');
       document.body.classList.remove('supplierAccountingMode');
@@ -315,10 +330,31 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
     const profile=me.profiles?.find(p=>p.role===role);
     if(!profile?.enabled) return;
     if(role==='merchant'){
-      const cached=window.BusinessLifeMerchantToday?.getState?.()?.workspace;
-      if(cached)applyWorkspaceState(cached);
+      const scopeChanged=accountingState.role!=='merchant'||accountingWorkspaceAccountId!==accountId;
+      if(scopeChanged){
+        // Profile/account → Merchant: do not render another business identity
+        // or attach its business_id to Merchant requests while Today hydrates.
+        accountingState={role:'merchant',activeBusinessId:null,businesses:[]};
+        const bar=document.getElementById('businessWorkspaceBar');
+        if(bar){
+          bar.className='businessWorkspaceBar businessWorkspaceBarPending';
+          bar.setAttribute('aria-busy','true');
+          bar.innerHTML='<div><span class="workspaceEyebrow">Current business</span><strong>Preparing workspace…</strong></div><span class="workspaceIsolated">Loading</span>';
+        }
+      }
+      accountingWorkspaceAccountId=accountId;
+      const today=window.BusinessLifeMerchantToday?.getState?.();
+      // The Accounting module loads lazily. Today's event may already have
+      // fired, so hydrate only a cache carrying the matching original account
+      // and Merchant profile key; never borrow a previous session's workspace.
+      const verifiedCache=Boolean(today?.data&&today?.workspace&&today.profileKey===String(accountId??'')+':merchant');
+      if(verifiedCache){
+        applyWorkspaceState(today.workspace);
+        applyFinancePresentation({role:'merchant',presentation:today.data.presentation||{}});
+      }
       return;
     }
+    accountingWorkspaceAccountId=accountId;
     accountingState={role:'supplier',activeBusinessId:null,businesses:[]};
     wireSupplierAccountingTile();
     const workspaceState=await api('/api/accounting/workspaces');
@@ -328,7 +364,38 @@ async function bootAccountingWorkspace(detail=window.BusinessLifeProfileState) {
   }catch(err){console.warn('Accounting workspace:',err.message)}
 }
 
-document.addEventListener('abl:profile-state',event=>bootAccountingWorkspace(event.detail),{passive:true});
+function resetMerchantNavPresentation(){
+  const shellNav=document.getElementById('merchantWorkspaceNav');
+  if(shellNav){
+    shellNav.removeAttribute('data-ready');
+    shellNav.setAttribute('aria-busy','true');
+    shellNav.querySelector('#merchantRecipesTopButton')?.classList.add('roleFinanceHidden');
+    shellNav.querySelector('#merchantBusinessTools')?.removeAttribute('open');
+  }
+  const nav=document.querySelector('.merchantPrimaryNav');
+  if(nav){nav.removeAttribute('data-ready');nav.setAttribute('aria-busy','true')}
+}
+let merchantNavPresentationScope=null;
+document.addEventListener('abl:profile-state',event=>{
+  const detail=event.detail||{};
+  const scope=detail.surface==='profile'&&detail.activeRole==='merchant'
+    ?String(detail.accountId??'unknown')+':merchant'
+    :null;
+  if(scope!==merchantNavPresentationScope)resetMerchantNavPresentation();
+  merchantNavPresentationScope=scope;
+  bootAccountingWorkspace(detail);
+},{passive:true});
+document.addEventListener('abl:business-workspace-changed',event=>{
+  if(event.detail?.role==='merchant')resetMerchantNavPresentation();
+},{passive:true});
+document.addEventListener('abl:auth-expired',()=>{
+  accountingWorkspaceAccountId=null;
+  accountingState={role:null,activeBusinessId:null,businesses:[]};
+  resetMerchantNavPresentation();
+},{passive:true});
+document.addEventListener('abl:merchant-today-error',()=>{
+  if(accountingState.role==='merchant'||window.BusinessLifeProfileState?.activeRole==='merchant')applyFinancePresentation({role:'merchant',presentation:{merchant_domain:'unknown',legacy_recipe_ui_allowed:false}});
+},{passive:true});
 document.addEventListener('abl:merchant-money-opened',()=>{
   if(accountingState.role==='merchant')mountEconomicSummary('viewMoney');
 },{passive:true});
