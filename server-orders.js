@@ -11,6 +11,8 @@ import {installMerchantVoiceOrderRoutes,ensureVoiceOrderUsageSchema} from './mer
 import {installMerchantVoiceOrderConfirmation} from './merchant-voice-order-confirm.js';
 import {installMerchantVoicePasskeyRoutes,ensureMerchantVoicePasskeySchema} from './merchant-voice-passkey-routes.js';
 import {passkeyConfig} from './merchant-voice-passkey-core.js';
+import {installMerchantTeamRoutes} from './merchant-team-routes.js';
+import {ensureMerchantTeamSchema} from './merchant-team-operators.js';
 import {ensureVoiceOrderSubmissionSchema} from './merchant-voice-order-idempotency.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
 import {enforceHighRiskVelocity,highRiskVelocityErrorBody} from './abuse-velocity-core.js';
@@ -45,7 +47,7 @@ function manilaDateStamp() {
 
 export function isOrdersOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
-  if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js'||pathname==='/merchant-voice-order-ui.js'||pathname==='/merchant-voice-order.css')return true;
+  if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js'||pathname==='/merchant-voice-order-ui.js'||pathname==='/merchant-voice-order.css'||pathname==='/merchant-team-ui.js'||pathname==='/merchant-team.css')return true;
   if(pathname==='/api/orders'||pathname.startsWith('/api/orders/'))return true;
   return false;
 }
@@ -76,6 +78,10 @@ export async function ordersFetch(path,options={}){
     let html=await r.text();
     html=html.replace('</head>','  <link rel="stylesheet" href="/orders.css" />\n</head>')
       .replace('</body>','  <script type="module" src="/orders-ui.js"></script>\n</body>');
+    if(process.env.MERCHANT_TEAM_ENABLED==='1'){
+      html=html.replace('</head>','  <link rel="stylesheet" href="/merchant-team.css" />\n</head>')
+        .replace('</body>','  <script src="/merchant-team-ui.js" defer></script>\n</body>');
+    }
     if(process.env.ORDER_VOICE_UI_ENABLED==='1'){
       html=html.replace('</head>','  <link rel="stylesheet" href="/merchant-voice-order.css" />\n</head>')
         .replace('</body>','  <script src="/merchant-voice-order-ui.js" defer></script>\n</body>');
@@ -251,6 +257,7 @@ async function initDb() {
   await ensureOrderStockReservationSchema(pool);
   if(process.env.ORDER_VOICE_UI_ENABLED==='1')await ensureVoiceOrderUsageSchema(pool);
   if(process.env.ORDER_VOICE_CREATE_ENABLED==='1')await ensureVoiceOrderSubmissionSchema(pool);
+  if(process.env.MERCHANT_TEAM_ENABLED==='1')await ensureMerchantTeamSchema(pool);
   if(process.env.ORDER_VOICE_UI_ENABLED==='1'&&passkeyConfig().ready)await ensureMerchantVoicePasskeySchema(pool);
 }
 
@@ -365,6 +372,8 @@ app.get('/health',async(req,res)=>{const r=await ordersFetch('/health',{headers:
 app.get('/orders-receivable-view.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-receivable-view.js'),'utf8')));
 app.get('/orders-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','orders-ui.js'),'utf8')));
 app.get('/orders.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','orders.css'),'utf8')));
+app.get('/merchant-team-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','merchant-team-ui.js'),'utf8')));
+app.get('/merchant-team.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','merchant-team.css'),'utf8')));
 app.get('/merchant-voice-order-ui.js',(_req,res)=>res.type('application/javascript').send(readFileSync(join(__dirname,'public','merchant-voice-order-ui.js'),'utf8')));
 app.get('/merchant-voice-order.css',(_req,res)=>res.type('text/css').send(readFileSync(join(__dirname,'public','merchant-voice-order.css'),'utf8')));
 async function proxyHtml(req,res){const r=await ordersFetch(req.path,{headers:req.headers});res.status(r.status).type('html').send(await r.text())}
@@ -374,6 +383,12 @@ app.get('/api/orders/products',async(req,res,next)=>{try{const businessId=Number
 
 const merchantVoiceSigningSecret=crypto.createHmac('sha256',process.env.ORDER_VOICE_SIGNING_SECRET||process.env.TOKEN_SECRET||crypto.randomBytes(32))
   .update('merchant-voice-orders-863').digest();
+const merchantTeam=installMerchantTeamRoutes(app,{
+  db:pool,requireMerchant,bodyMiddleware:body,
+  secret:process.env.MERCHANT_TEAM_SECRET||process.env.TOKEN_SECRET||'',
+  pinPepper:process.env.MERCHANT_TEAM_PIN_PEPPER||'',
+  tokenSecret:process.env.TOKEN_SECRET||''
+});
 let merchantVoiceConfirmation=null;
 const merchantVoicePasskey=installMerchantVoicePasskeyRoutes(app,{
   db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,
@@ -384,12 +399,14 @@ installMerchantVoiceOrderRoutes(app,{
   snapshotsForBusiness:({businessId,items})=>merchantCounterSnapshots(pool,{businessId,items}),
   secret:merchantVoiceSigningSecret,bodyMiddleware:body,
   confirmationReady:()=>merchantVoiceConfirmation?.ready()===true,
-  passkeyReady:()=>merchantVoicePasskey.enrollmentReady()
+  passkeyReady:()=>merchantVoicePasskey.enrollmentReady(),
+  teamEnabled:merchantTeam.enabled,operatorResolver:merchantTeam.resolveForVoice
 });
 merchantVoiceConfirmation=installMerchantVoiceOrderConfirmation(app,{
   db:pool,requireMerchant,quoteSecret:merchantVoiceSigningSecret,tokenSecret:process.env.TOKEN_SECRET,
   canonicalSnapshots:(client,{businessId,items})=>merchantCounterSnapshots(client,{businessId,items}),
   createCanonicalOrder:createOrder,orderDetail,bodyMiddleware:body,
+  teamEnabled:merchantTeam.enabled,
   verifyDeviceApproval:merchantVoicePasskey.ready()?merchantVoicePasskey.verifyDeviceApproval:null,
   checkCreateVelocity:({accountId,businessId})=>enforceHighRiskVelocity(pool,{
     actorAccountId:accountId,actionCode:'order_create',subjectType:'business',subjectId:businessId
