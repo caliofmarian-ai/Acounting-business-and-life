@@ -107,12 +107,12 @@ export function installMerchantVoiceOrderRoutes(app,{
     const {me,business}=await requireMerchant(req,Number(businessId));
     if(!positiveId(me?.account?.id)||Number(business?.id)!==Number(businessId))
       throw fail(403,'ORDER_VOICE_SESSION_REQUIRED','Merchant operator or business is unavailable.');
-    const accountId=Number(me.account.id),businessId=Number(business.id);
-    let sessionId=safeSessionId(req,accountId,businessId,secretBytes),operator=null;
+    const accountId=Number(me.account.id),resolvedBusinessId=Number(business.id);
+    let sessionId=safeSessionId(req,accountId,resolvedBusinessId,secretBytes),operator=null;
     if(teamEnabled()){
       if(typeof operatorResolver!=='function')
         throw fail(503,'ORDER_VOICE_NOT_CONFIGURED','Operator shifts are not configured.');
-      operator=await operatorResolver(req,{accountId,businessId,permission:'orders.voice_draft'});
+      operator=await operatorResolver(req,{accountId,businessId:resolvedBusinessId,permission:'orders.voice_draft'});
       if(!operator?.operator_id||!operator?.shift_id)
         throw fail(403,'TEAM_SHIFT_REQUIRED','Choose an authorized operator before using voice orders.');
       // Shift ID and operator identity are cryptographically bound into the
@@ -121,7 +121,7 @@ export function installMerchantVoiceOrderRoutes(app,{
         .update('merchant-team-voice:'+sessionId+':'+operator.operator_id+':'+operator.shift_id)
         .digest('hex').slice(0,48);
     }
-    return{accountId,businessId,sessionId,operator};
+    return{accountId,businessId:resolvedBusinessId,sessionId,operator};
   };
   app.get('/api/orders/voice/capabilities',async(req,res)=>{
     res.set('Cache-Control','private, no-store');
