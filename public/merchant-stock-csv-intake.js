@@ -4,6 +4,33 @@ const SUPPORTED_UNITS=new Set(['kg','g','L','ml','unit']);
 const NORMALIZE=value=>String(value??'').trim().toLocaleLowerCase('en-PH').replace(/\s+/g,' ');
 const CENTS=value=>Math.round((Number(value)+Number.EPSILON)*100)/100;
 
+// Reject non-decimal CSV and form values before numeric coercion: financial
+// evidence must not silently round fractions of a peso or accept exponent/radix
+// shorthand. Null means invalid/unverified, never a confirmed zero.
+export function parsePhpMoney(value){
+  const raw=String(value??'').trim();
+  if(!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,2})?$/.test(raw))return null;
+  const [whole,fraction='']=raw.split('.');
+  const centavos=BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0')||'0');
+  if(centavos<1n||centavos>10000000000n)return null;
+  return Number(centavos)/100;
+}
+export function parseStockQuantity(value){
+  const raw=String(value??'').trim();
+  if(!/^(?:0|[1-9]\d{0,6})(?:\.\d{1,4})?$/.test(raw))return null;
+  const [whole,fraction='']=raw.split('.');
+  const tenThousandths=BigInt(whole)*10000n+BigInt(fraction.padEnd(4,'0')||'0');
+  if(tenThousandths<1n||tenThousandths>10000000000n)return null;
+  return Number(tenThousandths)/10000;
+}
+export function validPhilippinePurchaseDate(value,today){
+  const date=String(value||''),parts=/^([1-9]\d{3})-(\d{2})-(\d{2})$/.exec(date);
+  if(!parts||typeof today!=='string'||date>today)return false;
+  const year=Number(parts[1]),month=Number(parts[2]),day=Number(parts[3]);
+  const actual=new Date(Date.UTC(year,month-1,day));
+  return actual.getUTCFullYear()===year&&actual.getUTCMonth()===month-1&&actual.getUTCDate()===day;
+}
+
 export function parseCsvRecords(text){
   const source=String(text||'').replace(/^\uFEFF/,'');
   if(source.length>250000)throw new Error('CSV exceeds the 250 KB review limit.');
@@ -29,6 +56,7 @@ export function parseStockIntakeCsv(text){
   const records=parseCsvRecords(text);
   if(records.length<2)throw new Error('CSV must have a header and at least one product.');
   const headers=records.shift().map(x=>NORMALIZE(x));
+  if(new Set(headers).size!==headers.length)throw new Error('Duplicate CSV column name; check the original source before importing.');
   for(const required of ['item','proposed_quantity','proposed_unit','screenshot_line_php']){
     if(!headers.includes(required))throw new Error('Missing required CSV column: '+required);
   }
@@ -42,19 +70,20 @@ export function parseStockIntakeCsv(text){
     const key=NORMALIZE(item);
     if(seen.has(key))throw new Error('Duplicate product name in CSV: '+item);
     seen.add(key);
-    const quantity=data.proposed_quantity===''?null:Number(data.proposed_quantity);
-    const total=data.screenshot_line_php===''?NaN:Number(data.screenshot_line_php);
-    const expected=data.recomputed_line_php===''||data.recomputed_line_php===undefined?null:Number(data.recomputed_line_php);
+    const quantity=data.proposed_quantity===''?null:parseStockQuantity(data.proposed_quantity);
+    const total=parsePhpMoney(data.screenshot_line_php);
+    const expectedProvided=data.recomputed_line_php!==''&&data.recomputed_line_php!==undefined;
+    const expected=expectedProvided?parsePhpMoney(data.recomputed_line_php):null;
     const unit=data.proposed_unit||'';
     const flag=data.posting_status||'';
     const paidRaw=data.actual_total_paid_php||'';
-    const paidTotal=paidRaw===''?null:Number(paidRaw);
-    if(paidTotal!==null&&(!Number.isFinite(paidTotal)||paidTotal<=0||
-      Math.abs(paidTotal*100-Math.round(paidTotal*100))>1e-6)){
+    const paidTotal=paidRaw===''?null:parsePhpMoney(paidRaw);
+    if(paidRaw!==''&&paidTotal===null){
       throw new Error('Invalid confirmed paid total on CSV line '+(index+2));
     }
-    const costMismatch=expected!==null&&Number.isFinite(expected)&&Number.isFinite(total)&&Math.abs(expected-total)>0.009;
-    const requiresReview=!Number.isFinite(quantity)||quantity===null||quantity<=0||costMismatch
+    const costMismatch=expected!==null&&total!==null&&Math.abs(expected-total)>0.009;
+    const requiresReview=quantity===null||total===null||!SUPPORTED_UNITS.has(unit)||
+      (expectedProvided&&expected===null)||costMismatch
       ||/(VERIFY|CONFIRM QTY|CHECK PRICE|REVIEW|UNKNOWN)/i.test(flag);
     return{
       key:String(index+1),item,quantity,unit,total,expected,flag,paidTotal,
@@ -197,13 +226,13 @@ if(hasDocument){
         ' '+String(row.exists.unit||'')+'). This tool will NOT add it again. Use ordinary Stock receiving if this is a distinct new purchase.'));
       const columns=element('div','columns');
       columns.appendChild(createField('Physically confirmed quantity',row.quantity,{step:'0.0001'},value=>{
-        row.quantity=value===''?null:Number(value);renderRows();
+        row.quantity=value===''?null:parseStockQuantity(value);renderRows();
       }));
       columns.appendChild(createField('Unit',row.unit,{choices:['kg','g','L','ml','unit']},value=>{
         row.unit=value;renderRows();
       }));
       columns.appendChild(createField('Value of stock to add (₱)',row.total,{step:'0.01'},value=>{
-        row.total=value===''?NaN:Number(value);renderRows();
+        row.total=value===''?null:parsePhpMoney(value);renderRows();
       }));
       item.appendChild(columns);
       if(row.requiresReview){
@@ -237,12 +266,12 @@ if(hasDocument){
       state.rows.filter(x=>x.exists).length+' already in Inventory · '+
       state.rows.filter(x=>['saved','saved-date-pending'].includes(x.result)).length+' saved this session';
     const date=String($('purchaseDate').value||'');
-    const validDate=/^\d{4}-\d{2}-\d{2}$/.test(date)&&
-      Number.isFinite(Date.parse(date+'T12:00:00+08:00'))&&date<=localDatePH();
+    const validDate=validPhilippinePurchaseDate(date,localDatePH());
     const validAccount=['cash','gcash','bank','other'].includes($('purchaseAccount').value);
     const selectedPaid=CENTS(selected.reduce((sum,row)=>sum+Number(row.total||0),0));
     const paidText=String($('actualTotalPaid').value||'');
-    const confirmedPaid=paidText===''?NaN:Number(paidText);
+    const parsedPaid=parsePhpMoney(paidText);
+    const confirmedPaid=parsedPaid===null?NaN:parsedPaid;
     const totalsMatch=Number.isFinite(confirmedPaid)&&confirmedPaid>0&&
       Math.abs(CENTS(confirmedPaid)-selectedPaid)<0.005;
     message('reconciliation',

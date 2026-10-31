@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory
+  parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
+  parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -100,4 +101,50 @@ test('the self-service tool requires explicit physical count and business confir
   assert.match(ui,/type="file"/);
   assert.match(ui,/noindex,nofollow/);
   assert.match(js,/exactlyConfirmedBusiness\(\)/);
+});
+
+test('confirmed PHP amounts reject exponent, radix, sub-cent and coercion without rounding',()=>{
+  for(const value of ['1e3','0x10','0b10','0.001','1.234','1.005','-2','+2','NaN',
+    'Infinity','1,000','₱10','01.20','100000000.01','100000001',''])assert.equal(parsePhpMoney(value),null,String(value));
+  assert.equal(parsePhpMoney('0.01'),0.01);
+  assert.equal(parsePhpMoney('3772.50'),3772.5);
+  assert.equal(parsePhpMoney('100000000.00'),100000000);
+  assert.equal(parsePhpMoney(12.5),12.5);
+});
+
+test('physical quantity must have at most four fractional digits and a valid decimal form',()=>{
+  for(const value of ['1e3','0x10','2.00001','1.0000000000000001','-1','+1','01',
+    '1000000.0001','1000001',''])assert.equal(parseStockQuantity(value),null,String(value));
+  assert.equal(parseStockQuantity('0.0001'),0.0001);
+  assert.equal(parseStockQuantity('1.2500'),1.25);
+  assert.equal(parseStockQuantity('1000000'),1000000);
+});
+
+test('malformed CSV numbers stay unverified; invalid paid totals and duplicate headers fail closed',()=>{
+  const h='item,proposed_quantity,proposed_unit,screenshot_line_php,recomputed_line_php,actual_total_paid_php';
+  const row=parseStockIntakeCsv(h+'\nRice,1e3,kg,0x10,15,3772.50')[0];
+  assert.equal(row.quantity,null);assert.equal(row.total,null);assert.equal(row.requiresReview,true);
+  assert.equal(validStockIntakeRow(row),false);
+  const unknown=parseStockIntakeCsv(h+'\nRice,2,kg,100,1.001,3772.50')[0];
+  assert.equal(unknown.requiresReview,true);
+  for(const paid of ['3772.501','1e3','0x10','NaN','Infinity','100000000.01']){
+    assert.throws(()=>parseStockIntakeCsv(h+'\nRice,2,kg,100,100,'+paid),/Invalid confirmed paid total/);
+  }
+  assert.throws(()=>parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php,ITEM\nRice,2,kg,100,Beans'),/Duplicate CSV column name/);
+});
+
+test('paid date cannot normalize invalid calendar days or future PH dates',()=>{
+  assert.equal(validPhilippinePurchaseDate('2026-10-31','2026-10-31'),true);
+  assert.equal(validPhilippinePurchaseDate('2024-02-29','2026-10-31'),true);
+  for(const date of ['2026-02-29','2026-02-31','2026-04-31','2026-13-01',
+    '2026-11-01','2026-1-1','2026-00-01','not-a-date']){
+    assert.equal(validPhilippinePurchaseDate(date,'2026-10-31'),false,date);
+  }
+});
+
+test('posting controls validate raw human-paid amount and date before any mutation',()=>{
+  assert.match(js,/const parsedPaid=parsePhpMoney\(paidText\)/);
+  assert.match(js,/validPhilippinePurchaseDate\(date,localDatePH\(\)\)/);
+  assert.match(js,/row\.total=value===''\?null:parsePhpMoney\(value\)/);
+  assert.match(js,/row\.quantity=value===''\?null:parseStockQuantity\(value\)/);
 });
