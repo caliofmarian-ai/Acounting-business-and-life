@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'merchant-team-*.js'
+      - 'public/merchant-operator*'
+      - 'tests/merchant-team-terminal-*.test.js'
       - 'public/merchant-team-*'
       - 'tests/merchant-team-*.test.js'
       - 'server-orders.js'
@@ -43,4 +45,6 @@ jobs:
       - run: npm install --global npm@10.8.2
       - run: npm ci
       - name: Verify operator shifts, PIN attempts, access and audit in disposable PostgreSQL
-        run: node --test tests/merchant-team-postgres.test.js
+        run: |
+          node --test tests/merchant-team-postgres.test.js
+          node --test tests/merchant-team-terminal-postgres.test.js

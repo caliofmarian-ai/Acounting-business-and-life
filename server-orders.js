@@ -7,11 +7,16 @@ import { fileURLToPath } from 'node:url';
 import { ensureMonetizationSchema,recordMonetizableCompletion } from './monetization-core.js';
 import { readOrderDetail } from './orders-read-core.js';
 import {merchantCounterCatalog,merchantCounterSnapshots} from './merchant-counter-catalog-core.js';
-import {installMerchantVoiceOrderRoutes,ensureVoiceOrderUsageSchema} from './merchant-voice-order-routes.js';
+import {installMerchantVoiceOrderRoutes,ensureVoiceOrderUsageSchema,chargeVoiceOrderQuota} from './merchant-voice-order-routes.js';
 import {installMerchantVoiceOrderConfirmation} from './merchant-voice-order-confirm.js';
 import {installMerchantVoicePasskeyRoutes,ensureMerchantVoicePasskeySchema} from './merchant-voice-passkey-routes.js';
 import {passkeyConfig} from './merchant-voice-passkey-core.js';
 import {installMerchantTeamRoutes} from './merchant-team-routes.js';
+import {installMerchantTeamTerminalRoutes} from './merchant-team-terminal-routes.js';
+import {ensureMerchantTeamTerminalSchema} from './merchant-team-terminal-core.js';
+import {applyVoiceOrderTurn,voiceDraftForQuote} from './merchant-voice-order-core.js';
+import {interpretVoiceOrderText} from './merchant-voice-order-provider.js';
+import {authoritativeVoiceOrderQuote} from './merchant-voice-order-quote.js';
 import {ensureMerchantTeamSchema} from './merchant-team-operators.js';
 import {ensureVoiceOrderSubmissionSchema} from './merchant-voice-order-idempotency.js';
 import {accountAuthFetch,startEmbeddedAccountAuth,stopEmbeddedAccountAuth} from './server-auth.js';
@@ -48,6 +53,7 @@ function manilaDateStamp() {
 export function isOrdersOwnedPath(path='',method='GET'){
   const pathname=String(path||'').split('?')[0];
   if(pathname==='/orders.css'||pathname==='/orders-ui.js'||pathname==='/orders-receivable-view.js'||pathname==='/merchant-voice-order-ui.js'||pathname==='/merchant-voice-order.css'||pathname==='/merchant-team-ui.js'||pathname==='/merchant-team.css')return true;
+  if(pathname==='/operator'||pathname==='/merchant-operator-ui.js'||pathname==='/merchant-operator.css')return true;
   if(pathname==='/api/orders'||pathname.startsWith('/api/orders/'))return true;
   return false;
 }
@@ -255,9 +261,10 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(business_id,order_status,created_at DESC);
   `);
   await ensureOrderStockReservationSchema(pool);
-  if(process.env.ORDER_VOICE_UI_ENABLED==='1')await ensureVoiceOrderUsageSchema(pool);
+  if(process.env.ORDER_VOICE_UI_ENABLED==='1'||(process.env.MERCHANT_TEAM_TERMINAL_ENABLED==='1'&&process.env.ORDER_VOICE_AI_ENABLED==='1'))await ensureVoiceOrderUsageSchema(pool);
   if(process.env.ORDER_VOICE_CREATE_ENABLED==='1')await ensureVoiceOrderSubmissionSchema(pool);
   if(process.env.MERCHANT_TEAM_ENABLED==='1')await ensureMerchantTeamSchema(pool);
+  if(process.env.MERCHANT_TEAM_ENABLED==='1'&&process.env.MERCHANT_TEAM_TERMINAL_ENABLED==='1')await ensureMerchantTeamTerminalSchema(pool);
   if(process.env.ORDER_VOICE_UI_ENABLED==='1'&&passkeyConfig().ready)await ensureMerchantVoicePasskeySchema(pool);
 }
 
@@ -388,6 +395,25 @@ const merchantTeam=installMerchantTeamRoutes(app,{
   secret:process.env.MERCHANT_TEAM_SECRET||process.env.TOKEN_SECRET||'',
   pinPepper:process.env.MERCHANT_TEAM_PIN_PEPPER||'',
   tokenSecret:process.env.TOKEN_SECRET||''
+});
+installMerchantTeamTerminalRoutes(app,{
+  db:pool,requireMerchant,bodyMiddleware:body,
+  secret:process.env.MERCHANT_TEAM_SECRET||'',
+  pepper:process.env.MERCHANT_TEAM_PIN_PEPPER||'',
+  tokenSecret:process.env.TOKEN_SECRET||'',
+  catalogForBusiness:businessId=>merchantCounterCatalog(pool,{businessId}),
+  listOrdersForBusiness:async businessId=>(await pool.query(
+    'SELECT id,order_number,order_status,payment_status,total FROM orders WHERE business_id=$1 ORDER BY created_at DESC LIMIT 30',
+    [businessId])).rows,
+  interpretTurn:input=>interpretVoiceOrderText({...input,env:process.env}),
+  applyTurn:applyVoiceOrderTurn,
+  quoteForDraft:async({business_id,owner_account_id,voice_session_id,draft})=>{
+    const items=voiceDraftForQuote(draft).items;
+    const snapshots=await merchantCounterSnapshots(pool,{businessId:business_id,items});
+    return authoritativeVoiceOrderQuote({draft,snapshots,accountId:owner_account_id,
+      sessionId:voice_session_id,businessId:business_id,secret:merchantVoiceSigningSecret});
+  },
+  chargeAiQuota:input=>chargeVoiceOrderQuota(pool,input)
 });
 let merchantVoiceConfirmation=null;
 const merchantVoicePasskey=installMerchantVoicePasskeyRoutes(app,{
