@@ -611,3 +611,21 @@ test('C1 nonprinting controls cannot be hidden inside model review hints',()=>{
   }
   assert.equal(draft('merchant_prepared_food',{name:'Chef 👩‍🍳'}).hints.name,'Chef 👩‍🍳');
 });
+
+test('unknown model attribute keys cannot crowd valid V3 hints out of the bounded draft',()=>{
+  const manyUnknown={};
+  for(let i=0;i<50;i++)manyUnknown['unrecognized_'+i]='untrusted';
+  manyUnknown.color='Light Oak';
+  manyUnknown.width_cm='90';
+  manyUnknown.warranty_months='60';
+  const d=draft('merchant_non_food',{
+    catalog_category_code:'furniture_home',variant_attributes:manyUnknown
+  });
+  assert.deepEqual(d.hints.variant_attributes,[
+    {code:'color',value:'Light Oak',authority:'UNVERIFIED_MODEL_SUGGESTION'},
+    {code:'width_cm',value:'90',authority:'UNVERIFIED_MODEL_SUGGESTION'}
+  ]);
+  assert.equal(d.state,'REVIEW_REQUIRED');
+  assert.equal(d.publishable,false);
+  assert.equal(d.canonical_write_payload,false);
+});

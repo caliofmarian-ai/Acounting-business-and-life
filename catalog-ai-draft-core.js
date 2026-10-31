@@ -149,8 +149,9 @@ function attributeHints(category,raw){
   const allowed=new Map(catalogCategoryAttributes(category)
     .map(x=>[x.attribute_code,x.definition]));
   const out=[];
-  for(const key of Object.keys(raw).slice(0,40)){
-    if(!allowed.has(key)||key==='warranty_months')continue;
+  // The input is already capped at 32 KiB. Unknown model keys must not
+  // exhaust the 40-candidate review budget ahead of valid V3 attributes.
+  for(const key of Object.keys(raw).filter(k=>allowed.has(k)&&k!=='warranty_months').slice(0,40)){
     const definition=allowed.get(key),type=definition?.value_type,hint=raw[key];
     let candidate=hint;
     if(typeof hint==='number'){
