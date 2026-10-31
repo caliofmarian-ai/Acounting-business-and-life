@@ -10,8 +10,18 @@ test('Service Job payment intent requires completed and Customer-confirmed work'
   assert.match(payment,/Service Job is not completed yet/);
   assert.match(payment,/!job\.customer_confirmed_at/);
   assert.match(payment,/Confirm Service Job completion before payment/);
-  assert.match(payment,/job\.final_price\?\?job\.quote_amount\?\?0/);
+  assert.match(payment,/resolveAcceptedServiceJobPayable/);
+  assert.match(payment,/service_job_quotes WHERE id=\$1/);
+  assert.match(payment,/payable_authority:pricing\.payable_authority/);
   assert.match(payment,/Service Job has no payable amount/);
+});
+
+test('Payment Core fails closed on a missing or inconsistent accepted quote snapshot',()=>{
+  assert.match(payment,/acceptedQuote\.rows\[0\]\|\|null/);
+  assert.match(payment,/accepted_quote_id:pricing\.accepted_quote_id/);
+  assert.match(payment,/agreed_total:pricing\.agreed_total/);
+  assert.match(payment,/legacy_final_adjustment:pricing\.legacy_final_adjustment/);
+  assert.match(payment,/payable_authority:summary\.commercial\.payable_authority/);
 });
 
 test('only the owning Customer can create a Service Job payment intent',()=>{

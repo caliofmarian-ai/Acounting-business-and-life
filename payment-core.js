@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import {resolveAcceptedServiceJobPayable} from './local-services-pricing-core.js';
 
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const money=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;
@@ -187,7 +188,7 @@ async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={
     job=q.rows[0];
   }
 
-  const [activity,refunds,settlement,latest]=await Promise.all([
+  const [activity,refunds,settlement,latest,acceptedQuote]=await Promise.all([
     db.query(`
       SELECT
         COALESCE(SUM(amount) FILTER(
@@ -231,10 +232,17 @@ async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={
       FROM payment_intents
       WHERE source_type='service_job' AND source_id=$1
       ORDER BY created_at DESC,id DESC LIMIT 1
-    `,[id])
+    `,[id]),
+    job.accepted_quote_id==null
+      ?Promise.resolve({rows:[]})
+      :db.query(`
+        SELECT id,job_id,status,total_amount,currency_code,legacy_record
+        FROM service_job_quotes WHERE id=$1
+      `,[job.accepted_quote_id])
   ]);
 
-  const payable=money(job.final_price??job.quote_amount??0);
+  const pricing=resolveAcceptedServiceJobPayable(job,acceptedQuote.rows[0]||null);
+  const payable=pricing.payable_value;
   const gross=money(activity.rows[0]?.gross_confirmed||0);
   const refunded=money(refunds.rows[0]?.refunded_amount||0);
   const effectivePaid=money(Math.max(0,gross-refunded));
@@ -258,7 +266,11 @@ async function serviceJobPaymentSummaryDb(db,jobId,{jobRow=null,lockJob=false}={
       customer_confirmed_at:job.customer_confirmed_at,
       quote_amount:job.quote_amount==null?null:money(job.quote_amount),
       final_price:job.final_price==null?null:money(job.final_price),
+      accepted_quote_id:pricing.accepted_quote_id,
+      agreed_total:pricing.agreed_total,
+      legacy_final_adjustment:pricing.legacy_final_adjustment,
       payable_value:payable,
+      payable_authority:pricing.payable_authority,
       payable_state:payableState
     },
     payment:{
@@ -304,7 +316,8 @@ export async function createServiceJobPaymentIntent(pool,{
     if(Number(job.customer_account_id)!==Number(payerAccountId))throw Object.assign(new Error('This Service Job belongs to another Customer'),{status:403});
     if(job.status!=='completed')throw Object.assign(new Error('Service Job is not completed yet'),{status:409});
     if(!job.customer_confirmed_at)throw Object.assign(new Error('Confirm Service Job completion before payment'),{status:409});
-    const payable=money(job.final_price??job.quote_amount??0);
+    const summary=await serviceJobPaymentSummaryDb(client,id,{jobRow:job});
+    const payable=summary.commercial.payable_value;
     if(payable<=0)throw Object.assign(new Error('Service Job has no payable amount'),{status:409});
 
     const key=clean(idempotencyKey,220);
@@ -326,7 +339,6 @@ export async function createServiceJobPaymentIntent(pool,{
         AND expires_at IS NOT NULL AND expires_at<=NOW()
     `,[id]);
 
-    const summary=await serviceJobPaymentSummaryDb(client,id,{jobRow:job});
     if(summary.payment.outstanding<=0)throw Object.assign(new Error('Service Job is already paid'),{status:409});
     if(summary.payment.pending_amount>0)throw Object.assign(new Error('A Service Job payment is already pending'),{status:409});
 
@@ -346,7 +358,11 @@ export async function createServiceJobPaymentIntent(pool,{
       VALUES($1,$2,'service_job_payment_intent_created',$3,$4::jsonb,$5)
     `,[
       Number(payerAccountId),ins.rows[0].id,provider,
-      JSON.stringify({service_job_id:id,payable_value:summary.commercial.payable_value,outstanding:summary.payment.outstanding,checkout_supported:true}),
+      JSON.stringify({
+        service_job_id:id,accepted_quote_id:summary.commercial.accepted_quote_id,
+        payable_value:summary.commercial.payable_value,payable_authority:summary.commercial.payable_authority,
+        outstanding:summary.payment.outstanding,checkout_supported:true
+      }),
       'service-job-intent:'+ins.rows[0].public_id
     ]);
     await client.query('COMMIT');

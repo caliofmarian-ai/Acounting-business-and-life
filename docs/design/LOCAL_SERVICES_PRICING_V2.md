@@ -62,6 +62,14 @@ The Customer response targets both the quote identifier and expected version. Da
 - Customer requests are restricted to a category actively offered by the selected Provider.
 - Legacy accepted jobs are migrated to one marked legacy quote snapshot. Any historical final-price difference is retained separately as `legacy_final_adjustment`; it does not weaken V2 rules for new work.
 
+## Payment authority
+
+- For Pricing V2 work, Payment Core resolves the payable value from the exact `accepted_quote_id` and verifies that the immutable quote total matches `agreed_total`.
+- A completed V2 job whose `final_price` differs from that approved snapshot fails closed with `SERVICE_JOB_PRICE_INTEGRITY_MISMATCH`; it cannot open checkout or be confirmed by a payment webhook.
+- A migrated legacy job may preserve an historical difference only when its accepted quote is marked `legacy_record` and the difference is recorded in `legacy_final_adjustment`.
+- PayMongo checkout, receivable summaries, monetization evidence and Service Provider Money use the same approved-price precedence.
+- Customer payment evidence still does not create `service_provider_net`, payout or settlement evidence. Those remain separately governed and unconfigured until an approved settlement policy exists.
+
 ## Local market guidance policy
 
 The research checkpoint reviewed Philippine service-platform patterns and CALABARZON wage context. The product intentionally does not publish or enforce a single “Bacoor market rate.” Public guide prices are Provider-authored because scope, trade, materials, access, travel, inspection and warranty terms materially change the retail price.

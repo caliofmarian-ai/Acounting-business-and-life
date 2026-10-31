@@ -258,6 +258,19 @@ export async function resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,acc
   }
 
   if(i.source_type==='service_job'){
+    // Service Job payment intents expire after 30 minutes. An expired or
+    // unbounded pending intent must never create/reuse a provider checkout:
+    // it no longer counts toward the pending balance and a replacement can
+    // otherwise be issued for the same receivable. Already-succeeded intents
+    // remain inspectable without reopening checkout.
+    if(i.status!=='succeeded'){
+      const expiry=i.expires_at==null?NaN:new Date(i.expires_at).getTime();
+      if(!Number.isFinite(expiry)||expiry<=Date.now()){
+        throw Object.assign(new Error('Service Job payment intent expired. Create a new intent.'),{
+          status:409,code:'SERVICE_JOB_PAYMENT_INTENT_EXPIRED'
+        });
+      }
+    }
     const jq=await pool.query(
       "SELECT j.id,j.customer_account_id,j.provider_account_id,j.service_label,j.status,j.quote_amount,j.final_price,j.currency_code,j.customer_confirmed_at,p.display_name provider_name FROM service_jobs j JOIN accounts p ON p.id=j.provider_account_id WHERE j.id=$1",
       [i.source_id]
@@ -266,6 +279,15 @@ export async function resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,acc
     const j=jq.rows[0];
     if(Number(j.customer_account_id)!==Number(accountId))throw Object.assign(new Error('Payment intent belongs to another Customer'),{status:403});
     if(j.status!=='completed'||!j.customer_confirmed_at)throw Object.assign(new Error('Service Job is not payable until completion is Customer-confirmed'),{status:409});
+    // Pending Service Job checkout is Philippine-peso only. An intent with a
+    // different or missing currency cannot become a provider charge merely
+    // because its numeric amount matches the PHP receivable. Historical paid
+    // intents remain readable without attempting another checkout.
+    if(i.status!=='succeeded'&&(i.currency_code!=='PHP'||j.currency_code!=='PHP')){
+      throw Object.assign(new Error('Service Job checkout currency differs from the PHP payable authority'),{
+        status:409,code:'SERVICE_JOB_CURRENCY_INTEGRITY_MISMATCH'
+      });
+    }
     const summary=await serviceJobPaymentSummary(pool,j.id);
     if(i.status!=='succeeded'&&Number(i.amount)>Number(summary.payment.outstanding)+0.001){
       throw Object.assign(new Error('Service Job outstanding amount changed before checkout'),{status:409,code:'SERVICE_JOB_OUTSTANDING_CHANGED'});
@@ -288,6 +310,8 @@ export async function resolvePayMongoCheckoutDescriptor(pool,{intentPublicId,acc
         service_job_id:Number(j.id),
         provider_account_id:Number(j.provider_account_id),
         provider_name:j.provider_name||'',
+        accepted_quote_id:summary.commercial.accepted_quote_id,
+        payable_authority:summary.commercial.payable_authority,
         outstanding_amount:Number(summary.payment.outstanding)
       }
     };

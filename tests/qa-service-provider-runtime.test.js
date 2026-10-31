@@ -23,6 +23,8 @@ test('Service Provider QA uses self-application and non-credential-gated handyma
   assert.match(service,/code='handyman'/);
   assert.match(service,/credential_gate===true/);
   assert.match(service,/requested_category_ids:\[Number\(categoryId\)\]/);
+  assert.match(service,/role='service_provider' AND territory_id=\$2/);
+  assert.match(service,/latestServiceApplication\(pool,provider\.accountId,territoryId\)/);
   assert.doesNotMatch(service,/prc_license|tesda_nc_coc/);
 });
 
