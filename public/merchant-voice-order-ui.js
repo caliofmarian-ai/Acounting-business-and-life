@@ -56,7 +56,7 @@
   }
   async function api(path,options={}){
     const result=await fetch(path,{credentials:'same-origin',cache:'no-store',...options,
-      headers:{'Content-Type':'application/json',...(options.headers||{})}});
+      headers:{'Content-Type':'application/json',...(path.startsWith('/api/orders/voice/')?window.BusinessLifeMerchantTeam?.headers?.()||{}:{}),...(options.headers||{})}});
     const data=await result.json().catch(()=>({}));
     if(!result.ok){const error=new Error(data.error||`Assistant request failed (${result.status}).`);
       error.code=data.code||'';error.status=result.status;throw error}
@@ -342,6 +342,7 @@
       if(document.getElementById('ordersWorkspace')){observer.disconnect();observe()}
     });observer.observe(shell,{childList:true});
   }
+  document.addEventListener('abl:merchant-team-operator-changed',()=>{reset('Operator changed. Previous draft discarded.');queueMicrotask(schedule)},{passive:true});
   document.addEventListener('abl:business-workspace-changed',()=>reset('Business changed. Draft discarded.'),{passive:true});
   document.addEventListener('abl:profile-state',()=>{if(!merchantVisible())reset()},{passive:true});
   document.addEventListener('abl:auth-expired',()=>reset(),{passive:true});
