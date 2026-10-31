@@ -24,6 +24,8 @@ export function installMerchantTeamRoutes(app,{
   if(!app?.get||!app?.post||!app?.patch||!db?.connect||typeof requireMerchant!=='function')
     throw new TypeError('Team operators require canonical Merchant authorization and PostgreSQL.');
   const enabled=()=>teamShiftFlag(env);
+  // Never treat owner-cookie PIN shifts as production employee authentication.
+  const legacyAllowed=()=>env.NODE_ENV==='test'&&env.MERCHANT_TEAM_LEGACY_SHIFT_TEST_ONLY==='1';
   async function context(req,rawBusinessId){
     if(!validId(rawBusinessId))throw error(400,'TEAM_ACCOUNT_SESSION','Choose an active Merchant business.');
     const bid=Number(rawBusinessId);
@@ -52,6 +54,7 @@ export function installMerchantTeamRoutes(app,{
   const patchBody=(path,fn)=>bodyMiddleware?app.patch(path,bodyMiddleware,respond(fn)):app.patch(path,respond(fn));
   app.get('/api/orders/team/operators',respond(async(_req,ctx)=>({business_id:ctx.businessId,
     terminal_enabled:env.MERCHANT_TEAM_TERMINAL_ENABLED==='1',
+    legacy_shift_allowed:legacyAllowed(),
     operators:await listTeamOperators(db,ctx)})));
   withBody('/api/orders/team/operators',async(req,ctx)=>({operator:await addTeamOperator(db,{
     ...ctx,tokenSecret,pepper:pinPepper,secret,input:{
@@ -62,8 +65,8 @@ export function installMerchantTeamRoutes(app,{
     ...ctx,operatorId:req.params?.operatorId,tokenSecret,now:now()
   }));
   withBody('/api/orders/team/shift/start',async(req,ctx)=>{
-    if(env.MERCHANT_TEAM_TERMINAL_ENABLED==='1')
-      throw error(403,'TEAM_OPERATOR_TERMINAL_REQUIRED','Use the restricted staff terminal, not the owner session.');
+    if(!legacyAllowed())
+      throw error(403,'TEAM_OPERATOR_TERMINAL_REQUIRED','Staff must use the restricted terminal, not the owner account.');
     return{shift:await shiftStart(db,{
     ...ctx,operatorId:req.body?.operator_id,pin:req.body?.pin,
     secret,pepper:pinPepper,now:now()
@@ -79,8 +82,8 @@ export function installMerchantTeamRoutes(app,{
   // Voice routes receive this callback for their own narrow draft-only scope.
   return{enabled,resolveForVoice:async(req,{accountId,businessId,permission='orders.voice_draft'}={})=>{
     if(!enabled())throw error(503,'TEAM_NOT_CONFIGURED','Merchant Team is not enabled.');
-    if(env.MERCHANT_TEAM_TERMINAL_ENABLED==='1')
-      throw error(403,'TEAM_OPERATOR_TERMINAL_REQUIRED','Use the restricted staff terminal for AI voice orders.');
+    if(!legacyAllowed())
+      throw error(403,'TEAM_OPERATOR_TERMINAL_REQUIRED','Staff must use the restricted terminal for AI voice orders.');
     const token=loginToken(req),sessionBinding=teamSessionBinding({token,accountId,businessId,secret});
     return requireShift(db,{businessId,accountId,sessionBinding,secret,token:shiftToken(req),requiredPermission:permission,now:now()});
   }};

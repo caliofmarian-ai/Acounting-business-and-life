@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {installMerchantTeamRoutes} from '../merchant-team-routes.js';
 const ownerAccountId=31,businessId=8;
 const shift={operator_id:'2109c7e0-f94e-491c-9801-41bc079c27b9',shift_id:'d37f909b-5133-4746-992a-f099b3c8428e',name:'Mother',role:'order_operator',permissions:['orders.voice_draft'],token:'x'.repeat(48)};
-function rig({allow=true,enabled=true,resolve=null}={}){
+function rig({allow=true,enabled=true,resolve=null,legacyTest=true}={}){
   const handlers=new Map(),calls=[];
   const app={get:(path,handler)=>handlers.set('GET '+path,handler),post:(path,...handlersList)=>handlers.set('POST '+path,handlersList.at(-1)),patch:(path,...handlersList)=>handlers.set('PATCH '+path,handlersList.at(-1))};
   const team=installMerchantTeamRoutes(app,{
     db:{async connect(){throw Error('No DB writes in this test')},async query(){return{rows:[],rowCount:0}}},
-    env:{MERCHANT_TEAM_ENABLED:enabled?'1':'0'},secret:'private-team-session-secret-123456789',tokenSecret:'account-token-secret-123456789',
+    env:{MERCHANT_TEAM_ENABLED:enabled?'1':'0',NODE_ENV:legacyTest?'test':'production',MERCHANT_TEAM_LEGACY_SHIFT_TEST_ONLY:legacyTest?'1':'0'},secret:'private-team-session-secret-123456789',tokenSecret:'account-token-secret-123456789',
     requireMerchant:async(_req,bid)=>{calls.push(['merchant-auth',bid]);if(!allow)throw Object.assign(new Error('Forbidden'),{status:403});return{me:{account:{id:ownerAccountId}},business:{id:bid}}},
     requireShift:resolve|| (async(_db,params)=>{calls.push(['team-shift',params]);return shift}),
     shiftStart:async()=>shift
@@ -36,4 +36,16 @@ test('account session and operator shift are separate: missing shift has no impl
   const v=rig({resolve:async()=>{throw Object.assign(new Error('Start your shift'),{status:403,code:'TEAM_SHIFT_REQUIRED'})}});
   await assert.rejects(v.team.resolveForVoice({headers:{authorization:'Bearer an-authenticated-session-token-very-long'}},
     {accountId:31,businessId:8}),/Start your shift/);
+});
+
+test('production never allows PIN worker shift inside an owner account browser',async()=>{
+  const rigged=rig({legacyTest:false});
+  const ownerView=await rigged.call('GET','/api/orders/team/operators',{query:{business_id:8}});
+  assert.equal(ownerView.status,200);assert.equal(ownerView.data.legacy_shift_allowed,false);
+  const start=await rigged.call('POST','/api/orders/team/shift/start',{
+    body:{business_id:8,operator_id:shift.operator_id,pin:'123456'}});
+  assert.equal(start.status,403);assert.equal(start.data.code,'TEAM_OPERATOR_TERMINAL_REQUIRED');
+  await assert.rejects(rigged.team.resolveForVoice({headers:{authorization:'Bearer owner-token',
+    'x-merchant-team-shift':'x'.repeat(48)}},{accountId:31,businessId:8}),
+    e=>e.code==='TEAM_OPERATOR_TERMINAL_REQUIRED');
 });

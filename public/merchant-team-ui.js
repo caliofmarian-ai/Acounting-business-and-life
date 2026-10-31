@@ -5,7 +5,7 @@
  */
 (()=>{
   'use strict';
-  const state={businessId:null,shift:null,operators:[],message:'',busy:false,epoch:0,open:false,terminalEnabled:false,pairUrl:'',manageOpen:false};
+  const state={businessId:null,shift:null,operators:[],message:'',busy:false,epoch:0,open:false,terminalEnabled:false,legacyShiftAllowed:false,pairUrl:'',manageOpen:false};
   const h=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const roleName={manager:'Manager',order_operator:'Order operator',stock_helper:'Stock helper',temporary:'Temporary replacement'};
   const today=()=>new Date().toISOString();
@@ -19,7 +19,7 @@
     detail:state.shift?{businessId:state.businessId,operatorId:state.shift.operator_id,shiftId:state.shift.shift_id}:null
   }))}
   function clear(message=''){
-    state.epoch++;state.shift=null;state.businessId=null;state.operators=[];state.terminalEnabled=false;state.pairUrl='';state.manageOpen=false;
+    state.epoch++;state.shift=null;state.businessId=null;state.operators=[];state.terminalEnabled=false;state.legacyShiftAllowed=false;state.pairUrl='';state.manageOpen=false;
     state.busy=false;state.message=message;state.open=false;announce();render();
   }
   const api=async(path,options={})=>{
@@ -34,10 +34,10 @@
     const active=state.shift;
     const options=state.operators.filter(o=>o.active).map(o=>`<option value="${h(o.id)}">${h(o.name)} — ${h(roleName[o.role]||o.role)}</option>`).join('');
     panel.innerHTML=`<details class="merchantTeamDetails" ${state.open||active||state.message?'open':''}>
-      <summary><span aria-hidden="true">👥</span><span><strong>Team · Operators</strong><small>${state.terminalEnabled?'Staff enter through their restricted terminal':active?`${h(active.name)} is on shift`:'Choose who is working this shift'}</small></span><span class="merchantTeamBadge">${state.terminalEnabled?'STAFF LINK':active?'ON SHIFT':'CHOOSE'}</span></summary>
+      <summary><span aria-hidden="true">👥</span><span><strong>Team · Operators</strong><small>${state.terminalEnabled?'Staff enter through their restricted terminal':active?`${h(active.name)} is on shift`:'Choose who is working this shift'}</small></span><span class="merchantTeamBadge">${state.terminalEnabled?'STAFF LINK':state.legacyShiftAllowed?(active?'ON SHIFT':'CHOOSE'):'OWNER ONLY'}</span></summary>
       <div class="merchantTeamBody">
        <p class="merchantTeamHint">One Merchant, one shared Catalog and Orders. Each person uses their own shift PIN. Staff do not need a new Business & Life account.</p>
-       ${state.terminalEnabled?`<p class="merchantTeamHint">For safety, give employees a private staff link and their own PIN. They must use a separate device or sign out of the owner account first. The owner stays in this Merchant workspace.</p>`:active?`<div class="merchantTeamActive"><strong>${h(active.name)}</strong><span>${h(roleName[active.role]||active.role)}</span><small>Shift ends ${h(new Date(active.expires_at).toLocaleString('en-PH'))}</small></div>
+       ${state.terminalEnabled?`<p class="merchantTeamHint">For safety, give employees a private staff link and their own PIN. They must use a separate device or sign out of the owner account first. The owner stays in this Merchant workspace.</p>`:!state.legacyShiftAllowed?`<p class="merchantTeamHint">Staff login is unavailable until the restricted terminal is configured. You may manage the roster here, but cannot log a worker into the owner account.</p>`:active?`<div class="merchantTeamActive"><strong>${h(active.name)}</strong><span>${h(roleName[active.role]||active.role)}</span><small>Shift ends ${h(new Date(active.expires_at).toLocaleString('en-PH'))}</small></div>
          <button id="merchantTeamEnd" type="button">End / change operator</button>`:
          `<form id="merchantTeamStart" class="merchantTeamGrid"><label>Operator<select name="operator" required>${options||'<option value="">No operators yet</option>'}</select></label>
            <label>Personal PIN<input name="pin" type="password" inputmode="numeric" autocomplete="off" minlength="6" maxlength="10" required></label>
@@ -105,7 +105,7 @@
   }
   async function loadRoster(bid){
     const result=await api(`/api/orders/team/operators?business_id=${encodeURIComponent(bid)}`);
-    if(state.businessId===bid){state.operators=Array.isArray(result.operators)?result.operators:[];state.terminalEnabled=result.terminal_enabled===true;}
+    if(state.businessId===bid){state.operators=Array.isArray(result.operators)?result.operators:[];state.terminalEnabled=result.terminal_enabled===true;state.legacyShiftAllowed=result.legacy_shift_allowed===true;}
   }
   let pending=false;
   async function attach(){
