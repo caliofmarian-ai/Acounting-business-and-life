@@ -30,7 +30,8 @@ function responseError(res,error){
   const code=String(error?.code||'');
   const safe=allowedCodes.has(code) || ['ORDER_VOICE_RATE_LIMIT','ORDER_VOICE_BAD_REQUEST',
     'ORDER_VOICE_NOT_CONFIGURED','ORDER_VOICE_CONSENT_REQUIRED',
-    'ORDER_VOICE_SESSION_REQUIRED','ORDER_VOICE_CATALOG_EMPTY','ORDER_VOICE_QUOTA'].includes(code);
+    'ORDER_VOICE_SESSION_REQUIRED','ORDER_VOICE_CATALOG_EMPTY','ORDER_VOICE_QUOTA',
+    'TEAM_SHIFT_REQUIRED','TEAM_PERMISSION_DENIED','TEAM_OPERATOR_INACTIVE','TEAM_ACCOUNT_SESSION'].includes(code);
   const payload={error:safe?String(error.message).slice(0,230):privateMessage,code:safe?code:'ORDER_VOICE_UNAVAILABLE'};
   if(status===429)res.set('Retry-After','60');
   return res.status(status).json(payload);
@@ -93,7 +94,8 @@ export function installMerchantVoiceOrderRoutes(app,{
   db,requireMerchant,catalogForBusiness,snapshotsForBusiness,bodyMiddleware=null,
   env=process.env,fetchImpl=fetch,secret=crypto.randomBytes(32),
   interpret=interpretVoiceOrderText,chargeQuota=chargeVoiceOrderQuota,
-  confirmationReady=()=>false,passkeyReady=()=>false
+  confirmationReady=()=>false,passkeyReady=()=>false,
+  teamEnabled=()=>false,operatorResolver=null
 }={}){
   if(!app||typeof app.get!=='function'||typeof app.post!=='function'||typeof requireMerchant!=='function'||typeof catalogForBusiness!=='function')
     throw new TypeError('Voice Orders requires the canonical Orders router, auth and Merchant Catalog.');
@@ -105,7 +107,21 @@ export function installMerchantVoiceOrderRoutes(app,{
     const {me,business}=await requireMerchant(req,Number(businessId));
     if(!positiveId(me?.account?.id)||Number(business?.id)!==Number(businessId))
       throw fail(403,'ORDER_VOICE_SESSION_REQUIRED','Merchant operator or business is unavailable.');
-    return {accountId:Number(me.account.id),businessId:Number(business.id),sessionId:safeSessionId(req,me.account.id,business.id,secretBytes)};
+    const accountId=Number(me.account.id),businessId=Number(business.id);
+    let sessionId=safeSessionId(req,accountId,businessId,secretBytes),operator=null;
+    if(teamEnabled()){
+      if(typeof operatorResolver!=='function')
+        throw fail(503,'ORDER_VOICE_NOT_CONFIGURED','Operator shifts are not configured.');
+      operator=await operatorResolver(req,{accountId,businessId,permission:'orders.voice_draft'});
+      if(!operator?.operator_id||!operator?.shift_id)
+        throw fail(403,'TEAM_SHIFT_REQUIRED','Choose an authorized operator before using voice orders.');
+      // Shift ID and operator identity are cryptographically bound into the
+      // session. A different helper cannot reuse this unfinished draft/quote.
+      sessionId=crypto.createHmac('sha256',secretBytes)
+        .update('merchant-team-voice:'+sessionId+':'+operator.operator_id+':'+operator.shift_id)
+        .digest('hex').slice(0,48);
+    }
+    return{accountId,businessId,sessionId,operator};
   };
   app.get('/api/orders/voice/capabilities',async(req,res)=>{
     res.set('Cache-Control','private, no-store');
@@ -113,8 +129,9 @@ export function installMerchantVoiceOrderRoutes(app,{
       const ctx=await requireContext(req,req.query?.business_id);
       res.json({business_id:ctx.businessId,enabled:ready(),mode:'push_to_talk_turns',
         languages:['en-PH','fil-PH'],creates_orders:false,
-        can_confirm_order:ready()&&env.ORDER_VOICE_CREATE_ENABLED==='1'&&confirmationReady(),
-        passkey_enrollment_available:ready()&&passkeyReady(),
+        team_enabled:teamEnabled(),operator:ctx.operator?{id:ctx.operator.operator_id,name:ctx.operator.name,shift_id:ctx.operator.shift_id}:null,
+        can_confirm_order:!teamEnabled()&&ready()&&env.ORDER_VOICE_CREATE_ENABLED==='1'&&confirmationReady(),
+        passkey_enrollment_available:!teamEnabled()&&ready()&&passkeyReady(),
         reason:ready()?null:'Voice AI is not available for this Merchant yet. Use the regular counter order.'});
     }catch(error){responseError(res,error)}
   });
@@ -135,7 +152,9 @@ export function installMerchantVoiceOrderRoutes(app,{
       const snapshots=await snapshotsForBusiness({businessId:ctx.businessId,items});
       const quote=authoritativeVoiceOrderQuote({draft:validated,snapshots,accountId:ctx.accountId,
         businessId:ctx.businessId,sessionId:ctx.sessionId,secret:secretBytes});
-      res.json(quote);
+      if(ctx.operator)await db.query(`INSERT INTO merchant_team_events(business_id,operator_id,shift_id,actor_account_id,event_code)
+        VALUES($1,$2,$3,$4,'voice.quote')`,[ctx.businessId,ctx.operator.operator_id,ctx.operator.shift_id,ctx.accountId]);
+      res.json({...quote,operator_id:ctx.operator?.operator_id||null});
     }catch(error){responseError(res,error)}
   };
   if(bodyMiddleware)app.post('/api/orders/voice/quote',bodyMiddleware,quoteHandler);
@@ -159,7 +178,10 @@ export function installMerchantVoiceOrderRoutes(app,{
         consent:true,env,fetchImpl});
       const output=applyVoiceOrderTurn({businessId:ctx.businessId,sessionId:ctx.sessionId,catalog,
         previousDraft:checked.draft,turn});
-      res.json({...output,mode:'push_to_talk_turns',creates_orders:false});
+      if(ctx.operator)await db.query(`INSERT INTO merchant_team_events(business_id,operator_id,shift_id,actor_account_id,event_code)
+        VALUES($1,$2,$3,$4,'voice.turn')`,[ctx.businessId,ctx.operator.operator_id,ctx.operator.shift_id,ctx.accountId]);
+      res.json({...output,mode:'push_to_talk_turns',creates_orders:false,
+        operator_id:ctx.operator?.operator_id||null});
     }catch(error){responseError(res,error)}
   };
   if(bodyMiddleware)app.post('/api/orders/voice/turn',bodyMiddleware,handler);
