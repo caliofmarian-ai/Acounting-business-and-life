@@ -488,15 +488,49 @@ export function nextMicrobusinessReadinessAction(state={}){
 // a read-path operation. Concurrent Merchant/Services requests used to run
 // DDL simultaneously and could deadlock on PostgreSQL catalog locks.
 // Cache only the schema task: never cache per-account/business readiness data.
+// The base DDL stays single-flight per Pool. The optional businesses FK may
+// need a later guarded attachment when Auth/Marketplace bootstraps in stages.
 const readinessSchemaByPool=new WeakMap();
+const readinessForeignKeyGuardSql=`
+    DO $readiness_fk$
+    BEGIN
+      IF to_regclass('public.businesses') IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname='microbusiness_readiness_business_fk'
+            AND conrelid='microbusiness_readiness'::regclass
+        )
+      THEN
+        ALTER TABLE microbusiness_readiness
+          ADD CONSTRAINT microbusiness_readiness_business_fk
+          FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE;
+      END IF;
+    END
+    $readiness_fk$;
+`;
 export function ensureMicrobusinessReadinessSchema(pool){
-  const existing=readinessSchemaByPool.get(pool);
-  if(existing)return existing;
+  const state=readinessSchemaByPool.get(pool);
+  if(state){
+    if(!state.schemaReady||state.fkReady)return state.promise;
+    // The first bootstrap may legitimately precede creation of businesses.
+    // Check only for that deferred FK: never rerun the full table/index DDL
+    // on ordinary reads, and serialize concurrent checks on this same Pool.
+    if(state.fkProbe)return state.fkProbe;
+    const probe=(async()=>{
+      const business=await pool.query("SELECT to_regclass('public.businesses') AS table_name");
+      if(!business.rows[0]?.table_name)return;
+      await pool.query(`SELECT pg_advisory_xact_lock(87320261031::bigint);
+        ${readinessForeignKeyGuardSql}`);
+      state.fkReady=true;
+    })();
+    state.fkProbe=probe;
+    probe.finally(()=>{if(state.fkProbe===probe)state.fkProbe=null}).catch(()=>{});
+    return probe;
+  }
+  const current={schemaReady:false,fkReady:false,promise:null,fkProbe:null};
   const pending=(async()=>{
-  // One implicit PostgreSQL transaction: advisory lock, all DDL and the FK
-  // guard are one simple-query message. This serializes *different* Node Pools
-  // and replicas as well as this process's WeakMap single-flight. A failure
-  // rolls the entire schema batch back without leaving an open transaction.
+    // A single PostgreSQL implicit transaction/advisory lock makes DDL and
+    // the optional FK guard atomic across independent processes and Pools.
   await pool.query(`
     SELECT pg_advisory_xact_lock(87320261031::bigint);
     CREATE TABLE IF NOT EXISTS microbusiness_readiness (
@@ -550,28 +584,19 @@ export function ensureMicrobusinessReadinessSchema(pool){
     CREATE INDEX IF NOT EXISTS microbusiness_readiness_events_subject_idx
       ON microbusiness_readiness_events(account_id,created_at DESC);
 
-    DO $readiness_fk$
-    BEGIN
-      IF to_regclass('public.businesses') IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM pg_constraint
-          WHERE conname='microbusiness_readiness_business_fk'
-            AND conrelid='microbusiness_readiness'::regclass
-        )
-      THEN
-        ALTER TABLE microbusiness_readiness
-          ADD CONSTRAINT microbusiness_readiness_business_fk
-          FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE;
-      END IF;
-    END
-    $readiness_fk$;
+    ${readinessForeignKeyGuardSql}
   `);
+
+    // A successful first pass without businesses must not permanently skip
+    // the foreign key when that table is created later in the same process.
+    const business=await pool.query("SELECT to_regclass('public.businesses') AS table_name");
+    current.fkReady=Boolean(business.rows[0]?.table_name);
+    current.schemaReady=true;
   })();
-  readinessSchemaByPool.set(pool,pending);
-  // An unsuccessful migration must never poison future requests. The failed
-  // promise remains rejected for its callers; a later request can retry.
+  current.promise=pending;
+  readinessSchemaByPool.set(pool,current);
   pending.catch(()=>{
-    if(readinessSchemaByPool.get(pool)===pending)readinessSchemaByPool.delete(pool);
+    if(readinessSchemaByPool.get(pool)===current)readinessSchemaByPool.delete(pool);
   });
   return pending;
 }
