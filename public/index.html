@@ -236,6 +236,16 @@
 
       <section id="viewStock" class="view hidden">
         <div class="sectionHead"><div><h1>Stock</h1><p class="muted"><span id="lowStock">0</span> low-stock items · Food, Retail and Operations in one workspace</p></div></div>
+        <div class="card stack">
+          <div class="sectionHead"><div><h2>Inventory</h2><p class="muted">On hand, reserved, unavailable, available and incoming stock.</p></div><small class="muted">One business-scoped source of truth</small></div>
+          <div id="inventoryDomainFilters" class="inventoryDomainFilters" role="group" aria-label="Filter Inventory">
+            <button type="button" data-inventory-domain="all" class="active">All</button>
+            <button type="button" data-inventory-domain="food">Food</button>
+            <button type="button" data-inventory-domain="non_food">Retail</button>
+            <button type="button" data-inventory-domain="operations">Operations</button>
+          </div>
+          <div id="stockList" class="list"></div>
+        </div>
         <form id="stockForm" class="card stack">
           <input id="stockInventoryId" type="hidden" />
           <div><h2>Add stock from a purchase</h2><p class="muted">Example: 1 kg carrots for ₱80 becomes 1000 g at ₱0.08/g automatically.</p></div>
@@ -347,16 +357,6 @@
           <div id="stockPurchasePreview" class="salePreview"></div>
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
-        <div class="card stack">
-          <div class="sectionHead"><div><h2>Inventory</h2><p class="muted">On hand, reserved, unavailable, available and incoming stock.</p></div><small class="muted">One business-scoped source of truth</small></div>
-          <div id="inventoryDomainFilters" class="inventoryDomainFilters" role="group" aria-label="Filter Inventory">
-            <button type="button" data-inventory-domain="all" class="active">All</button>
-            <button type="button" data-inventory-domain="food">Food</button>
-            <button type="button" data-inventory-domain="non_food">Retail</button>
-            <button type="button" data-inventory-domain="operations">Operations</button>
-          </div>
-          <div id="stockList" class="list"></div>
-        </div>
         <div class="card stack" id="inventoryUnavailableCard">
           <div><h2>Unavailable stock</h2><p class="muted">Temporarily block physical stock from sale/use without deleting it or creating a cash transaction.</p></div>
           <form id="inventoryUnavailableForm" class="stack">
