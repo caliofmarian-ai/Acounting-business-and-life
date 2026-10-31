@@ -3,6 +3,17 @@ const pmtok=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const pmh=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const pmnice=v=>String(v||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 const pmmoney=v=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(Number(v)||0);
+// Send a precise decimal string; never reinterpret exponent/sub-cent input.
+function pmExactPesoAmount(id){
+  const raw=String(document.getElementById(id)?.value??'').trim();
+  if(!/^\d{1,12}(?:\.\d{1,2})?$/.test(raw))
+    throw new Error('Enter a positive PHP amount with up to two decimal places; exponents and commas are not accepted.');
+  const [whole,fraction='']=raw.split('.');
+  const cents=BigInt(whole)*100n+BigInt((fraction+'00').slice(0,2));
+  if(cents<1n||cents>99999999999999n)
+    throw new Error('PHP amount must be between ₱0.01 and ₱999,999,999,999.99.');
+  return raw;
+}
 async function pmapi(path,options={}){const headers={...(options.headers||{})};if(options.body&&!headers['Content-Type'])headers['Content-Type']='application/json';const r=await fetch(path,{...options,headers});const b=await r.json().catch(()=>({}));if(!r.ok)throw new Error(b.error||'Request failed ('+r.status+')');return b}
 function pmtoast(msg){let t=document.getElementById('roleToast')||document.getElementById('profileMoneyFallbackToast');if(!t){t=document.createElement('div');t.id='profileMoneyFallbackToast';t.className='roleToast';t.setAttribute('role','status');t.setAttribute('aria-live','polite');document.body.appendChild(t)}t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600);return false}
 function ensurePmReversalDialog(){
@@ -99,9 +110,10 @@ async function reloadProfileMoney(){pmData=await pmapi('/api/profile-money/'+enc
 async function saveProfileMoneyEntry(e){
   e.preventDefault();const out=document.getElementById('profileMoneyEntryStatus');out.textContent='Saving…';
   const source=document.getElementById('profileMoneySource'),sourceId=source?.value||null;
-  const payload={entry_type:document.getElementById('profileMoneyEntryType').value,direction:document.getElementById('profileMoneyDirection').value,category:document.getElementById('profileMoneyCategory').value,amount:Number(document.getElementById('profileMoneyAmount').value),currency_code:'PHP',financial_account_id:document.getElementById('profileMoneyAccount').value||null,source_type:sourceId?(pmRole==='courier'?'delivery':'service_job'):'manual',source_id:sourceId,note:document.getElementById('profileMoneyNote').value,evidence_reference:document.getElementById('profileMoneyEvidence').value};
   const key='profile-money-'+Date.now()+'-'+Math.random().toString(16).slice(2);
-  try{await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});await reloadProfileMoney()}catch(err){out.textContent=err.message}
+  try{
+    const payload={entry_type:document.getElementById('profileMoneyEntryType').value,direction:document.getElementById('profileMoneyDirection').value,category:document.getElementById('profileMoneyCategory').value,amount:pmExactPesoAmount('profileMoneyAmount'),currency_code:'PHP',financial_account_id:document.getElementById('profileMoneyAccount').value||null,source_type:sourceId?(pmRole==='courier'?'delivery':'service_job'):'manual',source_id:sourceId,note:document.getElementById('profileMoneyNote').value,evidence_reference:document.getElementById('profileMoneyEvidence').value};
+    await pmapi('/api/profile-money/'+encodeURIComponent(pmRole)+'/entries',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify(payload)});await reloadProfileMoney()}catch(err){out.textContent=err.message}
 }
 function reverseProfileMoneyEntry(id){openPmReversalDialog(id)}
 function bindProfileLedger(){
