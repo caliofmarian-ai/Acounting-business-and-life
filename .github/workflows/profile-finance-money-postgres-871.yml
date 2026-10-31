@@ -1,0 +1,61 @@
+name: Profile Finance Real PostgreSQL Precision #871
+
+on:
+  pull_request:
+    paths:
+      - 'profile-finance-core.js'
+      - 'scripts/profile-finance-money-postgres-871.mjs'
+      - '.github/workflows/profile-finance-money-postgres-871.yml'
+  push:
+    branches: [fix/profile-finance-money-precision-871]
+    paths:
+      - 'profile-finance-core.js'
+      - 'scripts/profile-finance-money-postgres-871.mjs'
+      - '.github/workflows/profile-finance-money-postgres-871.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  exact-source-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_finance_precision_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_finance_precision_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_finance_precision_ci
+      NODE_ENV: test
+      ABL_FINANCE_PRECISION_CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Confirm literal source head, not synthetic PR merge
+        env:
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL="$(git rev-parse HEAD)"
+          echo "TESTED_SHA=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
+      - name: Real disposable PostgreSQL precision/rollback integration
+        run: node scripts/profile-finance-money-postgres-871.mjs
