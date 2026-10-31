@@ -88,7 +88,9 @@ test('Merchant Inventory keeps manual search when camera scanning is unavailable
 test('Scanner handoff integrates receiving and guided count without replacing manual controls',()=>{
   assert.match(merchant,/createInventoryScanUi/);
   assert.match(merchant,/onReceiveItem:useInventoryForReceiving/);
-  assert.match(merchant,/onCountItem:item=>inventoryCountUi\.selectItem/);
+  assert.match(merchant,/onCountItem:async item=>/);
+  assert.match(merchant,/await openStockTool\('count'\)/);
+  assert.match(merchant,/inventoryCountUi\.selectItem\(item\?\.id\)/);
   assert.match(merchant,/inventory_id:\$\('stockInventoryId'\)/);
   assert.match(countUi,/function selectItem\(inventoryId\)/);
   assert.match(countUi,/countSessionItemPicker/);

@@ -52,7 +52,7 @@ test('Today loads independent evidence in parallel and scopes every source to ac
 test('Merchant opens on Today with five primary actions',()=>{
   assert.match(html,/id="viewDashboard" class="view merchantTodayView"/);
   assert.match(html,/merchantPrimaryNav/);
-  for(const label of ['Today','Orders','Catalog','Inventory','Money'])assert.match(html,new RegExp('>'+label+'<'));
+  for(const label of ['Today','Orders','Catalog','Stock','Money'])assert.match(html,new RegExp('>'+label+'<'));
   assert.doesNotMatch(html,/class="bottomNav navSix"/);
 });
 

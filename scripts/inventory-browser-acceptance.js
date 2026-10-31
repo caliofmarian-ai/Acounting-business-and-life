@@ -18,11 +18,17 @@ const rendererStart=source.indexOf('let inventoryConfirmedContext=null;');
 const rendererEnd=source.indexOf('\nfunction inventoryReadApi(',rendererStart);
 assert.ok(rendererStart>=0&&rendererEnd>rendererStart,'Actual read-state renderer is required');
 const renderer=source.slice(rendererStart,rendererEnd);
+const toolsStart=source.indexOf('function resetStockTools(){');
+const toolsEnd=source.indexOf('\nfunction lotExpiryCopy(',toolsStart);
+assert.ok(toolsStart>0&&toolsEnd>toolsStart,'Actual Stock tool functions are required');
+const stockTools=source.slice(toolsStart,toolsEnd);
 const script=[
-  "const $=id=>document.getElementById(id);",
-  "const merchantReadContext=()=>({accountId:1,businessId:1});",
-  "function loadStock(){inventoryReadState('ready')}",
+  "const $=id=>document.getElementById(id);let inventoryLoadGeneration=0;window.stockLoadCalls=[];",
+  "const merchantReadContext=()=>({accountId:1,businessId:1});function isMerchantBaseActive(){return true}",
+  "function loadStock({tool=null}={}){window.stockLoadCalls.push(tool);inventoryReadState('ready');const panel=$('stockTool-'+tool);if(panel){panel.dataset.stockLoading='false';panel.dataset.stockLoaded='true'}return Promise.resolve([])}",
   renderer,
+  stockTools,
+  "initStockTools();",
   "document.querySelectorAll('form').forEach(form=>form.addEventListener('submit',event=>event.preventDefault()));",
   "$('stockList').textContent='Example ingredient — last confirmed quantity: 4 kg';",
   "document.querySelectorAll('[data-test-state]').forEach(button=>button.addEventListener('click',()=>inventoryReadState(button.dataset.testState,{savedAt:Date.UTC(2026,9,27,16),error:new Error('Controlled read failure.')})));",
@@ -75,6 +81,17 @@ try{
       if(evidence)await page.screenshot({path:join(evidence,viewport.width+'-'+label+'.png')});
     };
     await status.getByText('Inventory confirmed just now.',{exact:true}).waitFor();
+    // #875: the actual Stock markup defaults to a menu, never an expanded list.
+    assert.equal(await page.locator('#stockToolDeck .stockTool').count(),14);
+    assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
+    assert.equal(await page.locator('#stockList').isVisible(),false);
+    await page.locator('#stockTool-inventory > summary').click();
+    assert.equal(await page.locator('#stockList').isVisible(),true);
+    assert.deepEqual(await page.evaluate(()=>window.stockLoadCalls),['inventory'],'click Inventory only');
+    await page.locator('#stockTool-lots > summary').click();
+    assert.deepEqual(await page.evaluate(()=>window.stockLoadCalls),['inventory','lots'],'click Lots only');
+    assert.equal(await page.locator('#stockTool-inventory').getAttribute('open'),null,'only one open tool');
+    await page.locator('#stockTool-inventory > summary').click();
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false,'Capability-disabled picker stays disabled');
     const styles=await fieldset.evaluate(el=>{
@@ -97,7 +114,9 @@ try{
     assert.equal(await page.locator('#stockList').isVisible(),true,'Cached Inventory stays readable');
     assert.equal(await page.locator('#stockForm').isVisible(),false);
     await fit('offline');
-    await status.getByRole('button',{name:'Retry',exact:true}).click();
+    // Menu mode has no unrelated Load/Retry button; each instrument is the action.
+    assert.equal(await status.getByRole('button').count(),0);
+    await page.getByRole('button',{name:'Test ready',exact:true}).click();
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false,'Retry cannot clear an independent disabled state');
     checks.push(viewport.width+'px retry preserves individual widget restrictions');
@@ -108,7 +127,7 @@ try{
     assert.equal(await input.isEnabled(),false);
     assert.equal(await page.locator('#stockList').isVisible(),false,'Failed reads expose no retained stock');
     await fit('error');
-    await status.getByRole('button',{name:'Retry',exact:true}).click();
+    await status.getByRole('button',{name:'Retry this tool',exact:true}).click();
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false);
 
@@ -116,7 +135,8 @@ try{
     assert.equal(await input.isEnabled(),false);
     assert.equal(await page.locator('#stockList').isVisible(),false);
     await fit('idle');
-    await status.getByRole('button',{name:'Load Inventory',exact:true}).click();
+    assert.equal(await status.getByRole('button').count(),0);
+    await page.getByRole('button',{name:'Test ready',exact:true}).click();
     assert.equal(await input.isEnabled(),true);
     assert.equal(await picker.isEnabled(),false);
     await context.close();

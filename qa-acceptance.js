@@ -14,6 +14,7 @@ import {legacyPrivateEvidenceCounts,migratePrivateEvidenceV1} from './private-ev
 import {runMerchantGovernanceV1Acceptance} from './qa-merchant-governance-v1.js';
 import {runMerchantCounterOrdersV1Acceptance} from './qa-merchant-counter-orders-v1.js';
 import {KNOWLEDGE_CENTER_WAVE,runKnowledgeCenterAcceptance} from './qa-knowledge-acceptance.js';
+import {INVENTORY_LOCATION_READ_862_WAVE,runInventoryLocationRead862Acceptance} from './qa-inventory-location-read-862.js';
 
 const scryptAsync=promisify(crypto.scrypt);
 const CUSTOMER_ALIAS='dropi.deliveries+testcustomer@gmail.com';
@@ -76,6 +77,7 @@ const ACCEPTANCE_WAVES=new Set([CUSTOMER_WAVE,MERCHANT_CATALOG_WAVE,MERCHANT_EXP
 ACCEPTANCE_WAVES.add(MERCHANT_GOVERNANCE_V1_WAVE);
 ACCEPTANCE_WAVES.add(MERCHANT_COUNTER_ORDERS_V1_WAVE);
 ACCEPTANCE_WAVES.add(KNOWLEDGE_CENTER_WAVE);
+ACCEPTANCE_WAVES.add(INVENTORY_LOCATION_READ_862_WAVE);
 
 const clean=(value,max=300)=>String(value??'').trim().slice(0,max);
 const QA_REVISION=clean(process.env.RAILWAY_GIT_COMMIT_SHA||process.env.GITHUB_SHA||'local',40).slice(0,12)||'local';
@@ -6392,7 +6394,13 @@ export async function runQaAcceptanceIfRequested({pool,port,env=process.env}){
   const base='http://127.0.0.1:'+Number(port);
   let finalResult;
   try{
-    const result=config.wave===KNOWLEDGE_CENTER_WAVE
+    const result=config.wave===INVENTORY_LOCATION_READ_862_WAVE
+      ?await runInventoryLocationRead862Acceptance({
+        pool,base,secret:config.secret,env,
+        aliases:{merchant:MERCHANT_ALIAS,customer:CUSTOMER_ALIAS},
+        helpers:{requestJson,expectStatus,qaAccountSession}
+      })
+      :config.wave===KNOWLEDGE_CENTER_WAVE
       ?await runKnowledgeCenterAcceptance({
         pool,base,secret:config.secret,env,
         aliases:{customer:CUSTOMER_ALIAS,merchant:MERCHANT_ALIAS,supplier:SUPPLIER_ALIAS,
