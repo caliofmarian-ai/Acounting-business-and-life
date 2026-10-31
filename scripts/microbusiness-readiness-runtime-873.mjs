@@ -73,7 +73,7 @@ try{
         FROM pg_stat_activity
         WHERE datname=$1 AND wait_event_type='Lock'
           AND wait_event='advisory'
-          AND query LIKE 'SELECT pg_advisory_xact_lock%'`,[ciDbName]);
+          AND query LIKE '%pg_advisory_xact_lock(87320261031::bigint)%'`,[ciDbName]);
       waiting=Number(probe.rows[0].waiting);
       if(waiting===2)break;
       await new Promise(resolve=>setTimeout(resolve,30));
