@@ -583,3 +583,76 @@ test('Unknown emitter COMMIT result retains pending status for idempotent retry'
   assert.equal(state.events.size,1);
   assert.equal(state.emissions,2);
 });
+
+
+let emailRetryFixtureCounter=0;
+function emailRetryUiHarness(storage,{account=81,business=44,failOnce=false,role='merchant'}={}){
+  const src=read('public/order-sales-documents-ui.js');
+  const first=src.indexOf('  const pendingEmailKeys=new Map();');
+  const last=src.indexOf('  async function open(view){',first);
+  assert.ok(first>=0&&last>first,'execute real document-email client retry/send functions');
+  const chunk=src.slice(first,last);
+  const messages=[],posts=[],panel={};
+  const sessionStorage={
+    getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),
+    removeItem:k=>storage.delete(k)
+  };
+  const crypto={getRandomValues(bytes){
+    const seq=++emailRetryFixtureCounter;
+    bytes.fill(0);bytes[12]=(seq>>>24)&255;bytes[13]=(seq>>>16)&255;
+    bytes[14]=(seq>>>8)&255;bytes[15]=seq&255;
+    return bytes;
+  }};
+  const api=async(path,init={})=>{
+    if(path==='/api/accounting/workspaces')return{role,active_business_id:business};
+    if(path==='/api/me')return{account:{id:account}};
+    assert.ok(path.endsWith('/orders/123/send'),'unexpected email endpoint');
+    assert.equal(init.method,'POST');
+    posts.push(JSON.parse(init.body));
+    if(failOnce){failOnce=false;throw new Error('Email queue result uncertain; retry the same request key')}
+    return{already_queued:false,delivery_status:'queued'};
+  };
+  const make=new Function('api','modal','activeBusiness','sessionStorage','crypto','setMessage','merchant',
+    "const globalThis={crypto};const API='/api/notifications/order-sales-documents';"+chunk+';return send;');
+  const send=make(api,panel,business,sessionStorage,crypto,(v,bad)=>messages.push({v,bad}),async()=>{});
+  return{send:()=>send(123,{disabled:false}),posts,messages};
+}
+test('ambiguous email send reuses same key after UI reload, then clears only on acknowledged result',async()=>{
+  const storage=new Map();
+  const first=emailRetryUiHarness(storage,{failOnce:true});
+  await first.send();
+  assert.equal(first.posts.length,1);
+  assert.equal(storage.size,1);
+  const restored=emailRetryUiHarness(storage);
+  await restored.send();
+  assert.equal(restored.posts[0].client_request_key,first.posts[0].client_request_key);
+  assert.equal(storage.size,0);
+  assert.match(restored.messages.at(-1).v,/Email queued/);
+});
+test('a completed email queue request permits a distinct key for a later deliberate resend',async()=>{
+  const storage=new Map(),h=emailRetryUiHarness(storage);
+  await h.send();await h.send();
+  assert.equal(h.posts.length,2);
+  assert.notEqual(h.posts[0].client_request_key,h.posts[1].client_request_key);
+  assert.equal(storage.size,0);
+});
+test('pending email retry identities are isolated across accounts/businesses',async()=>{
+  const storage=new Map();
+  const a=emailRetryUiHarness(storage,{account:81,business:44,failOnce:true});
+  const b=emailRetryUiHarness(storage,{account:82,business:44,failOnce:true});
+  const c=emailRetryUiHarness(storage,{account:81,business:45,failOnce:true});
+  await a.send();await b.send();await c.send();
+  assert.equal(storage.size,3);
+  assert.equal(new Set([a,b,c].map(h=>h.posts[0].client_request_key)).size,3);
+  const recovered=emailRetryUiHarness(storage,{account:81,business:44});
+  await recovered.send();
+  assert.equal(recovered.posts[0].client_request_key,a.posts[0].client_request_key);
+  assert.equal(storage.size,2);
+});
+test('non-Merchant workspace cannot queue a document or create a retry key',async()=>{
+  const storage=new Map(),h=emailRetryUiHarness(storage,{role:'customer'});
+  await h.send();
+  assert.equal(h.posts.length,0);
+  assert.equal(storage.size,0);
+  assert.match(h.messages.at(-1).v,/Merchant business changed/);
+});

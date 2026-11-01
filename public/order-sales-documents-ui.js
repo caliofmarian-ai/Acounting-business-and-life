@@ -6,7 +6,7 @@
   const date=value=>{try{return new Date(value).toLocaleDateString('en-PH')}catch{return String(value||'')}};
   const peso=value=>'₱'+new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value)||0);
   async function api(path,init={}){
-    const response=await fetch(path,{credentials:'same-origin',...init});
+    const response=await fetch(path,{credentials:'same-origin',cache:'no-store',...init});
     const data=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(data.error||'Cannot load purchase documents ('+response.status+')');
     return data;
@@ -88,18 +88,46 @@
       (docs.documents?.length?docs.documents.map(documentItem).join(''):'<p>No order documents saved yet.</p>')+'</section>';
     box.querySelectorAll('[data-osd-send]').forEach(button=>button.onclick=()=>send(Number(button.dataset.osdSend),button));
   }
-  const newKey=()=>('sales-doc-'+Date.now()+'-'+Math.random().toString(36).slice(2,15));
+  // A lost queue acknowledgment is retryable only with the ORIGINAL key.
+  const pendingEmailKeys=new Map();
+  const emailKeySlot=(actor,business,order)=>'abl:order-sales-email:v1:'+actor+':'+business+':'+order;
+  function emailRequestKey(actor,business,order){
+    const slot=emailKeySlot(actor,business,order);
+    let key=pendingEmailKeys.get(slot);
+    if(!key){try{key=sessionStorage.getItem(slot)}catch{}}
+    if(!/^[a-zA-Z0-9_-]{12,100}$/.test(key||'')){
+      if(!globalThis.crypto?.getRandomValues)throw new Error('Secure email request ID unavailable');
+      const bytes=new Uint8Array(16);
+      globalThis.crypto.getRandomValues(bytes);
+      key='sales-doc-'+Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+    }
+    pendingEmailKeys.set(slot,key);
+    try{sessionStorage.setItem(slot,key)}catch{}
+    return key;
+  }
+  function confirmEmailRequest(actor,business,order){
+    const slot=emailKeySlot(actor,business,order);
+    pendingEmailKeys.delete(slot);
+    try{sessionStorage.removeItem(slot)}catch{}
+  }
   async function send(orderId,button){
     if(!modal||!activeBusiness)return;
     const panel=modal,biz=activeBusiness;button.disabled=true;
     try{
-      const context=await api('/api/accounting/workspaces');
-      if(modal!==panel||context.role!=='merchant'||Number(context.active_business_id)!==biz)throw new Error('Merchant business changed. Reopen documents.');
+      const [context,me]=await Promise.all([api('/api/accounting/workspaces'),api('/api/me')]);
+      const actor=Number(me?.account?.id);
+      if(modal!==panel||activeBusiness!==biz||context.role!=='merchant'||
+         Number(context.active_business_id)!==biz)throw new Error('Merchant business changed. Reopen documents.');
+      if(!Number.isSafeInteger(actor)||actor<1)throw new Error('Sign in again before emailing documents.');
+      // On HTTP 503 or a lost response, retain this same account/business/order key.
+      const requestKey=emailRequestKey(actor,biz,orderId);
       const result=await api(API+'/orders/'+orderId+'/send',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({business_id:biz,client_request_key:newKey()})
+        body:JSON.stringify({business_id:biz,client_request_key:requestKey})
       });
-      if(modal!==panel)return;
+      // Only confirmed server acceptance allows a later deliberate resend key.
+      confirmEmailRequest(actor,biz,orderId);
+      if(modal!==panel||activeBusiness!==biz)return;
       setMessage(result.already_queued?'Already queued.':'Email queued for the verified Customer. Delivery will be tracked.');
       await merchant();
     }catch(e){if(modal===panel)setMessage(e.message,true)}
