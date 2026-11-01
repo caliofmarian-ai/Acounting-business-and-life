@@ -46,7 +46,7 @@ try{
   // Pools, not just the single-Pool WeakMap gate. All databases are disposable.
   const ciDbName='abl_readiness_lock_ci';
   const maintenance=new pg.Pool({database:'postgres',max:2});
-  let bootstrap=null,recoveryPool=null,stagedPool=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
+  let bootstrap=null,recoveryPool=null,stagedPool=null,interleavedPool=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
   let lockHeld=false,created=false,settledTasks=null;
   try{
     await maintenance.query('CREATE DATABASE '+ciDbName);
@@ -112,6 +112,37 @@ try{
     await stagedPool.end();
     stagedPool=null;
 
+    // Actual PostgreSQL interleaving: businesses is absent throughout the
+    // initial DDL batch, but is created before the follow-up FK proof query.
+    // A table-presence probe would incorrectly cache "FK ready" here.
+    interleavedPool=new pg.Pool({database:ciDbName,max:2});
+    await interleavedPool.query('DROP TABLE businesses');
+    let injectedCreates=0;
+    const interleaved={
+      async query(sql,...params){
+        const result=await interleavedPool.query(sql,...params);
+        if(String(sql).includes('CREATE TABLE IF NOT EXISTS microbusiness_readiness (')){
+          await interleavedPool.query('CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+          injectedCreates++;
+        }
+        return result;
+      }
+    };
+    await ensureMicrobusinessReadinessSchema(interleaved);
+    same(injectedCreates,1,'businesses was created strictly between real DDL and FK inspection');
+    const interleavedBefore=await interleavedPool.query(`SELECT COUNT(*)::int AS count
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(interleavedBefore.rows[0].count),0,'cold DDL omitted FK while businesses was absent');
+    await Promise.all(Array.from({length:12},()=>ensureMicrobusinessReadinessSchema(interleaved)));
+    const interleavedAfter=await interleavedPool.query(`SELECT COUNT(*)::int AS count
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(interleavedAfter.rows[0].count),1,'deferred constraint attaches after concurrent businesses creation');
+    await interleavedPool.query('DROP TABLE microbusiness_readiness_events; DROP TABLE microbusiness_readiness');
+    await interleavedPool.end();
+    interleavedPool=null;
+
     // Now verify a genuinely COLD initialization in two separate Pools.
     lockPool=new pg.Pool({database:ciDbName,max:1});
     poolA=new pg.Pool({database:ciDbName,max:1});
@@ -159,7 +190,7 @@ try{
     if(lockHeld&&lockClient)await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)').catch(()=>{});
     if(settledTasks)await settledTasks;
     lockClient?.release();
-    await Promise.all([bootstrap?.end(),recoveryPool?.end(),stagedPool?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
+    await Promise.all([bootstrap?.end(),recoveryPool?.end(),stagedPool?.end(),interleavedPool?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
     // A normal DROP, never WITH FORCE: a leaked connection must fail loudly,
     // rather than emit an unhandled 57P01 and hide the original assertion.
     if(created)await maintenance.query('DROP DATABASE IF EXISTS '+ciDbName);

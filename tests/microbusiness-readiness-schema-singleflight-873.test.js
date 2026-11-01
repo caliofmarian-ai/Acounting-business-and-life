@@ -4,9 +4,9 @@ import {ensureMicrobusinessReadinessSchema} from '../microbusiness-readiness-cor
 
 // Deterministic query adapter; the independent CI PostgreSQL workflow tests
 // actual transactions, locks, FK creation and full failure rollback.
-function fakePool({waitForDdl=null,firstFailure=false,businessInitiallyExists=true}={}){
+function fakePool({waitForDdl=null,firstFailure=false,businessInitiallyExists=true,businessAppearsAfterDdl=false}={}){
   const statements=[];
-  let fail=firstFailure,businessExists=businessInitiallyExists;
+  let fail=firstFailure,businessExists=businessInitiallyExists,fkExists=false;
   return{
     statements,
     createBusinesses(){businessExists=true},
@@ -15,13 +15,19 @@ function fakePool({waitForDdl=null,firstFailure=false,businessInitiallyExists=tr
       if(String(sql).includes('CREATE TABLE IF NOT EXISTS microbusiness_readiness (')){
         if(fail){fail=false;throw new Error('synthetic transient schema failure')}
         if(waitForDdl)await waitForDdl;
+        fkExists=businessExists; // The optional FK is attached only during this DDL.
+        if(businessAppearsAfterDdl)businessExists=true; // Another bootstrap races after DDL.
         return{rows:[],rowCount:0};
+      }
+      if(String(sql).includes("SELECT EXISTS (")&&String(sql).includes("FROM pg_constraint")){
+        return{rows:[{present:fkExists}],rowCount:1};
       }
       if(String(sql).includes("SELECT to_regclass('public.businesses') AS table_name")){
         return{rows:[{table_name:businessExists?'businesses':null}],rowCount:1};
       }
       if(String(sql).includes('DO $readiness_fk$')&&String(sql).includes('pg_advisory_xact_lock')){
         assert.equal(businessExists,true,'deferred FK must wait for businesses');
+        fkExists=true;
         return{rows:[],rowCount:0};
       }
       throw new Error('Unexpected SQL in schema single-flight test');
@@ -43,7 +49,7 @@ test('12 concurrent callers share one schema DDL task and success is reused',asy
   assert.equal(ddlCount(pool),1,'one atomic, transaction-scoped DDL and FK batch');
   assert.match(pool.statements[0],/pg_advisory_xact_lock\(87320261031::bigint\)/);
   assert.match(pool.statements[0],/DO \$readiness_fk\$/);
-  assert.equal(pool.statements.length,2,'one bootstrap DDL and one cheap business-table proof');
+  assert.equal(pool.statements.length,2,'one bootstrap DDL and one actual FK constraint proof');
   await ensureMicrobusinessReadinessSchema(pool);
   assert.equal(pool.statements.length,2,'successful initialization is not repeated on every GET');
 });
@@ -83,4 +89,19 @@ test('staged businesses bootstrap attaches the optional FK without repeating tab
   assert.equal(after,before+2,'one cheap table probe plus one FK-only DDL');
   await ensureMicrobusinessReadinessSchema(pool);
   assert.equal(pool.statements.length,after,'future Merchant GETs issue no DDL or probe');
+});
+
+test('business created after cold DDL but before FK proof is not mistaken for attached FK',async()=>{
+  const pool=fakePool({businessInitiallyExists:false,businessAppearsAfterDdl:true});
+  await ensureMicrobusinessReadinessSchema(pool);
+  assert.equal(ddlCount(pool),1);
+  assert.equal(deferredFkCount(pool),0,'the first DDL genuinely did not create the FK');
+  const tasks=Array.from({length:12},()=>ensureMicrobusinessReadinessSchema(pool));
+  assert.equal(new Set(tasks).size,1,'later constraint attachment is single-flight');
+  await Promise.all(tasks);
+  assert.equal(ddlCount(pool),1,'cold DDL is not repeated');
+  assert.equal(deferredFkCount(pool),1,'the table appearing after DDL requires a deferred FK');
+  const after=pool.statements.length;
+  await ensureMicrobusinessReadinessSchema(pool);
+  assert.equal(pool.statements.length,after,'successful FK attachment stays cached');
 });

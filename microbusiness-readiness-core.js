@@ -589,8 +589,14 @@ export function ensureMicrobusinessReadinessSchema(pool){
 
     // A successful first pass without businesses must not permanently skip
     // the foreign key when that table is created later in the same process.
-    const business=await pool.query("SELECT to_regclass('public.businesses') AS table_name");
-    current.fkReady=Boolean(business.rows[0]?.table_name);
+    // businesses can be created between the cold DDL batch and this read.
+    // Table existence is NOT proof that the deferred constraint was attached.
+    const fk=await pool.query(`SELECT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid=to_regclass('public.microbusiness_readiness')
+    ) AS present`);
+    current.fkReady=Boolean(fk.rows[0]?.present);
     current.schemaReady=true;
   })();
   current.promise=pending;
