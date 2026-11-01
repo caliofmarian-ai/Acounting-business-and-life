@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
   commercialOrderDocument,orderDocumentDigest,salesDocumentMessage,salesDocumentPrintHtml,
-  privateCustomerSalesDocumentResponse,registerCustomerSalesDocumentRoutes
+  privateCustomerSalesDocumentResponse,registerCustomerSalesDocumentRoutes,customerSalesDocumentInternals
 } from '../customer-sales-documents.js';
 
 const read=x=>readFileSync(new URL('../'+x,import.meta.url),'utf8');
@@ -284,8 +284,8 @@ test('Merchant document detail/print recheck binding after slow private lookup',
   }
 });
 
-function sendRevocationHarness({holdEmail=null,holdInsert=null,authorized=()=>true,account=()=>81}={}){
-  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0};
+function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81}={}){
+  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0,queuePendingMarks:0};
   const order=makeOrder(),snapshot=commercialOrderDocument(order);
   const pool={
     query:async sql=>{
@@ -309,9 +309,32 @@ function sendRevocationHarness({holdEmail=null,holdInsert=null,authorized=()=>tr
         return{rowCount:1,rows:[{id:72,order_id:order.id,business_id:order.business_id,
           customer_account_id:order.customer_account_id,snapshot_json:snapshot}]};
       }
+      if(sql.includes("UPDATE customer_sales_document_sends SET queue_status='queue_failed'")){
+        state.queuePendingMarks++;
+        return{rowCount:1};
+      }
       throw Error('Unexpected SQL in send authorization test: '+sql.slice(0,100));
     },
-    connect:async()=>{state.queueStarts++;throw Error('Unauthorized email queue was reached');}
+    connect:async()=>{
+      state.queueStarts++;
+      if(!holdQueue)throw Error('Unauthorized email queue was reached');
+      return{
+        query:async sql=>{
+          if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0};
+          if(sql.includes('FOR UPDATE')){
+            holdQueue.onRead();await holdQueue.wait;
+            return{rowCount:1,rows:[{id:72}]};
+          }
+          if(sql.includes('SELECT * FROM customer_sales_document_sends'))return{rowCount:0,rows:[]};
+          if(sql.includes('SELECT id FROM customer_sales_document_sends'))return{rowCount:0,rows:[]};
+          if(sql.includes('INSERT INTO customer_sales_document_sends'))return{
+            rowCount:1,rows:[{id:501,sent_by_account_id:81,customer_account_id:81,
+              queue_status:'pending',event_key:'test_event_501'}]
+          };
+          throw Error('Unexpected transactional SQL: '+sql.slice(0,100));
+        },release(){}
+      };
+    }
   };
   const run=documentRouteHarness({pool,identity:async()=>({account:{id:account(++state.identities)}})});
   const send=()=>run('/orders/123/send',{params:{id:'123'},
@@ -359,4 +382,74 @@ test('Merchant receipt email revocation during document creation cannot enqueue 
   assert.equal(state.permissions,3);
   assert.equal(state.documentWrites,1);
   assert.equal(state.queueStarts,0);
+});
+
+
+test('Merchant revocation during locked email queue wait rejects dispatch and clears newly pending attempt',async()=>{
+  const hold=heldQuery();
+  let allowed=true;
+  const {state,send}=sendRevocationHarness({holdQueue:hold,authorized:()=>allowed});
+  const pending=send();
+  await hold.started;
+  allowed=false;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,403);
+  assert.equal(result.response,null);
+  assert.equal(state.permissions,4);
+  assert.equal(state.queueStarts,1);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Account switch during locked send queue wait fails before emitting Customer email',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdQueue:hold,account:n=>n<=3?81:82});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,401);
+  assert.equal(result.response,null);
+  assert.equal(state.identities,4);
+  assert.equal(state.queueStarts,1);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Queued idempotency key cannot be replayed by another Merchant operator',async()=>{
+  let emitted=0,rollbacks=0;
+  const client={query:async sql=>{
+    if(sql==='ROLLBACK'){rollbacks++;return{rowCount:0};}
+    if(sql==='BEGIN'||sql==='COMMIT'||sql.includes('FOR UPDATE'))return{rowCount:0};
+    if(sql.includes('SELECT * FROM customer_sales_document_sends'))return{
+      rowCount:1,rows:[{id:501,sent_by_account_id:999,queue_status:'queued'}]
+    };
+    throw Error('Unexpected SQL: '+sql);
+  },release(){}};
+  const pool={connect:async()=>client};
+  await assert.rejects(customerSalesDocumentInternals.queueDocument(pool,{
+    document:{id:72,customer_account_id:81},actor:81,
+    requestKey:'safe_replay_12345',authorize:async()=>{},emit:async()=>{emitted++;return 1;}
+  }),e=>e.status===409&&/another Merchant operator/.test(e.message));
+  assert.equal(emitted,0);
+  assert.equal(rollbacks,1);
+});
+
+test('Already queued replay still requires fresh authorization after database lock',async()=>{
+  let emitted=0,releaseCount=0;
+  const client={query:async sql=>{
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql)||sql.includes('FOR UPDATE'))return{rowCount:0};
+    if(sql.includes('SELECT * FROM customer_sales_document_sends'))return{
+      rowCount:1,rows:[{id:501,sent_by_account_id:81,queue_status:'queued'}]
+    };
+    throw Error('Unexpected SQL: '+sql);
+  },release(){releaseCount++;}};
+  const pool={connect:async()=>client};
+  await assert.rejects(customerSalesDocumentInternals.queueDocument(pool,{
+    document:{id:72,customer_account_id:81},actor:81,
+    requestKey:'safe_replay_12345',
+    authorize:async()=>{throw Object.assign(new Error('Merchant revoked'),{status:403})},
+    emit:async()=>{emitted++;return 1;}
+  }),e=>e.status===403);
+  assert.equal(emitted,0);
+  assert.equal(releaseCount,1);
 });
