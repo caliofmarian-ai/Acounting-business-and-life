@@ -1,0 +1,33 @@
+name: Customer Sales Documents Exact Head 857
+on:
+  pull_request:
+    paths:
+      - 'customer-sales-documents.js'
+      - 'tests/customer-sales-documents-v1.test.js'
+      - '.github/workflows/customer-sales-documents-exact-head-857.yml'
+permissions:
+  contents: read
+concurrency:
+  group: customer-sales-documents-head-857-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Assert exact PR head and check source
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          node --check customer-sales-documents.js
+          node --check tests/customer-sales-documents-v1.test.js
+          node --test tests/customer-sales-documents-v1.test.js
