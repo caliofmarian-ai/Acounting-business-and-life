@@ -98,3 +98,110 @@ test('valid decimal PHP values bind exact cents; no accidental provider movement
     assert.ok(!calls.includes('ROLLBACK'));
   }
 });
+
+
+// Same-key finance requests must replay *only identical* monetary instructions.
+// These use the real exported routines and deterministic read-only DB adapters;
+// production PostgreSQL precision/rollback remains tested by the separate job.
+test('provider HOLD replay rejects changed cents/account/source without creating a new movement',async()=>{
+  const prior={
+    id:71,account_id:11,movement_type:'transfer',
+    source_financial_account_id:1,destination_financial_account_id:2,
+    amount:'1.23',currency_code:'PHP',provider_code:'',note:'approved',
+    source_profile_role:'customer',destination_profile_role:'customer',
+    status:'pending_provider',hold_code:'PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED'
+  };
+  let queries=0;
+  const pool={async query(sql){
+    queries++;
+    if(sql.includes('SELECT * FROM profile_money_movements WHERE idempotency_key='))return{rowCount:1,rows:[prior]};
+    if(sql.includes('FROM profile_money_movements m'))return{rowCount:1,rows:[prior]};
+    throw Error('Unexpected movement replay SQL: '+sql);
+  }};
+  const input={
+    publicId:'new-id-unused',idempotencyKey:'hold-original',accountId:11,
+    movementType:'transfer',sourceFinancialAccountId:1,destinationFinancialAccountId:2,
+    amount:'1.23',currencyCode:'PHP',note:'approved'
+  };
+  for(const delta of [
+    {amount:'1.24'},{sourceFinancialAccountId:4},
+    {destinationFinancialAccountId:5},{note:'different approval'},
+    {movementType:'withdrawal'}
+  ])await assert.rejects(createProfileMoneyMovementRequest(pool,{...input,...delta}),e=>e.status===409);
+  await assert.rejects(createProfileMoneyMovementRequest(pool,{...input,accountId:12}),e=>e.status===404);
+  const restored=await createProfileMoneyMovementRequest(pool,input);
+  assert.equal(restored.id,71);
+  assert.equal(restored.amount,1.23);
+  assert.equal(queries,8,'six invalid lookups and one valid lookup with one readback');
+});
+
+test('personal Money entry replay rejects changed cents/category/direction and preserves original',async()=>{
+  const prior={
+    id:72,account_id:11,profile_role:'customer',entry_type:'expense',
+    direction:'out',category:'groceries',amount:'2.31',currency_code:'PHP',
+    financial_account_id:null,source_type:'manual',source_id:null,note:'groceries',
+    evidence_reference:'',actor_account_id:11,occurred_at:'2026-11-01T12:00:00.000Z',
+    status:'active'
+  };
+  let queries=0;
+  const pool={async query(sql){
+    queries++;
+    if(sql.includes('SELECT * FROM profile_money_entries WHERE entry_key='))return{rowCount:1,rows:[prior]};
+    if(sql.includes('FROM profile_money_entries e LEFT JOIN'))return{rowCount:1,rows:[prior]};
+    throw Error('Unexpected personal replay SQL: '+sql);
+  }};
+  const input={
+    publicId:'unused-new-id',entryKey:'pme-original',accountId:11,profileRole:'customer',
+    entryType:'expense',direction:'out',category:'groceries',amount:'2.31',
+    currencyCode:'PHP',sourceType:'manual',note:'groceries'
+  };
+  for(const delta of [
+    {amount:'2.32'},{direction:'in'},{category:'housing'},{note:'changed'},
+    {sourceType:'external'},{financialAccountId:5}
+  ])await assert.rejects(createProfileMoneyEntry(pool,{...input,...delta}),e=>e.status===409);
+  await assert.rejects(createProfileMoneyEntry(pool,{...input,accountId:12}),e=>e.status===409);
+  const restored=await createProfileMoneyEntry(pool,input);
+  assert.equal(restored.id,72);
+  assert.equal(restored.amount,2.31);
+  assert.equal(queries,9,'seven invalid lookups and one valid lookup with one readback');
+});
+
+test('internal profile transfer replay rejects changed money instruction',async()=>{
+  const prior={
+    id:73,account_id:11,source_profile_role:'customer',source_business_id:null,
+    destination_profile_role:'courier',destination_business_id:null,
+    amount:'4.56',currency_code:'PHP',note:'move reserve',status:'succeeded'
+  };
+  const calls=[];
+  const client={release(){},async query(sql){
+    calls.push(sql);
+    if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+    if(sql.includes('pg_advisory_xact_lock('))return{rowCount:1,rows:[]};
+    if(sql.includes('SELECT * FROM profile_fund_transfers WHERE transfer_key='))return{rowCount:1,rows:[prior]};
+    throw Error('Unexpected internal transfer SQL: '+sql);
+  }};
+  const pool={
+    async connect(){return client},
+    async query(sql){
+      calls.push(sql);
+      if(sql.includes('FROM profile_fund_transfers')&&sql.includes('WHERE account_id='))return{rowCount:1,rows:[prior]};
+      throw Error('Unexpected transfer list SQL: '+sql);
+    }
+  };
+  const input={
+    publicId:'unused-transfer-id',transferKey:'transfer-original',
+    accountId:11,sourceProfileRole:'customer',destinationProfileRole:'courier',
+    amount:'4.56',currencyCode:'PHP',note:'move reserve'
+  };
+  for(const delta of [
+    {amount:'4.57'},{sourceProfileRole:'service_provider'},
+    {destinationProfileRole:'merchant',destinationBusinessId:3},
+    {currencyCode:'USD'},{note:'different intent'}
+  ])await assert.rejects(transferFundsBetweenProfiles(pool,{...input,...delta}),e=>e.status===409);
+  await assert.rejects(transferFundsBetweenProfiles(pool,{...input,accountId:12}),e=>e.status===409);
+  const restored=await transferFundsBetweenProfiles(pool,input);
+  assert.equal(restored.id,73);
+  assert.equal(restored.idempotent,true);
+  assert.equal(calls.filter(x=>x==='ROLLBACK').length,6);
+  assert.equal(calls.filter(x=>x==='COMMIT').length,1);
+});

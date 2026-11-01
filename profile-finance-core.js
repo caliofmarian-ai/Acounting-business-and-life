@@ -758,7 +758,22 @@ export async function createProfileMoneyMovementRequest(pool,{
   const value=normalizePositiveMoney(amount,'Transfer amount'),currency=normalizeCurrency(currencyCode),key=clean(idempotencyKey,220);
   if(!key)fail('Idempotency key is required');
   const existing=await pool.query('SELECT * FROM profile_money_movements WHERE idempotency_key=$1',[key]);
-  if(existing.rowCount)return (await listProfileMoneyMovements(pool,accountId)).find(x=>x.id===Number(existing.rows[0].id));
+  if(existing.rowCount){
+    const prior=existing.rows[0];
+    // A duplicate key acknowledges only the original account and instruction.
+    // A different amount/source/destination must not silently replay a HOLD.
+    if(Number(prior.account_id)!==Number(accountId))
+      fail('Money movement not found in this account',404);
+    if(prior.movement_type!==type||
+       Number(prior.source_financial_account_id)!==Number(sourceFinancialAccountId)||
+       Number(prior.destination_financial_account_id)!==Number(destinationFinancialAccountId)||
+       Number(prior.amount)!==value||
+       prior.currency_code!==currency||
+       String(prior.note??'')!==clean(note,500)||
+       (providerCode&&String(prior.provider_code??'')!==clean(providerCode,80)))
+      fail('Idempotency key already belongs to a different money movement',409);
+    return (await listProfileMoneyMovements(pool,accountId)).find(x=>x.id===Number(prior.id));
+  }
   if(sourceFinancialAccountId==null||destinationFinancialAccountId==null)fail('Source and destination financial accounts are required');
   const sourceQ=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(sourceFinancialAccountId),Number(accountId)]);
   const destQ=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(destinationFinancialAccountId),Number(accountId)]);
@@ -862,6 +877,20 @@ export async function createProfileMoneyEntry(pool,{
   if(existing.rowCount){
     const old=existing.rows[0];
     if(Number(old.account_id)!==Number(accountId)||old.profile_role!==role)fail('Idempotency key belongs to another Money scope',409);
+    // A retry with the same key may recover a posted entry, but it must not
+    // acknowledge a different expense/income instruction or financial source.
+    if(old.entry_type!==entry.type||old.direction!==entry.direction||
+       old.category!==cat||Number(old.amount)!==value||
+       old.currency_code!==currency||
+       Number(old.financial_account_id||0)!==Number(financialAccountId||0)||
+       String(old.source_type??'')!==clean(sourceType,80)||
+       Number(old.source_id||0)!==Number(sourceId||0)||
+       String(old.note??'')!==clean(note,700)||
+       String(old.evidence_reference??'')!==clean(evidenceReference,500)||
+       Number(old.actor_account_id||accountId)!==Number(actorAccountId||accountId)||
+       (occurredAt!=null&&occurredAt!==''&&
+         new Date(old.occurred_at).getTime()!==new Date(occurredAt).getTime()))
+      fail('Idempotency key already belongs to a different Money entry',409);
     const detail=await pool.query(`
       SELECT e.*,f.display_name financial_account_name,f.account_kind financial_account_kind,f.reference_last4 financial_account_last4
       FROM profile_money_entries e LEFT JOIN profile_financial_accounts f ON f.id=e.financial_account_id
@@ -1071,6 +1100,13 @@ export async function transferFundsBetweenProfiles(pool,{
     if(existing.rowCount){
       const x=existing.rows[0];
       if(Number(x.account_id)!==Number(accountId))fail('Idempotency key belongs to another account',409);
+      if(x.source_profile_role!==source.profileRole||
+         Number(x.source_business_id||0)!==Number(source.businessId||0)||
+         x.destination_profile_role!==destination.profileRole||
+         Number(x.destination_business_id||0)!==Number(destination.businessId||0)||
+         Number(x.amount)!==value||x.currency_code!==currency||
+         String(x.note??'')!==clean(note,700))
+        fail('Idempotency key already belongs to a different profile transfer',409);
       await client.query('COMMIT');
       return{...(await listProfileFundTransfers(pool,accountId)).find(t=>t.id===Number(x.id)),idempotent:true};
     }
