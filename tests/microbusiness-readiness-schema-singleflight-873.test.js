@@ -105,3 +105,37 @@ test('business created after cold DDL but before FK proof is not mistaken for at
   await ensureMicrobusinessReadinessSchema(pool);
   assert.equal(pool.statements.length,after,'successful FK attachment stays cached');
 });
+
+test('failed deferred FK attachment is retryable without re-provisioning readiness tables',async()=>{
+  const pool=fakePool({businessInitiallyExists:false});
+  await ensureMicrobusinessReadinessSchema(pool);
+  pool.createBusinesses();
+  const originalQuery=pool.query.bind(pool);
+  let fkAttempts=0;
+  pool.query=async sql=>{
+    if(String(sql).includes('DO $readiness_fk$') &&
+       !String(sql).includes('CREATE TABLE IF NOT EXISTS microbusiness_readiness (')){
+      fkAttempts++;
+      if(fkAttempts===1)throw new Error('synthetic transient deferred FK failure');
+    }
+    return originalQuery(sql);
+  };
+
+  const failed=Array.from({length:6},()=>ensureMicrobusinessReadinessSchema(pool));
+  assert.equal(new Set(failed).size,1,'concurrent deferred probes share a rejected task');
+  const first=await Promise.allSettled(failed);
+  assert.ok(first.every(result=>result.status==='rejected' &&
+    /synthetic transient deferred FK failure/.test(result.reason?.message)));
+  assert.equal(fkAttempts,1,'one failed FK attempt is not repeated while in flight');
+  assert.equal(ddlCount(pool),1,'the original schema provisioning is not repeated on failure');
+
+  const retry=Array.from({length:6},()=>ensureMicrobusinessReadinessSchema(pool));
+  assert.equal(new Set(retry).size,1,'retry remains single-flight');
+  await Promise.all(retry);
+  assert.equal(fkAttempts,2,'the failed deferred task is evicted and retried');
+  assert.equal(deferredFkCount(pool),1,'only the successful FK attachment updates state');
+  assert.equal(ddlCount(pool),1,'retry never re-runs the full table/index bootstrap');
+  const queriesAfterSuccess=pool.statements.length;
+  await ensureMicrobusinessReadinessSchema(pool);
+  assert.equal(pool.statements.length,queriesAfterSuccess,'success is cached after retry');
+});
