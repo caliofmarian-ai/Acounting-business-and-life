@@ -1,23 +1,32 @@
-// Synthetic native layout/navigation checks. No login, database, server API or
-// deployed acceptance is claimed. Uses shipped HTML/CSS and actual view/presentation functions.
+// Synthetic native Merchant shell/navigation checks. Uses actual shipped
+// HTML/CSS, the shell nav markup, actual local-view state listener and Finance
+// eligibility logic. No login, database, server API or deployed acceptance.
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
 import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=dirname(dirname(fileURLToPath(import.meta.url))),read=p=>readFileSync(join(root,p),'utf8');
-const ui=read('public/v03.js'),finance=read('public/business-accounting-ui.js');
+const ui=read('public/v03.js'),finance=read('public/business-accounting-ui.js'),shell=read('public/shell.js');
 function block(s,a,b){const first=s.indexOf(a),last=s.indexOf(b,first);assert.ok(first>=0&&last>first);return s.slice(first,last)}
 const setView=block(ui,'function setView(name){','\nasync function openInventoryNotificationContext');
 const presentation=block(finance,'function applyFinancePresentation(','\nconst BUSINESS_FINANCE_COMPATIBILITY_COPY');
 const actions=block(ui,'async function openMerchantAction(action){','\nasync function loadMerchantView');
+const shellActive=block(shell,"document.addEventListener('abl:merchant-local-view'",'\nfunction hideFeatureWorkspaces(');
+const navLine=shell.split('\n').find(line=>line.includes('nav.innerHTML=\'<div id="merchantWorkspaceActions"'));
+const navMarkup=navLine?.match(/nav\.innerHTML='(.*)';/)?.[1];
+assert.ok(navMarkup?.includes('merchantBusinessTools'),'actual shell nav markup missing');
 const states=['food','mixed','non_food','unknown','supplier'];
 const controls='<aside id="syntheticFixture"><strong>SYNTHETIC UI CHECK — no live account or stock</strong>'+states.map(s=>'<button type="button" data-fixture="'+s+'">Fixture '+s+'</button>').join('')+'</aside>';
-const script=["const $=id=>document.getElementById(id);const accountingState={role:'merchant'};async function loadMerchantView(name){document.body.dataset.requestedView=name}function updateSellPreview(){}",setView,presentation,actions,
+const script=[
+ "const $=id=>document.getElementById(id);const accountingState={role:'merchant'};const activeSurface='profile',activeRole='merchant';async function loadMerchantView(name){document.body.dataset.requestedView=name}function updateSellPreview(){}function resetStockTools(){document.querySelectorAll('#stockToolDeck details').forEach(d=>d.open=false)}",
+ "const primary=document.createElement('nav');primary.id='merchantWorkspaceNav';primary.className='merchantWorkspaceNav';primary.setAttribute('aria-label','Merchant workspace navigation');primary.innerHTML="+JSON.stringify(navMarkup)+";document.getElementById('shell').insertAdjacentElement('afterbegin',primary);document.body.dataset.merchantNav='unified';",
+ shellActive,setView,presentation,actions,
  "$('login').classList.add('hidden');$('shell').classList.remove('hidden');$('todayContent').classList.remove('hidden');$('todayLoading').classList.add('hidden');",
  "document.querySelectorAll('.bottomNav [data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));",
+ "document.querySelectorAll('#merchantWorkspaceNav [data-merchant-nav]').forEach(b=>b.onclick=()=>{const local={home:'Dashboard',recipes:'Menu',stock:'Stock',money:'Money'}[b.dataset.merchantNav];if(local)setView(local);else document.body.dataset.lastBusinessTool=b.dataset.merchantNav});",
  "document.querySelectorAll('[data-today-action]').forEach(b=>b.onclick=()=>openMerchantAction(b.dataset.todayAction));",
- "document.querySelectorAll('[data-fixture]').forEach(b=>b.onclick=()=>{const domain=b.dataset.fixture;applyFinancePresentation({role:domain==='supplier'?'supplier':'merchant',presentation:{merchant_domain:domain,legacy_recipe_ui_allowed:['food','mixed','supplier'].includes(domain)}});$('todayFoodActions').classList.toggle('hidden',!['food','mixed'].includes(domain));setView('Dashboard')});",
+ "document.querySelectorAll('[data-fixture]').forEach(b=>b.onclick=()=>{const domain=b.dataset.fixture;applyFinancePresentation({role:domain==='supplier'?'supplier':'merchant',presentation:{merchant_domain:domain,legacy_recipe_ui_allowed:['food','mixed'].includes(domain)}});$('todayFoodActions').classList.toggle('hidden',!['food','mixed'].includes(domain));setView('Dashboard')});",
  "document.querySelectorAll('form').forEach(form=>form.addEventListener('submit',e=>e.preventDefault()));"
 ].join('\n');
 let html=read('public/index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<link\b[^>]*rel="(?:manifest|icon)"[^>]*>/gi,'');
@@ -43,46 +52,61 @@ try{
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',route=>{if(route.request().url().startsWith(origin+'/'))return route.continue();external.push(route.request().url());return route.abort()});
   await page.goto(origin);
-  const recipes=page.locator('#merchantRecipesNav'),nav=page.getByRole('navigation',{name:'Merchant primary navigation'});
-  assert.equal(await recipes.isVisible(),false,'no capability flash');
-  assert.equal(await nav.locator('button .merchantNavIcon').count(),6,'six native outline icons');
-  assert.equal(await nav.locator('button .merchantNavLabel').count(),6,'six persistent text labels');
+  const recipes=page.locator('#merchantRecipesTopButton'),nav=page.getByRole('navigation',{name:'Merchant workspace navigation'});
+  assert.equal(await page.locator('.bottomNav.merchantPrimaryNav').isVisible(),false,'legacy bottom bar must stay hidden');
+  assert.equal(await nav.locator('.merchantWorkspaceLoading').isVisible(),true,'the first paint must not expose a provisional menu');
+  assert.equal(await recipes.isVisible(),false,'no Food capability flash');
   for(const domain of states){
    await page.getByRole('button',{name:'Fixture '+domain,exact:true}).click();
    const allowed=['food','mixed'].includes(domain);
+   assert.equal(await nav.locator('.merchantWorkspaceLoading').isVisible(),false,'resolved navigation only');
    assert.equal(await recipes.isVisible(),allowed,domain+' recipe eligibility');
-   const visible=await nav.locator('button:visible').allTextContents();
+   const visible=await nav.locator('#merchantWorkspaceActions > button:visible').allTextContents();
    if(allowed){
     assert.deepEqual(visible,['Today','Orders','Catalog','Products & recipes','Stock','Money']);
-    assert.equal(await nav.locator('button .merchantNavIcon').count(),6,'Finance hydration cannot erase icons');
-    assert.equal(await nav.locator('button:visible').first().evaluate(b=>getComputedStyle(b).borderTopWidth),'1px','inactive button has outlined border');
+    assert.equal(await nav.locator('button:visible').first().evaluate(b=>getComputedStyle(b).borderTopWidth),'1px','same outlined button treatment');
     await recipes.press('Enter');
     assert.equal(await page.locator('#viewMenu').isVisible(),true);
-    assert.equal(await recipes.getAttribute('class'),'active');
+    assert.match(await recipes.getAttribute('class'),/active/);
     assert.equal(await recipes.getAttribute('aria-current'),'page');
     assert.equal(await nav.locator('button[aria-current="page"]').count(),1,'only one current destination');
     assert.equal(await page.locator('body').getAttribute('data-requested-view'),'Menu');
     assert.equal(await page.locator('#viewMenu h1').textContent(),'Products & recipes');
-    const geometry=await nav.locator('button:visible').evaluateAll(buttons=>buttons.map(b=>{const r=b.getBoundingClientRect();return{height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,fit:b.scrollWidth<=b.clientWidth}}));
-    assert.ok(geometry.every(r=>r.height>=44&&r.left>=0&&r.right<=width&&r.top>=0&&r.bottom<=844&&r.fit),'labels and targets fit viewport '+width);
-    if(width<650){assert.equal(geometry[3].top,geometry[4].top);assert.ok(geometry[3].top>geometry[0].top,'three-column two-row mobile nav')}
-    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'no page overflow');
+    const geometry=await nav.locator('#merchantWorkspaceActions > button:visible').evaluateAll(buttons=>buttons.map(b=>{const r=b.getBoundingClientRect();return{height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom,fit:b.scrollWidth<=b.clientWidth}}));
+    assert.ok(geometry.every(r=>r.height>=44&&r.left>=0&&r.right<=width&&r.top>=0&&r.bottom<=844&&r.fit),'labels and touch targets fit viewport '+width);
+    if(width===390){assert.equal(geometry[3].top,geometry[0].top);assert.ok(geometry[4].top>geometry[0].top,'two rows at 390px')}
+    if(width===320){assert.equal(geometry[3].top,geometry[4].top);assert.ok(geometry[3].top>geometry[0].top,'three columns at 320px')}
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'no horizontal overflow');
     if(evidence&&domain==='food')await page.screenshot({path:join(evidence,width+'-recipes.png')});
     await nav.getByRole('button',{name:'Stock',exact:true}).click();assert.equal(await page.locator('#viewStock').isVisible(),true);assert.equal(await nav.getByRole('button',{name:'Stock',exact:true}).getAttribute('aria-current'),'page');
+     // #875: Stock is a menu of closed tools, not an eager expanded Inventory page.
+     assert.equal(await page.locator('#stockToolDeck .stockTool').count(),14);
+     assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
+     assert.equal(await page.locator('#stockList').isVisible(),false);
+     await page.locator('#stockTool-inventory > summary').click();
+     assert.equal(await page.locator('#stockTool-inventory').evaluate(node=>node.open),true,'Inventory tool expands on click');
+     await nav.getByRole('button',{name:'Today',exact:true}).click();
+     await nav.getByRole('button',{name:'Stock',exact:true}).click();
+     assert.equal(await page.locator('#stockToolDeck .stockTool[open]').count(),0);
     await recipes.click();assert.equal(await page.locator('#viewMenu').isVisible(),true);
     await nav.getByRole('button',{name:'Money',exact:true}).click();assert.equal(await page.locator('#viewMoney').isVisible(),true);
     await nav.getByRole('button',{name:'Today',exact:true}).click();
     await page.getByRole('button',{name:'Quick Sale',exact:true}).click();assert.equal(await page.locator('#viewSell').isVisible(),true);
    }else{
-    assert.equal(visible.length,5);assert.equal(await nav.getByRole('button',{name:'Money',exact:true}).isVisible(),true);
+    assert.deepEqual(visible,['Today','Orders','Catalog','Stock','Money']);
+    assert.equal(await nav.getByRole('button',{name:'Money',exact:true}).isVisible(),true);
    }
+   await nav.locator('#merchantBusinessTools summary').click();
+   for(const label of ['Storefront','Suppliers','Delivery','Settings'])
+     assert.equal(await nav.getByRole('button',{name:label,exact:true}).isVisible(),true,label+' secondary access');
+   await nav.locator('#merchantBusinessTools summary').click();
    checks.push({width,domain,passed:true});
   }
   assert.equal(await page.locator('[data-today-action="recipes"]').count(),0);
   await context.close();
  }
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
- const result={revision:process.env.RECIPE_BROWSER_REVISION||'candidate-working-tree',browser:browser.version(),mode:'synthetic native UI, no authentication or deployed API',checks};
+ const result={revision:process.env.RECIPE_BROWSER_REVISION||'candidate-working-tree',browser:browser.version(),mode:'synthetic native shell UI, no authentication or deployed API',checks};
  if(evidence)writeFileSync(join(evidence,'result.json'),JSON.stringify(result,null,2));
  console.log('RECIPE_NAV_BROWSER_PASS '+JSON.stringify(result));
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve))}
