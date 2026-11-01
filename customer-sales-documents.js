@@ -8,7 +8,16 @@ const id=(v,label='Identifier')=>{
   if(!Number.isSafeInteger(n)||n<1)throw err(400,label+' must be a positive integer');
   return n;
 };
-const money=value=>Number((Number(value)||0).toFixed(2));
+// NUMERIC(12,2) order values must be exact evidence, never silently coerced or rounded.
+const money=(value,label='Amount')=>{
+  if(typeof value!=='number'&&typeof value!=='string')throw err(409,label+' monetary evidence is invalid');
+  const raw=String(value);
+  if(!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(raw))throw err(409,label+' monetary evidence is invalid');
+  const numeric=Number(raw),cents=Math.round(numeric*100);
+  if(!Number.isSafeInteger(cents)||cents<0||cents>999999999999||Math.abs(numeric*100-cents)>0.0001)
+    throw err(409,label+' monetary evidence is invalid');
+  return cents/100;
+};
 const short=(v,max=250)=>String(v??'').trim().slice(0,max);
 const cleanHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const clientKey=value=>{
@@ -21,7 +30,12 @@ export function commercialOrderDocument(order,clock=new Date()){
   if(!order?.id||!order?.business_id)throw err(404,'Order not found');
   if(!id(order.customer_account_id,'Customer account'))throw err(422,'Only registered Customers may receive order documents');
   if(order.order_status==='cancelled')throw err(409,'Cancelled orders need separate refund/credit evidence');
-  const paid=money(order.paid_amount),outstanding=money(order.outstanding_amount),total=money(order.total);
+  const paid=money(order.paid_amount,'Recorded payment');
+  const outstanding=money(order.outstanding_amount,'Outstanding amount');
+  const total=money(order.total,'Total');
+  const subtotal=money(order.subtotal,'Subtotal'),deliveryFee=money(order.delivery_fee,'Delivery fee');
+  if(Math.round(paid*100)+Math.round(outstanding*100)!==Math.round(total*100))
+    throw err(409,'Order monetary evidence is inconsistent');
   if(paid<=0&&order.order_status!=='completed')throw err(409,'Document is available after recorded payment or order completion');
   const items=(order.items||[]).map(item=>({
     item_id:id(item.id,'Order line'),
@@ -45,7 +59,7 @@ export function commercialOrderDocument(order,clock=new Date()){
     payment_method:short(order.payment_method,40),
     merchant_recorded_payment:paid,
     payment_source_description:paid>0?'Merchant-recorded payment; external settlement not independently asserted':'No payment recorded',
-    subtotal:money(order.subtotal),delivery_fee:money(order.delivery_fee),
+    subtotal,delivery_fee:deliveryFee,
     total,amount_due:outstanding,items,
     official_tax_invoice:false,
     disclaimer:'Commercial order and payment evidence only. Not a BIR-issued or BIR-validated tax invoice.'
@@ -58,7 +72,7 @@ export function orderDocumentDigest(snapshot){
   return crypto.createHash('sha256').update(JSON.stringify(business)).digest('hex');
 }
 export function salesDocumentMessage(snapshot){
-  const display=amount=>new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(amount)||0);
+  const display=amount=>new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(money(amount,'Saved document amount'));
   const items=snapshot.items.map(x=>x.name+' × '+x.quantity+' = '+display(x.line_total));
   let list=items.join('; ');
   if(list.length>340)list=list.slice(0,330)+'… (open your account for all lines)';
@@ -75,7 +89,7 @@ export function salesDocumentMessage(snapshot){
   };
 }
 export function salesDocumentPrintHtml(snapshot){
-  const esc=cleanHtml,mon=v=>esc(snapshot.currency_code)+' '+(Number(v)||0).toFixed(2);
+  const esc=cleanHtml,mon=v=>esc(snapshot.currency_code)+' '+money(v,'Saved document amount').toFixed(2);
   const lines=snapshot.items.map(item=>
     '<tr><td>'+esc(item.name)+'</td><td>'+esc(item.quantity)+'</td><td>'+mon(item.unit_price)+'</td><td>'+mon(item.line_total)+'</td></tr>'
   ).join('');
@@ -213,7 +227,25 @@ async function queueDocument(pool,{document,actor,requestKey,emit=emitNotificati
     throw err(503,'Email delivery queue is unavailable; the saved document remains available');
   }
 }
+// Private Customer/Merchant records cannot be reused as a conditional 304.
+// Ignore old validators only for this authenticated, no-store route family.
+export function privateCustomerSalesDocumentResponse(req,res,next){
+  res.set({
+    'Cache-Control':'private, no-store, max-age=0',
+    'Pragma':'no-cache',
+    'Expires':'0',
+    'X-Content-Type-Options':'nosniff'
+  });
+  res.vary('Cookie');
+  res.vary('Authorization');
+  if(req.headers){
+    delete req.headers['if-none-match'];
+    delete req.headers['if-modified-since'];
+  }
+  next();
+}
 export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
+  app.use('/api/notifications/order-sales-documents',privateCustomerSalesDocumentResponse);
   app.get('/api/notifications/order-sales-documents/my',async(req,res,next)=>{
     try{
       const actor=id((await identity(req)).account.id,'Account');

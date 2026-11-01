@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  commercialOrderDocument,orderDocumentDigest,salesDocumentMessage,salesDocumentPrintHtml
+  commercialOrderDocument,orderDocumentDigest,salesDocumentMessage,salesDocumentPrintHtml,
+  privateCustomerSalesDocumentResponse,registerCustomerSalesDocumentRoutes
 } from '../customer-sales-documents.js';
 
 const read=x=>readFileSync(new URL('../'+x,import.meta.url),'utf8');
@@ -96,4 +97,78 @@ test('Email is a notification event, not new sale/paid money',()=>{
   const notifications=read('notification-core.js');
   assert.match(notifications,/\['order.billing_document','en-PH'/);
   assert.match(notifications,/\['order.billing_document','fil-PH'/);
+});
+
+test('Malformed economic evidence is rejected before snapshot, email, or print',()=>{
+  const invalid=[null,undefined,true,NaN,Infinity,-Infinity,'','unavailable','Infinity','NaN',
+    '0x10','1e3','0.001','145.005','-1','10000000000.00','01.00'];
+  for(const field of ['paid_amount','outstanding_amount','total','subtotal','delivery_fee']){
+    for(const value of invalid)
+      assert.throws(()=>commercialOrderDocument({...makeOrder(),[field]:value}),
+        /monetary evidence is invalid/,field+' = '+String(value));
+  }
+  for(const field of ['unit_price_snapshot','line_total']){
+    for(const value of invalid)
+      assert.throws(()=>commercialOrderDocument({...makeOrder(),
+        items:[{...makeOrder().items[0],[field]:value}]}),
+        /monetary evidence is invalid/,field+' = '+String(value));
+  }
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),paid_amount:'145.01',outstanding_amount:'0'}),
+    /monetary evidence is inconsistent/);
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),paid_amount:'120',outstanding_amount:'0'}),
+    /monetary evidence is inconsistent/);
+  const snapshot=commercialOrderDocument(makeOrder());
+  for(const field of ['total','merchant_recorded_payment','amount_due','subtotal','delivery_fee']){
+    const damaged={...snapshot,[field]:'not-a-number'};
+    assert.throws(()=>salesDocumentPrintHtml(damaged),/monetary evidence is invalid/);
+    if(['total','merchant_recorded_payment','amount_due'].includes(field))
+      assert.throws(()=>salesDocumentMessage(damaged),/monetary evidence is invalid/);
+  }
+});
+
+test('Exact-cent full, partial, unpaid and zero-cost completed orders remain non-fiscal',()=>{
+  const unpaid=commercialOrderDocument({...makeOrder(),paid_amount:'0.00',
+    outstanding_amount:'145.00',payment_status:'unpaid'});
+  assert.equal(unpaid.document_class,'order_summary');
+  const partial=commercialOrderDocument({...makeOrder(),paid_amount:'70.05',
+    outstanding_amount:'74.95',payment_status:'partial'});
+  assert.equal(partial.document_class,'payment_record');
+  assert.equal(partial.merchant_recorded_payment,70.05);
+  assert.equal(partial.amount_due,74.95);
+  assert.equal(salesDocumentMessage(partial).paid,'70.05');
+  assert.equal(commercialOrderDocument(makeOrder()).merchant_recorded_payment,145);
+  const zero=commercialOrderDocument({...makeOrder(),subtotal:'0.00',delivery_fee:'0.00',
+    total:'0.00',paid_amount:'0.00',outstanding_amount:'0.00',
+    items:[{...makeOrder().items[0],unit_price_snapshot:'0.00',line_total:'0.00'}]});
+  assert.equal(zero.document_class,'order_summary');
+  assert.equal(zero.total,0);
+});
+
+test('All signed-in document endpoints are no-store and conditional GETs cannot 304',()=>{
+  const routes={use:[],get:[],post:[]};
+  const app={
+    use:(path,fn)=>routes.use.push({path,fn}),
+    get:(path,...handlers)=>routes.get.push({path,handlers}),
+    post:(path,...handlers)=>routes.post.push({path,handlers})
+  };
+  registerCustomerSalesDocumentRoutes({app,pool:{},body:()=>{},identity:()=>{}});
+  assert.equal(routes.use.length,1);
+  assert.equal(routes.use[0].path,'/api/notifications/order-sales-documents');
+  assert.equal(routes.use[0].fn,privateCustomerSalesDocumentResponse);
+  assert.equal(routes.get.length,5);
+  assert.equal(routes.post.length,1);
+  const headers={},vary=[];
+  const req={headers:{'if-none-match':'W/"old-private-body"',
+    'if-modified-since':'Fri, 30 Oct 2026 00:00:00 GMT'}};
+  const res={set(obj){Object.assign(headers,obj);return this},
+    vary(name){vary.push(name);return this}};
+  let called=0;
+  privateCustomerSalesDocumentResponse(req,res,()=>{called++});
+  assert.equal(called,1);
+  assert.equal(headers['Cache-Control'],'private, no-store, max-age=0');
+  assert.equal(headers['Pragma'],'no-cache');
+  assert.equal(headers['X-Content-Type-Options'],'nosniff');
+  assert.deepEqual(vary,['Cookie','Authorization']);
+  assert.equal(req.headers['if-none-match'],undefined);
+  assert.equal(req.headers['if-modified-since'],undefined);
 });
