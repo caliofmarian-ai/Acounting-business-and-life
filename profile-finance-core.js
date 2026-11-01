@@ -648,8 +648,34 @@ export async function transferProfileBudgetAllocation(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    // The global transfer key must serialize across workers before any replay
+    // lookup. A hash collision only delays independent full-key lookups.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_budget_transfers:' || $1::text, 871))",
+      [key]
+    );
     const existing=await client.query('SELECT * FROM profile_budget_transfers WHERE transfer_key=$1',[key]);
-    if(existing.rowCount){await client.query('COMMIT');return existing.rows[0]}
+    if(existing.rowCount){
+      const prior=existing.rows[0];
+      // Never acknowledge a transfer from a different account or a different
+      // instruction. The original note/actor are persisted on the debit entry.
+      if(Number(prior.account_id)!==Number(accountId))
+        fail('Budget transfer not found in this account',404);
+      const original=await client.query(
+        'SELECT note,actor_account_id FROM profile_budget_entries WHERE entry_key=$1',
+        [key+':out']
+      );
+      if(Number(prior.source_envelope_id)!==Number(sourceEnvelopeId)||
+         Number(prior.destination_envelope_id)!==Number(destinationEnvelopeId)||
+         Number(prior.amount)!==value||
+         !original.rowCount||
+         String(original.rows[0].note??'')!==clean(note,500)||
+         Number(original.rows[0].actor_account_id)!==Number(actorAccountId||accountId))
+        fail('Idempotency key already belongs to a different budget transfer',409);
+      await client.query('COMMIT');
+      return {...prior,execution_type:'INTERNAL_BUDGET_REALLOCATION',
+        provider_money_moved:false,idempotent:true};
+    }
     const ids=[Number(sourceEnvelopeId),Number(destinationEnvelopeId)].sort((a,b)=>a-b);
     const q=await client.query(`
       SELECT * FROM profile_budget_envelopes

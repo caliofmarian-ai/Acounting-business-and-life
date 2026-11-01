@@ -64,6 +64,13 @@ try{
       amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
       source_type TEXT,source_id TEXT,note TEXT,actor_account_id BIGINT
     );
+    CREATE TABLE profile_budget_transfers(
+      id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,transfer_key TEXT NOT NULL UNIQUE,
+      account_id BIGINT NOT NULL,source_envelope_id BIGINT NOT NULL,
+      destination_envelope_id BIGINT NOT NULL,amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      currency_code TEXT NOT NULL,transfer_type TEXT NOT NULL
+        DEFAULT 'internal_budget_reallocation'
+    );
     CREATE TABLE profile_finance_audit_events(
       id BIGSERIAL PRIMARY KEY,account_id BIGINT NOT NULL,profile_role TEXT NOT NULL,
       business_id BIGINT,event_code TEXT NOT NULL,detail_json JSONB NOT NULL
@@ -178,6 +185,89 @@ try{
   eq(Number(retry.amount),9.99,'retry after rollback creates exactly one valid entry');
   eq(await rowCount('profile_budget_entries'),entriesBefore+1,'single retry entry');
   eq(await rowCount('profile_finance_audit_events'),auditsBefore+1,'single retry audit');
+
+  // Separate budget-transfer keys are global, too. The prior transfer code
+  // acknowledged any matching key before checking account or instructions.
+  // Keep accepted replays unique, preserve the debit-entry note/actor, and
+  // serialize same-key requests on actual separate PostgreSQL transactions.
+  const transfer=(key,amount='0.12',overrides={})=>transferProfileBudgetAllocation(pool,{
+    publicId:'precision-transfer-'+key,transferKey:key,accountId:11,
+    sourceEnvelopeId:22,destinationEnvelopeId:23,amount,
+    actorAccountId:11,note:'approved planned reallocation',...overrides
+  });
+  const firstTransfer=await transfer('transfer-replay');
+  const transferAgain=await transfer('transfer-replay');
+  eq(Number(firstTransfer.id),Number(transferAgain.id),'same transfer request returns original');
+  eq(transferAgain.idempotent,true,'replay reports idempotent');
+  eq(transferAgain.provider_money_moved,false,'budget move is never a provider payment');
+  eq(await rowCount('profile_budget_transfers'),1,'replay has just one transfer');
+  for(const [label,fn] of [
+    ['amount',()=>transfer('transfer-replay','0.13')],
+    ['source envelope',()=>transfer('transfer-replay','0.12',{sourceEnvelopeId:23,destinationEnvelopeId:22})],
+    ['note',()=>transfer('transfer-replay','0.12',{note:'other instruction'})],
+    ['actor',()=>transfer('transfer-replay','0.12',{actorAccountId:13})]
+  ]){
+    await assert.rejects(fn(),error=>error.status===409,
+      'reused key with different '+label+' must get deliberate 409');
+    assertions++;
+  }
+  await assert.rejects(transfer('transfer-replay','0.12',{
+    accountId:12,sourceEnvelopeId:24,destinationEnvelopeId:23
+  }),error=>error.status===404,'other account must not see or replay transfer');
+  assertions++;
+  eq(await rowCount('profile_budget_transfers'),1,'invalid replays created no transfer');
+
+  const [parallelA,parallelB]=await Promise.all([
+    transfer('transfer-parallel-same','0.21'),
+    transfer('transfer-parallel-same','0.21')
+  ]);
+  eq(Number(parallelA.id),Number(parallelB.id),
+    'concurrent identical transfer instruction resolves to same row');
+  eq(await rowCount('profile_budget_transfers'),2,
+    'identical concurrent calls add exactly one transfer');
+  const conflictingTransfer=await Promise.allSettled([
+    transfer('transfer-parallel-conflict','0.31'),
+    transfer('transfer-parallel-conflict','0.32')
+  ]);
+  eq(conflictingTransfer.filter(x=>x.status==='fulfilled').length,1,
+    'one concurrent conflicting transfer succeeds');
+  eq(conflictingTransfer.filter(x=>x.status==='rejected').length,1,
+    'other concurrent conflicting transfer rejects');
+  eq(conflictingTransfer.find(x=>x.status==='rejected').reason.status,409,
+    'conflict returns controlled 409, not raw 23505');
+  eq(await rowCount('profile_budget_transfers'),3,
+    'conflicting concurrent instructions append one transfer only');
+
+  // A failed audit after both debit/credit ledger rows must roll back the
+  // transfer and both entries as one atomic PostgreSQL transaction.
+  await pool.query(`
+    ALTER TABLE profile_finance_audit_events
+      ADD CONSTRAINT synthetic_transfer_audit_rejection
+      CHECK (NOT (event_code='internal_budget_reallocation'
+        AND detail_json->>'amount'='4.44'))
+  `);
+  const transfersBefore=await rowCount('profile_budget_transfers');
+  const ledgersBefore=await rowCount('profile_budget_entries');
+  const transferAuditsBefore=await rowCount('profile_finance_audit_events');
+  await assert.rejects(transfer('transfer-audit-rollback','4.44'),
+    error=>error.code==='23514','real PostgreSQL transfer audit must fail');
+  assertions++;
+  eq(await rowCount('profile_budget_transfers'),transfersBefore,
+    'audit rejection rolls back transfer row');
+  eq(await rowCount('profile_budget_entries'),ledgersBefore,
+    'audit rejection rolls back both debit and credit ledger entries');
+  eq(await rowCount('profile_finance_audit_events'),transferAuditsBefore,
+    'audit rejection leaves no partial finance audit');
+  await pool.query(
+    'ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_transfer_audit_rejection'
+  );
+  await transfer('transfer-audit-rollback','4.44');
+  eq(await rowCount('profile_budget_transfers'),transfersBefore+1,
+    'valid retry after rollback writes one transfer');
+  eq(await rowCount('profile_budget_entries'),ledgersBefore+2,
+    'valid retry after rollback writes two balanced ledger entries');
+  eq(await rowCount('profile_finance_audit_events'),transferAuditsBefore+1,
+    'valid retry after rollback writes one audit');
 
   console.log('PROFILE_FINANCE_REAL_POSTGRES_871_PASS assertions='+assertions+
     ' database=abl_finance_precision_ci no external payments');
