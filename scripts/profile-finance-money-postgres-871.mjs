@@ -71,7 +71,8 @@ try{
     INSERT INTO profile_budget_envelopes
       (id,account_id,status,profile_role,business_id,currency_code)
       VALUES (22,11,'active','customer',NULL,'PHP'),
-             (23,11,'active','customer',NULL,'PHP');
+             (23,11,'active','customer',NULL,'PHP'),
+             (24,12,'active','customer',NULL,'PHP');
   `);
   // Before any accepted operation, each malformed amount must fail prior to
   // connecting or issuing INSERTs in all five finance write primitives.
@@ -96,6 +97,32 @@ try{
     const replay=await writeBudget(amount,key);
     eq(Number(replay.id),Number(saved.id),'idempotent replay returns same entry');
   }
+  // Reusing a key with a different amount, destination, direction or note
+  // cannot silently report the first posting as a successful new instruction.
+  // The globally unique key also cannot return another account's budget row.
+  for(const [label,attempt] of [
+    ['changed cents',()=>writeBudget('1.24','valid-precision-1')],
+    ['changed envelope',()=>postProfileBudgetEntry(pool,{
+      accountId:11,envelopeId:23,entryKey:'valid-precision-1',amount:'1.23'
+    })],
+    ['changed direction',()=>postProfileBudgetEntry(pool,{
+      accountId:11,envelopeId:22,entryKey:'valid-precision-1',amount:'1.23',
+      direction:'debit'
+    })],
+    ['changed note',()=>postProfileBudgetEntry(pool,{
+      accountId:11,envelopeId:22,entryKey:'valid-precision-1',amount:'1.23',
+      note:'different approval'
+    })]
+  ]){
+    await assert.rejects(attempt(),error=>error.status===409,
+      label+' must not be acknowledged as an idempotent replay');
+    assertions++;
+  }
+  await assert.rejects(postProfileBudgetEntry(pool,{
+    accountId:12,envelopeId:24,entryKey:'valid-precision-1',amount:'1.23'
+  }),error=>error.status===404,
+  'cross-account key collision must not disclose or acknowledge an existing budget row');
+  assertions++;
   eq(await rowCount('profile_budget_entries'),3,'valid requests only three entries');
   eq(await rowCount('profile_finance_audit_events'),3,'valid requests only three audit events');
 

@@ -62,7 +62,7 @@ function budgetStub(expected){
     async query(sql,args=[]){
       calls.push(sql);
       if(sql==='BEGIN'||sql==='COMMIT')return{rowCount:0,rows:[]};
-      if(sql.includes('SELECT * FROM profile_budget_entries WHERE entry_key='))return{rowCount:0,rows:[]};
+      if(sql.includes('FROM profile_budget_entries be')&&sql.includes('WHERE be.entry_key='))return{rowCount:0,rows:[]};
       if(sql.includes('SELECT * FROM profile_budget_envelopes WHERE id='))return{
         rowCount:1,rows:[{id:22,status:'active',profile_role:'customer',business_id:null}]
       };

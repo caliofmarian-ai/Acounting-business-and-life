@@ -578,8 +578,31 @@ export async function postProfileBudgetEntry(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
-    const existing=await client.query('SELECT * FROM profile_budget_entries WHERE entry_key=$1',[key]);
-    if(existing.rowCount){await client.query('COMMIT');return existing.rows[0]}
+    // A replay is valid only for the same account and the same exact-cent
+    // instruction. A globally unique key must never expose another account's
+    // budget row or falsely acknowledge a different amount/envelope.
+    const existing=await client.query(`
+      SELECT be.*, e.account_id AS replay_account_id
+      FROM profile_budget_entries be
+      JOIN profile_budget_envelopes e ON e.id=be.envelope_id
+      WHERE be.entry_key=$1
+    `,[key]);
+    if(existing.rowCount){
+      const prior=existing.rows[0];
+      if(Number(prior.replay_account_id)!==Number(accountId))
+        fail('Budget entry not found in this account',404);
+      if(Number(prior.envelope_id)!==Number(envelopeId)||
+         prior.direction!==direction||prior.entry_type!==entryType||
+         Number(prior.amount)!==value||
+         String(prior.source_type??'')!==clean(sourceType,80)||
+         String(prior.source_id??'')!==clean(sourceId,160)||
+         String(prior.note??'')!==clean(note,500)||
+         Number(prior.actor_account_id)!==Number(actorAccountId||accountId))
+        fail('Idempotency key already belongs to a different budget instruction',409);
+      await client.query('COMMIT');
+      const {replay_account_id,...entry}=prior;
+      return entry;
+    }
     const env=await client.query('SELECT * FROM profile_budget_envelopes WHERE id=$1 AND account_id=$2 FOR UPDATE',[Number(envelopeId),Number(accountId)]);
     if(!env.rowCount)fail('Budget envelope not found',404);
     if(env.rows[0].status!=='active')fail('Budget envelope is inactive',409);
