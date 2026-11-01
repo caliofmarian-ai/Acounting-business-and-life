@@ -183,9 +183,10 @@ async function createOrFind(pool,{order,actor}){
   const row=await pool.query('SELECT * FROM customer_sales_documents WHERE order_id=$1 AND source_sha256=$2',[order.id,hash]);
   return row.rows[0];
 }
-async function queueDocument(pool,{document,actor,requestKey,emit=emitNotificationEvent}){
+async function queueDocument(pool,{document,actor,requestKey,authorize,emit=emitNotificationEvent}){
+  if(typeof authorize!=='function')throw new Error('Current Merchant authorization is required before email queueing');
   const customerId=id(document.customer_account_id),client=await pool.connect();
-  let attempt;
+  let attempt,insertedNew=false;
   try{
     await client.query('BEGIN');
     await client.query('SELECT id FROM customer_sales_documents WHERE id=$1 FOR UPDATE',[document.id]);
@@ -195,9 +196,10 @@ async function queueDocument(pool,{document,actor,requestKey,emit=emitNotificati
     );
     if(existing.rowCount){
       attempt=existing.rows[0];
+      // Idempotency is per sending operator, not a cross-operator lookup token.
+      if(Number(attempt.sent_by_account_id)!==actor)
+        throw err(409,'Request key belongs to another Merchant operator');
       await client.query('COMMIT');
-      // Reusing this exact request key is safe: notification event keys are idempotent.
-      if(attempt.queue_status==='queued')return{attempt,already_queued:true};
     }else{
       const recent=await client.query(`
         SELECT id FROM customer_sales_document_sends
@@ -211,12 +213,28 @@ async function queueDocument(pool,{document,actor,requestKey,emit=emitNotificati
         VALUES($1,$2,$3,$4,$5) RETURNING *
       `,[document.id,actor,customerId,requestKey,eventKey]);
       attempt=added.rows[0];
+      insertedNew=true;
       await client.query('COMMIT');
     }
   }catch(e){
     await client.query('ROLLBACK').catch(()=>{});
     throw e;
   }finally{client.release()}
+  // The document lock, idempotency lookup and COMMIT may have waited for a
+  // concurrent operation. The earlier route check cannot authorize an email
+  // after a session switch or a revoked Merchant membership during that wait.
+  try{
+    await authorize();
+  }catch(e){
+    // A newly created unsent attempt must not throttle a legitimate operator.
+    // Never mutate an existing attempt: its original sender may be enqueueing.
+    if(insertedNew)await pool.query(
+      "UPDATE customer_sales_document_sends SET queue_status='queue_failed' WHERE id=$1 AND queue_status='pending'",
+      [attempt.id]
+    ).catch(()=>{});
+    throw e;
+  }
+  if(attempt.queue_status==='queued')return{attempt,already_queued:true};
   const message=salesDocumentMessage(document.snapshot_json);
   try{
     const eventId=await emit(pool,{
@@ -319,7 +337,7 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       await requireCurrentSender();
       const document=await createOrFind(pool,{order,actor});
       await requireCurrentSender();
-      const result=await queueDocument(pool,{document,actor,requestKey});
+      const result=await queueDocument(pool,{document,actor,requestKey,authorize:requireCurrentSender});
       res.status(result.already_queued?200:202).json({
         document:documentPublic(document),
         delivery_status:result.attempt.queue_status,
