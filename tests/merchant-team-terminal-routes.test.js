@@ -7,7 +7,8 @@ const secret='test-terminal-session-secret-very-long-for-HMAC';
 const token=crypto.randomBytes(36).toString('base64url');
 const workerId='12ada236-d4ae-4d4f-8410-c2f2b7cbacfa';
 const current=new Date('2026-10-31T10:00:00Z');
-function rig({terminal=true,ai=true,role='order_operator'}={}){
+function rig({terminal=true,ai=true,role='order_operator',sessionActive=()=>true,
+  catalogLoader=null,ordersLoader=null}={}){
  const handlers=new Map(),routes=[];
  const method=verb=>(path,...args)=>{handlers.set(`${verb} ${path}`,args.at(-1));routes.push(`${verb} ${path}`)};
  const app={get:method('GET'),post:method('POST')};
@@ -15,19 +16,24 @@ function rig({terminal=true,ai=true,role='order_operator'}={}){
  const db={async connect(){return{async query(){return{rows:[],rowCount:0}},release(){}}},async query(sql,args=[]){
    calls.push({sql,args});
    const text=String(sql);
-   if(text.includes('FROM merchant_team_terminal_sessions s'))return{rows:[{
+   if(text.includes('FROM merchant_team_terminal_sessions s')){
+     if(!sessionActive())return{rows:[],rowCount:0};
+     return{rows:[{
      session_id:'b46c7223-4d08-4dfa-8aa4-f8667e5a1c21',business_id:7,owner_account_id:31,
      operator_id:workerId,display_name:'Mother',role,is_active:true,operator_revoked:null,
      session_revoked:null,session_expires_at:new Date('2026-10-31T18:00:00Z'),operator_expires_at:null
    }],rowCount:1};
+   }
    return{rows:[],rowCount:0};
  }};
  const config={MERCHANT_TEAM_ENABLED:'1',MERCHANT_TEAM_TERMINAL_ENABLED:terminal?'1':'0',
    ORDER_VOICE_AI_ENABLED:ai?'1':'0'};
  installMerchantTeamTerminalRoutes(app,{db,env:config,requireMerchant:async()=>{throw Object.assign(new Error('Forbidden'),{status:403})},
    secret,pepper:'pin-pepper-for-testing-must-be-long',tokenSecret:'owner-secret-for-testing-must-be-long',now:()=>current,
-   catalogForBusiness:async id=>{calls.push({catalog:id});return[{id:10,name:'Adobo',source_kind:'marketplace_product',selling_price:129,unit_cost:83,inventory_id:981,active:true,available:true}]},
-   listOrdersForBusiness:async id=>{calls.push({orders:id});return[{id:1,order_number:'BL-1',order_status:'preparing',payment_status:'unpaid',total:'129',customer_contact:'private-email'}]},
+   catalogForBusiness:async id=>{calls.push({catalog:id});return catalogLoader?
+     catalogLoader(id):[{id:10,name:'Adobo',source_kind:'marketplace_product',selling_price:129,unit_cost:83,inventory_id:981,active:true,available:true}]},
+   listOrdersForBusiness:async id=>{calls.push({orders:id});return ordersLoader?
+     ordersLoader(id):[{id:1,order_number:'BL-1',order_status:'preparing',payment_status:'unpaid',total:'129',customer_contact:'private-email'}]},
    interpretTurn:async()=>({operations:[{action:'readback'}]}),
    applyTurn:({businessId,sessionId,previousDraft})=>({draft:previousDraft||{business_id:businessId,session_id:sessionId,lines:[]}}),
    chargeAiQuota:async()=>{},quoteForDraft:async()=>({status:'quote_only',quote:{total_centavos:12900}})
@@ -148,4 +154,42 @@ test('staff Catalog exposes sellable options but never supplier costs or private
  assert.equal(product.variants[0].price_override,30);
  assert.equal(product.modifier_groups[0].options[0].name,'Oat milk');
  assert.doesNotMatch(JSON.stringify(product),/unit_cost|inventory_id|private_cost|business_id/);
+});
+test('revoking an operator during a pending Catalog read suppresses the late private result',async()=>{
+ let active=true,entered,release;
+ const started=new Promise(resolve=>{entered=resolve});
+ const gate=new Promise(resolve=>{release=resolve});
+ const {request,calls}=rig({sessionActive:()=>active,catalogLoader:async()=>{
+   entered();await gate;
+   return[{id:10,name:'private-product-after-revocation',selling_price:129,active:true,available:true}];
+ }});
+ const pending=request('GET','/api/orders/operator/catalog');
+ await started;
+ active=false;
+ release();
+ const r=await pending;
+ assert.equal(r.status,401);
+ assert.equal(r.data.code,'OPERATOR_SESSION_REQUIRED');
+ assert.doesNotMatch(JSON.stringify(r.data),/private-product-after-revocation/);
+ assert.equal(calls.filter(x=>String(x.sql||'').includes('FROM merchant_team_terminal_sessions s')).length,2,
+   'the second authorization check follows the awaited Catalog read');
+});
+test('revoking an operator during a pending Orders read suppresses the late private result',async()=>{
+ let active=true,entered,release;
+ const started=new Promise(resolve=>{entered=resolve});
+ const gate=new Promise(resolve=>{release=resolve});
+ const {request,calls}=rig({sessionActive:()=>active,ordersLoader:async()=>{
+   entered();await gate;
+   return[{id:22,order_number:'private-order-after-revocation',order_status:'preparing',total:129}];
+ }});
+ const pending=request('GET','/api/orders/operator/orders');
+ await started;
+ active=false;
+ release();
+ const r=await pending;
+ assert.equal(r.status,401);
+ assert.equal(r.data.code,'OPERATOR_SESSION_REQUIRED');
+ assert.doesNotMatch(JSON.stringify(r.data),/private-order-after-revocation/);
+ assert.equal(calls.filter(x=>String(x.sql||'').includes('FROM merchant_team_terminal_sessions s')).length,2,
+   'the second authorization check follows the awaited Orders read');
 });

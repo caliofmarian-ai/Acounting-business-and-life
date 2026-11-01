@@ -165,6 +165,8 @@ export function installMerchantTeamTerminalRoutes(app,{
   app.get('/api/orders/operator/catalog',response(async req=>{
     const state=await requireSession(req,'orders.voice_draft');
     const catalog=staffOrderCatalog(await catalogForBusiness(state.business_id));
+    // A staff session may be disabled while the private Catalog query is in flight.
+    await requireSession(req,'orders.voice_draft');
     return{business_id:state.business_id,operator_id:state.operator_id,
       products:catalog};
   }));
@@ -172,6 +174,8 @@ export function installMerchantTeamTerminalRoutes(app,{
     const state=await requireSession(req,'orders.read');
     if(typeof listOrdersForBusiness!=='function')throw failure(503,'OPERATOR_TERMINAL_UNAVAILABLE','Orders are not available.');
     const orders=await listOrdersForBusiness(state.business_id);
+    // Do not return delayed private Orders data after operator revocation.
+    await requireSession(req,'orders.read');
     return{business_id:state.business_id,orders:orders.map(o=>({id:Number(o.id),
       order_number:String(o.order_number||''),order_status:String(o.order_status||''),
       payment_status:String(o.payment_status||''),total:Number(o.total||0)}))};
