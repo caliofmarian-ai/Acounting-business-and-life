@@ -69,6 +69,8 @@ jobs:
           node-version: '20'
       - run: npm install --global npm@10.8.2
       - run: npm ci
+      - name: Verify late-revocation staff route regressions on literal PR head
+        run: node --test tests/merchant-team-terminal-routes.test.js
       - name: Start real application on disposable PostgreSQL
         run: |
           npm start > /tmp/abl-terminal-http.log 2>&1 &
