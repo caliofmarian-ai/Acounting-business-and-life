@@ -190,8 +190,11 @@ function documentRouteHarness({pool,identity}){
       status(){return this},
       type(){return this}
     };
-    await registered['/api/notifications/order-sales-documents'+path](
-      {headers:{},query:{},params:{id:'72'},...req},res,e=>{error=e});
+    const base='/api/notifications/order-sales-documents';
+    const handler=registered[base+path]||
+      registered[base+(path.endsWith('/print')?'/:id/print':'/:id')];
+    if(typeof handler!=='function')throw new Error('Missing document test route: '+path);
+    await handler({headers:{},query:{},params:{id:'72'},...req},res,e=>{error=e});
     return{error,response};
   };
 }
