@@ -100,6 +100,36 @@ test('startup removes legacy Merchant cache while successful reads never persist
   await warm(h);assert.deepEqual(h.writes,[]);assert.deepEqual([...h.storage], [['preference','keep']]);
 });
 
+test('Stock menu does not fetch on tab navigation; each opened tool loads only its own data',async()=>{
+  const h=harness();
+  const navigate=h.installLoader('loadMerchantView');
+  await navigate('Stock');
+  assert.equal(h.requests.length,0,'opening Stock must not trigger Inventory or advanced reads');
+
+  const inventoryOnly=h.api.load({tool:'inventory'});
+  assert.equal(h.requests.length,1);
+  assert.equal(h.requests[0].path,'/api/inventory');
+  await h.respond(0,inventoryRows(1));await inventoryOnly;
+  assert.equal(h.nested.some(x=>['lots','restock','locations','allergens','count','rules','waste'].includes(x.name)),false);
+  assert.equal(h.mutationsDisabled(),false);
+
+  h.nested.length=0;
+  const lots=h.api.load({tool:'lots'});
+  assert.equal(h.requests.length,2);
+  await h.respond(1,inventoryRows(1));await lots;
+  assert.ok(h.nested.some(x=>x.name==='lots'),'opening Lots loads its own details');
+  assert.equal(h.nested.some(x=>['restock','locations','allergens','count','rules','waste'].includes(x.name)),false);
+  assert.equal(h.mutationsDisabled(),false);
+
+  h.nested.length=0;
+  const restock=h.api.load({tool:'restock'});
+  assert.equal(h.requests.length,3);
+  await h.respond(2,inventoryRows(1));await restock;
+  assert.ok(h.nested.some(x=>x.name==='restock'),'opening Restock loads the supplier suggestions');
+  assert.equal(h.nested.some(x=>['lots','locations','allergens','count','rules','waste'].includes(x.name)),false);
+  assert.equal(h.writes.length,0,'no account data or credentials persisted');
+});
+
 test('only explicit same-context transport fallback returns an independent page-local Inventory snapshot',async()=>{
   const h=harness(),original=await warm(h);original[0].item='Mutated caller object';
   const stamps=[],offline=h.api.read('/api/inventory','inventory',{offline:true,onCache:stamp=>stamps.push(stamp)});
