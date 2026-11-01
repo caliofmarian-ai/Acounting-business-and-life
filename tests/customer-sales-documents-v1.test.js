@@ -44,7 +44,7 @@ test('Merchant completed an unpaid order: show order summary, never paid',()=>{
 
 test('Cannot issue purchase document for a cancelled order or unfinalized unpaid order',()=>{
   assert.throws(()=>commercialOrderDocument({...makeOrder(),order_status:'cancelled'}),/Cancelled orders/);
-  assert.throws(()=>commercialOrderDocument({...makeOrder(),order_status:'awaiting_payment',paid_amount:0}),/after recorded payment or order completion/);
+  assert.throws(()=>commercialOrderDocument({...makeOrder(),order_status:'awaiting_payment',paid_amount:0,outstanding_amount:145}),/after recorded payment or order completion/);
   assert.throws(()=>commercialOrderDocument({...makeOrder(),customer_account_id:null}),/Customer account/);
 });
 
