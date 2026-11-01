@@ -172,7 +172,17 @@ export function guardNewPaidStockIntakeRow(row,inventory){
   row.selected=false;
   const error=new Error('Selected item appeared in live Inventory after paid-total confirmation. No purchase was submitted for this item. Stop and reconcile the entire Stock and Money batch before any further posting.');
   error.paidBatchConflict=true;
+  error.conflictRow=row;
   throw error;
+}
+
+// A human approves one complete paid batch. A duplicate in a later selected
+// line must stop the batch BEFORE any earlier line is durably posted. This is
+// only a preflight safety check; server-side atomicity/idempotency is still
+// required to eliminate races with other devices.
+export function guardNewPaidStockIntakeBatch(rows,inventory){
+  for(const row of rows)guardNewPaidStockIntakeRow(row,inventory);
+  return true;
 }
 
 const hasDocument=typeof document!=='undefined';
@@ -454,15 +464,24 @@ if(hasDocument){
     const paidFrom=$('purchaseAccount').value,originalDate=$('purchaseDate').value;
     const pending=state.rows.filter(row=>row.selected&&validStockIntakeRow(row));
     let saved=0;
+    let initialBatchChecked=false;
     for(const row of pending){
       if(state.stop)break;
+      let purchaseDispatched=false;
       try{
         await assertLiveContext();
         if(!sameContext(originalContext,state.context))throw new Error('Merchant context changed.');
-        // Existing-name checks stop this row rather than silently increasing stock.
+        if(!initialBatchChecked){
+          // Check ALL approved items before submitting even the first expense.
+          guardNewPaidStockIntakeBatch(pending,state.inventory);
+          initialBatchChecked=true;
+        }
+        // Recheck each item as the import progresses (other devices may write).
         guardNewPaidStockIntakeRow(row,state.inventory);
         if(!validStockIntakeRow(row))throw new Error('Stock quantity, unit, cost or review confirmation is not valid.');
         row.result='posting';renderRows();
+        // From this point an interrupted response is uncertain; never auto-retry.
+        purchaseDispatched=true;
         // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
         const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({
           item:row.item,inventory_domain:'food',stock_role:'ingredient',inventory_type:'ingredient',
@@ -502,11 +521,19 @@ if(hasDocument){
       }catch(error){
         // No automatic retry: the server endpoint has no request-key idempotency.
         if(error?.paidBatchConflict){
-          row.result='error';
-          row.error='NOT POSTED: '+error.message;
+          const conflictRow=error.conflictRow||row;
+          conflictRow.result='error';
+          conflictRow.error='NOT POSTED: '+error.message;
+          revokeBatchConfirmations();
         }else if(row.result==='saved-date-pending'){
           row.error='STOCK AND EXPENSE ARE SAVED, but the original payment date could not be confirmed: '+
             (error?.message||'Unknown error')+'. Correct expense date in Money; do NOT post the stock purchase again.';
+        }else if(!purchaseDispatched){
+          // Validation, business recheck or a duplicate stopped BEFORE any POST.
+          row.result='error';
+          row.error='NOT POSTED: '+(error?.message||'Unknown error')+
+            '. No purchase request was sent for this item. Refresh context and re-confirm the paid batch.';
+          revokeBatchConfirmations();
         }else{
           row.result='uncertain';row.error='STOPPED: '+(error?.message||'Unknown error')+
             '. The request may have reached production; reconcile both Stock and Money before any retry.';

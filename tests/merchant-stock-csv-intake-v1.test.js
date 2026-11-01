@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
-  reviseStockIntakeRow,guardNewPaidStockIntakeRow,csvReadIsCurrent,preserveIntakeReviewForMerchant,
+  reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations
 } from '../public/merchant-stock-csv-intake.js';
 
@@ -276,4 +276,42 @@ test('paid-batch selection and reviewed-row edits revoke BOTH physical and Money
   for(const field of ['quantity','unit','total']){
     assert.ok(js.includes("if(reviseStockIntakeRow(row,'"+field+"',value))revokeBatchConfirmations()"));
   }
+});
+
+test('a duplicate in a later selected line stops the entire paid batch before the first POST',()=>{
+  const rows=parseStockIntakeCsv([
+    'item,proposed_quantity,proposed_unit,screenshot_line_php',
+    'Rice,2,kg,120',
+    'Fish balls,3,kg,345'
+  ].join('\n'));
+  rows.forEach(row=>{row.selected=true});
+  assert.equal(guardNewPaidStockIntakeBatch(rows,[]),true);
+  assert.throws(
+    ()=>guardNewPaidStockIntakeBatch(rows,[{id:88,item:' FISH  BALLS ',quantity:1}]),
+    error=>error.paidBatchConflict===true&&error.conflictRow===rows[1]
+  );
+  assert.equal(rows[0].selected,true,'earlier item has not been posted or silently deselected');
+  assert.equal(rows[0].result,'pending');
+  assert.equal(rows[1].selected,false,'conflicting later item needs fresh review');
+  assert.equal(rows[1].exists.id,88);
+  assert.ok(js.includes('guardNewPaidStockIntakeBatch(pending,state.inventory)'));
+  assert.ok(
+    js.indexOf('guardNewPaidStockIntakeBatch(pending,state.inventory)') <
+    js.indexOf("const result=await api('/api/inventory/purchase'"),
+    'whole-batch preflight precedes any item POST'
+  );
+  assert.match(js,/if\(!initialBatchChecked\)/);
+  assert.match(js,/guardNewPaidStockIntakeRow\(row,state\.inventory\)/,
+    'each subsequent item still gets a fresh live duplicate check');
+});
+
+test('errors before purchase dispatch are NOT POSTED, while interrupted POST remains uncertain',()=>{
+  assert.match(js,/let purchaseDispatched=false;/);
+  assert.match(js,/purchaseDispatched=true;\s*\/\/ Canonical atomic purchase/);
+  assert.match(js,/else if\(!purchaseDispatched\)\{/);
+  assert.match(js,/No purchase request was sent for this item/);
+  assert.match(js,/else\{\s*row\.result='uncertain'/);
+  assert.match(js,/const conflictRow=error\.conflictRow\|\|row;/);
+  assert.match(js,/conflictRow\.result='error';/);
+  assert.match(js,/revokeBatchConfirmations\(\);\s*\}else if\(row\.result==='saved-date-pending'\)/);
 });
