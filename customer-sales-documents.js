@@ -99,6 +99,17 @@ export function salesDocumentMessage(snapshot){
     document_disclaimer:'This is a commercial order/payment record, not a BIR tax invoice.'
   };
 }
+// Philippines documents must show civil time in Asia/Manila, not raw UTC.
+// Preserve the source ISO evidence in the immutable snapshot for audit.
+const philippineDocumentTime=value=>{
+  const date=typeof value==='string'&&value.trim()?new Date(value):null;
+  if(!date||!Number.isFinite(date.getTime()))return 'Date unavailable';
+  const local=new Intl.DateTimeFormat('en-GB',{
+    timeZone:'Asia/Manila',day:'2-digit',month:'short',year:'numeric',
+    hour:'2-digit',minute:'2-digit',hourCycle:'h23'
+  }).format(date);
+  return local+' PHT (UTC+08:00)';
+};
 export function salesDocumentPrintHtml(snapshot){
   const esc=cleanHtml,mon=v=>esc(snapshot.currency_code)+' '+money(v,'Saved document amount').toFixed(2);
   const lines=snapshot.items.map(item=>
@@ -107,7 +118,7 @@ export function salesDocumentPrintHtml(snapshot){
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Order '+esc(snapshot.order_number)+'</title>'+
     '<style>body{font-family:system-ui,Arial;max-width:740px;margin:30px auto;padding:16px;color:#182633}h1{margin:0 0 6px;font-size:24px}small{color:#52606e}table{width:100%;border-collapse:collapse;margin-top:18px}td,th{padding:10px 6px;border-bottom:1px solid #e5ebee;text-align:left}th:last-child,td:last-child{text-align:right}.totals{text-align:right;margin:16px 0}.disclaimer{border-top:1px solid #dae2e6;padding:14px 0;color:#566475;font-size:13px}@media print{body{margin:0;padding:0}}</style></head><body>'+
     '<h1>'+esc(snapshot.document_class==='payment_record'?'Merchant payment record':'Order summary')+'</h1>'+
-    '<p><strong>'+esc(snapshot.business_name)+'</strong><br>Order '+esc(snapshot.order_number)+'<br><small>Order date: '+esc(snapshot.created_at)+'<br>Record date: '+esc(snapshot.document_created_at)+'</small></p>'+
+    '<p><strong>'+esc(snapshot.business_name)+'</strong><br>Order '+esc(snapshot.order_number)+'<br><small>Order date: '+esc(philippineDocumentTime(snapshot.created_at))+'<br>Record date: '+esc(philippineDocumentTime(snapshot.document_created_at))+'</small></p>'+
     '<table><thead><tr><th>Product</th><th>Qty</th><th>Unit</th><th>Line</th></tr></thead><tbody>'+lines+'</tbody></table>'+
     '<div class="totals"><p>Merchandise: '+mon(snapshot.subtotal)+'</p><p>Delivery: '+mon(snapshot.delivery_fee)+'</p><p><strong>Total: '+mon(snapshot.total)+'</strong></p><p>Merchant-recorded payment: '+mon(snapshot.merchant_recorded_payment)+'</p><p>Outstanding: '+mon(snapshot.amount_due)+'</p></div>'+
     '<div class="disclaimer">'+esc(snapshot.disclaimer)+'<p>Recorded payment is not independently verified bank settlement. This document does not create or modify an accounting transaction.</p></div></body></html>';

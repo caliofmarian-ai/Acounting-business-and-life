@@ -56,6 +56,21 @@ test('Economic snapshot digest stays constant across document generation timesta
   assert.notEqual(orderDocumentDigest(a),orderDocumentDigest(c));
 });
 
+test('Printable order and record timestamps use Asia/Manila and preserve date rollover',()=>{
+  const snapshot=commercialOrderDocument(makeOrder(),new Date('2026-10-30T08:00:00.000Z'));
+  const html=salesDocumentPrintHtml(snapshot);
+  assert.match(html,/Order date: 30 Oct 2026, 14:00 PHT \(UTC\+08:00\)/);
+  assert.match(html,/Record date: 30 Oct 2026, 16:00 PHT \(UTC\+08:00\)/);
+  assert.doesNotMatch(html,/2026-10-30T06:00:00Z/);
+  assert.equal(snapshot.created_at,'2026-10-30T06:00:00Z','immutable source time stays UTC');
+  const nextDay=commercialOrderDocument({...makeOrder(),created_at:'2026-12-31T20:00:00Z'},
+    new Date('2026-12-31T20:30:00Z'));
+  assert.match(salesDocumentPrintHtml(nextDay),/Order date: 01 Jan 2027, 04:00 PHT/);
+  const invalid=salesDocumentPrintHtml({...snapshot,created_at:'<script>alert(1)</script>'});
+  assert.match(invalid,/Order date: Date unavailable/);
+  assert.doesNotMatch(invalid,/<script>/);
+});
+
 test('Printable Customer document escapes untrusted Merchant and Inventory text',()=>{
   const x=commercialOrderDocument({
     ...makeOrder(),business_name:'<script>alert(1)</script>',
