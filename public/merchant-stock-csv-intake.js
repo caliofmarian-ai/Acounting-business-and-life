@@ -159,6 +159,12 @@ export function reviseStockIntakeRow(row,field,raw){
 // Client preflight is not a server-side idempotency or create-only guarantee.
 // If one selected item becomes present, STOP the full paid batch; continuing
 // the remaining purchases would no longer reconcile to the confirmed total.
+// A human-confirmed paid batch is bound to its exact rows. Re-selecting even
+// equal-priced items changes the physical and ledger evidence being approved.
+export function revokePaidBatchConfirmations(physicalCheckbox,moneyCheckbox){
+  physicalCheckbox.checked=false;
+  moneyCheckbox.checked=false;
+}
 export function guardNewPaidStockIntakeRow(row,inventory){
   const existing=findExistingInventory(row,inventory);
   if(!existing)return true;
@@ -208,7 +214,16 @@ if(hasDocument){
     return Boolean(state.context&&NORMALIZE($('businessName').value)===NORMALIZE(state.context.businessName));
   }
   function refreshExisting(){
-    state.rows.forEach(row=>{row.exists=findExistingInventory(row,state.inventory)});
+    let membershipChanged=false;
+    state.rows.forEach(row=>{
+      const wasExisting=Boolean(row.exists);
+      row.exists=findExistingInventory(row,state.inventory);
+      if(Boolean(row.exists)!==wasExisting){
+        row.selected=false;
+        membershipChanged=true;
+      }
+    });
+    if(membershipChanged)revokeBatchConfirmations();
   }
   function renderBusiness(){
     $('businessCheck').classList.toggle('hidden',!state.context);
@@ -218,6 +233,9 @@ if(hasDocument){
         '. No stock has been changed.','ok');
     }
     updateControls();
+  }
+  function revokeBatchConfirmations(){
+    revokePaidBatchConfirmations($('physicalConfirm'),$('moneyConfirm'));
   }
   function resetIntakeReviewFields(){
     $('csv').value='';
@@ -315,20 +333,20 @@ if(hasDocument){
         ' '+String(row.exists.unit||'')+'). This tool will NOT add it again. Use ordinary Stock receiving if this is a distinct new purchase.'));
       const columns=element('div','columns');
       columns.appendChild(createField('Physically confirmed quantity',row.quantity,{step:'0.0001'},value=>{
-        reviseStockIntakeRow(row,'quantity',value);renderRows();
+        if(reviseStockIntakeRow(row,'quantity',value))revokeBatchConfirmations();renderRows();
       }));
       columns.appendChild(createField('Unit',row.unit,{choices:['kg','g','L','ml','unit']},value=>{
-        reviseStockIntakeRow(row,'unit',value);renderRows();
+        if(reviseStockIntakeRow(row,'unit',value))revokeBatchConfirmations();renderRows();
       }));
       columns.appendChild(createField('Value of stock to add (₱)',row.total,{step:'0.01'},value=>{
-        reviseStockIntakeRow(row,'total',value);renderRows();
+        if(reviseStockIntakeRow(row,'total',value))revokeBatchConfirmations();renderRows();
       }));
       item.appendChild(columns);
       if(row.requiresReview){
         const label=element('label','check');
         const check=document.createElement('input');check.type='checkbox';
         check.checked=row.reviewConfirmed;check.disabled=state.busy||row.result!=='pending';
-        check.addEventListener('change',()=>{row.reviewConfirmed=check.checked;renderRows()});
+        check.addEventListener('change',()=>{row.reviewConfirmed=check.checked;revokeBatchConfirmations();renderRows()});
         label.append(check,element('span','',
           'I verified the unclear amount, pack size or quantity against the actual goods. Accept this corrected value.'));
         item.appendChild(label);
@@ -336,7 +354,7 @@ if(hasDocument){
       const select=element('label','check');
       const check=document.createElement('input');check.type='checkbox';check.checked=row.selected;
       check.disabled=state.busy||row.result!=='pending'||Boolean(row.exists);
-      check.addEventListener('change',()=>{row.selected=check.checked;updateControls()});
+      check.addEventListener('change',()=>{if(row.selected!==check.checked){row.selected=check.checked;revokeBatchConfirmations()}updateControls()});
       select.append(check,element('span','',row.result==='saved'?'Saved to Merchant Stock and Money':
         row.exists?'Not selected — existing stock detected':'Include this item in the approved stock batch'));
       item.appendChild(select);
@@ -520,9 +538,20 @@ if(hasDocument){
   $('post').addEventListener('click',saveSelected);
   $('stop').addEventListener('click',()=>{state.stop=true;message('results','Stopping after the active purchase request finishes. No next item will be sent.','error')});
   $('selectSafe').addEventListener('click',()=>{
-    state.rows.forEach(r=>{if(r.result==='pending'&&!r.exists&&!r.requiresReview&&validStockIntakeRow({...r,selected:true}))r.selected=true});
+    let changed=false;
+    state.rows.forEach(r=>{
+      if(!r.selected&&r.result==='pending'&&!r.exists&&!r.requiresReview&&validStockIntakeRow({...r,selected:true})){
+        r.selected=true;changed=true;
+      }
+    });
+    if(changed)revokeBatchConfirmations();
     renderRows();
   });
-  $('clearSelection').addEventListener('click',()=>{state.rows.forEach(r=>{if(r.result==='pending')r.selected=false});renderRows()});
+  $('clearSelection').addEventListener('click',()=>{
+    let changed=false;
+    state.rows.forEach(r=>{if(r.result==='pending'&&r.selected){r.selected=false;changed=true}});
+    if(changed)revokeBatchConfirmations();
+    renderRows();
+  });
   refreshContext();
 }

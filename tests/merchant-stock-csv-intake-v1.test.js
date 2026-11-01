@@ -4,7 +4,8 @@ import {readFileSync} from 'node:fs';
 import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
-  reviseStockIntakeRow,guardNewPaidStockIntakeRow,csvReadIsCurrent,preserveIntakeReviewForMerchant
+  reviseStockIntakeRow,guardNewPaidStockIntakeRow,csvReadIsCurrent,preserveIntakeReviewForMerchant,
+  revokePaidBatchConfirmations
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -249,4 +250,30 @@ test('older Merchant refresh and pending file reads cannot resurrect prior login
   assert.ok(js.includes("$('rows').replaceChildren();"));
   assert.ok(js.includes("$('businessName').value='';"));
   assert.ok(js.includes("$('moneyConfirm').checked=false;"));
+});
+
+test('paid-batch selection and reviewed-row edits revoke BOTH physical and Money approvals even at the same total',()=>{
+  const first=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nRice,2,kg,120')[0];
+  const replacement=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nBeans,2,kg,120')[0];
+  first.selected=true;
+  const physical={checked:true},money={checked:true};
+  assert.equal(first.total,replacement.total,'equal-PHP substitutions could otherwise retain reconciliation');
+  first.selected=false;replacement.selected=true;
+  revokePaidBatchConfirmations(physical,money);
+  assert.equal(physical.checked,false,'new physical counts require new explicit approval');
+  assert.equal(money.checked,false,'equal-PHP substitutes require fresh duplicate-expense approval');
+  physical.checked=true;money.checked=true;
+  reviseStockIntakeRow(replacement,'quantity','3');
+  revokePaidBatchConfirmations(physical,money);
+  assert.equal(physical.checked,false);
+  assert.equal(money.checked,false);
+  // Actual page wiring: manual selection, mass-select, clear, review change,
+  // material edits and Inventory membership changes must revoke both fields.
+  assert.match(js,/row\.selected!==check\.checked\)\{row\.selected=check\.checked;revokeBatchConfirmations\(\)/);
+  assert.match(js,/if\(changed\)revokeBatchConfirmations\(\);/);
+  assert.match(js,/if\(membershipChanged\)revokeBatchConfirmations\(\);/);
+  assert.match(js,/row\.reviewConfirmed=check\.checked;revokeBatchConfirmations\(\)/);
+  for(const field of ['quantity','unit','total']){
+    assert.ok(js.includes("if(reviseStockIntakeRow(row,'"+field+"',value))revokeBatchConfirmations()"));
+  }
 });
