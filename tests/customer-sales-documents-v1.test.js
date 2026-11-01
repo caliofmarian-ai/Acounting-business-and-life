@@ -335,8 +335,8 @@ test('Merchant document detail/print recheck binding after slow private lookup',
   }
 });
 
-function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81}={}){
-  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0,queuePendingMarks:0};
+function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81,recipient=()=>({email:'verified@example.test',email_verified_at:'2026-10-30'})}={}){
+  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0,queuePendingMarks:0,recipientReads:0};
   const order=makeOrder(),snapshot=commercialOrderDocument(order);
   const pool={
     query:async sql=>{
@@ -352,7 +352,7 @@ function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,au
         return{rowCount:0,rows:[]};
       if(sql.includes('SELECT email,email_verified_at FROM accounts')){
         if(holdEmail){holdEmail.onRead();await holdEmail.wait;}
-        return{rowCount:1,rows:[{email:'verified@example.test',email_verified_at:'2026-10-30'}]};
+        return{rowCount:1,rows:[recipient(++state.recipientReads)]};
       }
       if(sql.includes('INSERT INTO customer_sales_documents')){
         state.documentWrites++;
@@ -463,6 +463,43 @@ test('Account switch during locked send queue wait fails before emitting Custome
   assert.equal(result.response,null);
   assert.equal(state.identities,4);
   assert.equal(state.queueStarts,1);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Recipient verification revoked during email queue row lock prevents dispatch',async()=>{
+  const hold=heldQuery();
+  let verified=true;
+  const {state,send}=sendRevocationHarness({
+    holdQueue:hold,
+    recipient:()=>({email:'verified@example.test',email_verified_at:verified?'2026-10-30':null})
+  });
+  const pending=send();
+  await hold.started;
+  verified=false;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.match(result.error.message,/verified email changed/);
+  assert.equal(result.response,null);
+  assert.equal(state.recipientReads,4);
+  assert.equal(state.queuePendingMarks,1);
+});
+
+test('Recipient email changed to another verified address during row lock prevents dispatch',async()=>{
+  const hold=heldQuery();
+  let email='verified@example.test';
+  const {state,send}=sendRevocationHarness({
+    holdQueue:hold,
+    recipient:()=>({email,email_verified_at:'2026-10-30'})
+  });
+  const pending=send();
+  await hold.started;
+  email='new-verified@example.test';
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.equal(result.response,null);
+  assert.equal(state.recipientReads,4);
   assert.equal(state.queuePendingMarks,1);
 });
 

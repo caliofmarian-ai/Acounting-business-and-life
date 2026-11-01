@@ -355,12 +355,20 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       if(!order||Number(order.business_id)!==businessId)throw err(404,'Order not found for this Merchant');
       if(!order.customer_account_id)throw err(422,'Only registered Customers may receive an email document');
       const customer=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
-      if(!customer.rowCount||!customer.rows[0].email_verified_at||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(short(customer.rows[0].email,200)))throw err(409,'Customer verified email is required for receipt email');
-      // Order/email reads and document insertion can await DB I/O while a Merchant
-      // loses their session or business access. Never queue an email for that stale actor.
+      const verifiedRecipientEmail=String(customer.rows[0]?.email??'').trim();
+      if(!customer.rowCount||!customer.rows[0].email_verified_at||
+        verifiedRecipientEmail.length>200||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verifiedRecipientEmail))
+        throw err(409,'Customer verified email is required for receipt email');
+      // Merchant authority AND the intended Customer's verified email must remain
+      // unchanged across document inserts and a potentially long queue row-lock wait.
+      // The notification worker still independently controls eventual delivery.
       const requireCurrentSender=async()=>{
         await requireCurrentDocumentReader(req,identity,actor,pool);
         await requireMerchantBusiness(pool,actor,businessId);
+        const current=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
+        if(!current.rowCount||!current.rows[0].email_verified_at||
+          String(current.rows[0].email??'').trim()!==verifiedRecipientEmail)
+          throw err(409,'Customer verified email changed; reopen documents before sending');
       };
       await requireCurrentSender();
       const document=await createOrFind(pool,{order,actor});
