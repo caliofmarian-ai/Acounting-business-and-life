@@ -350,6 +350,6 @@ test('auth-expired and pagehide dispatches block stale POST and date correction 
   assert.match(js,/await assertLiveContext\(\);\s*if\(!requireCurrent\(\)\)break;/);
   assert.match(js,/await assertMerchantContext\(\);\s*if\(!requireCurrent\(\)\)break;/);
   assert.match(js,/\}catch\(error\)\{\s*if\(!requireCurrent\(\)\)break;/);
-  assert.match(js,/\}\)\);\s*if\(!requireCurrent\(\)\)break;\s*if\(!result\?\.inventory\?\.id/);
+  assert.ok(js.includes("        })});\n        if(!requireCurrent())break;\n        if(!result?.inventory?.id"));
   assert.match(js,/state\.busy=false;\s*if\(!requireCurrent\(\)\)\{updateControls\(\);return;\}/);
 });
