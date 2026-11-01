@@ -18,10 +18,21 @@ const money=(value,label='Amount')=>{
     throw err(409,label+' monetary evidence is invalid');
   return cents/100;
 };
+// Order line quantity is NUMERIC(12,3). Do not coerce booleans, hex, exponent
+// notation or overprecision values into immutable commercial evidence.
+const orderQuantity=value=>{
+  if(typeof value!=='number'&&typeof value!=='string')throw err(409,'Order quantity evidence is invalid');
+  const raw=String(value);
+  if(!/^(?:0|[1-9]\d{0,8})(?:\.\d{1,3})?$/.test(raw))throw err(409,'Order quantity evidence is invalid');
+  const n=Number(raw);
+  if(!Number.isFinite(n)||n<=0)throw err(409,'Order quantity evidence is invalid');
+  return n;
+};
 const short=(v,max=250)=>String(v??'').trim().slice(0,max);
 const cleanHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+// Idempotency keys must never be truncated: distinct requests must not alias.
 const clientKey=value=>{
-  const key=short(value,100);
+  const key=typeof value==='string'?value.trim():'';
   if(!/^[a-zA-Z0-9_-]{12,100}$/.test(key))throw err(400,'client_request_key is required for safe email retries');
   return key;
 };
@@ -40,11 +51,11 @@ export function commercialOrderDocument(order,clock=new Date()){
   const items=(order.items||[]).map(item=>({
     item_id:id(item.id,'Order line'),
     name:short(item.name_snapshot,200),
-    quantity:Number(item.quantity),
+    quantity:orderQuantity(item.quantity),
     unit_price:money(item.unit_price_snapshot),
     line_total:money(item.line_total)
   }));
-  if(!items.length||items.some(item=>!Number.isFinite(item.quantity)||item.quantity<=0))throw err(409,'Order line item evidence is unavailable');
+  if(!items.length)throw err(409,'Order line item evidence is unavailable');
   const kind=paid>0?'payment_record':'order_summary';
   return {
     document_class:kind,fiscal_status:'internal_evidence',jurisdiction:'PH',

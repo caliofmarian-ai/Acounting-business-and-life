@@ -144,6 +144,41 @@ test('Exact-cent full, partial, unpaid and zero-cost completed orders remain non
   assert.equal(zero.total,0);
 });
 
+
+test('Order item quantities preserve NUMERIC(12,3) values without coercion or precision loss',()=>{
+  for(const valid of ['2','0.125',0.125,'999999999.999']){
+    const snapshot=commercialOrderDocument({...makeOrder(),
+      items:[{...makeOrder().items[0],quantity:valid}]});
+    assert.equal(snapshot.items[0].quantity,Number(valid));
+  }
+  for(const invalid of [null,undefined,true,false,NaN,Infinity,'',' 2 ','0x10','1e3',
+    '+2','01.000','0','0.000','0.0001','1.0000','1000000000','-1',[],{}]){
+    assert.throws(()=>commercialOrderDocument({...makeOrder(),
+      items:[{...makeOrder().items[0],quantity:invalid}]}),
+    /Order quantity evidence is invalid/,'quantity = '+String(invalid));
+  }
+});
+
+test('Receipt idempotency keys never truncate or coerce into an existing retry key',async()=>{
+  let dbReads=0;
+  const run=documentRouteHarness({
+    identity:async()=>({account:{id:81}}),
+    pool:{query:async()=>{dbReads++;throw Error('Merchant database gate reached')}}
+  });
+  for(const invalid of ['a'.repeat(101),'a'.repeat(100)+'b',123456789012345,{}]){
+    const result=await run('/orders/123/send',{params:{id:'123'},
+      body:{business_id:44,client_request_key:invalid}});
+    assert.equal(result.error?.status,400);
+    assert.match(result.error?.message||'',/client_request_key/);
+    assert.equal(result.response,null);
+  }
+  assert.equal(dbReads,0,'invalid keys must not initiate business reads');
+  const valid=await run('/orders/123/send',{params:{id:'123'},
+    body:{business_id:44,client_request_key:'a'.repeat(100)}});
+  assert.match(valid.error?.message||'',/Merchant database gate reached/);
+  assert.equal(dbReads,1,'a valid 100-character key reaches authorization');
+});
+
 test('All signed-in document endpoints are no-store and conditional GETs cannot 304',()=>{
   const routes={use:[],get:[],post:[]};
   const app={
