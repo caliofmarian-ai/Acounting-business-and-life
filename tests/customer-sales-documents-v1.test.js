@@ -172,3 +172,110 @@ test('All signed-in document endpoints are no-store and conditional GETs cannot 
   assert.equal(req.headers['if-none-match'],undefined);
   assert.equal(req.headers['if-modified-since'],undefined);
 });
+
+function documentRouteHarness({pool,identity}){
+  const registered={};
+  const app={
+    use(){},
+    get:(path,...handlers)=>{registered[path]=handlers.at(-1)},
+    post:(path,...handlers)=>{registered[path]=handlers.at(-1)}
+  };
+  registerCustomerSalesDocumentRoutes({app,pool,identity,body:(_req,_res,next)=>next()});
+  return async (path,req={})=>{
+    let error=null,response=null;
+    const res={
+      json(v){response=v;return this},
+      send(v){response=v;return this},
+      set(){return this},
+      status(){return this},
+      type(){return this}
+    };
+    await registered['/api/notifications/order-sales-documents'+path](
+      {headers:{},query:{},params:{id:'72'},...req},res,e=>{error=e});
+    return{error,response};
+  };
+}
+function heldQuery(){
+  let started,release;
+  return{
+    started:new Promise(resolve=>{started=resolve}),
+    wait:new Promise(resolve=>{release=resolve}),
+    onRead:()=>started(),
+    release:()=>release()
+  };
+}
+test('Customer private list drops delayed data after account switch',async()=>{
+  const hold=heldQuery();
+  let identityCount=0;
+  const run=documentRouteHarness({
+    identity:async()=>({account:{id:++identityCount===1?81:82}}),
+    pool:{query:async()=>{hold.onRead();await hold.wait;
+      return{rows:[{id:72,order_id:123,business_id:44,customer_account_id:81,snapshot_json:{total:145}}]}}}
+  });
+  const pending=run('/my');
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,401);
+  assert.equal(result.response,null);
+  assert.equal(identityCount,2);
+});
+test('Merchant private lists reject permission revoked during database read',async()=>{
+  for(const path of ['/business','/merchant-orders']){
+    const hold=heldQuery();
+    let permissionReads=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>{
+        if(sql.includes('FROM accounts a')){
+          return{rowCount:++permissionReads===1?1:0};
+        }
+        hold.onRead();await hold.wait;
+        return{rows:[{id:72,order_id:123,business_id:44,customer_account_id:72,
+          snapshot_json:{total:145}}]};
+      }}
+    });
+    const pending=run(path,{query:{business_id:'44'}});
+    await hold.started;
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,403,path);
+    assert.equal(result.response,null,path);
+    assert.equal(permissionReads,2,path);
+  }
+});
+test('Document detail and printable view reject account changed mid read',async()=>{
+  for(const path of ['/72','/72/print']){
+    const hold=heldQuery();
+    let identityCount=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:++identityCount===1?81:82}}),
+      pool:{query:async()=>{hold.onRead();await hold.wait;
+        return{rowCount:1,rows:[{id:72,order_id:123,business_id:44,
+          customer_account_id:81,snapshot_json:{order_number:'BL-123'}}]}}}
+    });
+    const pending=run(path);
+    await hold.started;
+    hold.release();
+    const result=await pending;
+    assert.equal(result.error?.status,401,path);
+    assert.equal(result.response,null,path);
+    assert.equal(identityCount,2,path);
+  }
+});
+test('Merchant document detail/print recheck binding after slow private lookup',async()=>{
+  for(const path of ['/72','/72/print']){
+    let permissionReads=0;
+    const run=documentRouteHarness({
+      identity:async()=>({account:{id:81}}),
+      pool:{query:async sql=>sql.includes('FROM accounts a')
+        ?{rowCount:++permissionReads===1?1:0}
+        :{rowCount:1,rows:[{id:72,order_id:123,business_id:44,
+            customer_account_id:99,snapshot_json:{order_number:'BL-123'}}]}}
+    });
+    const result=await run(path);
+    assert.equal(result.error?.status,403,path);
+    assert.equal(result.response,null,path);
+    assert.equal(permissionReads,2,path);
+  }
+});

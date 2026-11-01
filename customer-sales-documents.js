@@ -155,6 +155,14 @@ async function merchantPermission(pool,accountId,businessId){
 async function requireMerchantBusiness(pool,actor,businessId){
   if(!(await merchantPermission(pool,actor,businessId)))throw err(403,'Merchant business is not available');
 }
+// A private DB read may finish after logout, account switch, or Merchant revocation.
+// Recheck at the response boundary; the client must still reject its own late replies.
+async function requireCurrentDocumentReader(req,identity,actor,pool,document=null){
+  const current=id((await identity(req)).account.id,'Account');
+  if(current!==actor)throw err(401,'Document session changed');
+  if(document&&Number(document.customer_account_id)!==actor)
+    await requireMerchantBusiness(pool,actor,Number(document.business_id));
+}
 async function authorizedDocument(pool,actor,documentId){
   const q=await pool.query('SELECT * FROM customer_sales_documents WHERE id=$1',[id(documentId)]);
   if(!q.rowCount)throw err(404,'Document not found');
@@ -253,6 +261,7 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
         SELECT * FROM customer_sales_documents
          WHERE customer_account_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100
       `,[actor]);
+      await requireCurrentDocumentReader(req,identity,actor,pool);
       res.json({documents:q.rows.map(documentPublic)});
     }catch(e){next(e)}
   });
@@ -271,6 +280,8 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
           AND (o.paid_amount>0 OR o.order_status='completed')
         ORDER BY o.created_at DESC,o.id DESC LIMIT 100
       `,[businessId]);
+      await requireCurrentDocumentReader(req,identity,actor,pool);
+      await requireMerchantBusiness(pool,actor,businessId);
       res.json({orders:q.rows});
     }catch(e){next(e)}
   });
@@ -280,6 +291,8 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       const businessId=id(req.query.business_id,'business_id');
       await requireMerchantBusiness(pool,actor,businessId);
       const q=await pool.query('SELECT * FROM customer_sales_documents WHERE business_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100',[businessId]);
+      await requireCurrentDocumentReader(req,identity,actor,pool);
+      await requireMerchantBusiness(pool,actor,businessId);
       res.json({documents:q.rows.map(documentPublic)});
     }catch(e){next(e)}
   });
@@ -310,12 +323,14 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
   app.get('/api/notifications/order-sales-documents/:id',async(req,res,next)=>{
     try{
       const actor=id((await identity(req)).account.id,'Account'),doc=await authorizedDocument(pool,actor,req.params.id);
+      await requireCurrentDocumentReader(req,identity,actor,pool,doc);
       res.json({document:documentPublic(doc),snapshot:doc.snapshot_json});
     }catch(e){next(e)}
   });
   app.get('/api/notifications/order-sales-documents/:id/print',async(req,res,next)=>{
     try{
       const actor=id((await identity(req)).account.id,'Account'),doc=await authorizedDocument(pool,actor,req.params.id);
+      await requireCurrentDocumentReader(req,identity,actor,pool,doc);
       res.set({'Cache-Control':'private, no-store, max-age=0','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"});
       res.status(200).type('html').send(salesDocumentPrintHtml(doc.snapshot_json));
     }catch(e){next(e)}
