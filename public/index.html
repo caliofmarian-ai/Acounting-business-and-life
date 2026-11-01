@@ -107,8 +107,8 @@
           <section class="todayCard todayMoneyCard">
             <div class="todayCardHead"><div><span>Money</span><h2>Confirmed business snapshot</h2></div></div>
             <div class="todayMoneyGrid">
-              <div><span>Money received</span><strong id="todayMoneyReceived">₱0</strong><small>Confirmed customer payments</small></div>
-              <div><span>Completed sales</span><strong id="todayCompletedSales">₱0</strong><small>Merchandise value</small></div>
+              <div><span>Money received</span><strong id="todayMoneyReceived">₱0</strong><small>Confirmed customer payments + paid Quick Sales</small></div>
+              <div><span>Completed sales</span><strong id="todayCompletedSales">₱0</strong><small id="todaySalesSources">Completed orders + Quick Sale</small></div>
               <div><span>Awaiting payment</span><strong id="todayAwaitingPayment">₱0</strong><small>Completed, not fully paid</small></div>
               <div><span>Expenses</span><strong id="todayBusinessExpenses">₱0</strong><small>Business expenses</small></div>
             </div>
@@ -134,7 +134,35 @@
           <button class="primary bigAction">Record product sale</button>
           <div id="sellMessage"></div>
         </form>
-        <div class="card stack"><div class="sectionHead"><h2>Recent menu sales</h2><button data-view-link="Menu" class="linkBtn">Menu & margins</button></div><div id="productSaleList" class="list"></div></div>
+        <div class="card stack"><div class="sectionHead"><h2>Recent menu sales</h2><button data-view-link="Menu" class="linkBtn">Menu & margins</button></div><div id="productSaleList" class="list" role="status" aria-live="polite"></div></div>
+        <details id="preparedRemovalDetails" class="card stack">
+          <summary><strong>Remove prepared portions — not a sale</strong></summary>
+          <div class="stack" style="padding-top:0.75rem">
+            <p class="muted">Use this for prepared food eaten by the owner, damaged, spoiled or rejected at quality control. The saved recipe ingredients and their cost are removed without creating revenue or moving cash. Choose the truthful reason.</p>
+            <form id="preparedRemovalForm" class="stack">
+              <label>Prepared product<select id="preparedRemovalProduct" required><option value="">Choose a prepared product</option></select></label>
+              <div class="grid2">
+                <label>Portions to remove<input id="preparedRemovalQty" type="number" min="0.0001" step="0.0001" value="1" required /></label>
+                <label>Reason<select id="preparedRemovalReason" required>
+                  <option value="owner_consumption">Owner consumption / personal use</option>
+                  <option value="damaged">Damaged prepared food</option>
+                  <option value="spoilage">Spoiled prepared food</option>
+                  <option value="quality_rejected">Failed quality control</option>
+                </select></label>
+              </div>
+              <label>Explanation (optional)<input id="preparedRemovalNote" maxlength="300" placeholder="E.g., two portions eaten by the owner" /></label>
+              <div id="preparedRemovalPreview" class="salePreview" aria-live="polite">Choose a prepared product.</div>
+              <button id="preparedRemovalSubmit" class="secondary" type="submit">Record non-sale removal</button>
+              <div id="preparedRemovalMessage" aria-live="polite"></div>
+            </form>
+          </div>
+        </details>
+        <div class="card stack">
+          <div class="sectionHead"><h2>Prepared portions removed without sale</h2><small class="muted">Owner use separate from waste · values are noncash</small></div>
+          <div id="preparedRemovalSummary" class="salePreview">No removals recorded in the last 30 days.</div>
+          <div id="preparedRemovalList" class="list"></div>
+        </div>
+
       </section>
 
       <section id="viewAdd" class="view hidden">
@@ -235,7 +263,26 @@
       </section>
 
       <section id="viewStock" class="view hidden">
-        <div class="sectionHead"><div><h1>Stock</h1><p class="muted"><span id="lowStock">0</span> low-stock items · Food, Retail and Operations in one workspace</p></div></div>
+        <div class="sectionHead"><div><h1>Stock</h1><p class="muted"><span id="lowStock" class="hidden" aria-hidden="true">0</span>Choose a tool. It loads only when you open it.</p></div></div>
+        <div id="stockToolDeck" class="stockToolDeck" aria-label="Stock tools">
+          <details id="stockTool-inventory" class="stockTool" data-stock-tool="inventory">
+            <summary aria-controls="stockPanel-inventory"><span>Inventory · See current stock</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-inventory" class="stockToolPanel">
+        <div class="card stack">
+          <div class="sectionHead"><div><h2>Inventory</h2><p class="muted">On hand, reserved, unavailable, available and incoming stock.</p></div><small class="muted">One business-scoped source of truth</small></div>
+          <div id="inventoryDomainFilters" class="inventoryDomainFilters" role="group" aria-label="Filter Inventory">
+            <button type="button" data-inventory-domain="all" class="active">All</button>
+            <button type="button" data-inventory-domain="food">Food</button>
+            <button type="button" data-inventory-domain="non_food">Retail</button>
+            <button type="button" data-inventory-domain="operations">Operations</button>
+          </div>
+          <div id="stockList" class="list"></div>
+        </div>
+            </div>
+          </details>
+          <details id="stockTool-purchase" class="stockTool" data-stock-tool="purchase">
+            <summary aria-controls="stockPanel-purchase"><span>Add stock from purchase</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-purchase" class="stockToolPanel">
         <form id="stockForm" class="card stack">
           <input id="stockInventoryId" type="hidden" />
           <div><h2>Add stock from a purchase</h2><p class="muted">Example: 1 kg carrots for ₱80 becomes 1000 g at ₱0.08/g automatically.</p></div>
@@ -347,16 +394,11 @@
           <div id="stockPurchasePreview" class="salePreview"></div>
           <button class="primary">Add purchase to stock</button><div id="stockMessage"></div>
         </form>
-        <div class="card stack">
-          <div class="sectionHead"><div><h2>Inventory</h2><p class="muted">On hand, reserved, unavailable, available and incoming stock.</p></div><small class="muted">One business-scoped source of truth</small></div>
-          <div id="inventoryDomainFilters" class="inventoryDomainFilters" role="group" aria-label="Filter Inventory">
-            <button type="button" data-inventory-domain="all" class="active">All</button>
-            <button type="button" data-inventory-domain="food">Food</button>
-            <button type="button" data-inventory-domain="non_food">Retail</button>
-            <button type="button" data-inventory-domain="operations">Operations</button>
-          </div>
-          <div id="stockList" class="list"></div>
-        </div>
+            </div>
+          </details>
+          <details id="stockTool-unavailable" class="stockTool" data-stock-tool="unavailable">
+            <summary aria-controls="stockPanel-unavailable"><span>Unavailable stock</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-unavailable" class="stockToolPanel">
         <div class="card stack" id="inventoryUnavailableCard">
           <div><h2>Unavailable stock</h2><p class="muted">Temporarily block physical stock from sale/use without deleting it or creating a cash transaction.</p></div>
           <form id="inventoryUnavailableForm" class="stack">
@@ -379,6 +421,11 @@
           </form>
           <div id="inventoryUnavailableList" class="list"></div>
         </div>
+            </div>
+          </details>
+          <details id="stockTool-scanner" class="stockTool" data-stock-tool="scanner">
+            <summary aria-controls="stockPanel-scanner"><span>Find by SKU or barcode</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-scanner" class="stockToolPanel">
         <div class="card stack" id="inventoryScanCard">
           <div class="sectionHead">
             <div><h2>Find by SKU or barcode</h2><p class="muted">Search manually at any time, or use the camera on supported mobile devices. Scanning never replaces manual Inventory controls.</p></div>
@@ -418,6 +465,11 @@
             </div>
           </details>
         </div>
+            </div>
+          </details>
+          <details id="stockTool-restockSettings" class="stockTool" data-stock-tool="restockSettings">
+            <summary aria-controls="stockPanel-restockSettings"><span>Restock settings</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-restockSettings" class="stockToolPanel">
         <div class="card stack">
           <div><h2>Restock settings</h2><p class="muted">Change the low-stock alert and Target / Par level without recording a purchase.</p></div>
           <form id="restockSettingsForm" class="stack">
@@ -431,6 +483,11 @@
             <button class="secondary">Save restock settings</button><div id="restockSettingsMessage"></div>
           </form>
         </div>
+            </div>
+          </details>
+          <details id="stockTool-storage" class="stockTool" data-stock-tool="storage">
+            <summary aria-controls="stockPanel-storage"><span>Storage & segregation</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-storage" class="stockToolPanel">
         <div class="card stack">
           <div><h2>Storage & segregation</h2><p class="muted">Update where an existing item is stored without adding or removing stock.</p></div>
           <form id="storageForm" class="stack">
@@ -466,6 +523,11 @@
             <button class="secondary">Save storage settings</button><div id="storageMessage"></div>
           </form>
         </div>
+            </div>
+          </details>
+          <details id="stockTool-locations" class="stockTool" data-stock-tool="locations">
+            <summary aria-controls="stockPanel-locations"><span>Storage locations & transfers</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-locations" class="stockToolPanel">
         <div class="card stack" id="inventoryLocationsCard">
           <div class="sectionHead"><div><h2>Storage locations & internal transfers</h2><p class="muted">Food can use Pantry/Fridge/Freezer; Retail can use Sales floor/Stock room/Shelf/Warehouse. Transfers never create purchase, sale or cash movement.</p></div><button id="inventoryLocationsRefresh" type="button" class="secondary">Refresh</button></div>
 
@@ -525,12 +587,21 @@
           <div class="sectionHead"><h3>Recent internal transfers</h3><small class="muted">Actor/time/source/destination audit</small></div>
           <div id="inventoryTransferList" class="list"></div>
         </div>
-
+            </div>
+          </details>
+          <details id="stockTool-lots" class="stockTool" data-stock-tool="lots">
+            <summary aria-controls="stockPanel-lots"><span>Lots & expiry</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-lots" class="stockToolPanel">
         <div class="card stack">
           <div class="sectionHead"><div><h2>Lots & expiry</h2><p class="muted">Earliest expiry first. Expired or held lots are not considered usable FEFO stock.</p></div><button id="lotRefresh" type="button" class="secondary">Refresh lots</button></div>
           <div id="lotSummary" class="salePreview">No tracked lots yet.</div>
           <div id="lotList" class="list"></div>
         </div>
+            </div>
+          </details>
+          <details id="stockTool-allergens" class="stockTool" data-stock-tool="allergens">
+            <summary aria-controls="stockPanel-allergens"><span>Ingredient allergen evidence</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-allergens" class="stockToolPanel">
         <div class="card stack" id="ingredientAllergenCard">
           <div><h2>Ingredient allergen evidence</h2><p class="muted">Record only what you know from the ingredient label, Supplier documentation or confirmed preparation facts. Business & Life never guesses allergens from an ingredient name.</p></div>
           <form id="ingredientAllergenForm" class="stack">
@@ -544,7 +615,11 @@
             <div id="ingredientAllergenMessage"></div>
           </form>
         </div>
-
+            </div>
+          </details>
+          <details id="stockTool-count" class="stockTool" data-stock-tool="count">
+            <summary aria-controls="stockPanel-count"><span>Guided inventory count</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-count" class="stockToolPanel">
         <div class="card stack" id="guidedCountCard">
           <div class="sectionHead">
             <div><h2>Guided inventory count</h2><p class="muted">Run a full inventory or a smaller cycle count on mobile. Counted quantities are saved without changing stock until the final review is confirmed.</p></div>
@@ -607,7 +682,11 @@
           </div>
           <div id="countSessionMessage" aria-live="polite"></div>
         </div>
-
+            </div>
+          </details>
+          <details id="stockTool-adjustments" class="stockTool" data-stock-tool="adjustments">
+            <summary aria-controls="stockPanel-adjustments"><span>Waste & physical adjustments</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-adjustments" class="stockToolPanel">
         <div class="card stack">
           <div><h2>Waste & stock count</h2><p class="muted">Record real losses or correct stock after a physical count. These changes adjust Inventory only; they do not pretend cash moved.</p></div>
           <form id="stockAdjustmentForm" class="stack">
@@ -634,6 +713,11 @@
           <div class="sectionHead"><h3>Recent adjustments</h3><small class="muted">Audit trail</small></div>
           <div id="stockAdjustmentList" class="list"></div>
         </div>
+            </div>
+          </details>
+          <details id="stockTool-wasteAnalytics" class="stockTool" data-stock-tool="wasteAnalytics">
+            <summary aria-controls="stockPanel-wasteAnalytics"><span>Waste & spoilage analytics</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-wasteAnalytics" class="stockToolPanel">
         <div class="card stack" id="wasteAnalyticsCard">
           <div class="sectionHead"><div><h2>Waste & spoilage analytics</h2><p class="muted">Loss value uses the cost snapshot saved when each stock adjustment was recorded.</p></div><div class="wastePeriodButtons"><button id="wastePeriod7" type="button" class="miniBtn active">7 days</button><button id="wastePeriod30" type="button" class="miniBtn">30 days</button></div></div>
           <div id="wasteAnalyticsSummary" class="salePreview">No waste analytics loaded yet.</div>
@@ -645,13 +729,22 @@
           <div id="wasteDetailList" class="list"></div>
           <div id="wasteEvidencePolicy" class="salePreview">Business & Life does not calculate a waste percentage unless denominator completeness can be proven.</div>
         </div>
-
+            </div>
+          </details>
+          <details id="stockTool-restock" class="stockTool" data-stock-tool="restock">
+            <summary aria-controls="stockPanel-restock"><span>Restock list</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-restock" class="stockToolPanel">
         <div class="card stack">
           <div class="sectionHead"><div><h2>Restock list</h2><p class="muted">Items below their low-stock alert are grouped by preferred Supplier and replenished toward the Target / Par level.</p></div><button id="restockRefresh" type="button" class="secondary">Refresh list</button></div>
           <div id="restockSummary" class="salePreview">No items currently need restocking.</div>
           <div id="restockList" class="list"></div>
           <small class="muted">Review pack quantities before sending. One grouped Supplier request can contain several items. Sending it creates sourcing requests only — never a purchase order, payment or received stock.</small>
         </div>
+            </div>
+          </details>
+          <details id="stockTool-consumables" class="stockTool" data-stock-tool="consumables">
+            <summary aria-controls="stockPanel-consumables"><span>Order consumables</span><span class="stockToolChevron" aria-hidden="true">⌄</span></summary>
+            <div id="stockPanel-consumables" class="stockToolPanel">
         <div class="card stack">
           <div><h2>Order consumables</h2><p class="muted">Automatically deduct packaging and other consumables when food preparation starts. These rules are separate from recipes.</p></div>
           <form id="consumableRuleForm" class="stack">
@@ -668,6 +761,9 @@
           </form>
           <div id="consumableRuleList" class="list"></div>
           <small class="muted">When an order starts preparation, configured consumables are deducted together with recipe ingredients. Cancelling after consumption restores both.</small>
+        </div>
+            </div>
+          </details>
         </div>
       </section>
 

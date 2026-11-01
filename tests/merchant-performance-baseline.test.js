@@ -55,7 +55,9 @@ test('Merchant Today keeps deep finance stock history and analysis deferred by t
   assert.match(block,/loadRemittances\(\)/);
   assert.match(block,/loadAnalysis\(7\)/);
   assert.match(block,/loadAnalysis\(30\)/);
-  assert.match(block,/if\(name==='Stock'\)return loadStock\(\)/);
+  // #875: the Stock navigation is a tool menu; opening a tool owns its data read.
+  assert.match(block,/if\(name==='Stock'\)return;/);
+  assert.doesNotMatch(block,/if\(name==='Stock'\)return loadStock\(\)/);
   assert.match(block,/if\(name==='History'\)return loadTransactions\(\)/);
 });
 
