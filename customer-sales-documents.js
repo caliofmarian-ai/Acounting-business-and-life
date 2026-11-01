@@ -271,8 +271,12 @@ async function queueDocument(pool,{document,actor,requestKey,authorize,emit=emit
       ['queued',eventId,attempt.id]);
     return{attempt:{...attempt,queue_status:'queued',notification_event_id:eventId},already_queued:false};
   }catch(e){
-    await pool.query("UPDATE customer_sales_document_sends SET queue_status='queue_failed' WHERE id=$1",[attempt.id]).catch(()=>{});
-    throw err(503,'Email delivery queue is unavailable; the saved document remains available');
+    // emitNotificationEvent uses a separate committed transaction. The audit
+    // UPDATE may fail after the receipt is already queued for delivery.
+    // Marking a possibly committed send queue_failed lets a new request key
+    // bypass the duplicate guard and create an unintended second email.
+    // Keep pending on an uncertain result and retry the SAME idempotency key.
+    throw err(503,'Email queue result is uncertain; retry with the same request key');
   }
 }
 // Private Customer/Merchant records cannot be reused as a conditional 304.

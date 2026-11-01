@@ -503,3 +503,76 @@ test('Already queued replay still requires fresh authorization after database lo
   assert.equal(emitted,0);
   assert.equal(releaseCount,1);
 });
+
+function ambiguousDocumentQueue({failure}={}){
+  const snapshot=commercialOrderDocument(makeOrder());
+  const state={attempt:null,events:new Map(),downgrades:0,emissions:0};
+  let auditFails=failure==='audit',emitFails=failure==='emit';
+  const client={async query(sql,p=[]){
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0};
+    if(sql.includes('FOR UPDATE'))return{rowCount:1,rows:[{id:72}]};
+    if(sql.includes('SELECT * FROM customer_sales_document_sends')){
+      const found=state.attempt?.client_request_key===p[1];
+      return{rowCount:found?1:0,rows:found?[{...state.attempt}]:[]};
+    }
+    if(sql.includes('SELECT id FROM customer_sales_document_sends')){
+      const pending=state.attempt&&['pending','queued'].includes(state.attempt.queue_status);
+      return{rowCount:pending?1:0,rows:pending?[{id:501}]:[]};
+    }
+    if(sql.includes('INSERT INTO customer_sales_document_sends')){
+      state.attempt={id:501,sent_by_account_id:81,customer_account_id:81,
+        client_request_key:p[3],event_key:p[4],queue_status:'pending'};
+      return{rowCount:1,rows:[{...state.attempt}]};
+    }
+    throw Error('Unexpected transaction SQL: '+sql.slice(0,90));
+  },release(){}};
+  const pool={connect:async()=>client,async query(sql,p=[]){
+    if(sql.includes('SET queue_status=$1')){
+      if(auditFails){auditFails=false;throw Error('audit UPDATE failed after event COMMIT')}
+      state.attempt.queue_status=p[0];state.attempt.notification_event_id=p[1];
+      return{rowCount:1};
+    }
+    if(sql.includes("SET queue_status='queue_failed'")){
+      state.downgrades++;state.attempt.queue_status='queue_failed';
+      return{rowCount:1};
+    }
+    throw Error('Unexpected audit SQL: '+sql.slice(0,90));
+  }};
+  const send=key=>customerSalesDocumentInternals.queueDocument(pool,{
+    document:{id:72,order_id:123,customer_account_id:81,snapshot_json:snapshot},
+    actor:81,requestKey:key,authorize:async()=>{},
+    emit:async(_pool,{eventKey})=>{
+      state.emissions++;
+      const id=state.events.get(eventKey)??901;
+      state.events.set(eventKey,id); // committed event simulated
+      if(emitFails){emitFails=false;throw Error('lost connection after event COMMIT')}
+      return id;
+    }
+  });
+  return{state,send};
+}
+
+test('Committed email event survives failed audit UPDATE without duplicate dispatch',async()=>{
+  const {state,send}=ambiguousDocumentQueue({failure:'audit'});
+  await assert.rejects(send('audit_retry_key_12345'),e=>e.status===503&&/same request key/.test(e.message));
+  assert.equal(state.attempt.queue_status,'pending');
+  assert.equal(state.downgrades,0);
+  await assert.rejects(send('different_key_12345'),e=>e.status===429);
+  assert.equal(state.events.size,1);
+  const retry=await send('audit_retry_key_12345');
+  assert.equal(retry.attempt.queue_status,'queued');
+  assert.equal(state.events.size,1);
+  assert.equal(state.downgrades,0);
+});
+
+test('Unknown emitter COMMIT result retains pending status for idempotent retry',async()=>{
+  const {state,send}=ambiguousDocumentQueue({failure:'emit'});
+  await assert.rejects(send('commit_retry_key_12345'),e=>e.status===503&&/same request key/.test(e.message));
+  assert.equal(state.attempt.queue_status,'pending');
+  assert.equal(state.downgrades,0);
+  assert.equal(state.events.size,1);
+  const retry=await send('commit_retry_key_12345');
+  assert.equal(retry.attempt.queue_status,'queued');
+  assert.equal(state.events.size,1);
+  assert.equal(state.emissions,2);
+});
