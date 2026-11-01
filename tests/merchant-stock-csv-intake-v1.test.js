@@ -5,7 +5,7 @@ import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
-  revokePaidBatchConfirmations
+  revokePaidBatchConfirmations,revokeMerchantIntakeSession,intakeOperationIsCurrent
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -314,4 +314,42 @@ test('errors before purchase dispatch are NOT POSTED, while interrupted POST rem
   assert.match(js,/const conflictRow=error\.conflictRow\|\|row;/);
   assert.match(js,/conflictRow\.result='error';/);
   assert.match(js,/revokeBatchConfirmations\(\);\s*\}else if\(row\.result==='saved-date-pending'\)/);
+});
+
+test('expired Merchant auth erases reviewed CSV, financial history and pending request context',()=>{
+  const merchant={accountId:11,businessId:100,businessName:'Reviewed Merchant'};
+  const row=parseStockIntakeCsv(example)[0];
+  const state={context:merchant,accountId:11,rows:[row],resultLog:['old private expense'],
+    inventory:[{id:3}],transactions:[{id:4}],contextReadRevision:8,csvReadRevision:10,stop:false};
+  assert.equal(intakeOperationIsCurrent(state,8,'csrf-old','csrf-old'),true);
+  state.stop=true; // Manual stop still permits recording the in-flight response.
+  assert.equal(intakeOperationIsCurrent(state,8,'csrf-old','csrf-old'),true);
+  assert.equal(intakeOperationIsCurrent(state,8,'csrf-old','csrf-new'),false);
+  revokeMerchantIntakeSession(state);
+  assert.equal(state.contextReadRevision,9);
+  assert.equal(state.csvReadRevision,11);
+  assert.equal(state.stop,true);
+  assert.equal(state.context,null);
+  assert.equal(state.accountId,null);
+  assert.deepEqual(state.rows,[]);
+  assert.deepEqual(state.resultLog,[]);
+  assert.deepEqual(state.inventory,[]);
+  assert.deepEqual(state.transactions,[]);
+  assert.equal(intakeOperationIsCurrent(state,8,'csrf-old','csrf-old'),false);
+  assert.equal(intakeOperationIsCurrent({...state,context:merchant},9,'',''),false);
+});
+
+test('auth-expired and pagehide dispatches block stale POST and date correction results',()=>{
+  assert.ok(js.includes("document.addEventListener('abl:auth-expired',invalidatePrivateReview)"));
+  assert.ok(js.includes("window.addEventListener('pagehide',invalidatePrivateReview)"));
+  assert.ok(js.includes("window.addEventListener('pageshow',event=>"));
+  assert.ok(js.includes("const operationRevision=state.contextReadRevision;"));
+  assert.ok(js.includes("const csrfAtStart=window.ABLSession?.csrfToken?.()||'';"));
+  assert.ok(js.includes('if(!requireCurrent())break;'));
+  assert.ok(js.includes("if(!requireCurrent()){state.busy=false;updateControls();return;}"));
+  assert.match(js,/await assertLiveContext\(\);\s*if\(!requireCurrent\(\)\)break;/);
+  assert.match(js,/await assertMerchantContext\(\);\s*if\(!requireCurrent\(\)\)break;/);
+  assert.match(js,/\}catch\(error\)\{\s*if\(!requireCurrent\(\)\)break;/);
+  assert.match(js,/\}\)\);\s*if\(!requireCurrent\(\)\)break;\s*if\(!result\?\.inventory\?\.id/);
+  assert.match(js,/state\.busy=false;\s*if\(!requireCurrent\(\)\)\{updateControls\(\);return;\}/);
 });

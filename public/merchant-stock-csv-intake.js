@@ -84,6 +84,25 @@ export function preserveIntakeReviewForMerchant(state,previous,next){
   return same;
 }
 
+// Expired authentication revokes private CSV and expense evidence, even
+// when a previously dispatched purchase has not returned yet.
+export function revokeMerchantIntakeSession(state){
+  state.contextReadRevision++;
+  state.csvReadRevision++;
+  state.stop=true;
+  preserveIntakeReviewForMerchant(state,state.context,null);
+  state.context=null;
+  state.inventory=[];
+  state.transactions=[];
+  state.accountId=null;
+}
+// Human Stop does not invalidate the active request; a changed login does.
+export function intakeOperationIsCurrent(state,revision,expectedCsrf,currentCsrf){
+  return Number.isSafeInteger(revision)&&revision===state.contextReadRevision&&
+    Boolean(state.context)&&typeof expectedCsrf==='string'&&expectedCsrf.length>0&&
+    expectedCsrf===currentCsrf;
+}
+
 export function parseStockIntakeCsv(text){
   const records=parseCsvRecords(text);
   if(records.length<2)throw new Error('CSV must have a header and at least one product.');
@@ -255,6 +274,17 @@ if(hasDocument){
     $('moneyConfirm').checked=false;
     message('fileStatus','Select and review a CSV for the verified Merchant business.');
     message('results','No stock or Money changes were made by this review session.');
+  }
+  function invalidatePrivateReview(){
+    revokeMerchantIntakeSession(state);
+    resetIntakeReviewFields();
+    $('rows').replaceChildren();
+    $('reviewPanel').classList.add('hidden');
+    $('commitPanel').classList.add('hidden');
+    $('businessCheck').classList.add('hidden');
+    message('authStatus','Merchant session ended or changed. Sign in again, then reconcile Stock and Money before retrying any interrupted purchase.','error');
+    message('ledgerStatus','Merchant identity verification required.');
+    updateControls();
   }
   async function refreshContext(){
     if(state.busy)return;
@@ -460,16 +490,28 @@ if(hasDocument){
     // Invalidate outstanding file reads before the first durable request.
     state.csvReadRevision++;
     state.busy=true;state.stop=false;updateControls();
+    const operationRevision=state.contextReadRevision;
+    const csrfAtStart=window.ABLSession?.csrfToken?.()||'';
+    const stillCurrent=()=>intakeOperationIsCurrent(
+      state,operationRevision,csrfAtStart,window.ABLSession?.csrfToken?.()||''
+    );
+    const requireCurrent=()=>{
+      if(stillCurrent())return true;
+      if(state.context||state.rows.length||state.resultLog.length)invalidatePrivateReview();
+      return false;
+    };
+    if(!requireCurrent()){state.busy=false;updateControls();return;}
     const originalContext=state.context;
     const paidFrom=$('purchaseAccount').value,originalDate=$('purchaseDate').value;
     const pending=state.rows.filter(row=>row.selected&&validStockIntakeRow(row));
     let saved=0;
     let initialBatchChecked=false;
     for(const row of pending){
-      if(state.stop)break;
+      if(state.stop||!requireCurrent())break;
       let purchaseDispatched=false;
       try{
         await assertLiveContext();
+        if(!requireCurrent())break;
         if(!sameContext(originalContext,state.context))throw new Error('Merchant context changed.');
         if(!initialBatchChecked){
           // Check ALL approved items before submitting even the first expense.
@@ -489,6 +531,7 @@ if(hasDocument){
           account:paidFrom,record_expense:true,
           note:'Paid stock intake from reviewed Merchant CSV. Actual purchase date: '+originalDate+'. '+row.note
         })});
+        if(!requireCurrent())break;
         if(!result?.inventory?.id||!result?.purchase?.id||!result?.transaction?.id){
           throw new Error('Purchase/payment response was incomplete; manually reconcile before retry.');
         }
@@ -505,6 +548,7 @@ if(hasDocument){
         // an explicitly approximate time) through the existing audited correction API.
         if(originalDate!==localDatePH()){
           await assertMerchantContext();
+          if(!requireCurrent())break;
           const dated=await api('/api/transactions/'+result.transaction.id,{
             method:'PATCH',
             body:JSON.stringify({
@@ -512,6 +556,7 @@ if(hasDocument){
               reason:'Merchant confirmed historical PH purchase date; time-of-day is unknown'
             })
           });
+          if(!requireCurrent())break;
           if(Number(dated?.id)!==Number(result.transaction.id))
             throw new Error('Linked expense date correction could not be verified.');
         }
@@ -519,6 +564,7 @@ if(hasDocument){
         message('results',saved+' purchase(s) and linked expenses dated '+originalDate+'.\n'+state.resultLog.join('\n'),'ok');
         renderRows();
       }catch(error){
+        if(!requireCurrent())break;
         // No automatic retry: the server endpoint has no request-key idempotency.
         if(error?.paidBatchConflict){
           const conflictRow=error.conflictRow||row;
@@ -544,9 +590,13 @@ if(hasDocument){
       }
     }
     state.busy=false;
+    if(!requireCurrent()){updateControls();return;}
     if(!state.stop)message('results',saved+' stock purchase(s) and '+saved+' linked paid business expense(s) saved to the active Merchant, dated '+originalDate+'. No payment was sent.\n'+state.resultLog.join('\n'),'ok');
     renderRows();updateControls();
   }
+  document.addEventListener('abl:auth-expired',invalidatePrivateReview);
+  window.addEventListener('pagehide',invalidatePrivateReview);
+  window.addEventListener('pageshow',event=>{if(event.persisted&&!state.busy)refreshContext()});
   $('refreshContext').addEventListener('click',refreshContext);
   $('csv').addEventListener('change',readFile);
   $('businessName').addEventListener('input',updateControls);
