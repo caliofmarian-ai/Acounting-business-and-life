@@ -1,0 +1,59 @@
+name: Inventory Native Browser
+
+on:
+  pull_request:
+    paths:
+      - 'public/v03.js'
+      - 'public/index.html'
+      - 'public/styles.css'
+      - 'public/v03.css'
+      - 'scripts/inventory-browser-acceptance.js'
+      - '.github/workflows/inventory-native-browser.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'public/v03.js'
+      - 'public/index.html'
+      - 'public/styles.css'
+      - 'public/v03.css'
+      - 'scripts/inventory-browser-acceptance.js'
+      - '.github/workflows/inventory-native-browser.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inventory-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install isolated browser tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/inventory-native" --no-package-lock --ignore-scripts playwright@1.58.2
+          google-chrome --version
+      - name: Verify actual Inventory renderer with native DOM and CSS
+        env:
+          INVENTORY_BROWSER_MODULE: ${{ runner.temp }}/inventory-native/node_modules/playwright/index.mjs
+          INVENTORY_BROWSER_CHANNEL: chrome
+          INVENTORY_BROWSER_EVIDENCE_DIR: ${{ runner.temp }}/inventory-native-evidence
+          INVENTORY_BROWSER_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/inventory-browser-acceptance.js
+      - name: Preserve synthetic visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inventory-native-evidence
+          path: ${{ runner.temp }}/inventory-native-evidence
+          if-no-files-found: ignore
+          retention-days: 7

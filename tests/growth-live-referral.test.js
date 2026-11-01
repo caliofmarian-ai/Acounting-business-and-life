@@ -7,6 +7,7 @@ import {
   normalizeReferralProfileRole
 } from '../growth/referral-account.js';
 import { isValidReferralCode, PUBLIC_PROFILE_ROLES } from '../growth/referral-domain.js';
+import { fixture, tick, referral } from './promotion-page-fixture.js';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -58,25 +59,30 @@ test('Promotion Center belongs to the selected profile settings, not the avatar 
   assert.match(settings,/promotion-center\.html\?profile=/);
 });
 
-test('Promotion Center loads the authenticated account identity and never defaults to demo identity', () => {
+test('Promotion Center loads the authenticated account identity and never defaults to demo identity', async t => {
   const page = read('public/referral/promotion-center.html');
-  assert.match(page, /\/api\/growth\/referral\?profile=/);
+  const f = fixture(); t.after(() => f.ui.destroy()); await tick();
+  assert.ok(f.requests.some(request => request.path === '/api/growth/referral?profile=merchant'));
+  assert.equal(f.el('referralCode').textContent, referral('merchant').code);
   assert.match(page, /<script src="\/session-security\.js"><\/script>/);
-  assert.match(page, /window\.ABLSession\?\.authenticated\(\)/);
   assert.doesNotMatch(page, /Authorization:'Bearer '|localStorage\.getItem\('abl_token'\)/);
-  assert.match(page, /Sign in required/);
   assert.doesNotMatch(page, /r1_DemoReferral/);
-  assert.match(page, /direct referral sending stays disabled/i);
+  f.signOut(); await f.document.fire('abl:auth-expired');
+  assert.equal(f.el('signin').hidden, false);
+  assert.equal(f.el('referralUrl').value, '');
 });
 
-test('live referral endpoint adds a local QR tied to the exact campaign URL with a qr-origin marker', () => {
+test('live referral endpoint adds a local QR tied to the exact campaign URL with a qr-origin marker', async t => {
   const server = read('server-auth.js');
-  const page = read('public/referral/promotion-center.html');
   assert.match(server, /buildLocalReferralQr\(payload\.referralUrl\)/);
   assert.match(server, /qr \}/);
-  assert.match(page, /data\.qr\.referralUrl!==data\.referralUrl/);
-  assert.match(page, /data\.qr\.marker!=='qr'/);
-  assert.match(page, /#qr/);
-  assert.match(page, /Changing the sharing profile regenerates this QR locally/i);
-  assert.doesNotMatch(page, /api\.qrserver|quickchart|chart\.google/);
+  const f = fixture(); t.after(() => f.ui.destroy()); await tick();
+  assert.equal(f.el('qrImage').src, referral('merchant').qr.dataUrl);
+  assert.equal(f.el('qrImage').hidden, false);
+  f.el('role').value = 'customer'; await f.el('role').fire('change');
+  assert.equal(f.el('qrImage').src, undefined, 'old QR clears before the new request resolves');
+  await tick();
+  assert.equal(f.ui.controller.getCurrent().identity.qr.referralUrl, referral('customer').referralUrl);
+  assert.equal(f.ui.controller.getCurrent().identity.qr.marker, 'qr');
+  assert.equal(f.requests.every(request => request.path.startsWith('/api/')), true);
 });
