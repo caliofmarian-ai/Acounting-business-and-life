@@ -30,6 +30,11 @@ class ReadinessDb{
   async query(sql,args=[]){
     const q=String(sql).replace(/\s+/g,' ').trim();
     if(q.startsWith('SELECT pg_advisory_xact_lock(87320261031::bigint); CREATE TABLE IF NOT EXISTS microbusiness_readiness'))return{rows:[],rowCount:0};
+    // This fake has no businesses table or business FK: reflect the real
+    // constraint-existence query, rather than assuming table presence is FK proof.
+    if(q.startsWith('SELECT EXISTS ( SELECT 1 FROM pg_constraint WHERE conname=\'microbusiness_readiness_business_fk\'')){
+      return{rows:[{present:false}],rowCount:1};
+    }
     if(q==="SELECT to_regclass('public.businesses') AS table_name")return{rows:[{table_name:null}],rowCount:1};
     if(q.startsWith('SELECT 1 FROM business_memberships')){
       const key=String(args[0])+':'+String(args[1]);
