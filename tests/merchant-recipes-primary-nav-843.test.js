@@ -13,7 +13,7 @@ test('recipe destination occurs once in primary nav immediately before Stock',()
  assert.match(nav,/id="merchantRecipesNav"[^>]*class="roleFinanceHidden"[^>]*data-view="Menu"[^>]*aria-controls="viewMenu"[^>]*>[\s\S]*?<span class="merchantNavLabel">Products &amp; recipes<\/span><\/button><button data-view="Stock">/);
  assert.equal((html.match(/data-today-action="recipes"/g)||[]).length,0);
  assert.match(html,/data-today-action="quick-sale">Quick Sale/);
- for(const label of ['Today','Orders','Catalog','Inventory','Money'])assert.ok(nav.includes('>'+label+'<'));
+ for(const label of ['Today','Orders','Catalog','Stock','Money'])assert.ok(nav.includes('>'+label+'<'));
 });
 function presentation(){
  const recipe=node(['roleFinanceHidden']);recipe.textContent='Products & recipes';const stock=node();const views={viewMenu:node(['hidden','roleFinanceHidden']),viewSell:node(['hidden','roleFinanceHidden'])};
@@ -36,7 +36,7 @@ for(const [label,overview] of [
 });
 test('the existing setView opens the canonical editor and selects only its nav button',()=>{
  const views={viewMenu:node(['hidden']),viewStock:node(),viewDashboard:node(['hidden'])},buttons=['Dashboard','Menu','Stock','Money'].map(name=>({...node(name==='Stock'?['active']:[]),dataset:{view:name}}));const loads=[];
- const context=vm.createContext({$:id=>views[id],document:{querySelectorAll:s=>s==='.view'?Object.values(views):buttons},window:{scrollTo(){}},loadMerchantView:async name=>loads.push(name),updateSellPreview(){},console});
+ const context=vm.createContext({$:id=>views[id],document:{querySelectorAll:s=>s==='.view'?Object.values(views):buttons},window:{scrollTo(){}},loadMerchantView:async name=>loads.push(name),resetStockTools(){},updateSellPreview(){},console});
  vm.runInContext(block(ui,'function setView(name){','\nasync function openInventoryNotificationContext'),context);
  context.setView('Menu');assert.equal(views.viewMenu.classList.contains('hidden'),false);assert.equal(views.viewStock.classList.contains('hidden'),true);assert.deepEqual(buttons.filter(b=>b.classList.contains('active')).map(b=>b.dataset.view),['Menu']);assert.deepEqual(loads,['Menu']);
  context.setView('Stock');context.setView('Menu');assert.deepEqual(loads,['Menu','Stock','Menu']);
