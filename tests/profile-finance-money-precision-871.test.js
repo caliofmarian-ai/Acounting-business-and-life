@@ -156,7 +156,8 @@ test('personal Money entry replay rejects changed cents/category/direction and p
     currencyCode:'PHP',sourceType:'manual',note:'groceries'
   };
   for(const delta of [
-    {amount:'2.32'},{direction:'in'},{category:'housing'},{note:'changed'},
+    {amount:'2.32'},{entryType:'money_in',direction:'in',category:'income'},
+    {category:'housing'},{note:'changed'},
     {sourceType:'external'},{financialAccountId:5}
   ])await assert.rejects(createProfileMoneyEntry(pool,{...input,...delta}),e=>e.status===409);
   await assert.rejects(createProfileMoneyEntry(pool,{...input,accountId:12}),e=>e.status===409);
