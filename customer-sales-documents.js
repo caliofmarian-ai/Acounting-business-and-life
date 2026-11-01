@@ -310,7 +310,15 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       if(!order.customer_account_id)throw err(422,'Only registered Customers may receive an email document');
       const customer=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
       if(!customer.rowCount||!customer.rows[0].email_verified_at||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(short(customer.rows[0].email,200)))throw err(409,'Customer verified email is required for receipt email');
+      // Order/email reads and document insertion can await DB I/O while a Merchant
+      // loses their session or business access. Never queue an email for that stale actor.
+      const requireCurrentSender=async()=>{
+        await requireCurrentDocumentReader(req,identity,actor,pool);
+        await requireMerchantBusiness(pool,actor,businessId);
+      };
+      await requireCurrentSender();
       const document=await createOrFind(pool,{order,actor});
+      await requireCurrentSender();
       const result=await queueDocument(pool,{document,actor,requestKey});
       res.status(result.already_queued?200:202).json({
         document:documentPublic(document),

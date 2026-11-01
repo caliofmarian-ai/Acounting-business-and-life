@@ -282,3 +282,80 @@ test('Merchant document detail/print recheck binding after slow private lookup',
     assert.equal(permissionReads,2,path);
   }
 });
+
+function sendRevocationHarness({holdEmail=null,holdInsert=null,authorized=()=>true,account=()=>81}={}){
+  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0};
+  const order=makeOrder(),snapshot=commercialOrderDocument(order);
+  const pool={
+    query:async sql=>{
+      if(sql.includes('FROM accounts a'))
+        return{rowCount:authorized(++state.permissions)?1:0};
+      if(sql.includes('SELECT id FROM orders WHERE id='))
+        return{rowCount:1,rows:[{id:order.id}]};
+      if(sql.includes('SELECT o.*,b.name business_name'))
+        return{rowCount:1,rows:[order]};
+      if(sql.includes('FROM order_items'))
+        return{rowCount:1,rows:order.items};
+      if(sql.includes('FROM order_payments')||sql.includes('FROM order_status_events'))
+        return{rowCount:0,rows:[]};
+      if(sql.includes('SELECT email,email_verified_at FROM accounts')){
+        if(holdEmail){holdEmail.onRead();await holdEmail.wait;}
+        return{rowCount:1,rows:[{email:'verified@example.test',email_verified_at:'2026-10-30'}]};
+      }
+      if(sql.includes('INSERT INTO customer_sales_documents')){
+        state.documentWrites++;
+        if(holdInsert){holdInsert.onRead();await holdInsert.wait;}
+        return{rowCount:1,rows:[{id:72,order_id:order.id,business_id:order.business_id,
+          customer_account_id:order.customer_account_id,snapshot_json:snapshot}]};
+      }
+      throw Error('Unexpected SQL in send authorization test: '+sql.slice(0,100));
+    },
+    connect:async()=>{state.queueStarts++;throw Error('Unauthorized email queue was reached');}
+  };
+  const run=documentRouteHarness({pool,identity:async()=>({account:{id:account(++state.identities)}})});
+  const send=()=>run('/orders/123/send',{params:{id:'123'},
+    body:{business_id:44,client_request_key:'verified_send_12345'}});
+  return{state,send};
+}
+
+test('Merchant receipt email revocation during verified-recipient read does not create or queue anything',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdEmail:hold,authorized:n=>n===1});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,403);
+  assert.equal(result.response,null);
+  assert.equal(state.permissions,2);
+  assert.equal(state.documentWrites,0);
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant receipt email account switch during recipient lookup refuses side effects',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdEmail:hold,account:n=>n===1?81:82});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,401);
+  assert.equal(result.response,null);
+  assert.equal(state.identities,2);
+  assert.equal(state.documentWrites,0);
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant receipt email revocation during document creation cannot enqueue mail',async()=>{
+  const hold=heldQuery();
+  const {state,send}=sendRevocationHarness({holdInsert:hold,authorized:n=>n<=2});
+  const pending=send();
+  await hold.started;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,403);
+  assert.equal(result.response,null);
+  assert.equal(state.permissions,3);
+  assert.equal(state.documentWrites,1);
+  assert.equal(state.queueStarts,0);
+});
