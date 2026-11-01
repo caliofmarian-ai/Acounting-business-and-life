@@ -225,8 +225,10 @@ async function queueDocument(pool,{document,actor,requestKey,authorize,emit=emit
     }else{
       const recent=await client.query(`
         SELECT id FROM customer_sales_document_sends
-         WHERE document_id=$1 AND queue_status IN ('pending','queued')
-           AND created_at>NOW()-INTERVAL '5 minutes' LIMIT 1
+         WHERE document_id=$1 AND (
+           queue_status='pending'
+           OR (queue_status='queued' AND created_at>NOW()-INTERVAL '5 minutes')
+         ) LIMIT 1
       `,[document.id]);
       if(recent.rowCount)throw err(429,'A document email was requested recently. Try again later.');
       const eventKey='order-sales-document:'+document.id+':'+crypto.randomUUID();

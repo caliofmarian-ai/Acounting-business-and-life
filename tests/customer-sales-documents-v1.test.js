@@ -95,7 +95,8 @@ test('Merchant-only send and private Customer read must enforce order and busine
   assert.match(core,/customer.rows\[0\].email_verified_at/);
   assert.match(core,/SELECT id FROM customer_sales_documents WHERE id=\$1 FOR UPDATE/);
   assert.match(core,/client_request_key/);
-  assert.match(core,/created_at>NOW\(\)-INTERVAL '5 minutes'/);
+  assert.match(core,/queue_status='pending'/);
+  assert.match(core,/queue_status='queued' AND created_at>NOW\(\)-INTERVAL '5 minutes'/);
   assert.match(core,/mandatory:true,emailDefault:true,pushDefault:false/);
   assert.match(core,/INSERT INTO customer_sales_documents/);
   assert.match(core,/not a BIR-issued/i);
@@ -516,12 +517,17 @@ function ambiguousDocumentQueue({failure}={}){
       return{rowCount:found?1:0,rows:found?[{...state.attempt}]:[]};
     }
     if(sql.includes('SELECT id FROM customer_sales_document_sends')){
-      const pending=state.attempt&&['pending','queued'].includes(state.attempt.queue_status);
+      assert.match(sql,/queue_status='pending'/);
+      assert.match(sql,/queue_status='queued' AND created_at>NOW\(\)-INTERVAL '5 minutes'/);
+      const age=Date.now()-Date.parse(state.attempt?.created_at||new Date().toISOString());
+      const pending=state.attempt&&(state.attempt.queue_status==='pending'||
+        (state.attempt.queue_status==='queued'&&age<5*60*1000));
       return{rowCount:pending?1:0,rows:pending?[{id:501}]:[]};
     }
     if(sql.includes('INSERT INTO customer_sales_document_sends')){
       state.attempt={id:501,sent_by_account_id:81,customer_account_id:81,
-        client_request_key:p[3],event_key:p[4],queue_status:'pending'};
+        client_request_key:p[3],event_key:p[4],queue_status:'pending',
+        created_at:new Date().toISOString()};
       return{rowCount:1,rows:[{...state.attempt}]};
     }
     throw Error('Unexpected transaction SQL: '+sql.slice(0,90));
@@ -557,6 +563,7 @@ test('Committed email event survives failed audit UPDATE without duplicate dispa
   await assert.rejects(send('audit_retry_key_12345'),e=>e.status===503&&/same request key/.test(e.message));
   assert.equal(state.attempt.queue_status,'pending');
   assert.equal(state.downgrades,0);
+  state.attempt.created_at=new Date(Date.now()-10*60*1000).toISOString();
   await assert.rejects(send('different_key_12345'),e=>e.status===429);
   assert.equal(state.events.size,1);
   const retry=await send('audit_retry_key_12345');
