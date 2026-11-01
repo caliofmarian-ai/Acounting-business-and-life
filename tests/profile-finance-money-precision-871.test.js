@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   postProfileBudgetEntry,transferProfileBudgetAllocation,
   createProfileMoneyMovementRequest,createProfileMoneyEntry,
-  transferFundsBetweenProfiles
+  transferFundsBetweenProfiles,reverseProfileMoneyEntry
 } from '../profile-finance-core.js';
 
 // Actual public finance primitives, synthetic inputs. Invalid amounts must be
@@ -53,9 +53,54 @@ for(const [label,fn] of mutations){
   });
 }
 
+// Idempotency collisions across distinct long keys can acknowledge the wrong
+// already-posted money instruction. Validate the literal key before ANY SQL.
+test('all finance mutations reject oversized/coerced replay keys before database I/O',async()=>{
+  const common='f'.repeat(220);
+  const requests=[
+    ['budget allocation',key=>postProfileBudgetEntry(noDb,{
+      accountId:11,envelopeId:22,entryKey:key,amount:'1.23'
+    })],
+    ['budget transfer',key=>transferProfileBudgetAllocation(noDb,{
+      publicId:'budget-transfer',transferKey:key,accountId:11,
+      sourceEnvelopeId:22,destinationEnvelopeId:23,amount:'1.23'
+    })],
+    ['provider-HOLD transfer',key=>createProfileMoneyMovementRequest(noDb,{
+      publicId:'movement',idempotencyKey:key,accountId:11,movementType:'transfer',
+      sourceFinancialAccountId:1,destinationFinancialAccountId:2,amount:'1.23'
+    })],
+    ['personal expense',key=>createProfileMoneyEntry(noDb,{
+      publicId:'entry',entryKey:key,accountId:11,profileRole:'customer',
+      entryType:'expense',direction:'out',category:'groceries',amount:'1.23'
+    })],
+    ['personal correction',key=>reverseProfileMoneyEntry(noDb,{
+      publicId:'reverse',reversalKey:key,accountId:11,profileRole:'customer',entryId:4
+    })],
+    ['internal profile funds',key=>transferFundsBetweenProfiles(noDb,{
+      publicId:'transfer',transferKey:key,accountId:11,
+      sourceProfileRole:'customer',destinationProfileRole:'courier',amount:'1.23'
+    })]
+  ];
+  for(const [label,request] of requests){
+    for(const invalid of [common+'A',common+'B',12,true,{},null,'  ']){
+      await assert.rejects(request(invalid),e=>e.status===400&&/Idempotency key/.test(e.message),
+        label+' must reject malformed/overlong key before DB access');
+    }
+  }
+});
+
+test('a 220-character finance replay key passes through the SQL lock unchanged',async()=>{
+  const key='g'.repeat(220);
+  const {pool}=budgetStub(1.23,key);
+  const posted=await postProfileBudgetEntry(pool,{
+    accountId:11,envelopeId:22,entryKey:key,amount:'1.23'
+  });
+  assert.equal(posted.amount,1.23);
+});
+
 // A real ledger operation is not necessary for valid amount conversion:
 // stub the exact SQL boundary and inspect the numeric bind parameter.
-function budgetStub(expected){
+function budgetStub(expected,expectedKey=null){
   const calls=[];
   const client={
     release(){},
@@ -64,6 +109,7 @@ function budgetStub(expected){
       if(sql==='BEGIN'||sql==='COMMIT')return{rowCount:0,rows:[]};
       if(sql.includes('pg_advisory_xact_lock(hashtextextended(')){
         assert.equal(args.length,1,'advisory lock must bind the original idempotency key');
+        if(expectedKey!==null)assert.equal(args[0],expectedKey,'SQL lock must use untruncated key');
         return{rowCount:1,rows:[]};
       }
       if(sql.includes('FROM profile_budget_entries be')&&sql.includes('WHERE be.entry_key='))return{rowCount:0,rows:[]};

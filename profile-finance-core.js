@@ -1,6 +1,14 @@
 const clean=(v,max=1000)=>String(v??'').trim().slice(0,max);
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
 
+// Never silently truncate a financial replay key: two different requests
+// sharing their first 220 characters must not alias the same ledger record.
+function normalizeIdempotencyKey(value){
+  const key=typeof value==='string'?value.trim():'';
+  if(!key||key.length>220)fail('Idempotency key must be a non-empty string of at most 220 characters');
+  return key;
+}
+
 export const PROFILE_FINANCE_ROLES=Object.freeze(['customer','merchant','supplier','courier','service_provider']);
 export const BUSINESS_FINANCE_ROLES=Object.freeze(['merchant','supplier']);
 export const FINANCIAL_ACCOUNT_KINDS=Object.freeze(['cash','bank','e_wallet','paymongo_wallet','provider_clearing','other']);
@@ -573,7 +581,7 @@ export async function postProfileBudgetEntry(pool,{
 }){
   if(!['credit','debit'].includes(direction))fail('Unsupported budget entry direction');
   if(!['allocation','release','adjustment'].includes(entryType))fail('Unsupported manual budget entry type');
-  const value=normalizePositiveMoney(amount,'Budget amount'),key=clean(entryKey,220);
+  const value=normalizePositiveMoney(amount,'Budget amount'),key=normalizeIdempotencyKey(entryKey);
   if(!key)fail('Idempotency key is required');
   const client=await pool.connect();
   try{
@@ -642,7 +650,7 @@ export async function postProfileBudgetEntry(pool,{
 export async function transferProfileBudgetAllocation(pool,{
   publicId,transferKey,accountId,sourceEnvelopeId,destinationEnvelopeId,amount,actorAccountId=null,note=''
 }){
-  const value=normalizePositiveMoney(amount,'Transfer amount'),key=clean(transferKey,220);
+  const value=normalizePositiveMoney(amount,'Transfer amount'),key=normalizeIdempotencyKey(transferKey);
   if(!key)fail('Idempotency key is required');
   if(Number(sourceEnvelopeId)===Number(destinationEnvelopeId))fail('Choose two different budget envelopes');
   const client=await pool.connect();
@@ -755,7 +763,7 @@ export async function createProfileMoneyMovementRequest(pool,{
 }){
   const type=clean(movementType,30);
   if(!MOVEMENT_TYPE_SET.has(type))fail('Unsupported money movement type');
-  const value=normalizePositiveMoney(amount,'Transfer amount'),currency=normalizeCurrency(currencyCode),key=clean(idempotencyKey,220);
+  const value=normalizePositiveMoney(amount,'Transfer amount'),currency=normalizeCurrency(currencyCode),key=normalizeIdempotencyKey(idempotencyKey);
   if(!key)fail('Idempotency key is required');
   const existing=await pool.query('SELECT * FROM profile_money_movements WHERE idempotency_key=$1',[key]);
   if(existing.rowCount){
@@ -871,7 +879,7 @@ export async function createProfileMoneyEntry(pool,{
 }){
   const role=normalizePersonalMoneyRole(profileRole),entry=normalizeProfileMoneyEntry(role,entryType,direction);
   const cat=normalizeProfileMoneyCategory(role,category),value=normalizePositiveMoney(amount,'Money entry amount');
-  const currency=normalizeCurrency(currencyCode),key=clean(entryKey,220);
+  const currency=normalizeCurrency(currencyCode),key=normalizeIdempotencyKey(entryKey);
   if(!key)fail('Idempotency key is required');
   const existing=await pool.query('SELECT * FROM profile_money_entries WHERE entry_key=$1',[key]);
   if(existing.rowCount){
@@ -929,7 +937,7 @@ export async function createProfileMoneyEntry(pool,{
 export async function reverseProfileMoneyEntry(pool,{
   publicId,reversalKey,accountId,profileRole,entryId,note='',actorAccountId=null
 }){
-  const role=normalizePersonalMoneyRole(profileRole),key=clean(reversalKey,220);
+  const role=normalizePersonalMoneyRole(profileRole),key=normalizeIdempotencyKey(reversalKey);
   if(!key)fail('Idempotency key is required');
   const client=await pool.connect();
   try{
@@ -1088,7 +1096,7 @@ export async function transferFundsBetweenProfiles(pool,{
   publicId,transferKey,accountId,sourceProfileRole,sourceBusinessId=null,
   destinationProfileRole,destinationBusinessId=null,amount,currencyCode='PHP',note=''
 }){
-  const value=normalizePositiveMoney(amount,'Transfer amount'),key=clean(transferKey,220),currency=normalizeCurrency(currencyCode);
+  const value=normalizePositiveMoney(amount,'Transfer amount'),key=normalizeIdempotencyKey(transferKey),currency=normalizeCurrency(currencyCode);
   if(!key)fail('Idempotency key is required');
   const source=normalizeFundScope(sourceProfileRole,sourceBusinessId),destination=normalizeFundScope(destinationProfileRole,destinationBusinessId);
   if(source.profileRole===destination.profileRole&&Number(source.businessId||0)===Number(destination.businessId||0))fail('Choose two different profiles/workspaces');
