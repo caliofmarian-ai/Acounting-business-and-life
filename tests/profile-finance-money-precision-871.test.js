@@ -62,6 +62,10 @@ function budgetStub(expected){
     async query(sql,args=[]){
       calls.push(sql);
       if(sql==='BEGIN'||sql==='COMMIT')return{rowCount:0,rows:[]};
+      if(sql.includes('pg_advisory_xact_lock(hashtextextended(')){
+        assert.equal(args.length,1,'advisory lock must bind the original idempotency key');
+        return{rowCount:1,rows:[]};
+      }
       if(sql.includes('FROM profile_budget_entries be')&&sql.includes('WHERE be.entry_key='))return{rowCount:0,rows:[]};
       if(sql.includes('SELECT * FROM profile_budget_envelopes WHERE id='))return{
         rowCount:1,rows:[{id:22,status:'active',profile_role:'customer',business_id:null}]
@@ -88,6 +92,9 @@ test('valid decimal PHP values bind exact cents; no accidental provider movement
     });
     assert.equal(posted.amount,expected);
     assert.ok(calls.includes('COMMIT'));
+    const lockAt=calls.findIndex(sql=>sql.includes('pg_advisory_xact_lock(hashtextextended('));
+    const replayAt=calls.findIndex(sql=>sql.includes('FROM profile_budget_entries be'));
+    assert.ok(lockAt>=0&&replayAt>lockAt,'same-key transaction lock must precede replay lookup');
     assert.ok(!calls.includes('ROLLBACK'));
   }
 });

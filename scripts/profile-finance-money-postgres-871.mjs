@@ -126,6 +126,37 @@ try{
   eq(await rowCount('profile_budget_entries'),3,'valid requests only three entries');
   eq(await rowCount('profile_finance_audit_events'),3,'valid requests only three audit events');
 
+  // Real PostgreSQL concurrency: both callers begin with a previously absent
+  // key. Without per-key serialization, the second pre-insert SELECT can race
+  // the first INSERT and surface a raw 23505 instead of an idempotent replay.
+  const [sameA,sameB]=await Promise.all([
+    writeBudget('2.37','concurrent-valid-replay'),
+    writeBudget('2.37','concurrent-valid-replay')
+  ]);
+  eq(Number(sameA.id),Number(sameB.id),
+    'parallel identical instructions resolve to the same committed entry');
+  eq(await rowCount('profile_budget_entries'),4,
+    'parallel replay writes exactly one additional budget entry');
+  eq(await rowCount('profile_finance_audit_events'),4,
+    'parallel replay writes exactly one additional audit event');
+
+  // A simultaneous reuse of the same key for differing amounts must
+  // acknowledge exactly one posting and return a deliberate 409 for the other.
+  const conflicting=await Promise.allSettled([
+    writeBudget('2.41','concurrent-conflicting-instructions'),
+    writeBudget('2.42','concurrent-conflicting-instructions')
+  ]);
+  eq(conflicting.filter(item=>item.status==='fulfilled').length,1,
+    'only one conflicting instruction can commit');
+  const rejected=conflicting.filter(item=>item.status==='rejected');
+  eq(rejected.length,1,'other instruction must be rejected');
+  eq(rejected[0].reason.status,409,
+    'conflicting concurrent replay gets 409, not a raw database unique violation');
+  eq(await rowCount('profile_budget_entries'),5,
+    'conflicting parallel instructions commit just one extra entry');
+  eq(await rowCount('profile_finance_audit_events'),5,
+    'conflicting parallel instructions append just one audit event');
+
   // Force an actual database error *after* the entry INSERT. The primitive
   // must ROLLBACK both the entry and audit; no partial financial history.
   await pool.query(`

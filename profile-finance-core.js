@@ -578,6 +578,14 @@ export async function postProfileBudgetEntry(pool,{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    // The replay SELECT must run AFTER same-key concurrent writers commit,
+    // including requests arriving through different Node workers or Pools.
+    // A rare hash collision only serializes independent keys; the full key
+    // and its account/instruction are still checked below.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_budget_entries:' || $1::text, 871))",
+      [key]
+    );
     // A replay is valid only for the same account and the same exact-cent
     // instruction. A globally unique key must never expose another account's
     // budget row or falsely acknowledge a different amount/envelope.
