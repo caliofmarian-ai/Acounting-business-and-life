@@ -204,7 +204,7 @@ test('Padded or control-character email retry keys cannot alias the same stored 
     identity:async()=>({account:{id:81}}),
     pool:{query:async()=>{dbReads++;throw Error('Reached Merchant permission query')}}
   });
-  for(const supplied of [' '+key,key+' ',key+'\\n','\\t'+key,key+'\\r\\n',key+'\\u0000']){
+  for(const supplied of [' '+key,key+' ',key+'\n','\t'+key,key+'\r\n',key+'\u0000']){
     const result=await run('/orders/123/send',{params:{id:'123'},
       body:{business_id:44,client_request_key:supplied}});
     assert.equal(result.error?.status,400,'invalid literal key must be rejected');
