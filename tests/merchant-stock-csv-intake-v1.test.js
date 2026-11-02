@@ -5,7 +5,7 @@ import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
-  revokePaidBatchConfirmations,revokeMerchantIntakeSession,intakeOperationIsCurrent,
+  revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
   STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification
 } from '../public/merchant-stock-csv-intake.js';
 
@@ -425,4 +425,37 @@ test('changing stock category revokes human review and both paid-batch approvals
   assert.equal(validStockIntakeRow(row),false);
   assert.match(js,/if\(reviseStockIntakeRow\(row,'classificationCode',value\)\)revokeBatchConfirmations\(\)/);
   assert.match(js,/stockIntakeClassification\(row.classificationCode\)/);
+});
+
+test('a changed CSV selection immediately revokes OLD paid approvals before the new file is read',()=>{
+  const state={
+    rows:[{item:'Old paid Rice',selected:true,reviewConfirmed:true}],
+    resultLog:['Previous Merchant expense and purchase IDs']
+  };
+  const physical={checked:true},money={checked:true},paid={value:'3772.50'};
+  clearPreviousCsvReview(state,physical,money,paid);
+  assert.deepEqual(state.rows,[],'previous physical lines are no longer selectable');
+  assert.deepEqual(state.resultLog,[],'old paid-batch results cannot be reused as new evidence');
+  assert.equal(physical.checked,false);
+  assert.equal(money.checked,false);
+  assert.equal(paid.value,'','previous paid total must not survive file selection');
+
+  // Actual page wiring: cancellation and revocation happen synchronously
+  // before empty-file, oversized-file and asynchronous read branches.
+  const start=js.indexOf('  async function readFile(){');
+  const end=js.indexOf('  async function assertMerchantContext(){',start);
+  assert.ok(start>0&&end>start);
+  const handler=js.slice(start,end);
+  const revision=handler.indexOf('const ticket=++state.csvReadRevision;');
+  const revoke=handler.indexOf('clearPreviousCsvReview(state,');
+  const disable=handler.indexOf('renderRows(); // Disable Post synchronously');
+  const empty=handler.indexOf('if(!file){');
+  const tooLarge=handler.indexOf('if(file.size>250000)');
+  const asyncRead=handler.indexOf('await file.text()');
+  assert.ok(revision>=0&&revision<revoke,'old pending file read is invalidated first');
+  assert.ok(revoke<disable&&disable<empty&&empty<tooLarge&&tooLarge<asyncRead,
+    'old batch is no longer postable even when replacement is missing, oversized or still reading');
+  assert.ok(js.includes("$('post').disabled=state.busy||!state.context"),'renderRows disables Post via current controls');
+  assert.ok(handler.includes('if(!csvReadIsCurrent(ticket,state.csvReadRevision,state.busy))return;'),
+    'stale new-file responses cannot restore a previous batch');
 });

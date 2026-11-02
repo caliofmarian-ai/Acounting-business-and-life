@@ -206,6 +206,16 @@ export function revokePaidBatchConfirmations(physicalCheckbox,moneyCheckbox){
   physicalCheckbox.checked=false;
   moneyCheckbox.checked=false;
 }
+// Changing the selected CSV is an immediate revocation of the previous
+// physical and Money approvals. Never wait for asynchronous File.text():
+// a new, empty, unreadable or oversized file must not leave the old batch
+// ready to POST while a different source is shown in the file input.
+export function clearPreviousCsvReview(state,physicalCheckbox,moneyCheckbox,paidInput){
+  state.rows=[];
+  state.resultLog=[];
+  revokePaidBatchConfirmations(physicalCheckbox,moneyCheckbox);
+  paidInput.value='';
+}
 export function guardNewPaidStockIntakeRow(row,inventory){
   const existing=findExistingInventory(row,inventory);
   if(!existing)return true;
@@ -479,8 +489,13 @@ if(hasDocument){
   }
   async function readFile(){
     if(state.busy)return;
-    const file=$('csv').files?.[0];if(!file)return;
+    const file=$('csv').files?.[0];
     const ticket=++state.csvReadRevision;
+    clearPreviousCsvReview(state,$('physicalConfirm'),$('moneyConfirm'),$('actualTotalPaid'));
+    renderRows(); // Disable Post synchronously; do not await the replacement file.
+    message('results','The previous CSV review and paid-batch approvals were cleared. No new purchase was submitted.');
+    if(!file){message('fileStatus','No CSV selected. Choose a new file before reviewing stock.');return}
+    message('fileStatus','Reading the new CSV; previous approvals were revoked.');
     if(file.size>250000){message('fileStatus','CSV is too large.','error');return}
     try{
       const csvText=await file.text();
