@@ -195,6 +195,29 @@ test('Receipt idempotency keys never truncate or coerce into an existing retry k
   assert.equal(dbReads,1,'a valid 100-character key reaches authorization');
 });
 
+test('Padded or control-character email retry keys cannot alias the same stored send',async()=>{
+  // The two literal client keys are different; trimming one into the other
+  // would acknowledge an unrelated send rather than reject invalid input.
+  const key='retry_20261102_safe_12345';
+  let dbReads=0;
+  const run=documentRouteHarness({
+    identity:async()=>({account:{id:81}}),
+    pool:{query:async()=>{dbReads++;throw Error('Reached Merchant permission query')}}
+  });
+  for(const supplied of [' '+key,key+' ',key+'\\n','\\t'+key,key+'\\r\\n',key+'\\u0000']){
+    const result=await run('/orders/123/send',{params:{id:'123'},
+      body:{business_id:44,client_request_key:supplied}});
+    assert.equal(result.error?.status,400,'invalid literal key must be rejected');
+    assert.match(result.error?.message||'',/client_request_key/);
+    assert.equal(result.response,null);
+  }
+  assert.equal(dbReads,0,'nonliteral keys must not access Merchant or financial data');
+  const good=await run('/orders/123/send',{params:{id:'123'},
+    body:{business_id:44,client_request_key:key}});
+  assert.match(good.error?.message||'',/Reached Merchant permission query/);
+  assert.equal(dbReads,1,'unaltered valid key proceeds to regular authorization');
+});
+
 test('All signed-in document endpoints are no-store and conditional GETs cannot 304',()=>{
   const routes={use:[],get:[],post:[]};
   const app={

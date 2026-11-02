@@ -32,7 +32,7 @@ const short=(v,max=250)=>String(v??'').trim().slice(0,max);
 const cleanHtml=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 // Idempotency keys must never be truncated: distinct requests must not alias.
 const clientKey=value=>{
-  const key=typeof value==='string'?value.trim():'';
+  const key=typeof value==='string'?value:'';
   if(!/^[a-zA-Z0-9_-]{12,100}$/.test(key))throw err(400,'client_request_key is required for safe email retries');
   return key;
 };
