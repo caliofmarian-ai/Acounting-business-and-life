@@ -199,13 +199,16 @@ test('personal Money entry replay rejects changed cents/category/direction and p
     evidence_reference:'',actor_account_id:11,occurred_at:'2026-11-01T12:00:00.000Z',
     status:'active'
   };
-  let queries=0;
-  const pool={async query(sql){
-    queries++;
+  const calls=[];
+  const client={release(){},async query(sql){
+    calls.push(sql);
+    if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0,rows:[]};
+    if(sql.includes('pg_advisory_xact_lock(hashtextextended('))return{rowCount:1,rows:[]};
     if(sql.includes('SELECT * FROM profile_money_entries WHERE entry_key='))return{rowCount:1,rows:[prior]};
     if(sql.includes('FROM profile_money_entries e LEFT JOIN'))return{rowCount:1,rows:[prior]};
     throw Error('Unexpected personal replay SQL: '+sql);
   }};
+  const pool={async connect(){return client}};
   const input={
     publicId:'unused-new-id',entryKey:'pme-original',accountId:11,profileRole:'customer',
     entryType:'expense',direction:'out',category:'groceries',amount:'2.31',
@@ -220,7 +223,11 @@ test('personal Money entry replay rejects changed cents/category/direction and p
   const restored=await createProfileMoneyEntry(pool,input);
   assert.equal(restored.id,72);
   assert.equal(restored.amount,2.31);
-  assert.equal(queries,9,'seven invalid lookups and one valid lookup with one readback');
+  assert.equal(calls.filter(sql=>sql.includes('SELECT * FROM profile_money_entries WHERE entry_key=')).length,8,
+    'seven rejected replays and one accepted replay inspect the literal key under lock');
+  assert.equal(calls.filter(sql=>sql.includes('pg_advisory_xact_lock(hashtextextended(')).length,8);
+  assert.equal(calls.filter(sql=>sql==='ROLLBACK').length,7);
+  assert.equal(calls.filter(sql=>sql==='COMMIT').length,1);
 });
 
 test('internal profile transfer replay rejects changed money instruction',async()=>{

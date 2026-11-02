@@ -897,7 +897,17 @@ export async function createProfileMoneyEntry(pool,{
   const cat=normalizeProfileMoneyCategory(role,category),value=normalizePositiveMoney(amount,'Money entry amount');
   const currency=normalizeCurrency(currencyCode),key=normalizeIdempotencyKey(entryKey);
   if(!key)fail('Idempotency key is required');
-  const existing=await pool.query('SELECT * FROM profile_money_entries WHERE entry_key=$1',[key]);
+  // Serialize one opaque key across workers. Both the ledger row and its
+  // audit record must commit atomically, including concurrent retries.
+  const client=await pool.connect();
+  let createdId=null;
+  try{
+    await client.query('BEGIN');
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_money_entries:' || $1::text, 871))",
+      [key]
+    );
+    const existing=await client.query('SELECT * FROM profile_money_entries WHERE entry_key=$1',[key]);
   if(existing.rowCount){
     const old=existing.rows[0];
     if(Number(old.account_id)!==Number(accountId)||old.profile_role!==role)fail('Idempotency key belongs to another Money scope',409);
@@ -915,21 +925,22 @@ export async function createProfileMoneyEntry(pool,{
        (occurredAt!=null&&occurredAt!==''&&
          new Date(old.occurred_at).getTime()!==new Date(occurredAt).getTime()))
       fail('Idempotency key already belongs to a different Money entry',409);
-    const detail=await pool.query(`
+    const detail=await client.query(`
       SELECT e.*,f.display_name financial_account_name,f.account_kind financial_account_kind,f.reference_last4 financial_account_last4
       FROM profile_money_entries e LEFT JOIN profile_financial_accounts f ON f.id=e.financial_account_id
       WHERE e.id=$1
     `,[old.id]);
     const x=detail.rows[0];
+    await client.query('COMMIT');
     return{id:Number(x.id),public_id:x.public_id,entry_type:x.entry_type,direction:x.direction,category:x.category,amount:Number(x.amount),currency_code:x.currency_code,financial_account_id:x.financial_account_id==null?null:Number(x.financial_account_id),financial_account_name:x.financial_account_name||'',financial_account_kind:x.financial_account_kind||'',financial_account_last4:x.financial_account_last4||'',source_type:x.source_type,source_id:x.source_id==null?null:Number(x.source_id),note:x.note||'',evidence_reference:x.evidence_reference||'',status:x.status,reversal_of_id:x.reversal_of_id==null?null:Number(x.reversal_of_id),occurred_at:x.occurred_at,created_at:x.created_at};
   }
-  await validateLinkedFinancialAccount(pool,{
+  await validateLinkedFinancialAccount(client,{
     accountId:Number(accountId),profileRole:role,businessId:null,financialAccountId,currencyCode:currency
   });
-  const source=await validateProfileMoneySource(pool,{accountId,profileRole:role,sourceType,sourceId});
+  const source=await validateProfileMoneySource(client,{accountId,profileRole:role,sourceType,sourceId});
   const when=occurredAt==null||occurredAt===''?null:new Date(occurredAt);
   if(when&&Number.isNaN(when.getTime()))fail('occurred_at must be a valid date/time');
-  const {rows}=await pool.query(`
+  const {rows}=await client.query(`
     INSERT INTO profile_money_entries(
       public_id,entry_key,account_id,profile_role,financial_account_id,source_type,source_id,
       entry_type,direction,category,amount,currency_code,note,evidence_reference,actor_account_id,occurred_at
@@ -940,14 +951,18 @@ export async function createProfileMoneyEntry(pool,{
     source.sourceType,source.sourceId,entry.type,entry.direction,cat,value,currency,clean(note,700),
     clean(evidenceReference,500),actorAccountId||Number(accountId),when?when.toISOString():null
   ]);
-  await pool.query(`
+  await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,NULL,$3,'profile_money_entry_created',$4::jsonb)
   `,[
     Number(accountId),role,financialAccountId==null?null:Number(financialAccountId),
     JSON.stringify({entry_id:Number(rows[0].id),entry_type:entry.type,direction:entry.direction,category:cat,amount:value,currency_code:currency,source_type:source.sourceType,source_id:source.sourceId,provider_balance_effect:false})
   ]);
-  return (await listProfileMoneyEntries(pool,{accountId,profileRole:role,limit:250})).entries.find(x=>x.id===Number(rows[0].id));
+    await client.query('COMMIT');
+    createdId=Number(rows[0].id);
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
+  return (await listProfileMoneyEntries(pool,{accountId,profileRole:role,limit:250})).entries.find(x=>x.id===createdId);
 }
 
 export async function reverseProfileMoneyEntry(pool,{

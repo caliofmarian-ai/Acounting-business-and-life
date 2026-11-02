@@ -353,6 +353,73 @@ try{
   eq(Number((await holdAudits()).rows[0].count),holdAuditsBefore+1,
     'retry after rollback writes exactly one audit');
 
+
+  // New personal Money regression: real PostgreSQL lock, concurrent idempotent
+  // replay and full entry+audit rollback, never real account/provider data.
+  await pool.query(`
+    CREATE TABLE profile_money_entries(
+      id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,
+      entry_key TEXT NOT NULL UNIQUE,account_id BIGINT NOT NULL,
+      profile_role TEXT NOT NULL,financial_account_id BIGINT,
+      source_type TEXT NOT NULL,source_id BIGINT,
+      entry_type TEXT NOT NULL,direction TEXT NOT NULL,category TEXT NOT NULL,
+      amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      currency_code TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',
+      evidence_reference TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',reversal_of_id BIGINT,
+      actor_account_id BIGINT,occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  const expense=(key,amount='1.23')=>createProfileMoneyEntry(pool,{
+    publicId:'ci-personal-'+key,entryKey:key,accountId:11,
+    profileRole:'customer',entryType:'expense',direction:'out',
+    category:'groceries',amount,currencyCode:'PHP',
+    sourceType:'manual',note:'disposable test expense'
+  });
+  const personalAudits=async()=>Number((await pool.query(
+    "SELECT COUNT(*)::int AS count FROM profile_finance_audit_events WHERE event_code='profile_money_entry_created'"
+  )).rows[0].count);
+  const [personalA,personalB]=await Promise.all([
+    expense('parallel-same-personal'),expense('parallel-same-personal')
+  ]);
+  eq(personalA.id,personalB.id,'parallel same-key personal Money returns original entry');
+  eq(await rowCount('profile_money_entries'),1,'parallel same key writes one entry');
+  eq(await personalAudits(),1,'parallel same key writes one audit');
+  const personalConflict=await Promise.allSettled([
+    expense('parallel-conflict-personal','2.31'),
+    expense('parallel-conflict-personal','2.32')
+  ]);
+  eq(personalConflict.filter(x=>x.status==='fulfilled').length,1,
+    'one conflicting concurrent personal instruction commits');
+  eq(personalConflict.filter(x=>x.status==='rejected').length,1,
+    'other conflicting instruction rejects');
+  eq(personalConflict.find(x=>x.status==='rejected').reason.status,409,
+    'conflicting personal replay returns deliberate 409, not raw unique error');
+  eq(await rowCount('profile_money_entries'),2,'conflicting instructions write one more entry');
+  eq(await personalAudits(),2,'conflicting instructions write one more audit');
+  await pool.query(`
+    ALTER TABLE profile_finance_audit_events
+    ADD CONSTRAINT synthetic_personal_audit_rejection
+    CHECK (NOT (event_code='profile_money_entry_created'
+      AND detail_json->>'amount'='9.99'))
+  `);
+  const personalBefore=await rowCount('profile_money_entries');
+  const auditBefore=await personalAudits();
+  await assert.rejects(expense('rollback-personal','9.99'),
+    error=>error.code==='23514','actual PostgreSQL audit failure aborts personal entry');
+  assertions++;
+  eq(await rowCount('profile_money_entries'),personalBefore,
+    'failed audit rolls back personal entry');
+  eq(await personalAudits(),auditBefore,
+    'failed audit leaves no partial personal audit');
+  await pool.query('ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_personal_audit_rejection');
+  const personalRetry=await expense('rollback-personal','9.99');
+  eq(personalRetry.amount,9.99,'successful retry preserves exact cents');
+  eq(await rowCount('profile_money_entries'),personalBefore+1,'retry writes one personal entry');
+  eq(await personalAudits(),auditBefore+1,'retry writes one personal audit');
+
   console.log('PROFILE_FINANCE_REAL_POSTGRES_871_PASS assertions='+assertions+
     ' database=abl_finance_precision_ci no external payments');
 }finally{
