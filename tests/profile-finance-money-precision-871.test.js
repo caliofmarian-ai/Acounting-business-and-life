@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   postProfileBudgetEntry,transferProfileBudgetAllocation,
   createProfileMoneyMovementRequest,createProfileMoneyEntry,createProfileFinancialAccount,
+  updateProfileFinancialAccount,upsertMoneyPreference,
   transferFundsBetweenProfiles,reverseProfileMoneyEntry
 } from '../profile-finance-core.js';
 
@@ -316,4 +317,88 @@ test('financial account creation commits account metadata and audit atomically',
   };
   await run(true);
   await run(false);
+});
+
+
+test('financial account edits require audit success on one locked transaction',async()=>{
+  const row={id:42,account_id:11,profile_role:'customer',business_id:null,public_id:'synthetic-a',
+    owner_scope:'account',account_kind:'cash',currency_code:'PHP',status:'active',
+    display_name:'Old cash',provider_destination_ref:'',verification_status:'unverified',
+    can_pay:true,can_receive:false,can_payout:false};
+  for(const rejectAudit of [true,false]){
+    const events=[];let released=false;
+    const client={
+      release(){released=true},
+      async query(sql,args){
+        events.push(sql);
+        if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0,rows:[]};
+        if(sql.includes('SELECT * FROM profile_financial_accounts'))return{rowCount:1,rows:[row]};
+        if(sql.includes('UPDATE profile_financial_accounts SET'))
+          return{rowCount:1,rows:[{...row,display_name:args[0],status:args[10]}]};
+        if(sql.includes('INSERT INTO profile_finance_audit_events(')){
+          if(rejectAudit)throw Object.assign(new Error('audit rejected'),{code:'23514'});
+          return{rowCount:1,rows:[]};
+        }
+        throw Error('Unexpected SQL: '+sql);
+      }
+    };
+    const db={async connect(){return client},async query(){throw Error('Unscoped pool.query forbidden')}};
+    const change=updateProfileFinancialAccount(db,{accountId:11,id:42,displayName:'New cash',status:'inactive'});
+    if(rejectAudit){
+      await assert.rejects(change,e=>e.code==='23514');
+      assert.equal(events.includes('COMMIT'),false);
+      assert.equal(events.at(-1),'ROLLBACK');
+    }else{
+      const updated=await change;
+      assert.equal(updated.display_name,'New cash');
+      assert.equal(updated.status,'inactive');
+      assert.equal(events.at(-1),'COMMIT');
+    }
+    assert.equal(events[0],'BEGIN');
+    assert.match(events[1],/FOR UPDATE/);
+    assert.ok(events.findIndex(e=>e.includes('UPDATE profile_financial_accounts SET'))<
+      events.findIndex(e=>e.includes('INSERT INTO profile_finance_audit_events(')));
+    assert.equal(released,true);
+  }
+});
+
+test('money preferences and audit are atomic for initial or repeated upsert',async()=>{
+  for(const rejectAudit of [true,false]){
+    const events=[];let released=false;
+    const client={
+      release(){released=true},
+      async query(sql){
+        events.push(sql);
+        if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0,rows:[]};
+        if(sql.includes('INSERT INTO profile_money_preferences('))return{rowCount:1,rows:[{
+          id:24,profile_role:'customer',business_id:null,
+          accepted_methods:['cash'],payout_schedule_preference:'daily',
+          default_receive_account_id:null,default_spend_account_id:null,
+          default_payout_account_id:null,updated_at:new Date(0)
+        }]};
+        if(sql.includes('INSERT INTO profile_finance_audit_events(')){
+          if(rejectAudit)throw Object.assign(new Error('audit rejected'),{code:'23514'});
+          return{rowCount:1,rows:[]};
+        }
+        throw Error('Unexpected SQL: '+sql);
+      }
+    };
+    const db={async connect(){return client},async query(){throw Error('Unscoped pool.query forbidden')}};
+    const change=upsertMoneyPreference(db,{accountId:11,profileRole:'customer',
+      acceptedMethods:['cash'],payoutSchedulePreference:'daily'});
+    if(rejectAudit){
+      await assert.rejects(change,e=>e.code==='23514');
+      assert.equal(events.includes('COMMIT'),false);
+      assert.equal(events.at(-1),'ROLLBACK');
+    }else{
+      const stored=await change;
+      assert.equal(stored.payout_schedule_preference,'daily');
+      assert.deepEqual(stored.accepted_methods,['cash']);
+      assert.equal(events.at(-1),'COMMIT');
+    }
+    assert.equal(events[0],'BEGIN');
+    assert.ok(events.findIndex(e=>e.includes('INSERT INTO profile_money_preferences('))<
+      events.findIndex(e=>e.includes('INSERT INTO profile_finance_audit_events(')));
+    assert.equal(released,true);
+  }
 });

@@ -455,7 +455,11 @@ export async function updateProfileFinancialAccount(pool,{
   accountId,id,displayName,institutionName,accountName,referenceLast4,providerCode,providerDestinationRef,
   canPay,canReceive,canPayout,status
 }){
-  const current=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2',[Number(id),Number(accountId)]);
+  // Serialize account edits and commit the mandatory audit with metadata.
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const current=await client.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 FOR UPDATE',[Number(id),Number(accountId)]);
   if(!current.rowCount)fail('Financial account not found',404);
   const old=current.rows[0];
   const nextStatus=status===undefined?old.status:clean(status,20);
@@ -464,7 +468,7 @@ export async function updateProfileFinancialAccount(pool,{
   const nextVerification=nextProviderRef===old.provider_destination_ref
     ?old.verification_status
     :(nextProviderRef?'pending':'unverified');
-  const {rows}=await pool.query(`
+  const {rows}=await client.query(`
     UPDATE profile_financial_accounts SET
       display_name=$1,institution_name=$2,account_name=$3,reference_last4=$4,provider_code=$5,provider_destination_ref=$6,
       can_pay=$7,can_receive=$8,can_payout=$9,verification_status=$10,status=$11,updated_at=NOW()
@@ -478,11 +482,14 @@ export async function updateProfileFinancialAccount(pool,{
     canPay===undefined?old.can_pay:Boolean(canPay),canReceive===undefined?old.can_receive:Boolean(canReceive),
     canPayout===undefined?old.can_payout:Boolean(canPayout),nextVerification,nextStatus,Number(id),Number(accountId)
   ]);
-  await pool.query(`
+  await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,$3,$4,'financial_account_updated',$5::jsonb)
   `,[Number(accountId),old.profile_role,old.business_id,Number(id),JSON.stringify({status:nextStatus,verification_status:nextVerification})]);
-  return publicFinancialAccount(rows[0]);
+    await client.query('COMMIT');
+    return publicFinancialAccount(rows[0]);
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
 }
 
 export async function upsertMoneyPreference(pool,{
@@ -490,7 +497,11 @@ export async function upsertMoneyPreference(pool,{
   defaultPayoutAccountId=null,acceptedMethods=[],payoutSchedulePreference='provider_default'
 }){
   const role=normalizeRole(profileRole),methods=normalizeMethods(acceptedMethods),schedule=normalizeSchedule(payoutSchedulePreference);
-  const {rows}=await pool.query(`
+  // A preferences upsert must never survive a rejected audit event.
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const {rows}=await client.query(`
     INSERT INTO profile_money_preferences(
       account_id,profile_role,business_id,default_receive_account_id,default_spend_account_id,default_payout_account_id,
       accepted_methods,payout_schedule_preference
@@ -510,11 +521,12 @@ export async function upsertMoneyPreference(pool,{
     defaultPayoutAccountId==null?null:Number(defaultPayoutAccountId),
     JSON.stringify(methods),schedule
   ]);
-  await pool.query(`
+  await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,event_code,detail_json)
     VALUES($1,$2,$3,'money_preferences_updated',$4::jsonb)
   `,[Number(accountId),role,businessId==null?null:Number(businessId),JSON.stringify({accepted_methods:methods,payout_schedule_preference:schedule})]);
-  const r=rows[0];
+    await client.query('COMMIT');
+    const r=rows[0];
   return{
     id:Number(r.id),profile_role:r.profile_role,business_id:r.business_id==null?null:Number(r.business_id),
     default_receive_account_id:r.default_receive_account_id==null?null:Number(r.default_receive_account_id),
@@ -523,6 +535,8 @@ export async function upsertMoneyPreference(pool,{
     accepted_methods:Array.isArray(r.accepted_methods)?r.accepted_methods:methods,
     payout_schedule_preference:r.payout_schedule_preference,updated_at:r.updated_at
   };
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
 }
 
 

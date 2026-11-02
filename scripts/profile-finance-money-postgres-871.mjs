@@ -8,7 +8,7 @@ import {
   transferProfileBudgetAllocation,
   createProfileMoneyMovementRequest,
   createProfileMoneyEntry,
-  createProfileFinancialAccount,
+  createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
   transferFundsBetweenProfiles
 } from '../profile-finance-core.js';
 
@@ -474,6 +474,69 @@ try{
   `);
   eq(Number(linkedAccountAudit.rows[0].financial_account_id),createdAccount.id,
     'audit links to the exact created account in the same transaction');
+
+
+  // Actual PostgreSQL audit failure must roll back account metadata UPDATE.
+  const changeAccount=()=>updateProfileFinancialAccount(pool,{
+    accountId:11,id:createdAccount.id,displayName:'Updated CI account',status:'inactive'
+  });
+  const accountUpdateAuditBefore=await rowCount('profile_finance_audit_events');
+  await pool.query(`ALTER TABLE profile_finance_audit_events
+    ADD CONSTRAINT synthetic_financial_update_audit_rejection
+    CHECK (event_code <> 'financial_account_updated')`);
+  await assert.rejects(changeAccount(),error=>error.code==='23514');assertions++;
+  const oldMetadata=await pool.query(
+    'SELECT display_name,status FROM profile_financial_accounts WHERE id=$1',[createdAccount.id]);
+  eq(oldMetadata.rows[0].display_name,'Disposable account','audit failure rolls back account name');
+  eq(oldMetadata.rows[0].status,'active','audit failure rolls back account status');
+  eq(await rowCount('profile_finance_audit_events'),accountUpdateAuditBefore,
+    'failed account update added no audit');
+  await pool.query('ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_financial_update_audit_rejection');
+  const updatedAccount=await changeAccount();
+  eq(updatedAccount.display_name,'Updated CI account','account update retry succeeds');
+  eq(updatedAccount.status,'inactive','valid account change updates status');
+  eq(await rowCount('profile_finance_audit_events'),accountUpdateAuditBefore+1,
+    'account update retry appends one audit');
+
+  // Preferences: both initial INSERT and ON CONFLICT UPDATE must be rollback-safe.
+  await pool.query(`
+    CREATE TABLE profile_money_preferences(
+      id BIGSERIAL PRIMARY KEY,
+      account_id BIGINT NOT NULL,profile_role TEXT NOT NULL,business_id BIGINT,
+      default_receive_account_id BIGINT,default_spend_account_id BIGINT,
+      default_payout_account_id BIGINT,accepted_methods JSONB NOT NULL,
+      payout_schedule_preference TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE UNIQUE INDEX synthetic_finance_preferences_scope
+      ON profile_money_preferences(account_id,profile_role,COALESCE(business_id,0));
+  `);
+  const preferences=methods=>upsertMoneyPreference(pool,{accountId:11,profileRole:'customer',
+    acceptedMethods:methods,payoutSchedulePreference:'daily'});
+  const prefAuditBefore=await rowCount('profile_finance_audit_events');
+  await pool.query(`ALTER TABLE profile_finance_audit_events
+    ADD CONSTRAINT synthetic_preferences_audit_rejection
+    CHECK (event_code <> 'money_preferences_updated')`);
+  await assert.rejects(preferences(['cash']),error=>error.code==='23514');assertions++;
+  eq(await rowCount('profile_money_preferences'),0,'failed new preferences have no row');
+  eq(await rowCount('profile_finance_audit_events'),prefAuditBefore,'failed preferences have no audit');
+  await pool.query('ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_preferences_audit_rejection');
+  const prefCreated=await preferences(['cash']);
+  eq(prefCreated.accepted_methods[0],'cash','preferences retry succeeds');
+  eq(await rowCount('profile_money_preferences'),1,'retry stores one preference row');
+  eq(await rowCount('profile_finance_audit_events'),prefAuditBefore+1,'retry adds one preference audit');
+  await pool.query(`ALTER TABLE profile_finance_audit_events
+    ADD CONSTRAINT synthetic_preferences_audit_rejection
+    CHECK (event_code <> 'money_preferences_updated')`);
+  await assert.rejects(preferences(['bank_transfer']),error=>error.code==='23514');assertions++;
+  const preserved=await pool.query('SELECT accepted_methods FROM profile_money_preferences WHERE id=$1',
+    [prefCreated.id]);
+  eq(preserved.rows[0].accepted_methods[0],'cash','failed preferences update preserves old methods');
+  eq(await rowCount('profile_finance_audit_events'),prefAuditBefore+1,'failed upsert adds no audit');
+  await pool.query('ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_preferences_audit_rejection');
+  const prefUpdated=await preferences(['bank_transfer']);
+  eq(prefUpdated.accepted_methods[0],'bank_transfer','valid preference update succeeds');
+  eq(await rowCount('profile_money_preferences'),1,'upsert preserves one scope row');
+  eq(await rowCount('profile_finance_audit_events'),prefAuditBefore+2,'update adds one preference audit');
 
   console.log('PROFILE_FINANCE_REAL_POSTGRES_871_PASS assertions='+assertions+
     ' database=abl_finance_precision_ci no external payments');
