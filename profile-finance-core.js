@@ -982,7 +982,28 @@ export async function createProfileMoneyEntry(pool,{
     createdId=Number(rows[0].id);
   }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
   finally{client.release()}
-  return (await listProfileMoneyEntries(pool,{accountId,profileRole:role,limit:250})).entries.find(x=>x.id===createdId);
+  // A legitimate backdated entry can be older than the 250-row history page.
+  // Never return undefined after its ledger + mandatory audit have COMMITTED.
+  const posted=await pool.query(`
+    SELECT e.*,f.display_name financial_account_name,f.account_kind financial_account_kind,
+      f.reference_last4 financial_account_last4
+    FROM profile_money_entries e
+    LEFT JOIN profile_financial_accounts f ON f.id=e.financial_account_id
+    WHERE e.id=$1 AND e.account_id=$2 AND e.profile_role=$3
+  `,[createdId,Number(accountId),role]);
+  if(posted.rowCount!==1)fail('Committed Money entry could not be reloaded',500);
+  const x=posted.rows[0];
+  return{
+    id:Number(x.id),public_id:x.public_id,entry_type:x.entry_type,direction:x.direction,category:x.category,
+    amount:Number(x.amount),currency_code:x.currency_code,
+    financial_account_id:x.financial_account_id==null?null:Number(x.financial_account_id),
+    financial_account_name:x.financial_account_name||'',financial_account_kind:x.financial_account_kind||'',
+    financial_account_last4:x.financial_account_last4||'',source_type:x.source_type,
+    source_id:x.source_id==null?null:Number(x.source_id),note:x.note||'',
+    evidence_reference:x.evidence_reference||'',status:x.status,
+    reversal_of_id:x.reversal_of_id==null?null:Number(x.reversal_of_id),
+    occurred_at:x.occurred_at,created_at:x.created_at
+  };
 }
 
 export async function reverseProfileMoneyEntry(pool,{

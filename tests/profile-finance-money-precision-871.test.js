@@ -402,3 +402,41 @@ test('money preferences and audit are atomic for initial or repeated upsert',asy
     assert.equal(released,true);
   }
 });
+
+test('backdated Money entry returns the committed scoped row, not a capped recent-history page',async()=>{
+  let committed=false,released=false,reads=0;
+  const recorded={
+    id:911,public_id:'ci-backdated-911',entry_type:'expense',direction:'out',
+    category:'groceries',amount:'1.23',currency_code:'PHP',financial_account_id:null,
+    source_type:'manual',source_id:null,note:'backdated',evidence_reference:'',
+    status:'active',reversal_of_id:null,occurred_at:new Date('2005-01-01T00:00:00Z'),
+    created_at:new Date('2026-11-02T00:00:00Z')
+  };
+  const client={release(){released=true},async query(sql){
+    if(sql==='BEGIN'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+    if(sql==='COMMIT'){committed=true;return{rowCount:0,rows:[]}}
+    if(sql.includes('pg_advisory_xact_lock'))return{rowCount:1,rows:[]};
+    if(sql.includes('SELECT * FROM profile_money_entries WHERE entry_key='))return{rowCount:0,rows:[]};
+    if(sql.includes('INSERT INTO profile_money_entries('))return{rowCount:1,rows:[recorded]};
+    if(sql.includes('INSERT INTO profile_finance_audit_events('))return{rowCount:1,rows:[]};
+    throw Error('Unexpected transaction SQL: '+sql);
+  }};
+  const db={async connect(){return client},async query(sql,args){
+    reads++;
+    assert.equal(committed,true,'row reload happens after ledger + audit commit');
+    assert.match(sql,/WHERE e\.id=\$1 AND e\.account_id=\$2 AND e\.profile_role=\$3/);
+    assert.doesNotMatch(sql,/ORDER BY|LIMIT/i,'never silently use a 250-row recent page');
+    assert.deepEqual(args,[911,11,'customer'],'lookup is scoped to account and profile');
+    return{rowCount:1,rows:[recorded]};
+  }};
+  const posted=await createProfileMoneyEntry(db,{
+    publicId:recorded.public_id,entryKey:'backdated-key-911',accountId:11,
+    profileRole:'customer',entryType:'expense',direction:'out',category:'groceries',
+    amount:'1.23',occurredAt:'2005-01-01T00:00:00Z',note:'backdated'
+  });
+  assert.equal(posted.id,911);
+  assert.equal(posted.amount,1.23);
+  assert.equal(posted.public_id,'ci-backdated-911');
+  assert.equal(reads,1);
+  assert.equal(released,true);
+});

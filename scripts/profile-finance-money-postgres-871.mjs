@@ -8,6 +8,7 @@ import {
   transferProfileBudgetAllocation,
   createProfileMoneyMovementRequest,
   createProfileMoneyEntry,
+  listProfileMoneyEntries,
   createProfileFinancialAccount,updateProfileFinancialAccount,upsertMoneyPreference,
   transferFundsBetweenProfiles
 } from '../profile-finance-core.js';
@@ -420,6 +421,41 @@ try{
   eq(personalRetry.amount,9.99,'successful retry preserves exact cents');
   eq(await rowCount('profile_money_entries'),personalBefore+1,'retry writes one personal entry');
   eq(await personalAudits(),auditBefore+1,'retry writes one personal audit');
+
+
+  // The recent-history list is intentionally capped at 250 and ordered by
+  // occurred_at. A valid old-dated entry must still return its own ID/amount
+  // after COMMIT, and a same-key retry must return that identical entry.
+  await pool.query(`
+    INSERT INTO profile_money_entries(
+      public_id,entry_key,account_id,profile_role,source_type,
+      entry_type,direction,category,amount,currency_code,note,
+      actor_account_id,occurred_at
+    )
+    SELECT 'ci-recent-'+n::text,'ci-recent-key-'+n::text,11,'customer','manual',
+      'expense','out','groceries',1.00,'PHP','synthetic history fixture',11,NOW()
+    FROM generate_series(1,251) AS n
+  `);
+  const historicalArgs={
+    publicId:'ci-historical-backdated-entry',entryKey:'historical-backdated-key',
+    accountId:11,profileRole:'customer',entryType:'expense',direction:'out',
+    category:'groceries',amount:'1.23',currencyCode:'PHP',sourceType:'manual',
+    note:'disposable historical expense',occurredAt:'2005-01-01T00:00:00Z'
+  };
+  const historicalAuditBefore=await personalAudits();
+  const historicalPosted=await createProfileMoneyEntry(pool,historicalArgs);
+  eq(historicalPosted.public_id,historicalArgs.publicId,
+    'backdated committed expense returns its exact row beyond 250-item history');
+  eq(historicalPosted.amount,1.23,'backdated amount retains exact cents');
+  eq(new Date(historicalPosted.occurred_at).toISOString(),historicalArgs.occurredAt.replace('Z','.000Z'),
+    'committed historical occurred_at is preserved');
+  const recent=await listProfileMoneyEntries(pool,{accountId:11,profileRole:'customer',limit:250});
+  eq(recent.entries.some(x=>x.id===historicalPosted.id),false,
+    'historical entry genuinely falls outside capped recent list');
+  const historicalRetry=await createProfileMoneyEntry(pool,historicalArgs);
+  eq(historicalRetry.id,historicalPosted.id,'same-key historical retry returns original committed entry');
+  eq(await personalAudits(),historicalAuditBefore+1,
+    'backdated post and replay append exactly one audit event');
 
 
   // Real PostgreSQL constraint rejection must roll back creation of a
