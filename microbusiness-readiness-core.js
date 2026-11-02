@@ -521,7 +521,15 @@ export function ensureMicrobusinessReadinessSchema(pool){
       if(!business.rows[0]?.table_name)return;
       await pool.query(`SELECT pg_advisory_xact_lock(87320261031::bigint);
         ${readinessForeignKeyGuardSql}`);
-      state.fkReady=true;
+      // The business table may have disappeared between the initial probe and
+      // the guarded DO (for example a concurrent schema bootstrap/rollback).
+      // Only a committed, observed FK is proof that future requests may skip it.
+      const attached=await pool.query(`SELECT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname='microbusiness_readiness_business_fk'
+          AND conrelid=to_regclass('public.microbusiness_readiness')
+      ) AS present`);
+      state.fkReady=Boolean(attached.rows[0]?.present);
     })();
     state.fkProbe=probe;
     probe.finally(()=>{if(state.fkProbe===probe)state.fkProbe=null}).catch(()=>{});

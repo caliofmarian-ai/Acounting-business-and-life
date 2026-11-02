@@ -46,7 +46,7 @@ try{
   // Pools, not just the single-Pool WeakMap gate. All databases are disposable.
   const ciDbName='abl_readiness_lock_ci';
   const maintenance=new pg.Pool({database:'postgres',max:2});
-  let bootstrap=null,recoveryPool=null,stagedPool=null,interleavedPool=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
+  let bootstrap=null,recoveryPool=null,stagedPool=null,vanishingPool=null,interleavedPool=null,lockPool=null,poolA=null,poolB=null,lockClient=null;
   let lockHeld=false,created=false,settledTasks=null;
   try{
     await maintenance.query('CREATE DATABASE '+ciDbName);
@@ -111,6 +111,42 @@ try{
     await stagedPool.query('DROP TABLE microbusiness_readiness_events; DROP TABLE microbusiness_readiness');
     await stagedPool.end();
     stagedPool=null;
+
+    // Genuine PostgreSQL race at the deferred-FK boundary: a positive table
+    // probe is followed by a real DROP before guarded attachment. The DO must
+    // skip, the postcondition must remain false, and later CREATE must retry.
+    vanishingPool=new pg.Pool({database:ciDbName,max:2});
+    await vanishingPool.query('DROP TABLE businesses');
+    let dropOnProbe=false,vanished=0;
+    const vanishing={
+      async query(sql,...params){
+        const result=await vanishingPool.query(sql,...params);
+        if(dropOnProbe&&String(sql).includes("SELECT to_regclass('public.businesses') AS table_name")&&result.rows[0]?.table_name){
+          await vanishingPool.query('DROP TABLE businesses');
+          dropOnProbe=false;
+          vanished++;
+        }
+        return result;
+      }
+    };
+    await ensureMicrobusinessReadinessSchema(vanishing);
+    await vanishingPool.query('CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    dropOnProbe=true;
+    await ensureMicrobusinessReadinessSchema(vanishing);
+    same(vanished,1,'real businesses table dropped after positive FK probe and before guarded DO');
+    const skippedFk=await vanishingPool.query(`SELECT COUNT(*)::int AS count
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(skippedFk.rows[0].count),0,'guard correctly skipped FK while business table was absent');
+    await vanishingPool.query('CREATE TABLE businesses(id BIGINT PRIMARY KEY)');
+    await ensureMicrobusinessReadinessSchema(vanishing);
+    const restoredFk=await vanishingPool.query(`SELECT COUNT(*)::int AS count
+      FROM pg_constraint WHERE conname='microbusiness_readiness_business_fk'
+        AND conrelid='microbusiness_readiness'::regclass`);
+    same(Number(restoredFk.rows[0].count),1,'real FK attaches after businesses returns');
+    await vanishingPool.query('DROP TABLE microbusiness_readiness_events; DROP TABLE microbusiness_readiness');
+    await vanishingPool.end();
+    vanishingPool=null;
 
     // Actual PostgreSQL interleaving: businesses is absent throughout the
     // initial DDL batch, but is created before the follow-up FK proof query.
@@ -190,7 +226,7 @@ try{
     if(lockHeld&&lockClient)await lockClient.query('SELECT pg_advisory_unlock(87320261031::bigint)').catch(()=>{});
     if(settledTasks)await settledTasks;
     lockClient?.release();
-    await Promise.all([bootstrap?.end(),recoveryPool?.end(),stagedPool?.end(),interleavedPool?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
+    await Promise.all([bootstrap?.end(),recoveryPool?.end(),stagedPool?.end(),vanishingPool?.end(),interleavedPool?.end(),poolA?.end(),poolB?.end(),lockPool?.end()].filter(Boolean));
     // A normal DROP, never WITH FORCE: a leaked connection must fail loudly,
     // rather than emit an unhandled 57P01 and hide the original assertion.
     if(created)await maintenance.query('DROP DATABASE IF EXISTS '+ciDbName);

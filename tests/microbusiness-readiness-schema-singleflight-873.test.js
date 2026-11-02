@@ -4,9 +4,9 @@ import {ensureMicrobusinessReadinessSchema} from '../microbusiness-readiness-cor
 
 // Deterministic query adapter; the independent CI PostgreSQL workflow tests
 // actual transactions, locks, FK creation and full failure rollback.
-function fakePool({waitForDdl=null,firstFailure=false,businessInitiallyExists=true,businessAppearsAfterDdl=false}={}){
+function fakePool({waitForDdl=null,firstFailure=false,businessInitiallyExists=true,businessAppearsAfterDdl=false,businessDisappearsDuringDeferredFk=false}={}){
   const statements=[];
-  let fail=firstFailure,businessExists=businessInitiallyExists,fkExists=false;
+  let fail=firstFailure,businessExists=businessInitiallyExists,fkExists=false,vanishedOnce=false;
   return{
     statements,
     createBusinesses(){businessExists=true},
@@ -27,6 +27,13 @@ function fakePool({waitForDdl=null,firstFailure=false,businessInitiallyExists=tr
       }
       if(String(sql).includes('DO $readiness_fk$')&&String(sql).includes('pg_advisory_xact_lock')){
         assert.equal(businessExists,true,'deferred FK must wait for businesses');
+        if(businessDisappearsDuringDeferredFk&&!vanishedOnce){
+          // Simulate the table disappearing after a positive pre-lock probe,
+          // before the database-scoped DO guard runs.
+          vanishedOnce=true;
+          businessExists=false;
+          return{rows:[],rowCount:0};
+        }
         fkExists=true;
         return{rows:[],rowCount:0};
       }
@@ -86,7 +93,7 @@ test('staged businesses bootstrap attaches the optional FK without repeating tab
   assert.equal(ddlCount(pool),1,'the expensive schema DDL never repeats');
   assert.equal(deferredFkCount(pool),1,'one transaction-locked FK guard after businesses appears');
   const after=pool.statements.length;
-  assert.equal(after,before+2,'one cheap table probe plus one FK-only DDL');
+  assert.equal(after,before+3,'one table probe, FK-only DDL and constraint proof');
   await ensureMicrobusinessReadinessSchema(pool);
   assert.equal(pool.statements.length,after,'future Merchant GETs issue no DDL or probe');
 });
@@ -104,6 +111,20 @@ test('business created after cold DDL but before FK proof is not mistaken for at
   const after=pool.statements.length;
   await ensureMicrobusinessReadinessSchema(pool);
   assert.equal(pool.statements.length,after,'successful FK attachment stays cached');
+});
+
+test('deferred FK is not cached as ready when businesses disappears between probe and guarded DDL',async()=>{
+  const pool=fakePool({businessInitiallyExists:false,businessDisappearsDuringDeferredFk:true});
+  await ensureMicrobusinessReadinessSchema(pool);
+  pool.createBusinesses();
+  await ensureMicrobusinessReadinessSchema(pool);
+  assert.equal(deferredFkCount(pool),1,'guard ran once but skipped missing businesses');
+  pool.createBusinesses();
+  await ensureMicrobusinessReadinessSchema(pool);
+  assert.equal(deferredFkCount(pool),2,'later table recreation must retry the missing FK');
+  const after=pool.statements.length;
+  await ensureMicrobusinessReadinessSchema(pool);
+  assert.equal(pool.statements.length,after,'an actually attached FK can then be cached');
 });
 
 test('failed deferred FK attachment is retryable without re-provisioning readiness tables',async()=>{
