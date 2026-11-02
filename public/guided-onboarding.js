@@ -46,6 +46,7 @@ const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
 let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH',selectedProfileJourneyRole='',languagePickerReturnMode='';
 const copyCache=new Map();
 let copyLoadEpoch=0;
+let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0;
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -122,20 +123,42 @@ function scheduleRefresh(delay=250){clearTimeout(refreshTimer);refreshTimer=setT
 
 async function refreshGuide({render=true}={}){
   if(!token())return null;
-  guide=await api('/api/onboarding/guide');
-  await loadCopy(guide.preferred_locale);
+  const readEpoch=++guideReadEpoch,mutationEpoch=guideMutationEpoch;
+  // Reads dispatched during an outstanding write cannot outrank that write,
+  // even if their response happens to arrive after the write commits.
+  const startedDuringMutation=guideMutationsPending>0;
+  const snapshot=await api('/api/onboarding/guide');
+  if(readEpoch!==guideReadEpoch||mutationEpoch!==guideMutationEpoch||
+     startedDuringMutation||guideMutationsPending>0||!token())return guide;
+  guide=snapshot;
+  await loadCopy(snapshot.preferred_locale);
+  // The locale-pack fetch is another await boundary: a later user action may
+  // have superseded this guide while its translations were still loading.
+  if(readEpoch!==guideReadEpoch||mutationEpoch!==guideMutationEpoch||
+     guideMutationsPending>0||!token())return guide;
   syncLauncher();
   decorateAccountSettings();
   if(render)scheduleRender(20);
   return guide;
 }
 async function updateGuide(input,{render=true}={}){
-  guide=await api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
-  await loadCopy(guide.preferred_locale);
-  syncLauncher();
-  decorateAccountSettings();
-  if(render)scheduleRender(20);
-  return guide;
+  // A new mutation invalidates all earlier/simultaneous read snapshots and
+  // in-flight locale-pack completions before the PUT reaches the server.
+  ++guideMutationEpoch;
+  ++guideReadEpoch;
+  ++copyLoadEpoch;
+  ++guideMutationsPending;
+  try{
+    const updated=await api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
+    guide=updated;
+    await loadCopy(updated.preferred_locale);
+    syncLauncher();
+    decorateAccountSettings();
+    if(render)scheduleRender(20);
+    return guide;
+  }finally{
+    --guideMutationsPending;
+  }
 }
 function removeOverlay(){
   overlay?.remove();overlay=null;

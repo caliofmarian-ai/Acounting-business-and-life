@@ -180,3 +180,103 @@ test('current English decoding failure ends safely without recursive fallback', 
   assert.equal(h.state().copyLocale, 'en-PH');
   assert.equal(h.state().lang, 'en-PH');
 });
+
+ 
+// Guide API responses have an independent async race from locale-pack fetches.
+// Execute the actual shipped GET/PUT functions rather than a rewritten mock.
+const guideStart=ui.indexOf('async function refreshGuide(');
+const guideEnd=ui.indexOf('\nfunction removeOverlay()',guideStart);
+assert.ok(guideStart>=0&&guideEnd>guideStart,'shipped guide API functions must be extractable');
+assert.match(ui,/let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0;/);
+const guideFlow=ui.slice(guideStart,guideEnd);
+
+function guideApiHarness({holdCopyLocale=null}={}){
+  const requests=[],copies=[],renders=[],heldCopy=deferred();
+  let authenticated=true;
+  const factory=new Function('api','loadCopy','token','syncLauncher','decorateAccountSettings','scheduleRender',
+    "let guide=null,guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,copyLoadEpoch=0;\n"+
+    guideFlow+"\nreturn {refreshGuide,updateGuide,current:()=>guide};");
+  const functions=factory(
+    (path,options={})=>{
+      assert.equal(path,'/api/onboarding/guide');
+      const request=deferred();
+      requests.push({method:options.method||'GET',...request});
+      return request.promise;
+    },
+    locale=>{
+      copies.push(locale);
+      return locale===holdCopyLocale?heldCopy.promise:Promise.resolve();
+    },
+    ()=>authenticated,()=>{},()=>{},delay=>renders.push(delay)
+  );
+  return {...functions,requests,copies,renders,
+    respond(index,value){assert.ok(requests[index]);requests[index].resolve(value)},
+    logout(){authenticated=false},
+    releaseCopy(){heldCopy.resolve()}
+  };
+}
+
+test('old guide GET cannot undo a newer confirmed Filipino locale PUT',async()=>{
+  const h=guideApiHarness();
+  const old=h.refreshGuide({render:false});
+  const update=h.updateGuide({action:'set_locale',locale:'fil-PH'},{render:false});
+  assert.deepEqual(h.requests.map(x=>x.method),['GET','PUT']);
+  h.respond(1,{preferred_locale:'fil-PH',version:'confirmed-newer'});await update;
+  h.respond(0,{preferred_locale:'en-PH',version:'obsolete-get'});await old;
+  assert.equal(h.current().preferred_locale,'fil-PH');
+  assert.equal(h.current().version,'confirmed-newer');
+  assert.deepEqual(h.copies,['fil-PH']);
+});
+
+test('older guide refresh cannot replace the newer GET response',async()=>{
+  const h=guideApiHarness();
+  const first=h.refreshGuide({render:false});
+  const second=h.refreshGuide({render:false});
+  h.respond(1,{preferred_locale:'fil-PH',version:'newer-read'});await second;
+  h.respond(0,{preferred_locale:'en-PH',version:'older-read'});await first;
+  assert.equal(h.current().version,'newer-read');
+  assert.deepEqual(h.copies,['fil-PH']);
+});
+
+test('guide GET started during a pending write cannot race ahead of that write',async()=>{
+  const h=guideApiHarness();
+  const write=h.updateGuide({action:'set_locale',locale:'fil-PH'},{render:false});
+  const read=h.refreshGuide({render:false});
+  h.respond(1,{preferred_locale:'en-PH',version:'pre-write-get'});await read;
+  assert.equal(h.current(),null);
+  h.respond(0,{preferred_locale:'fil-PH',version:'confirmed'});await write;
+  assert.equal(h.current().version,'confirmed');
+  assert.deepEqual(h.copies,['fil-PH']);
+});
+
+test('guide refresh started after a completed write remains functional',async()=>{
+  const h=guideApiHarness();
+  const write=h.updateGuide({action:'set_locale',locale:'fil-PH'},{render:false});
+  h.respond(0,{preferred_locale:'fil-PH'});await write;
+  const read=h.refreshGuide({render:false});
+  h.respond(1,{preferred_locale:'en-PH',version:'legitimate-new-read'});await read;
+  assert.equal(h.current().version,'legitimate-new-read');
+  assert.deepEqual(h.copies,['fil-PH','en-PH']);
+});
+
+test('guide GET loses UI authority if a PUT begins while translations are pending',async()=>{
+  const h=guideApiHarness({holdCopyLocale:'en-PH'});
+  const old=h.refreshGuide();
+  h.respond(0,{preferred_locale:'en-PH'});await drainMicrotasks();
+  assert.deepEqual(h.copies,['en-PH']);
+  const write=h.updateGuide({action:'set_locale',locale:'fil-PH'});
+  h.respond(1,{preferred_locale:'fil-PH',version:'newer'});await write;
+  h.releaseCopy();await old;
+  assert.equal(h.current().preferred_locale,'fil-PH');
+  assert.deepEqual(h.renders,[20],'superseded GET must not schedule another render');
+});
+
+test('guide read resolving after logout is ignored without activating copy',async()=>{
+  const h=guideApiHarness();
+  const old=h.refreshGuide({render:false});
+  h.logout();
+  h.respond(0,{preferred_locale:'fil-PH',private_account_fixture:true});
+  await old;
+  assert.equal(h.current(),null);
+  assert.deepEqual(h.copies,[]);
+});
