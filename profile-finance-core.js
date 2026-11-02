@@ -765,63 +765,76 @@ export async function createProfileMoneyMovementRequest(pool,{
   if(!MOVEMENT_TYPE_SET.has(type))fail('Unsupported money movement type');
   const value=normalizePositiveMoney(amount,'Transfer amount'),currency=normalizeCurrency(currencyCode),key=normalizeIdempotencyKey(idempotencyKey);
   if(!key)fail('Idempotency key is required');
-  const existing=await pool.query('SELECT * FROM profile_money_movements WHERE idempotency_key=$1',[key]);
-  if(existing.rowCount){
-    const prior=existing.rows[0];
-    // A duplicate key acknowledges only the original account and instruction.
-    // A different amount/source/destination must not silently replay a HOLD.
-    if(Number(prior.account_id)!==Number(accountId))
-      fail('Money movement not found in this account',404);
-    if(prior.movement_type!==type||
-       Number(prior.source_financial_account_id)!==Number(sourceFinancialAccountId)||
-       Number(prior.destination_financial_account_id)!==Number(destinationFinancialAccountId)||
-       Number(prior.amount)!==value||
-       prior.currency_code!==currency||
-       String(prior.note??'')!==clean(note,500)||
-       (providerCode&&String(prior.provider_code??'')!==clean(providerCode,80)))
-      fail('Idempotency key already belongs to a different money movement',409);
-    return (await listProfileMoneyMovements(pool,accountId)).find(x=>x.id===Number(prior.id));
-  }
-  if(sourceFinancialAccountId==null||destinationFinancialAccountId==null)fail('Source and destination financial accounts are required');
-  const sourceQ=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(sourceFinancialAccountId),Number(accountId)]);
-  const destQ=await pool.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(destinationFinancialAccountId),Number(accountId)]);
-  if(!sourceQ.rowCount||!destQ.rowCount)fail('Financial account is outside this account or inactive',403);
-  const source=sourceQ.rows[0],destination=destQ.rows[0];
-  if(Number(source.id)===Number(destination.id))fail('Choose different source and destination accounts');
-  if(source.currency_code!==currency||destination.currency_code!==currency)fail('Movement currency must match both financial accounts',409);
-  if(type==='transfer'){
-    if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled to transfer money',409);
-    if(!destination.can_receive)fail('Destination account is not enabled to receive money',409);
-  }else{
-    if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled for payout/withdrawal',409);
-    if(!destination.can_payout)fail('Destination account is not enabled as a payout/withdrawal destination',409);
-  }
-  const provider=clean(providerCode||source.provider_code||destination.provider_code,80);
-  const {rows}=await pool.query(`
-    INSERT INTO profile_money_movements(
-      public_id,idempotency_key,account_id,movement_type,
-      source_financial_account_id,destination_financial_account_id,
-      source_profile_role,source_business_id,destination_profile_role,destination_business_id,
-      amount,currency_code,provider_code,status,hold_code,note
-    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending_provider','PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED',$14)
-    RETURNING *
-  `,[
-    clean(publicId,120),key,Number(accountId),type,Number(source.id),Number(destination.id),
-    source.profile_role,source.business_id,destination.profile_role,destination.business_id,
-    value,currency,provider,clean(note,500)
-  ]);
-  await pool.query(`
-    INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
-    VALUES($1,$2,$3,$4,'money_movement_request_created',$5::jsonb)
-  `,[
-    Number(accountId),source.profile_role,source.business_id,Number(source.id),
-    JSON.stringify({
-      movement_id:Number(rows[0].id),movement_type:type,destination_financial_account_id:Number(destination.id),
-      destination_profile_role:destination.profile_role,destination_business_id:destination.business_id==null?null:Number(destination.business_id),
-      amount:value,currency_code:currency,status:'pending_provider',provider_money_moved:false
-    })
-  ]);
-  return (await listProfileMoneyMovements(pool,accountId)).find(x=>x.id===Number(rows[0].id));
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    // Serialize global-key replay before SELECT/INSERT, even across app workers.
+    // Audit and HOLD insert must commit or roll back as one transaction.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('profile_money_movements:' || $1::text, 871))",
+      [key]
+    );
+    const existing=await client.query('SELECT * FROM profile_money_movements WHERE idempotency_key=$1',[key]);
+    if(existing.rowCount){
+      const prior=existing.rows[0];
+      // A duplicate key acknowledges only the original account and instruction.
+      // A different amount/source/destination must not silently replay a HOLD.
+      if(Number(prior.account_id)!==Number(accountId))
+        fail('Money movement not found in this account',404);
+      if(prior.movement_type!==type||
+         Number(prior.source_financial_account_id)!==Number(sourceFinancialAccountId)||
+         Number(prior.destination_financial_account_id)!==Number(destinationFinancialAccountId)||
+         Number(prior.amount)!==value||
+         prior.currency_code!==currency||
+         String(prior.note??'')!==clean(note,500)||
+         (providerCode&&String(prior.provider_code??'')!==clean(providerCode,80)))
+        fail('Idempotency key already belongs to a different money movement',409);
+      await client.query('COMMIT');
+      return (await listProfileMoneyMovements(client,accountId)).find(x=>x.id===Number(prior.id));
+    }
+    if(sourceFinancialAccountId==null||destinationFinancialAccountId==null)fail('Source and destination financial accounts are required');
+    const sourceQ=await client.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(sourceFinancialAccountId),Number(accountId)]);
+    const destQ=await client.query('SELECT * FROM profile_financial_accounts WHERE id=$1 AND account_id=$2 AND status=\'active\'',[Number(destinationFinancialAccountId),Number(accountId)]);
+    if(!sourceQ.rowCount||!destQ.rowCount)fail('Financial account is outside this account or inactive',403);
+    const source=sourceQ.rows[0],destination=destQ.rows[0];
+    if(Number(source.id)===Number(destination.id))fail('Choose different source and destination accounts');
+    if(source.currency_code!==currency||destination.currency_code!==currency)fail('Movement currency must match both financial accounts',409);
+    if(type==='transfer'){
+      if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled to transfer money',409);
+      if(!destination.can_receive)fail('Destination account is not enabled to receive money',409);
+    }else{
+      if(!source.can_pay&&!['provider_clearing','paymongo_wallet'].includes(source.account_kind))fail('Source account is not enabled for payout/withdrawal',409);
+      if(!destination.can_payout)fail('Destination account is not enabled as a payout/withdrawal destination',409);
+    }
+    const provider=clean(providerCode||source.provider_code||destination.provider_code,80);
+    const {rows}=await client.query(`
+      INSERT INTO profile_money_movements(
+        public_id,idempotency_key,account_id,movement_type,
+        source_financial_account_id,destination_financial_account_id,
+        source_profile_role,source_business_id,destination_profile_role,destination_business_id,
+        amount,currency_code,provider_code,status,hold_code,note
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending_provider','PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED',$14)
+      RETURNING *
+    `,[
+      clean(publicId,120),key,Number(accountId),type,Number(source.id),Number(destination.id),
+      source.profile_role,source.business_id,destination.profile_role,destination.business_id,
+      value,currency,provider,clean(note,500)
+    ]);
+    await client.query(`
+      INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
+      VALUES($1,$2,$3,$4,'money_movement_request_created',$5::jsonb)
+    `,[
+      Number(accountId),source.profile_role,source.business_id,Number(source.id),
+      JSON.stringify({
+        movement_id:Number(rows[0].id),movement_type:type,destination_financial_account_id:Number(destination.id),
+        destination_profile_role:destination.profile_role,destination_business_id:destination.business_id==null?null:Number(destination.business_id),
+        amount:value,currency_code:currency,status:'pending_provider',provider_money_moved:false
+      })
+    ]);
+    await client.query('COMMIT');
+    return (await listProfileMoneyMovements(client,accountId)).find(x=>x.id===Number(rows[0].id));
+  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+  finally{client.release()}
 }
 
 

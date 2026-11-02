@@ -17,7 +17,7 @@ if(process.env.NODE_ENV!=='test'||
    process.env.PGDATABASE!=='abl_finance_precision_ci'){
   throw new Error('Disposable localhost PostgreSQL CI only; never execute against live accounts.');
 }
-const pool=new pg.Pool({max:3,connectionTimeoutMillis:5000});
+const pool=new pg.Pool({max:2,connectionTimeoutMillis:5000});
 const rowCount=async(table)=>Number((await pool.query('SELECT COUNT(*)::int AS count FROM '+table)).rows[0].count);
 let assertions=0;
 const eq=(a,b,message)=>{assert.equal(a,b,message);assertions++};
@@ -73,8 +73,35 @@ try{
     );
     CREATE TABLE profile_finance_audit_events(
       id BIGSERIAL PRIMARY KEY,account_id BIGINT NOT NULL,profile_role TEXT NOT NULL,
-      business_id BIGINT,event_code TEXT NOT NULL,detail_json JSONB NOT NULL
+      business_id BIGINT,financial_account_id BIGINT,event_code TEXT NOT NULL,detail_json JSONB NOT NULL
     );
+    CREATE TABLE profile_financial_accounts(
+      id BIGINT PRIMARY KEY,account_id BIGINT NOT NULL,status TEXT NOT NULL,
+      currency_code TEXT NOT NULL,account_kind TEXT NOT NULL,
+      can_pay BOOLEAN NOT NULL,can_receive BOOLEAN NOT NULL,can_payout BOOLEAN NOT NULL,
+      provider_code TEXT,profile_role TEXT NOT NULL,business_id BIGINT,
+      display_name TEXT,reference_last4 TEXT
+    );
+    CREATE TABLE profile_money_movements(
+      id BIGSERIAL PRIMARY KEY,public_id TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT NOT NULL UNIQUE,account_id BIGINT NOT NULL,
+      movement_type TEXT NOT NULL,source_financial_account_id BIGINT NOT NULL,
+      destination_financial_account_id BIGINT NOT NULL,
+      source_profile_role TEXT,source_business_id BIGINT,
+      destination_profile_role TEXT,destination_business_id BIGINT,
+      amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      currency_code TEXT NOT NULL,provider_code TEXT,
+      status TEXT NOT NULL,hold_code TEXT,note TEXT,
+      provider_reference TEXT,evidence_reference TEXT,failure_code TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO profile_financial_accounts
+      (id,account_id,status,currency_code,account_kind,can_pay,can_receive,can_payout,provider_code,profile_role,display_name)
+    VALUES (101,11,'active','PHP','cash',true,true,false,'','customer','Source cash'),
+           (102,11,'active','PHP','bank',true,true,true,'','customer','Destination bank'),
+           (103,12,'active','PHP','cash',true,true,false,'','customer','Other account cash'),
+           (104,12,'active','PHP','bank',true,true,true,'','customer','Other account bank');
     INSERT INTO profile_budget_envelopes
       (id,account_id,status,profile_role,business_id,currency_code)
       VALUES (22,11,'active','customer',NULL,'PHP'),
@@ -268,6 +295,63 @@ try{
     'valid retry after rollback writes two balanced ledger entries');
   eq(await rowCount('profile_finance_audit_events'),transferAuditsBefore+1,
     'valid retry after rollback writes one audit');
+
+  // Provider-adapter HOLD requests cannot move money. Replays use a
+  // database-scoped key lock; the movement and its audit commit atomically.
+  const hold=(key,amount='1.23',overrides={})=>createProfileMoneyMovementRequest(pool,{
+    publicId:'ci-hold-'+key,idempotencyKey:key,accountId:11,
+    movementType:'transfer',sourceFinancialAccountId:101,
+    destinationFinancialAccountId:102,amount,note:'reviewed HOLD',...overrides
+  });
+  const [holdA,holdB]=await Promise.all([
+    hold('parallel-same-hold'),hold('parallel-same-hold')
+  ]);
+  eq(holdA.id,holdB.id,'parallel same-key HOLD returns identical movement');
+  eq(holdA.status,'pending_provider','HOLD remains pending, not a payout');
+  eq(holdA.execution_ready,false,'HOLD cannot execute a provider transfer');
+  eq(await rowCount('profile_money_movements'),1,'only one HOLD committed');
+  const holdAudits=()=>pool.query("SELECT COUNT(*)::int AS count FROM profile_finance_audit_events WHERE event_code='money_movement_request_created'");
+  eq(Number((await holdAudits()).rows[0].count),1,'one audit for same-key parallel HOLD');
+  const conflictHolds=await Promise.allSettled([
+    hold('parallel-conflict-hold','2.31'),
+    hold('parallel-conflict-hold','2.32')
+  ]);
+  eq(conflictHolds.filter(x=>x.status==='fulfilled').length,1,
+    'parallel conflicting HOLD keys commit only one instruction');
+  eq(conflictHolds.find(x=>x.status==='rejected').reason.status,409,
+    'conflicting HOLD replay returns a deliberate 409');
+  eq(await rowCount('profile_money_movements'),2,'conflicting requests add one HOLD');
+  eq(Number((await holdAudits()).rows[0].count),2,'conflicting requests add one audit');
+  await assert.rejects(hold('parallel-same-hold','1.24'),
+    e=>e.status===409,'reused HOLD key with new cents must be rejected');
+  assertions++;
+  await assert.rejects(hold('parallel-same-hold','1.23',{
+    accountId:12,sourceFinancialAccountId:103,destinationFinancialAccountId:104
+  }),e=>e.status===404,'other account must not observe replayed HOLD');
+  assertions++;
+
+  await pool.query(`
+    ALTER TABLE profile_finance_audit_events
+      ADD CONSTRAINT synthetic_hold_audit_rejection
+      CHECK (NOT (event_code='money_movement_request_created'
+        AND detail_json->>'amount'='9.99'))
+  `);
+  const holdsBefore=await rowCount('profile_money_movements');
+  const holdAuditsBefore=Number((await holdAudits()).rows[0].count);
+  await assert.rejects(hold('audit-rollback-hold','9.99'),
+    error=>error.code==='23514','real PostgreSQL audit failure must abort HOLD');
+  assertions++;
+  eq(await rowCount('profile_money_movements'),holdsBefore,
+    'audit failure rolled back movement and its idempotency key');
+  eq(Number((await holdAudits()).rows[0].count),holdAuditsBefore,
+    'audit failure left no partial movement audit');
+  await pool.query('ALTER TABLE profile_finance_audit_events DROP CONSTRAINT synthetic_hold_audit_rejection');
+  const recoveredHold=await hold('audit-rollback-hold','9.99');
+  eq(recoveredHold.status,'pending_provider','retry after audit failure saves HOLD');
+  eq(await rowCount('profile_money_movements'),holdsBefore+1,
+    'retry after rolled-back audit writes exactly one movement');
+  eq(Number((await holdAudits()).rows[0].count),holdAuditsBefore+1,
+    'retry after rollback writes exactly one audit');
 
   console.log('PROFILE_FINANCE_REAL_POSTGRES_871_PASS assertions='+assertions+
     ' database=abl_finance_precision_ci no external payments');
