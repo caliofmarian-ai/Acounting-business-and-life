@@ -157,3 +157,52 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
   if(saved.rowCount!==1)throw bad('Purchase intent was already committed or missing','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
   return response;
 }
+
+// Integration-safe transaction coordinator for the existing authenticated HTTP
+// purchase route (NOT mounted here). Its caller must FIRST bind an authorized
+// originating Merchant/business and provide the same pg Client for every
+// stock/lot/purchase/expense/reconciliation query inside createPurchase.
+// Neither createPurchase nor its callees may issue BEGIN/COMMIT/ROLLBACK or use
+// pool.query: a purchase intent and its financial effects are one transaction.
+// On an uncertain COMMIT/network outcome, retry the SAME key; never auto-repost.
+export async function executeInventoryPurchaseIntent(client,options,createPurchase){
+  if(!client||typeof client.query!=='function')throw bad('A transactional database client is required');
+  if(typeof createPurchase!=='function')throw bad('A transactional purchase callback is required');
+  const context={
+    businessId:dbId(options?.businessId,'Business'),
+    accountId:dbId(options?.accountId,'Account'),
+    intentKey:literalKey(options?.intentKey),
+    payload:options?.payload
+  };
+  // Reject malformed request context before BEGIN; no partial write is possible.
+  inventoryPurchaseFingerprint(context.payload);
+  let started=false;
+  try{
+    await client.query('BEGIN');
+    started=true;
+    const claim=await claimInventoryPurchaseIntent(client,context);
+    if(claim.kind==='replay'){
+      await client.query('COMMIT');
+      started=false;
+      return claim; // No purchase callback, inventory delta, lot or second expense.
+    }
+    await lockInventoryPurchaseBusiness(client,context.businessId);
+    const created=await createPurchase(client);
+    if(!created||typeof created!=='object'||Array.isArray(created)){
+      throw bad('The purchase callback must return a committed response and purchase ID');
+    }
+    const response=await finishInventoryPurchaseIntent(client,{
+      ...context,purchaseId:created.purchaseId,response:created.response
+    });
+    await client.query('COMMIT');
+    started=false;
+    return {kind:'new',purchaseId:String(created.purchaseId),response};
+  }catch(error){
+    if(started){
+      // Preserve the original failure for the caller and avoid retrying effects.
+      // If the connection is lost, the owning HTTP layer must discard it.
+      await client.query('ROLLBACK').catch(()=>{});
+    }
+    throw error;
+  }
+}

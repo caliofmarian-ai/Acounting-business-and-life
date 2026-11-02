@@ -6,7 +6,7 @@ import {
   INVENTORY_PURCHASE_INTENT_SCHEMA,
   claimInventoryPurchaseIntent,
   finishInventoryPurchaseIntent,
-  lockInventoryPurchaseBusiness
+  lockInventoryPurchaseBusiness,executeInventoryPurchaseIntent
 } from '../inventory-purchase-intent-core.js';
 
 if(process.env.NODE_ENV!=='test' || process.env.ABL_PURCHASE_INTENT_CI!=='1' ||
@@ -23,37 +23,32 @@ const params=(businessId,intentKey,body=payload)=>({
   businessId,accountId:501,intentKey,payload:body
 });
 async function post(client,businessId,intentKey,body=payload){
-  await client.query('BEGIN');
-  try{
-    const claim=await claimInventoryPurchaseIntent(client,params(businessId,intentKey,body));
-    if(claim.kind==='replay'){await client.query('COMMIT');return claim}
-    await lockInventoryPurchaseBusiness(client,businessId);
-    const old=await client.query(
+  // Exercise the same transaction coordinator that the later authorized
+  // Express integration must invoke; no isolated test-only BEGIN/COMMIT path.
+  return executeInventoryPurchaseIntent(client,params(businessId,intentKey,body),async tx=>{
+    const old=await tx.query(
       'SELECT * FROM inventory WHERE business_id=$1 AND lower(item)=lower($2) FOR UPDATE',
       [businessId,body.item]);
     let inventoryId;
     if(old.rowCount){
       inventoryId=old.rows[0].id;
-      await client.query('UPDATE inventory SET quantity=quantity+$1 WHERE id=$2',
+      await tx.query('UPDATE inventory SET quantity=quantity+$1 WHERE id=$2',
         [body.quantity,inventoryId]);
     }else{
-      inventoryId=(await client.query(
+      inventoryId=(await tx.query(
         'INSERT INTO inventory(business_id,item,quantity) VALUES($1,$2,$3) RETURNING id',
         [businessId,body.item,body.quantity])).rows[0].id;
     }
-    const purchase=(await client.query(
+    const purchase=(await tx.query(
       'INSERT INTO inventory_purchases(business_id,inventory_id) VALUES($1,$2) RETURNING id',
       [businessId,inventoryId])).rows[0];
-    const lot=(await client.query(
+    const lot=(await tx.query(
       'INSERT INTO synthetic_lots(purchase_id) VALUES($1) RETURNING id',[purchase.id])).rows[0];
-    const expense=(await client.query(
+    const expense=(await tx.query(
       'INSERT INTO synthetic_expenses(purchase_id) VALUES($1) RETURNING id',[purchase.id])).rows[0];
-    const response={inventory:{id:inventoryId},purchase,lot,transaction:expense};
-    await finishInventoryPurchaseIntent(client,{businessId,accountId:501,intentKey,
-      purchaseId:purchase.id,response});
-    await client.query('COMMIT');
-    return{kind:'new',response};
-  }catch(e){await client.query('ROLLBACK').catch(()=>{});throw e}
+    return{purchaseId:purchase.id,
+      response:{inventory:{id:inventoryId},purchase,lot,transaction:expense}};
+  });
 }
 
 try{
@@ -258,6 +253,43 @@ try{
     await a.query('ROLLBACK');
     eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
       [foreignKey])).rows[0].n,0,'foreign association never commits');
+
+    // A callback failure after writing a fresh item must atomically erase the
+    // item, reservation and every ledger effect. The same literal key can then
+    // complete one legitimate purchase via the transaction coordinator.
+    const callbackKey='31234567-0000-4000-9000-123456789012';
+    const callbackBody={...payload,item:'Synthetic rollback item 881'};
+    let callbackFailure=null;
+    try{
+      await executeInventoryPurchaseIntent(a,params(101,callbackKey,callbackBody),async tx=>{
+        await tx.query(
+          'INSERT INTO inventory(business_id,item,quantity) VALUES($1,$2,$3)',
+          [101,callbackBody.item,callbackBody.quantity]);
+        throw new Error('synthetic failure after stock write');
+      });
+    }catch(error){callbackFailure=error}
+    eq(callbackFailure?.message,'synthetic failure after stock write',
+      'failed callback surfaces original error');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory WHERE business_id=$1 AND item=$2',
+      [101,callbackBody.item])).rows[0].n,0,'callback rollback erases inserted item');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [callbackKey])).rows[0].n,0,'callback rollback erases intent reservation');
+    const callbackRetry=await post(a,101,callbackKey,callbackBody);
+    eq(callbackRetry.kind,'new','same key succeeds once after callback rollback');
+    const priorPurchases=(await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchases WHERE business_id=101')).rows[0].n;
+    const secondRetry=await post(a,101,callbackKey,callbackBody);
+    eq(secondRetry.kind,'replay','second retry returns stored committed result');
+    eq(String(secondRetry.response.purchase.id),String(callbackRetry.response.purchase.id),
+      'replay retains original purchase ID through transaction coordinator');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM inventory_purchases WHERE business_id=101')).rows[0].n,
+      priorPurchases,'replay did not insert another purchase');
+    eq((await pool.query(
+      'SELECT count(*)::int AS n FROM synthetic_expenses')).rows[0].n,
+      priorPurchases+1,'replay did not insert another linked business expense');
 
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   inventoryPurchaseFingerprint,claimInventoryPurchaseIntent,
   lockInventoryPurchaseBusiness,finishInventoryPurchaseIntent,
+  executeInventoryPurchaseIntent,
   INVENTORY_PURCHASE_INTENT_SCHEMA
 } from '../inventory-purchase-intent-core.js';
 
@@ -83,4 +84,63 @@ test('finish binds the purchase row to the same authorized business',async()=>{
   );
   assert.match(statement,/FROM inventory_purchases AS purchase/);
   assert.match(statement,/purchase.id=\$4 AND purchase.business_id=intent.business_id/);
+});
+
+test('transaction executor commits one purchase, then replays without touching inventory',async()=>{
+  const events=[];let committed=null;let draft=null;
+  const client={async query(sql,args){
+    if(sql==='BEGIN'){events.push('BEGIN');return{rowCount:0,rows:[]}}
+    if(sql==='COMMIT'){events.push('COMMIT');committed=draft||committed;return{rowCount:0,rows:[]}}
+    if(sql==='ROLLBACK'){events.push('ROLLBACK');draft=null;return{rowCount:0,rows:[]}}
+    if(sql.includes('INSERT INTO inventory_purchase_intents')){
+      events.push('claim');
+      if(committed)return{rowCount:0,rows:[]};
+      draft={payload_sha256:args[3],purchase_id:null,response_json:null};
+      return{rowCount:1,rows:[{intent_key:args[2]}]};
+    }
+    if(sql.includes('SELECT payload_sha256,purchase_id,response_json')){
+      events.push('replay');return{rowCount:1,rows:[committed]};
+    }
+    if(sql.includes('pg_advisory_xact_lock')){events.push('lock');return{rowCount:1,rows:[]}}
+    if(sql.includes('UPDATE inventory_purchase_intents')){
+      events.push('finish');
+      draft.purchase_id=args[3];draft.response_json=JSON.parse(args[4]);
+      return{rowCount:1,rows:[{purchase_id:args[3]}]};
+    }
+    throw new Error('Unexpected SQL');
+  }};
+  const opts={businessId:1,accountId:2,intentKey:key,payload};
+  const response={purchase:{id:42},inventory:{quantity:'2'},lot:{id:75},transaction:{id:80}};
+  const first=await executeInventoryPurchaseIntent(client,opts,async connection=>{
+    assert.equal(connection,client);events.push('purchase');
+    return{purchaseId:42,response};
+  });
+  assert.deepEqual(first,{kind:'new',purchaseId:'42',response});
+  assert.deepEqual(events,['BEGIN','claim','lock','purchase','finish','COMMIT']);
+  const second=await executeInventoryPurchaseIntent(client,opts,async()=>{
+    throw new Error('Must not post a replay');
+  });
+  assert.equal(second.kind,'replay');
+  assert.deepEqual(second.response,response);
+  assert.deepEqual(events.slice(6),['BEGIN','claim','replay','COMMIT']);
+});
+
+test('transaction executor rolls back failed callback and validates before BEGIN',async()=>{
+  const events=[];
+  const client={async query(sql){
+    if(sql==='BEGIN'||sql==='ROLLBACK'||sql==='COMMIT'){events.push(sql);return{rowCount:0,rows:[]}}
+    if(sql.includes('INSERT INTO inventory_purchase_intents')){events.push('claim');return{rowCount:1,rows:[{intent_key:key}]}}
+    if(sql.includes('pg_advisory_xact_lock')){events.push('lock');return{rowCount:1,rows:[]}}
+    throw new Error('Unexpected query');
+  }};
+  const opts={businessId:1,accountId:2,intentKey:key,payload};
+  await assert.rejects(executeInventoryPurchaseIntent(client,opts,async()=>{
+    events.push('purchase');throw new Error('synthetic purchase failure');
+  }),/synthetic purchase failure/);
+  assert.deepEqual(events,['BEGIN','claim','lock','purchase','ROLLBACK']);
+  events.length=0;
+  await assert.rejects(executeInventoryPurchaseIntent(client,{...opts,intentKey:'bad'},async()=>{}),
+    e=>e.status===400);
+  await assert.rejects(executeInventoryPurchaseIntent(client,opts,null),e=>e.status===400);
+  assert.deepEqual(events,[],'invalid input never begins a transaction');
 });
