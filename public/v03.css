@@ -423,4 +423,90 @@
   .merchantPrimaryNav:has([data-view="Menu"]:not(.roleFinanceHidden)) button{min-height:56px;font-size:.73rem;padding:7px 4px;line-height:1.18}
   body:has(.merchantPrimaryNav:not(.hidden) [data-view="Menu"]:not(.roleFinanceHidden)) #app{padding-bottom:calc(158px + env(safe-area-inset-bottom,0px))}
 }
+/* Until Merchant capabilities arrive, show one stable, noninteractive nav placeholder.
+   Do not briefly paint Inventory or a five-button grid before Recipes eligibility resolves. */
+.merchantPrimaryNav .merchantNavLoading{display:none}
+.merchantPrimaryNav:not([data-ready="true"]) button{visibility:hidden!important;pointer-events:none}
+.merchantPrimaryNav:not([data-ready="true"]){min-height:64px}
+.merchantPrimaryNav:not([data-ready="true"]) .merchantNavLoading{
+  position:absolute;inset:6px;display:grid;place-items:center;z-index:1;
+  border:1px solid #b5cdc8;border-radius:14px;background:#f4faf9;
+  color:#173b37;font-size:.8rem;font-weight:700;text-align:center;
+}
+@media(max-width:649px){
+  .merchantPrimaryNav:not([data-ready="true"]){min-height:120px}
+}
 @media(prefers-reduced-motion:reduce){.merchantPrimaryNav button{transition:none}}
+
+/* #875 Merchant Stock receipt actions. One visible design for both independently
+   mounted modules, regardless of when either module injects its dialog CSS. */
+#viewStock > .sectionHead{align-items:stretch}
+#viewStock > .sectionHead > div:first-child{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;
+  min-width:0;flex:1 1 auto;align-content:start
+}
+#viewStock > .sectionHead > div:first-child > h1,
+#viewStock > .sectionHead > div:first-child > p{grid-column:1/-1;margin:0}
+#viewStock > .sectionHead #receiptIntelligenceButton,
+#viewStock > .sectionHead #merchantPurchaseDocumentsButton{
+  display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
+  min-width:0;width:100%;min-height:48px;margin:0;padding:12px 14px;
+  color:#fff;background:#056b5e;border:1px solid #056b5e;border-radius:14px;
+  font:750 14px/1.3 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  text-align:center;white-space:normal;overflow-wrap:anywhere;cursor:pointer;
+  box-shadow:0 3px 9px rgba(5,107,94,.16);
+}
+#viewStock > .sectionHead #receiptIntelligenceButton:hover,
+#viewStock > .sectionHead #merchantPurchaseDocumentsButton:hover{
+  background:#07594c;border-color:#07594c
+}
+#viewStock > .sectionHead #receiptIntelligenceButton:focus-visible,
+#viewStock > .sectionHead #merchantPurchaseDocumentsButton:focus-visible{
+  outline:3px solid #1d4ed8;outline-offset:2px
+}
+@media(max-width:520px){
+  #viewStock > .sectionHead > div:first-child{grid-template-columns:minmax(0,1fr)}
+}
+
+/* #875 Stock tool on-demand accordion, consistent with Merchant Figma V2 nav. */
+#viewStock .stockToolDeck{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;
+  align-items:start;margin:10px 0 16px;min-width:0
+}
+#viewStock .stockTool{
+  min-width:0;border:1px solid #b5cdc8;border-radius:14px;background:#fff;
+  overflow:hidden;box-shadow:0 3px 9px rgba(5,107,94,.055)
+}
+#viewStock .stockTool[open]{grid-column:1/-1;border-color:#056b5e}
+#viewStock .stockTool > summary{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  box-sizing:border-box;min-height:52px;padding:12px 15px;
+  font-weight:750;font-size:14px;line-height:1.3;color:#173b37;
+  list-style:none;cursor:pointer;overflow-wrap:anywhere
+}
+#viewStock .stockTool > summary::-webkit-details-marker{display:none}
+#viewStock .stockTool > summary:hover{background:#f0fdfa}
+#viewStock .stockTool[open] > summary{background:#056b5e;color:#fff}
+#viewStock .stockTool > summary:focus-visible{outline:3px solid #1d4ed8;outline-offset:-3px}
+#viewStock .stockToolChevron{font-size:22px;line-height:1;flex:none}
+#viewStock .stockTool[open] .stockToolChevron{transform:rotate(180deg)}
+#viewStock .stockToolPanel{padding:12px;min-width:0;overflow-wrap:anywhere}
+#viewStock .stockToolPanel > .card,
+#viewStock .stockToolPanel > form.card{margin:0}
+#viewStock[data-inventory-read-state="loading"] .stockToolPanel,
+#viewStock[data-inventory-read-state="error"] .stockToolPanel,
+#viewStock[data-inventory-read-state="idle"] .stockToolPanel,
+#viewStock .stockTool[data-stock-loading="true"] .stockToolPanel,
+#viewStock .stockTool[data-stock-error="true"] .stockToolPanel{display:none}
+#viewStock .stockTool[data-stock-loading="true"]::after{
+  display:block;content:"Loading this tool…";padding:15px;
+  font-size:13px;color:#475569
+}
+#viewStock .stockTool[data-stock-error="true"]::after{
+  display:block;content:"This tool could not load. Close and open it to retry.";
+  padding:15px;font-size:13px;color:#9a3412
+}
+@media(max-width:700px){
+  #viewStock .stockToolDeck{grid-template-columns:minmax(0,1fr)}
+  #viewStock .stockToolPanel{padding:9px}
+}
