@@ -5,7 +5,8 @@ import {
   parseCsvRecords,parseStockIntakeCsv,validStockIntakeRow,findExistingInventory,
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
-  revokePaidBatchConfirmations,revokeMerchantIntakeSession,intakeOperationIsCurrent
+  revokePaidBatchConfirmations,revokeMerchantIntakeSession,intakeOperationIsCurrent,
+  STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -39,6 +40,9 @@ test('genuine source-note mismatches and missing physical quantities are held fo
   const rows=parseStockIntakeCsv(example);
   assert.equal(rows.length,4);
   assert.equal(rows[0].item,'Fish balls');
+  assert.equal(rows[0].classificationCode,'');
+  assert.equal(validStockIntakeRow(rows[0]),false,'unverified category is never implicitly ingredient');
+  assert.equal(reviseStockIntakeRow(rows[0],'classificationCode','food_ingredient'),true);
   assert.equal(validStockIntakeRow(rows[0]),true);
   assert.equal(rows[1].requiresReview,true);
   assert.equal(validStockIntakeRow(rows[1]),false);
@@ -50,6 +54,7 @@ test('genuine source-note mismatches and missing physical quantities are held fo
 
 test('human correction and explicit review permit a valid line',()=>{
   const rows=parseStockIntakeCsv(example);
+  for(const row of rows)reviseStockIntakeRow(row,'classificationCode','food_ingredient');
   rows[1].total=124;
   rows[1].reviewConfirmed=true;
   assert.equal(validStockIntakeRow(rows[1]),true);
@@ -364,4 +369,60 @@ test('auth-expired and pagehide dispatches block stale POST and date correction 
   assert.match(js,/\}catch\(error\)\{\s*if\(!requireCurrent\(\)\)break;/);
   assert.ok(js.includes("        })});\n        if(!requireCurrent())break;\n        if(!result?.inventory?.id"));
   assert.match(js,/state\.busy=false;\s*if\(!requireCurrent\(\)\)\{updateControls\(\);return;\}/);
+});
+
+test('paid stock CSV needs explicit canonical physical category, never source guesses',()=>{
+  const expected={
+    food_ingredient:{inventory_domain:'food',stock_role:'ingredient',inventory_type:'ingredient'},
+    food_resale:{inventory_domain:'food',stock_role:'direct_resale',inventory_type:'resale_item'},
+    non_food_resale:{inventory_domain:'non_food',stock_role:'direct_resale',inventory_type:'resale_item'},
+    production_material:{inventory_domain:'non_food',stock_role:'production_material',inventory_type:'production_material'},
+    packaging:{inventory_domain:'operations',stock_role:'packaging',inventory_type:'packaging'},
+    kitchen_consumable:{inventory_domain:'operations',stock_role:'operational_consumable',inventory_type:'kitchen_consumable'},
+    cleaning_sanitation:{inventory_domain:'operations',stock_role:'operational_supply',inventory_type:'cleaning_sanitation'},
+    operational_supply:{inventory_domain:'operations',stock_role:'operational_supply',inventory_type:'operational_supply'}
+  };
+  assert.deepEqual(Object.keys(STOCK_INTAKE_CLASSIFICATIONS),Object.keys(expected));
+  for(const [code,fields] of Object.entries(expected)){
+    assert.deepEqual(stockIntakeClassification(code),fields);
+    const row=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nItem,2,unit,100')[0];
+    assert.equal(validStockIntakeRow(row),false);
+    assert.equal(reviseStockIntakeRow(row,'classificationCode',code),true);
+    assert.equal(row.classificationCode,code);
+    assert.equal(validStockIntakeRow(row),true);
+    assert.equal(reviseStockIntakeRow(row,'classificationCode',code),false);
+  }
+  for(const code of ['',null,'__proto__','constructor','unknown','food',' FOOD_INGREDIENT '])
+    assert.equal(stockIntakeClassification(code),null,String(code));
+  const misleadingCsv=parseStockIntakeCsv(
+    'item,proposed_quantity,proposed_unit,screenshot_line_php,inventory_type\nDetergent,2,unit,180,ingredient'
+  )[0];
+  assert.equal(misleadingCsv.classificationCode,'','unverified CSV cannot authorize classification');
+  assert.equal(validStockIntakeRow(misleadingCsv),false);
+  assert.ok(js.includes('const classification=stockIntakeClassification(row.classificationCode);'));
+  assert.ok(js.includes('item:row.item,...classification,'));
+  assert.doesNotMatch(js,/item:row\.item,inventory_domain:'food',stock_role:'ingredient',inventory_type:'ingredient'/);
+  assert.match(ui,/choose the correct verified Inventory category/i);
+});
+
+test('changing stock category revokes human review and both paid-batch approvals',()=>{
+  const row=parseStockIntakeCsv('item,proposed_quantity,proposed_unit,screenshot_line_php\nSoap,2,unit,180')[0];
+  assert.equal(reviseStockIntakeRow(row,'classificationCode','cleaning_sanitation'),true);
+  assert.equal(row.requiresReview,false,'initial human choice does not need a duplicate row checkbox');
+  row.selected=true;row.reviewConfirmed=true;
+  assert.equal(reviseStockIntakeRow(row,'classificationCode','packaging'),true);
+  assert.equal(row.classificationCode,'packaging');
+  assert.equal(row.selected,false);
+  assert.equal(row.reviewConfirmed,false);
+  assert.equal(row.requiresReview,true);
+  assert.equal(validStockIntakeRow(row),false);
+  row.reviewConfirmed=true;
+  assert.equal(validStockIntakeRow(row),true);
+  row.selected=true;
+  assert.equal(reviseStockIntakeRow(row,'classificationCode','not_a_class'),true);
+  assert.equal(row.classificationCode,'');
+  assert.equal(row.selected,false);
+  assert.equal(validStockIntakeRow(row),false);
+  assert.match(js,/if\(reviseStockIntakeRow\(row,'classificationCode',value\)\)revokeBatchConfirmations\(\)/);
+  assert.match(js,/stockIntakeClassification\(row.classificationCode\)/);
 });

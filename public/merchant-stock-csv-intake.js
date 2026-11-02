@@ -1,6 +1,23 @@
 // Merchant stock CSV intake — client-only review layer over the canonical Inventory purchase API.
 // Never holds auth tokens, bypasses current-business checks, or creates financial transactions.
 const SUPPORTED_UNITS=new Set(['kg','g','L','ml','unit']);
+export const STOCK_INTAKE_CLASSIFICATIONS=Object.freeze({
+  food_ingredient:Object.freeze({label:'Food · recipe ingredient',inventory_domain:'food',stock_role:'ingredient',inventory_type:'ingredient'}),
+  food_resale:Object.freeze({label:'Food · direct resale',inventory_domain:'food',stock_role:'direct_resale',inventory_type:'resale_item'}),
+  non_food_resale:Object.freeze({label:'Non-food · direct resale',inventory_domain:'non_food',stock_role:'direct_resale',inventory_type:'resale_item'}),
+  production_material:Object.freeze({label:'Non-food · production material',inventory_domain:'non_food',stock_role:'production_material',inventory_type:'production_material'}),
+  packaging:Object.freeze({label:'Operations · packaging',inventory_domain:'operations',stock_role:'packaging',inventory_type:'packaging'}),
+  kitchen_consumable:Object.freeze({label:'Operations · kitchen consumable',inventory_domain:'operations',stock_role:'operational_consumable',inventory_type:'kitchen_consumable'}),
+  cleaning_sanitation:Object.freeze({label:'Operations · cleaning / sanitation',inventory_domain:'operations',stock_role:'operational_supply',inventory_type:'cleaning_sanitation'}),
+  operational_supply:Object.freeze({label:'Operations · other supply',inventory_domain:'operations',stock_role:'operational_supply',inventory_type:'operational_supply'})
+});
+// A CSV or shop receipt cannot prove Inventory classification. The operator
+// must choose the canonical category of EACH physical item before posting.
+export function stockIntakeClassification(code){
+  if(typeof code!=='string'||!Object.hasOwn(STOCK_INTAKE_CLASSIFICATIONS,code))return null;
+  const {inventory_domain,stock_role,inventory_type}=STOCK_INTAKE_CLASSIFICATIONS[code];
+  return{inventory_domain,stock_role,inventory_type};
+}
 const NORMALIZE=value=>String(value??'').trim().toLocaleLowerCase('en-PH').replace(/\s+/g,' ');
 const CENTS=value=>Math.round((Number(value)+Number.EPSILON)*100)/100;
 
@@ -138,7 +155,7 @@ export function parseStockIntakeCsv(text){
       (expectedProvided&&expected===null)||costMismatch
       ||/(VERIFY|CONFIRM QTY|CHECK PRICE|REVIEW|UNKNOWN)/i.test(flag);
     return{
-      key:String(index+1),item,quantity,unit,total,expected,flag,paidTotal,
+      key:String(index+1),item,quantity,unit,total,expected,flag,paidTotal,classificationCode:'',
       note:String(data.review_note||'').slice(0,240),
       requiresReview,reviewConfirmed:false,selected:false,
       exists:null,result:'pending',error:''
@@ -147,7 +164,7 @@ export function parseStockIntakeCsv(text){
 }
 
 export function validStockIntakeRow(row){
-  return Boolean(row&&row.item&&row.item.length<=100&&
+  return Boolean(row&&stockIntakeClassification(row.classificationCode)&&row.item&&row.item.length<=100&&
     Number.isFinite(row.quantity)&&row.quantity>0&&row.quantity<=1000000&&
     Math.abs(row.quantity*10000-Math.round(row.quantity*10000))<1e-6&&
     SUPPORTED_UNITS.has(row.unit)&&Number.isFinite(row.total)&&
@@ -165,12 +182,16 @@ export function findExistingInventory(row,inventory){
 // A changed physical count, unit, or paid value voids any prior human approval.
 // Never carry an old review checkbox or selection onto a different purchase.
 export function reviseStockIntakeRow(row,field,raw){
-  if(!row||row.result!=='pending'||!['quantity','unit','total'].includes(field))return false;
+  if(!row||row.result!=='pending'||!['quantity','unit','total','classificationCode'].includes(field))return false;
   const next=field==='quantity'?(raw===''?null:parseStockQuantity(raw)):
-    field==='total'?(raw===''?null:parsePhpMoney(raw)):String(raw??'');
+    field==='total'?(raw===''?null:parsePhpMoney(raw)):
+    field==='classificationCode'?(stockIntakeClassification(raw)?raw:''):String(raw??'');
   if(Object.is(row[field],next))return false;
+  const wasClassified=Boolean(stockIntakeClassification(row.classificationCode));
   row[field]=next;
-  row.requiresReview=true;
+  // Initial choice is explicit human classification; a subsequent change
+  // also demands renewed line review and both batch approvals.
+  if(field!=='classificationCode'||wasClassified)row.requiresReview=true;
   row.reviewConfirmed=false;
   row.selected=false;
   return true;
@@ -342,7 +363,9 @@ if(hasDocument){
     if(options?.choices){
       input=document.createElement('select');
       for(const choice of options.choices){
-        const opt=document.createElement('option');opt.value=choice;opt.textContent=choice;input.appendChild(opt);
+        const opt=document.createElement('option');
+        const [key,label]=Array.isArray(choice)?choice:[choice,choice];
+        opt.value=key;opt.textContent=label;input.appendChild(opt);
       }
       input.value=value;
     }else{
@@ -360,7 +383,7 @@ if(hasDocument){
       const item=element('article','item'+(row.exists?' existing':'')+(row.requiresReview?' review':'')+(['saved','saved-date-pending'].includes(row.result)?' saved':''));
       const top=element('div','controls');
       const title=element('h3','',row.item);top.appendChild(title);
-      const status=row.result==='saved'?'Saved stock and expense':row.result==='saved-date-pending'?'Saved; date needs correction':row.exists?'Already in Inventory':row.result==='uncertain'?'Needs investigation':row.result==='error'?'Stopped':row.requiresReview?'Review required':'Ready to review';
+      const status=row.result==='saved'?'Saved stock and expense':row.result==='saved-date-pending'?'Saved; date needs correction':row.exists?'Already in Inventory':row.result==='uncertain'?'Needs investigation':row.result==='error'?'Stopped':!stockIntakeClassification(row.classificationCode)?'Choose stock category':row.requiresReview?'Review required':'Ready to review';
       top.appendChild(element('span','tag'+(row.exists||row.result==='error'?' error':row.requiresReview?' warn':' ok'),status));
       item.appendChild(top);
       const detail=element('p','muted',
@@ -383,6 +406,13 @@ if(hasDocument){
         if(reviseStockIntakeRow(row,'total',value))revokeBatchConfirmations();renderRows();
       }));
       item.appendChild(columns);
+      item.appendChild(createField('Verified Inventory category',row.classificationCode,{
+        choices:[['','Choose category (required)'],
+          ...Object.entries(STOCK_INTAKE_CLASSIFICATIONS).map(([code,choice])=>[code,choice.label])]
+      },value=>{
+        if(reviseStockIntakeRow(row,'classificationCode',value))revokeBatchConfirmations();
+        renderRows();
+      }));
       if(row.requiresReview){
         const label=element('label','check');
         const check=document.createElement('input');check.type='checkbox';
@@ -521,13 +551,15 @@ if(hasDocument){
         }
         // Recheck each item as the import progresses (other devices may write).
         guardNewPaidStockIntakeRow(row,state.inventory);
-        if(!validStockIntakeRow(row))throw new Error('Stock quantity, unit, cost or review confirmation is not valid.');
+        if(!validStockIntakeRow(row))throw new Error('Stock quantity, unit, category, cost or review confirmation is not valid.');
+        const classification=stockIntakeClassification(row.classificationCode);
+        if(!classification)throw new Error('Choose and verify the Inventory category before posting.');
         row.result='posting';renderRows();
         // From this point an interrupted response is uncertain; never auto-retry.
         purchaseDispatched=true;
         // Canonical atomic purchase + linked expense. This records an existing payment; no funds transfer occurs.
         const result=await api('/api/inventory/purchase',{method:'POST',body:JSON.stringify({
-          item:row.item,inventory_domain:'food',stock_role:'ingredient',inventory_type:'ingredient',
+          item:row.item,...classification,
           purchase_quantity:row.quantity,purchase_unit:row.unit,total_cost:CENTS(row.total),
           account:paidFrom,record_expense:true,
           note:'Paid stock intake from reviewed Merchant CSV. Actual purchase date: '+originalDate+'. '+row.note
