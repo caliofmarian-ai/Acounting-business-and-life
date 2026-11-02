@@ -25,10 +25,11 @@ function harness() {
   };
   const document = { documentElement: { lang: 'en-PH' } };
   const factory = new Function('fetch', 'document',
-    "let copy={},copyLocale='en-PH',copyLoadEpoch=0;const copyCache=new Map();\n" +
+    "let copy={},copyLocale='en-PH',copyLoadEpoch=0,sessionKey='session_A';const copyCache=new Map();\n" +
+    "const sessionIdentity=()=>sessionKey;const token=()=>Boolean(sessionKey);\n" +
     "const normalizeLocale=value=>['en-PH','fil-PH'].includes(String(value||''))?String(value):'en-PH';\n" +
     "const activeLocale=()=>copyLocale;\n" + loader +
-    "\nreturn { loadCopy, state:()=>({copy,copyLocale,lang:document.documentElement.lang,cache:copyCache}) };"
+    "\nreturn { loadCopy,rotateSession:key=>{sessionKey=key}, state:()=>({copy,copyLocale,lang:document.documentElement.lang,cache:copyCache}) };"
   );
   return { ...factory(fetch, document), requests, complete(index, pack, ok=true) {
     assert.ok(requests[index], 'expected an actual fetch request');
@@ -184,18 +185,21 @@ test('current English decoding failure ends safely without recursive fallback', 
  
 // Guide API responses have an independent async race from locale-pack fetches.
 // Execute the actual shipped GET/PUT functions rather than a rewritten mock.
-const guideStart=ui.indexOf('async function refreshGuide(');
+const guideStart=ui.indexOf('function reconcileGuideSession(');
 const guideEnd=ui.indexOf('\nfunction removeOverlay()',guideStart);
 assert.ok(guideStart>=0&&guideEnd>guideStart,'shipped guide API functions must be extractable');
 assert.match(ui,/let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null;/);
+assert.match(ui,/const sessionIdentity=\(\)=>String\(window\.ABLSession\?\.csrfToken\?\.\(\)\|\|''\);/);
 assert.match(ui,/const request=guideWriteTail\?guideWriteTail\.then\(dispatch,dispatch\):dispatch\(\);/);
 const guideFlow=ui.slice(guideStart,guideEnd);
 
 function guideApiHarness({holdCopyLocale=null}={}){
   const requests=[],copies=[],renders=[],heldCopy=deferred();
-  let authenticated=true;
-  const factory=new Function('api','loadCopy','token','syncLauncher','decorateAccountSettings','scheduleRender',
-    "let guide=null,guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null,copyLoadEpoch=0;\n"+
+  let authenticated=true,sessionKey='account_A';
+  const factory=new Function('api','loadCopy','token','syncLauncher','decorateAccountSettings','scheduleRender','sessionIdentity',
+    "let guide=null,guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null,copyLoadEpoch=0,guideSessionIdentity=null,guideSessionEpoch=0;\n"+
+    "let copy={},copyLocale='en-PH',selectedProfileJourneyRole='',languagePickerReturnMode='',missionCenterOpen=false,lastAutoStep='';\n"+
+    "const copyCache=new Map(),profileDraftSavedForRole=new Set();function removeOverlay(){};\n"+
     guideFlow+"\nreturn {refreshGuide,updateGuide,current:()=>guide};");
   const functions=factory(
     (path,options={})=>{
@@ -208,12 +212,13 @@ function guideApiHarness({holdCopyLocale=null}={}){
       copies.push(locale);
       return locale===holdCopyLocale?heldCopy.promise:Promise.resolve();
     },
-    ()=>authenticated,()=>{},()=>{},delay=>renders.push(delay)
+    ()=>authenticated,()=>{},()=>{},delay=>renders.push(delay),()=>sessionKey
   );
   return {...functions,requests,copies,renders,
     respond(index,value){assert.ok(requests[index]);requests[index].resolve(value)},
     reject(index,error){assert.ok(requests[index]);requests[index].reject(error)},
-    logout(){authenticated=false},
+    logout(){authenticated=false;sessionKey=''},
+    switchAccount(){sessionKey='account_B';authenticated=true},
     releaseCopy(){heldCopy.resolve()}
   };
 }
@@ -348,4 +353,66 @@ test('confirmed guide PUT arriving after logout cannot activate private tutorial
   assert.equal(h.current(),null);
   assert.deepEqual(h.copies,[]);
   assert.deepEqual(h.renders,[]);
+});
+
+test('an A guide GET finishing under authenticated B cannot show private A guidance',async()=>{
+  const h=guideApiHarness();
+  const old=h.refreshGuide();
+  h.switchAccount();
+  h.respond(0,{preferred_locale:'fil-PH',private_owner:'account_A'});
+  const result=await old;
+  assert.equal(result,null);
+  assert.equal(h.current(),null);
+  assert.deepEqual(h.copies,[]);
+  assert.deepEqual(h.renders,[]);
+});
+
+test('an A guide PUT response after B login cannot commit old private guide',async()=>{
+  const h=guideApiHarness();
+  const old=h.updateGuide({action:'set_locale',locale:'fil-PH'});
+  h.switchAccount();
+  h.respond(0,{preferred_locale:'fil-PH',private_owner:'account_A'});
+  assert.equal(await old,null);
+  assert.equal(h.current(),null);
+  assert.deepEqual(h.copies,[]);
+});
+
+test('queued old-account PUT never dispatches under B; new B PUT is independent',async()=>{
+  const h=guideApiHarness();
+  const first=h.updateGuide({action:'set_locale',locale:'fil-PH'},{render:false});
+  const queued=h.updateGuide({action:'set_locale',locale:'en-PH'},{render:false});
+  assert.equal(h.requests.length,1);
+  h.switchAccount();
+  const fresh=h.updateGuide({action:'set_locale',locale:'en-PH'},{render:false});
+  assert.equal(h.requests.length,2,'B write must not wait for A pending request');
+  h.respond(1,{preferred_locale:'en-PH',private_owner:'account_B'});await fresh;
+  h.respond(0,{preferred_locale:'fil-PH',private_owner:'account_A'});
+  const result=await Promise.allSettled([first,queued]);
+  assert.equal(result[0].status,'fulfilled');
+  assert.equal(result[1].status,'rejected','queued A write must fail before API dispatch');
+  assert.match(String(result[1].reason?.message),/session changed/);
+  assert.equal(h.requests.length,2,'no queued A POST is sent under B');
+  assert.equal(h.current().private_owner,'account_B');
+});
+
+test('old A guide state is cleared on session transition before new B read resolves',async()=>{
+  const h=guideApiHarness();
+  const old=h.refreshGuide({render:false});
+  h.respond(0,{preferred_locale:'en-PH',private_owner:'account_A'});await old;
+  assert.equal(h.current().private_owner,'account_A');
+  h.switchAccount();
+  const fresh=h.refreshGuide({render:false});
+  assert.equal(h.current(),null,'previous account guide must be discarded synchronously');
+  h.respond(1,{preferred_locale:'fil-PH',private_owner:'account_B'});await fresh;
+  assert.equal(h.current().private_owner,'account_B');
+});
+
+test('old locale-pack response cannot activate across a rotated account session',async()=>{
+  const h=harness();
+  const old=h.loadCopy('fil-PH');
+  h.rotateSession('session_B');
+  h.complete(0,fil);await old;
+  assert.equal(h.state().copyLocale,'en-PH');
+  assert.deepEqual(h.state().copy,{});
+  assert.equal(h.state().cache.has('fil-PH'),false,'old account cache must not be populated');
 });

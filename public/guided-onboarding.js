@@ -47,8 +47,12 @@ let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,las
 const copyCache=new Map();
 let copyLoadEpoch=0;
 let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null;
+let guideSessionIdentity=null,guideSessionEpoch=0;
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
+// Use the browser's current readable CSRF session token only as an in-memory
+// identity boundary. Never persist or log this value; never treat it as auth.
+const sessionIdentity=()=>String(window.ABLSession?.csrfToken?.()||'');
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const normalizeLocale=value=>SUPPORTED_LOCALES.has(String(value||''))?String(value):'en-PH';
 const activeLocale=()=>normalizeLocale(guide?.preferred_locale||guide?.facts?.preferred_locale||copyLocale);
@@ -61,13 +65,13 @@ const suggestedLocale=()=>{
   const langs=[...(navigator.languages||[]),navigator.language||''].map(x=>String(x).toLowerCase());
   return langs.some(x=>x.startsWith('fil')||x.startsWith('tl'))?'fil-PH':'en-PH';
 };
-async function loadCopy(locale=activeLocale()){
+async function loadCopy(locale=activeLocale(),expectedSession=sessionIdentity()){
   const normalized=normalizeLocale(locale);
   // A previous fetch must never override a newer language choice or fallback.
   // Increment even for a cache hit: a pending older fetch may still complete.
   const requestEpoch=++copyLoadEpoch;
   const activate=pack=>{
-    if(requestEpoch===copyLoadEpoch){
+    if(requestEpoch===copyLoadEpoch&&expectedSession===sessionIdentity()&&token()){
       copy=pack;copyLocale=normalized;document.documentElement.lang=normalized;
     }
     return pack;
@@ -78,13 +82,13 @@ async function loadCopy(locale=activeLocale()){
     if(!response.ok)throw new Error('Locale pack unavailable');
     const pack=await response.json();
     // A stale completion cannot evict a newer cached revision of the same pack.
-    if(requestEpoch===copyLoadEpoch||!copyCache.has(normalized))copyCache.set(normalized,pack);
+    if(expectedSession===sessionIdentity()&&(requestEpoch===copyLoadEpoch||!copyCache.has(normalized)))copyCache.set(normalized,pack);
     return activate(pack);
   }catch(error){
     // A stale network failure must not trigger an English fallback for a
     // different language selection made while this request was pending.
-    if(requestEpoch!==copyLoadEpoch)return null;
-    if(normalized!=='en-PH')return loadCopy('en-PH');
+    if(requestEpoch!==copyLoadEpoch||expectedSession!==sessionIdentity())return null;
+    if(normalized!=='en-PH')return loadCopy('en-PH',expectedSession);
     return activate({});
   }
 }
@@ -121,53 +125,70 @@ function firstVisible(...selectors){
 function scheduleRender(delay=80){clearTimeout(renderTimer);renderTimer=setTimeout(()=>Promise.resolve().then(()=>renderGuide()).catch(error=>console.error('Guided onboarding render:',error)),delay)}
 function scheduleRefresh(delay=250){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>refreshGuide().catch(()=>{}),delay)}
 
+function reconcileGuideSession(){
+  const current=sessionIdentity();
+  if(current!==guideSessionIdentity){
+    guideSessionIdentity=current;
+    ++guideSessionEpoch;
+    ++guideReadEpoch;++guideMutationEpoch;++copyLoadEpoch;
+    // Old-account operations can finish after this event; their finally
+    // blocks must not decrement the new session's pending-write count.
+    guideMutationsPending=0;guideWriteTail=null;
+    guide=null;copy={};copyLocale='en-PH';copyCache.clear();
+    selectedProfileJourneyRole='';languagePickerReturnMode='';
+    profileDraftSavedForRole.clear();missionCenterOpen=false;lastAutoStep='';
+    removeOverlay();syncLauncher();
+  }
+  return current;
+}
+function sameGuideSession(expected){
+  return reconcileGuideSession()===expected&&Boolean(token());
+}
 async function refreshGuide({render=true}={}){
+  const expectedSession=reconcileGuideSession();
   if(!token())return null;
   const readEpoch=++guideReadEpoch,mutationEpoch=guideMutationEpoch;
-  // Reads dispatched during an outstanding write cannot outrank that write,
-  // even if their response happens to arrive after the write commits.
   const startedDuringMutation=guideMutationsPending>0;
   const snapshot=await api('/api/onboarding/guide');
-  if(readEpoch!==guideReadEpoch||mutationEpoch!==guideMutationEpoch||
-     startedDuringMutation||guideMutationsPending>0||!token())return guide;
+  if(!sameGuideSession(expectedSession)||readEpoch!==guideReadEpoch||
+     mutationEpoch!==guideMutationEpoch||startedDuringMutation||
+     guideMutationsPending>0)return null;
   guide=snapshot;
-  await loadCopy(snapshot.preferred_locale);
-  // The locale-pack fetch is another await boundary: a later user action may
-  // have superseded this guide while its translations were still loading.
-  if(readEpoch!==guideReadEpoch||mutationEpoch!==guideMutationEpoch||
-     guideMutationsPending>0||!token())return guide;
+  await loadCopy(snapshot.preferred_locale,expectedSession);
+  if(!sameGuideSession(expectedSession)||readEpoch!==guideReadEpoch||
+     mutationEpoch!==guideMutationEpoch||guideMutationsPending>0)return null;
   syncLauncher();
   decorateAccountSettings();
   if(render)scheduleRender(20);
   return guide;
 }
 async function updateGuide(input,{render=true}={}){
-  // A new mutation invalidates earlier guide reads and locale-pack results.
+  const expectedSession=reconcileGuideSession(),expectedSessionEpoch=guideSessionEpoch;
+  if(!token())throw new Error('Sign in again to update your tutorial.');
   const mutationEpoch=++guideMutationEpoch;
-  ++guideReadEpoch;
-  ++copyLoadEpoch;
-  ++guideMutationsPending;
-  // Server state must follow the user's update order, even if network
-  // responses otherwise arrive out of order. Serialize the HTTP PUTs only:
-  // a slow translation download must not delay the next confirmed write.
-  const dispatch=()=>api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
+  ++guideReadEpoch;++copyLoadEpoch;++guideMutationsPending;
+  // An old-account PUT that was queued behind another request must not be
+  // dispatched using the new account's cookies after logout/login.
+  const dispatch=()=>{
+    if(!sameGuideSession(expectedSession))
+      throw new Error('Onboarding session changed. Reopen the tutorial.');
+    return api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
+  };
   const request=guideWriteTail?guideWriteTail.then(dispatch,dispatch):dispatch();
   guideWriteTail=request;
   request.finally(()=>{if(guideWriteTail===request)guideWriteTail=null}).catch(()=>{});
   try{
     const updated=await request;
-    // An older response, or a response after logout, cannot repaint the
-    // latest selected language or another signed-out user's guide.
-    if(mutationEpoch!==guideMutationEpoch||!token())return guide;
+    if(!sameGuideSession(expectedSession)||mutationEpoch!==guideMutationEpoch)return null;
     guide=updated;
-    await loadCopy(updated.preferred_locale);
-    if(mutationEpoch!==guideMutationEpoch||!token())return guide;
+    await loadCopy(updated.preferred_locale,expectedSession);
+    if(!sameGuideSession(expectedSession)||mutationEpoch!==guideMutationEpoch)return null;
     syncLauncher();
     decorateAccountSettings();
     if(render)scheduleRender(20);
     return guide;
   }finally{
-    --guideMutationsPending;
+    if(expectedSessionEpoch===guideSessionEpoch)--guideMutationsPending;
   }
 }
 function removeOverlay(){
@@ -1122,7 +1143,8 @@ async function handleProfileChoice(target){
   scheduleRefresh(450);
 }
 function bindLifecycle(){
-  document.addEventListener('abl:profile-state',()=>scheduleRefresh(120));
+  document.addEventListener('abl:profile-state',()=>{reconcileGuideSession();scheduleRefresh(120)});
+  document.addEventListener('abl:auth-expired',()=>reconcileGuideSession());
   document.addEventListener('abl:account-settings-rendered',event=>{
     const view=event.detail?.view;
     if(view==='home')decorateAccountSettings();
