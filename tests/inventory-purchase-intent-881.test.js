@@ -68,4 +68,19 @@ test('schema includes scoped unique reservation, FK and private committed respon
   assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/PRIMARY KEY \(business_id, account_id, intent_key\)/);
   assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/REFERENCES inventory_purchases\(id\) ON DELETE RESTRICT/);
   assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/response_json JSONB/);
+  assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/CREATE CONSTRAINT TRIGGER inventory_purchase_intents_complete_commit/);
+  assert.match(INVENTORY_PURCHASE_INTENT_SCHEMA,/DEFERRABLE INITIALLY DEFERRED/);
+});
+
+test('finish binds the purchase row to the same authorized business',async()=>{
+  let statement='';
+  const absent={async query(sql){statement=sql;return{rowCount:0,rows:[]}}};
+  await assert.rejects(
+    finishInventoryPurchaseIntent(absent,{
+      businessId:101,accountId:501,intentKey:key,purchaseId:800,response:{purchase:{id:800}}
+    }),
+    e=>e.code==='INVENTORY_PURCHASE_INTENT_CONFLICT' && e.status===409
+  );
+  assert.match(statement,/FROM inventory_purchases AS purchase/);
+  assert.match(statement,/purchase.id=\$4 AND purchase.business_id=intent.business_id/);
 });

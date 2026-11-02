@@ -223,6 +223,42 @@ try{
     eq(foreign.kind,'new','same key separate business not replayed');
     eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
       [key])).rows[0].n,2,'keys are business/account scoped');
+    // A transaction that reserves an intent but forgets to finish it must
+    // fail at the real PostgreSQL COMMIT, not poison the key for future retry.
+    const incompleteKey='11234567-0000-4000-9000-123456789012';
+    await a.query('BEGIN');
+    eq((await claimInventoryPurchaseIntent(a,params(101,incompleteKey))).kind,
+      'new','incomplete test intent reserved within transaction');
+    let incompleteError=null;
+    try{await a.query('COMMIT')}catch(error){incompleteError=error}
+    eq(incompleteError?.code,'23514','incomplete intent COMMIT fails with check violation');
+    eq(incompleteError?.constraint,'inventory_purchase_intents_complete_commit',
+      'deferred trigger identifies the rejected incomplete commit');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [incompleteKey])).rows[0].n,0,'failed commit rolls back the incomplete reservation');
+    eq((await post(a,101,incompleteKey)).kind,'new',
+      'retry after an incomplete-commit rollback can post normally');
+
+    // A valid purchase from business 102 must not be linkable to an intent
+    // owned by business 101. PostgreSQL enforces this at the UPDATE itself.
+    const foreignKey='21234567-0000-4000-9000-123456789012';
+    await a.query('BEGIN');
+    eq((await claimInventoryPurchaseIntent(a,params(101,foreignKey))).kind,
+      'new','cross-business fixture reserves a fresh local intent');
+    let crossBusinessError=null;
+    try{
+      await finishInventoryPurchaseIntent(a,{
+        businessId:101,accountId:501,intentKey:foreignKey,
+        purchaseId:foreign.response.purchase.id,
+        response:{purchase:{id:foreign.response.purchase.id}}
+      });
+    }catch(error){crossBusinessError=error}
+    eq(crossBusinessError?.code,'INVENTORY_PURCHASE_INTENT_CONFLICT',
+      'foreign business purchase cannot complete local intent');
+    await a.query('ROLLBACK');
+    eq((await pool.query('SELECT count(*)::int AS n FROM inventory_purchase_intents WHERE intent_key=$1',
+      [foreignKey])).rows[0].n,0,'foreign association never commits');
+
     console.log(JSON.stringify({ok:true,realPostgresAssertions:checks,
       isolatedDb:'abl_purchase_intent_ci',liveRouteIntegrated:false}));
   }finally{a.release();b.release()}

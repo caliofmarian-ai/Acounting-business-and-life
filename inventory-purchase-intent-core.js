@@ -23,6 +23,42 @@ CREATE TABLE IF NOT EXISTS inventory_purchase_intents (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS inventory_purchase_intents_purchase_unique
   ON inventory_purchase_intents(business_id, purchase_id) WHERE purchase_id IS NOT NULL;
+-- A reservation MUST NOT survive COMMIT unless its stock/purchase/lot/expense
+-- transaction also produced the final response. The ordinary row CHECK
+-- permits the temporary NULL state inside BEGIN; the deferrable trigger
+-- rejects that state at COMMIT, preventing permanently poisoned replay keys.
+CREATE OR REPLACE FUNCTION inventory_purchase_intents_assert_complete()
+RETURNS trigger LANGUAGE plpgsql AS $intent_complete$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM inventory_purchase_intents AS current_intent
+     WHERE current_intent.business_id=NEW.business_id
+       AND current_intent.account_id=NEW.account_id
+       AND current_intent.intent_key=NEW.intent_key
+       AND (current_intent.purchase_id IS NULL
+         OR current_intent.response_json IS NULL
+         OR current_intent.committed_at IS NULL)
+  ) THEN
+    RAISE EXCEPTION 'Inventory purchase intent cannot commit incomplete'
+      USING ERRCODE='23514', CONSTRAINT='inventory_purchase_intents_complete_commit';
+  END IF;
+  RETURN NULL;
+END;
+$intent_complete$;
+DO $install_intent_complete$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgrelid='inventory_purchase_intents'::regclass
+       AND tgname='inventory_purchase_intents_complete_commit'
+  ) THEN
+    CREATE CONSTRAINT TRIGGER inventory_purchase_intents_complete_commit
+      AFTER INSERT OR UPDATE ON inventory_purchase_intents
+      DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION inventory_purchase_intents_assert_complete();
+  END IF;
+END;
+$install_intent_complete$;
 `;
 
 const bad=(message,code='INVENTORY_PURCHASE_INTENT_INVALID',status=400)=>
@@ -107,11 +143,16 @@ export async function finishInventoryPurchaseIntent(client,{businessId,accountId
   if(!response||typeof response!=='object'||Array.isArray(response))throw bad('A committed purchase response object is required');
   const json=JSON.stringify(response);
   if(!json||Buffer.byteLength(json,'utf8')>65536)throw bad('Purchase response snapshot exceeds intent limit');
+  // Do not associate a scoped Merchant intent with another business's purchase.
+  // The database relationship is checked inside this SAME open transaction.
   const saved=await client.query(`
-    UPDATE inventory_purchase_intents
+    UPDATE inventory_purchase_intents AS intent
        SET purchase_id=$4,response_json=$5::jsonb,committed_at=NOW()
-     WHERE business_id=$1 AND account_id=$2 AND intent_key=$3 AND purchase_id IS NULL
-     RETURNING purchase_id
+      FROM inventory_purchases AS purchase
+     WHERE intent.business_id=$1 AND intent.account_id=$2
+       AND intent.intent_key=$3 AND intent.purchase_id IS NULL
+       AND purchase.id=$4 AND purchase.business_id=intent.business_id
+     RETURNING intent.purchase_id
   `,[...args,json]);
   if(saved.rowCount!==1)throw bad('Purchase intent was already committed or missing','INVENTORY_PURCHASE_INTENT_CONFLICT',409);
   return response;
