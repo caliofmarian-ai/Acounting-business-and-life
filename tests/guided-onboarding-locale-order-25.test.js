@@ -187,7 +187,8 @@ test('current English decoding failure ends safely without recursive fallback', 
 const guideStart=ui.indexOf('async function refreshGuide(');
 const guideEnd=ui.indexOf('\nfunction removeOverlay()',guideStart);
 assert.ok(guideStart>=0&&guideEnd>guideStart,'shipped guide API functions must be extractable');
-assert.match(ui,/let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0;/);
+assert.match(ui,/let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null;/);
+assert.match(ui,/const request=guideWriteTail\?guideWriteTail\.then\(dispatch,dispatch\):dispatch\(\);/);
 const guideFlow=ui.slice(guideStart,guideEnd);
 
 function guideApiHarness({holdCopyLocale=null}={}){
@@ -302,6 +303,9 @@ test('overlapping guide PUTs dispatch in user order; an older locale cannot repl
 test('failed earlier guide PUT does not poison a queued subsequent update',async()=>{
   const h=guideApiHarness();
   const failed=h.updateGuide({action:'set_locale',locale:'fil-PH'},{render:false});
+  // Attach rejection handling immediately, before the deliberate async failure.
+  // The final Promise.allSettled still verifies that the original PUT rejected.
+  failed.catch(()=>{});
   const valid=h.updateGuide({action:'set_locale',locale:'en-PH'},{render:false});
   assert.equal(h.requests.length,1);
   h.reject(0,new Error('synthetic temporary PUT rejection'));
