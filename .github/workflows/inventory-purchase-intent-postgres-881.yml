@@ -1,0 +1,61 @@
+name: Inventory Purchase Intent PostgreSQL #881
+
+on:
+  pull_request:
+    paths:
+      - 'inventory-purchase-intent-core.js'
+      - 'tests/inventory-purchase-intent-881.test.js'
+      - 'scripts/inventory-purchase-intent-postgres-881.mjs'
+      - '.github/workflows/inventory-purchase-intent-postgres-881.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'inventory-purchase-intent-core.js'
+      - 'tests/inventory-purchase-intent-881.test.js'
+      - 'scripts/inventory-purchase-intent-postgres-881.mjs'
+      - '.github/workflows/inventory-purchase-intent-postgres-881.yml'
+
+permissions:
+  contents: read
+jobs:
+  isolated-intent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abl_purchase_intent_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d abl_purchase_intent_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: abl_purchase_intent_ci
+      NODE_ENV: test
+      ABL_PURCHASE_INTENT_CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert literal checkout revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Unit contract
+        run: node --test tests/inventory-purchase-intent-881.test.js
+      - name: Real isolated PostgreSQL double-post and rollback contract
+        run: node scripts/inventory-purchase-intent-postgres-881.mjs
