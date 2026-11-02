@@ -33,7 +33,8 @@ export function validPhilippinePurchaseDate(value,today){
 
 export function parseCsvRecords(text){
   const source=String(text||'').replace(/^\uFEFF/,'');
-  if(source.length>250000)throw new Error('CSV exceeds the 250 KB review limit.');
+  if(source.length>250000||new TextEncoder().encode(source).byteLength>250000)
+    throw new Error('CSV exceeds the 250 KB review limit.');
   const records=[];let field='',fields=[],mode='start';
   const finishField=()=>{fields.push(field);field='';mode='start'};
   const finishRecord=()=>{

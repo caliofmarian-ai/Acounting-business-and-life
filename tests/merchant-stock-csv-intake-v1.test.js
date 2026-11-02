@@ -23,6 +23,18 @@ test('quoted commas, BOM, and CRLF are correctly parsed',()=>{
   assert.deepEqual(records,[['item','qty'],['Fish balls, frozen','3']]);
 });
 
+test('CSV size cap is enforced in UTF-8 bytes for Philippine Unicode text',()=>{
+  const within='ñ'.repeat(125000); // exactly 250,000 UTF-8 bytes
+  assert.equal(new TextEncoder().encode(within).byteLength,250000);
+  const rows=parseCsvRecords(within);
+  assert.equal(rows.length,1);
+  assert.equal(rows[0][0].length,125000);
+  const over='ñ'.repeat(125001);
+  assert.equal(over.length,125001,'UTF-16 code units would incorrectly pass the old limit');
+  assert.throws(()=>parseCsvRecords(over),/250 KB review limit/);
+  assert.throws(()=>parseCsvRecords('a'.repeat(250001)),/250 KB review limit/);
+});
+
 test('genuine source-note mismatches and missing physical quantities are held for review',()=>{
   const rows=parseStockIntakeCsv(example);
   assert.equal(rows.length,4);
