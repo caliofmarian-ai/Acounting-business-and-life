@@ -61,7 +61,9 @@ function supplierHarness(){
     selected:()=>vm.runInContext('supSupplierSection',context),
     profile(detail){window.BusinessLifeProfileState={...window.BusinessLifeProfileState,...detail};dispatch('abl:profile-state',window.BusinessLifeProfileState)},
     business(id,event={role:'supplier',activeBusinessId:id}){accounting.activeBusinessId=id;dispatch('abl:business-workspace-changed',event)},
-    dispatch,auth:value=>{authenticated=value},session:value=>{csrf=value}
+    dispatch,auth:value=>{authenticated=value},session:value=>{csrf=value},
+    seedSupplierInventory:entries=>vm.runInContext('supInventory='+JSON.stringify(entries),context),
+    supplierInventory:()=>vm.runInContext('supInventory.map(x=>x.sku)',context)
   };
 }
 
@@ -251,4 +253,47 @@ test('Supplier Catalog still starts independent reads together and renders their
   assert.deepEqual(h.requests.map(request=>request.path),['/api/supplier/me','/api/supplier/v2/activities']);
   h.requests[0].resolve({supplier:{supplier_name:'Controlled Supplier'},catalog:[]});h.requests[1].resolve({activities:[]});await current;
   assert.match(h.workspace.innerHTML,/My Catalog/);assert.doesNotMatch(h.workspace.innerHTML,/Loading My Catalog/);assert.equal(clearEvents(h),1);
+});
+
+
+test('auth expiry wipes completed Supplier finance, cached stock and private modal markup',async()=>{
+  const h=supplierHarness(),current=h.open('Money');
+  h.requests[0].resolve({money:{receivable_total:123},money_orders:[]});await current;
+  assert.match(h.workspace.innerHTML,/123/);
+  h.seedSupplierInventory([{sku:'PRIVATE-SUPPLIER-SKU'}]);
+  h.node('supModal').innerHTML='PRIVATE-PO-NOTE';
+  h.node('supModalBg').classList.remove('hidden');
+  h.dispatch('abl:auth-expired');
+  assert.equal(h.workspace.innerHTML,'','resolved private Supplier finance must not remain mounted');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+  assert.equal(h.node('supModal').innerHTML,'','old purchase-order modal must be erased');
+  assert.equal(h.node('supModalBg').classList.contains('hidden'),true);
+  assert.deepEqual([...h.supplierInventory()],[],'old Supplier inventory cache must be discarded');
+  assert.equal(h.requests.length,1,'privacy cleanup must not initiate any network write or read');
+});
+
+test('account change erases settled Supplier data before a newly authorized workspace opens',async()=>{
+  const h=supplierHarness(),first=h.open('Orders');
+  h.requests[0].resolve([order('PRIVATE-ACCOUNT-ONE')]);await first;
+  assert.match(h.workspace.innerHTML,/PRIVATE-ACCOUNT-ONE/);
+  h.node('supModal').innerHTML='OLD-ACCOUNT-PO-MODAL';
+  h.profile({accountId:2});
+  assert.equal(h.workspace.innerHTML,'');
+  assert.equal(h.node('supModal').innerHTML,'');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+  const next=h.open('Orders');h.requests[1].resolve([order('ACCOUNT-TWO')]);await next;
+  assert.match(h.workspace.innerHTML,/ACCOUNT-TWO/);
+  assert.doesNotMatch(h.workspace.innerHTML,/PRIVATE-ACCOUNT-ONE/);
+});
+
+test('same-context Supplier decoration preserves the panel, but leaving the role purges it',async()=>{
+  const h=supplierHarness(),first=h.open('Orders');
+  h.requests[0].resolve([order('PRIVATE-SUPPLIER-ORDER')]);await first;
+  const before=h.workspace.innerHTML,writes=h.workspace.writes;
+  h.profile({snapshot:{...h.window.BusinessLifeProfileState.snapshot}});
+  assert.equal(h.workspace.innerHTML,before,'ordinary same-context hydration must not blank Supplier');
+  assert.equal(h.workspace.writes,writes);
+  h.profile({surface:'profile',activeRole:'merchant',navigationEpoch:2});
+  assert.equal(h.workspace.innerHTML,'','role exit must remove Supplier-only private markup');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
 });
