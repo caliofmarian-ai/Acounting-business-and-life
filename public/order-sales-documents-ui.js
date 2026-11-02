@@ -1,7 +1,7 @@
 // Sales-document UI mounts beside Orders without changing the Orders agent's code.
 (()=>{
   const API='/api/notifications/order-sales-documents';
-  let modal=null,mode='',activeBusiness=null;
+  let modal=null,mode='',activeBusiness=null,documentLoadEpoch=0;
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const date=value=>{try{return new Date(value).toLocaleDateString('en-PH')}catch{return String(value||'')}};
   const peso=value=>'₱'+new Intl.NumberFormat('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value)||0);
@@ -37,7 +37,7 @@
     `;
     document.head.appendChild(node);
   }
-  function close(){if(modal){modal.remove();modal=null;activeBusiness=null}}
+  function close(){documentLoadEpoch++;if(modal){modal.remove();modal=null;activeBusiness=null}}
   function shell(view){
     style();modal=document.createElement('div');modal.className='osdModal';modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');modal.setAttribute('aria-labelledby','osdHeading');
     modal.innerHTML='<div class="osdPanel"><div class="osdHeader"><div><h2 id="osdHeading">'+
@@ -56,24 +56,26 @@
       '<a href="'+documentLink(d.id)+'" target="_blank" rel="noopener">View / Print / Save as PDF</a></div>';
   }
   async function customer(){
+    const epoch=++documentLoadEpoch;
     const box=modal?.querySelector('#osdContent');if(!box)return;
     const old=modal;
     const result=await api(API+'/my');
-    if(old!==modal)return;
+    if(old!==modal||epoch!==documentLoadEpoch)return;
     box.innerHTML='<section class="osdBox"><h3>Documents available in your account</h3>'+
       (result.documents?.length?result.documents.map(documentItem).join(''):'<p>No documents have been issued for your orders yet.</p>')+'</section>';
   }
   async function merchant(){
+    const epoch=++documentLoadEpoch;
     const old=modal,box=modal?.querySelector('#osdContent');if(!box)return;
     const ctx=await api('/api/accounting/workspaces');
-    if(old!==modal)return;
+    if(old!==modal||epoch!==documentLoadEpoch)return;
     if(ctx.role!=='merchant'||!Number(ctx.active_business_id))throw new Error('Open the Merchant business workspace first.');
     const businessId=Number(ctx.active_business_id);activeBusiness=businessId;
     const [orders,docs]=await Promise.all([
       api(API+'/merchant-orders?business_id='+businessId),
       api(API+'/business?business_id='+businessId)
     ]);
-    if(old!==modal||activeBusiness!==businessId)return;
+    if(old!==modal||epoch!==documentLoadEpoch||activeBusiness!==businessId)return;
     const list=(orders.orders||[]).map(o=>{
       const canSend=Boolean(o.customer_email_verified);
       return '<div class="osdRow"><strong>'+esc(o.order_number||o.id)+' · '+esc(o.order_status)+'</strong>'+

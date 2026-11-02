@@ -693,3 +693,76 @@ test('non-Merchant workspace cannot queue a document or create a retry key',asyn
   assert.equal(storage.size,0);
   assert.match(h.messages.at(-1).v,/Merchant business changed/);
 });
+
+
+function merchantDocumentEpochHarness(api){
+  // Execute the real UI function. Only the dialog and network are synthetic.
+  const source=read('public/order-sales-documents-ui.js');
+  const first=source.indexOf('  async function merchant(){');
+  const last=source.indexOf('  // A lost queue acknowledgment',first);
+  assert.ok(first>=0&&last>first,'execute actual Merchant document loader');
+  const chunk=source.slice(first,last);
+  const box={innerHTML:'',querySelectorAll:()=>[]};
+  const panel={querySelector:selector=>selector==='#osdContent'?box:null};
+  const make=new Function('api','modal','esc','date','peso','documentItem',
+    "let activeBusiness=null,documentLoadEpoch=0;const API='/api/notifications/order-sales-documents';"+
+    chunk+";return{merchant,state:()=>({business:activeBusiness,html:modal.querySelector('#osdContent').innerHTML})};");
+  return make(api,panel,value=>String(value),()=>'',value=>String(value),()=>'<span>record</span>');
+}
+function deferredDocumentUiResponse(){
+  let resolve;
+  const promise=new Promise(r=>{resolve=r});
+  return{promise,resolve};
+}
+function documentOrdersForUi(business,label){
+  return{orders:[{id:business,order_number:label,order_status:'completed',
+    created_at:'2026-10-30T06:00:00Z',total:10,paid_amount:10,customer_email_verified:true}]};
+}
+test('late Merchant workspace A cannot replace already-rendered business B documents',async()=>{
+  const firstContext=deferredDocumentUiResponse(),requested=[];
+  let contexts=0;
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces')
+      return ++contexts===1?firstContext.promise:{role:'merchant',active_business_id:22};
+    if(path.includes('/merchant-orders?')){
+      const business=Number(path.match(/business_id=(\d+)/)?.[1]);
+      requested.push(business);
+      return documentOrdersForUi(business,'Documents for business '+business);
+    }
+    if(path.includes('/business?'))return{documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant(),newest=ui.merchant();
+  await newest;
+  assert.equal(ui.state().business,22);
+  firstContext.resolve({role:'merchant',active_business_id:11});
+  await old;
+  assert.equal(ui.state().business,22,'late A context must not reassign activeBusiness');
+  assert.match(ui.state().html,/Documents for business 22/);
+  assert.doesNotMatch(ui.state().html,/Documents for business 11/);
+  assert.deepEqual(requested,[22],'old A must not fetch or render private order data');
+});
+test('older same-business Merchant read cannot overwrite newer completed document load',async()=>{
+  const oldOrders=deferredDocumentUiResponse(),firstOrderRead=deferredDocumentUiResponse();
+  let orderReads=0;
+  const api=async path=>{
+    if(path==='/api/accounting/workspaces')return{role:'merchant',active_business_id:44};
+    if(path.includes('/merchant-orders?')){
+      if(++orderReads===1){firstOrderRead.resolve();return oldOrders.promise}
+      return documentOrdersForUi(44,'NEWEST order view');
+    }
+    if(path.includes('/business?'))return{documents:[]};
+    throw Error('Unexpected UI API: '+path);
+  };
+  const ui=merchantDocumentEpochHarness(api);
+  const old=ui.merchant();
+  await firstOrderRead.promise;
+  await ui.merchant();
+  assert.match(ui.state().html,/NEWEST order view/);
+  oldOrders.resolve(documentOrdersForUi(44,'STALE order view'));
+  await old;
+  assert.equal(ui.state().business,44);
+  assert.match(ui.state().html,/NEWEST order view/);
+  assert.doesNotMatch(ui.state().html,/STALE order view/);
+});
