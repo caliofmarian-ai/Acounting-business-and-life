@@ -48,6 +48,21 @@ export function validPhilippinePurchaseDate(value,today){
   return actual.getUTCFullYear()===year&&actual.getUTCMonth()===month-1&&actual.getUTCDate()===day;
 }
 
+// File.text() is deliberately not used here: browsers replace malformed UTF-8
+// with U+FFFD, changing paid stock product identities without an import error.
+// Decode the original bytes strictly before showing or approving any row.
+export function decodeReviewedStockCsvBytes(input){
+  const bytes=input instanceof Uint8Array?input:
+    input instanceof ArrayBuffer?new Uint8Array(input):null;
+  if(!bytes)throw new Error('CSV file bytes are unavailable; reselect the source file.');
+  if(bytes.byteLength>250000)throw new Error('CSV exceeds the 250 KB review limit.');
+  try{
+    return new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+  }catch{
+    throw new Error('CSV contains invalid UTF-8 bytes. Re-export it as UTF-8 and review the file before importing.');
+  }
+}
+
 export function parseCsvRecords(text){
   const source=String(text||'').replace(/^\uFEFF/,'');
   if(source.length>250000||new TextEncoder().encode(source).byteLength>250000)
@@ -498,7 +513,7 @@ if(hasDocument){
     message('fileStatus','Reading the new CSV; previous approvals were revoked.');
     if(file.size>250000){message('fileStatus','CSV is too large.','error');return}
     try{
-      const csvText=await file.text();
+      const csvText=decodeReviewedStockCsvBytes(await file.arrayBuffer());
       if(!csvReadIsCurrent(ticket,state.csvReadRevision,state.busy))return;
       const parsed=parseStockIntakeCsv(csvText);
       const sourcePaidTotals=[...new Set(parsed.map(row=>row.paidTotal).filter(value=>value!==null))];

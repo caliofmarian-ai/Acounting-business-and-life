@@ -6,7 +6,7 @@ import {
   parsePhpMoney,parseStockQuantity,validPhilippinePurchaseDate,
   reviseStockIntakeRow,guardNewPaidStockIntakeRow,guardNewPaidStockIntakeBatch,csvReadIsCurrent,preserveIntakeReviewForMerchant,
   revokePaidBatchConfirmations,clearPreviousCsvReview,revokeMerchantIntakeSession,intakeOperationIsCurrent,
-  STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification
+  STOCK_INTAKE_CLASSIFICATIONS,stockIntakeClassification,decodeReviewedStockCsvBytes
 } from '../public/merchant-stock-csv-intake.js';
 
 const ui=readFileSync(new URL('../public/merchant-stock-csv-intake.html',import.meta.url),'utf8');
@@ -34,6 +34,24 @@ test('CSV size cap is enforced in UTF-8 bytes for Philippine Unicode text',()=>{
   assert.equal(over.length,125001,'UTF-16 code units would incorrectly pass the old limit');
   assert.throws(()=>parseCsvRecords(over),/250 KB review limit/);
   assert.throws(()=>parseCsvRecords('a'.repeat(250001)),/250 KB review limit/);
+});
+
+test('actual CSV bytes fail closed for malformed UTF-8 before paid stock review',()=>{
+  const good=['item,proposed_quantity,proposed_unit,screenshot_line_php','Kamote ñ,2,kg,120'].join(String.fromCharCode(10));
+  const encoded=new TextEncoder().encode(good);
+  assert.equal(decodeReviewedStockCsvBytes(encoded),good);
+  assert.equal(parseStockIntakeCsv(decodeReviewedStockCsvBytes(encoded))[0].item,'Kamote ñ');
+  assert.equal(decodeReviewedStockCsvBytes(encoded.buffer),good);
+  const invalid=Uint8Array.of(82,105,99,101,44,0xc3,0x28);
+  assert.ok(new TextDecoder().decode(invalid).includes(String.fromCodePoint(0xfffd)),
+    'default browser-style decoding silently substitutes a replacement character');
+  assert.throws(()=>decodeReviewedStockCsvBytes(invalid),/invalid UTF-8 bytes/);
+  assert.throws(()=>decodeReviewedStockCsvBytes(Uint8Array.of(0xed,0xa0,0x80)),/invalid UTF-8 bytes/,
+    'malformed surrogate encoding must not become an item name');
+  assert.throws(()=>decodeReviewedStockCsvBytes(new Uint8Array(250001)),/250 KB review limit/);
+  assert.throws(()=>decodeReviewedStockCsvBytes('not file bytes'),/file bytes are unavailable/);
+  assert.ok(js.includes('decodeReviewedStockCsvBytes(await file.arrayBuffer())'));
+  assert.ok(!js.includes('await file.text()'));
 });
 
 test('genuine source-note mismatches and missing physical quantities are held for review',()=>{
@@ -229,7 +247,7 @@ test('stale asynchronous CSV reads cannot replace a posted or newer reviewed bat
   assert.equal(csvReadIsCurrent(4,4,true),false,'a running stock/expense write blocks file replacement');
   assert.equal(csvReadIsCurrent(4,5,false),false,'a past read stays cancelled after posting');
   assert.match(js,/const ticket=\+\+state\.csvReadRevision;/);
-  assert.match(js,/const csvText=await file\.text\(\);\s*if\(!csvReadIsCurrent\(ticket,state\.csvReadRevision,state\.busy\)\)return;/);
+  assert.match(js,/const csvText=decodeReviewedStockCsvBytes\(await file\.arrayBuffer\(\)\);\s*if\(!csvReadIsCurrent\(ticket,state\.csvReadRevision,state\.busy\)\)return;/);
   assert.match(js,/state\.csvReadRevision\+\+;\s*state\.busy=true/);
   assert.match(js,/\$\('csv'\)\.disabled=state\.busy/);
   assert.match(js,/\$\('actualTotalPaid'\)\.disabled=state\.busy/);
@@ -451,7 +469,7 @@ test('a changed CSV selection immediately revokes OLD paid approvals before the 
   const disable=handler.indexOf('renderRows(); // Disable Post synchronously');
   const empty=handler.indexOf('if(!file){');
   const tooLarge=handler.indexOf('if(file.size>250000)');
-  const asyncRead=handler.indexOf('await file.text()');
+  const asyncRead=handler.indexOf('await file.arrayBuffer()');
   assert.ok(revision>=0&&revision<revoke,'old pending file read is invalidated first');
   assert.ok(revoke<disable&&disable<empty&&empty<tooLarge&&tooLarge<asyncRead,
     'old batch is no longer postable even when replacement is missing, oversized or still reading');
