@@ -335,13 +335,15 @@ test('Merchant document detail/print recheck binding after slow private lookup',
   }
 });
 
-function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81,recipient=()=>({email:'verified@example.test',email_verified_at:'2026-10-30'})}={}){
-  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0,queuePendingMarks:0,recipientReads:0};
+function sendRevocationHarness({holdEmail=null,holdInsert=null,holdQueue=null,authorized=()=>true,account=()=>81,activeBusiness=()=>44,recipient=()=>({email:'verified@example.test',email_verified_at:'2026-10-30'})}={}){
+  const state={permissions:0,identities:0,documentWrites:0,queueStarts:0,queuePendingMarks:0,recipientReads:0,workspaceReads:0};
   const order=makeOrder(),snapshot=commercialOrderDocument(order);
   const pool={
     query:async sql=>{
       if(sql.includes('FROM accounts a'))
         return{rowCount:authorized(++state.permissions)?1:0};
+      if(sql.includes('FROM account_business_preferences'))
+        return{rowCount:1,rows:[{business_id:activeBusiness(++state.workspaceReads)}]};
       if(sql.includes('SELECT id FROM orders WHERE id='))
         return{rowCount:1,rows:[{id:order.id}]};
       if(sql.includes('SELECT o.*,b.name business_name'))
@@ -464,6 +466,54 @@ test('Account switch during locked send queue wait fails before emitting Custome
   assert.equal(state.identities,4);
   assert.equal(state.queueStarts,1);
   assert.equal(state.queuePendingMarks,1);
+});
+
+test('Merchant workspace A to B switch during recipient lookup stops email before document creation',async()=>{
+  const hold=heldQuery();
+  let selected=44;
+  const {state,send}=sendRevocationHarness({holdEmail:hold,activeBusiness:()=>selected});
+  const pending=send();
+  await hold.started;
+  selected=45;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.match(result.error?.message||'',/Merchant business changed/);
+  assert.equal(result.response,null);
+  assert.equal(state.documentWrites,0);
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant workspace switch during document insert refuses subsequent email queueing',async()=>{
+  const hold=heldQuery();
+  let selected=44;
+  const {state,send}=sendRevocationHarness({holdInsert:hold,activeBusiness:()=>selected});
+  const pending=send();
+  await hold.started;
+  selected=45;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.equal(result.response,null);
+  assert.equal(state.documentWrites,1,'saved immutable document is not an email');
+  assert.equal(state.queueStarts,0);
+});
+
+test('Merchant workspace switch during locked send attempt prevents queued email',async()=>{
+  const hold=heldQuery();
+  let selected=44;
+  const {state,send}=sendRevocationHarness({holdQueue:hold,activeBusiness:()=>selected});
+  const pending=send();
+  await hold.started;
+  selected=45;
+  hold.release();
+  const result=await pending;
+  assert.equal(result.error?.status,409);
+  assert.match(result.error?.message||'',/Merchant business changed/);
+  assert.equal(result.response,null);
+  assert.equal(state.queueStarts,1);
+  assert.equal(state.queuePendingMarks,1,'unsent pending attempt must not throttle valid requests');
+  assert.ok(state.workspaceReads>=3,'selected workspace is checked at each authorization boundary');
 });
 
 test('Recipient verification revoked during email queue row lock prevents dispatch',async()=>{

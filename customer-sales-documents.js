@@ -365,6 +365,14 @@ export function registerCustomerSalesDocumentRoutes({app,pool,body,identity}){
       const requireCurrentSender=async()=>{
         await requireCurrentDocumentReader(req,identity,actor,pool);
         await requireMerchantBusiness(pool,actor,businessId);
+        // Binding to a business is not evidence that it is still the selected
+        // workspace: the same Merchant may switch A -> B while this send waits.
+        const selected=await pool.query(
+          "SELECT business_id FROM account_business_preferences WHERE account_id=$1 AND role='merchant'",
+          [actor]
+        );
+        if(Number(selected.rows[0]?.business_id)!==businessId)
+          throw err(409,'Merchant business changed; reopen documents before sending');
         const current=await pool.query('SELECT email,email_verified_at FROM accounts WHERE id=$1',[order.customer_account_id]);
         if(!current.rowCount||!current.rows[0].email_verified_at||
           String(current.rows[0].email??'').trim()!==verifiedRecipientEmail)
