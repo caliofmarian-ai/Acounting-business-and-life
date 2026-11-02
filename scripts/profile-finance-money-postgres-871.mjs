@@ -526,7 +526,7 @@ try{
   eq(await rowCount('profile_finance_audit_events'),prefAuditBefore+1,'retry adds one preference audit');
   await pool.query(`ALTER TABLE profile_finance_audit_events
     ADD CONSTRAINT synthetic_preferences_audit_rejection
-    CHECK (event_code <> 'money_preferences_updated')`);
+    CHECK (event_code <> 'money_preferences_updated') NOT VALID`);
   await assert.rejects(preferences(['bank_transfer']),error=>error.code==='23514');assertions++;
   const preserved=await pool.query('SELECT accepted_methods FROM profile_money_preferences WHERE id=$1',
     [prefCreated.id]);
