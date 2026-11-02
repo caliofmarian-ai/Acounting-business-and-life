@@ -427,7 +427,10 @@ export async function createProfileFinancialAccount(pool,{
   const last4=normalizeLast4(referenceLast4),currency=normalizeCurrency(currencyCode);
   const providerRef=clean(providerDestinationRef,220);
   const verification=providerRef?'pending':'unverified';
-  const {rows}=await pool.query(`
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const {rows}=await client.query(`
     INSERT INTO profile_financial_accounts(
       public_id,account_id,profile_role,owner_scope,business_id,account_kind,provider_code,provider_destination_ref,
       display_name,institution_name,account_name,reference_last4,currency_code,can_pay,can_receive,can_payout,verification_status
@@ -438,11 +441,14 @@ export async function createProfileFinancialAccount(pool,{
     clean(providerCode,80),providerRef,clean(displayName,120),clean(institutionName,120),clean(accountName,160),
     last4,currency,Boolean(canPay),Boolean(canReceive),Boolean(canPayout),verification
   ]);
-  await pool.query(`
+    await client.query(`
     INSERT INTO profile_finance_audit_events(account_id,profile_role,business_id,financial_account_id,event_code,detail_json)
     VALUES($1,$2,$3,$4,'financial_account_created',$5::jsonb)
   `,[Number(accountId),role,scope==='business'?Number(businessId):null,rows[0].id,JSON.stringify({kind,provider_code:clean(providerCode,80),can_pay:Boolean(canPay),can_receive:Boolean(canReceive),can_payout:Boolean(canPayout)})]);
-  return publicFinancialAccount(rows[0]);
+    await client.query('COMMIT');
+    return publicFinancialAccount(rows[0]);
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}
+  finally{client.release()}
 }
 
 export async function updateProfileFinancialAccount(pool,{

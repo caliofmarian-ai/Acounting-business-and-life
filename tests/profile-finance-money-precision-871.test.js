@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   postProfileBudgetEntry,transferProfileBudgetAllocation,
-  createProfileMoneyMovementRequest,createProfileMoneyEntry,
+  createProfileMoneyMovementRequest,createProfileMoneyEntry,createProfileFinancialAccount,
   transferFundsBetweenProfiles,reverseProfileMoneyEntry
 } from '../profile-finance-core.js';
 
@@ -268,4 +268,52 @@ test('internal profile transfer replay rejects changed money instruction',async(
   assert.equal(restored.idempotent,true);
   assert.equal(calls.filter(x=>x==='ROLLBACK').length,6);
   assert.equal(calls.filter(x=>x==='COMMIT').length,1);
+});
+
+
+// #871 financial-account metadata must never outlive its mandatory audit
+// when the database rejects the audit insert. This exercises the exported
+// primitive with a deterministic SQL boundary, not a real financial account.
+test('financial account creation commits account metadata and audit atomically',async()=>{
+  const input={publicId:'synthetic-account-871',accountId:11,profileRole:'customer',
+    ownerScope:'account',accountKind:'cash',displayName:'Test cash'};
+  const run=async(rejectAudit)=>{
+    const calls=[];
+    let released=false;
+    const client={
+      release(){released=true;},
+      async query(sql){
+        calls.push(sql);
+        if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return{rowCount:0,rows:[]};
+        if(sql.includes('INSERT INTO profile_financial_accounts('))return{
+          rowCount:1,rows:[{id:42,public_id:input.publicId,profile_role:'customer',
+            owner_scope:'account',business_id:null,account_kind:'cash',
+            display_name:'Test cash',status:'active',currency_code:'PHP'}]
+        };
+        if(sql.includes('INSERT INTO profile_finance_audit_events(')){
+          if(rejectAudit)throw Object.assign(new Error('synthetic audit failure'),{code:'23514'});
+          return{rowCount:1,rows:[]};
+        }
+        throw new Error('Unexpected SQL: '+sql);
+      }
+    };
+    const db={async connect(){return client},async query(){throw Error('Unscoped pool.query is forbidden')}};
+    if(rejectAudit){
+      await assert.rejects(createProfileFinancialAccount(db,input),error=>error.code==='23514');
+      assert.equal(calls.includes('COMMIT'),false,'no commit on audit failure');
+      assert.equal(calls.at(-1),'ROLLBACK','rejected audit must undo account INSERT');
+    }else{
+      const saved=await createProfileFinancialAccount(db,input);
+      assert.equal(saved.id,42);
+      assert.equal(calls.at(-1),'COMMIT','audit succeeds before committing account');
+      assert.equal(calls.includes('ROLLBACK'),false);
+    }
+    const insertAt=calls.findIndex(sql=>sql.includes('INSERT INTO profile_financial_accounts('));
+    const auditAt=calls.findIndex(sql=>sql.includes('INSERT INTO profile_finance_audit_events('));
+    assert.equal(calls[0],'BEGIN');
+    assert.ok(insertAt>0&&auditAt>insertAt,'account and audit use the same checked-out client');
+    assert.equal(released,true,'client released after success or failure');
+  };
+  await run(true);
+  await run(false);
 });
