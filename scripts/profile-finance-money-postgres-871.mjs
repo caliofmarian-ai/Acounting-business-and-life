@@ -432,7 +432,7 @@ try{
       entry_type,direction,category,amount,currency_code,note,
       actor_account_id,occurred_at
     )
-    SELECT 'ci-recent-'+n::text,'ci-recent-key-'+n::text,11,'customer','manual',
+    SELECT 'ci-recent-'||n::text,'ci-recent-key-'||n::text,11,'customer','manual',
       'expense','out','groceries',1.00,'PHP','synthetic history fixture',11,NOW()
     FROM generate_series(1,251) AS n
   `);
