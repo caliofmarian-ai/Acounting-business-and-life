@@ -194,7 +194,7 @@ function guideApiHarness({holdCopyLocale=null}={}){
   const requests=[],copies=[],renders=[],heldCopy=deferred();
   let authenticated=true;
   const factory=new Function('api','loadCopy','token','syncLauncher','decorateAccountSettings','scheduleRender',
-    "let guide=null,guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,copyLoadEpoch=0;\n"+
+    "let guide=null,guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null,copyLoadEpoch=0;\n"+
     guideFlow+"\nreturn {refreshGuide,updateGuide,current:()=>guide};");
   const functions=factory(
     (path,options={})=>{
@@ -211,6 +211,7 @@ function guideApiHarness({holdCopyLocale=null}={}){
   );
   return {...functions,requests,copies,renders,
     respond(index,value){assert.ok(requests[index]);requests[index].resolve(value)},
+    reject(index,error){assert.ok(requests[index]);requests[index].reject(error)},
     logout(){authenticated=false},
     releaseCopy(){heldCopy.resolve()}
   };
@@ -279,4 +280,68 @@ test('guide read resolving after logout is ignored without activating copy',asyn
   await old;
   assert.equal(h.current(),null);
   assert.deepEqual(h.copies,[]);
+});
+
+test('overlapping guide PUTs dispatch in user order; an older locale cannot replace the newer one',async()=>{
+  const h=guideApiHarness();
+  const first=h.updateGuide({action:'set_locale',locale:'fil-PH'});
+  const later=h.updateGuide({action:'set_locale',locale:'en-PH'});
+  assert.deepEqual(h.requests.map(r=>r.method),['PUT'],'the second PUT must wait for first write acknowledgement');
+  h.respond(0,{preferred_locale:'fil-PH',version:'older'});
+  await drainMicrotasks();
+  assert.equal(h.requests.length,2,'newer PUT must dispatch after prior write');
+  assert.deepEqual(h.copies,[],'superseded first PUT must not paint an outdated locale');
+  h.respond(1,{preferred_locale:'en-PH',version:'newer'});
+  await Promise.all([first,later]);
+  assert.equal(h.current().preferred_locale,'en-PH');
+  assert.equal(h.current().version,'newer');
+  assert.deepEqual(h.copies,['en-PH']);
+  assert.deepEqual(h.renders,[20]);
+});
+
+test('failed earlier guide PUT does not poison a queued subsequent update',async()=>{
+  const h=guideApiHarness();
+  const failed=h.updateGuide({action:'set_locale',locale:'fil-PH'},{render:false});
+  const valid=h.updateGuide({action:'set_locale',locale:'en-PH'},{render:false});
+  assert.equal(h.requests.length,1);
+  h.reject(0,new Error('synthetic temporary PUT rejection'));
+  await drainMicrotasks();
+  assert.equal(h.requests.length,2,'subsequent PUT still starts after failure');
+  h.respond(1,{preferred_locale:'en-PH',version:'retry-success'});
+  const outcomes=await Promise.allSettled([failed,valid]);
+  assert.equal(outcomes[0].status,'rejected');
+  assert.equal(outcomes[1].status,'fulfilled');
+  assert.equal(h.current().version,'retry-success');
+  assert.deepEqual(h.copies,['en-PH']);
+  const read=h.refreshGuide({render:false});
+  assert.equal(h.requests.length,3,'after both writes finish a regular refresh must work');
+  h.respond(2,{preferred_locale:'en-PH',version:'normal-read'});await read;
+  assert.equal(h.current().version,'normal-read');
+});
+
+test('a newer PUT may proceed while an older response is waiting for its locale pack',async()=>{
+  const h=guideApiHarness({holdCopyLocale:'fil-PH'});
+  const first=h.updateGuide({action:'set_locale',locale:'fil-PH'});
+  h.respond(0,{preferred_locale:'fil-PH',version:'first'});
+  await drainMicrotasks();
+  assert.deepEqual(h.copies,['fil-PH']);
+  const later=h.updateGuide({action:'set_locale',locale:'en-PH'});
+  assert.equal(h.requests.length,2,'write queue must not wait for older locale download');
+  h.respond(1,{preferred_locale:'en-PH',version:'second'});
+  await later;
+  h.releaseCopy();await first;
+  assert.equal(h.current().version,'second');
+  assert.equal(h.current().preferred_locale,'en-PH');
+  assert.deepEqual(h.renders,[20],'first stale completion cannot rerender');
+});
+
+test('confirmed guide PUT arriving after logout cannot activate private tutorial state',async()=>{
+  const h=guideApiHarness();
+  const write=h.updateGuide({action:'set_locale',locale:'fil-PH'});
+  h.logout();
+  h.respond(0,{preferred_locale:'fil-PH',account_marker:'private-fixture'});
+  await write;
+  assert.equal(h.current(),null);
+  assert.deepEqual(h.copies,[]);
+  assert.deepEqual(h.renders,[]);
 });

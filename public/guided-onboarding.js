@@ -46,7 +46,7 @@ const COACH_TARGET_GAP=14,COACH_EDGE_GAP=12,COMPACT_BREAKPOINT=420;
 let guide=null,overlay=null,launcher=null,refreshTimer=null,renderTimer=null,lastAutoStep='',missionCenterOpen=false,currentSpotlightTarget=null,placementFrame=0,placementRun=0,copy={},copyLocale='en-PH',selectedProfileJourneyRole='',languagePickerReturnMode='';
 const copyCache=new Map();
 let copyLoadEpoch=0;
-let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0;
+let guideReadEpoch=0,guideMutationEpoch=0,guideMutationsPending=0,guideWriteTail=null;
 const profileDraftSavedForRole=new Set();
 const token=()=>window.ABLSession?.authenticated()?'cookie-session':'';
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -142,16 +142,26 @@ async function refreshGuide({render=true}={}){
   return guide;
 }
 async function updateGuide(input,{render=true}={}){
-  // A new mutation invalidates all earlier/simultaneous read snapshots and
-  // in-flight locale-pack completions before the PUT reaches the server.
-  ++guideMutationEpoch;
+  // A new mutation invalidates earlier guide reads and locale-pack results.
+  const mutationEpoch=++guideMutationEpoch;
   ++guideReadEpoch;
   ++copyLoadEpoch;
   ++guideMutationsPending;
+  // Server state must follow the user's update order, even if network
+  // responses otherwise arrive out of order. Serialize the HTTP PUTs only:
+  // a slow translation download must not delay the next confirmed write.
+  const dispatch=()=>api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
+  const request=guideWriteTail?guideWriteTail.then(dispatch,dispatch):dispatch();
+  guideWriteTail=request;
+  request.finally(()=>{if(guideWriteTail===request)guideWriteTail=null}).catch(()=>{});
   try{
-    const updated=await api('/api/onboarding/guide',{method:'PUT',body:JSON.stringify(input)});
+    const updated=await request;
+    // An older response, or a response after logout, cannot repaint the
+    // latest selected language or another signed-out user's guide.
+    if(mutationEpoch!==guideMutationEpoch||!token())return guide;
     guide=updated;
     await loadCopy(updated.preferred_locale);
+    if(mutationEpoch!==guideMutationEpoch||!token())return guide;
     syncLauncher();
     decorateAccountSettings();
     if(render)scheduleRender(20);
