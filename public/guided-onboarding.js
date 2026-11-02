@@ -88,7 +88,9 @@ async function loadCopy(locale=activeLocale(),expectedSession=sessionIdentity())
     // A stale network failure must not trigger an English fallback for a
     // different language selection made while this request was pending.
     if(requestEpoch!==copyLoadEpoch||expectedSession!==sessionIdentity())return null;
-    if(normalized!=='en-PH')return loadCopy('en-PH',expectedSession);
+    // The session guard above runs synchronously before the fallback
+    // captures the same session in its own loadCopy() call.
+    if(normalized!=='en-PH')return loadCopy('en-PH');
     return activate({});
   }
 }
