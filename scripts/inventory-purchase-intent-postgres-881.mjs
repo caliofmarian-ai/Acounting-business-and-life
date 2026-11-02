@@ -124,6 +124,80 @@ try{
     eq(Number((await pool.query('SELECT quantity FROM inventory WHERE business_id=101')).rows[0].quantity),
       4,'two distinct purchases both increment stock');
 
+    // The original Production defect concerned two DIFFERENT legitimate
+    // purchase intents creating the same new item. The same-key replay test
+    // above cannot prove this cross-intent missing-row/unique-index race.
+    // Observe a real second PostgreSQL backend waiting on the business lock
+    // while the first purchase has NOT yet committed its fresh item.
+    const concurrentItem='CI parallel herb 881';
+    const firstBody={...payload,item:concurrentItem,quantity:2};
+    const secondBody={...payload,item:concurrentItem,quantity:3};
+    const firstKey='e1234567-0000-4000-9000-123456789012';
+    const secondKey='f1234567-0000-4000-9000-123456789012';
+    let firstTransactionOpen=false,secondPurchase=null;
+    try{
+      await a.query('BEGIN');
+      firstTransactionOpen=true;
+      eq((await claimInventoryPurchaseIntent(a,params(101,firstKey,firstBody))).kind,
+        'new','first distinct intent reserves its own key');
+      await lockInventoryPurchaseBusiness(a,101);
+      const priorItem=await a.query(
+        'SELECT id FROM inventory WHERE business_id=$1 AND item=$2',
+        [101,concurrentItem]);
+      eq(priorItem.rowCount,0,'parallel first-item fixture genuinely starts absent');
+      const secondPid=Number((await b.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+      secondPurchase=post(b,101,secondKey,secondBody);
+      let observedWait=false;
+      for(let attempt=0;attempt<150;attempt++){
+        const observed=await pool.query(
+          'SELECT wait_event_type,wait_event FROM pg_stat_activity WHERE pid=$1',
+          [secondPid]);
+        if(observed.rows[0]?.wait_event_type==='Lock'&&
+           observed.rows[0]?.wait_event==='advisory'){
+          observedWait=true;
+          break;
+        }
+        await sleep(25);
+      }
+      // The second caller is blocked BEFORE its missing-row lookup, so the
+      // first caller can create and commit its own unique inventory row.
+      const createdItem=(await a.query(
+        'INSERT INTO inventory(business_id,item,quantity) VALUES($1,$2,$3) RETURNING id',
+        [101,concurrentItem,2])).rows[0];
+      const firstPurchase=(await a.query(
+        'INSERT INTO inventory_purchases(business_id,inventory_id) VALUES($1,$2) RETURNING id',
+        [101,createdItem.id])).rows[0];
+      await a.query('INSERT INTO synthetic_lots(purchase_id) VALUES($1)',[firstPurchase.id]);
+      await a.query('INSERT INTO synthetic_expenses(purchase_id) VALUES($1)',[firstPurchase.id]);
+      await finishInventoryPurchaseIntent(a,{businessId:101,accountId:501,
+        intentKey:firstKey,purchaseId:firstPurchase.id,
+        response:{inventory:createdItem,purchase:firstPurchase}});
+      await a.query('COMMIT');
+      firstTransactionOpen=false;
+      const secondResult=await secondPurchase;
+      eq(observedWait,true,'distinct-key concurrent purchase waited on actual PostgreSQL business advisory lock');
+      eq(secondResult.kind,'new','different intent posts a second legitimate purchase');
+      const itemRows=await pool.query(
+        'SELECT id,quantity FROM inventory WHERE business_id=$1 AND item=$2',
+        [101,concurrentItem]);
+      eq(itemRows.rowCount,1,'two simultaneous distinct intents share exactly one inventory item');
+      eq(Number(itemRows.rows[0].quantity),5,'both distinct purchase quantities are retained');
+      const [purchaseCount,lotCount,expenseCount]=await Promise.all([
+        pool.query('SELECT COUNT(*)::int AS n FROM inventory_purchases WHERE inventory_id=$1',
+          [itemRows.rows[0].id]),
+        pool.query('SELECT COUNT(*)::int AS n FROM synthetic_lots WHERE purchase_id IN (SELECT id FROM inventory_purchases WHERE inventory_id=$1)',
+          [itemRows.rows[0].id]),
+        pool.query('SELECT COUNT(*)::int AS n FROM synthetic_expenses WHERE purchase_id IN (SELECT id FROM inventory_purchases WHERE inventory_id=$1)',
+          [itemRows.rows[0].id])
+      ]);
+      eq(purchaseCount.rows[0].n,2,'both legitimate purchase records committed');
+      eq(lotCount.rows[0].n,2,'each concurrent purchase has one real PostgreSQL test lot');
+      eq(expenseCount.rows[0].n,2,'each concurrent purchase has one test expense, without duplicates');
+    }finally{
+      if(firstTransactionOpen)await a.query('ROLLBACK').catch(()=>{});
+      if(secondPurchase)await secondPurchase.catch(()=>{});
+    }
+
     const rolledKey='d1234567-0000-4000-9000-123456789012';
     await a.query('BEGIN');
     eq((await claimInventoryPurchaseIntent(a,params(101,rolledKey))).kind,'new',
