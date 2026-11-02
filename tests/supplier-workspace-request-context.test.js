@@ -210,17 +210,20 @@ test('authentication expiry and a new session cannot revive an old Supplier resp
 });
 
 test('logout without a profile event prevents Supplier success and new reads',async()=>{
-  const h=supplierHarness(),older=h.open('Orders');h.auth(false);const html=h.workspace.innerHTML;
+  const h=supplierHarness(),older=h.open('Orders');h.auth(false);
   h.requests[0].resolve([order('LOGGED-OUT')]);await older;await h.load('ETA');await h.open('ETA');
-  assert.equal(h.workspace.innerHTML,html);assert.equal(h.requests.length,1);assert.equal(clearEvents(h),0);
+  assert.equal(h.workspace.innerHTML,'','unauthenticated Supplier reads must purge stale markup');
+  assert.equal(h.workspace.classList.contains('hidden'),true);
+  assert.equal(h.requests.length,1);assert.equal(clearEvents(h),0);
 });
 
 test('logged-out and other-profile Supplier opens cannot expose retained markup or change the current surface',async()=>{
   const h=supplierHarness();h.workspace.innerHTML='Retained private Supplier markup';
   h.auth(false);await h.open('ETA');
-  assert.equal(h.workspace.classList.contains('hidden'),true);assert.equal(h.selected(),'Today');assert.equal(h.requests.length,0);
+  assert.equal(h.workspace.classList.contains('hidden'),true);assert.equal(h.workspace.innerHTML,'');
+  assert.equal(h.selected(),'Today');assert.equal(h.requests.length,0);
   h.auth(true);h.profile({activeRole:'merchant',navigationEpoch:2});await h.open('Orders');
-  assert.equal(h.workspace.classList.contains('hidden'),true);assert.equal(h.workspace.innerHTML,'Retained private Supplier markup');
+  assert.equal(h.workspace.classList.contains('hidden'),true);assert.equal(h.workspace.innerHTML,'','role change purges private Supplier data');
   assert.equal(h.selected(),'Today');assert.equal(h.requests.length,0);assert.equal(h.node('roleHub').classList.contains('hidden'),false);
 });
 

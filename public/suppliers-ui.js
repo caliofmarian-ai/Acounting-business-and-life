@@ -690,7 +690,8 @@ function clearSupplierPrivateSurface(){
   supplierWorkspaceBusinessId=null;
 }
 function beginSupplierWorkspaceRequest(){
-  if(!supplierProfileIsActive()||!supWorkspace||supWorkspace.classList.contains('hidden'))return null;
+  if(!supplierProfileIsActive()){clearSupplierPrivateSurface();return null;}
+  if(!supWorkspace||supWorkspace.classList.contains('hidden'))return null;
   supplierWorkspaceOwned=true;
   supplierWorkspaceProfileKey=supplierProfileContext();
   supplierWorkspaceBusinessId=currentSupplierBusinessId();
@@ -719,7 +720,7 @@ function supplierWorkspaceError(section,error,request){
   document.getElementById('supWorkspaceBack')?.addEventListener('click',closeSupWorkspace);
 }
 async function openSupplierWorkspace(section='Today'){
-  if(!supplierProfileIsActive())return;
+  if(!supplierProfileIsActive()){clearSupplierPrivateSurface();return;}
   supSupplierSection=SUPPLIER_SECTION_META[section]?section:'Today';
   ensureSup();hideSupBase();supWorkspace.classList.remove('hidden');
   await renderSupplierWorkspace(supSupplierSection);
