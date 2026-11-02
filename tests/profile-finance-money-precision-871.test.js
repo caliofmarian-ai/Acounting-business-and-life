@@ -157,13 +157,16 @@ test('provider HOLD replay rejects changed cents/account/source without creating
     source_profile_role:'customer',destination_profile_role:'customer',
     status:'pending_provider',hold_code:'PROVIDER_MONEY_MOVEMENT_ADAPTER_NOT_CONNECTED'
   };
-  let queries=0;
-  const pool={async query(sql){
-    queries++;
+  const calls=[];
+  const client={release(){},async query(sql){
+    calls.push(sql);
+    if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return{rowCount:0,rows:[]};
+    if(sql.includes('pg_advisory_xact_lock(hashtextextended('))return{rowCount:1,rows:[]};
     if(sql.includes('SELECT * FROM profile_money_movements WHERE idempotency_key='))return{rowCount:1,rows:[prior]};
     if(sql.includes('FROM profile_money_movements m'))return{rowCount:1,rows:[prior]};
     throw Error('Unexpected movement replay SQL: '+sql);
   }};
+  const pool={async connect(){return client}};
   const input={
     publicId:'new-id-unused',idempotencyKey:'hold-original',accountId:11,
     movementType:'transfer',sourceFinancialAccountId:1,destinationFinancialAccountId:2,
@@ -178,7 +181,12 @@ test('provider HOLD replay rejects changed cents/account/source without creating
   const restored=await createProfileMoneyMovementRequest(pool,input);
   assert.equal(restored.id,71);
   assert.equal(restored.amount,1.23);
-  assert.equal(queries,8,'six invalid lookups and one valid lookup with one readback');
+  assert.equal(calls.filter(sql=>sql.includes('SELECT * FROM profile_money_movements WHERE idempotency_key=')).length,7,
+    'six rejected replays and one accepted replay each look up the full key');
+  assert.equal(calls.filter(sql=>sql.includes('pg_advisory_xact_lock(hashtextextended(')).length,7,
+    'each replay takes the global key lock before lookup');
+  assert.equal(calls.filter(sql=>sql==='ROLLBACK').length,6,'rejected replays roll back');
+  assert.equal(calls.filter(sql=>sql==='COMMIT').length,1,'matching replay commits once');
 });
 
 test('personal Money entry replay rejects changed cents/category/direction and preserves original',async()=>{
