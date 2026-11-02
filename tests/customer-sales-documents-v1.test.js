@@ -766,3 +766,58 @@ test('older same-business Merchant read cannot overwrite newer completed documen
   assert.match(ui.state().html,/NEWEST order view/);
   assert.doesNotMatch(ui.state().html,/STALE order view/);
 });
+
+function documentOpenFailureHarness(requests){
+  // Execute the actual UI open() function; dialog and requests are synthetic.
+  const source=read('public/order-sales-documents-ui.js');
+  const first=source.indexOf('  async function open(view){');
+  const last=source.indexOf('  function mount(){',first);
+  assert.ok(first>=0&&last>first,'execute actual document dialog opener');
+  const chunk=source.slice(first,last);
+  const make=new Function('requests',
+    "let modal=null,mode='',documentLoadEpoch=0;"+
+    "const shell=()=>{modal={content:{textContent:'Loading...'},querySelector(x){return x==='#osdContent'?this.content:null}};};"+
+    "const setMessage=(m,error)=>{if(modal){modal.error=m;modal.isError=error}};"+
+    "const customer=()=>{documentLoadEpoch++;return requests.shift()()};"+
+    "const merchant=customer;"+chunk+
+    "const close=()=>{documentLoadEpoch++;modal=null};"+
+    "const fresh=text=>{documentLoadEpoch++;if(modal)modal.content.textContent=text};"+
+    "return {open,close,fresh,state:()=>({modal,epoch:documentLoadEpoch})};");
+  return make(requests);
+}
+function deferredDocumentFailure(){
+  let reject;
+  const promise=new Promise((_,fail)=>{reject=fail});
+  return{promise,reject};
+}
+test('late dialog-load error after close and reopen never replaces the new Customer records',async()=>{
+  const old=deferredDocumentFailure();
+  const ui=documentOpenFailureHarness([()=>old.promise,()=>Promise.resolve()]);
+  const oldOpen=ui.open('customer');
+  const oldDialog=ui.state().modal;
+  ui.close();
+  await ui.open('customer');
+  assert.notEqual(ui.state().modal,oldDialog);
+  ui.state().modal.content.textContent='NEW Customer records';
+  old.reject(new Error('OLD Merchant business load failed'));
+  await oldOpen;
+  assert.equal(ui.state().modal.content.textContent,'NEW Customer records');
+  assert.equal(ui.state().modal.error,undefined);
+});
+test('superseded load error in the same document dialog cannot replace newer successful content',async()=>{
+  const old=deferredDocumentFailure();
+  const ui=documentOpenFailureHarness([()=>old.promise]);
+  const pending=ui.open('merchant');
+  ui.fresh('CURRENT Merchant documents');
+  old.reject(new Error('STALE order list failure'));
+  await pending;
+  assert.equal(ui.state().modal.content.textContent,'CURRENT Merchant documents');
+  assert.equal(ui.state().modal.error,undefined);
+});
+test('the latest document dialog error remains visible and actionable',async()=>{
+  const ui=documentOpenFailureHarness([()=>Promise.reject(new Error('Current document fetch failed'))]);
+  await ui.open('customer');
+  assert.equal(ui.state().modal.error,'Current document fetch failed');
+  assert.equal(ui.state().modal.isError,true);
+  assert.equal(ui.state().modal.content.textContent,'Unable to load purchase documents.');
+});

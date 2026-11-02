@@ -138,8 +138,19 @@
   async function open(view){
     if(modal)return;
     mode=view;shell(view);
-    try{if(view==='merchant')await merchant();else await customer()}
-    catch(e){setMessage(e.message,true);const x=modal?.querySelector('#osdContent');if(x)x.textContent='Unable to load purchase documents.'}
+    const openedModal=modal;
+    // Async loaders establish their generation before their first awaited read.
+    const loading=view==='merchant'?merchant():customer();
+    const openedEpoch=documentLoadEpoch;
+    try{await loading}
+    catch(e){
+      // A rejected old request must not replace a newly opened dialog or a
+      // newer successful load in the same dialog with stale error content.
+      if(modal!==openedModal||documentLoadEpoch!==openedEpoch)return;
+      setMessage(e.message,true);
+      const x=openedModal.querySelector('#osdContent');
+      if(x)x.textContent='Unable to load purchase documents.';
+    }
   }
   function mount(){
     const workspace=document.getElementById('ordersWorkspace');
