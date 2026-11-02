@@ -113,7 +113,8 @@ test('Merchant mobile UI exposes locations, transfers, reversal and location cou
   ])assert.ok(html.includes('id="'+id+'"'));
   assert.match(html,/value="location_id">Storage location/);
   assert.match(ui,/createInventoryLocationUi/);
-  assert.match(ui,/inventoryLocationUi\.load\(\)/);
+  assert.match(ui,/inventoryLocationUi\.prefetch\(\)/);
+  assert.match(ui,/inventoryLocationUi\.load\(\{isCurrent,prefetched:prefetchedStorage\}\)/);
   assert.match(ui,/getLocations:\(\)=>inventoryLocationUi\.getLocations\(\)/);
   assert.match(countUi,/scopeType\.value==='location_id'/);
   assert.match(countUi,/Location · /);
