@@ -67,25 +67,34 @@ try{
     'laneWidth:Math.round(r(lanes[0]).width),lanePosition:getComputedStyle(lanes[0]).position,labelWidth:Math.round(r(main).width),'+
     'labelHeight:Math.round(r(label).height),buttonHeight:Math.round(r(button).height),'+
     'pageWidth:document.documentElement.scrollWidth,'+
+    'physicalScreenWidth:screen.width,physicalScreenHeight:screen.height,'+
+    'smallPhysicalTouch:matchMedia("(pointer:coarse) and (max-device-width:600px)").matches,'+
     'pointerCoarse:matchMedia("(pointer:coarse)").matches,'+
     'portrait:matchMedia("(orientation:portrait)").matches,'+
     'css:document.styleSheets[0].href};})()';
   // The touch/portrait 980px case models an Android browser with Desktop site ON:
   // virtual CSS viewport is wide, while the physical device is portrait/coarse.
+  // CSS orientation measures virtual width/height, NOT physical handset rotation.
+  // A 390px physical phone can expose a 980x600 or 1280x650 CSS viewport in Desktop site mode.
+  // The screenWidth override keeps the physical screen narrow while the layout viewport is wide.
   // Synthetic emulation is not a real physical-device acceptance result.
   const scenarios=[
     ...[320,360,390,412].map(width=>({name:String(width),width,height:900,mobile:true,touch:false,expectedLanes:1})),
     {name:'980',width:980,height:900,mobile:false,touch:false,expectedLanes:2},
     {name:'980-touch-portrait',width:980,height:1800,mobile:true,touch:true,expectedLanes:1},
     {name:'1280',width:1280,height:900,mobile:false,touch:false,expectedLanes:4},
-    {name:'1280-touch-portrait',width:1280,height:2200,mobile:true,touch:true,expectedLanes:1}
+    {name:'1280-touch-portrait',width:1280,height:2200,mobile:true,touch:true,expectedLanes:1},
+    {name:'980-phone-virtual-landscape',width:980,height:600,screenWidth:390,screenHeight:844,mobile:true,touch:true,expectedLanes:1,expectedPortrait:false,expectedSmallPhysical:true},
+    {name:'1280-phone-virtual-landscape',width:1280,height:650,screenWidth:390,screenHeight:844,mobile:true,touch:true,expectedLanes:1,expectedPortrait:false,expectedSmallPhysical:true},
+    {name:'980-touch-tablet-landscape',width:980,height:650,screenWidth:1024,screenHeight:768,mobile:true,touch:true,expectedLanes:2,expectedPortrait:false,expectedSmallPhysical:false},
+    {name:'1280-touch-tablet-landscape',width:1280,height:900,screenWidth:1280,screenHeight:900,mobile:true,touch:true,expectedLanes:4,expectedPortrait:false,expectedSmallPhysical:false}
   ];
   for(const scenario of scenarios){
-    const {name,width,height,mobile,touch,expectedLanes}=scenario;
+    const {name,width,height,mobile,touch,expectedLanes,screenWidth,screenHeight,expectedPortrait,expectedSmallPhysical}=scenario;
     const {targetId}=await send('Target.createTarget',{url:'about:blank'});
     const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
     await send('Page.enable',{},sessionId);await send('Runtime.enable',{},sessionId);
-    await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:touch?3:1,mobile},sessionId);
+    await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:touch?3:1,mobile,...(screenWidth?{screenWidth,screenHeight}:{})},sessionId);
     await send('Emulation.setTouchEmulationEnabled',{enabled:touch,maxTouchPoints:touch?5:1},sessionId);
     await send('Page.navigate',{url:origin+'/fixture'},sessionId);
     let m=null;
@@ -98,11 +107,13 @@ try{
     assert.ok(m,'fixture failed to load '+width);
     assert.equal(m.viewport,width,'unexpected CSS viewport '+width);
     assert.equal(m.lanesPerRow,expectedLanes,name+' lane count');
-    if(name==='1280-touch-portrait')assert.equal(m.lanePosition,'static','touch portrait lanes must not stick/overlap');
-    if(name==='1280')assert.equal(m.lanePosition,'sticky','ordinary wide desktop lanes remain sticky');
+    if(['1280-touch-portrait','1280-phone-virtual-landscape'].includes(name))assert.equal(m.lanePosition,'static','phone lanes must not stick/overlap');
+    if(['1280','1280-touch-tablet-landscape'].includes(name))assert.equal(m.lanePosition,'sticky','wide desktop/tablet lanes remain sticky');
     if(touch){
       assert.equal(m.pointerCoarse,true,name+' must exercise actual CSS coarse-pointer override');
-      assert.equal(m.portrait,true,name+' must exercise portrait override');
+      assert.equal(m.portrait,expectedPortrait??true,name+' virtual CSS orientation');
+      if(expectedSmallPhysical!==undefined)assert.equal(m.smallPhysicalTouch,expectedSmallPhysical,name+' physical-device-width media guard');
+      if(screenWidth)assert.equal(m.physicalScreenWidth,screenWidth,name+' physical screen width');
     }
     assert.ok(m.labelWidth>=160,width+'px order label narrow: '+m.labelWidth);
     assert.ok(m.labelHeight<=60,width+'px vertical letter wrap');
@@ -111,7 +122,7 @@ try{
     assert.ok(m.css?.endsWith('/orders.css'),'must use real CSS');
     const screenshot=await send('Page.captureScreenshot',{format:'png'},sessionId);
     writeFileSync(join(out,'orders-'+name+'.png'),Buffer.from(screenshot.data,'base64'));
-    results.push({name,width,height,mobile,touch,...m});
+    results.push({name,width,height,mobile,touch,screenWidth:screenWidth??null,screenHeight:screenHeight??null,...m});
     await send('Target.closeTarget',{targetId});
   }
   assert.equal(errors.length,0,'browser exceptions');

@@ -35,3 +35,10 @@ test('wide forced desktop CSS viewport on portrait touch stacks non-sticky lanes
   assert.ok(desktop>=0&&override>desktop,'touch portrait override must follow wide desktop rule');
   assert.match(css.slice(override),/^@media\(min-width:1200px\) and \(pointer:coarse\) and \(orientation:portrait\)\{\.ordersBoard\{grid-template-columns:minmax\(0,1fr\)\}\.orderLane\{position:static\}\}/);
 });
+
+
+test('physical narrow touch screen wins over virtual landscape desktop-site viewport',()=>{
+  const override='@media(min-width:650px) and (pointer:coarse) and (max-device-width:600px){.ordersBoard{grid-template-columns:minmax(0,1fr)}.orderLane{position:static}}';
+  assert.ok(css.indexOf(override)>css.indexOf('@media(min-width:1200px){'), 'narrow-physical-device override must follow wide desktop rule');
+  assert.match(css, /@media\(min-width:650px\) and \(pointer:coarse\) and \(max-device-width:600px\)/);
+});
