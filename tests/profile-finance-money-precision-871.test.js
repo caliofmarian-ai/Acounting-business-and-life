@@ -82,7 +82,9 @@ test('all finance mutations reject oversized/coerced replay keys before database
     })]
   ];
   for(const [label,request] of requests){
-    for(const invalid of [common+'A',common+'B',12,true,{},null,'  ']){
+    for(const invalid of [common+'A',common+'B',12,true,{},null,'  ',
+      ' padded-key','padded-key ','\tpadded-key','padded-key\n',
+      'padded\u0000key','padded\u007fkey']){
       await assert.rejects(request(invalid),e=>e.status===400&&/Idempotency key/.test(e.message),
         label+' must reject malformed/overlong key before DB access');
     }

@@ -4,9 +4,12 @@ const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status
 // Never silently truncate a financial replay key: two different requests
 // sharing their first 220 characters must not alias the same ledger record.
 function normalizeIdempotencyKey(value){
-  const key=typeof value==='string'?value.trim():'';
-  if(!key||key.length>220)fail('Idempotency key must be a non-empty string of at most 220 characters');
-  return key;
+  // An idempotency key is opaque, not a display string: trimming can alias
+  // two distinct client keys to one already-posted financial instruction.
+  if(typeof value!=='string'||!value.trim()||value.length>220||
+     value!==value.trim()||/[\u0000-\u001f\u007f]/.test(value))
+    fail('Idempotency key must be an unpadded non-empty string of at most 220 characters without control characters');
+  return value;
 }
 
 export const PROFILE_FINANCE_ROLES=Object.freeze(['customer','merchant','supplier','courier','service_provider']);
